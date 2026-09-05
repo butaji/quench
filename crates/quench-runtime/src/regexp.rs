@@ -1125,20 +1125,24 @@ fn match_value(text: &str, start: usize, end: usize, unicode: bool) -> Value {
 
 fn match_result(values: Vec<Value>, index: Value, input: &str, groups: Option<Value>) -> Value {
     crate::execution_trace::allocation("match_result");
-    let result = crate::builtins::set_property(Value::array(values), "index", index);
-    let result = crate::builtins::set_property(result, "input", Value::String(input.to_string()));
     let groups = groups.unwrap_or(Value::Undefined);
-    crate::builtins::define_own_property(
-        &result,
-        "groups",
-        &[
-            ("value".to_string(), groups),
-            ("writable".to_string(), Value::Boolean(true)),
-            ("enumerable".to_string(), Value::Boolean(true)),
-            ("configurable".to_string(), Value::Boolean(true)),
-        ],
-    )
-    .unwrap_or(result)
+    let result = Value::array(values);
+    // Match-result arrays are freshly allocated and cannot have observable
+    // aliases yet. Populate their ordinary named properties in place, which
+    // avoids three copy-on-write ObjectData clones per `exec`/`match` call.
+    // The keys are new, the array is extensible, and the default descriptor
+    // produced by [[Set]] is exactly the explicit writable/enumerable/
+    // configurable descriptor required for `groups` below.
+    crate::cycle_collector::track_value(&result);
+    crate::cycle_collector::track_value(&index);
+    let input = Value::String(input.to_string());
+    crate::cycle_collector::track_value(&input);
+    crate::cycle_collector::track_value(&groups);
+    crate::cycle_collector::checkpoint();
+    let _ = crate::execute::set_property_in_place(&result, "index", index);
+    let _ = crate::execute::set_property_in_place(&result, "input", input);
+    let _ = crate::execute::set_property_in_place(&result, "groups", groups);
+    result
 }
 
 fn argument_string(arguments: &[Value]) -> Result<String, VmError> {
@@ -1331,5 +1335,24 @@ mod tests {
         );
         let result = replace_with_template(&regexp, "ab", "x").expect("replace");
         assert_eq!(result, Value::String("xaxbx".to_string()));
+    }
+
+    #[test]
+    fn native_template_replace_preserves_match_tokens_and_no_match() {
+        let regexp = Value::Object(
+            ObjectData::new(vec![
+                (
+                    "\0regexp_source".to_string(),
+                    Value::String("foo".to_string()),
+                ),
+                ("\0regexp_flags".to_string(), Value::String("g".to_string())),
+            ])
+            .into(),
+        );
+        let result = replace_with_template(&regexp, "afoofoo", "<$&>").expect("native replace");
+        assert_eq!(result, Value::String("a<foo><foo>".to_string()));
+
+        let no_match = replace_with_template(&regexp, "bar", "x").expect("native no-match");
+        assert_eq!(no_match, Value::String("bar".to_string()));
     }
 }

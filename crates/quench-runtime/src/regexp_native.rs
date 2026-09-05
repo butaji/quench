@@ -15,6 +15,11 @@ enum CharacterClass {
 
 enum NativePattern<'a> {
     Literal(&'a [u8]),
+    AnchoredLiteral {
+        literal: &'a [u8],
+        anchor_start: bool,
+        anchor_end: bool,
+    },
     CharacterClass(CharacterClass),
     PropertyRepeat {
         name: &'a str,
@@ -53,6 +58,40 @@ pub(crate) fn find_str(
             Some(NativeMatch {
                 start: start + offset,
                 end: start + offset + needle.len(),
+            })
+        }
+        NativePattern::AnchoredLiteral {
+            literal,
+            anchor_start,
+            anchor_end,
+        } => {
+            if anchor_start && start != 0 {
+                return None;
+            }
+            let candidate = if anchor_start {
+                input
+            } else {
+                input.get(start..)?
+            };
+            let offset = if anchor_start || sticky {
+                0
+            } else {
+                candidate
+                    .as_bytes()
+                    .windows(literal.len())
+                    .position(|window| window == literal)?
+            };
+            let end = offset.checked_add(literal.len())?;
+            if end > candidate.len()
+                || &candidate.as_bytes()[offset..end] != literal
+                || (anchor_end && end != candidate.len())
+            {
+                return None;
+            }
+            let absolute = if anchor_start { 0 } else { start + offset };
+            Some(NativeMatch {
+                start: absolute,
+                end: absolute + literal.len(),
             })
         }
         NativePattern::CharacterClass(class) => {
@@ -117,6 +156,47 @@ pub(crate) fn find_units(
                 end: start + offset + pattern.len(),
             })
         }
+        NativePattern::AnchoredLiteral {
+            literal,
+            anchor_start,
+            anchor_end,
+        } => {
+            if anchor_start && start != 0 {
+                return None;
+            }
+            let candidate = if anchor_start {
+                input
+            } else {
+                input.get(start..)?
+            };
+            let offset = if anchor_start || sticky {
+                0
+            } else {
+                candidate.windows(literal.len()).position(|window| {
+                    window
+                        .iter()
+                        .zip(literal.iter())
+                        .all(|(unit, byte)| *unit == u16::from(*byte))
+                })?
+            };
+            let end = offset.checked_add(literal.len())?;
+            if end > candidate.len()
+                || candidate.get(offset..end).is_none_or(|window| {
+                    !window
+                        .iter()
+                        .zip(literal.iter())
+                        .all(|(unit, byte)| *unit == u16::from(*byte))
+                })
+                || (anchor_end && end != candidate.len())
+            {
+                return None;
+            }
+            let absolute = if anchor_start { 0 } else { start + offset };
+            Some(NativeMatch {
+                start: absolute,
+                end: absolute + literal.len(),
+            })
+        }
         NativePattern::CharacterClass(class) => {
             let offset = if sticky {
                 0
@@ -151,6 +231,11 @@ pub(crate) fn test_units(source: &str, flags: &str, input: &[u16], start: usize)
     Some(find_units(source, flags, input, start).is_some())
 }
 
+#[inline]
+pub(crate) fn supports_str(source: &str, flags: &str) -> bool {
+    parse(source, flags).is_some()
+}
+
 fn parse<'a>(source: &'a str, flags: &str) -> Option<NativePattern<'a>> {
     if let Some(property) = parse_property_repeat(source, flags) {
         return Some(property);
@@ -167,16 +252,29 @@ fn parse<'a>(source: &'a str, flags: &str) -> Option<NativePattern<'a>> {
             return Some(repeat);
         }
     }
-    if source.is_empty()
-        || !source.is_ascii()
-        || flags.contains(['i', 'm', 'u', 'v'])
-        || source
-            .bytes()
-            .any(|byte| b"\\.^$*+?()[]{}|".contains(&byte))
-    {
+    if source.is_empty() || !source.is_ascii() || flags.contains(['i', 'm', 'u', 'v']) {
         return None;
     }
-    Some(NativePattern::Literal(source.as_bytes()))
+    let (anchor_start, body) = source
+        .strip_prefix('^')
+        .map_or((false, source), |body| (true, body));
+    let (body, anchor_end) = body
+        .strip_suffix('$')
+        .map_or((body, false), |body| (body, true));
+    if (anchor_start || anchor_end)
+        && !body.is_empty()
+        && !body.bytes().any(|byte| b"\\.^$*+?()[]{}|".contains(&byte))
+    {
+        return Some(NativePattern::AnchoredLiteral {
+            literal: body.as_bytes(),
+            anchor_start,
+            anchor_end,
+        });
+    }
+    if anchor_start || anchor_end || body.bytes().any(|byte| b"\\.^$*+?()[]{}|".contains(&byte)) {
+        return None;
+    }
+    Some(NativePattern::Literal(body.as_bytes()))
 }
 
 fn parse_property_repeat<'a>(source: &'a str, flags: &str) -> Option<NativePattern<'a>> {
@@ -466,6 +564,20 @@ mod tests {
         assert_eq!(test_str("abc", "", "zabc", 1), Some(true));
         assert_eq!(test_str("abc", "y", "zabc", 1), Some(true));
         assert_eq!(test_str("abc", "y", "zabc", 0), Some(false));
+    }
+
+    #[test]
+    fn anchored_literal_scan_keeps_absolute_anchor_semantics() {
+        assert_eq!(
+            find_str("^ba", "", "bare", 0),
+            Some(super::NativeMatch { start: 0, end: 2 })
+        );
+        assert_eq!(test_str("^ba", "", "xbare", 1), Some(false));
+        assert_eq!(
+            find_str("ba$", "", "xxba", 0),
+            Some(super::NativeMatch { start: 2, end: 4 })
+        );
+        assert_eq!(test_str("ba$", "", "bax", 0), Some(false));
     }
 
     #[test]

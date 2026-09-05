@@ -71,6 +71,14 @@ pub(crate) struct NativeRegionContext<'a> {
     context: *const VmContext,
     result: Option<DispatchTransition>,
     error: Option<VmError>,
+    error_pc: Option<usize>,
+    entry_started: bool,
+    /// Set immediately before invoking rendered bytes; unlike a successful
+    /// transition this remains a witness even when the physical call exits
+    /// with a committed failure.
+    pub(crate) native_entered: bool,
+    #[cfg(test)]
+    force_committed_status: bool,
 }
 
 impl<'a> NativeRegionContext<'a> {
@@ -89,6 +97,11 @@ impl<'a> NativeRegionContext<'a> {
             context,
             result: None,
             error: None,
+            error_pc: None,
+            entry_started: false,
+            native_entered: false,
+            #[cfg(test)]
+            force_committed_status: false,
         }
     }
 
@@ -97,21 +110,42 @@ impl<'a> NativeRegionContext<'a> {
         status: u64,
     ) -> Result<DispatchTransition, crate::machine::NativeDispatchError> {
         match status {
-            NATIVE_DISPATCH_OK => self.result.ok_or_else(|| {
-                crate::machine::NativeDispatchError::Physical(
-                    "native region bridge returned without a transition".into(),
-                )
-            }),
-            NATIVE_DISPATCH_SEMANTIC_ERROR => self.error.map_or_else(
-                || {
-                    Err(crate::machine::NativeDispatchError::Physical(
-                        "native region bridge returned an empty semantic error".into(),
-                    ))
+            NATIVE_DISPATCH_OK => match self.result {
+                Some(result) => Ok(result),
+                None if self.entry_started => Err(
+                    crate::machine::NativeDispatchError::Committed(
+                        "native region entered without a transition".into(),
+                    ),
+                ),
+                None => Err(crate::machine::NativeDispatchError::Physical(
+                    "native region rejected without a transition".into(),
+                )),
+            },
+            NATIVE_DISPATCH_SEMANTIC_ERROR => match self.error {
+                Some(error) => match self.error_pc {
+                    Some(pc) => Err(crate::machine::NativeDispatchError::SemanticAt {
+                        pc,
+                        error,
+                    }),
+                    None => Err(crate::machine::NativeDispatchError::Semantic(error)),
                 },
-                |error| Err(crate::machine::NativeDispatchError::Semantic(error)),
-            ),
+                None if self.entry_started => Err(
+                    crate::machine::NativeDispatchError::Committed(
+                        "native region lost its post-entry error".into(),
+                    ),
+                ),
+                None => Err(crate::machine::NativeDispatchError::Physical(
+                    "native region rejected without a semantic error".into(),
+                )),
+            },
+            NATIVE_DISPATCH_COMMITTED_ERROR => Err(crate::machine::NativeDispatchError::Committed(
+                "native region reported a post-entry failure".into(),
+            )),
+            _ if self.entry_started => Err(crate::machine::NativeDispatchError::Committed(
+                "native region returned an invalid post-entry status".into(),
+            )),
             _ => Err(crate::machine::NativeDispatchError::Physical(
-                "native region bridge returned an invalid status".into(),
+                "native region returned an invalid entry status".into(),
             )),
         }
     }
@@ -119,6 +153,7 @@ impl<'a> NativeRegionContext<'a> {
 
 const NATIVE_DISPATCH_OK: u64 = 1;
 const NATIVE_DISPATCH_SEMANTIC_ERROR: u64 = 2;
+const NATIVE_DISPATCH_COMMITTED_ERROR: u64 = 3;
 
 // Keep the CPS fast path shallow enough that the large transition frame does
 // not accumulate on long-running ARM64 loops. The stack-safe segment takes
@@ -166,6 +201,12 @@ pub(crate) extern "C" fn native_region_bridge(raw: *mut std::ffi::c_void) -> u64
         return 0;
     }
     let region = unsafe { &mut *(raw.cast::<NativeRegionContext<'static>>()) };
+    // This hook exists only in unit tests; production has no synthetic failure
+    // branch in the native hot path.
+    #[cfg(test)]
+    if region.force_committed_status {
+        return NATIVE_DISPATCH_COMMITTED_ERROR;
+    }
     // Validate the complete window before invoking even the first canonical
     // handler.  This is what makes an Unknown/quickened mismatch an atomic
     // fallback: the caller can retry the whole span without replaying a
@@ -182,19 +223,95 @@ pub(crate) extern "C" fn native_region_bridge(raw: *mut std::ffi::c_void) -> u64
             return 0;
         }
     }
+    // From this point on a handler or physical kernel may have committed
+    // effects. Any failure is therefore an exit, never a retryable miss.
+    region.entry_started = true;
+
+    // The array-loop declaration has a fixed residual shape.  Execute that
+    // shape through one statically wired kernel before falling back to the
+    // generic bridge.  The kernel performs all guards up front and then
+    // commits the five operations without re-entering opcode dispatch between
+    // them; unsupported operands simply return `None` and use the complete
+    // ordinary path below.
+    if region.operations == [
+        crate::ir::Opcode::LoadLocalChecked,
+        crate::ir::Opcode::AGetI,
+        crate::ir::Opcode::Add,
+        crate::ir::Opcode::ASetI,
+        crate::ir::Opcode::Return,
+    ] {
+        match execute_composed_array_loop(region) {
+            Some(Ok(transition)) => {
+                crate::execution_trace::stencil_observation(
+                    region.code,
+                    region.pc,
+                    "composed_array_loop",
+                    true,
+                );
+                region.result = Some(transition);
+                return NATIVE_DISPATCH_OK;
+            }
+            Some(Err(error)) => {
+                region.error = Some(error);
+                return NATIVE_DISPATCH_SEMANTIC_ERROR;
+            }
+            None => {}
+        }
+    }
+
+    match execute_region_fallback(region) {
+        Ok(transition) => {
+            region.result = Some(transition);
+            NATIVE_DISPATCH_OK
+        }
+        Err(crate::machine::NativeDispatchError::SemanticAt { pc, error }) => {
+            region.error_pc = Some(pc);
+            region.error = Some(error);
+            NATIVE_DISPATCH_SEMANTIC_ERROR
+        }
+        Err(crate::machine::NativeDispatchError::Semantic(error)) => {
+            region.error = Some(error);
+            NATIVE_DISPATCH_SEMANTIC_ERROR
+        }
+        Err(crate::machine::NativeDispatchError::Physical(_)) => 0,
+        Err(crate::machine::NativeDispatchError::Committed(_)) => NATIVE_DISPATCH_COMMITTED_ERROR,
+    }
+}
+
+/// Execute a selected region through canonical handlers after a physical
+/// admission miss. The full window is validated before the first handler and
+/// each intermediate operation must fall through normally; a guard or
+/// completion that cannot be represented by the region is returned as the
+/// already-committed transition, so callers resume from that exact state
+/// without replaying a prefix.
+pub(crate) fn execute_region_fallback(
+    region: &mut NativeRegionContext<'_>,
+) -> Result<DispatchTransition, crate::machine::NativeDispatchError> {
+    // First validate the complete immutable window. This pass performs no
+    // handler call, so a stale opcode/PC can only reject before effects.
+    for (offset, expected) in region.operations.iter().copied().enumerate() {
+        let pc = region
+            .pc
+            .checked_add(offset)
+            .ok_or_else(|| crate::machine::NativeDispatchError::Physical("region pc overflow".into()))?;
+        let instruction = region.code.instruction(pc).ok_or_else(|| {
+            crate::machine::NativeDispatchError::Physical("region instruction missing".into())
+        })?;
+        if instruction.opcode != expected {
+            return Err(crate::machine::NativeDispatchError::Physical(
+                "region opcode changed during admission".into(),
+            ));
+        }
+    }
 
     let mut last = None;
-    for (offset, expected) in region.operations.iter().copied().enumerate() {
-        let pc = match region.pc.checked_add(offset) {
-            Some(pc) => pc,
-            None => return 0,
-        };
-        let Some(instruction) = region.code.instruction(pc) else {
-            return 0;
-        };
-        if instruction.opcode != expected {
-            return 0;
-        }
+    for (offset, _expected) in region.operations.iter().copied().enumerate() {
+        let pc = region.pc.checked_add(offset).ok_or_else(|| {
+            crate::machine::NativeDispatchError::Physical("region pc overflow".into())
+        })?;
+        let instruction = region.code.instruction(pc).ok_or_else(|| {
+            crate::machine::NativeDispatchError::Physical("region instruction missing".into())
+        })?;
         let entry = crate::machine::BaselineEntry {
             instruction,
             handler: instruction.opcode.handler(),
@@ -208,14 +325,8 @@ pub(crate) extern "C" fn native_region_bridge(raw: *mut std::ffi::c_void) -> u64
                 &mut *region.registers,
                 &*region.context,
             )
-        };
-        let transition = match transition {
-            Ok(transition) => transition,
-            Err(error) => {
-                region.error = Some(error);
-                return NATIVE_DISPATCH_SEMANTIC_ERROR;
-            }
-        };
+        }
+        .map_err(|error| crate::machine::NativeDispatchError::SemanticAt { pc, error })?;
         let final_op = offset + 1 == region.operations.len();
         let expected_next = pc + 1;
         if !final_op
@@ -227,12 +338,392 @@ pub(crate) extern "C" fn native_region_bridge(raw: *mut std::ffi::c_void) -> u64
                         !matches!(completion, crate::completion::Completion::Normal)
                     }))
         {
-            return 0;
+            // The operation has already run. Return its exact transition;
+            // callers must consume it and may not retry the region entry.
+            return Ok(transition);
         }
         last = Some(transition);
     }
-    region.result = last;
-    NATIVE_DISPATCH_OK
+    last.ok_or_else(|| crate::machine::NativeDispatchError::Physical("empty region".into()))
+}
+
+/// Execute the admitted numeric array block as one physical operation.  This
+/// is deliberately a fixed-shape function generated from the declaration
+/// above, rather than a second interpreter: operands come from the canonical
+/// residual instructions and every failed proof returns `None` before any
+/// register, environment, or array mutation occurs.
+fn execute_composed_array_loop(
+    region: &mut NativeRegionContext<'_>,
+) -> Option<Result<DispatchTransition, VmError>> {
+    let code = region.code;
+    let pc = region.pc;
+    let registers = unsafe { &mut *region.registers };
+    let i0 = code.instruction(pc)?;
+    let i1 = code.instruction(pc.checked_add(1)?)?;
+    let i2 = code.instruction(pc.checked_add(2)?)?;
+    let i3 = code.instruction(pc.checked_add(3)?)?;
+    let i4 = code.instruction(pc.checked_add(4)?)?;
+    if i0.opcode != crate::ir::Opcode::LoadLocalChecked
+        || i1.opcode != crate::ir::Opcode::AGetI
+        || i2.opcode != crate::ir::Opcode::Add
+        || i3.opcode != crate::ir::Opcode::ASetI
+        || i4.opcode != crate::ir::Opcode::Return
+        || i0.flags != 0
+        || i1.flags != 0
+        || i2.flags != 0
+        || i3.flags != 0
+        || i4.flags != 0
+    {
+        return None;
+    }
+    // The store must update the same array/index loaded above, and the add
+    // must consume the loaded element.  These relationships are the physical
+    // wiring contract; adjacency alone is never sufficient admission.
+    if i1.b != i0.a
+        || i3.a != i0.a
+        || i3.b != i1.c
+        || i3.c != i2.a
+        || i2.b != i1.a
+        || i4.a != i2.a
+        // LoadLocal and AGetI commit these destinations before the later
+        // operands are consumed. Reject aliases that would make the early
+        // scalar reads differ from sequential residual execution.
+        || i1.c == i0.a
+        // A fused entry reads the array/index/addend before committing any
+        // destination registers.  Reject destination aliases that would make
+        // those early reads differ from sequential residual execution.
+        || i1.a == i0.a
+        || i2.a == i0.a
+        || i2.a == i1.a
+        || i2.c == i0.a
+        || i2.c == i1.a
+    {
+        return None;
+    }
+    let environment = crate::locals::current();
+    if environment.is_uninitialized(i0.b) {
+        return None;
+    }
+    let array_value = environment.get(i0.b);
+    let crate::value::Value::Array(array) = array_value.clone() else {
+        return None;
+    };
+    let index = registers.read_array_index(usize::from(i1.c))?;
+    let addend = registers.read_number(usize::from(i2.c))?;
+    if !array.is_plain_dense_access() {
+        return None;
+    }
+    let element = array.dense_number_at(index)?;
+    if !array.has_kernel_numeric_index(index) {
+        return None;
+    }
+    let result = element + addend;
+    if !crate::value::ArrayData::set_kernel_existing_f64(&array, index, result) {
+        return None;
+    }
+    registers.write(usize::from(i0.a), array_value);
+    registers.write_number(usize::from(i1.a), element);
+    registers.write_number(usize::from(i2.a), result);
+    let value = match read_register(registers, i4.a) {
+        Ok(value) => value,
+        Err(error) => return Some(Err(error)),
+    };
+    Some(Ok(handler_transition(
+        pc + 4,
+        Some(crate::completion::Completion::Return(value)),
+    )))
+}
+
+/// Context consumed by the direct AArch64 array stencil.  The context is
+/// intentionally a plain ABI record: no Rust references or VM objects cross
+/// the executable boundary.  Admission keeps the owning `Rc` and exclusive
+/// numeric borrow alive until the call returns; the kernel only touches the
+/// proven backing words and publishes its result here.
+#[repr(C)]
+pub(crate) struct NativeArrayKernelContext {
+    pub(crate) data: *mut f64,
+    pub(crate) len: usize,
+    pub(crate) index: usize,
+    pub(crate) addend: f64,
+    pub(crate) result: f64,
+}
+
+#[repr(C)]
+pub(crate) struct NativeArrayLoopContext {
+    pub data: *mut f64,
+    pub len: usize,
+    pub index: usize,
+    pub end: usize,
+    pub addend: f64,
+    pub result: f64,
+}
+
+/// Enter the direct physical array kernel after one complete semantic guard.
+/// `Ok(None)` means the facts were not strong enough; callers must execute the
+/// complete canonical region and may not invoke the bytes.  A physical error
+/// is distinct because the kernel was entered and cannot be safely retried.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub(crate) fn execute_composed_array_kernel(
+    region: &mut NativeRegionContext<'_>,
+    invoke: impl FnOnce(*mut std::ffi::c_void) -> Result<u64, crate::stencil_arena::ArenaError>,
+) -> Result<Option<DispatchTransition>, crate::machine::NativeDispatchError> {
+    let code = region.code;
+    let pc = region.pc;
+    let registers = unsafe { &mut *region.registers };
+    let i0 = code.instruction(pc).ok_or_else(|| {
+        crate::machine::NativeDispatchError::Physical("array kernel entry missing".into())
+    })?;
+    let i1 = code.instruction(pc.checked_add(1).ok_or_else(|| {
+        crate::machine::NativeDispatchError::Physical("array kernel pc overflow".into())
+    })?).ok_or_else(|| {
+        crate::machine::NativeDispatchError::Physical("array kernel index missing".into())
+    })?;
+    let i2 = code.instruction(pc.checked_add(2).ok_or_else(|| {
+        crate::machine::NativeDispatchError::Physical("array kernel add missing".into())
+    })?).ok_or_else(|| {
+        crate::machine::NativeDispatchError::Physical("array kernel add missing".into())
+    })?;
+    let i3 = code.instruction(pc.checked_add(3).ok_or_else(|| {
+        crate::machine::NativeDispatchError::Physical("array kernel store missing".into())
+    })?).ok_or_else(|| {
+        crate::machine::NativeDispatchError::Physical("array kernel store missing".into())
+    })?;
+    let i4 = code.instruction(pc.checked_add(4).ok_or_else(|| {
+        crate::machine::NativeDispatchError::Physical("array kernel return missing".into())
+    })?).ok_or_else(|| {
+        crate::machine::NativeDispatchError::Physical("array kernel return missing".into())
+    })?;
+    if i0.opcode != crate::ir::Opcode::LoadLocalChecked
+        || i1.opcode != crate::ir::Opcode::AGetI
+        || i2.opcode != crate::ir::Opcode::Add
+        || i3.opcode != crate::ir::Opcode::ASetI
+        || i4.opcode != crate::ir::Opcode::Return
+        || i0.flags != 0
+        || i1.flags != 0
+        || i2.flags != 0
+        || i3.flags != 0
+        || i4.flags != 0
+        || i1.b != i0.a
+        || i3.a != i0.a
+        || i3.b != i1.c
+        || i3.c != i2.a
+        || i2.b != i1.a
+        || i4.a != i2.a
+        || i1.c == i0.a
+        || i1.a == i0.a
+        || i2.a == i0.a
+        || i2.a == i1.a
+        || i2.c == i0.a
+        || i2.c == i1.a
+    {
+        return Ok(None);
+    }
+    let environment = crate::locals::current();
+    if environment.is_uninitialized(i0.b) {
+        return Ok(None);
+    }
+    let array_value = environment.get(i0.b);
+    let crate::value::Value::Array(array) = array_value.clone() else {
+        return Ok(None);
+    };
+    let Some(index) = registers.read_array_index(usize::from(i1.c)) else {
+        return Ok(None);
+    };
+    let Some(addend) = registers.read_number(usize::from(i2.c)) else {
+        return Ok(None);
+    };
+    if !array.is_plain_dense_access() || !array.has_kernel_numeric_index(index) {
+        return Ok(None);
+    }
+    let element = array.dense_number_at(index).ok_or_else(|| {
+        crate::machine::NativeDispatchError::Physical("array kernel element decode failed".into())
+    })?;
+    let mut words = match array.numeric_kernel_words_mut() {
+        Some(words) if index < words.len() => words,
+        _ => return Ok(None),
+    };
+    let mut kernel = NativeArrayKernelContext {
+        data: words.as_mut_ptr(),
+        len: words.len(),
+        index,
+        addend,
+        result: element,
+    };
+    region.native_entered = true;
+    let status = invoke((&mut kernel as *mut NativeArrayKernelContext).cast());
+    drop(words);
+    let status = status.map_err(|error| {
+        crate::machine::NativeDispatchError::Committed(format!(
+            "array kernel execution failed after entry: {error:?}"
+        ))
+    })?;
+    if status != NATIVE_DISPATCH_OK {
+        return Err(crate::machine::NativeDispatchError::Committed(
+            "array kernel returned invalid status".into(),
+        ));
+    }
+    // The exclusive borrow and all shape checks remain valid across the
+    // machine call, so this setter only records the monotonic representation
+    // fact and performs the same guarded numeric write for non-Cell payloads.
+    if !crate::value::ArrayData::set_kernel_existing_f64(&array, index, kernel.result) {
+        return Err(crate::machine::NativeDispatchError::Committed(
+            "array kernel commit lost its proven slot".into(),
+        ));
+    }
+    registers.write(usize::from(i0.a), array_value);
+    registers.write_number(usize::from(i1.a), element);
+    registers.write_number(usize::from(i2.a), kernel.result);
+    let value = read_register(registers, i4.a).map_err(|error| {
+        crate::machine::NativeDispatchError::SemanticAt { pc: pc + 4, error }
+    })?;
+    Ok(Some(handler_transition(
+        pc + 4,
+        Some(crate::completion::Completion::Return(value)),
+    )))
+}
+
+/// Admit the canonical lowered numeric-array loop shape. The declaration is
+/// a contiguous residual span; operand relationships are checked from the
+/// actual instructions, so opcode adjacency alone cannot authorize entry.
+#[cfg(target_arch = "aarch64")]
+pub(crate) fn execute_composed_array_numeric_loop(
+    region: &mut NativeRegionContext<'_>,
+    invoke: impl FnOnce(*mut std::ffi::c_void) -> Result<u64, crate::stencil_arena::ArenaError>,
+) -> Result<Option<DispatchTransition>, crate::machine::NativeDispatchError> {
+    let code = region.code;
+    let pc = region.pc;
+    let registers = unsafe { &mut *region.registers };
+    if region.operations.len() != 19 {
+        return Ok(None);
+    }
+    let instructions = (0..19)
+        .map(|offset| code.instruction(pc + offset))
+        .collect::<Option<Vec<_>>>();
+    let Some(instructions) = instructions else { return Ok(None) };
+    use crate::ir::Opcode;
+    let shape = [
+        Opcode::LoadLocal,
+        Opcode::LoadConst,
+        Opcode::Binary,
+        Opcode::JumpIfFalse,
+        Opcode::LoadLocal,
+        Opcode::Move,
+        Opcode::LoadLocal,
+        Opcode::Move,
+        Opcode::LoadLocal,
+        Opcode::Slow,
+        Opcode::LoadLocal,
+        Opcode::AGetI,
+        Opcode::AddConst,
+        Opcode::ASetI,
+        Opcode::Move,
+        Opcode::LoadLocal,
+        Opcode::AddConst,
+        Opcode::StoreLocal,
+        Opcode::Jump,
+    ];
+    if instructions
+        .iter()
+        .zip(shape)
+        .any(|(instruction, opcode)| {
+            instruction.opcode != opcode
+                || (instruction.flags != 0 && opcode != Opcode::Binary)
+        })
+    {
+        return Ok(None);
+    }
+    let [load_index, load_end, compare, branch, load_array, move_array, load_index_body,
+        move_index, load_array_body, require_object, load_index_get, get, add_value, set,
+        move_result, load_index_update, add_index, store_index, jump] = instructions.as_slice()
+    else { return Ok(None) };
+    if compare.a != branch.a
+        || compare.b != load_index.a
+        || compare.c != load_end.a
+        || usize::from(branch.b) != pc + 19
+        || usize::from(jump.a) != pc
+        || load_array.b != load_array_body.b
+        || load_array_body.a != get.b
+        || load_index_body.b != load_index_update.b
+        || load_index_body.b != load_index_get.b
+        || load_index.a != store_index.a
+        || add_index.b != load_index_update.a
+        || store_index.b != add_index.a
+        || move_index.a != set.a
+        || get.a != add_value.b
+        || add_value.a != set.c
+        || move_result.b != add_value.a
+        || move_array.b != load_array.a
+        || move_index.b != move_array.a
+    {
+        return Ok(None);
+    }
+    let Some(crate::ops::Op::RequireObjectCoercible { src }) = code.cold_at(pc + 9) else {
+        return Ok(None);
+    };
+    if *src != load_array_body.a {
+        return Ok(None);
+    }
+    let Some(crate::value::Value::Number(end)) = code.constant(load_end.b).map(Into::into) else {
+        return Ok(None);
+    };
+    let Some(crate::value::Value::Number(addend)) = code
+        .constant(add_value.c)
+        .map(Into::into)
+    else {
+        return Ok(None);
+    };
+    if !end.is_finite() || end < 0.0 || end.fract() != 0.0 || addend.is_nan() {
+        return Ok(None);
+    }
+    let Some(index) = registers.read_array_index(usize::from(load_index.a)) else {
+        return Ok(None);
+    };
+    let end = end as usize;
+    if index > end {
+        return Ok(None);
+    }
+    let environment = crate::locals::current();
+    if environment.is_uninitialized(load_array.b) {
+        return Ok(None);
+    }
+    let array_value = environment.get(load_array.b);
+    let crate::value::Value::Array(array) = array_value.clone() else {
+        return Ok(None);
+    };
+    if !array.is_plain_dense_access() || end > array.len() {
+        return Ok(None);
+    }
+    let mut words = match array.numeric_kernel_words_mut() {
+        Some(words) if end <= words.len() => words,
+        _ => return Ok(None),
+    };
+    let mut kernel = NativeArrayLoopContext {
+        data: words.as_mut_ptr(),
+        len: words.len(),
+        index,
+        end,
+        addend,
+        result: 0.0,
+    };
+    region.native_entered = true;
+    let status = invoke((&mut kernel as *mut NativeArrayLoopContext).cast());
+    drop(words);
+    let status = status.map_err(|error| {
+        crate::machine::NativeDispatchError::Committed(format!(
+            "array loop kernel failed after entry: {error:?}"
+        ))
+    })?;
+    if status != NATIVE_DISPATCH_OK || kernel.index != end {
+        return Err(crate::machine::NativeDispatchError::Committed(
+            "array loop kernel returned incomplete progress".into(),
+        ));
+    }
+    crate::locals::write(store_index.b, crate::value::Value::Number(kernel.index as f64));
+    registers.write(usize::from(set.a), array_value);
+    registers.write_number(usize::from(add_value.a), kernel.result);
+    registers.write_number(usize::from(move_result.a), kernel.result);
+    registers.write_number(usize::from(load_index.a), kernel.index as f64);
+    Ok(Some(handler_transition(pc + 19, None)))
 }
 
 fn run_ops(
@@ -293,8 +784,16 @@ pub(crate) fn execute_baseline_code_from(
 ) -> Result<(crate::completion::Completion, usize), VmError> {
     let _context_guard = ContextGuard::install(context);
     let _global_guard = GlobalObjectGuard::install();
-    let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
-    let step = run_baseline_completion_step_from(code, plan, start, registers, context)?;
+    let _environment_guard =
+        crate::locals::EnvironmentGuard::install(Rc::clone(&environment));
+    let step = run_baseline_completion_step_from_with_environment(
+        code,
+        plan,
+        start,
+        registers,
+        context,
+        Some(environment.as_ref()),
+    )?;
     Ok((step.completion, step.next))
 }
 
@@ -327,6 +826,7 @@ fn run_code_completion_step_from(
         code,
         registers,
         context,
+        environment: None,
         tier_owner: None,
     };
     // The stable-Rust backend cannot promise a machine tail call. Enter the
@@ -349,11 +849,13 @@ pub(crate) fn execute_function_code_from(
 ) -> Result<(crate::completion::Completion, usize), VmError> {
     let _context_guard = ContextGuard::install(context);
     let _global_guard = GlobalObjectGuard::install();
-    let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
+    let _environment_guard =
+        crate::locals::EnvironmentGuard::install(Rc::clone(&environment));
     let mut dispatch = DispatchState {
         code,
         registers,
         context,
+        environment: Some(environment.as_ref()),
         tier_owner: Some(owner),
     };
     let step = dispatch_segment(&mut dispatch, start)?;
@@ -375,6 +877,7 @@ pub(crate) fn execute_function_code_step_from(
         code,
         registers,
         context,
+        environment: None,
         tier_owner: Some(owner),
     };
     let step = dispatch_segment(&mut dispatch, start)?;
@@ -411,14 +914,20 @@ pub(crate) fn execute_baseline_code_step_from_with_owner(
     // Retire the completed step only after its transition is fully known.
     let mut retired = 0u64;
     let mut count = || retired = retired.saturating_add(1);
-    let result = run_baseline_completion_step_from_with_hook(
-        code,
-        plan,
-        start,
-        registers,
-        context,
-        &mut count,
-    );
+    // The frame guard owns the current environment for this whole drive. Use
+    // its stable pointer rather than cloning an Rc or reopening TLS for every
+    // local instruction; the pointer is valid only for this callback.
+    let result = crate::locals::with_current_ref(|environment| {
+        run_baseline_completion_step_from_with_hook(
+            code,
+            plan,
+            start,
+            registers,
+            context,
+            environment,
+            &mut count,
+        )
+    });
     owner.retire(retired);
     let step = result?;
     Ok((step.completion, step.next))
@@ -447,11 +956,19 @@ pub(crate) fn execute_optimized_code_step_from(
     // physical miss and falls through to the ordinary per-instruction path,
     // never to a partially executed region.
     if let Some(native) = entry.native_region.as_ref() {
-        match native
-            .borrow_mut()
-            .execute(code, start, registers, context)
-        {
+        let (result, native_executed) = {
+            let mut plan = native.borrow_mut();
+            let result = plan.execute(code, start, registers, context);
+            (result, plan.last_native_execution())
+        };
+        match result {
             Ok(transition) => {
+                crate::execution_trace::stencil_observation(
+                    code,
+                    start,
+                    "region",
+                    native_executed,
+                );
                 crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
                 let next = match transition.target {
                     DispatchTarget::Callee(next) => next,
@@ -463,11 +980,33 @@ pub(crate) fn execute_optimized_code_step_from(
                 return Ok((completion, next));
             }
             Err(crate::machine::NativeDispatchError::Semantic(error)) => {
+                crate::execution_trace::stencil_observation(
+                    code,
+                    start,
+                    "region",
+                    native_executed,
+                );
                 return completion_step_after_error(registers, error, start + 1)
                     .map(|step| (step.completion, step.next));
             }
+            Err(crate::machine::NativeDispatchError::SemanticAt { pc, error }) => {
+                crate::execution_trace::stencil_observation(
+                    code,
+                    start,
+                    "region",
+                    native_executed,
+                );
+                return completion_step_after_error(registers, error, pc + 1)
+                    .map(|step| (step.completion, step.next));
+            }
             Err(crate::machine::NativeDispatchError::Physical(_)) => {
+                crate::execution_trace::stencil_observation(code, start, "region", false);
                 crate::execution_trace::leaf_rejection("optimizing_native_region");
+            }
+            Err(crate::machine::NativeDispatchError::Committed(message)) => {
+                return Err(VmError::EvalError(format!(
+                    "committed native region failure: {message}"
+                )));
             }
         }
     }
@@ -483,7 +1022,7 @@ pub(crate) fn execute_optimized_code_step_from(
             let Some((_, value)) = code.constant_at(start) else {
                 return execute_baseline_code_step_from(code, baseline, start, registers, context);
             };
-            write_value(registers, instruction.a, value.into());
+            write_constant(registers, instruction.a, value);
             return Ok((crate::completion::Completion::Normal, start + 1));
         }
         crate::ir::Opcode::Return => {
@@ -522,11 +1061,15 @@ pub(crate) fn execute_optimized_code_step_from(
                         .write_tagged_bits(usize::from(instruction.a), bits)
                         .is_some()
                     {
+                        crate::execution_trace::stencil_observation(
+                            code, start, "move", true,
+                        );
                         crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
                         return Ok((crate::completion::Completion::Normal, start + 1));
                     }
                 }
             }
+            crate::execution_trace::stencil_observation(code, start, "move", false);
             crate::execution_trace::leaf_rejection("optimizing_native_move");
         }
         if copy_register(registers, instruction.a, instruction.b).is_ok() {
@@ -559,12 +1102,16 @@ pub(crate) fn execute_optimized_code_step_from(
                             .write_tagged_bits(usize::from(instruction.a), bits)
                             .is_some()
                         {
+                            crate::execution_trace::stencil_observation(
+                                code, start, "property", true,
+                            );
                             crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
                             return Ok((crate::completion::Completion::Normal, start + 1));
                         }
                     }
                 }
             }
+            crate::execution_trace::stencil_observation(code, start, "property", false);
             crate::execution_trace::leaf_rejection("optimizing_native_property");
         }
     }
@@ -586,11 +1133,13 @@ pub(crate) fn execute_optimized_code_step_from(
         };
         if let Some((lhs, rhs)) = operands {
             if let Ok(result) = native.borrow_mut().execute(lhs, rhs) {
+                crate::execution_trace::stencil_observation(code, start, "binary", true);
                 write_value(registers, instruction.a, Value::Number(result));
                 crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
                 return Ok((crate::completion::Completion::Normal, start + 1));
             }
         }
+        crate::execution_trace::stencil_observation(code, start, "binary", false);
         crate::execution_trace::leaf_rejection("optimizing_native_execution");
     }
     if let Some(native) = entry.native_dispatch.as_ref() {
@@ -599,6 +1148,7 @@ pub(crate) fn execute_optimized_code_step_from(
             .execute(code, start, entry.baseline, registers, context)
         {
             Ok(transition) => {
+                crate::execution_trace::stencil_observation(code, start, "dispatch", true);
                 crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
                 let next = match transition.target {
                     DispatchTarget::Callee(next) => next,
@@ -610,11 +1160,23 @@ pub(crate) fn execute_optimized_code_step_from(
                 return Ok((completion, next));
             }
             Err(crate::machine::NativeDispatchError::Semantic(error)) => {
+                crate::execution_trace::stencil_observation(code, start, "dispatch", true);
                 return completion_step_after_error(registers, error, start + 1)
                     .map(|step| (step.completion, step.next));
             }
+            Err(crate::machine::NativeDispatchError::SemanticAt { pc, error }) => {
+                crate::execution_trace::stencil_observation(code, start, "dispatch", true);
+                return completion_step_after_error(registers, error, pc + 1)
+                    .map(|step| (step.completion, step.next));
+            }
             Err(crate::machine::NativeDispatchError::Physical(_)) => {
+                crate::execution_trace::stencil_observation(code, start, "dispatch", false);
                 crate::execution_trace::leaf_rejection("optimizing_native_dispatch");
+            }
+            Err(crate::machine::NativeDispatchError::Committed(message)) => {
+                return Err(VmError::EvalError(format!(
+                    "committed native dispatch failure: {message}"
+                )));
             }
         }
     }
@@ -630,6 +1192,19 @@ fn run_baseline_completion_step_from(
     registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
 ) -> Result<CompletionStep, VmError> {
+    run_baseline_completion_step_from_with_environment(
+        code, plan, start, registers, context, None,
+    )
+}
+
+fn run_baseline_completion_step_from_with_environment(
+    code: crate::machine::CodeView<'_>,
+    plan: &crate::machine::BaselinePlan,
+    start: usize,
+    registers: &mut crate::register_file::RegisterFile,
+    context: &VmContext,
+    environment: Option<&crate::environment::Environment>,
+) -> Result<CompletionStep, VmError> {
     let mut no_profile = || {};
     run_baseline_completion_step_from_with_hook(
         code,
@@ -637,6 +1212,7 @@ fn run_baseline_completion_step_from(
         start,
         registers,
         context,
+        environment,
         &mut no_profile,
     )
 }
@@ -647,6 +1223,7 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
     start: usize,
     registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
+    environment: Option<&crate::environment::Environment>,
     on_instruction: &mut F,
 ) -> Result<CompletionStep, VmError> {
     if plan.len() != code.len() {
@@ -669,6 +1246,44 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
             );
         };
         on_instruction();
+        // Indexed property lowering emits an explicit coercibility check before
+        // AGetI/ASetI. Once the object word is already known non-nullish, the
+        // check has no observable work left: elide it and keep the canonical
+        // indexed handler as the semantic owner. This applies equally to
+        // baseline plans (the hot path used by loop fragments), not just the
+        // unplanned interpreter dispatcher.
+        if skip_proven_object_coercible(code, pc, instruction, registers) {
+            pc += 1;
+            continue;
+        }
+        // Proven lexical transfers are pure frame-word operations. When the
+        // baseline entry owns its Environment, keep the same frame fact for
+        // both load and store instead of reopening TLS for each instruction.
+        if let Some(environment) = environment {
+            match instruction.opcode {
+                crate::ir::Opcode::LoadLocal => {
+                    crate::locals::load_proven_in(
+                        environment,
+                        registers,
+                        instruction.a,
+                        instruction.b,
+                    )?;
+                    pc += 1;
+                    continue;
+                }
+                crate::ir::Opcode::StoreLocal => {
+                    crate::locals::store_proven_in(
+                        environment,
+                        registers,
+                        instruction.a,
+                        instruction.b,
+                    )?;
+                    pc += 1;
+                    continue;
+                }
+                _ => {}
+            }
+        }
         // Build-generated Number binary stencils are real baseline machine-code
         // leaves. Admission is structural and the numeric guard is checked
         // before entering them; every other value uses the canonical handler.
@@ -701,6 +1316,9 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                                 .write_tagged_bits(usize::from(instruction.a), bits)
                                 .is_some()
                             {
+                                crate::execution_trace::stencil_observation(
+                                    code, pc, "property", true,
+                                );
                                 crate::execution_trace::event(
                                     crate::execution_trace::Event::LeafHit,
                                 );
@@ -709,6 +1327,7 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                             }
                         }
                     }
+                    crate::execution_trace::stencil_observation(code, pc, "property", false);
                     crate::execution_trace::leaf_rejection("native_property");
                 }
             }
@@ -721,13 +1340,56 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                             .write_tagged_bits(usize::from(instruction.a), bits)
                             .is_some()
                         {
+                            crate::execution_trace::stencil_observation(
+                                code, pc, "move", true,
+                            );
                             crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
                             pc += 1;
                             continue;
                         }
                     }
                 }
+                crate::execution_trace::stencil_observation(code, pc, "move", false);
                 crate::execution_trace::leaf_rejection("native_move");
+            }
+        }
+        if instruction.opcode == crate::ir::Opcode::Add && instruction.flags == 0 {
+            if let Some(native) = plan.native_add_chain_at(pc) {
+                let next = plan.instruction(pc + 1);
+                let chain_shape = next.filter(|next| {
+                    next.opcode == crate::ir::Opcode::Add
+                        && next.flags == 0
+                        && next.b == instruction.a
+                        // Reading the first result as the second add's third
+                        // operand would require an intermediate materialized
+                        // value; leave that alias to the complete handlers.
+                        && next.c != instruction.a
+                });
+                let operands = chain_shape.and_then(|next| {
+                    let first = registers.read_number_pair(
+                        usize::from(instruction.b),
+                        usize::from(instruction.c),
+                    )?;
+                    let third = registers.read_number(usize::from(next.c))?;
+                    Some((first.0, first.1, third, next.a))
+                });
+                if let Some((lhs, rhs, third, destination)) = operands {
+                    if let Ok(result) = native.borrow_mut().execute(lhs, rhs, third) {
+                        crate::execution_trace::stencil_observation(
+                            code, pc, "add_chain", true,
+                        );
+                        write_value(registers, destination, Value::Number(result));
+                        crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                        pc += 2;
+                        continue;
+                    }
+                    crate::execution_trace::stencil_observation(code, pc, "add_chain", false);
+                    crate::execution_trace::leaf_rejection("native_add_chain");
+                } else {
+                    crate::execution_trace::stencil_observation(code, pc, "add_chain", false);
+                    crate::execution_trace::event(crate::execution_trace::Event::LeafReject);
+                    crate::execution_trace::leaf_rejection("native_add_chain_guard");
+                }
             }
         }
         if let Some(native) = plan.native_binary_at(pc) {
@@ -750,19 +1412,24 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
             };
             if let Some((lhs, rhs)) = operands {
                 if let Ok(result) = native.borrow_mut().execute(lhs, rhs) {
+                    crate::execution_trace::stencil_observation(
+                        code, pc, "binary", true,
+                    );
                     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
                     let value = Value::Number(result);
                     write_value(registers, instruction.a, value);
                     pc += 1;
                     continue;
                 }
+                crate::execution_trace::stencil_observation(code, pc, "binary", false);
                 crate::execution_trace::leaf_rejection("native_execution");
             } else {
+                crate::execution_trace::stencil_observation(code, pc, "binary", false);
                 crate::execution_trace::event(crate::execution_trace::Event::LeafReject);
                 crate::execution_trace::leaf_rejection("number_guard");
             }
         }
-        if skip_index_coercible(code, pc, instruction, registers) {
+        if skip_proven_object_coercible(code, pc, instruction, registers) {
             pc += 1;
             continue;
         }
@@ -778,13 +1445,20 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                 .execute(code, pc, entry, registers, context)
             {
                 Ok(transition) => {
+                    crate::execution_trace::stencil_observation(code, pc, "dispatch", true);
                     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
                     transition
                 }
                 Err(crate::machine::NativeDispatchError::Semantic(error)) => {
+                    crate::execution_trace::stencil_observation(code, pc, "dispatch", true);
                     return completion_step_after_error(registers, error, pc + 1)
                 }
+                Err(crate::machine::NativeDispatchError::SemanticAt { pc: fault_pc, error }) => {
+                    crate::execution_trace::stencil_observation(code, pc, "dispatch", true);
+                    return completion_step_after_error(registers, error, fault_pc + 1)
+                }
                 Err(crate::machine::NativeDispatchError::Physical(_)) => {
+                    crate::execution_trace::stencil_observation(code, pc, "dispatch", false);
                     crate::execution_trace::leaf_rejection("native_dispatch");
                     match run_baseline_instruction(code, pc, entry, registers, context) {
                         Ok(transition) => transition,
@@ -792,6 +1466,11 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                             return completion_step_after_error(registers, error, pc + 1)
                         }
                     }
+                }
+                Err(crate::machine::NativeDispatchError::Committed(message)) => {
+                    return Err(VmError::EvalError(format!(
+                        "committed native dispatch failure: {message}"
+                    )));
                 }
             },
             None => match run_baseline_instruction(code, pc, entry, registers, context) {
@@ -832,6 +1511,7 @@ struct DispatchState<'code, 'state> {
     code: crate::machine::CodeView<'code>,
     registers: &'state mut crate::register_file::RegisterFile,
     context: &'state VmContext,
+    environment: Option<&'state crate::environment::Environment>,
     tier_owner: Option<&'state crate::machine::FunctionCode>,
 }
 
@@ -859,7 +1539,7 @@ fn dispatch_callee<'code, 'state>(
             state.code.len(),
         );
     };
-    if skip_index_coercible(state.code, pc, instruction, state.registers) {
+    if skip_proven_object_coercible(state.code, pc, instruction, state.registers) {
         if let Some(step) = maybe_osr_switch(
             state.code,
             state.tier_owner,
@@ -872,8 +1552,20 @@ fn dispatch_callee<'code, 'state>(
         }
         return dispatch_callee(state, pc + 1, depth + 1);
     }
+    // The build-time arithmetic-glue row is also reachable from the ordinary
+    // function dispatcher (before a baseline plan exists).  Admit it at the
+    // same boundary as the canonical instruction stream so a hot function does
+    // not need to wait for a tier transition to remove the three per-op
+    // dispatches.  The helper is all-or-nothing and returns the exact residual
+    // successor; an unknown shape simply falls through below.
     #[cfg(not(feature = "execution-trace"))]
-    let result = match run_instruction_hot(state.code, pc, instruction, state.registers) {
+    let result = match run_instruction_hot(
+        state.code,
+        pc,
+        instruction,
+        state.registers,
+        state.environment,
+    ) {
         Some(result) => result,
         None => run_instruction(state.code, pc, instruction, state.registers, state.context),
     };
@@ -937,7 +1629,7 @@ fn dispatch_segment<'code, 'state>(
                 state.code.len(),
             );
         };
-        if skip_index_coercible(state.code, pc, instruction, state.registers) {
+        if skip_proven_object_coercible(state.code, pc, instruction, state.registers) {
             if let Some(step) = maybe_osr_switch(
                 state.code,
                 state.tier_owner,
@@ -952,7 +1644,13 @@ fn dispatch_segment<'code, 'state>(
             continue;
         }
         #[cfg(not(feature = "execution-trace"))]
-        let result = match run_instruction_hot(state.code, pc, instruction, state.registers) {
+        let result = match run_instruction_hot(
+            state.code,
+            pc,
+            instruction,
+            state.registers,
+            state.environment,
+        ) {
             Some(result) => result,
             None => run_instruction(state.code, pc, instruction, state.registers, state.context),
         };
@@ -1012,6 +1710,7 @@ fn run_instruction_hot(
     pc: usize,
     instruction: crate::ir::Instruction,
     registers: &mut crate::register_file::RegisterFile,
+    environment: Option<&crate::environment::Environment>,
 ) -> Option<Result<DispatchTransition, VmError>> {
     use crate::ir::Opcode;
     let result = match instruction.opcode {
@@ -1019,7 +1718,7 @@ fn run_instruction_hot(
             .constant_at(pc)
             .ok_or(VmError::MissingReturn)
             .map(|(_, value)| {
-                write_value(registers, instruction.a, value.into());
+                write_constant(registers, instruction.a, value);
                 handler_transition(pc, None)
             }),
         Opcode::Move => {
@@ -1035,8 +1734,18 @@ fn run_instruction_hot(
             };
             copied.map(|_| handler_transition(pc, None))
         }
-        Opcode::LoadLocal => crate::locals::load_proven(registers, instruction.a, instruction.b)
-            .map(|_| handler_transition(pc, None)),
+        Opcode::LoadLocal => {
+            let loaded = match environment {
+                Some(environment) => crate::locals::load_proven_in(
+                    environment,
+                    registers,
+                    instruction.a,
+                    instruction.b,
+                ),
+                None => crate::locals::load_proven(registers, instruction.a, instruction.b),
+            };
+            loaded.map(|_| handler_transition(pc, None))
+        }
         Opcode::LoadLocalChecked => {
             let name = code
                 .metadata_at(pc)
@@ -1094,12 +1803,13 @@ fn maybe_osr_switch(
         .map(Some)
 }
 
-/// A dynamic indexed access still owns its complete property semantics, but
-/// an adjacent `RequireObjectCoercible` is redundant once the object word is
-/// known non-nullish.  The match is deliberately local: labels, callbacks,
-/// and every non-indexed operation remain on the ordinary slow path.
+/// `RequireObjectCoercible` has no observable work once its source word is
+/// known non-nullish. The fact is exact (the tagged word distinguishes only
+/// null/undefined here), so this removes the gateway even when lowering placed
+/// harmless loads between the check and its eventual indexed access. Unknown
+/// or nullish words retain the complete slow operation.
 #[inline(always)]
-fn skip_index_coercible(
+fn skip_proven_object_coercible(
     code: crate::machine::CodeView<'_>,
     pc: usize,
     instruction: crate::ir::Instruction,
@@ -1111,15 +1821,7 @@ fn skip_index_coercible(
     let Some(crate::ops::Op::RequireObjectCoercible { src }) = code.cold(instruction) else {
         return false;
     };
-    let Some(next) = code.instruction(pc + 1) else {
-        return false;
-    };
-    let object = match next.opcode {
-        crate::ir::Opcode::AGetI => next.b,
-        crate::ir::Opcode::ASetI => next.a,
-        _ => return false,
-    };
-    *src == object && registers.word_is_non_nullish(usize::from(object)) == Some(true)
+    registers.word_is_non_nullish(usize::from(*src)) == Some(true)
 }
 
 #[inline(always)]
@@ -1138,11 +1840,15 @@ fn run_object_index_get(
         return false;
     }
     let key = index.to_string();
-    let Some(value) = quickened_own_get_data(code, pc, object, &key) else {
+    let Some(word) = quickened_own_slot_data(code, pc, object, &key) else {
         return false;
     };
-    write_value(registers, destination, value);
-    true
+    let Some(bits) = word.plain_tagged_bits() else {
+        return false;
+    };
+    registers
+        .write_tagged_bits(usize::from(destination), bits)
+        .is_some()
 }
 
 #[inline(always)]
@@ -1297,6 +2003,23 @@ fn run_control_operands(
 }
 
 #[inline(always)]
+fn write_constant(
+    registers: &mut crate::register_file::RegisterFile,
+    destination: u16,
+    constant: &crate::ops::Constant,
+) {
+    match constant {
+        // Numbers have a first-class tagged representation. Keep the
+        // immutable constant fact in that representation instead of cloning a
+        // temporary Value and immediately encoding it again.
+        crate::ops::Constant::Number(value) => {
+            registers.write_number(usize::from(destination), *value);
+        }
+        _ => write_value(registers, destination, constant.into()),
+    }
+}
+
+#[inline(always)]
 pub(crate) fn run_load_const(
     code: crate::machine::CodeView<'_>,
     pc: usize,
@@ -1305,7 +2028,7 @@ pub(crate) fn run_load_const(
     _context: &VmContext,
 ) -> Result<DispatchTransition, VmError> {
     let (_, value) = code.constant_at(pc).ok_or(VmError::MissingReturn)?;
-    write_value(registers, instruction.a, value.into());
+    write_constant(registers, instruction.a, value);
     Ok(handler_transition(pc, None))
 }
 
@@ -1525,6 +2248,20 @@ pub(crate) fn run_compact_call(
     } else {
         return Err(VmError::EvalError("invalid compact call arity".into()));
     };
+    #[cfg(feature = "execution-trace")]
+    {
+        // Compact calls previously contributed no target identity to the
+        // corpus ledger, leaving the largest call category opaque. Keep this
+        // extra read in diagnostic artifacts only; scored builds retain the
+        // original hot path unchanged.
+        let callee_value = read_register(registers, instruction.b)?;
+        crate::execution_trace::call_method(
+            arguments.len(),
+            false,
+            true,
+            crate::execution_trace::call_target_name(&callee_value),
+        );
+    }
     if let Some(completion) = quickened_direct_call(
         code,
         pc,
@@ -1605,6 +2342,27 @@ pub(crate) fn run_compact_get_named(
     registers: &mut crate::register_file::RegisterFile,
     _context: &VmContext,
 ) -> Result<DispatchTransition, VmError> {
+    // A rewritten named-load carries a proven shape/slot fact. Read the
+    // immutable tagged word directly instead of decoding the receiver and
+    // cloning the payload twice (once for validation and once for the write).
+    // Binding cells/weak functions return `None` from the slot projection and
+    // continue through the complete canonical path below.
+    if instruction.opcode == crate::ir::Opcode::GetNQuickened && instruction.flags == 0 {
+        if let Some(key) = code.metadata_at(pc).and_then(|metadata| metadata.name.as_deref()) {
+            let bits = registers
+                .read_object(usize::from(instruction.b))
+                .and_then(|object| quickened_own_slot_data(code, pc, object, key))
+                .and_then(crate::register_file::SlotWord::plain_tagged_bits);
+            if let Some(bits) = bits {
+                if registers
+                    .write_tagged_bits(usize::from(instruction.a), bits)
+                    .is_some()
+                {
+                    return Ok(handler_transition(pc, None));
+                }
+            }
+        }
+    }
     if instruction.flags == 0 {
         let object = read_register(registers, instruction.b)?;
         let key = code
@@ -1871,10 +2629,7 @@ fn quickened_own_slot_data<'a>(
                 cached_shape,
                 cached_slot,
             ) {
-                let valid = !matches!(
-                    word.load(),
-                    crate::value::Value::BindingCell(_) | crate::value::Value::WeakFunction(_)
-                );
+                let valid = word.plain_tagged_bits().is_some();
                 if valid {
                     return Some(word);
                 }
@@ -1908,10 +2663,7 @@ fn quickened_own_slot_data<'a>(
         // this receiver's layout, so re-use the shared cache validator rather
         // than exposing a stale raw data slot.
         if let Some(word) = crate::vm::cached_plain_own_word(data, key, shape.0, cached_slot) {
-            let valid = !matches!(
-                word.load(),
-                crate::value::Value::BindingCell(_) | crate::value::Value::WeakFunction(_)
-            );
+            let valid = word.plain_tagged_bits().is_some();
             if valid {
                 if let Some(quickened_opcode) = code.instruction(pc).and_then(|instruction| {
                     match instruction.opcode {
@@ -2592,6 +3344,12 @@ mod compact_handler_tests {
         run_compact_get_named(code, 0, instruction, &mut registers, &context)
             .expect("guarded second lookup");
         assert_eq!(registers.read(0), Some(Value::Number(9.0)));
+        let quickened = code.instruction(0).expect("quickened named get");
+        assert_eq!(quickened.opcode, crate::ir::Opcode::GetNQuickened);
+        registers.write(0, Value::Undefined);
+        run_compact_get_named(code, 0, quickened, &mut registers, &context)
+            .expect("direct tagged-word lookup");
+        assert_eq!(registers.read(0), Some(Value::Number(9.0)));
     }
 
     #[test]
@@ -2620,6 +3378,41 @@ mod compact_handler_tests {
         run_compact_get_index(code, 0, instruction, &mut registers, &context)
             .expect("guarded indexed lookup");
         assert_eq!(registers.read(0), Some(Value::Number(11.0)));
+    }
+
+    #[test]
+    fn proven_object_coercibility_skip_is_guarded_by_object_word() {
+        let executable = crate::machine::ExecutableCode::from_ops(vec![
+            Op::RequireObjectCoercible { src: 1 },
+            // The check is often separated from the eventual index access by
+            // a local/key transfer; the source word itself is the complete
+            // fact, so no adjacency assumption is needed.
+            Op::Move { dst: 3, src: 2 },
+            Op::GetPropertyDynamic {
+                dst: 0,
+                object: 1,
+                key: 2,
+            },
+        ]);
+        let code = executable.code();
+        let check = code.instruction(0).expect("coercibility check");
+        assert_eq!(check.opcode, crate::ir::Opcode::Slow);
+        let object = Value::Object(Rc::new(ObjectData::new(vec![
+            ("0".into(), Value::Number(4.0)),
+        ])));
+        let registers = crate::register_file::RegisterFile::from_values(vec![
+            Value::Undefined,
+            object,
+            Value::Number(0.0),
+        ]);
+        assert!(super::skip_proven_object_coercible(code, 0, check, &registers));
+
+        let nullish = crate::register_file::RegisterFile::from_values(vec![
+            Value::Undefined,
+            Value::Null,
+            Value::Number(0.0),
+        ]);
+        assert!(!super::skip_proven_object_coercible(code, 0, check, &nullish));
     }
 
     #[test]
@@ -2733,6 +3526,384 @@ mod compact_handler_tests {
             assert_transition_equal(&actual, &expected);
             assert_eq!(native, ordinary);
         }
+    }
+
+    #[test]
+    fn composed_array_block_uses_one_native_entry() {
+        let code = crate::machine::ExecutableCode::from_ops(vec![
+            Op::CheckInitialized { slot: 0, name: "a".into() },
+            Op::LoadLocal { dst: 1, slot: 0 },
+            Op::GetPropertyDynamic { dst: 2, object: 1, key: 3 },
+            Op::Binary { dst: 4, operator: crate::ops::BinaryOp::Add, lhs: 2, rhs: 5 },
+            Op::SetPropertyDynamic { object: 1, key: 3, src: 4, strict: false },
+            Op::Return { src: 4 },
+        ]);
+        let lowered = code.code();
+        assert_eq!(
+            (0..lowered.len())
+                .map(|pc| lowered.instruction(pc).unwrap().opcode)
+                .collect::<Vec<_>>(),
+            vec![
+                crate::ir::Opcode::LoadLocalChecked,
+                crate::ir::Opcode::AGetI,
+                crate::ir::Opcode::Add,
+                crate::ir::Opcode::ASetI,
+                crate::ir::Opcode::Return,
+            ]
+        );
+        let array = Value::Array(Rc::new(crate::value::ArrayData::new(vec![
+            Value::Number(4.0),
+        ])));
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![
+            Value::Undefined,
+            Value::Undefined,
+            Value::Undefined,
+            Value::Number(0.0),
+            Value::Undefined,
+            Value::Number(3.0),
+        ]);
+        let environment = crate::environment::Environment::new();
+        environment.set(0, array.clone());
+        let _guard = crate::locals::EnvironmentGuard::install(environment);
+        let context = crate::vm::current_context_or_default();
+
+        // Exercise the physical ABI independently of the host ISA: the
+        // callback models the emitted ARM64 load/add/store sequence while
+        // `execute_composed_array_kernel` performs the real admission,
+        // rooting, and exact residual-state materialization.
+        let mut physical_registers = crate::register_file::RegisterFile::from_values(vec![
+            Value::Undefined,
+            Value::Undefined,
+            Value::Undefined,
+            Value::Number(0.0),
+            Value::Undefined,
+            Value::Number(3.0),
+        ]);
+        let mut physical_region = super::NativeRegionContext::new(
+            lowered,
+            0,
+            crate::stencil_select::select_region(
+                crate::stencil_select::array_loop_body_region_key(),
+            )
+            .expect("array region declaration")
+            .operations,
+            &mut physical_registers,
+            &context,
+        );
+        let mut modeled_entries = 0usize;
+        let physical = super::execute_composed_array_kernel(&mut physical_region, |raw| {
+            modeled_entries += 1;
+            let kernel = unsafe { &mut *(raw.cast::<super::NativeArrayKernelContext>()) };
+            kernel.result = unsafe { *kernel.data.add(kernel.index) } + kernel.addend;
+            unsafe { *kernel.data.add(kernel.index) = kernel.result };
+            Ok(super::NATIVE_DISPATCH_OK)
+        })
+        .expect("physical array ABI");
+        assert!(physical.is_some());
+        assert_eq!(modeled_entries, 1, "modeled ABI callback must be entered once");
+        assert_eq!(physical_registers.read(4), Some(Value::Number(7.0)));
+        assert_eq!(crate::vm::get_property_result(&array, "0").unwrap(), Value::Number(7.0));
+        let Value::Array(array_ref) = &array else { unreachable!() };
+        assert!(crate::value::ArrayData::set_kernel_existing_f64(array_ref, 0, 4.0));
+
+        let mut region = crate::machine::NativeRegionPlan::new_for_test(
+            crate::stencil_select::array_loop_body_region_key(),
+        )
+        .expect("array-loop region admission");
+        let transition = region
+            .execute(lowered, 0, &mut registers, &context)
+            .expect("native composed entry");
+        assert!(matches!(
+            transition.completion,
+            Some(crate::completion::Completion::Return(Value::Number(value))) if value == 7.0
+        ));
+        assert_eq!(
+            crate::vm::get_property_result(&array, "0").unwrap(),
+            Value::Number(7.0)
+        );
+
+        // A hole invalidates the dense representation proof. The same
+        // admitted entry must then use the complete property semantics
+        // (which materialize the hole as `undefined`) without partially
+        // committing the fused path.
+        let mut holey_data = crate::value::ArrayData::new(vec![Value::Number(4.0)]);
+        holey_data.delete_property("0");
+        let holey = Value::Array(Rc::new(holey_data));
+        let mut fallback_registers = crate::register_file::RegisterFile::from_values(vec![
+            Value::Undefined,
+            Value::Undefined,
+            Value::Undefined,
+            Value::Number(0.0),
+            Value::Undefined,
+            Value::Number(3.0),
+        ]);
+        let fallback_environment = crate::environment::Environment::new();
+        fallback_environment.set(0, holey.clone());
+        let _fallback_guard = crate::locals::EnvironmentGuard::install(fallback_environment);
+        let mut fallback_region = crate::machine::NativeRegionPlan::new_for_test(
+            crate::stencil_select::array_loop_body_region_key(),
+        )
+        .expect("array-loop fallback admission");
+        fallback_region
+            .execute(lowered, 0, &mut fallback_registers, &context)
+            .expect("complete hole fallback");
+        assert!(matches!(fallback_registers.read(4), Some(Value::Number(value)) if value.is_nan()));
+        assert!(matches!(
+            crate::vm::get_property_result(&holey, "0").unwrap(),
+            Value::Number(value) if value.is_nan()
+        ));
+
+        // A stale operation anywhere in the window must reject before the
+        // first effect. This guards the no-replay contract after the
+        // two-pass fallback validation.
+        let stale = crate::machine::ExecutableCode::from_ops(vec![
+            Op::CheckInitialized { slot: 0, name: "a".into() },
+            Op::LoadLocal { dst: 1, slot: 0 },
+            Op::GetPropertyDynamic { dst: 2, object: 1, key: 3 },
+            Op::Binary { dst: 4, operator: crate::ops::BinaryOp::Add, lhs: 2, rhs: 5 },
+            Op::SetPropertyDynamic { object: 1, key: 3, src: 4, strict: false },
+            Op::Return { src: 4 },
+        ]);
+        stale.code().quicken_instruction(4, crate::ir::Opcode::Slow, 0, 0, 0);
+        let mut stale_registers = crate::register_file::RegisterFile::from_values(vec![
+            Value::Undefined,
+            Value::Undefined,
+            Value::Undefined,
+            Value::Number(0.0),
+            Value::Undefined,
+            Value::Number(3.0),
+        ]);
+        let stale_before = stale_registers.clone();
+        let stale_array_before = crate::vm::get_property_result(&array, "0").unwrap();
+        let mut stale_region = crate::machine::NativeRegionPlan::new_for_test(
+            crate::stencil_select::array_loop_body_region_key(),
+        )
+        .expect("stale region admission");
+        assert!(matches!(
+            stale_region.execute(stale.code(), 0, &mut stale_registers, &context),
+            Err(crate::machine::NativeDispatchError::Physical(_))
+        ));
+        assert_eq!(stale_registers, stale_before);
+        assert_eq!(crate::vm::get_property_result(&array, "0").unwrap(), stale_array_before);
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn composed_array_admission_rejects_destination_alias_before_entry() {
+        let code = crate::machine::ExecutableCode::from_ops(vec![
+            Op::CheckInitialized { slot: 0, name: "a".into() },
+            Op::LoadLocal { dst: 1, slot: 0 },
+            Op::GetPropertyDynamic { dst: 1, object: 1, key: 3 },
+            Op::Binary { dst: 4, operator: crate::ops::BinaryOp::Add, lhs: 1, rhs: 5 },
+            Op::SetPropertyDynamic { object: 1, key: 3, src: 4, strict: false },
+            Op::Return { src: 4 },
+        ]);
+        let lowered = code.code();
+        let array = Value::Array(Rc::new(crate::value::ArrayData::new(vec![Value::Number(4.0)])));
+        let environment = crate::environment::Environment::new();
+        environment.set(0, array.clone());
+        let _guard = crate::locals::EnvironmentGuard::install(environment);
+        let context = crate::vm::current_context_or_default();
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![
+            Value::Undefined,
+            Value::Undefined,
+            Value::Undefined,
+            Value::Number(0.0),
+            Value::Undefined,
+            Value::Number(3.0),
+        ]);
+        let operations = crate::stencil_select::select_region(
+            crate::stencil_select::array_loop_body_region_key(),
+        )
+        .expect("array region declaration")
+        .operations;
+        let mut region = super::NativeRegionContext::new(
+            lowered,
+            0,
+            operations,
+            &mut registers,
+            &context,
+        );
+        let mut entered = false;
+        let admitted = super::execute_composed_array_kernel(&mut region, |_raw| {
+            entered = true;
+            Ok(super::NATIVE_DISPATCH_OK)
+        })
+        .expect("alias guard should be a cheap rejection");
+        assert!(admitted.is_none());
+        assert!(!entered, "destination alias must reject before native entry");
+        assert_eq!(crate::vm::get_property_result(&array, "0").unwrap(), Value::Number(4.0));
+    }
+
+    /// This test is compiled only on ARM64 and invokes the rendered stencil
+    /// bytes directly. The portable host test above intentionally models the
+    /// ABI callback; it is not evidence that machine code executed.
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn rendered_array_kernel_executes_machine_bytes() {
+        let record = crate::stencil_select::select_region(
+            crate::stencil_select::array_loop_body_region_key(),
+        )
+        .expect("array kernel declaration");
+        assert!(record.executable);
+        let site = crate::quickening::QuickeningSite::<4>::new(
+            crate::ir::Opcode::LoadLocalChecked,
+        );
+        let values = crate::stencil_fact::PatchValues::from_site(&site);
+        let mut arena = crate::stencil_arena::StencilArena::new(4096).expect("arena");
+        let mut cache = crate::stencil_select::RenderedRegionCache::new();
+        let address = arena
+            .render_or_get(
+                &mut cache,
+                crate::stencil_select::array_loop_body_region_key(),
+                &record.stencil,
+                &values,
+            )
+            .expect("render");
+        arena.make_executable().expect("RX transition");
+        let mut data = vec![4.0f64];
+        let mut raw = super::NativeArrayKernelContext {
+            data: data.as_mut_ptr(),
+            len: data.len(),
+            index: 0,
+            addend: 3.0,
+            result: 4.0,
+        };
+        let status = arena
+            .execute_dispatch(
+                address,
+                (&mut raw as *mut super::NativeArrayKernelContext)
+                    .cast::<std::ffi::c_void>(),
+            )
+            .expect("machine entry");
+        assert_eq!(status, super::NATIVE_DISPATCH_OK);
+        assert_eq!(data[0], 7.0);
+        assert_eq!(raw.result, 7.0);
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn rendered_numeric_array_loop_executes_native_backedge() {
+        let key = crate::stencil_select::array_numeric_loop_region_key();
+        let record = crate::stencil_select::select_region(key).expect("numeric loop declaration");
+        let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::LoadLocal);
+        let values = crate::stencil_fact::PatchValues::from_site(&site);
+        let mut arena = crate::stencil_arena::StencilArena::new(4096).expect("arena");
+        let mut cache = crate::stencil_select::RenderedRegionCache::new();
+        let address = arena
+            .render_or_get(&mut cache, key, &record.stencil, &values)
+            .expect("render numeric loop");
+        arena.make_executable().expect("protect numeric loop");
+        for (mut data, initial_result, expected_result, expected_data) in [
+            (Vec::<f64>::new(), 0.0, 0.0, Vec::<f64>::new()),
+            (vec![7.0], 0.0, 8.0, vec![8.0]),
+            (vec![1.0, 2.0, 3.0], 0.0, 4.0, vec![2.0, 3.0, 4.0]),
+            (vec![2.0, 3.0], 9.0, 4.0, vec![3.0, 4.0]),
+        ] {
+            let end = data.len();
+            let mut raw = super::NativeArrayLoopContext {
+                data: data.as_mut_ptr(),
+                len: end,
+                index: 0,
+                end,
+                addend: 1.0,
+                result: initial_result,
+            };
+            let status = arena
+                .execute_dispatch(
+                    address,
+                    (&mut raw as *mut super::NativeArrayLoopContext).cast::<std::ffi::c_void>(),
+                )
+                .expect("execute native numeric loop");
+            assert_eq!(status, super::NATIVE_DISPATCH_OK);
+            assert_eq!(raw.index, end);
+            assert_eq!(raw.result, expected_result);
+            assert_eq!(data, expected_data);
+        }
+    }
+
+    #[test]
+    fn committed_region_status_transport_preserves_non_retryable_kind() {
+        let code = crate::machine::ExecutableCode::from_ops(vec![Op::Return { src: 0 }]);
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![Value::Number(9.0)]);
+        let context = crate::vm::current_context_or_default();
+        let mut bridge_context = super::NativeRegionContext::new(
+            code.code(),
+            0,
+            crate::stencil_select::select_region(
+                crate::stencil_select::array_loop_body_region_key(),
+            )
+            .expect("region declaration")
+            .operations,
+            &mut registers,
+            &context,
+        );
+        bridge_context.force_committed_status = true;
+        let status = super::native_region_bridge(
+            (&mut bridge_context as *mut super::NativeRegionContext<'_>)
+                .cast::<std::ffi::c_void>(),
+        );
+        assert_eq!(status, super::NATIVE_DISPATCH_COMMITTED_ERROR);
+        let before = registers.clone();
+        assert!(matches!(
+            bridge_context.finish(status),
+            Err(crate::machine::NativeDispatchError::Committed(_))
+        ));
+        assert_eq!(registers, before, "committed status must not replay the region");
+    }
+
+    #[test]
+    fn fallback_consumes_post_entry_completion_without_retry() {
+        const OPS: &[crate::ir::Opcode] = &[crate::ir::Opcode::Return, crate::ir::Opcode::Return];
+        let code = crate::machine::ExecutableCode::from_ops(vec![
+            Op::Return { src: 0 },
+            Op::Return { src: 0 },
+        ]);
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![Value::Number(11.0)]);
+        let context = crate::vm::current_context_or_default();
+        let mut region = super::NativeRegionContext::new(
+            code.code(),
+            0,
+            OPS,
+            &mut registers,
+            &context,
+        );
+        let transition = super::execute_region_fallback(&mut region)
+            .expect("the first Return is an exact post-entry completion");
+        assert!(matches!(
+            transition.completion,
+            Some(crate::completion::Completion::Return(Value::Number(value))) if value == 11.0
+        ));
+        assert_eq!(transition.next_pc, 1, "resume state identifies the completed op");
+    }
+
+    #[test]
+    fn fallback_reports_exact_fault_pc_after_prior_effect() {
+        const OPS: &[crate::ir::Opcode] = &[crate::ir::Opcode::StoreLocal, crate::ir::Opcode::Slow];
+        let code = crate::machine::ExecutableCode::from_ops(vec![
+            Op::StoreLocal { slot: 0, src: 0 },
+            Op::RequireObjectCoercible { src: 1 },
+        ]);
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![
+            Value::Number(17.0),
+            Value::Undefined,
+        ]);
+        let environment = crate::environment::Environment::new();
+        let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+        let context = crate::vm::current_context_or_default();
+        let mut region = super::NativeRegionContext::new(
+            code.code(),
+            0,
+            OPS,
+            &mut registers,
+            &context,
+        );
+        let result = super::execute_region_fallback(&mut region);
+        assert!(matches!(
+            result,
+            Err(crate::machine::NativeDispatchError::SemanticAt { pc: 1, .. })
+        ));
+        assert_eq!(environment.get(0), Value::Number(17.0));
     }
 
     #[test]
@@ -2962,6 +4133,69 @@ mod compact_handler_tests {
             completion,
             crate::completion::Completion::Return(Value::String("ab".into()))
         );
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn baseline_fused_add_chain_matches_two_canonical_adds() {
+        let function = crate::machine::FunctionCode::from_ops(vec![
+            Op::Binary { dst: 0, operator: crate::ops::BinaryOp::Add, lhs: 1, rhs: 2 },
+            Op::Binary { dst: 3, operator: crate::ops::BinaryOp::Add, lhs: 0, rhs: 4 },
+            Op::Return { src: 3 },
+        ]);
+        function.set_tier_threshold_for_test(1);
+        function.retire(1);
+        assert_eq!(function.enter_invocation(), crate::machine::TierTransition::CompileBaseline);
+        let plan = function.baseline_plan().expect("baseline plan");
+        if crate::stencil_policy::current().native_leaves {
+            assert!(plan.native_add_chain_at(0).is_some());
+        }
+        let code = function.code().expect("function code");
+        let context = crate::vm::current_context_or_default();
+        let environment = crate::environment::Environment::new();
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![
+            Value::Undefined,
+            Value::Number(1.5),
+            Value::Number(2.25),
+            Value::Undefined,
+            Value::Number(4.0),
+        ]);
+        let (completion, _) = crate::vm::execute_baseline_code_from(
+            code, &plan, 0, &mut registers, &context, environment,
+        )
+        .expect("fused numeric chain");
+        assert_eq!(completion, crate::completion::Completion::Return(Value::Number(7.75)));
+    }
+
+    #[test]
+    fn fused_add_chain_is_rejected_when_first_result_remains_live() {
+        let function = crate::machine::FunctionCode::from_ops(vec![
+            Op::Binary {
+                dst: 0,
+                operator: crate::ops::BinaryOp::Add,
+                lhs: 1,
+                rhs: 2,
+            },
+            Op::Binary {
+                dst: 3,
+                operator: crate::ops::BinaryOp::Add,
+                lhs: 0,
+                rhs: 4,
+            },
+            // Keep the first result live after the pair. A fused stencil
+            // returns only dst=3, so build-time admission must stay on the
+            // canonical residual path here.
+            Op::Move { dst: 5, src: 0 },
+            Op::Return { src: 5 },
+        ]);
+        function.set_tier_threshold_for_test(1);
+        function.retire(1);
+        assert_eq!(
+            function.enter_invocation(),
+            crate::machine::TierTransition::CompileBaseline
+        );
+        let plan = function.baseline_plan().expect("baseline plan");
+        assert!(plan.native_add_chain_at(0).is_none());
     }
 
     fn execute_one_at_a_time(
@@ -3222,6 +4456,170 @@ mod compact_handler_tests {
             Err(crate::machine::NativeDispatchError::Physical(_))
         ));
         assert_eq!(partial, before, "hostile span executed a prefix");
+    }
+
+    #[test]
+    fn ordinary_source_lowering_emits_numeric_backedge_and_executes() {
+        let program = crate::reduce::reduce_source(
+            "var a = [1, 2, 3]; for (var i = 0; i < 3; i = i + 1) a[i] = a[i] + 1; a;",
+        )
+        .expect("ordinary loop lowers");
+        let code = program.code();
+        let has_backedge = |view: crate::machine::CodeView<'_>| (0..view.len()).any(|pc| {
+            view.instruction(pc).is_some_and(|instruction| {
+                instruction.opcode == crate::ir::Opcode::Jump
+                    && usize::from(instruction.b) < pc
+            })
+        });
+        let backedge = (0..code.len()).any(|pc| {
+            code.instruction(pc)
+                .is_some_and(|instruction| instruction.opcode == crate::ir::Opcode::Jump && usize::from(instruction.b) < pc)
+        }) || code.cold_ops().any(|(_, op)| {
+            let mut found = false;
+            op.visit_bodies(&mut |body| {
+                found |= body.code().is_some_and(&has_backedge);
+            });
+            found
+        });
+        assert!(backedge, "ordinary source must lower a nested loop body with a backward edge");
+        let admitted_shape = crate::stencil_select::select_region(
+            crate::stencil_select::array_numeric_loop_region_key(),
+        )
+        .expect("numeric loop declaration")
+        .operations;
+        let has_admitted_shape = (0..code.len()).any(|pc| {
+            (0..admitted_shape.len()).all(|offset| {
+                code.instruction(pc + offset)
+                    .is_some_and(|instruction| instruction.opcode == admitted_shape[offset])
+            })
+        }) || code.cold_ops().any(|(_, op)| {
+            let mut found = false;
+            op.visit_bodies(&mut |body| {
+                if let Some(body) = body.code() {
+                    found |= (0..body.len()).any(|pc| {
+                        (0..admitted_shape.len()).all(|offset| {
+                            body.instruction(pc + offset)
+                                .is_some_and(|instruction| instruction.opcode == admitted_shape[offset])
+                        })
+                    });
+                }
+            });
+            found
+        });
+        assert!(has_admitted_shape, "ordinary source must expose the declared numeric-loop span");
+        #[cfg(target_arch = "aarch64")]
+        {
+            let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+            let mut reaches_native_admission = false;
+            let mut native_execution_verified = false;
+            code.cold_ops().for_each(|(_, op)| {
+                op.visit_bodies(&mut |body| {
+                    if let Some(body_code) = body.code() {
+                        let plan = crate::machine::BaselinePlan::compile_for_test(body_code, policy);
+                        reaches_native_admission |= (0..body_code.len()).any(|pc| {
+                            plan.native_region_at(pc).is_some_and(|region| {
+                                region.borrow().key_for_test()
+                                    == crate::stencil_select::array_numeric_loop_region_key()
+                            })
+                        });
+                        if !native_execution_verified
+                            && (0..body_code.len()).any(|pc| {
+                                (0..admitted_shape.len()).all(|offset| {
+                                    body_code.instruction(pc + offset).is_some_and(|instruction| {
+                                        instruction.opcode == admitted_shape[offset]
+                                    })
+                                })
+                            })
+                        {
+                            let plan = Rc::new(crate::machine::BaselinePlan::compile_for_test(
+                                body_code, policy,
+                            ));
+                            let Some(shape_pc) = (0..body_code.len()).find(|pc| {
+                                (0..admitted_shape.len()).all(|offset| {
+                                    body_code.instruction(*pc + offset).is_some_and(|instruction| {
+                                        instruction.opcode == admitted_shape[offset]
+                                    })
+                                })
+                            }) else {
+                                return;
+                            };
+                            let mut registers =
+                                crate::register_file::RegisterFile::with_undefined(
+                                    usize::from(body_code.register_count()).max(8),
+                                );
+                            let environment = crate::environment::Environment::new();
+                            let mut array_slot = None;
+                            for pc in 0..body_code.len() {
+                                let instruction = body_code.instruction(pc).expect("body instruction");
+                                match instruction.opcode {
+                                    crate::ir::Opcode::LoadLocal
+                                    | crate::ir::Opcode::LoadLocalChecked
+                                    | crate::ir::Opcode::StoreLocal
+                                    | crate::ir::Opcode::StoreLocalChecked => {
+                                        let slot = if matches!(
+                                            instruction.opcode,
+                                            crate::ir::Opcode::StoreLocal
+                                                | crate::ir::Opcode::StoreLocalChecked
+                                        ) {
+                                            instruction.a
+                                        } else {
+                                            instruction.b
+                                        };
+                                        environment.set(slot, Value::Number(0.0));
+                                    }
+                                    crate::ir::Opcode::AGetI => {
+                                        array_slot = (0..body_code.len()).find_map(|candidate| {
+                                            let load = body_code.instruction(candidate)?;
+                                            (load.opcode == crate::ir::Opcode::LoadLocal
+                                                && load.a == instruction.b)
+                                                .then_some(load.b)
+                                        });
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            let array_data = Rc::new(crate::value::ArrayData::new(vec![
+                                Value::Number(1.0),
+                                Value::Number(2.0),
+                                Value::Number(3.0),
+                            ]));
+                            let array = Value::Array(Rc::clone(&array_data));
+                            let Some(array_slot) = array_slot else { return };
+                            environment.set(array_slot, array);
+                            if let Some(index_register) = body_code
+                                .instruction(shape_pc)
+                                .map(|instruction| instruction.a)
+                            {
+                                registers.write_number(usize::from(index_register), 0.0);
+                            }
+                            let context = crate::vm::current_context_or_default();
+                            let _environment_guard =
+                                crate::locals::EnvironmentGuard::install(environment);
+                            let Some(region) = plan.native_region_at(shape_pc) else {
+                                return;
+                            };
+                            let execution = region
+                                .borrow_mut()
+                                .execute(body_code, shape_pc, &mut registers, &context);
+                            if execution.is_ok() && region.borrow().last_native_execution() {
+                                assert_eq!(array_data.dense_number_at(0), Some(2.0));
+                                assert_eq!(array_data.dense_number_at(1), Some(3.0));
+                                assert_eq!(array_data.dense_number_at(2), Some(4.0));
+                                native_execution_verified = true;
+                            }
+                        }
+                    }
+                });
+            });
+            assert!(reaches_native_admission, "ordinary ARM lowering must reach native loop admission");
+            assert!(native_execution_verified, "ordinary lowered body must execute native bytes");
+        }
+        let result = crate::vm::execute_code_with_context(
+            code,
+            &crate::vm::VmContext::default(),
+        )
+        .expect("ordinary loop executes");
+        assert!(matches!(result, Value::Undefined));
     }
 
     #[test]

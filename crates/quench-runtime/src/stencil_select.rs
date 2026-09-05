@@ -8,6 +8,17 @@ use crate::stencil_fact::{FactState, RegionId, RegionKey, Stencil};
 
 pub const MAX_RENDERED_REGIONS: usize = 16;
 
+/// Physical calling convention declared by a stencil row.  Selection uses
+/// the same generated declaration for opcode shape and ABI, so a scalar leaf
+/// can never be accidentally invoked with the region-context pointer ABI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RegionAbi {
+    Scalar,
+    Bridge,
+    ArrayKernel,
+    ArrayNumericLoop,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RegionRecord {
     pub key: RegionKey,
@@ -15,6 +26,7 @@ pub struct RegionRecord {
     pub operations: &'static [crate::ir::Opcode],
     pub entry: u16,
     pub fallthrough: Option<(&'static Stencil, u16)>,
+    pub abi: RegionAbi,
     /// Some regions describe IC data/layout but do not yet contain a complete
     /// executable semantic leaf.  Those rows remain selectable for auditing,
     /// but the renderer must use the canonical fallback for them.
@@ -110,14 +122,21 @@ include!(concat!(env!("OUT_DIR"), "/stencil_catalog.rs"));
 
 /// Select an admitted region with one canonical table lookup.
 pub fn select_stencil(key: RegionKey) -> Option<&'static Stencil> {
-    REGION_TABLE
+    CANONICAL_REGION_TABLE
         .iter()
         .find(|record| record.key == key)
         .map(|record| &record.stencil)
 }
 
 pub fn select_region(key: RegionKey) -> Option<&'static RegionRecord> {
-    generated_region_lookup(key)
+    canonical_region_lookup(key)
+}
+
+/// Iterate the build-time declaration table for plan construction.  Keeping
+/// this accessor next to selection means callers cannot drift a second,
+/// hand-maintained list of region keys from the generated catalog.
+pub(crate) fn region_records() -> &'static [RegionRecord] {
+    CANONICAL_REGION_TABLE
 }
 
 /// Execute the selected region through a caller-owned semantic entry point.
@@ -140,82 +159,67 @@ pub fn admitted_region_key(region: RegionId, facts: &[FactState]) -> RegionKey {
 }
 
 pub const fn region_table_len() -> usize {
-    REGION_TABLE.len()
+    CANONICAL_REGION_TABLE.len()
 }
 
-/// Declare the mechanical half of a region: its generated key accessor and
-/// the shared single-entry CFG proof.  Handler semantics remain handwritten;
-/// this macro only prevents the opcode/key/test wiring from drifting apart.
-macro_rules! generated_region_admissions {
-    ($( $accessor:ident => $key:ident / $operations:ident / $region_id:literal ),+ $(,)?) => {
-        $(
-            pub const fn $accessor() -> RegionKey {
-                RegionKey::from_opcodes(RegionId($region_id), $operations)
-            }
-        )+
+#[cfg(test)]
+mod generated_region_admission_tests {
+    use super::*;
 
-        #[cfg(test)]
-        mod generated_region_admission_tests {
-            use super::*;
+    #[test]
+    fn every_generated_region_has_one_external_entry_and_exact_ops() {
+        for record in CANONICAL_REGION_TABLE {
+            assert_eq!(record.entry, 0);
+            assert_eq!(
+                select_region(record.key).unwrap().operations,
+                record.operations
+            );
+            assert!(has_single_entry_point(
+                u32::from(record.entry),
+                &[RegionBlock {
+                    id: 0,
+                    predecessors: &[],
+                    external_entry: true
+                }]
+            ));
+        }
+        assert!(!has_single_entry_point(
+            0,
+            &[
+                RegionBlock {
+                    id: 0,
+                    predecessors: &[],
+                    external_entry: true
+                },
+                RegionBlock {
+                    id: 1,
+                    predecessors: &[0],
+                    external_entry: true
+                },
+            ]
+        ));
+    }
 
-            #[test]
-            fn every_declared_region_has_one_external_entry_and_exact_ops() {
-                let rows: &[(RegionKey, RegionId, &[crate::ir::Opcode])] = &[
-                    $(($key, RegionId($region_id), $operations)),+
-                ];
-                for (key, region, operations) in rows {
-                    let record = select_region(*key).expect("declared region row");
-                    assert_eq!(*key, RegionKey::from_opcodes(
-                        *region, *operations,
-                    ), "region id is part of the generated key");
-                    assert_eq!(record.operations, *operations);
-                    assert!(has_single_entry_point(
-                        u32::from(record.entry),
-                        &[RegionBlock {
-                            id: 0,
-                            predecessors: &[],
-                            external_entry: true,
-                        }]
-                    ));
+    #[test]
+    fn generated_abi_classification_matches_physical_entry_shape() {
+        for record in CANONICAL_REGION_TABLE {
+            match record.abi {
+                RegionAbi::Scalar => {
+                    assert!(!record.stencil.bytes.is_empty());
+                    assert_ne!(record.stencil.bytes.len(), 44);
+                    assert_ne!(record.stencil.bytes.len(), 76);
                 }
-
-                // An externally reachable interior block invalidates the
-                // declaration regardless of which region requested it.
-                assert!(!has_single_entry_point(
-                    0,
-                    &[
-                        RegionBlock { id: 0, predecessors: &[], external_entry: true },
-                        RegionBlock { id: 1, predecessors: &[0], external_entry: true },
-                    ]
-                ));
+                RegionAbi::Bridge => {
+                    assert!(
+                        matches!(record.stencil.bytes.len(), 12 | 16),
+                        "bridge rows use the dispatch trampoline"
+                    );
+                }
+                RegionAbi::ArrayKernel => assert_eq!(record.stencil.bytes.len(), 44),
+                RegionAbi::ArrayNumericLoop => assert_eq!(record.stencil.bytes.len(), 76),
             }
         }
-    };
-}
-
-generated_region_admissions! {
-    loop_region_key => LOOP_KEY / LOOP_OPS / 1,
-    fallthrough_region_key => FALLTHROUGH_KEY / FALLTHROUGH_OPS / 3,
-    property_region_key => PROPERTY_KEY / PROPERTY_OPS / 2,
-    move_region_key => MOVE_KEY / MOVE_OPS / 8,
-    dispatch_region_key => DISPATCH_KEY / DISPATCH_OPS / 9,
-    subtract_region_key => SUBTRACT_KEY / SUBTRACT_OPS / 4,
-    multiply_region_key => MULTIPLY_KEY / MULTIPLY_OPS / 5,
-    divide_region_key => DIVIDE_KEY / DIVIDE_OPS / 6,
-    add_const_region_key => ADD_CONST_KEY / ADD_CONST_OPS / 7,
-    loop_glue_region_key => LOOP_GLUE_KEY / LOOP_GLUE_OPS / 10,
-    loop_body_region_key => LOOP_BODY_KEY / LOOP_BODY_OPS / 22,
-    binary_glue_region_key => BINARY_GLUE_KEY / BINARY_GLUE_OPS / 11,
-    update_return_region_key => UPDATE_RETURN_KEY / UPDATE_RETURN_OPS / 12,
-    call_region_key => CALL_KEY / CALL_OPS / 13,
-    call_n_region_key => CALL_N_KEY / CALL_N_OPS / 14,
-    arithmetic_glue_region_key => ARITHMETIC_GLUE_KEY / ARITHMETIC_GLUE_OPS / 15,
-    get_property_region_key => GET_PROPERTY_KEY / GET_PROPERTY_OPS / 16,
-    set_n_region_key => SET_N_KEY / SET_N_OPS / 17,
-    get_index_region_key => GET_INDEX_KEY / GET_INDEX_OPS / 18,
-    set_index_region_key => SET_INDEX_KEY / SET_INDEX_OPS / 19,
-    get_index_inc_region_key => GET_INDEX_INC_KEY / GET_INDEX_INC_OPS / 20,
-    for_i_region_key => FOR_I_KEY / FOR_I_OPS / 21,
+    }
 }
 
 /// Canonical admission table for numeric baseline leaves.  The opcode catalog
@@ -346,10 +350,10 @@ mod tests {
 
     #[test]
     fn selection_is_canonical_and_misses_fall_back() {
-        assert!(select_stencil(LOOP_KEY).is_some());
+        assert!(select_stencil(loop_region_key()).is_some());
         assert!(select_stencil(RegionKey(0)).is_none());
         assert_eq!(
-            LOOP_KEY,
+            loop_region_key(),
             RegionKey::from_opcodes(
                 RegionId(1),
                 &[crate::ir::Opcode::Add, crate::ir::Opcode::Return]
@@ -389,7 +393,7 @@ mod tests {
 
     #[test]
     fn property_row_is_catalog_admitted() {
-        let key = RegionKey::from_opcodes(RegionId(2), &[crate::ir::Opcode::GetN]);
+        let key = property_region_key();
         let record = select_region(key).expect("property admission row");
         assert_eq!(
             record.executable,
@@ -410,7 +414,7 @@ mod tests {
 
     #[test]
     fn move_row_is_catalog_admitted() {
-        let key = RegionKey::from_opcodes(RegionId(8), &[crate::ir::Opcode::Move]);
+        let key = move_region_key();
         let record = select_region(key).expect("move admission row");
         assert_eq!(
             record.executable,
@@ -468,7 +472,7 @@ mod tests {
         // Explicit before/after migration check: the former hand-written
         // construction and the generated declaration are identical.
         let legacy = RegionKey::from_opcodes(
-            RegionId(3),
+            RegionId(4),
             &[crate::ir::Opcode::Add, crate::ir::Opcode::Return],
         );
         assert_eq!(fallthrough_region_key(), legacy);
@@ -477,7 +481,7 @@ mod tests {
     #[test]
     fn dispatch_uses_region_sequence_and_falls_back_once() {
         let selected = dispatch_region(
-            LOOP_KEY,
+            loop_region_key(),
             |record| Ok::<_, ()>(record.operations.len()),
             || Ok::<_, ()>(0),
         );

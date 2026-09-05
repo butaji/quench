@@ -13,7 +13,8 @@ dispatch row used `Opcode::ALL`: catalog admission was therefore **31/31
 operations.  Task 035 reconciles that declaration with the generated catalog;
 the post-task admission ratio remains **31/31 (100%)**, now backed by both the
 declaration and the generated `dispatch_row_covers_every_compact_opcode`
-test.  The specialized-leaf ratio remains **8/31 (25.8%)**; task 040 item 2
+test.  The specialized-leaf ratio is now **9/31 (29.0%)** with the guarded
+two-`Add` composed leaf; task 040 item 2
 adds bounded `CALL` and `CALL_N` bridge regions, but these intentionally reuse
 the canonical call handlers rather than claiming a new callable-identity
 machine-code leaf. The other entries intentionally use the complete dispatch
@@ -71,8 +72,9 @@ remain available when this exact whole-body shape is absent.
 
 `LOOP_BODY` is an executable region row in addition to the rows named in the
 table; its seven operations are all canonical handlers and therefore do not
-increase the specialized-leaf count (still 8/31). The catalog now has 22
-bounded region rows, all with complete ordinary fallback.
+increase the specialized-leaf count (still 9/31). The catalog now has 23
+bounded region rows, including the composed two-`Add` machine-code chain, all
+with complete ordinary fallback.
 
 The priority decision follows the existing neutral evidence in
 `architecture-evidence.md`: arithmetic and named-property reads have measured

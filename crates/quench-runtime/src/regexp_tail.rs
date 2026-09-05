@@ -16,11 +16,18 @@ fn regex_receiver(receiver: Option<&Value>, method: &str) -> Result<Value, VmErr
     }
 }
 
-/// Extract the owned source/flags and compile the backend regex for `receiver`.
-fn compiled_regex(receiver: &Value) -> Result<(Regex, String), VmError> {
+/// Extract the owned source/flags and acquire the cached backend regex.
+///
+/// Replacement and split used to call `compile` directly here.  That rebuilt
+/// the OXC lowering and compiled bytecode on every invocation, even when
+/// a JavaScript RegExp object was reused in a hot loop.  Keep compilation in
+/// the shared source/flags cache; the returned `Rc` also makes the lifetime of
+/// the compiled program explicit while callers scan the input.
+fn compiled_regex(receiver: &Value) -> Result<(Rc<Regex>, String), VmError> {
     let (source, flags, _) = extract_regex_parts(receiver)?;
     let pattern = if source.is_empty() { "(?:)" } else { &source };
-    let re = compile(pattern, &build_re_flags(&flags)).map_err(VmError::EvalError)?;
+    let re_flags = build_re_flags(&flags);
+    let re = compiled_for(receiver, pattern, &re_flags)?;
     Ok((re, flags))
 }
 
@@ -527,6 +534,13 @@ fn advance_empty_exec(receiver: &Value, input: &str, matched: &str) -> Result<()
 }
 
 fn replace_with_template(receiver: &Value, s: &str, template: &str) -> Result<Value, VmError> {
+    let (source, flags, _) = extract_regex_parts(receiver)?;
+    if flags.contains('g') {
+        set_last_index(receiver, 0.0)?;
+    }
+    if let Some(result) = replace_with_native(&source, &flags, s, template)? {
+        return Ok(result);
+    }
     let (re, flags) = compiled_regex(receiver)?;
     let global = flags.contains('g');
     // RegExp.prototype[@@replace] resets lastIndex before a global scan.
@@ -557,6 +571,49 @@ fn replace_with_template(receiver: &Value, s: &str, template: &str) -> Result<Va
     }
     out.push_str(&s[copied..]);
     Ok(Value::String(out))
+}
+
+/// Run the allocation-free matcher for a pattern whose semantics are fully
+/// represented by `regexp_native`.  The replacement still goes through the
+/// canonical template expander, so `$&`, prefix/suffix, and malformed tokens
+/// retain ordinary behavior; the synthetic `Match` simply has no captures.
+/// Returning `None` leaves all complex, captured, Unicode, and observable
+/// custom cases on the complete backend interpreter.
+fn replace_with_native(
+    source: &str,
+    flags: &str,
+    input: &str,
+    template: &str,
+) -> Result<Option<Value>, VmError> {
+    if !crate::regexp_native::supports_str(source, flags) {
+        return Ok(None);
+    }
+    let global = flags.contains('g');
+    let mut output = String::with_capacity(input.len());
+    let mut copied = 0;
+    let mut search = 0;
+    loop {
+        let Some(found) = crate::regexp_native::find_str(source, flags, input, search) else {
+            break;
+        };
+        let matched = crate::regexp_backend::Match::native(found.start..found.end);
+        output.push_str(&input[copied..found.start]);
+        output.push_str(&expand_template(template, input, input, &matched));
+        copied = found.end;
+        if !global {
+            break;
+        }
+        if found.start == found.end {
+            if found.end == input.len() {
+                break;
+            }
+            search = next_char(input, found.end);
+        } else {
+            search = found.end;
+        }
+    }
+    output.push_str(&input[copied..]);
+    Ok(Some(Value::String(output)))
 }
 
 fn replace_with_callable(receiver: &Value, s: &str, replacement: &Value) -> Result<Value, VmError> {

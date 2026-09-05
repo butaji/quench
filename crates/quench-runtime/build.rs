@@ -51,6 +51,13 @@ const fn aarch64_ret() -> u32 {
     0xD65F_03C0
 }
 
+/// AArch64 unconditional branch (B), with a zeroed signed imm26 field. The
+/// relocation writer supplies the word displacement once both stencils share
+/// one arena mapping.
+const fn aarch64_b() -> u32 {
+    0x1400_0000
+}
+
 /// AArch64 scalar double literal load, ARM ARM C6.2.167. The immediate is
 /// measured in bytes from the instruction's PC and must be 4-byte aligned.
 const fn aarch64_ldr_d_literal(rt: u8, byte_offset: i32) -> u32 {
@@ -81,9 +88,19 @@ const fn aarch64_pair(first: u32, second: u32) -> [u8; 8] {
     out
 }
 
-const fn aarch64_add_const_bytes() -> [u8; 20] {
-    let mut out = [0; 20];
-    put32(&mut out, 0, aarch64_ldr_d_literal(1, 12));
+const fn aarch64_triple(first: u32, second: u32, third: u32) -> [u8; 12] {
+    let mut out = [0; 12];
+    put32(&mut out, 0, first);
+    put32(&mut out, 4, second);
+    put32(&mut out, 8, third);
+    out
+}
+
+const fn aarch64_add_const_bytes() -> [u8; 24] {
+    let mut out = [0; 24];
+    // Keep the embedded f64 literal naturally 8-byte aligned: three
+    // instructions occupy bytes 0..12 and the literal starts at byte 16.
+    put32(&mut out, 0, aarch64_ldr_d_literal(1, 16));
     put32(&mut out, 4, aarch64_fadd_d(0, 0, 1));
     put32(&mut out, 8, aarch64_ret());
     out
@@ -175,12 +192,81 @@ const X86_DISPATCH_BYTES: [u8; 12] = x86_dispatch_bytes();
 const AARCH64_LOOP_BYTES: [u8; 8] = aarch64_pair(aarch64_fadd_d(0, 0, 1), aarch64_ret());
 const AARCH64_PROPERTY_BYTES: [u8; 8] = aarch64_pair(aarch64_ldr_x0_x0(), aarch64_ret());
 const AARCH64_MOVE_BYTES: [u8; 8] = AARCH64_PROPERTY_BYTES;
-const AARCH64_FALLTHROUGH_BYTES: [u8; 8] = AARCH64_LOOP_BYTES;
+const AARCH64_FALLTHROUGH_BYTES: [u8; 8] = aarch64_pair(aarch64_fadd_d(0, 0, 1), aarch64_b());
 const AARCH64_SUBTRACT_BYTES: [u8; 8] = aarch64_pair(aarch64_fsub_d(0, 0, 1), aarch64_ret());
 const AARCH64_MULTIPLY_BYTES: [u8; 8] = aarch64_pair(aarch64_fmul_d(0, 0, 1), aarch64_ret());
 const AARCH64_DIVIDE_BYTES: [u8; 8] = aarch64_pair(aarch64_fdiv_d(0, 0, 1), aarch64_ret());
-const AARCH64_ADD_CONST_BYTES: [u8; 20] = aarch64_add_const_bytes();
+const X86_ADD_CHAIN_BYTES: [u8; 9] = {
+    let first = x86_sse2_binary(0x58, 0, 1);
+    let second = x86_sse2_binary(0x58, 0, 2);
+    [
+        first[0],
+        first[1],
+        first[2],
+        first[3],
+        second[0],
+        second[1],
+        second[2],
+        second[3],
+        x86_ret(),
+    ]
+};
+const AARCH64_ADD_CHAIN_BYTES: [u8; 12] = aarch64_triple(
+    aarch64_fadd_d(0, 0, 1),
+    aarch64_fadd_d(0, 0, 2),
+    aarch64_ret(),
+);
+const AARCH64_ADD_CONST_BYTES: [u8; 24] = aarch64_add_const_bytes();
 const AARCH64_DISPATCH_BYTES: [u8; 16] = aarch64_dispatch_bytes();
+
+/// Raw numeric array kernel ABI (AArch64): x0 points at a repr(C) context
+/// whose fields are {data: *mut f64, len: usize, index: usize,
+/// addend: f64, result: f64}. Rust proves bounds and representation before
+/// entering this code, so the hot body contains only address arithmetic,
+/// load/add/store, and status publication.
+const AARCH64_ARRAY_KERNEL_BYTES: [u8; 44] = {
+    let mut out = [0; 44];
+    put32(&mut out, 0, 0xF940_0001); // ldr x1, [x0]
+    put32(&mut out, 4, 0xF940_0402); // ldr x2, [x0, #8]
+    put32(&mut out, 8, 0xF940_0803); // ldr x3, [x0, #16]
+    put32(&mut out, 12, 0x8B03_0C24); // add x4, x1, x3, lsl #3
+    put32(&mut out, 16, 0xFD40_0080); // ldr d0, [x4]
+    put32(&mut out, 20, 0xFD40_0C01); // ldr d1, [x0, #24]
+    put32(&mut out, 24, 0x1E61_2800); // fadd d0, d0, d1
+    put32(&mut out, 28, 0xFD00_0080); // str d0, [x4]
+    put32(&mut out, 32, 0xFD00_1000); // str d0, [x0, #32]
+    put32(&mut out, 36, 0x5280_0020); // mov w0, #1
+    put32(&mut out, 40, aarch64_ret());
+    out
+};
+
+/// AArch64 numeric array loop ABI. The context is
+/// `{data,len,index,end,addend,result}`. The entry performs the complete
+/// guarded loop, including the conditional exit and native backedge; no Rust
+/// handler is called per iteration.
+const AARCH64_ARRAY_LOOP_BYTES: [u8; 76] = {
+    let mut out = [0; 76];
+    put32(&mut out, 0, 0xF940_0801); // ldr x1, [x0, #16] (index)
+    put32(&mut out, 4, 0xF940_0C02); // ldr x2, [x0, #24] (end)
+    put32(&mut out, 8, 0xFD40_1400); // ldr d0, [x0, #40] (initial result)
+    put32(&mut out, 12, 0x1E60_4001); // fmov d1, d0 (zero-iteration result)
+    put32(&mut out, 16, 0x1400_0001); // b loop header (skip one instruction)
+    put32(&mut out, 20, 0xEB02_003F); // cmp x1, x2
+    put32(&mut out, 24, 0x5400_0142); // b.hs done (to instruction 16)
+    put32(&mut out, 28, 0xF940_0003); // ldr x3, [x0]
+    put32(&mut out, 32, 0x8B01_0C64); // add x4, x3, x1, lsl #3
+    put32(&mut out, 36, 0xFD40_0081); // ldr d1, [x4]
+    put32(&mut out, 40, 0xFD40_1002); // ldr d2, [x0, #32]
+    put32(&mut out, 44, 0x1E62_2821); // fadd d1, d1, d2
+    put32(&mut out, 48, 0xFD00_0081); // str d1, [x4]
+    put32(&mut out, 52, 0x9100_0421); // add x1, x1, #1
+    put32(&mut out, 56, 0xF900_0801); // str x1, [x0, #16]
+    put32(&mut out, 60, 0x17FF_FFF6); // b loop header (10 instructions backwards)
+    put32(&mut out, 64, 0xFD00_1401); // str d1, [x0, #40]
+    put32(&mut out, 68, 0x5280_0020); // mov w0, #1
+    put32(&mut out, 72, aarch64_ret());
+    out
+};
 
 const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
@@ -225,13 +311,13 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         name: "fallthrough",
         operations: &["Add", "Return"],
         x86_bytes: &X86_FALLTHROUGH_BYTES,
-        // AArch64 uses a direct branch only within the rendered region.  The
-        // ARM renderer falls back to the equivalent single-region return
-        // sequence when this x86 rel32 chaining shape is selected.
+        // AArch64 uses a direct B/imm26 branch to the aligned return tail;
+        // x86 keeps its rel32 form. Both are patched only after the two pieces
+        // have been placed in one arena.
         aarch64_bytes: &AARCH64_FALLTHROUGH_BYTES,
         portable_bytes: &[0xC3],
         holes: &[(5, 4, "Rel32")],
-        aarch64_holes: &[],
+        aarch64_holes: &[(4, 4, "Branch26")],
         entry: 0,
         external_entries: &[0],
     },
@@ -272,11 +358,11 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         name: "add_const",
         operations: &["AddConst", "Return"],
         x86_bytes: &X86_ADD_CONST_BYTES,
-        // ldr d1, #12; fadd d0, d0, d1; ret; <literal f64>
+        // ldr d1, #16; fadd d0, d0, d1; ret; padding; <literal f64>
         aarch64_bytes: &AARCH64_ADD_CONST_BYTES,
         portable_bytes: &[0xC3],
         holes: &[(13, 8, "Ptr64")],
-        aarch64_holes: &[(12, 8, "Ptr64")],
+        aarch64_holes: &[(16, 8, "Ptr64")],
         entry: 0,
         external_entries: &[0],
     },
@@ -423,9 +509,9 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     },
     RegionDeclaration {
         name: "arithmetic_glue",
-        // Measured neutral arithmetic-loop glue.  This is admitted only as a
-        // complete bounded span; each operation still runs its canonical
-        // handler through the task-042 sequential bridge.
+        // Measured neutral arithmetic-loop glue. This bounded row remains a
+        // build-time admission fact; execution uses the canonical handlers
+        // until a physical implementation proves its boundary cost.
         operations: &[
             "LoadConst",
             "LoadLocalChecked",
@@ -509,6 +595,65 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         entry: 0,
         external_entries: &[0],
     },
+    RegionDeclaration {
+        name: "add_chain",
+        // Two proven numeric adds share one ABI entry and one return. The
+        // runtime admits this row only when the second add consumes the first
+        // result; all other shapes use canonical handlers.
+        operations: &["Add", "Add"],
+        x86_bytes: &X86_ADD_CHAIN_BYTES,
+        aarch64_bytes: &AARCH64_ADD_CHAIN_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
+        name: "array_loop_body",
+        // A bounded array-loop block. AArch64 uses a direct raw numeric
+        // kernel; Rust performs the semantic admission and exact exit
+        // materialization before/after this physical body.
+        operations: &["LoadLocalChecked", "AGetI", "Add", "ASetI", "Return"],
+        x86_bytes: &X86_DISPATCH_BYTES,
+        aarch64_bytes: &AARCH64_ARRAY_KERNEL_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[(2, 8, "Ptr64")],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
+        name: "array_numeric_loop",
+        operations: &[
+            "LoadLocal",
+            "LoadConst",
+            "Binary",
+            "JumpIfFalse",
+            "LoadLocal",
+            "Move",
+            "LoadLocal",
+            "Move",
+            "LoadLocal",
+            "Slow",
+            "LoadLocal",
+            "AGetI",
+            "AddConst",
+            "ASetI",
+            "Move",
+            "LoadLocal",
+            "AddConst",
+            "StoreLocal",
+            "Jump",
+        ],
+        x86_bytes: &X86_DISPATCH_BYTES,
+        aarch64_bytes: &AARCH64_ARRAY_LOOP_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
 ];
 
 fn main() {
@@ -520,6 +665,7 @@ fn main() {
     }
     println!("cargo:rustc-check-cfg=cfg(quench_production)");
     println!("cargo:rerun-if-env-changed=PROFILE");
+    println!("cargo:rerun-if-env-changed=QUENCH_VERIFY_STENCIL_ENCODINGS");
     let profile = env::var("PROFILE").unwrap_or_else(|_| "unknown".to_owned());
     // Keep this mapping exhaustive: a profile not represented here must not
     // silently masquerade as a production artifact.
@@ -548,9 +694,25 @@ fn verify_stencil_encodings() {
     let arm_object = root.join("arm.o");
     fs::write(
         &arm_source,
-        ".text\n.globl _verify\n_verify:\n  fadd d0, d0, d1\n  fsub d0, d0, d1\n  fmul d0, d0, d1\n  fdiv d0, d0, d1\n  ldr d1, 12f\n  ldr x0, [x0]\n  br x16\n  ret\n12:\n  .quad 0\n",
+        ".text\n.globl _verify\n_verify:\n  fadd d0, d0, d1\n  fsub d0, d0, d1\n  fmul d0, d0, d1\n  fdiv d0, d0, d1\n  ldr x1, [x0]\n  ldr x2, [x0, #8]\n  ldr x3, [x0, #16]\n  add x4, x1, x3, lsl #3\n  ldr d0, [x4]\n  ldr d1, [x0, #24]\n  str d0, [x4]\n  str d0, [x0, #32]\n  mov w0, #1\n  ldr x1, [x0, #16]\n  ldr x2, [x0, #24]\n  ldr d0, [x0, #40]\n  cmp x1, x2\n  b.hs 2f\n1:\n  ldr x3, [x0]\n  add x4, x3, x1, lsl #3\n  ldr d1, [x4]\n  ldr d2, [x0, #32]\n  fadd d1, d1, d2\n  str d1, [x4]\n  add x1, x1, #1\n  str x1, [x0, #16]\n  b 1b\n2:\n  str d1, [x0, #40]\n  mov w0, #1\n  ldr x0, [x0]\n  br x16\n  ret\n_literal:\n  ldr d1, 16f\n  .space 12\n16:\n  .quad 0\n",
     )
     .expect("write ARM stencil verification source");
+    // Keep the loop encoder covered by real assembler output as well as the
+    // scalar templates above.  Labels let clang/as calculate branch
+    // displacements; the generated raw bytes are checked against these
+    // resulting words below, avoiding hand-counted offsets in the verifier.
+    {
+        use std::io::Write;
+        let mut source = fs::OpenOptions::new()
+            .append(true)
+            .open(&arm_source)
+            .expect("open ARM stencil verification source");
+        source
+            .write_all(
+                b"\n.globl _numeric_loop\n_numeric_loop:\n  ldr x1, [x0, #16]\n  ldr x2, [x0, #24]\n  ldr d0, [x0, #40]\n  fmov d1, d0\n  b 3f\n3:\n  cmp x1, x2\n  b.hs 4f\n  ldr x3, [x0]\n  add x4, x3, x1, lsl #3\n  ldr d1, [x4]\n  ldr d2, [x0, #32]\n  fadd d1, d1, d2\n  str d1, [x4]\n  add x1, x1, #1\n  str x1, [x0, #16]\n  b 3b\n4:\n  str d1, [x0, #40]\n  mov w0, #1\n  ret\n",
+            )
+            .expect("append ARM numeric-loop verification source");
+    }
     run_tool(
         Command::new("clang").args([
             "--target=aarch64-apple-darwin",
@@ -572,7 +734,34 @@ fn verify_stencil_encodings() {
         aarch64_fsub_d(0, 0, 1),
         aarch64_fmul_d(0, 0, 1),
         aarch64_fdiv_d(0, 0, 1),
-        aarch64_ldr_d_literal(1, 12),
+        0xF940_0001,
+        0xF940_0402,
+        0xF940_0803,
+        0x8B03_0C24,
+        0xFD40_0080,
+        0xFD40_0C01,
+        0xFD00_0080,
+        0xFD00_1000,
+        0x5280_0020,
+        0xF940_0801,
+        0xF940_0C02,
+        0xFD40_1400,
+        0x1E60_4001,
+        0x1400_0001,
+        0xEB02_003F,
+        0x5400_0142,
+        0xF940_0003,
+        0x8B01_0C64,
+        0xFD40_0081,
+        0xFD40_1002,
+        0x1E62_2821,
+        0xFD00_0081,
+        0x9100_0421,
+        0xF900_0801,
+        0x17FF_FFF8,
+        0x17FF_FFF6,
+        0xFD00_1401,
+        aarch64_ldr_d_literal(1, 16),
         aarch64_ldr_x0_x0(),
         aarch64_br_x16(),
         aarch64_ret(),
@@ -582,6 +771,16 @@ fn verify_stencil_encodings() {
             "AArch64 encoder word {word:08x} missing from objdump output:\n{arm_dump}"
         );
     }
+    assert_eq!(
+        u32::from_le_bytes(AARCH64_ARRAY_LOOP_BYTES[16..20].try_into().unwrap()),
+        0x1400_0001,
+        "numeric loop entry branch must skip one-time initialization"
+    );
+    assert_eq!(
+        u32::from_le_bytes(AARCH64_ARRAY_LOOP_BYTES[60..64].try_into().unwrap()),
+        0x17FF_FFF6,
+        "numeric loop backedge must target the condition header"
+    );
     fs::remove_file(&arm_source).ok();
     fs::remove_file(&arm_object).ok();
     fs::remove_dir(&root).ok();
@@ -639,7 +838,111 @@ fn generate_stencil_catalog() {
         );
     }
     let output = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
+    // Accessors are generated from the same declaration slice as the bytes,
+    // opcode lists and table rows.  Callers therefore cannot add a region
+    // without also getting a mechanically named key constructor.
+    let accessors = REGION_DECLARATIONS
+        .iter()
+        .map(|declaration| {
+            format!(
+                "pub const fn {}_region_key() -> crate::stencil_fact::RegionKey {{ CANONICAL_{}_KEY }}",
+                accessor_name(declaration.name),
+                key_name(declaration.name)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let key_defs = REGION_DECLARATIONS
+        .iter()
+        .enumerate()
+        .map(|(index, declaration)| {
+            let name = key_name(declaration.name);
+            format!(
+                "const {name}_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(crate::stencil_fact::RegionId({}), {name}_OPS);",
+                index + 1
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let region_rows = REGION_DECLARATIONS
+        .iter()
+        .enumerate()
+        .map(|(index, declaration)| {
+            let name = key_name(declaration.name);
+            let fallthrough = if declaration.name == "fallthrough" {
+                "Some((&FALLTHROUGH_TAIL, if cfg!(target_arch = \"aarch64\") { 4 } else { 5 }))"
+            } else {
+                "None"
+            };
+            let executable = if declaration.name == "dispatch" {
+                "DISPATCH_EXECUTABLE"
+            } else {
+                "EXECUTABLE"
+            };
+            let abi = abi_expr(declaration);
+            format!(
+                "    crate::stencil_select::RegionRecord {{ key: CANONICAL_{name}_KEY, stencil: crate::stencil_fact::Stencil {{ bytes: CANONICAL_{name}_BYTES, holes: CANONICAL_{name}_HOLES }}, operations: CANONICAL_{name}_OPS, entry: 0, fallthrough: {fallthrough}, abi: {abi}, executable: {executable} }}, // declaration {index}",
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let canonical_bytes = REGION_DECLARATIONS
+        .iter()
+        .map(|declaration| {
+            byte_decl(
+                &format!("CANONICAL_{}", key_name(declaration.name)),
+                declaration,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let canonical_holes = REGION_DECLARATIONS
+        .iter()
+        .map(|declaration| {
+            hole_decl(
+                &format!("CANONICAL_{}", key_name(declaration.name)),
+                declaration,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let canonical_ops = REGION_DECLARATIONS
+        .iter()
+        .map(|declaration| {
+            let name = key_name(declaration.name);
+            format!(
+                "const CANONICAL_{name}_OPS: &[crate::ir::Opcode] = &[{}];",
+                opcode_expr(declaration.operations)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let canonical_keys = REGION_DECLARATIONS
+        .iter()
+        .enumerate()
+        .map(|(index, declaration)| {
+            let name = key_name(declaration.name);
+            format!(
+                "const CANONICAL_{name}_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(crate::stencil_fact::RegionId({}), CANONICAL_{name}_OPS);",
+                index + 1
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let lookup_arms = REGION_DECLARATIONS
+        .iter()
+        .enumerate()
+        .map(|(index, declaration)| {
+            format!(
+                "        {}_KEY => Some(&REGION_TABLE[{index}]),",
+                key_name(declaration.name)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     let generated = r#"
+/* BEGIN LEGACY EXPANDED CATALOG. Runtime selection below is generated from
+   REGION_DECLARATIONS; this block remains only to ease source migration.
 // The generated rows carry real x86-64 and AArch64 encodings. Unsupported
 // targets receive a return-only fragment and must use the ordinary fallback.
 __LOOP_BYTES__
@@ -668,6 +971,12 @@ __GET_INDEX_BYTES__
 __SET_INDEX_BYTES__
 __GET_INDEX_INC_BYTES__
 __FOR_I_BYTES__
+__ADD_CHAIN_BYTES__
+__ARRAY_LOOP_BODY_BYTES__
+__ARRAY_NUMERIC_LOOP_BYTES__
+#[cfg(target_arch = "aarch64")]
+const FALLTHROUGH_TAIL_BYTES: &[u8] = &[0xC0, 0x03, 0x5F, 0xD6];
+#[cfg(not(target_arch = "aarch64"))]
 const FALLTHROUGH_TAIL_BYTES: &[u8] = &[0xC3];
 // The catalog remains present on every target for deterministic admission,
 // but only the ISA whose bytes are actually defined may cross the executable
@@ -699,6 +1008,9 @@ __GET_INDEX_HOLES__
 __SET_INDEX_HOLES__
 __GET_INDEX_INC_HOLES__
 __FOR_I_HOLES__
+__ADD_CHAIN_HOLES__
+__ARRAY_LOOP_BODY_HOLES__
+__ARRAY_NUMERIC_LOOP_HOLES__
 const FALLTHROUGH_TAIL_HOLES: &[crate::stencil_fact::Hole] = &[];
 const FALLTHROUGH_TAIL: crate::stencil_fact::Stencil = crate::stencil_fact::Stencil {
     bytes: FALLTHROUGH_TAIL_BYTES,
@@ -727,78 +1039,19 @@ const GET_INDEX_OPS: &[crate::ir::Opcode] = &[__GET_INDEX_OPS__];
 const SET_INDEX_OPS: &[crate::ir::Opcode] = &[__SET_INDEX_OPS__];
 const GET_INDEX_INC_OPS: &[crate::ir::Opcode] = &[__GET_INDEX_INC_OPS__];
 const FOR_I_OPS: &[crate::ir::Opcode] = &[__FOR_I_OPS__];
-const LOOP_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
-    crate::stencil_fact::RegionId(1), LOOP_OPS,
-);
-const PROPERTY_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
-    crate::stencil_fact::RegionId(2), PROPERTY_OPS,
-);
-const MOVE_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
-    crate::stencil_fact::RegionId(8), MOVE_OPS,
-);
-const FALLTHROUGH_KEY: crate::stencil_fact::RegionKey =
-    crate::stencil_fact::RegionKey::from_opcodes(crate::stencil_fact::RegionId(3), FALLTHROUGH_OPS);
-const SUBTRACT_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
-    crate::stencil_fact::RegionId(4), SUBTRACT_OPS,
-);
-const MULTIPLY_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
-    crate::stencil_fact::RegionId(5), MULTIPLY_OPS,
-);
-const DIVIDE_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
-    crate::stencil_fact::RegionId(6), DIVIDE_OPS,
-);
-const ADD_CONST_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
-    crate::stencil_fact::RegionId(7), ADD_CONST_OPS,
-);
-const DISPATCH_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
-    crate::stencil_fact::RegionId(9), DISPATCH_OPS,
-);
-const LOOP_GLUE_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
-    crate::stencil_fact::RegionId(10), LOOP_GLUE_OPS,
-);
-const LOOP_BODY_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
-    crate::stencil_fact::RegionId(22), LOOP_BODY_OPS,
-);
-const BINARY_GLUE_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
-    crate::stencil_fact::RegionId(11), BINARY_GLUE_OPS,
-);
-const UPDATE_RETURN_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
-    crate::stencil_fact::RegionId(12), UPDATE_RETURN_OPS,
-);
-const CALL_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
-    crate::stencil_fact::RegionId(13), CALL_OPS,
-);
-const CALL_N_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
-    crate::stencil_fact::RegionId(14), CALL_N_OPS,
-);
-const ARITHMETIC_GLUE_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
-    crate::stencil_fact::RegionId(15), ARITHMETIC_GLUE_OPS,
-);
-const GET_PROPERTY_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
-    crate::stencil_fact::RegionId(16), GET_PROPERTY_OPS,
-);
-const SET_N_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
-    crate::stencil_fact::RegionId(17), SET_N_OPS,
-);
-const GET_INDEX_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
-    crate::stencil_fact::RegionId(18), GET_INDEX_OPS,
-);
-const SET_INDEX_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
-    crate::stencil_fact::RegionId(19), SET_INDEX_OPS,
-);
-const GET_INDEX_INC_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
-    crate::stencil_fact::RegionId(20), GET_INDEX_INC_OPS,
-);
-const FOR_I_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
-    crate::stencil_fact::RegionId(21), FOR_I_OPS,
-);
+const ADD_CHAIN_OPS: &[crate::ir::Opcode] = &[__ADD_CHAIN_OPS__];
+const ARRAY_LOOP_BODY_OPS: &[crate::ir::Opcode] = &[__ARRAY_LOOP_BODY_OPS__];
+const ARRAY_NUMERIC_LOOP_OPS: &[crate::ir::Opcode] = &[__ARRAY_NUMERIC_LOOP_OPS__];
+__KEY_DEFS__
 static NUMERIC_REGION_KEYS: &[(crate::ir::Opcode, crate::stencil_fact::RegionKey)] = &[
-    (crate::ir::Opcode::Add, FALLTHROUGH_KEY),
-    (crate::ir::Opcode::Sub, SUBTRACT_KEY),
-    (crate::ir::Opcode::Mul, MULTIPLY_KEY),
-    (crate::ir::Opcode::Div, DIVIDE_KEY),
-    (crate::ir::Opcode::AddConst, ADD_CONST_KEY),
+    (crate::ir::Opcode::Add, CANONICAL_FALLTHROUGH_KEY),
+    (crate::ir::Opcode::Sub, CANONICAL_SUBTRACT_KEY),
+    (crate::ir::Opcode::Mul, CANONICAL_MULTIPLY_KEY),
+    (crate::ir::Opcode::Div, CANONICAL_DIVIDE_KEY),
+    (crate::ir::Opcode::AddConst, CANONICAL_ADD_CONST_KEY),
 ];
+// Legacy hand-expanded table retained as source text during migration; the
+// runtime never references it. Canonical rows below are declaration-derived.
 static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
     (crate::stencil_select::RegionRecord {
         key: LOOP_KEY,
@@ -829,7 +1082,7 @@ static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
         stencil: crate::stencil_fact::Stencil { bytes: FALLTHROUGH_BYTES, holes: FALLTHROUGH_HOLES },
         operations: FALLTHROUGH_OPS,
         entry: 0,
-        fallthrough: Some((&FALLTHROUGH_TAIL, 5)),
+        fallthrough: Some((&FALLTHROUGH_TAIL, if cfg!(target_arch = "aarch64") { 4 } else { 5 })),
         executable: EXECUTABLE,
     }),
     (crate::stencil_select::RegionRecord {
@@ -934,6 +1187,9 @@ static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
     (crate::stencil_select::RegionRecord { key: SET_INDEX_KEY, stencil: crate::stencil_fact::Stencil { bytes: SET_INDEX_BYTES, holes: SET_INDEX_HOLES }, operations: SET_INDEX_OPS, entry: 0, fallthrough: None, executable: EXECUTABLE }),
     (crate::stencil_select::RegionRecord { key: GET_INDEX_INC_KEY, stencil: crate::stencil_fact::Stencil { bytes: GET_INDEX_INC_BYTES, holes: GET_INDEX_INC_HOLES }, operations: GET_INDEX_INC_OPS, entry: 0, fallthrough: None, executable: EXECUTABLE }),
     (crate::stencil_select::RegionRecord { key: FOR_I_KEY, stencil: crate::stencil_fact::Stencil { bytes: FOR_I_BYTES, holes: FOR_I_HOLES }, operations: FOR_I_OPS, entry: 0, fallthrough: None, executable: EXECUTABLE }),
+    (crate::stencil_select::RegionRecord { key: ADD_CHAIN_KEY, stencil: crate::stencil_fact::Stencil { bytes: ADD_CHAIN_BYTES, holes: ADD_CHAIN_HOLES }, operations: ADD_CHAIN_OPS, entry: 0, fallthrough: None, executable: EXECUTABLE }),
+    (crate::stencil_select::RegionRecord { key: ARRAY_LOOP_BODY_KEY, stencil: crate::stencil_fact::Stencil { bytes: ARRAY_LOOP_BODY_BYTES, holes: ARRAY_LOOP_BODY_HOLES }, operations: ARRAY_LOOP_BODY_OPS, entry: 0, fallthrough: None, executable: EXECUTABLE }),
+    (crate::stencil_select::RegionRecord { key: ARRAY_NUMERIC_LOOP_KEY, stencil: crate::stencil_fact::Stencil { bytes: ARRAY_NUMERIC_LOOP_BYTES, holes: ARRAY_NUMERIC_LOOP_HOLES }, operations: ARRAY_NUMERIC_LOOP_OPS, entry: 0, fallthrough: None, executable: EXECUTABLE }),
 ];
 // Generated direct key dispatch keeps selection independent of the number of
 // unrelated catalog rows; the ordinary fallback remains the `_` arm.
@@ -961,9 +1217,45 @@ fn generated_region_lookup(key: crate::stencil_fact::RegionKey) -> Option<&'stat
         SET_INDEX_KEY => Some(&REGION_TABLE[19]),
         GET_INDEX_INC_KEY => Some(&REGION_TABLE[20]),
         FOR_I_KEY => Some(&REGION_TABLE[21]),
+        ADD_CHAIN_KEY => Some(&REGION_TABLE[22]),
+        ARRAY_LOOP_BODY_KEY => Some(&REGION_TABLE[23]),
+        ARRAY_NUMERIC_LOOP_KEY => Some(&REGION_TABLE[24]),
         _ => None,
     }
 }
+END LEGACY TABLE */
+// Canonical declaration-derived table.  The legacy rows above remain only
+// as a compatibility artifact while downstream users migrate; all runtime
+// selection and length queries use this generated table.
+#[cfg(target_arch = "aarch64")]
+const FALLTHROUGH_TAIL_BYTES: &[u8] = &[0xC0, 0x03, 0x5F, 0xD6];
+#[cfg(not(target_arch = "aarch64"))]
+const FALLTHROUGH_TAIL_BYTES: &[u8] = &[0xC3];
+const FALLTHROUGH_TAIL_HOLES: &[crate::stencil_fact::Hole] = &[];
+const FALLTHROUGH_TAIL: crate::stencil_fact::Stencil = crate::stencil_fact::Stencil {
+    bytes: FALLTHROUGH_TAIL_BYTES,
+    holes: FALLTHROUGH_TAIL_HOLES,
+};
+const EXECUTABLE: bool = cfg!(any(target_arch = "x86_64", target_arch = "aarch64"));
+const DISPATCH_EXECUTABLE: bool = cfg!(target_arch = "x86_64");
+__CANONICAL_BYTES__
+__CANONICAL_HOLES__
+__CANONICAL_OPS__
+__CANONICAL_KEYS__
+static NUMERIC_REGION_KEYS: &[(crate::ir::Opcode, crate::stencil_fact::RegionKey)] = &[
+    (crate::ir::Opcode::Add, CANONICAL_FALLTHROUGH_KEY),
+    (crate::ir::Opcode::Sub, CANONICAL_SUBTRACT_KEY),
+    (crate::ir::Opcode::Mul, CANONICAL_MULTIPLY_KEY),
+    (crate::ir::Opcode::Div, CANONICAL_DIVIDE_KEY),
+    (crate::ir::Opcode::AddConst, CANONICAL_ADD_CONST_KEY),
+];
+static CANONICAL_REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
+__REGION_ROWS__
+];
+fn canonical_region_lookup(key: crate::stencil_fact::RegionKey) -> Option<&'static crate::stencil_select::RegionRecord> {
+    CANONICAL_REGION_TABLE.iter().find(|record| record.key == key)
+}
+__ACCESSORS__
 "#
     .replace("__LOOP_BYTES__", &byte_decl("LOOP", &REGION_DECLARATIONS[0]))
     .replace("__PROPERTY_BYTES__", &byte_decl("PROPERTY", &REGION_DECLARATIONS[1]))
@@ -993,6 +1285,9 @@ fn generated_region_lookup(key: crate::stencil_fact::RegionKey) -> Option<&'stat
     .replace("__SET_INDEX_BYTES__", &byte_decl("SET_INDEX", &REGION_DECLARATIONS[19]))
     .replace("__GET_INDEX_INC_BYTES__", &byte_decl("GET_INDEX_INC", &REGION_DECLARATIONS[20]))
     .replace("__FOR_I_BYTES__", &byte_decl("FOR_I", &REGION_DECLARATIONS[21]))
+    .replace("__ADD_CHAIN_BYTES__", &byte_decl("ADD_CHAIN", &REGION_DECLARATIONS[22]))
+    .replace("__ARRAY_LOOP_BODY_BYTES__", &byte_decl("ARRAY_LOOP_BODY", &REGION_DECLARATIONS[23]))
+    .replace("__ARRAY_NUMERIC_LOOP_BYTES__", &byte_decl("ARRAY_NUMERIC_LOOP", &REGION_DECLARATIONS[24]))
     .replace("__LOOP_HOLES__", &hole_decl("LOOP", &REGION_DECLARATIONS[0]))
     .replace("__PROPERTY_HOLES__", &hole_decl("PROPERTY", &REGION_DECLARATIONS[1]))
     .replace("__MOVE_HOLES__", &hole_decl("MOVE", &REGION_DECLARATIONS[2]))
@@ -1021,6 +1316,9 @@ fn generated_region_lookup(key: crate::stencil_fact::RegionKey) -> Option<&'stat
     .replace("__SET_INDEX_HOLES__", &hole_decl("SET_INDEX", &REGION_DECLARATIONS[19]))
     .replace("__GET_INDEX_INC_HOLES__", &hole_decl("GET_INDEX_INC", &REGION_DECLARATIONS[20]))
     .replace("__FOR_I_HOLES__", &hole_decl("FOR_I", &REGION_DECLARATIONS[21]))
+    .replace("__ADD_CHAIN_HOLES__", &hole_decl("ADD_CHAIN", &REGION_DECLARATIONS[22]))
+    .replace("__ARRAY_LOOP_BODY_HOLES__", &hole_decl("ARRAY_LOOP_BODY", &REGION_DECLARATIONS[23]))
+    .replace("__ARRAY_NUMERIC_LOOP_HOLES__", &hole_decl("ARRAY_NUMERIC_LOOP", &REGION_DECLARATIONS[24]))
     .replace("__LOOP_OPS__", &opcode_expr(REGION_DECLARATIONS[0].operations))
     .replace("__PROPERTY_OPS__", &opcode_expr(REGION_DECLARATIONS[1].operations))
     .replace("__MOVE_OPS__", &opcode_expr(REGION_DECLARATIONS[2].operations))
@@ -1041,7 +1339,18 @@ fn generated_region_lookup(key: crate::stencil_fact::RegionKey) -> Option<&'stat
     .replace("__GET_INDEX_OPS__", &opcode_expr(REGION_DECLARATIONS[18].operations))
     .replace("__SET_INDEX_OPS__", &opcode_expr(REGION_DECLARATIONS[19].operations))
     .replace("__GET_INDEX_INC_OPS__", &opcode_expr(REGION_DECLARATIONS[20].operations))
-    .replace("__FOR_I_OPS__", &opcode_expr(REGION_DECLARATIONS[21].operations));
+    .replace("__FOR_I_OPS__", &opcode_expr(REGION_DECLARATIONS[21].operations))
+    .replace("__ADD_CHAIN_OPS__", &opcode_expr(REGION_DECLARATIONS[22].operations))
+    .replace("__ARRAY_LOOP_BODY_OPS__", &opcode_expr(REGION_DECLARATIONS[23].operations))
+    .replace("__ARRAY_NUMERIC_LOOP_OPS__", &opcode_expr(REGION_DECLARATIONS[24].operations))
+    .replace("__KEY_DEFS__", &key_defs)
+    .replace("__REGION_ROWS__", &region_rows)
+    .replace("__LOOKUP_ARMS__", &lookup_arms)
+    .replace("__CANONICAL_BYTES__", &canonical_bytes)
+    .replace("__CANONICAL_HOLES__", &canonical_holes)
+    .replace("__CANONICAL_OPS__", &canonical_ops)
+    .replace("__CANONICAL_KEYS__", &canonical_keys)
+    .replace("__ACCESSORS__", &accessors);
     fs::write(output.join("stencil_catalog.rs"), generated).expect("write stencil catalog");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/ir.rs");
@@ -1049,6 +1358,45 @@ fn generated_region_lookup(key: crate::stencil_fact::RegionKey) -> Option<&'stat
 
 fn has_single_external_entry(entry: u32, external_entries: &[u32]) -> bool {
     external_entries.len() == 1 && external_entries[0] == entry
+}
+
+fn accessor_name(name: &str) -> String {
+    match name {
+        "set_named" => "set_n".to_owned(),
+        other => other.to_owned(),
+    }
+}
+
+fn key_name(name: &str) -> String {
+    match name {
+        "set_named" => "SET_N".to_owned(),
+        other => other.to_ascii_uppercase(),
+    }
+}
+
+/// Derive the physical calling convention from the declared bytes.  Direct
+/// scalar rows and the two raw array kernels have distinct machine layouts;
+/// all rows whose bytes are the generated dispatch trampoline use the erased
+/// `NativeRegionContext` bridge.  This keeps ABI classification mechanical
+/// without a second hand-maintained key list.
+fn abi_expr(declaration: &RegionDeclaration) -> &'static str {
+    let target_is_aarch64 = env::var("CARGO_CFG_TARGET_ARCH")
+        .ok()
+        .is_some_and(|arch| arch == "aarch64")
+        || env::var("TARGET")
+            .ok()
+            .is_some_and(|target| target.starts_with("aarch64"));
+    if !target_is_aarch64 && declaration.x86_bytes == X86_DISPATCH_BYTES {
+        "crate::stencil_select::RegionAbi::Bridge"
+    } else if target_is_aarch64 && declaration.aarch64_bytes == AARCH64_ARRAY_KERNEL_BYTES {
+        "crate::stencil_select::RegionAbi::ArrayKernel"
+    } else if target_is_aarch64 && declaration.aarch64_bytes == AARCH64_ARRAY_LOOP_BYTES {
+        "crate::stencil_select::RegionAbi::ArrayNumericLoop"
+    } else if declaration.aarch64_bytes == AARCH64_DISPATCH_BYTES {
+        "crate::stencil_select::RegionAbi::Bridge"
+    } else {
+        "crate::stencil_select::RegionAbi::Scalar"
+    }
 }
 
 fn opcode_expr(operations: &[&str]) -> String {

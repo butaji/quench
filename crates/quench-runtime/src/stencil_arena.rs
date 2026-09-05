@@ -8,6 +8,30 @@ use crate::stencil_fact::{PatchValues, Stencil};
 use crate::stencil_patch::{apply_holes, PatchError};
 use crate::stencil_select::{select_region, RenderedRegionCache};
 
+#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+extern "C" {
+    fn sys_icache_invalidate(start: *const std::ffi::c_void, size: usize);
+}
+
+#[cfg(all(target_arch = "aarch64", not(target_os = "macos")))]
+extern "C" {
+    fn __clear_cache(start: *const u8, end: *const u8);
+}
+
+#[inline]
+fn flush_icache(ptr: *const u8, len: usize) {
+    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+    unsafe {
+        sys_icache_invalidate(ptr.cast(), len);
+    }
+    #[cfg(all(target_arch = "aarch64", not(target_os = "macos")))]
+    unsafe {
+        __clear_cache(ptr, ptr.add(len));
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    let _ = (ptr, len);
+}
+
 const PAGE: usize = 4096;
 /// Workload-independent disposable code budget for one arena.
 pub const MAX_ARENA_BYTES: usize = 1 << 20;
@@ -107,6 +131,49 @@ impl StencilArena {
         Ok(entry(lhs, rhs))
     }
 
+    /// Validate an installed numeric entry once, then hand the caller the
+    /// typed code pointer for its steady-state loop.  The arena is immutable
+    /// after `make_executable`, so a pointer returned here remains valid until
+    /// this arena is dropped; callers retain the arena alongside the pointer.
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn f64_entry(
+        &self,
+        address: usize,
+    ) -> Result<extern "C" fn(f64, f64) -> f64, ArenaError> {
+        let base = self.ptr as usize;
+        let end = base.saturating_add(self.cursor);
+        if !self.executable || address < base || address >= end {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        Ok(unsafe { std::mem::transmute(address) })
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn f64x3_entry(
+        &self,
+        address: usize,
+    ) -> Result<extern "C" fn(f64, f64, f64) -> f64, ArenaError> {
+        let base = self.ptr as usize;
+        let end = base.saturating_add(self.cursor);
+        if !self.executable || address < base || address >= end {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        Ok(unsafe { std::mem::transmute(address) })
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn tagged_word_entry(
+        &self,
+        address: usize,
+    ) -> Result<extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64, ArenaError> {
+        let base = self.ptr as usize;
+        let end = base.saturating_add(self.cursor);
+        if !self.executable || address < base || address >= end {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        Ok(unsafe { std::mem::transmute(address) })
+    }
+
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     pub fn execute_f64(&self, _address: usize, _lhs: f64, _rhs: f64) -> Result<f64, ArenaError> {
         Err(ArenaError::ProtectionFailed)
@@ -200,6 +267,20 @@ impl StencilArena {
         let offset = self.cursor;
         self.cursor = end;
         Ok(offset)
+    }
+
+    fn alloc_aligned(&mut self, size: usize, alignment: usize) -> Result<usize, ArenaError> {
+        let mask = alignment.checked_sub(1).ok_or(ArenaError::Exhausted)?;
+        if alignment == 0 || !alignment.is_power_of_two() {
+            return Err(ArenaError::Exhausted);
+        }
+        let aligned = self
+            .cursor
+            .checked_add(mask)
+            .map(|cursor| cursor & !mask)
+            .ok_or(ArenaError::Exhausted)?;
+        self.alloc(aligned.saturating_sub(self.cursor))?;
+        self.alloc(size)
     }
 
     pub fn copy_and_patch<const N: usize>(
@@ -351,6 +432,30 @@ impl StencilArena {
         self.execute_f64(address, lhs, rhs).or_else(|_| fallback())
     }
 
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn render_selected_f64x3<const N: usize>(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        key: crate::stencil_fact::RegionKey,
+        values: &PatchValues<'_, N>,
+        lhs: f64,
+        rhs: f64,
+        third: f64,
+    ) -> Result<f64, ArenaError> {
+        let Some(record) = select_region(key).filter(|record| record.executable) else {
+            return Err(ArenaError::ProtectionFailed);
+        };
+        // A fused chain is emitted as one complete stencil and therefore must
+        // not recurse through the two-piece fallthrough renderer.
+        if record.fallthrough.is_some() {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        let address = self.render_or_get(cache, key, &record.stencil, values)?;
+        self.make_executable()?;
+        let entry = self.f64x3_entry(address)?;
+        Ok(entry(lhs, rhs, third))
+    }
+
     /// Install a two-region Number chain. The head falls through by a direct
     /// `Rel32` jump to the already-installed tail, which returns the value in
     /// `xmm0`. The caller supplies the build-time displacement offset; this
@@ -473,20 +578,18 @@ impl StencilArena {
         fallback()
     }
 
-    /// AArch64's direct-branch encoding is not the x86 rel32 hole format used
-    /// by the two-region test stencil. The generated ARM fallthrough row is
-    /// therefore a semantically equivalent single fadd/ret leaf; retain the
-    /// same bounded render/cache/protection protocol while omitting the
-    /// architecture-specific chain.
+    /// Compose the AArch64 head and tail in one arena. The head carries a
+    /// `B`/imm26 relocation to the tail, so the chain has one entry and one
+    /// return at the boundary; no Rust callback occurs between them.
     #[cfg(target_arch = "aarch64")]
     pub fn render_fallthrough_f64<const N: usize>(
         &mut self,
         cache: &mut RenderedRegionCache,
         key: crate::stencil_fact::RegionKey,
         head: &Stencil,
-        _tail: &Stencil,
+        tail: &Stencil,
         values: &PatchValues<'_, N>,
-        _rel32_offset: u16,
+        branch_offset: u16,
         lhs: f64,
         rhs: f64,
         fallback: impl FnOnce() -> Result<f64, ArenaError>,
@@ -501,13 +604,76 @@ impl StencilArena {
             }
             cache.remove(key, signature, address);
         }
-        if !head.validate() {
+        if !head.validate() || !tail.validate() {
             return fallback();
         }
-        let address = match self.render_or_get(cache, key, head, values) {
-            Ok(address) => address,
+        if !head.holes.iter().any(|hole| {
+            hole.offset == branch_offset
+                && matches!(hole.kind, crate::stencil_fact::HoleKind::Branch26)
+        }) {
+            return fallback();
+        }
+        let checkpoint = self.cursor;
+        let tail_offset = match self.alloc_aligned(tail.bytes.len(), 4) {
+            Ok(offset) => offset,
             Err(_) => return fallback(),
         };
+        let tail_result = unsafe {
+            std::ptr::copy_nonoverlapping(
+                tail.bytes.as_ptr(),
+                self.ptr.add(tail_offset),
+                tail.bytes.len(),
+            );
+            let dst = std::slice::from_raw_parts_mut(self.ptr.add(tail_offset), tail.bytes.len());
+            apply_holes(dst, tail.holes, values)
+        };
+        if tail_result.is_err() {
+            self.cursor = checkpoint;
+            return fallback();
+        }
+        let tail_address = match self.address(tail_offset) {
+            Some(address) => address,
+            None => {
+                self.cursor = checkpoint;
+                return fallback();
+            }
+        };
+        let head_offset = match self.alloc_aligned(head.bytes.len(), 4) {
+            Ok(offset) => offset,
+            Err(_) => {
+                self.cursor = checkpoint;
+                return fallback();
+            }
+        };
+        // AArch64 `B` measures its displacement from the branch instruction
+        // itself (unlike x86 rel32, which is relative to the following
+        // instruction).
+        let branch_address = self.ptr as usize + head_offset + usize::from(branch_offset);
+        let Some(patched_values) = values.with_relative_target(tail_address, branch_address) else {
+            self.cursor = checkpoint;
+            return fallback();
+        };
+        let head_result = unsafe {
+            std::ptr::copy_nonoverlapping(
+                head.bytes.as_ptr(),
+                self.ptr.add(head_offset),
+                head.bytes.len(),
+            );
+            let dst = std::slice::from_raw_parts_mut(self.ptr.add(head_offset), head.bytes.len());
+            apply_holes(dst, head.holes, &patched_values)
+        };
+        if head_result.is_err() {
+            self.cursor = checkpoint;
+            return fallback();
+        }
+        let address = match self.address(head_offset) {
+            Some(address) => address,
+            None => {
+                self.cursor = checkpoint;
+                return fallback();
+            }
+        };
+        cache.insert(key, signature, address);
         if self.make_executable().is_err() {
             cache.remove(key, signature, address);
             return fallback();
@@ -522,6 +688,10 @@ impl StencilArena {
         if self.executable {
             return Ok(());
         }
+        // AArch64 has separate data/instruction caches. The bytes were copied
+        // and patched through the RW mapping, so invalidate the published
+        // range before the W^X transition makes it executable.
+        flush_icache(self.ptr, self.cursor);
         let result = unsafe {
             libc::mprotect(
                 self.ptr.cast(),
@@ -698,14 +868,14 @@ mod tests {
         assert_eq!(
             arena.used(),
             if cfg!(target_arch = "aarch64") {
-                20
+                24
             } else {
                 21
             }
         );
         assert_eq!(
             arena.byte(if cfg!(target_arch = "aarch64") {
-                12
+                16
             } else {
                 13
             }),
