@@ -76,12 +76,7 @@ pub(crate) fn protect_frame(
         });
         length
     });
-    let environment_length = ENV_ROOTS.with(|roots| {
-        let mut roots = roots.borrow_mut();
-        let length = roots.len();
-        roots.push(Rc::clone(environment));
-        length
-    });
+    let environment_length = ENV_ROOTS.with(|roots| roots.borrow().len());
     RootGuard {
         value_length,
         environment_length,
