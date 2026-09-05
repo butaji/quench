@@ -4,8 +4,9 @@
 //! CLI without a shell.
 
 use std::io::Write;
-use std::process::{Command, Output};
+use std::process::{Child, Command, Output};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
@@ -64,7 +65,32 @@ pub(crate) fn shell_output(command: &str, options: Option<&Value>) -> std::io::R
         process.env("QUENCH_CHILD_RUNNER", "1");
         process.env("QUENCH_PARENT_PID", std::process::id().to_string());
     }
-    process.output()
+    let process = process.spawn()?;
+    wait_with_timeout(process, options)
+}
+
+/// Wait for a host child without allowing Node's timeout option to be
+/// defeated by a synchronous `output()` call.  The same wait contract is
+/// shared by shell commands and direct compatibility-runner children.
+pub(crate) fn wait_with_timeout(
+    mut process: Child,
+    options: Option<&Value>,
+) -> std::io::Result<Output> {
+    let timeout = options.and_then(timeout_millis);
+    if let Some(limit) = timeout {
+        let started = Instant::now();
+        loop {
+            if process.try_wait()?.is_some() {
+                break;
+            }
+            if started.elapsed() >= Duration::from_millis(limit.min(u128::from(u64::MAX)) as u64) {
+                let _ = process.kill();
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    process.wait_with_output()
 }
 
 pub(crate) fn needs_shell(command: &str) -> bool {
