@@ -4634,16 +4634,43 @@ pub fn internal_throw_accessor(
 
 pub fn internal_js_stream_construct(
     _state: &Rc<RefCell<HostState>>,
-    _args: &[Value],
+    args: &[Value],
 ) -> Result<Value, VmError> {
-    let external = crate::host::namespace_object_from_pairs(vec![(
-        "__quench_external".into(),
-        Value::Boolean(true),
-    )]);
-    Ok(crate::host::namespace_object_from_pairs(vec![(
-        "_externalStream".into(),
-        external,
-    )]))
+    let stream = args
+        .first()
+        .cloned()
+        .unwrap_or_else(|| crate::host::namespace_object_from_pairs(Vec::new()));
+    let handle = crate::host::namespace_object_from_pairs(vec![
+        (
+            "asyncReset".into(),
+            crate::host::capability(crate::registry::SPEC_INTERNAL_JS_STREAM),
+        ),
+        (
+            "getProviderType".into(),
+            crate::host::capability(crate::registry::SPEC_ASYNC_EXECUTION_ID),
+        ),
+        (
+            "getAsyncId".into(),
+            crate::host::capability(crate::registry::SPEC_ASYNC_EXECUTION_ID),
+        ),
+    ]);
+    Ok(execute::set_property(stream, "_handle", handle))
+}
+
+pub fn internal_js_stream_call(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(resource) = args.first().filter(|value| {
+        matches!(
+            execute::get_property(value, "type"),
+            Value::String(_)
+        ) && matches!(execute::get_property(value, "handle"), Value::Object(_))
+    }) {
+        crate::modules::async_hooks::attach_resource(state, resource.clone(), "ReusedHandle")?;
+    }
+    Ok(Value::Undefined)
 }
 
 fn source_text_module_requests(source: &str) -> Result<Vec<(Value, String)>, VmError> {
@@ -9885,11 +9912,25 @@ fn fork_child_start(
         let error = result.as_ref().err().cloned().expect("error checked");
         let handled = crate::modules::pump::handle_uncaught(state, error)
             .and_then(|_| crate::modules::pump::run_uncaught(state));
-        let _ = crate::modules::cluster::fail_fork_process(state, child.object_identity().unwrap_or(0), 1);
+        let code = if let Err(error) = &handled {
+            execute::set_property_in_place(
+                child,
+                "\0forkStderr",
+                Value::String(format!("{}\n", error.render())),
+            );
+            7
+        } else {
+            1
+        };
+        let _ = crate::modules::cluster::fail_fork_process(
+            state,
+            child.object_identity().unwrap_or(0),
+            code,
+        );
         execute::set_property_in_place(&process, "send", previous_send);
         execute::set_property_in_place(&process, "disconnect", previous_disconnect);
         execute::set_property_in_place(&process, "connected", previous_connected);
-        return handled.map(|_| ());
+        return Ok(());
     }
     Ok(())
 }

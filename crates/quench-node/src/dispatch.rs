@@ -589,6 +589,7 @@ const CAP_V8_DESERIALIZER_DOUBLE: u16 = SPEC_V8_DESERIALIZER_DOUBLE.cap;
 pub fn lookup(cap: u16) -> Option<CallHandler> {
     use handlers::*;
     let h = match cap {
+        CAP_INTERNAL_JS_STREAM => internal_js_stream_call,
         CAP_V8_SERIALIZER_WRITE => crate::modules::v8::serializer_write_handler,
         CAP_V8_SERIALIZER_RELEASE => crate::modules::v8::serializer_release_handler,
         CAP_V8_DESERIALIZER_READ => crate::modules::v8::deserializer_read_handler,
