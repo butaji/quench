@@ -262,20 +262,9 @@ pub(crate) extern "C" fn native_region_bridge(raw: *mut std::ffi::c_void) -> u64
         return NATIVE_DISPATCH_COMMITTED_ERROR;
     }
     // Validate the complete window before invoking even the first canonical
-    // handler.  This is what makes an Unknown/quickened mismatch an atomic
-    // fallback: the caller can retry the whole span without replaying a
-    // prefix that may already have mutated registers or heap state.
-    for (offset, expected) in region.operations.iter().copied().enumerate() {
-        let pc = match region.pc.checked_add(offset) {
-            Some(pc) => pc,
-            None => return 0,
-        };
-        let Some(instruction) = region.code.instruction(pc) else {
-            return 0;
-        };
-        if instruction.opcode != expected {
-            return 0;
-        }
+    // handler. This is the atomic Unknown/fallback boundary.
+    if validate_residual_window(region).is_err() {
+        return 0;
     }
     // From this point on a handler or physical kernel may have committed
     // effects. Any failure is therefore an exit, never a retryable miss.
@@ -339,22 +328,9 @@ pub(crate) fn execute_region_fallback(
     region: &mut NativeRegionContext<'_>,
 ) -> Result<DispatchTransition, crate::machine::NativeDispatchError> {
     // First validate the complete immutable window. This pass performs no
-    // handler call, so a stale opcode/PC can only reject before effects.
-    for (offset, expected) in region.operations.iter().copied().enumerate() {
-        let pc = region
-            .pc
-            .checked_add(offset)
-            .ok_or_else(|| crate::machine::NativeDispatchError::Physical("region pc overflow".into()))?;
-        let instruction = region.code.instruction(pc).ok_or_else(|| {
-            crate::machine::NativeDispatchError::Physical("region instruction missing".into())
-        })?;
-        if instruction.opcode != expected {
-            return Err(crate::machine::NativeDispatchError::Physical(
-                "region opcode changed during admission".into(),
-            ));
-        }
-    }
-
+    // handler call, so a stale opcode/operand/edge can only reject before
+    // effects.
+    validate_residual_window(region)?;
     let mut last = None;
     for (offset, _expected) in region.operations.iter().copied().enumerate() {
         let pc = region.pc.checked_add(offset).ok_or_else(|| {
@@ -389,13 +365,63 @@ pub(crate) fn execute_region_fallback(
                         !matches!(completion, crate::completion::Completion::Normal)
                     }))
         {
-            // The operation has already run. Return its exact transition;
-            // callers must consume it and may not retry the region entry.
             return Ok(transition);
         }
         last = Some(transition);
     }
     last.ok_or_else(|| crate::machine::NativeDispatchError::Physical("empty region".into()))
+}
+
+fn validate_residual_window(
+    region: &NativeRegionContext<'_>,
+) -> Result<(), crate::machine::NativeDispatchError> {
+    let end = region
+        .pc
+        .checked_add(region.operations.len())
+        .ok_or_else(|| crate::machine::NativeDispatchError::Physical("region pc overflow".into()))?;
+    for (offset, expected) in region.operations.iter().copied().enumerate() {
+        let pc = region
+            .pc
+            .checked_add(offset)
+            .ok_or_else(|| crate::machine::NativeDispatchError::Physical("region pc overflow".into()))?;
+        let instruction = region.code.instruction(pc).ok_or_else(|| {
+            crate::machine::NativeDispatchError::Physical("region instruction missing".into())
+        })?;
+        if instruction.opcode != expected
+            || !expected.operands_are_canonical([instruction.a, instruction.b, instruction.c])
+        {
+            return Err(crate::machine::NativeDispatchError::Physical(
+                "region operation changed during admission".into(),
+            ));
+        }
+        match expected.control_operands(instruction) {
+            crate::ir::ControlOperands::Return { .. } if pc + 1 != end => {
+                return Err(crate::machine::NativeDispatchError::Physical(
+                    "region returns before its declared boundary".into(),
+                ));
+            }
+            crate::ir::ControlOperands::Branch { target, .. }
+            | crate::ir::ControlOperands::Jump { target }
+                if usize::from(target) < region.pc || usize::from(target) > end =>
+            {
+                return Err(crate::machine::NativeDispatchError::Physical(
+                    "region successor leaves its declared boundary".into(),
+                ));
+            }
+            crate::ir::ControlOperands::Loop { .. } => {
+                return Err(crate::machine::NativeDispatchError::Physical(
+                    "structured loop requires ordinary execution".into(),
+                ));
+            }
+            _ => {}
+        }
+    }
+    if region.operations.is_empty() {
+        return Err(crate::machine::NativeDispatchError::Physical(
+            "empty region".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Execute the admitted numeric array block as one physical operation.  This
