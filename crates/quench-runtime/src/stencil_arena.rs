@@ -187,6 +187,33 @@ impl SharedStencilSlab {
         remove
     }
 
+    /// Evict idle slabs and prune their derived cache rows in one ownership
+    /// transition.  Callers that only need a count may use `evict_idle`; the
+    /// cache-aware form prevents stale generation rows accumulating after a
+    /// retirement/rebuild cycle.
+    pub fn evict_idle_with_cache(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        retain: usize,
+    ) -> usize {
+        if self.active_dispatches.get() != 0 {
+            return 0;
+        }
+        let remove = self.slabs.len().saturating_sub(retain);
+        if remove == 0 {
+            return 0;
+        }
+        let owners = self.slabs[..remove]
+            .iter()
+            .map(StencilArena::id)
+            .collect::<Vec<_>>();
+        self.slabs.drain(0..remove);
+        for owner in owners {
+            cache.remove_owner(owner);
+        }
+        remove
+    }
+
     fn reclaim_for(&mut self, additional: usize) -> bool {
         if self.active_dispatches.get() != 0 {
             return false;
@@ -1686,6 +1713,28 @@ mod tests {
             .render_or_get(&mut cache, first_key, &stencil, &values)
             .unwrap();
         assert_ne!(pool.owner_for(replacement), Some(first_owner));
+    }
+
+    #[test]
+    fn cache_rows_are_pruned_with_retired_slab_owners() {
+        let mut pool = SharedStencilSlab::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let values = PatchValues::from_site(&site);
+        static BYTES: [u8; 4096] = [0; 4096];
+        let stencil = Stencil { bytes: &BYTES, holes: &[] };
+        let first_key = crate::stencil_fact::RegionKey(107);
+        let second_key = crate::stencil_fact::RegionKey(108);
+        let first = pool
+            .render_or_get(&mut cache, first_key, &stencil, &values)
+            .unwrap();
+        pool.render_or_get(&mut cache, second_key, &stencil, &values)
+            .unwrap();
+        let first_owner = pool.owner_for(first).unwrap();
+        assert_eq!(cache.len(), 2);
+        assert_eq!(pool.evict_idle_with_cache(&mut cache, 1), 1);
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.get_owned(first_key, 0, first_owner), None);
     }
 
     #[test]
