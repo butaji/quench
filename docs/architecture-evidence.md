@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `4fe27aaf9` (cleanup files remain
+Evidence below is bound to source revision `a49b19f5e` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -22,6 +22,14 @@ Host library regressions remain green (**4 passed**) at
 `/tmp/quench-node-full-20260905-loose-equality.log`.
 Execution-trace runtime regression is also green (**742 passed, 0 failed,
 1 ignored**) at `/tmp/quench-runtime-trace-20260905-loose-equality.log`.
+
+The current revision adds a typed numeric-negate stencil (build-time
+`negate` declaration, target bytes, and owned `f64 -> f64` entry) with
+ordinary-source execution, signed-zero, and coercive fallback coverage:
+`/tmp/quench-negate-focused-20260905-v2.log`. Full runtime is **731 passed,
+0 failed, 1 ignored** (`/tmp/quench-runtime-full-20260905-negate.log`) and
+execution-trace runtime is **743 passed, 0 failed, 1 ignored**
+(`/tmp/quench-runtime-trace-20260905-negate.log`).
 
 | Layer / family | Code and normal wiring | Executed evidence | Supported / safe boundary | Status and remaining gap |
 | --- | --- | --- | --- | --- |
