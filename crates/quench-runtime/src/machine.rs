@@ -2110,6 +2110,86 @@ pub(crate) struct NativeRegionPlan {
     last_native_execution: bool,
 }
 
+/// Validate the complete residual window before a physical entry is
+/// published.  Opcode identity alone is insufficient: operand encodings and
+/// control successors are part of the canonical operation contract.  A
+/// failure here is a pre-entry rejection, so callers may safely execute the
+/// ordinary residual operation sequence without replaying effects.
+fn validate_region_window(
+    code: CodeView<'_>,
+    pc: usize,
+    record: &crate::stencil_select::RegionRecord,
+) -> Result<(), NativeDispatchError> {
+    let contract = record.contract();
+    if !contract.executable
+        || !contract.has_single_entry()
+        || !contract.legal_external_entry(0)
+        || contract.operations.is_empty()
+    {
+        return Err(NativeDispatchError::Physical(
+            "native region contract has no legal entry".into(),
+        ));
+    }
+    // Raw memory entries have no allocating helper boundary.  Keep this
+    // check declaration-derived so a future row cannot accidentally acquire
+    // an allocating operation merely by reusing the array ABI bytes.
+    if matches!(
+        contract.abi,
+        crate::stencil_select::RegionAbi::ArrayKernel
+            | crate::stencil_select::RegionAbi::ArrayNumericLoop
+    ) && contract.has_effect(crate::facts::OperationEffect::Allocate)
+    {
+        return Err(NativeDispatchError::Physical(
+            "raw array region declares an allocating operation".into(),
+        ));
+    }
+    let end = pc
+        .checked_add(contract.operations.len())
+        .ok_or_else(|| NativeDispatchError::Physical("native region pc overflow".into()))?;
+    for (offset, expected) in contract.operations.iter().copied().enumerate() {
+        let window_pc = pc
+            .checked_add(offset)
+            .ok_or_else(|| NativeDispatchError::Physical("native region pc overflow".into()))?;
+        let instruction = code.instruction(window_pc).ok_or_else(|| {
+            NativeDispatchError::Physical("native region window is incomplete".into())
+        })?;
+        if instruction.opcode != expected
+            || !expected.operands_are_canonical([instruction.a, instruction.b, instruction.c])
+        {
+            return Err(NativeDispatchError::Physical(
+                "native region operation contract changed before publication".into(),
+            ));
+        }
+        match expected.control_operands(instruction) {
+            crate::ir::ControlOperands::Next => {}
+            crate::ir::ControlOperands::Return { .. } => {
+                if window_pc + 1 != end {
+                    return Err(NativeDispatchError::Physical(
+                        "native region returns before its declared boundary".into(),
+                    ));
+                }
+            }
+            crate::ir::ControlOperands::Branch { target, .. }
+            | crate::ir::ControlOperands::Jump { target } => {
+                let target = usize::from(target);
+                if target < pc || target > end {
+                    return Err(NativeDispatchError::Physical(
+                        "native region successor leaves its verified boundary".into(),
+                    ));
+                }
+            }
+            crate::ir::ControlOperands::Loop { .. } => {
+                // Structured loop operations are not currently emitted by a
+                // raw stencil.  They remain complete ordinary fallback.
+                return Err(NativeDispatchError::Physical(
+                    "structured loop opcode requires ordinary execution".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 impl NativeRegionPlan {
     fn new(
         key: crate::stencil_fact::RegionKey,
@@ -2197,25 +2277,18 @@ impl NativeRegionPlan {
         // publishing executable bytes.  A stale/quickened opcode is therefore
         // a cheap RejectBeforeEntry and cannot consume slab capacity or leave
         // a physical mapping behind for a region that was never legal.
-        for (offset, expected) in operations.iter().copied().enumerate() {
-            let Some(window_pc) = pc.checked_add(offset) else {
-                return Err(NativeDispatchError::Physical(
-                    "native fused region pc overflow".into(),
-                ));
-            };
-            let Some(instruction) = code.instruction(window_pc) else {
-                return Err(NativeDispatchError::Physical(
-                    "native fused region window is incomplete".into(),
-                ));
-            };
-            if instruction.opcode != expected {
-                return Err(NativeDispatchError::Physical(
-                    "native fused region opcode changed before publication".into(),
-                ));
-            }
+        let Some(record) = crate::stencil_select::select_region(key) else {
+            return Err(NativeDispatchError::Physical(
+                "native fused region stencil missing".into(),
+            ));
+        };
+        if record.operations != operations {
+            return Err(NativeDispatchError::Physical(
+                "native fused region operation contract changed".into(),
+            ));
         }
-        if !crate::stencil_select::select_region(key)
-            .is_some_and(|record| record.executable && record.operations == operations)
+        validate_region_window(code, pc, record)?;
+        if !record.executable
             || self.lifecycle.observe_site(&self.site, key, true)
                 == crate::stencil_lifecycle::StencilState::Retired
         {
@@ -2230,7 +2303,8 @@ impl NativeRegionPlan {
             let record = crate::stencil_select::select_region(key).ok_or_else(|| {
                 NativeDispatchError::Physical("native fused region stencil missing".into())
             })?;
-            if record.entry != 0 || !record.external_entries.contains(&0) {
+            let contract = record.contract();
+            if !contract.legal_external_entry(0) {
                 return Err(NativeDispatchError::Physical(
                     "native fused region has no legal external entry".into(),
                 ));
@@ -2239,7 +2313,7 @@ impl NativeRegionPlan {
             // closed if metadata and the selected invocation path disagree;
             // an opcode-prefix match is never sufficient to pass a scalar
             // or raw-array entry a NativeRegionContext pointer.
-            if matches!(record.abi, crate::stencil_select::RegionAbi::Scalar) {
+            if matches!(contract.abi, crate::stencil_select::RegionAbi::Scalar) {
                 return Err(NativeDispatchError::Physical(
                     "native fused region ABI metadata mismatch".into(),
                 ));
