@@ -46,6 +46,10 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
             println!("quench-node [-e CODE|SCRIPT]");
             Ok(())
         }
+        Some("--version") | Some("-v") => {
+            println!("v22.0.0");
+            Ok(())
+        }
         Some("-e") | Some("--eval") => {
             let source = args.get(mode_index + 1).map_or("", String::as_str);
             let sink: OutputSink = std::sync::Arc::new(|line| println!("{line}"));

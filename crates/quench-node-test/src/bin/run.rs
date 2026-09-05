@@ -11,6 +11,18 @@ use quench_node_test::runner::NodeTestRunner;
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
+    // A self-reexecuted compatibility child must honor the same simple CLI
+    // probe as Node even when permission flags precede --version.  Keep this
+    // at the Rust boundary so child_process does not special-case filenames
+    // or project fixtures.
+    if arguments.iter().any(|arg| arg == "--version" || arg == "-v")
+        && !arguments
+            .iter()
+            .any(|arg| arg.ends_with(".js") || arg.ends_with(".mjs") || arg.ends_with(".cjs"))
+    {
+        println!("v22.0.0");
+        return ExitCode::SUCCESS;
+    }
     let input_type = arguments
         .windows(2)
         .find_map(|pair| (pair[0] == "--input-type").then(|| pair[1].as_str()));
