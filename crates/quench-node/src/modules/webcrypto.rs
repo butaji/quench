@@ -1283,9 +1283,14 @@ fn signature_bytes(algorithm: &Value, key: &Value, data: &[u8]) -> Result<Vec<u8
         requested
     };
     if name.eq_ignore_ascii_case("HMAC") {
-        let hash = execute::to_js_string(&execute::get_property(&key_algorithm, "hash"))
-            .or_else(|_| execute::to_js_string(&execute::get_property(algorithm, "hash")))
-            .unwrap_or_else(|_| "SHA-256".into())
+        // HMAC key metadata stores `hash` as the WebCrypto algorithm object
+        // (`{ name: "SHA-384" }`), not a string.  Converting that object
+        // directly yields "[object Object]" and silently selected SHA-256
+        // for every non-SHA-256 key.  Normalize through the shared algorithm
+        // parser so all digest variants retain their declared hash.
+        let hash = algorithm_hash(&key_algorithm)
+            .or_else(|| algorithm_hash(algorithm))
+            .unwrap_or_else(|| "SHA-256".into())
             .to_ascii_lowercase()
             .replace('-', "");
         let hash = match hash.as_str() {
