@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `6b1bf50ae` (cleanup files remain
+Evidence below is bound to source revision `b80faee86` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -62,6 +62,13 @@ two-op execution passes in normal and trace builds
 `/tmp/quench-add-chain-witness-trace-20260905.log`, 1 passed each). The
 ordinary-source driver also asserts the witness whenever native policy admits
 the chain.
+The subtract/multiply/divide arithmetic regression now uses the explicit ARM
+development policy and asserts native-entry execution on supported targets;
+normal and trace focused runs each pass
+(`/tmp/quench-arithmetic-native-witness-20260905-v2.log`,
+`/tmp/quench-arithmetic-native-witness-trace-20260905.log`). The current full
+runtime remains **734 passed, 0 failed, 1 ignored**
+(`/tmp/quench-runtime-full-20260905-arithmetic-witness.log`).
 
 Logical-not now reuses the corrected truthiness entries for proven numbers and
 tagged words; the ARM64 zero setup is encoded as `fmov d1, xzr` and is covered
