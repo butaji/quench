@@ -2384,6 +2384,11 @@ pub(crate) struct NativePropertyPlan {
     opcode: crate::ir::Opcode,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     entry: Option<extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    shared_entry: Option<(
+        usize,
+        extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64,
+    )>,
     #[cfg(test)]
     native_entry_count: u64,
 }
@@ -2422,6 +2427,8 @@ impl NativePropertyPlan {
             opcode,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             entry: None,
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            shared_entry: None,
             #[cfg(test)]
             native_entry_count: 0,
         })
@@ -2455,6 +2462,19 @@ impl NativePropertyPlan {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
         }
         if let Some(shared) = self.shared_arena.clone() {
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            if let Some((address, entry)) = self.shared_entry {
+                match shared.borrow().with_active(address, || entry(slot.cast())) {
+                    Ok(bits) => {
+                        #[cfg(test)]
+                        {
+                            self.native_entry_count = self.native_entry_count.saturating_add(1);
+                        }
+                        return Ok(bits);
+                    }
+                    Err(_) => self.shared_entry = None,
+                }
+            }
             let rendered = (|| -> Result<
                 (usize, extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64),
                 crate::stencil_arena::ArenaError,
@@ -2475,6 +2495,10 @@ impl NativePropertyPlan {
                 }
             };
             let bits = shared.borrow().with_active(address, || entry(slot.cast()))?;
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            {
+                self.shared_entry = Some((address, entry));
+            }
             #[cfg(test)]
             {
                 self.native_entry_count = self.native_entry_count.saturating_add(1);
