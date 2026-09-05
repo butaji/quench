@@ -793,6 +793,72 @@ fn ordinary_source_lowering_executes_numeric_truthiness_and_falls_back_for_strin
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
+fn ordinary_source_lowering_executes_tagged_truthiness_for_boolean() {
+    let program = crate::reduce::reduce_source("var x = true; if (x) { x = false; } x;")
+        .expect("boolean conditional source lowers");
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut executed = false;
+    let mut inspect = |view: crate::machine::CodeView<'_>| {
+        if executed {
+            return;
+        }
+        let Some(pc) = (0..view.len()).find(|pc| {
+            view.instruction(*pc)
+                .is_some_and(|instruction| instruction.opcode == crate::ir::Opcode::JumpIfFalse)
+        }) else {
+            return;
+        };
+        let plan = super::BaselinePlan::compile_for_test(view, policy);
+        let native = plan.native_truthiness_at(pc).expect("word truthiness leaf");
+        let instruction = view.instruction(pc).expect("branch instruction");
+        let mut registers = crate::register_file::RegisterFile::with_undefined(
+            usize::from(view.register_count()).max(8),
+        );
+        registers.write(usize::from(instruction.a), crate::value::Value::Boolean(true));
+        let context = crate::vm::current_context_or_default();
+        assert!(crate::vm::execute_baseline_code_from(
+            view,
+            &plan,
+            pc,
+            &mut registers,
+            &context,
+            crate::environment::Environment::new(),
+        )
+        .is_ok());
+        assert!(native.borrow().native_entry_count > 0);
+        let mut hostile = crate::register_file::RegisterFile::with_undefined(
+            usize::from(view.register_count()).max(8),
+        );
+        hostile.write(
+            usize::from(instruction.a),
+            crate::value::Value::String("truthy".into()),
+        );
+        let before = native.borrow().native_entry_count;
+        assert!(crate::vm::execute_baseline_code_from(
+            view,
+            &plan,
+            pc,
+            &mut hostile,
+            &context,
+            crate::environment::Environment::new(),
+        )
+        .is_ok());
+        assert_eq!(native.borrow().native_entry_count, before);
+        executed = true;
+    };
+    inspect(program.code());
+    program.code().cold_ops().for_each(|(_, op)| {
+        op.visit_bodies(&mut |body| {
+            if let Some(view) = body.code() {
+                inspect(view);
+            }
+        });
+    });
+    assert!(executed, "ordinary source must execute tagged truthiness bytes");
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
 fn primitive_load_const_uses_rendered_machine_word_and_preserves_value() {
     let code = crate::machine::ExecutableCode::from_ops(vec![
         crate::ops::Op::Const {
