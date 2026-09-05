@@ -207,4 +207,17 @@ mod tests {
             Err(PatchError::UnsupportedOffset)
         );
     }
+
+    #[test]
+    fn aarch64_branch26_rejects_out_of_range_target() {
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let values = PatchValues::from_site(&site)
+            .with_relative_target(1 << 27, 0)
+            .expect("signed displacement is representable");
+        let mut bytes = 0x1400_0000u32.to_le_bytes();
+        assert_eq!(
+            write_branch26(&mut bytes, 0, &values),
+            Err(PatchError::UnsupportedOffset)
+        );
+    }
 }
