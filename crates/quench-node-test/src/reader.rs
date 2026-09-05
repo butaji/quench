@@ -344,6 +344,13 @@ impl NodeRunner {
             let _dynamic_import = quench_runtime::module_bindings::install_dynamic_import({
                 let dynamic_namespace_cache = std::rc::Rc::clone(&dynamic_namespace_cache);
                 std::rc::Rc::new(move |specifier, _deferred| {
+                    let trace = quench_node::modules::diagnostics_channel::module_import_begin(
+                        &state,
+                        quench_node::modules::diagnostics_channel::module_import_parent_url(&state),
+                        specifier.to_owned(),
+                    )
+                    .ok()
+                    .flatten();
                     let mocked = quench_node::modules::test::module_is_mocked(specifier);
                     let cacheable =
                         !mocked || quench_node::modules::test::mock_module_cache(specifier);
@@ -354,6 +361,13 @@ impl NodeRunner {
                     );
                     if cacheable {
                         if let Some(cached) = dynamic_namespace_cache.borrow().get(&cache_key) {
+                            if let Some(event) = trace {
+                                let _ = quench_node::modules::diagnostics_channel::module_import_end(
+                                    &state,
+                                    event,
+                                    Ok(cached.clone()),
+                                );
+                            }
                             return Some(cached.clone());
                         }
                     }
@@ -363,6 +377,13 @@ impl NodeRunner {
                     ) {
                         Ok(value) => {
                             let namespace = quench_node::modules::require::dynamic_namespace(value);
+                            if let Some(event) = trace {
+                                let _ = quench_node::modules::diagnostics_channel::module_import_end(
+                                    &state,
+                                    event,
+                                    Ok(namespace.clone()),
+                                );
+                            }
                             if cacheable {
                                 dynamic_namespace_cache
                                     .borrow_mut()
@@ -370,9 +391,19 @@ impl NodeRunner {
                             }
                             Some(namespace)
                         }
-                        Err(quench_runtime::vm::VmError::Thrown(reason)) => Some(
-                            quench_node::modules::require::dynamic_import_rejection(reason),
-                        ),
+                        Err(quench_runtime::vm::VmError::Thrown(reason)) => {
+                            let rejection = quench_node::modules::require::dynamic_import_rejection(
+                                reason.clone(),
+                            );
+                            if let Some(event) = trace {
+                                let _ = quench_node::modules::diagnostics_channel::module_import_end(
+                                    &state,
+                                    event,
+                                    Err(reason),
+                                );
+                            }
+                            Some(rejection)
+                        }
                         Err(_) => None,
                     }
                 })
