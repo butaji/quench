@@ -145,6 +145,17 @@ mod tests {
     }
 
     #[test]
+    fn literal64_uses_constant_domain_without_accepting_pointer_bits() {
+        let site = QuickeningSite::<2>::new(Opcode::AddConst);
+        let values = PatchValues::from_site(&site)
+            .with_constant_bits(0x3ff0_0000_0000_0000)
+            .with_pointer_bits(0xfeed_beef);
+        let mut bytes = [0u8; 8];
+        write_literal64(&mut bytes, 0, &values).unwrap();
+        assert_eq!(u64::from_le_bytes(bytes), 0x3ff0_0000_0000_0000);
+    }
+
+    #[test]
     fn relative_holes_accept_signed_displacements_but_reject_overflow() {
         let site = QuickeningSite::<2>::new(Opcode::GetProperty);
         let values = PatchValues::from_site(&site)
