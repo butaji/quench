@@ -1500,8 +1500,9 @@ pub(crate) struct NativeBinaryPlan {
     uint_entry: Option<extern "C" fn(u32, u32) -> u32>,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     shared_entry_address: Option<usize>,
+    shared_entry_owner: Option<u64>,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    tagged_shared_entry: Option<(usize, extern "C" fn(u64, u64) -> u64)>,
+    tagged_shared_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(u64, u64) -> u64>>,
     #[cfg(test)]
     native_entry_count: u64,
 }
@@ -1648,6 +1649,7 @@ impl NativeBinaryPlan {
             uint_entry: None,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             shared_entry_address: None,
+            shared_entry_owner: None,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             tagged_shared_entry: None,
             #[cfg(test)]
@@ -1700,6 +1702,7 @@ impl NativeBinaryPlan {
             uint_entry: None,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             shared_entry_address: None,
+            shared_entry_owner: None,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             tagged_shared_entry: None,
             #[cfg(test)]
@@ -1730,10 +1733,10 @@ impl NativeBinaryPlan {
                 return Ok(entry(lhs, rhs) != 0);
             }
         }
-        if let (Some(shared), Some((address, entry))) =
+        if let (Some(shared), Some(owned)) =
             (self.shared_arena.clone(), self.tagged_shared_entry)
         {
-            if let Ok(result) = shared.borrow().with_active(address, || entry(lhs, rhs)) {
+            if let Ok(result) = shared.borrow().with_owned(owned, |entry| entry(lhs, rhs)) {
                 self.note_native_entry();
                 return Ok(result != 0);
             }
@@ -1749,8 +1752,9 @@ impl NativeBinaryPlan {
                 slab.make_executable(address)?;
                 (address, slab.word_pair_bool_entry(address)?)
             };
-            self.tagged_shared_entry = Some((address, entry));
-            let result = shared.borrow().with_active(address, || entry(lhs, rhs))?;
+            let owned = shared.borrow().owned_entry(address, entry)?;
+            self.tagged_shared_entry = Some(owned);
+            let result = shared.borrow().with_owned(owned, |entry| entry(lhs, rhs))?;
             self.note_native_entry();
             return Ok(result != 0);
         }
@@ -1790,12 +1794,13 @@ impl NativeBinaryPlan {
                 }
             }
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            if let (Some(shared), Some(address)) =
-                (self.shared_arena.clone(), self.shared_entry_address)
+            if let (Some(shared), Some(address), Some(owner)) =
+                (self.shared_arena.clone(), self.shared_entry_address, self.shared_entry_owner)
             {
                 if self.integer_unsigned {
                     if let Some(entry) = self.uint_entry {
-                        match shared.borrow().with_active(address, || {
+                        let owned = crate::stencil_arena::OwnedEntry { address, owner, entry };
+                        match shared.borrow().with_owned(owned, |entry| {
                             entry(left as u32, right as u32)
                         }) {
                             Ok(result) => {
@@ -1809,7 +1814,8 @@ impl NativeBinaryPlan {
                         }
                     }
                 } else if let Some(entry) = self.int_entry {
-                    match shared.borrow().with_active(address, || entry(left, right)) {
+                    let owned = crate::stencil_arena::OwnedEntry { address, owner, entry };
+                    match shared.borrow().with_owned(owned, |entry| entry(left, right)) {
                         Ok(result) => {
                             self.note_native_entry();
                             return Ok(f64::from(result));
@@ -1817,6 +1823,7 @@ impl NativeBinaryPlan {
                         Err(_) => {
                             self.int_entry = None;
                             self.shared_entry_address = None;
+                            self.shared_entry_owner = None;
                         }
                     }
                 }
@@ -1856,11 +1863,14 @@ impl NativeBinaryPlan {
                             return Err(error);
                         }
                     };
+                    let owner = shared.borrow().owner_for(address).ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+                    let owned = crate::stencil_arena::OwnedEntry { address, owner, entry };
                     let result = shared
                         .borrow()
-                        .with_active(address, || entry(left as u32, right as u32))?;
+                        .with_owned(owned, |entry| entry(left as u32, right as u32))?;
                     self.uint_entry = Some(entry);
                     self.shared_entry_address = Some(address);
+                    self.shared_entry_owner = Some(owner);
                     self.note_native_entry();
                     return Ok(f64::from(result));
                 }
@@ -1883,9 +1893,12 @@ impl NativeBinaryPlan {
                         return Err(error);
                     }
                 };
-                let result = shared.borrow().with_active(address, || entry(left, right))?;
+                let owner = shared.borrow().owner_for(address).ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+                let owned = crate::stencil_arena::OwnedEntry { address, owner, entry };
+                let result = shared.borrow().with_owned(owned, |entry| entry(left, right))?;
                 self.int_entry = Some(entry);
                 self.shared_entry_address = Some(address);
+                self.shared_entry_owner = Some(owner);
                 self.note_native_entry();
                 return Ok(f64::from(result));
             }
@@ -1950,7 +1963,9 @@ impl NativeBinaryPlan {
                 self.shared_entry_address,
                 self.entry,
             ) {
-                match shared.borrow().with_active(address, || unsafe {
+                let owner = self.shared_entry_owner.ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+                let owned = crate::stencil_arena::OwnedEntry { address, owner, entry };
+                match shared.borrow().with_owned(owned, |entry| unsafe {
                     invoke_f64x2_entry(entry, lhs, rhs)
                 }) {
                     Ok(result) => {
@@ -1960,6 +1975,7 @@ impl NativeBinaryPlan {
                     Err(_) => {
                         self.entry = None;
                         self.shared_entry_address = None;
+                        self.shared_entry_owner = None;
                     }
                 }
             }
@@ -1995,7 +2011,9 @@ impl NativeBinaryPlan {
                 })();
                 return match rendered {
                     Ok((address, entry)) => {
-                        let value = shared.borrow().with_active(address, || entry(lhs, rhs) != 0)?;
+                        let owner = shared.borrow().owner_for(address).ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+                        let owned = crate::stencil_arena::OwnedEntry { address, owner, entry };
+                        let value = shared.borrow().with_owned(owned, |entry| entry(lhs, rhs) != 0)?;
                         self.note_native_entry();
                         Ok(if value { 1.0 } else { 0.0 })
                     }
@@ -2023,10 +2041,13 @@ impl NativeBinaryPlan {
                 }
             };
             self.entry = Some(entry);
+            let owner = shared.borrow().owner_for(address).ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
             self.shared_entry_address = Some(address);
+            self.shared_entry_owner = Some(owner);
+            let owned = crate::stencil_arena::OwnedEntry { address, owner, entry };
             let result = shared
                 .borrow()
-                .with_active(address, || unsafe { invoke_f64x2_entry(entry, lhs, rhs) })?;
+                .with_owned(owned, |entry| unsafe { invoke_f64x2_entry(entry, lhs, rhs) })?;
             self.note_native_entry();
             return Ok(result);
         }
@@ -2146,13 +2167,13 @@ pub(crate) struct NativeTruthinessPlan {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     word_entry: Option<extern "C" fn(u64) -> u64>,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    shared_entry: Option<(usize, extern "C" fn(f64) -> u64)>,
+    shared_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(f64) -> u64>>,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    shared_word_entry: Option<(usize, extern "C" fn(u64) -> u64)>,
+    shared_word_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(u64) -> u64>>,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pointer_entry: Option<extern "C" fn(u64) -> u64>,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    shared_pointer_entry: Option<(usize, extern "C" fn(u64) -> u64)>,
+    shared_pointer_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(u64) -> u64>>,
     #[cfg(test)]
     native_entry_count: u64,
 }
@@ -2230,8 +2251,8 @@ impl NativeTruthinessPlan {
     ) -> Result<bool, crate::stencil_arena::ArenaError> {
         let values = crate::stencil_fact::PatchValues::from_site(&self.site);
         if let Some(shared) = self.shared_arena.clone() {
-            if let Some((address, entry)) = self.shared_entry {
-                if let Ok(result) = shared.borrow().with_active(address, || entry(value)) {
+            if let Some(owned) = self.shared_entry {
+                if let Ok(result) = shared.borrow().with_owned(owned, |entry| entry(value)) {
                     #[cfg(test)]
                     {
                         self.native_entry_count = self.native_entry_count.saturating_add(1);
@@ -2248,10 +2269,11 @@ impl NativeTruthinessPlan {
                 slab.make_executable(address)?;
                 (address, slab.bool_unary_entry(address)?)
             };
-            self.shared_entry = Some((address, entry));
+            let owned = shared.borrow().owned_entry(address, entry)?;
+            self.shared_entry = Some(owned);
             return shared
                 .borrow()
-                .with_active(address, || entry(value))
+                .with_owned(owned, |entry| entry(value))
                 .map(|result| {
                     #[cfg(test)]
                     {
@@ -2295,8 +2317,8 @@ impl NativeTruthinessPlan {
         let values = crate::stencil_fact::PatchValues::from_site(&self.site)
             .with_constant_bits(crate::tagged_value::TaggedValue::bool(true).bits());
         if let Some(shared) = self.shared_arena.clone() {
-            if let Some((address, entry)) = self.shared_word_entry {
-                if let Ok(result) = shared.borrow().with_active(address, || entry(value)) {
+            if let Some(owned) = self.shared_word_entry {
+                if let Ok(result) = shared.borrow().with_owned(owned, |entry| entry(value)) {
                     #[cfg(test)]
                     {
                         self.native_entry_count = self.native_entry_count.saturating_add(1);
@@ -2311,9 +2333,10 @@ impl NativeTruthinessPlan {
             let address = slab.render_or_get(&mut self.cache, self.word_key, stencil, &values)?;
             slab.make_executable(address)?;
             let entry = slab.word_bool_entry(address)?;
-            self.shared_word_entry = Some((address, entry));
             drop(slab);
-            let result = shared.borrow().with_active(address, || entry(value))?;
+            let owned = shared.borrow().owned_entry(address, entry)?;
+            self.shared_word_entry = Some(owned);
+            let result = shared.borrow().with_owned(owned, |entry| entry(value))?;
             #[cfg(test)]
             {
                 self.native_entry_count = self.native_entry_count.saturating_add(1);
@@ -2354,8 +2377,8 @@ impl NativeTruthinessPlan {
     ) -> Result<bool, crate::stencil_arena::ArenaError> {
         let values = crate::stencil_fact::PatchValues::from_site(&self.site);
         if let Some(shared) = self.shared_arena.clone() {
-            if let Some((address, entry)) = self.shared_pointer_entry {
-                if let Ok(result) = shared.borrow().with_active(address, || entry(value)) {
+            if let Some(owned) = self.shared_pointer_entry {
+                if let Ok(result) = shared.borrow().with_owned(owned, |entry| entry(value)) {
                     self.note_entry();
                     return Ok(result != 0);
                 }
@@ -2367,9 +2390,10 @@ impl NativeTruthinessPlan {
             let address = slab.render_or_get(&mut self.cache, self.pointer_key, stencil, &values)?;
             slab.make_executable(address)?;
             let entry = slab.word_bool_entry(address)?;
-            self.shared_pointer_entry = Some((address, entry));
             drop(slab);
-            let result = shared.borrow().with_active(address, || entry(value))?;
+            let owned = shared.borrow().owned_entry(address, entry)?;
+            self.shared_pointer_entry = Some(owned);
+            let result = shared.borrow().with_owned(owned, |entry| entry(value))?;
             self.note_entry();
             return Ok(result != 0);
         }
@@ -2425,7 +2449,7 @@ pub(crate) struct NativeNullishPlan {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     entry: Option<extern "C" fn(u64) -> u64>,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    shared_entry: Option<(usize, extern "C" fn(u64) -> u64)>,
+    shared_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(u64) -> u64>>,
     #[cfg(test)]
     native_entry_count: u64,
 }
@@ -2483,8 +2507,8 @@ impl NativeNullishPlan {
         let values = crate::stencil_fact::PatchValues::from_site(&self.site)
             .with_constant_bits(0x7ff8_4000_0000_0003);
         if let Some(shared) = self.shared_arena.clone() {
-            if let Some((address, entry)) = self.shared_entry {
-                if let Ok(result) = shared.borrow().with_active(address, || entry(bits)) {
+            if let Some(owned) = self.shared_entry {
+                if let Ok(result) = shared.borrow().with_owned(owned, |entry| entry(bits)) {
                     #[cfg(test)]
                     {
                         self.native_entry_count = self.native_entry_count.saturating_add(1);
@@ -2501,10 +2525,11 @@ impl NativeNullishPlan {
                 slab.make_executable(address)?;
                 (address, slab.word_bool_entry(address)?)
             };
-            self.shared_entry = Some((address, entry));
+            let owned = shared.borrow().owned_entry(address, entry)?;
+            self.shared_entry = Some(owned);
             let result = shared
                 .borrow()
-                .with_active(address, || entry(bits))
+                .with_owned(owned, |entry| entry(bits))
                 .map(|result| result != 0);
             if result.is_ok() {
                 #[cfg(test)]
@@ -2572,7 +2597,7 @@ pub(crate) struct NativeLoadConstPlan {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     entry: Option<extern "C" fn() -> u64>,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    shared_entry: Option<(usize, extern "C" fn() -> u64)>,
+    shared_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn() -> u64>>,
 }
 
 impl std::fmt::Debug for NativeLoadConstPlan {
@@ -2624,8 +2649,8 @@ impl NativeLoadConstPlan {
         let values = crate::stencil_fact::PatchValues::from_site(&self.site)
             .with_constant_bits(self.bits);
         if let Some(shared) = self.shared_arena.clone() {
-            if let Some((address, entry)) = self.shared_entry {
-                if let Ok(result) = shared.borrow().with_active(address, || entry()) {
+            if let Some(owned) = self.shared_entry {
+                if let Ok(result) = shared.borrow().with_owned(owned, |entry| entry()) {
                     return Ok(result);
                 }
                 self.shared_entry = None;
@@ -2638,8 +2663,9 @@ impl NativeLoadConstPlan {
                 slab.make_executable(address)?;
                 (address, slab.constant_word_entry(address)?)
             };
-            self.shared_entry = Some((address, entry));
-            return shared.borrow().with_active(address, || entry());
+            let owned = shared.borrow().owned_entry(address, entry)?;
+            self.shared_entry = Some(owned);
+            return shared.borrow().with_owned(owned, |entry| entry());
         }
         if let Some(entry) = self.entry {
             return Ok(entry());
@@ -2676,7 +2702,7 @@ pub(crate) struct NativeUnaryPlan {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     entry: Option<extern "C" fn(i32) -> i32>,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    shared_entry: Option<(usize, extern "C" fn(i32) -> i32)>,
+    shared_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(i32) -> i32>>,
     #[cfg(test)]
     native_entry_count: u64,
 }
@@ -2741,8 +2767,8 @@ impl NativeUnaryPlan {
         let values = crate::stencil_fact::PatchValues::from_site(&self.site);
         if let Some(shared) = self.shared_arena.clone() {
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            if let Some((address, entry)) = self.shared_entry {
-                match shared.borrow().with_active(address, || entry(operand)) {
+            if let Some(owned) = self.shared_entry {
+                match shared.borrow().with_owned(owned, |entry| entry(operand)) {
                     Ok(result) => {
                         self.note_entry();
                         return Ok(f64::from(result));
@@ -2763,10 +2789,11 @@ impl NativeUnaryPlan {
                 self.lifecycle.reset();
                 error
             })?;
-            let result = shared.borrow().with_active(address, || entry(operand))?;
+            let owned = shared.borrow().owned_entry(address, entry)?;
+            let result = shared.borrow().with_owned(owned, |entry| entry(operand))?;
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             {
-                self.shared_entry = Some((address, entry));
+                self.shared_entry = Some(owned);
             }
             self.note_entry();
             return Ok(f64::from(result));
@@ -2796,7 +2823,7 @@ pub(crate) struct NativeAddChainPlan {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     entry: Option<extern "C" fn(f64, f64, f64) -> f64>,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    shared_entry: Option<(usize, extern "C" fn(f64, f64, f64) -> f64)>,
+    shared_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(f64, f64, f64) -> f64>>,
 }
 
 impl NativeAddChainPlan {
@@ -2849,10 +2876,10 @@ impl NativeAddChainPlan {
         {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
         }
-        if let (Some(shared), Some((address, entry))) =
+        if let (Some(shared), Some(owned)) =
             (self.shared_arena.clone(), self.shared_entry)
         {
-            match shared.borrow().with_active(address, || unsafe {
+            match shared.borrow().with_owned(owned, |entry| unsafe {
                 invoke_f64x3_entry(entry, lhs, rhs, third)
             }) {
                 Ok(value) => return Ok(value),
@@ -2879,8 +2906,9 @@ impl NativeAddChainPlan {
                     return Err(error);
                 }
             };
-            self.shared_entry = Some((address, entry));
-            return shared.borrow().with_active(address, || unsafe {
+            let owned = shared.borrow().owned_entry(address, entry)?;
+            self.shared_entry = Some(owned);
+            return shared.borrow().with_owned(owned, |entry| unsafe {
                 invoke_f64x3_entry(entry, lhs, rhs, third)
             });
         }
@@ -2938,7 +2966,7 @@ pub(crate) struct NativeMovePlan {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     entry: Option<extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64>,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    shared_entry: Option<(usize, extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64)>,
+    shared_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64>>,
     #[cfg(test)]
     native_entry_count: u64,
 }
@@ -3028,10 +3056,10 @@ impl NativeMovePlan {
             }
         }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-        if let (Some(shared), Some((address, entry))) =
+        if let (Some(shared), Some(owned)) =
             (self.shared_arena.clone(), self.shared_entry)
         {
-            match shared.borrow().with_active(address, || entry(source)) {
+            match shared.borrow().with_owned(owned, |entry| entry(source)) {
                 Ok(value) => {
                     self.note_entry();
                     return Ok(value);
@@ -3071,8 +3099,9 @@ impl NativeMovePlan {
                     return Err(error);
                 }
             };
-            self.shared_entry = Some((address, entry));
-            let result = shared.borrow().with_active(address, || entry(source));
+            let owned = shared.borrow().owned_entry(address, entry)?;
+            self.shared_entry = Some(owned);
+            let result = shared.borrow().with_owned(owned, |entry| entry(source));
             if result.is_ok() {
                 self.note_entry();
             }
@@ -3154,10 +3183,9 @@ pub(crate) struct NativePropertyPlan {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     entry: Option<extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64>,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    shared_entry: Option<(
-        usize,
+    shared_entry: Option<crate::stencil_arena::OwnedEntry<
         extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64,
-    )>,
+    >>,
     #[cfg(test)]
     native_entry_count: u64,
 }
@@ -3232,8 +3260,8 @@ impl NativePropertyPlan {
         }
         if let Some(shared) = self.shared_arena.clone() {
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            if let Some((address, entry)) = self.shared_entry {
-                match shared.borrow().with_active(address, || entry(slot.cast())) {
+            if let Some(owned) = self.shared_entry {
+                match shared.borrow().with_owned(owned, |entry| entry(slot.cast())) {
                     Ok(bits) => {
                         #[cfg(test)]
                         {
@@ -3263,10 +3291,11 @@ impl NativePropertyPlan {
                     return Err(error);
                 }
             };
-            let bits = shared.borrow().with_active(address, || entry(slot.cast()))?;
+            let owned = shared.borrow().owned_entry(address, entry)?;
+            let bits = shared.borrow().with_owned(owned, |entry| entry(slot.cast()))?;
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             {
-                self.shared_entry = Some((address, entry));
+                self.shared_entry = Some(owned);
             }
             #[cfg(test)]
             {

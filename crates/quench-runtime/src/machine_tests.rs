@@ -527,6 +527,7 @@ fn non_x86_native_execution_rejects_before_mapping() {
         integer_unsigned: false,
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         shared_entry_address: None,
+        shared_entry_owner: None,
         native_entry_count: 0,
     };
     assert!(plan.execute(1.0, 2.0).is_err());
@@ -553,6 +554,7 @@ fn native_numeric_entry_pointer_is_cached_after_first_render() {
         tagged_entry: None,
         uint_entry: None,
         shared_entry_address: None,
+        shared_entry_owner: None,
         tagged_shared_entry: None,
         native_entry_count: 0,
     };
