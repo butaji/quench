@@ -62,6 +62,11 @@ const fn aarch64_fdiv_d(rd: u8, rn: u8, rm: u8) -> u32 {
     0x1E60_1800 | ((rm as u32) << 16) | ((rn as u32) << 5) | rd as u32
 }
 
+/// AArch64 scalar double FNEG, ARM ARM C7.2.92.
+const fn aarch64_fneg_d(rd: u8, rn: u8) -> u32 {
+    0x1E61_4000 | ((rn as u32) << 5) | rd as u32
+}
+
 /// AArch64 RET, ARM ARM C6.2.172.
 const fn aarch64_ret() -> u32 {
     0xD65F_03C0
@@ -257,6 +262,22 @@ const fn x86_i32_bitop(opcode: u8) -> [u8; 5] {
 
 const fn x86_i32_unary_not() -> [u8; 5] {
     [0x89, 0xF8, 0xF7, 0xD0, 0xC3]
+}
+
+const fn x86_negate_bytes() -> [u8; 24] {
+    let mut out = [0; 24];
+    // MOVSD XMM1,[RIP+8]; XORPD XMM0,XMM1; RET; padding; sign mask.
+    out[0] = 0xF2;
+    out[1] = 0x0F;
+    out[2] = 0x10;
+    out[3] = 0x0D;
+    out[4] = 8;
+    out[8] = 0x66;
+    out[9] = 0x0F;
+    out[10] = 0x57;
+    out[11] = 0xC1;
+    out[12] = x86_ret();
+    out
 }
 
 const fn x86_nullish_word_bytes() -> [u8; 27] {
@@ -525,6 +546,8 @@ const AARCH64_SHIFT_RIGHT_BYTES: [u8; 8] =
 const AARCH64_SHIFT_RIGHT_ZERO_BYTES: [u8; 8] =
     aarch64_pair(aarch64_shift_w(0x1AC0_2400, 0, 0, 1), aarch64_ret());
 const AARCH64_BITWISE_NOT_BYTES: [u8; 8] = aarch64_pair(aarch64_mvn_w0(), aarch64_ret());
+const AARCH64_NEGATE_BYTES: [u8; 8] = aarch64_pair(aarch64_fneg_d(0, 0), aarch64_ret());
+const X86_NEGATE_BYTES: [u8; 24] = x86_negate_bytes();
 const AARCH64_NULLISH_WORD_BYTES: [u8; 32] = aarch64_nullish_word_bytes();
 const AARCH64_TRUTHY_WORD_BYTES: [u8; 24] = aarch64_truthy_word_bytes();
 const AARCH64_TRUTHY_POINTER_BYTES: [u8; 8] = aarch64_pair(0x5280_0020, aarch64_ret());
@@ -936,6 +959,18 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         aarch64_bytes: &AARCH64_BITWISE_NOT_BYTES,
         portable_bytes: &[0xC3],
         holes: &[],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
+        name: "negate",
+        operations: &["Unary", "Return"],
+        abi: DeclAbi::Scalar,
+        x86_bytes: &X86_NEGATE_BYTES,
+        aarch64_bytes: &AARCH64_NEGATE_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[(16, 8, "Literal64")],
         aarch64_holes: &[],
         entry: 0,
         external_entries: &[0],

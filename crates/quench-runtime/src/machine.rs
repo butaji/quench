@@ -2688,8 +2688,14 @@ impl NativeLoadConstPlan {
     }
 }
 
-/// Typed unary leaf for the exact Number-to-Int32 bitwise-not subset. Other
-/// unary operators retain the canonical residual handler and coercion order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeUnaryKind {
+    BitwiseNot,
+    Negate,
+}
+
+/// Typed unary leaves for exact numeric subsets. Other unary operators retain
+/// the canonical residual handler and coercion order.
 pub(crate) struct NativeUnaryPlan {
     arena: Option<crate::stencil_arena::StencilArena>,
     shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
@@ -2697,10 +2703,17 @@ pub(crate) struct NativeUnaryPlan {
     lifecycle: crate::stencil_lifecycle::StencilLifecycle,
     site: crate::quickening::QuickeningSite<4>,
     key: crate::stencil_fact::RegionKey,
+    kind: NativeUnaryKind,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     entry: Option<extern "C" fn(i32) -> i32>,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     shared_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(i32) -> i32>>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    number_entry: Option<extern "C" fn(f64) -> f64>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    shared_number_entry: Option<
+        crate::stencil_arena::OwnedEntry<extern "C" fn(f64) -> f64>,
+    >,
     #[cfg(test)]
     native_entry_count: u64,
 }
@@ -2727,13 +2740,24 @@ impl NativeUnaryPlan {
     }
 
     fn new(instruction: crate::ir::Instruction, policy: crate::stencil_policy::ExecutionPolicy) -> Option<Self> {
-        let key = crate::stencil_select::bitwise_not_region_key();
+        let (key, kind, abi) = match crate::ir::compact_unary_operator(instruction.flags) {
+            Some(crate::ops::UnaryOp::BitwiseNot) => (
+                crate::stencil_select::bitwise_not_region_key(),
+                NativeUnaryKind::BitwiseNot,
+                crate::stencil_select::RegionAbi::ScalarI32,
+            ),
+            Some(crate::ops::UnaryOp::Minus) => (
+                crate::stencil_select::negate_region_key(),
+                NativeUnaryKind::Negate,
+                crate::stencil_select::RegionAbi::Scalar,
+            ),
+            _ => return None,
+        };
         (policy.native_leaves
             && instruction.opcode == crate::ir::Opcode::Unary
-            && instruction.flags == crate::ir::compact_unary_id(crate::ops::UnaryOp::BitwiseNot)
             && crate::stencil_select::select_region(key).is_some_and(|record| {
                 record.executable
-                    && record.abi == crate::stencil_select::RegionAbi::ScalarI32
+                    && record.abi == abi
                     && validate_physical_template(record).is_ok()
             }))
             .then_some(Self {
@@ -2743,10 +2767,15 @@ impl NativeUnaryPlan {
                 lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
                 site: crate::quickening::QuickeningSite::new(instruction.opcode),
                 key,
+                kind,
                 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 entry: None,
                 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 shared_entry: None,
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+                number_entry: None,
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+                shared_number_entry: None,
                 #[cfg(test)]
                 native_entry_count: 0,
             })
@@ -2760,7 +2789,63 @@ impl NativeUnaryPlan {
         }
     }
 
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn execute_number(
+        &mut self,
+        value: f64,
+    ) -> Result<f64, crate::stencil_arena::ArenaError> {
+        let values = crate::stencil_fact::PatchValues::from_site(&self.site)
+            .with_constant_bits(0x8000_0000_0000_0000);
+        if let Some(shared) = self.shared_arena.clone() {
+            if let Some(owned) = self.shared_number_entry {
+                if let Ok(result) = shared.borrow().with_owned(owned, |entry| entry(value)) {
+                    self.note_entry();
+                    return Ok(result);
+                }
+                self.shared_number_entry = None;
+            }
+            let (address, entry) = {
+                let mut slab = shared.borrow_mut();
+                let stencil = crate::stencil_select::select_stencil(self.key)
+                    .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+                let address = slab.render_or_get(&mut self.cache, self.key, stencil, &values)?;
+                slab.make_executable(address)?;
+                (address, slab.f64_unary_entry(address)?)
+            };
+            let owned = shared.borrow().owned_entry(address, entry)?;
+            self.shared_number_entry = Some(owned);
+            let result = shared.borrow().with_owned(owned, |entry| entry(value))?;
+            self.note_entry();
+            return Ok(result);
+        }
+        if let Some(entry) = self.number_entry {
+            self.note_entry();
+            return Ok(entry(value));
+        }
+        if self.arena.is_none() {
+            self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
+        }
+        let arena = self
+            .arena
+            .as_mut()
+            .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
+        let stencil = crate::stencil_select::select_stencil(self.key)
+            .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+        let address = arena.render_or_get(&mut self.cache, self.key, stencil, &values)?;
+        arena.make_executable()?;
+        let entry = arena.f64_unary_entry(address)?;
+        self.number_entry = Some(entry);
+        self.note_entry();
+        Ok(entry(value))
+    }
+
     pub(crate) fn execute(&mut self, value: f64) -> Result<f64, crate::stencil_arena::ArenaError> {
+        if self.kind == NativeUnaryKind::Negate {
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            return self.execute_number(value);
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+            return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
+        }
         let operand = number_to_int32(value);
         let values = crate::stencil_fact::PatchValues::from_site(&self.site);
         if let Some(shared) = self.shared_arena.clone() {
