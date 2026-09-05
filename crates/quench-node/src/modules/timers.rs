@@ -51,6 +51,7 @@ pub struct Timer {
     pub active: bool,
     pub(crate) retired: bool,
     pub domain: Option<Value>,
+    pub process_scope: u64,
     pub(crate) order: u64,
 }
 
@@ -191,6 +192,7 @@ fn schedule(
             legacy_stores,
         );
     }
+    let process_scope = state.borrow().event_loop.process_scope();
     state.borrow_mut().timers.timers.insert(
         id,
         Timer {
@@ -206,6 +208,7 @@ fn schedule(
             active: true,
             retired: false,
             domain,
+            process_scope,
             order,
         },
     );
@@ -225,10 +228,7 @@ fn timer_object(
     };
     let object = crate::host::namespace_object_from_pairs(vec![
         (TIMER_ID_PROP.to_string(), Value::Number(id as f64)),
-        (
-            "_destroyed".to_string(),
-            Value::Boolean(false),
-        ),
+        ("_destroyed".to_string(), Value::Boolean(false)),
         (
             "constructor".to_string(),
             host_api::object(vec![(

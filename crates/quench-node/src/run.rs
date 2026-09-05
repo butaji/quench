@@ -55,6 +55,19 @@ pub fn run_script_with_sink(
     source: &str,
     sink: OutputSink,
 ) -> RunOutcome {
+    run_script_with_exec_argv(script, script_args, &[], source, sink)
+}
+
+/// Run a script with explicit process flags. Flags before the script belong
+/// to `process.execArgv`; preserving them separately from script arguments is
+/// essential for uncaught-exception policy and gated builtins.
+pub fn run_script_with_exec_argv(
+    script: &Path,
+    script_args: &[String],
+    exec_argv: &[String],
+    source: &str,
+    sink: OutputSink,
+) -> RunOutcome {
     // Compatibility tests model the Node executable, not the test harness
     // binary that happens to host it.
     let exec = "quench-node".to_string();
@@ -70,13 +83,14 @@ pub fn run_script_with_sink(
                 .find_map(|flag| flag.strip_prefix("--title=").map(str::to_owned))
         })
         .unwrap_or_else(|| "quench-node".into());
-    let fixture_flags = source
+    let mut fixture_flags = source
         .lines()
         .filter_map(|line| line.trim().strip_prefix("// Flags:"))
         .flat_map(str::split_whitespace)
         .filter(|flag| flag.starts_with('-'))
         .map(str::to_owned)
         .collect::<Vec<_>>();
+    fixture_flags.extend(exec_argv.iter().cloned());
     let (host, context) = crate::host::install_with_argv_and_title_and_exec_argv(
         RealmId::ROOT,
         sink,
@@ -130,7 +144,7 @@ pub fn run_script_with_sink(
         .collect::<Vec<_>>()
         .join("\n");
     let bootstrap_surface = format!(
-        "{web_streams_surface}\n{globals_surface}\n{fetch_surface}\nconst fetch = globalThis.fetch;\n{externalizable_surface}\n{report_surface}\n{async_resource_surface}\n{webcrypto_surface}\nfor (const __name of ['MessageChannel','MessagePort','worker_threads','TypeMismatchError','QuotaExceededError','__nodeCurrentAsyncResource','__nodeCallChecks']) if (__name in globalThis) Object.defineProperty(globalThis, __name, {{ configurable: true, enumerable: false, writable: true, value: globalThis[__name] }});"
+        "{web_streams_surface}\n{globals_surface}\n{fetch_surface}\nconst fetch = globalThis.fetch;\n{externalizable_surface}\n{report_surface}\n{async_resource_surface}\n{webcrypto_surface}\nconst crypto = globalThis.crypto;\nfor (const __name of ['MessageChannel','MessagePort','worker_threads','TypeMismatchError','QuotaExceededError','__nodeCurrentAsyncResource','__nodeCallChecks']) if (__name in globalThis) Object.defineProperty(globalThis, __name, {{ configurable: true, enumerable: false, writable: true, value: globalThis[__name] }});"
     );
     let wrapped = format!(
         "{bootstrap_surface}\n{punycode_surface}\n{vfs_head_surface}\n{vfs_surface}\n{vfs_stream_setup}\nObject.defineProperty(globalThis, '__nodePath', {{ value: __nodePath, configurable: true, enumerable: false }}); Object.defineProperty(globalThis, '__quench_fs_mkdir', {{ value: __quench_fs_mkdir, configurable: true, enumerable: false }}); globalThis.URL = URL; Object.defineProperty(globalThis, '__nodeURL', {{ value: globalThis.URL, configurable: true }}); Object.defineProperty(globalThis, '__nodeURLSearchParams', {{ value: globalThis.URLSearchParams, configurable: true }});\n{performance_surface}\n{url_pattern_surface}\nObject.defineProperty(globalThis, '__quenchURLPattern', {{ value: globalThis.__quenchURLPatternFactory?.(), configurable: true }}); delete globalThis.__quenchURLPatternFactory; delete globalThis.__quenchURLInstallCanParse; delete globalThis.__quenchURLInstallToString; delete globalThis.__nodeThrowReadonlyURLSetter;\n{wrapped}\n// Materialize persistent host globals after module setup and before the pump.\n{persistent_globals}"
@@ -186,7 +200,7 @@ pub fn eval_script_with_input_type(
     let web_streams_surface = crate::polyfills::bootstrap::lookup("web-streams").unwrap_or("");
     let source_text = source.to_owned();
     let punycode_surface = crate::polyfills::bootstrap::lookup("punycode").unwrap_or("");
-    let source = format!("{web_streams_surface}\n{globals_surface}\n{fetch_surface}\nconst fetch = globalThis.fetch;\n{punycode_surface}\n{source}");
+    let source = format!("{web_streams_surface}\n{globals_surface}\n{fetch_surface}\nconst fetch = globalThis.fetch; const crypto = globalThis.crypto;\n{punycode_surface}\n{source}");
     let context = context.with_compiled_source_text(source.clone());
     let ops = match reduce(&source) {
         Ok(ops) => ops,
@@ -296,11 +310,21 @@ fn route_uncaught(
     result: Result<quench_runtime::value::Value, VmError>,
 ) -> Result<(), VmError> {
     match result {
-        Err(error) => match crate::modules::pump::handle_uncaught(&host.state(), error) {
+        Err(error) => {
+            if crate::modules::process::abort_on_uncaught_exception(&host.state()) {
+                std::process::abort();
+            }
+            match crate::modules::pump::handle_uncaught(&host.state(), error) {
             Ok(()) => {
-                drive(context, "__quench_uncaught__();")
-                    .and_then(|_| drive(context, "__quench_run_loop__();"))?;
-                Ok(())
+                let handled = drive(context, "__quench_uncaught__();")
+                    .and_then(|_| drive(context, "__quench_run_loop__();"));
+                match handled {
+                    Ok(_) => Ok(()),
+                    Err(error) if crate::modules::process::abort_on_uncaught_exception(&host.state()) => {
+                        std::process::abort();
+                    }
+                    Err(error) => Err(error),
+                }
             }
             Err(error) => {
                 if crate::modules::process::abort_on_uncaught_exception(&host.state()) {
@@ -308,7 +332,8 @@ fn route_uncaught(
                 }
                 Err(error)
             }
-        },
+            }
+        }
         ok => ok.map(|_| ()),
     }
 }
