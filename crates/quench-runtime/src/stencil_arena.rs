@@ -2533,6 +2533,16 @@ mod tests {
         );
         assert_eq!(arena.used(), 0);
         assert_eq!(cache.len(), 0);
+        let bad_data = crate::stencil_select::PhysicalStencilView {
+            data: &[0xAA],
+            ..view
+        };
+        assert_eq!(
+            arena.render_physical_view_or_get(&mut cache, bad_data, &values),
+            Err(ArenaError::ProtectionFailed)
+        );
+        assert_eq!(arena.used(), 0);
+        assert_eq!(cache.len(), 0);
     }
 
     #[test]
