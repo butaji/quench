@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `43c8b2da0` (cleanup files remain
+Evidence below is bound to source revision `4db54bbd9` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -15,6 +15,14 @@ Add-chain equivalence is `/tmp/quench-add-chain-canonical-20260905.log` (1
 passed), and the full runtime library suite is
 `/tmp/quench-runtime-full-20260905-addchain-cache-order.log` (734 passed, 0
 failed, 1 ignored).
+
+The same path is now split into cache lookup, shared rendering and local
+rendering helpers (source `4db54bbd9`), keeping each lifecycle phase explicit.
+Focused normal and execution-trace cache-owner tests pass at
+`/tmp/quench-add-chain-helper-refactor-20260905.log` and
+`/tmp/quench-add-chain-helper-trace-20260905.log` (1 passed each); the full
+normal runtime remains **734 passed, 0 failed, 1 ignored** at
+`/tmp/quench-runtime-full-20260905-addchain-helper-refactor.log`.
 
 The generated catalog now records each target template's build-time helper-call
 effect; `validate_physical_template` compares that fact with decoded bytes and
