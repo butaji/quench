@@ -2138,7 +2138,9 @@ impl NativeMovePlan {
             return None;
         }
         let key = crate::stencil_select::move_region_key();
-        crate::stencil_select::select_region(key).filter(|record| record.executable)?;
+        crate::stencil_select::select_region(key).filter(|record| {
+            record.executable && record.abi == crate::stencil_select::RegionAbi::TaggedWord
+        })?;
         Some(Self {
             arena: None,
             shared_arena: None,
@@ -2290,7 +2292,9 @@ impl NativePropertyPlan {
         let opcode = instruction.opcode;
         (opcode == crate::ir::Opcode::GetN).then_some(())?;
         let key = crate::stencil_select::property_region_key();
-        crate::stencil_select::select_region(key).filter(|record| record.executable)?;
+        crate::stencil_select::select_region(key).filter(|record| {
+            record.executable && record.abi == crate::stencil_select::RegionAbi::TaggedWord
+        })?;
         Some(Self {
             arena: None,
             shared_arena: None,
@@ -2872,6 +2876,7 @@ impl NativeRegionPlan {
                 && !matches!(
                     record.abi,
                     crate::stencil_select::RegionAbi::Scalar
+                        | crate::stencil_select::RegionAbi::TaggedWord
                         | crate::stencil_select::RegionAbi::ScalarI32
                         | crate::stencil_select::RegionAbi::ScalarU32
                 )
@@ -2959,6 +2964,7 @@ impl NativeRegionPlan {
             if matches!(
                 contract.abi,
                 crate::stencil_select::RegionAbi::Scalar
+                    | crate::stencil_select::RegionAbi::TaggedWord
                     | crate::stencil_select::RegionAbi::ScalarI32
                     | crate::stencil_select::RegionAbi::ScalarU32
             ) {
@@ -2987,6 +2993,7 @@ impl NativeRegionPlan {
                 crate::stencil_select::RegionAbi::ArrayNumericLoop => "array_numeric_loop",
                 crate::stencil_select::RegionAbi::Bridge => "bridge",
                 crate::stencil_select::RegionAbi::Scalar => "scalar",
+                crate::stencil_select::RegionAbi::TaggedWord => "tagged_word",
                 crate::stencil_select::RegionAbi::ScalarI32 => "scalar_i32",
                 crate::stencil_select::RegionAbi::ScalarU32 => "scalar_u32",
             };
@@ -3044,6 +3051,11 @@ impl NativeRegionPlan {
                 crate::stencil_select::RegionAbi::Scalar => {
                     return Err(NativeDispatchError::Physical(
                         "scalar ABI cannot enter a region context".into(),
+                    ));
+                }
+                crate::stencil_select::RegionAbi::TaggedWord => {
+                    return Err(NativeDispatchError::Physical(
+                        "tagged-word ABI cannot enter a region context".into(),
                     ));
                 }
                 crate::stencil_select::RegionAbi::ScalarI32 => {
@@ -3292,6 +3304,7 @@ impl BaselinePlan {
                             || matches!(
                                 record.abi,
                                     crate::stencil_select::RegionAbi::Scalar
+                                    | crate::stencil_select::RegionAbi::TaggedWord
                                     | crate::stencil_select::RegionAbi::ScalarI32
                                     | crate::stencil_select::RegionAbi::ScalarU32
                             )
