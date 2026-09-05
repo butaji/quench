@@ -2980,6 +2980,7 @@ impl NativeRegionPlan {
         let record = crate::stencil_select::select_region(key).filter(|record| {
             record.executable
                 && !record.operations.is_empty()
+                && validate_physical_template(record).is_ok()
                 && !matches!(
                     record.abi,
                     crate::stencil_select::RegionAbi::Scalar
