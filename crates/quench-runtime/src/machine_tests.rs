@@ -1459,10 +1459,16 @@ fn shared_constant_entry_recovers_after_owner_eviction() {
     )
     .expect("shared constant plan");
     assert_eq!(plan.execute(), Ok(crate::tagged_value::TaggedValue::number(42.5).bits()));
-    assert!(plan.shared_entry.is_some());
+    assert!(matches!(
+        plan.installed,
+        super::InstalledConstantEntry::Shared(_)
+    ));
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert_eq!(plan.execute(), Ok(crate::tagged_value::TaggedValue::number(42.5).bits()));
-    assert!(plan.shared_entry.is_some(), "eviction must force a fresh owner");
+    assert!(matches!(
+        plan.installed,
+        super::InstalledConstantEntry::Shared(_)
+    ), "eviction must force a fresh owner");
 }
 
 #[test]
