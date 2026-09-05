@@ -9,6 +9,9 @@ pub fn deep_clone(value: Value) -> Value {
     if let Some(clone) = crate::modules::webcrypto::clone_key(&value) {
         return clone;
     }
+    if let Some(clone) = crate::modules::crypto::clone_key_object(&value) {
+        return clone;
+    }
     // AbortSignal transfer keeps the source signal live and delivers the same
     // abort state to the receiving port.  Preserve the canonical host target
     // instead of reducing it to an ordinary object.
@@ -119,6 +122,9 @@ pub fn advanced_clone(value: Value) -> Value {
 }
 
 fn advanced_clone_inner(value: Value, seen: &mut HashMap<u64, Value>) -> Value {
+    if let Some(clone) = crate::modules::crypto::clone_key_object(&value) {
+        return clone;
+    }
     // V8's advanced serializer preserves the observable Error fields even
     // though `message` and `stack` are non-enumerable. Recreate the matching
     // built-in error before falling back to ordinary enumerable properties.
