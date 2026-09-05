@@ -1898,10 +1898,7 @@ mod lane_profile_tests {
         counters.stencil_iterations.insert(key, 12);
         let profile = stencil_profile(&counters);
         assert_eq!(profile["code=7:pc=11:array_numeric_loop"]["hits"], 3);
-        assert_eq!(
-            profile["code=7:pc=11:array_numeric_loop"]["iterations"],
-            12
-        );
+        assert_eq!(profile["code=7:pc=11:array_numeric_loop"]["iterations"], 12);
     }
 
     #[test]
