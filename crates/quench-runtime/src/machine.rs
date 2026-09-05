@@ -2028,6 +2028,7 @@ impl std::fmt::Debug for NativeAddChainPlan {
 /// the retain/release edge, so pointer-backed values remain ownership-safe.
 pub(crate) struct NativeMovePlan {
     arena: Option<crate::stencil_arena::StencilArena>,
+    shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
     cache: crate::stencil_select::RenderedRegionCache,
     lifecycle: crate::stencil_lifecycle::StencilLifecycle,
     site: crate::quickening::QuickeningSite<4>,
@@ -2037,6 +2038,16 @@ pub(crate) struct NativeMovePlan {
 }
 
 impl NativeMovePlan {
+    fn new_with_arena(
+        instruction: crate::ir::Instruction,
+        policy: crate::stencil_policy::ExecutionPolicy,
+        shared_arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
+    ) -> Option<Self> {
+        let mut plan = Self::new(instruction, policy)?;
+        plan.shared_arena = Some(shared_arena);
+        Some(plan)
+    }
+
     fn new(
         instruction: crate::ir::Instruction,
         policy: crate::stencil_policy::ExecutionPolicy,
@@ -2051,6 +2062,7 @@ impl NativeMovePlan {
         crate::stencil_select::select_region(key).filter(|record| record.executable)?;
         Some(Self {
             arena: None,
+            shared_arena: None,
             cache: crate::stencil_select::RenderedRegionCache::new(),
             lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
             site: crate::quickening::QuickeningSite::new(instruction.opcode),
@@ -2078,6 +2090,18 @@ impl NativeMovePlan {
             || self.lifecycle.observe(key, true) == crate::stencil_lifecycle::StencilState::Retired
         {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
+        }
+        if let Some(shared) = self.shared_arena.clone() {
+            let entry = {
+                let mut slab = shared.borrow_mut();
+                let stencil = crate::stencil_select::select_stencil(key)
+                    .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+                let address = slab.render_or_get(&mut self.cache, key, stencil, &values)?;
+                slab.make_executable(address)?;
+                slab.tagged_word_entry(address)?
+            };
+            self.entry = Some(entry);
+            return Ok(entry(source));
         }
         if self.arena.is_none() {
             match crate::stencil_arena::StencilArena::new(4096) {
@@ -2127,7 +2151,12 @@ impl std::fmt::Debug for NativeMovePlan {
             .field("opcode", &self.opcode)
             .field(
                 "used_bytes",
-                &self.arena.as_ref().map_or(0, |arena| arena.used()),
+                &self
+                    .shared_arena
+                    .as_ref()
+                    .map(|arena| arena.borrow().used())
+                    .or_else(|| self.arena.as_ref().map(|arena| arena.used()))
+                    .unwrap_or(0),
             )
             .field("cache_len", &self.cache.len())
             .finish()
@@ -2139,6 +2168,7 @@ impl std::fmt::Debug for NativeMovePlan {
 /// word load, while `RegisterFile` owns the retain/release edge afterward.
 pub(crate) struct NativePropertyPlan {
     arena: Option<crate::stencil_arena::StencilArena>,
+    shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
     cache: crate::stencil_select::RenderedRegionCache,
     lifecycle: crate::stencil_lifecycle::StencilLifecycle,
     opcode: crate::ir::Opcode,
@@ -2147,6 +2177,16 @@ pub(crate) struct NativePropertyPlan {
 }
 
 impl NativePropertyPlan {
+    fn new_with_arena(
+        instruction: crate::ir::Instruction,
+        policy: crate::stencil_policy::ExecutionPolicy,
+        shared_arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
+    ) -> Option<Self> {
+        let mut plan = Self::new(instruction, policy)?;
+        plan.shared_arena = Some(shared_arena);
+        Some(plan)
+    }
+
     fn new(
         instruction: crate::ir::Instruction,
         policy: crate::stencil_policy::ExecutionPolicy,
@@ -2160,6 +2200,7 @@ impl NativePropertyPlan {
         crate::stencil_select::select_region(key).filter(|record| record.executable)?;
         Some(Self {
             arena: None,
+            shared_arena: None,
             cache: crate::stencil_select::RenderedRegionCache::new(),
             lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
             opcode,
@@ -2188,6 +2229,18 @@ impl NativePropertyPlan {
                 == crate::stencil_lifecycle::StencilState::Retired
         {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
+        }
+        if let Some(shared) = self.shared_arena.clone() {
+            let entry = {
+                let mut slab = shared.borrow_mut();
+                let stencil = crate::stencil_select::select_stencil(key)
+                    .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+                let address = slab.render_or_get(&mut self.cache, key, stencil, &values)?;
+                slab.make_executable(address)?;
+                slab.tagged_word_entry(address)?
+            };
+            self.entry = Some(entry);
+            return Ok(entry(slot.cast()));
         }
         if self.arena.is_none() {
             match crate::stencil_arena::StencilArena::new(4096) {
@@ -2237,7 +2290,12 @@ impl std::fmt::Debug for NativePropertyPlan {
             .field("opcode", &self.opcode)
             .field(
                 "used_bytes",
-                &self.arena.as_ref().map_or(0, |arena| arena.used()),
+                &self
+                    .shared_arena
+                    .as_ref()
+                    .map(|arena| arena.borrow().used())
+                    .or_else(|| self.arena.as_ref().map(|arena| arena.used()))
+                    .unwrap_or(0),
             )
             .field("cache_len", &self.cache.len())
             .finish()
@@ -2971,7 +3029,11 @@ impl BaselinePlan {
         let native_property = entries
             .iter()
             .map(|entry| {
-                NativePropertyPlan::new(entry.instruction, policy)
+                NativePropertyPlan::new_with_arena(
+                    entry.instruction,
+                    policy,
+                    Rc::clone(&shared_region_arena),
+                )
                     .map(|native| Rc::new(RefCell::new(native)))
             })
             .collect::<Vec<_>>()
@@ -2979,7 +3041,11 @@ impl BaselinePlan {
         let native_move = entries
             .iter()
             .map(|entry| {
-                NativeMovePlan::new(entry.instruction, policy)
+                NativeMovePlan::new_with_arena(
+                    entry.instruction,
+                    policy,
+                    Rc::clone(&shared_region_arena),
+                )
                     .map(|native| Rc::new(RefCell::new(native)))
             })
             .collect::<Vec<_>>()

@@ -215,6 +215,16 @@ impl SharedStencilSlab {
             .f64x3_entry(address)
     }
 
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn tagged_word_entry(
+        &self,
+        address: usize,
+    ) -> Result<extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64, ArenaError> {
+        self.slab_for(address)
+            .ok_or(ArenaError::ProtectionFailed)?
+            .tagged_word_entry(address)
+    }
+
     pub fn execute_dispatch(
         &self,
         address: usize,
