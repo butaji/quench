@@ -2698,6 +2698,8 @@ pub(crate) struct NativeLoadConstPlan {
     entry: Option<extern "C" fn() -> u64>,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     shared_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn() -> u64>>,
+    #[cfg(test)]
+    native_entry_count: u64,
 }
 
 impl std::fmt::Debug for NativeLoadConstPlan {
@@ -2741,6 +2743,8 @@ impl NativeLoadConstPlan {
                 entry: None,
                 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 shared_entry: None,
+                #[cfg(test)]
+                native_entry_count: 0,
             })
     }
 
@@ -2751,6 +2755,10 @@ impl NativeLoadConstPlan {
         if let Some(shared) = self.shared_arena.clone() {
             if let Some(owned) = self.shared_entry {
                 if let Ok(result) = shared.borrow().with_owned(owned, |entry| entry()) {
+                    #[cfg(test)]
+                    {
+                        self.native_entry_count = self.native_entry_count.saturating_add(1);
+                    }
                     return Ok(result);
                 }
                 self.shared_entry = None;
@@ -2766,7 +2774,13 @@ impl NativeLoadConstPlan {
             let owned = shared.borrow().owned_entry(address, entry)?;
             self.shared_entry = Some(owned);
             return match shared.borrow().with_owned(owned, |entry| entry()) {
-                Ok(result) => Ok(result),
+                Ok(result) => {
+                    #[cfg(test)]
+                    {
+                        self.native_entry_count = self.native_entry_count.saturating_add(1);
+                    }
+                    Ok(result)
+                }
                 Err(error) => {
                     self.shared_entry = None;
                     self.cache.clear();
@@ -2775,6 +2789,10 @@ impl NativeLoadConstPlan {
             };
         }
         if let Some(entry) = self.entry {
+            #[cfg(test)]
+            {
+                self.native_entry_count = self.native_entry_count.saturating_add(1);
+            }
             return Ok(entry());
         }
         if self.arena.is_none() {
@@ -2788,6 +2806,10 @@ impl NativeLoadConstPlan {
         arena.make_executable()?;
         let entry = arena.constant_word_entry(address)?;
         self.entry = Some(entry);
+        #[cfg(test)]
+        {
+            self.native_entry_count = self.native_entry_count.saturating_add(1);
+        }
         Ok(entry())
     }
 

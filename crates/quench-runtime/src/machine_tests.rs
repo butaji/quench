@@ -1427,6 +1427,7 @@ fn primitive_load_const_uses_rendered_machine_word_and_preserves_value() {
     .is_ok());
     assert_eq!(registers.read(0), Some(crate::value::Value::Number(42.5)));
     assert!(native.borrow_mut().execute().is_ok());
+    assert!(native.borrow().native_entry_count > 0, "constant bytes must execute");
 
     let string_code = crate::machine::ExecutableCode::from_ops(vec![
         crate::ops::Op::Const {
