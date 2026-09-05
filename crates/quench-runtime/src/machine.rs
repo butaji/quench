@@ -4305,11 +4305,15 @@ impl NativeRegionPlan {
         if !enabled {
             return None;
         }
+        let view = crate::stencil_select::select_physical(key)?;
         let record = crate::stencil_select::select_region(key).filter(|record| {
             record.executable
                 && !record.operations.is_empty()
                 && validate_physical_template(record).is_ok()
                 && record.abi.accepts_region_context()
+                && view.executable
+                && view.stencil.validate()
+                && view.abi == record.abi
         })?;
         Some(Self {
             arena: Some(arena),
