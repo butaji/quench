@@ -40,6 +40,9 @@ by ordinary-source numeric/NaN/boolean execution plus coercive fallback
 passed, 0 failed, 1 ignored** (`/tmp/quench-runtime-full-20260905-logical-not.log`)
 and execution-trace runtime is **744 passed, 0 failed, 1 ignored**
 (`/tmp/quench-runtime-trace-20260905-logical-not.log`).
+Fresh ARM-host emitted-byte audits also pass for strict/ordered comparisons
+(`/tmp/quench-compare-arm-audit-20260905.log`) and all typed bitwise/shift
+entries (`/tmp/quench-bitwise-arm-audit-20260905.log`).
 
 | Layer / family | Code and normal wiring | Executed evidence | Supported / safe boundary | Status and remaining gap |
 | --- | --- | --- | --- | --- |
