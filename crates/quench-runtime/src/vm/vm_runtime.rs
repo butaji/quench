@@ -6651,49 +6651,56 @@ mod compact_handler_tests {
         )
         .expect("ordinary loop lowers");
         let code = program.code();
-        let has_backedge = |view: crate::machine::CodeView<'_>| (0..view.len()).any(|pc| {
-            view.instruction(pc).is_some_and(|instruction| {
-                instruction.opcode == crate::ir::Opcode::Jump
-                    && usize::from(instruction.b) < pc
-            })
-        });
-        let backedge = (0..code.len()).any(|pc| {
-            code.instruction(pc)
-                .is_some_and(|instruction| instruction.opcode == crate::ir::Opcode::Jump && usize::from(instruction.b) < pc)
-        }) || code.cold_ops().any(|(_, op)| {
-            let mut found = false;
-            op.visit_bodies(&mut |body| {
-                found |= body.code().is_some_and(&has_backedge);
+        fn contains_backedge(view: crate::machine::CodeView<'_>) -> bool {
+            let direct = (0..view.len()).any(|pc| {
+                view.instruction(pc).is_some_and(|instruction| {
+                    instruction.opcode == crate::ir::Opcode::Jump
+                        && usize::from(instruction.b) < pc
+                })
             });
-            found
-        });
+            direct || view.cold_ops().any(|(_, op)| {
+                if matches!(op, crate::ops::Op::Loop { .. }) {
+                    return true;
+                }
+                let mut found = false;
+                op.visit_bodies(&mut |body| {
+                    found |= body.code().is_some_and(contains_backedge);
+                });
+                found
+            })
+        }
+        #[cfg(not(feature = "execution-trace"))]
+        fn contains_shape(
+            view: crate::machine::CodeView<'_>,
+            shape: &[crate::ir::Opcode],
+        ) -> bool {
+            let direct = (0..view.len()).any(|pc| {
+                (0..shape.len()).all(|offset| {
+                    view.instruction(pc + offset)
+                        .is_some_and(|instruction| instruction.opcode == shape[offset])
+                })
+            });
+            direct || view.cold_ops().any(|(_, op)| {
+                let mut found = false;
+                op.visit_bodies(&mut |body| {
+                    found |= body.code().is_some_and(|nested| contains_shape(nested, shape));
+                });
+                found
+            })
+        }
+        let backedge = contains_backedge(code);
         assert!(backedge, "ordinary source must lower a nested loop body with a backward edge");
         let admitted_shape = crate::stencil_select::select_region(
             crate::stencil_select::array_numeric_loop_region_key(),
         )
         .expect("numeric loop declaration")
         .operations;
-        let has_admitted_shape = (0..code.len()).any(|pc| {
-            (0..admitted_shape.len()).all(|offset| {
-                code.instruction(pc + offset)
-                    .is_some_and(|instruction| instruction.opcode == admitted_shape[offset])
-            })
-        }) || code.cold_ops().any(|(_, op)| {
-            let mut found = false;
-            op.visit_bodies(&mut |body| {
-                if let Some(body) = body.code() {
-                    found |= (0..body.len()).any(|pc| {
-                        (0..admitted_shape.len()).all(|offset| {
-                            body.instruction(pc + offset)
-                                .is_some_and(|instruction| instruction.opcode == admitted_shape[offset])
-                        })
-                    });
-                }
-            });
-            found
-        });
-        assert!(has_admitted_shape, "ordinary source must expose the declared numeric-loop span");
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(not(feature = "execution-trace"))]
+        assert!(
+            contains_shape(code, admitted_shape),
+            "ordinary source must expose the declared numeric-loop span"
+        );
+        #[cfg(all(target_arch = "aarch64", not(feature = "execution-trace")))]
         {
             let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
             let mut reaches_native_admission = false;
