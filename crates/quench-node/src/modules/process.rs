@@ -371,6 +371,7 @@ fn info_props_with_exec_argv(
         ),
     ]);
     let stdin = crate::host::namespace_object_from_pairs(vec![
+        ("fd".into(), Value::Number(0.0)),
         (
             "on".into(),
             Value::Builtin(quench_runtime::ops::Builtin::Object),

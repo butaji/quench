@@ -1001,9 +1001,9 @@ pub fn get_valid_stdio(args: &[Value]) -> Result<Value, VmError> {
     };
     if from_array {
         for index in length..3 {
-            execute::set_property_in_place(&stdio, &index.to_string(), Value::Undefined);
+            execute::set_array_element_in_place(&stdio, index, Value::Undefined);
         }
-        execute::set_property_in_place(&stdio, "length", Value::Number(3.0));
+        execute::set_array_length_in_place(&stdio, 3);
     }
     let mut normalized = Vec::with_capacity(3);
     let mut ipc = Value::Undefined;

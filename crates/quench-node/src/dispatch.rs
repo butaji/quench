@@ -379,6 +379,7 @@ const CAP_CP_DISCONNECT: u16 = 0x1E10;
 const CAP_CP_DISCONNECT_EMIT: u16 = 0x1E11;
 const CAP_CP_CONSTRUCTOR: u16 = crate::registry::SPEC_CP_CONSTRUCTOR.cap;
 const CAP_CP_INSTANCE_SPAWN: u16 = crate::registry::SPEC_CP_INSTANCE_SPAWN.cap;
+const CAP_CP_GET_VALID_STDIO: u16 = crate::registry::SPEC_CP_GET_VALID_STDIO.cap;
 const CAP_PROCESS_UMASK: u16 = 0x0A06;
 const CAP_PROCESS_ON: u16 = 0x0A07;
 const CAP_PROCESS_ONCE: u16 = 0x0A08;
@@ -1546,6 +1547,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_CP_DISCONNECT => cp_disconnect,
         CAP_CP_DISCONNECT_EMIT => cp_disconnect_emit,
         CAP_CP_INSTANCE_SPAWN => cp_instance_spawn,
+        CAP_CP_GET_VALID_STDIO => cp_get_valid_stdio,
         CAP_CP_EXECSYNC => cp_exec_sync,
         CAP_CP_EXEC => cp_async,
         CAP_CP_EXECFILE => cp_exec_file,
