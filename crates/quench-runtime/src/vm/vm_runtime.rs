@@ -13,6 +13,7 @@ pub(crate) struct NativeDispatchContext<'a> {
     context: *const VmContext,
     result: Option<DispatchTransition>,
     error: Option<VmError>,
+    error_pc: Option<usize>,
 }
 
 impl<'a> NativeDispatchContext<'a> {
@@ -31,6 +32,7 @@ impl<'a> NativeDispatchContext<'a> {
             context,
             result: None,
             error: None,
+            error_pc: None,
         }
     }
 
@@ -50,7 +52,13 @@ impl<'a> NativeDispatchContext<'a> {
                         "native bridge returned an empty semantic error".into(),
                     ))
                 },
-                |error| Err(crate::machine::NativeDispatchError::Semantic(error)),
+                |error| match self.error_pc {
+                    Some(pc) => Err(crate::machine::NativeDispatchError::SemanticAt {
+                        pc,
+                        error,
+                    }),
+                    None => Err(crate::machine::NativeDispatchError::Semantic(error)),
+                },
             ),
             _ => Err(crate::machine::NativeDispatchError::Physical(
                 "native bridge returned an invalid status".into(),
@@ -191,6 +199,7 @@ pub(crate) extern "C" fn native_dispatch_bridge(raw: *mut std::ffi::c_void) -> u
             NATIVE_DISPATCH_OK
         }
         Err(error) => {
+            dispatch.error_pc = Some(dispatch.pc);
             dispatch.error = Some(error);
             NATIVE_DISPATCH_SEMANTIC_ERROR
         }
@@ -258,6 +267,7 @@ pub(crate) extern "C" fn native_region_bridge(raw: *mut std::ffi::c_void) -> u64
                 return NATIVE_DISPATCH_OK;
             }
             Some(Err(error)) => {
+                region.error_pc = Some(region.pc + 4);
                 region.error = Some(error);
                 return NATIVE_DISPATCH_SEMANTIC_ERROR;
             }
@@ -276,6 +286,7 @@ pub(crate) extern "C" fn native_region_bridge(raw: *mut std::ffi::c_void) -> u64
             NATIVE_DISPATCH_SEMANTIC_ERROR
         }
         Err(crate::machine::NativeDispatchError::Semantic(error)) => {
+            region.error_pc = Some(region.pc);
             region.error = Some(error);
             NATIVE_DISPATCH_SEMANTIC_ERROR
         }
@@ -579,6 +590,7 @@ pub(crate) fn execute_composed_array_kernel(
     registers.write(usize::from(i0.a), array_value);
     registers.write_number(usize::from(i1.a), element);
     registers.write_number(usize::from(i2.a), kernel.result);
+    crate::execution_trace::stencil_iterations(code, pc, "composed_array_kernel", 1);
     let value = read_register(registers, i4.a).map_err(|error| {
         crate::machine::NativeDispatchError::SemanticAt { pc: pc + 4, error }
     })?;
@@ -732,6 +744,12 @@ pub(crate) fn execute_composed_array_numeric_loop(
     registers.write_number(usize::from(add_value.a), kernel.result);
     registers.write_number(usize::from(move_result.a), kernel.result);
     registers.write_number(usize::from(load_index.a), kernel.index as f64);
+    crate::execution_trace::stencil_iterations(
+        code,
+        pc,
+        "composed_array_numeric_loop",
+        kernel.index.saturating_sub(index),
+    );
     Ok(Some(handler_transition(pc + 19, None)))
 }
 
@@ -3974,6 +3992,39 @@ mod compact_handler_tests {
             Err(crate::machine::NativeDispatchError::SemanticAt { pc: 1, .. })
         ));
         assert_eq!(environment.get(0), Value::Number(17.0));
+    }
+
+    #[test]
+    fn native_bridge_preserves_fault_pc_after_prior_effect() {
+        const OPS: &[crate::ir::Opcode] = &[crate::ir::Opcode::StoreLocal, crate::ir::Opcode::Slow];
+        let code = crate::machine::ExecutableCode::from_ops(vec![
+            Op::StoreLocal { slot: 0, src: 0 },
+            Op::RequireObjectCoercible { src: 1 },
+        ]);
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![
+            Value::Number(23.0),
+            Value::Undefined,
+        ]);
+        let environment = crate::environment::Environment::new();
+        let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+        let context = crate::vm::current_context_or_default();
+        let mut region = super::NativeRegionContext::new(
+            code.code(),
+            0,
+            OPS,
+            &mut registers,
+            &context,
+        );
+        let status = super::native_region_bridge(
+            (&mut region as *mut super::NativeRegionContext<'_>)
+                .cast::<std::ffi::c_void>(),
+        );
+        assert_eq!(status, super::NATIVE_DISPATCH_SEMANTIC_ERROR);
+        assert_eq!(environment.get(0), Value::Number(23.0));
+        assert!(matches!(
+            region.finish(status),
+            Err(crate::machine::NativeDispatchError::SemanticAt { pc: 1, .. })
+        ));
     }
 
     #[test]
