@@ -148,7 +148,6 @@ struct StencilKey {
 }
 
 #[cfg(feature = "execution-trace")]
-#[derive(Default)]
 struct Counters {
     compact: [u64; crate::ir::Opcode::COUNT as usize + 1],
     leaf_compact: [u64; crate::ir::Opcode::COUNT as usize + 1],
@@ -189,6 +188,53 @@ struct Counters {
     stencil_storage: HashMap<StencilKey, (u64, u64)>,
     compact_sites: HashMap<CompactSiteKey, u64>,
     compact_site_dropped: u64,
+}
+
+#[cfg(feature = "execution-trace")]
+impl Default for Counters {
+    fn default() -> Self {
+        Self {
+            compact: [0; crate::ir::Opcode::COUNT as usize + 1],
+            leaf_compact: [0; crate::ir::Opcode::COUNT as usize + 1],
+            slow: HashMap::new(),
+            binary: HashMap::new(),
+            constant: HashMap::new(),
+            environment_children: HashMap::new(),
+            leaf_rejections: HashMap::new(),
+            call_shapes: HashMap::new(),
+            call_targets: HashMap::new(),
+            events: Vec::new(),
+            transitions: HashMap::new(),
+            previous: None,
+            operand_transitions: HashMap::new(),
+            previous_operand: None,
+            regexp: HashMap::new(),
+            object_shapes: HashMap::new(),
+            function_shapes: HashMap::new(),
+            function_call_shapes: HashMap::new(),
+            function_opcode_shapes: HashMap::new(),
+            descriptor_objects: HashMap::new(),
+            descriptor_views_by_op: HashMap::new(),
+            named_property_results: HashMap::new(),
+            named_property_misses: HashMap::new(),
+            loop_shapes: HashMap::new(),
+            value_decode_by_site: HashMap::new(),
+            value_decode_other_by_op: HashMap::new(),
+            owned_word_read_by_site: HashMap::new(),
+            owned_word_read_by_op: HashMap::new(),
+            packed_miss_by: HashMap::new(),
+            packed_miss_kind: HashMap::new(),
+            allocations: HashMap::new(),
+            last_index: HashMap::new(),
+            kernels: HashMap::new(),
+            quickening: HashMap::new(),
+            stencils: HashMap::new(),
+            stencil_iterations: HashMap::new(),
+            stencil_storage: HashMap::new(),
+            compact_sites: HashMap::new(),
+            compact_site_dropped: 0,
+        }
+    }
 }
 
 #[cfg(feature = "execution-trace")]
