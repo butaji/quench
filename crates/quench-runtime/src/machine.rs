@@ -4769,22 +4769,11 @@ impl std::fmt::Debug for NativeRegionPlan {
 pub(crate) struct BaselinePlan {
     entries: Rc<[BaselineEntry]>,
     osr_entries: Rc<[u32]>,
-    /// One optional machine-code leaf per canonical instruction.  The vector
-    /// is an admission map only; each leaf still executes through the same
-    /// complete handler on a failed numeric guard or unsupported platform.
-    native_binary: Rc<[Option<Rc<RefCell<NativeBinaryPlan>>>]>,
-    native_load_const: Rc<[Option<Rc<RefCell<NativeLoadConstPlan>>>]>,
-    native_truthiness: Rc<[Option<Rc<RefCell<NativeTruthinessPlan>>>]>,
-    native_nullish: Rc<[Option<Rc<RefCell<NativeNullishPlan>>>]>,
-    native_unary: Rc<[Option<Rc<RefCell<NativeUnaryPlan>>>]>,
-    native_add_chains: Rc<[Option<Rc<RefCell<NativeAddChainPlan>>>]>,
-    native_move: Rc<[Option<Rc<RefCell<NativeMovePlan>>>]>,
-    native_load_local: Rc<[Option<Rc<RefCell<NativeMovePlan>>>]>,
-    native_store_local: Rc<[Option<Rc<RefCell<NativeMovePlan>>>]>,
-    native_store_property: Rc<[Option<Rc<RefCell<NativeMovePlan>>>]>,
-    native_property: Rc<[Option<Rc<RefCell<NativePropertyPlan>>>]>,
-    native_dispatch: Rc<[Option<Rc<RefCell<NativeDispatchPlan>>>]>,
-    native_regions: Rc<[Option<Rc<RefCell<NativeRegionPlan>>>]>,
+    /// Sparse physical admissions.  The fixed-width span index is the only
+    /// per-PC storage; alternatives are retained as typed records in one
+    /// compact flat array, so polymorphic sites do not lose valid choices.
+    admission_index: Rc<[AdmissionSpan]>,
+    admissions: Rc<[NativeAdmission]>,
     /// All composed entries in one baseline view share a bounded slab owner.
     /// Scalar leaves retain their narrower per-plan arenas until they acquire
     /// an equally typed shared physical contract.
@@ -4816,6 +4805,102 @@ impl std::fmt::Debug for BaselineEntry {
             .field("control", &self.control)
             .finish()
     }
+}
+
+#[derive(Clone)]
+enum NativeAdmission {
+    Binary(Rc<RefCell<NativeBinaryPlan>>),
+    LoadConst(Rc<RefCell<NativeLoadConstPlan>>),
+    Truthiness(Rc<RefCell<NativeTruthinessPlan>>),
+    Nullish(Rc<RefCell<NativeNullishPlan>>),
+    Unary(Rc<RefCell<NativeUnaryPlan>>),
+    AddChain(Rc<RefCell<NativeAddChainPlan>>),
+    Move(Rc<RefCell<NativeMovePlan>>),
+    LoadLocal(Rc<RefCell<NativeMovePlan>>),
+    StoreLocal(Rc<RefCell<NativeMovePlan>>),
+    StoreProperty(Rc<RefCell<NativeMovePlan>>),
+    Property(Rc<RefCell<NativePropertyPlan>>),
+    Dispatch(Rc<RefCell<NativeDispatchPlan>>),
+    Region(Rc<RefCell<NativeRegionPlan>>),
+}
+
+impl std::fmt::Debug for NativeAdmission {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::Binary(_) => "binary",
+            Self::LoadConst(_) => "load_const",
+            Self::Truthiness(_) => "truthiness",
+            Self::Nullish(_) => "nullish",
+            Self::Unary(_) => "unary",
+            Self::AddChain(_) => "add_chain",
+            Self::Move(_) => "move",
+            Self::LoadLocal(_) => "load_local",
+            Self::StoreLocal(_) => "store_local",
+            Self::StoreProperty(_) => "store_property",
+            Self::Property(_) => "property",
+            Self::Dispatch(_) => "dispatch",
+            Self::Region(_) => "region",
+        };
+        formatter.write_str(name)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct AdmissionSpan {
+    start: u32,
+    len: u16,
+}
+
+struct AdmissionBuilder {
+    spans: Vec<AdmissionSpan>,
+    entries: Vec<NativeAdmission>,
+}
+
+impl AdmissionBuilder {
+    fn new(instruction_count: usize) -> Self {
+        Self {
+            spans: vec![AdmissionSpan::default(); instruction_count],
+            entries: Vec::new(),
+        }
+    }
+
+    fn push(&mut self, pc: usize, admission: NativeAdmission) {
+        let Some(span) = self.spans.get_mut(pc) else { return };
+        if span.len == 0 {
+            span.start = self.entries.len() as u32;
+        }
+        if let Some(len) = span.len.checked_add(1) {
+            span.len = len;
+            self.entries.push(admission);
+        }
+    }
+
+    fn finish(self) -> (Rc<[AdmissionSpan]>, Rc<[NativeAdmission]>) {
+        (self.spans.into(), self.entries.into())
+    }
+}
+
+macro_rules! collect_admission {
+    ($builder:expr, $pc:expr, $list:expr, $variant:ident) => {
+        if let Some(plan) = $list.get($pc).and_then(Clone::clone) {
+            $builder.push($pc, NativeAdmission::$variant(plan));
+        }
+    };
+}
+
+macro_rules! typed_admission_accessors {
+    ($handle:ident, $public:ident, $variant:ident, $ty:ty) => {
+        fn $handle(&self, pc: usize) -> Option<&Rc<RefCell<$ty>>> {
+            self.native_handle(pc, |admission| match admission {
+                NativeAdmission::$variant(plan) => Some(plan),
+                _ => None,
+            })
+        }
+
+        pub(crate) fn $public(&self, pc: usize) -> Option<&RefCell<$ty>> {
+            self.$handle(pc).map(Rc::as_ref)
+        }
+    };
 }
 
 impl PartialEq for BaselineEntry {
@@ -4932,7 +5017,7 @@ impl BaselinePlan {
             crate::stencil_arena::SharedStencilSlab::new(4096)
                 .expect("compile-time region slab capacity is valid"),
         ));
-        let native_binary = entries
+        let native_binary: Vec<Option<Rc<RefCell<NativeBinaryPlan>>>> = entries
             .iter()
             .map(|entry| {
                 NativeBinaryPlan::new_with_shared(
@@ -4942,9 +5027,8 @@ impl BaselinePlan {
                 )
                 .map(|native| Rc::new(RefCell::new(native)))
             })
-            .collect::<Vec<_>>()
-            .into();
-        let native_load_const = entries
+            .collect();
+        let native_load_const: Vec<Option<Rc<RefCell<NativeLoadConstPlan>>>> = entries
             .iter()
             .map(|entry| {
                 (entry.instruction.opcode == crate::ir::Opcode::LoadConst)
@@ -4962,9 +5046,8 @@ impl BaselinePlan {
                     })
                     .map(|native| Rc::new(RefCell::new(native)))
             })
-            .collect::<Vec<_>>()
-            .into();
-        let native_truthiness = entries
+            .collect();
+        let native_truthiness: Vec<Option<Rc<RefCell<NativeTruthinessPlan>>>> = entries
             .iter()
             .map(|entry| {
                 NativeTruthinessPlan::new_with_shared(
@@ -4974,9 +5057,8 @@ impl BaselinePlan {
                 )
                 .map(|native| Rc::new(RefCell::new(native)))
             })
-            .collect::<Vec<_>>()
-            .into();
-        let native_nullish = entries
+            .collect();
+        let native_nullish: Vec<Option<Rc<RefCell<NativeNullishPlan>>>> = entries
             .iter()
             .map(|entry| {
                 NativeNullishPlan::new_with_shared(
@@ -4986,9 +5068,8 @@ impl BaselinePlan {
                 )
                 .map(|native| Rc::new(RefCell::new(native)))
             })
-            .collect::<Vec<_>>()
-            .into();
-        let native_unary = entries
+            .collect();
+        let native_unary: Vec<Option<Rc<RefCell<NativeUnaryPlan>>>> = entries
             .iter()
             .map(|entry| {
                 NativeUnaryPlan::new_with_shared(
@@ -4998,9 +5079,8 @@ impl BaselinePlan {
                 )
                 .map(|native| Rc::new(RefCell::new(native)))
             })
-            .collect::<Vec<_>>()
-            .into();
-        let native_add_chains = entries
+            .collect();
+        let native_add_chains: Vec<Option<Rc<RefCell<NativeAddChainPlan>>>> = entries
             .iter()
             .enumerate()
             .map(|(pc, entry)| {
@@ -5020,9 +5100,8 @@ impl BaselinePlan {
                     .flatten()
                     .map(|native| Rc::new(RefCell::new(native)))
             })
-            .collect::<Vec<_>>()
-            .into();
-        let native_property = entries
+            .collect();
+        let native_property: Vec<Option<Rc<RefCell<NativePropertyPlan>>>> = entries
             .iter()
             .map(|entry| {
                 NativePropertyPlan::new_with_arena(
@@ -5032,9 +5111,8 @@ impl BaselinePlan {
                 )
                 .map(|native| Rc::new(RefCell::new(native)))
             })
-            .collect::<Vec<_>>()
-            .into();
-        let native_move = entries
+            .collect();
+        let native_move: Vec<Option<Rc<RefCell<NativeMovePlan>>>> = entries
             .iter()
             .map(|entry| {
                 NativeMovePlan::new_with_arena(
@@ -5045,9 +5123,8 @@ impl BaselinePlan {
                 .filter(|_| entry.instruction.opcode == crate::ir::Opcode::Move)
                 .map(|native| Rc::new(RefCell::new(native)))
             })
-            .collect::<Vec<_>>()
-            .into();
-        let native_load_local = entries
+            .collect();
+        let native_load_local: Vec<Option<Rc<RefCell<NativeMovePlan>>>> = entries
             .iter()
             .map(|entry| {
                 NativeMovePlan::new_with_arena(
@@ -5058,9 +5135,8 @@ impl BaselinePlan {
                 .filter(|_| entry.instruction.opcode == crate::ir::Opcode::LoadLocal)
                 .map(|native| Rc::new(RefCell::new(native)))
             })
-            .collect::<Vec<_>>()
-            .into();
-        let native_store_local = entries
+            .collect();
+        let native_store_local: Vec<Option<Rc<RefCell<NativeMovePlan>>>> = entries
             .iter()
             .map(|entry| {
                 NativeMovePlan::new_with_arena(
@@ -5071,9 +5147,8 @@ impl BaselinePlan {
                 .filter(|_| entry.instruction.opcode == crate::ir::Opcode::StoreLocal)
                 .map(|native| Rc::new(RefCell::new(native)))
             })
-            .collect::<Vec<_>>()
-            .into();
-        let native_store_property = entries
+            .collect();
+        let native_store_property: Vec<Option<Rc<RefCell<NativeMovePlan>>>> = entries
             .iter()
             .map(|entry| {
                 NativeMovePlan::new_with_arena(
@@ -5084,9 +5159,8 @@ impl BaselinePlan {
                 .filter(|_| entry.instruction.opcode == crate::ir::Opcode::SetN)
                 .map(|native| Rc::new(RefCell::new(native)))
             })
-            .collect::<Vec<_>>()
-            .into();
-        let native_dispatch = entries
+            .collect();
+        let native_dispatch: Vec<Option<Rc<RefCell<NativeDispatchPlan>>>> = entries
             .iter()
             .map(|entry| {
                 NativeDispatchPlan::new_with_arena(
@@ -5096,9 +5170,8 @@ impl BaselinePlan {
                 )
                 .map(|native| Rc::new(RefCell::new(native)))
             })
-            .collect::<Vec<_>>()
-            .into();
-        let native_regions = entries
+            .collect();
+        let native_regions: Vec<Option<Rc<RefCell<NativeRegionPlan>>>> = entries
             .iter()
             .enumerate()
             .map(|(pc, _)| {
@@ -5126,24 +5199,29 @@ impl BaselinePlan {
                     })
                     .map(|region| Rc::new(RefCell::new(region)))
             })
-            .collect::<Vec<_>>()
-            .into();
+            .collect();
+        let mut admission_builder = AdmissionBuilder::new(entries.len());
+        for pc in 0..entries.len() {
+            collect_admission!(admission_builder, pc, native_binary, Binary);
+            collect_admission!(admission_builder, pc, native_load_const, LoadConst);
+            collect_admission!(admission_builder, pc, native_truthiness, Truthiness);
+            collect_admission!(admission_builder, pc, native_nullish, Nullish);
+            collect_admission!(admission_builder, pc, native_unary, Unary);
+            collect_admission!(admission_builder, pc, native_add_chains, AddChain);
+            collect_admission!(admission_builder, pc, native_move, Move);
+            collect_admission!(admission_builder, pc, native_load_local, LoadLocal);
+            collect_admission!(admission_builder, pc, native_store_local, StoreLocal);
+            collect_admission!(admission_builder, pc, native_store_property, StoreProperty);
+            collect_admission!(admission_builder, pc, native_property, Property);
+            collect_admission!(admission_builder, pc, native_dispatch, Dispatch);
+            collect_admission!(admission_builder, pc, native_regions, Region);
+        }
+        let (admission_index, admissions) = admission_builder.finish();
         Self {
             entries,
             osr_entries,
-            native_binary,
-            native_load_const,
-            native_truthiness,
-            native_nullish,
-            native_unary,
-            native_add_chains,
-            native_move,
-            native_load_local,
-            native_store_local,
-            native_store_property,
-            native_property,
-            native_dispatch,
-            native_regions,
+            admission_index,
+            admissions,
             shared_region_arena,
         }
     }
@@ -5156,59 +5234,36 @@ impl BaselinePlan {
         self.entries.get(pc).copied()
     }
 
-    pub(crate) fn native_binary_at(&self, pc: usize) -> Option<&RefCell<NativeBinaryPlan>> {
-        self.native_binary.get(pc).and_then(Option::as_deref)
+    fn admissions_at(&self, pc: usize) -> &[NativeAdmission] {
+        let Some(span) = self.admission_index.get(pc) else {
+            return &[];
+        };
+        let start = span.start as usize;
+        let end = start.saturating_add(span.len as usize);
+        self.admissions.get(start..end).unwrap_or(&[])
     }
 
-    pub(crate) fn native_load_const_at(&self, pc: usize) -> Option<&RefCell<NativeLoadConstPlan>> {
-        self.native_load_const.get(pc).and_then(Option::as_deref)
+    fn native_handle<T>(
+        &self,
+        pc: usize,
+        select: impl Fn(&NativeAdmission) -> Option<&Rc<RefCell<T>>>,
+    ) -> Option<&Rc<RefCell<T>>> {
+        self.admissions_at(pc).iter().find_map(select)
     }
 
-    pub(crate) fn native_truthiness_at(&self, pc: usize) -> Option<&RefCell<NativeTruthinessPlan>> {
-        self.native_truthiness.get(pc).and_then(Option::as_deref)
-    }
-
-    pub(crate) fn native_nullish_at(&self, pc: usize) -> Option<&RefCell<NativeNullishPlan>> {
-        self.native_nullish.get(pc).and_then(Option::as_deref)
-    }
-
-    pub(crate) fn native_unary_at(&self, pc: usize) -> Option<&RefCell<NativeUnaryPlan>> {
-        self.native_unary.get(pc).and_then(Option::as_deref)
-    }
-
-    pub(crate) fn native_add_chain_at(&self, pc: usize) -> Option<&RefCell<NativeAddChainPlan>> {
-        self.native_add_chains.get(pc).and_then(Option::as_deref)
-    }
-
-    pub(crate) fn native_move_at(&self, pc: usize) -> Option<&RefCell<NativeMovePlan>> {
-        self.native_move.get(pc).and_then(Option::as_deref)
-    }
-
-    pub(crate) fn native_load_local_at(&self, pc: usize) -> Option<&RefCell<NativeMovePlan>> {
-        self.native_load_local.get(pc).and_then(Option::as_deref)
-    }
-
-    pub(crate) fn native_store_local_at(&self, pc: usize) -> Option<&RefCell<NativeMovePlan>> {
-        self.native_store_local.get(pc).and_then(Option::as_deref)
-    }
-
-    pub(crate) fn native_store_property_at(&self, pc: usize) -> Option<&RefCell<NativeMovePlan>> {
-        self.native_store_property
-            .get(pc)
-            .and_then(Option::as_deref)
-    }
-
-    pub(crate) fn native_property_at(&self, pc: usize) -> Option<&RefCell<NativePropertyPlan>> {
-        self.native_property.get(pc).and_then(Option::as_deref)
-    }
-
-    pub(crate) fn native_dispatch_at(&self, pc: usize) -> Option<&RefCell<NativeDispatchPlan>> {
-        self.native_dispatch.get(pc).and_then(Option::as_deref)
-    }
-
-    pub(crate) fn native_region_at(&self, pc: usize) -> Option<&RefCell<NativeRegionPlan>> {
-        self.native_regions.get(pc).and_then(Option::as_deref)
-    }
+    typed_admission_accessors!(binary_handle_at, native_binary_at, Binary, NativeBinaryPlan);
+    typed_admission_accessors!(load_const_handle_at, native_load_const_at, LoadConst, NativeLoadConstPlan);
+    typed_admission_accessors!(truthiness_handle_at, native_truthiness_at, Truthiness, NativeTruthinessPlan);
+    typed_admission_accessors!(nullish_handle_at, native_nullish_at, Nullish, NativeNullishPlan);
+    typed_admission_accessors!(unary_handle_at, native_unary_at, Unary, NativeUnaryPlan);
+    typed_admission_accessors!(add_chain_handle_at, native_add_chain_at, AddChain, NativeAddChainPlan);
+    typed_admission_accessors!(move_handle_at, native_move_at, Move, NativeMovePlan);
+    typed_admission_accessors!(load_local_handle_at, native_load_local_at, LoadLocal, NativeMovePlan);
+    typed_admission_accessors!(store_local_handle_at, native_store_local_at, StoreLocal, NativeMovePlan);
+    typed_admission_accessors!(store_property_handle_at, native_store_property_at, StoreProperty, NativeMovePlan);
+    typed_admission_accessors!(property_handle_at, native_property_at, Property, NativePropertyPlan);
+    typed_admission_accessors!(dispatch_handle_at, native_dispatch_at, Dispatch, NativeDispatchPlan);
+    typed_admission_accessors!(region_handle_at, native_region_at, Region, NativeRegionPlan);
 
     pub(crate) fn len(&self) -> usize {
         self.entries.len()
@@ -5262,22 +5317,19 @@ impl OptimizingPlan {
             .enumerate()
             .map(|(pc, entry)| OptimizingEntry {
                 baseline: *entry,
-                native_binary: baseline.native_binary.get(pc).and_then(Clone::clone),
-                native_load_const: baseline.native_load_const.get(pc).and_then(Clone::clone),
-                native_truthiness: baseline.native_truthiness.get(pc).and_then(Clone::clone),
-                native_nullish: baseline.native_nullish.get(pc).and_then(Clone::clone),
-                native_unary: baseline.native_unary.get(pc).and_then(Clone::clone),
-                native_move: baseline.native_move.get(pc).and_then(Clone::clone),
-                native_load_local: baseline.native_load_local.get(pc).and_then(Clone::clone),
-                native_store_local: baseline.native_store_local.get(pc).and_then(Clone::clone),
-                native_store_property: baseline
-                    .native_store_property
-                    .get(pc)
-                    .and_then(Clone::clone),
-                native_property: baseline.native_property.get(pc).and_then(Clone::clone),
-                native_dispatch: baseline.native_dispatch.get(pc).and_then(Clone::clone),
+                native_binary: baseline.binary_handle_at(pc).cloned(),
+                native_load_const: baseline.load_const_handle_at(pc).cloned(),
+                native_truthiness: baseline.truthiness_handle_at(pc).cloned(),
+                native_nullish: baseline.nullish_handle_at(pc).cloned(),
+                native_unary: baseline.unary_handle_at(pc).cloned(),
+                native_move: baseline.move_handle_at(pc).cloned(),
+                native_load_local: baseline.load_local_handle_at(pc).cloned(),
+                native_store_local: baseline.store_local_handle_at(pc).cloned(),
+                native_store_property: baseline.store_property_handle_at(pc).cloned(),
+                native_property: baseline.property_handle_at(pc).cloned(),
+                native_dispatch: baseline.dispatch_handle_at(pc).cloned(),
                 native_region: (policy.fused_regions || policy.composed_regions)
-                    .then(|| baseline.native_regions.get(pc).and_then(Clone::clone))
+                    .then(|| baseline.region_handle_at(pc).cloned())
                     .flatten(),
             })
             .collect::<Vec<_>>()
