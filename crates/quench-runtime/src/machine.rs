@@ -4180,6 +4180,20 @@ fn region_admission_matches(
     })
 }
 
+/// Prefer a physically specialized ABI when several declarations describe
+/// the same residual opcode span.  The ranking is a generated-contract
+/// property (raw kernels before bridges), not a benchmark- or opcode-shaped
+/// allowlist; scalar entries remain on their typed leaf plans.
+#[inline]
+fn region_abi_priority(abi: crate::stencil_select::RegionAbi) -> u8 {
+    match abi {
+        crate::stencil_select::RegionAbi::ArrayNumericLoop => 3,
+        crate::stencil_select::RegionAbi::ArrayKernel => 2,
+        crate::stencil_select::RegionAbi::Bridge => 1,
+        _ => 0,
+    }
+}
+
 impl BaselinePlan {
     #[cfg(test)]
     pub(crate) fn compile_for_test(
@@ -4387,7 +4401,7 @@ impl BaselinePlan {
             .map(|(pc, _)| {
                 crate::stencil_select::region_records()
                     .iter()
-                    .find_map(|record| {
+                    .filter(|record| {
                         // Region plans consume only the erased bridge or one
                         // of the explicitly typed raw-array ABIs.  Scalar
                         // leaves (Add/Move/property) have separate typed
@@ -4407,20 +4421,19 @@ impl BaselinePlan {
                                     | crate::stencil_select::RegionAbi::ScalarU32
                             )
                         {
-                            return None;
+                            return false;
                         }
-                        let key = record.key;
                         region_admission_matches(&entries, pc, record)
-                        .then(|| {
-                            NativeRegionPlan::new_with_arena(
-                                key,
-                                policy,
-                                Rc::clone(&shared_region_arena),
-                            )
-                        })
-                        .flatten()
-                        .map(|region| Rc::new(RefCell::new(region)))
                     })
+                    .max_by_key(|record| region_abi_priority(record.abi))
+                    .and_then(|record| {
+                        NativeRegionPlan::new_with_arena(
+                            record.key,
+                            policy,
+                            Rc::clone(&shared_region_arena),
+                        )
+                    })
+                    .map(|region| Rc::new(RefCell::new(region)))
             })
             .collect::<Vec<_>>()
             .into();

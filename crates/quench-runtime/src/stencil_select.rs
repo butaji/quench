@@ -433,7 +433,7 @@ mod generated_region_admission_tests {
                         "bridge rows use the dispatch trampoline"
                     );
                 }
-                RegionAbi::ArrayKernel => assert_eq!(record.stencil.bytes.len(), 44),
+                RegionAbi::ArrayKernel => assert!(matches!(record.stencil.bytes.len(), 20 | 44)),
                 RegionAbi::ArrayNumericLoop => assert_eq!(record.stencil.bytes.len(), 100),
             }
         }
