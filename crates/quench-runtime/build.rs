@@ -1492,9 +1492,8 @@ fn main() {
     println!("cargo:rerun-if-env-changed=PROFILE");
     println!("cargo:rerun-if-env-changed=QUENCH_VERIFY_STENCIL_ENCODINGS");
     println!("cargo:rerun-if-env-changed=QUENCH_GENERATE_STENCIL_OBJECTS");
-    println!("cargo:rerun-if-env-changed=QUENCH_CLANG");
-    println!("cargo:rerun-if-env-changed=QUENCH_OBJCOPY");
-    println!("cargo:rerun-if-env-changed=QUENCH_NM");
+    println!("cargo:rerun-if-env-changed=QUENCH_RUSTC");
+    println!("cargo:rerun-if-env-changed=QUENCH_OBJDUMP");
     let profile = env::var("PROFILE").unwrap_or_else(|_| "unknown".to_owned());
     // Keep this mapping exhaustive: a profile not represented here must not
     // silently masquerade as a production artifact.
@@ -1513,21 +1512,22 @@ fn main() {
 }
 
 /// One-time developer check for the const encoders. This is intentionally
-/// opt-in: ordinary builds remain pure Rust and do not require clang/as or
-/// objdump. Set `QUENCH_VERIFY_STENCIL_ENCODINGS=1` on a machine with the
-/// system tools to compare the generated words with real assembler output.
+/// opt-in: ordinary builds remain pure Rust and do not require object tools.
+/// Set `QUENCH_VERIFY_STENCIL_ENCODINGS=1` to compare Rust global_asm output
+/// with the generated words.
 fn verify_stencil_encodings() {
     let root = env::temp_dir().join(format!("quench-stencil-{}", std::process::id()));
     fs::create_dir_all(&root).expect("create stencil verification directory");
-    let arm_source = root.join("arm.s");
+    let arm_source = root.join("arm.rs");
     let arm_object = root.join("arm.o");
     fs::write(
         &arm_source,
-        ".text\n.globl _verify\n_verify:\n  fadd d0, d0, d1\n  fsub d0, d0, d1\n  fmul d0, d0, d1\n  fdiv d0, d0, d1\n  ldr x1, [x0]\n  ldr x2, [x0, #8]\n  ldr x3, [x0, #16]\n  add x4, x1, x3, lsl #3\n  ldr d0, [x4]\n  ldr d1, [x0, #24]\n  str d0, [x4]\n  str d0, [x0, #32]\n  mov w0, #1\n  ldr x1, [x0, #16]\n  ldr x2, [x0, #24]\n  ldr d0, [x0, #40]\n  cmp x1, x2\n  b.hs 2f\n1:\n  ldr x3, [x0]\n  add x4, x3, x1, lsl #3\n  ldr d1, [x4]\n  ldr d2, [x0, #32]\n  fadd d1, d1, d2\n  str d1, [x4]\n  add x1, x1, #1\n  str x1, [x0, #16]\n  b 1b\n2:\n  str d1, [x0, #40]\n  mov w0, #1\n  ldr x0, [x0]\n  br x16\n  ret\n_literal:\n  ldr d1, 16f\n  .space 12\n16:\n  .quad 0\n",
+        "#![no_std]\ncore::arch::global_asm!(r#\"\n.text\n.globl _verify\n_verify:\n  fadd d0, d0, d1\n  fsub d0, d0, d1\n  fmul d0, d0, d1\n  fdiv d0, d0, d1\n  ldr x1, [x0]\n  ldr x2, [x0, #8]\n  ldr x3, [x0, #16]\n  add x4, x1, x3, lsl #3\n  ldr d0, [x4]\n  ldr d1, [x0, #24]\n  str d0, [x4]\n  str d0, [x0, #32]\n  mov w0, #1\n  ldr x1, [x0, #16]\n  ldr x2, [x0, #24]\n  ldr d0, [x0, #40]\n  cmp x1, x2\n  b.hs 2f\n1:\n  ldr x3, [x0]\n  add x4, x3, x1, lsl #3\n  ldr d1, [x4]\n  ldr d2, [x0, #32]\n  fadd d1, d1, d2\n  str d1, [x4]\n  add x1, x1, #1\n  str x1, [x0, #16]\n  b 1b\n2:\n  str d1, [x0, #40]\n  mov w0, #1\n  ldr x0, [x0]\n  br x16\n  ret\n_literal:\n  ldr d1, 16f\n  .space 12\n16:\n  .quad 0\n\"#);\n",
     )
     .expect("write ARM stencil verification source");
+    strip_global_asm_terminator(&arm_source);
     // Keep the loop encoder covered by real assembler output as well as the
-    // scalar templates above.  Labels let clang/as calculate branch
+    // scalar templates above. Labels let rustc's assembler calculate branch
     // displacements; the generated raw bytes are checked against these
     // resulting words below, avoiding hand-counted offsets in the verifier.
     {
@@ -1541,18 +1541,17 @@ fn verify_stencil_encodings() {
                 b"\n.globl _numeric_loop\n_numeric_loop:\n  ldr x1, [x0, #16]\n  ldr x2, [x0, #24]\n  ldr d0, [x0, #40]\n  fmov d1, d0\n  b 3f\n3:\n  cmp x1, x2\n  b.hs 4f\n  ldr x3, [x0]\n  add x4, x3, x1, lsl #3\n  ldr d1, [x4]\n  ldr d2, [x0, #32]\n  fadd d1, d1, d2\n  str d1, [x4]\n  add x1, x1, #1\n  str x1, [x0, #16]\n  b 3b\n4:\n  str d1, [x0, #40]\n  mov w0, #1\n  ret\n",
             )
             .expect("append ARM numeric-loop verification source");
+        source.write_all(b"\n\"#);\n").expect("close global_asm source");
     }
+    let target = env::var("TARGET").unwrap_or_else(|_| "aarch64-apple-darwin".to_owned());
     run_tool(
-        stencil_tool("clang").args([
-            "--target=aarch64-apple-darwin",
-            "-c",
-            "-x",
-            "assembler",
+        Command::new(env::var_os("RUSTC").unwrap_or_else(|| "rustc".into())).args([
+            "--target", target.as_str(), "--crate-type=lib", "--emit=obj", "-Cpanic=abort",
             arm_source.to_str().expect("ARM source path"),
             "-o",
             arm_object.to_str().expect("ARM object path"),
         ]),
-        "assemble AArch64 stencil verification source",
+        "assemble Rust AArch64 stencil verification source",
     );
     let arm_dump = run_tool_output(
         stencil_tool("objdump").args(["-d", arm_object.to_str().expect("ARM object path")]),
@@ -1632,13 +1631,21 @@ fn run_tool(command: &mut Command, description: &str) {
     assert!(status.success(), "{description} exited with {status}");
 }
 
+fn strip_global_asm_terminator(path: &std::path::Path) {
+    let mut source = fs::read(path).expect("read global_asm source");
+    let trailer = b"\"#);\n";
+    if source.ends_with(trailer) {
+        source.truncate(source.len() - trailer.len());
+        fs::write(path, source).expect("rewrite global_asm source");
+    }
+}
+
 fn stencil_tool(name: &str) -> Command {
     let variable = format!("QUENCH_{}", name.to_ascii_uppercase());
     if let Some(path) = env::var_os(&variable) {
         return Command::new(path);
     }
     let candidates = match name {
-        "clang" => ["clang", "clang-18", "clang-17"].as_slice(),
         "objdump" => ["llvm-objdump", "objdump"].as_slice(),
         _ => &[name],
     };
