@@ -183,6 +183,7 @@ fn parse_object(path: &Path, name: &str) -> Vec<u8> {
     assert_eq!(section.align() % 4, 0, "Rust stencil text alignment is invalid");
     let symbols = file.symbols().filter(|symbol| symbol.section_index() == Some(section_index)).filter(|symbol| symbol.name().ok().is_some_and(|value| value.trim_start_matches('_') == name)).collect::<Vec<_>>();
     assert_eq!(symbols.len(), 1, "Rust stencil entry symbol must be unique");
+    assert_no_other_global_text_symbols(&file, section_index, name);
     let symbol = &symbols[0];
     let offset = symbol.address().checked_sub(section.address()).expect("stencil symbol precedes text");
     let size = symbol.size();
@@ -191,6 +192,20 @@ fn parse_object(path: &Path, name: &str) -> Vec<u8> {
     let output = bytes.to_vec();
     assert!(!output.is_empty() && output.len() % 4 == 0, "Rust stencil has invalid instruction bounds");
     output
+}
+
+fn assert_no_other_global_text_symbols<'data>(
+    file: &object::File<'data>,
+    section_index: object::SectionIndex,
+    entry_name: &str,
+) {
+    for symbol in file.symbols() {
+        if symbol.section_index() != Some(section_index) || !symbol.is_global() {
+            continue;
+        }
+        let name = symbol.name().unwrap_or_default().trim_start_matches('_');
+        assert_eq!(name, entry_name, "Rust stencil has another global text symbol {name:?}");
+    }
 }
 
 fn assert_single_text_section<'data>(file: &object::File<'data>) {
