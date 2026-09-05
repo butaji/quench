@@ -1726,6 +1726,11 @@ impl NativeBinaryPlan {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn native_entry_count(&self) -> u64 {
+        self.native_entry_count
+    }
+
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn execute_tagged(
         &mut self,
