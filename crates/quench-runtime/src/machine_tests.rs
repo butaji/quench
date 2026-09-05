@@ -453,6 +453,17 @@ fn native_strict_numeric_equality_uses_typed_scalar_entry() {
     assert!(plan.returns_boolean());
     assert_eq!(plan.execute(2.0, 2.0), Ok(1.0));
     assert_eq!(plan.execute(2.0, 3.0), Ok(0.0));
+    let mut not_equal = super::NativeBinaryPlan::new(
+        crate::ir::Instruction {
+            flags: crate::ir::compact_binary_id(crate::ops::BinaryOp::StrictNotEqual),
+            ..instruction
+        },
+        policy,
+    )
+    .expect("scalar inequality");
+    assert!(not_equal.returns_boolean());
+    assert_eq!(not_equal.execute(2.0, 2.0), Ok(0.0));
+    assert_eq!(not_equal.execute(f64::NAN, f64::NAN), Ok(1.0));
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
