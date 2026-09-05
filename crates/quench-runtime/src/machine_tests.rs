@@ -2130,8 +2130,7 @@ fn native_property_uses_rendered_address_without_remapping() {
         cache: crate::stencil_select::RenderedRegionCache::new(),
         lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
         opcode: crate::ir::Opcode::GetN,
-        entry: None,
-        shared_entry: None,
+        installed: super::InstalledPropertyEntry::Unpublished,
         native_entry_count: 0,
     };
     let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::GetN);
@@ -2165,12 +2164,12 @@ fn native_property_shared_entry_reuses_live_owner_and_recovers_after_eviction() 
     let slot = crate::register_file::SlotWord::new(super::Value::Number(42.5));
     assert!(plan.execute(&slot, &site).is_ok());
     let used = shared.borrow().used();
-    assert!(plan.shared_entry.is_some());
+    assert!(matches!(plan.installed, super::InstalledPropertyEntry::Shared(_)));
     assert!(plan.execute(&slot, &site).is_ok());
     assert_eq!(shared.borrow().used(), used);
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert!(plan.execute(&slot, &site).is_ok());
-    assert!(plan.shared_entry.is_some(), "eviction must rebuild the entry");
+    assert!(matches!(plan.installed, super::InstalledPropertyEntry::Shared(_)), "eviction must rebuild the entry");
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
