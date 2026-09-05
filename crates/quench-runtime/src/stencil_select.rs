@@ -221,6 +221,17 @@ pub struct RenderedRegion {
     pub owner: u64,
 }
 
+/// One verified physical selection.  Canonical semantic facts stay in the
+/// catalog record; the view only couples those facts to the exact bytes that
+/// will be rendered, preventing generated/legacy metadata from being mixed.
+#[derive(Clone, Copy, Debug)]
+pub struct PhysicalStencilView {
+    pub key: RegionKey,
+    pub record: &'static RegionRecord,
+    pub stencil: &'static Stencil,
+    pub generated: bool,
+}
+
 /// Disposable, fixed-capacity memo table.  Replacement is round-robin and is
 /// independent of workload identity, source paths, and hotness thresholds.
 #[derive(Clone, Debug)]
@@ -337,16 +348,38 @@ include!(concat!(env!("OUT_DIR"), "/stencil_artifacts.rs"));
 
 /// Select an admitted region with one canonical table lookup.
 pub fn select_stencil(key: RegionKey) -> Option<&'static Stencil> {
-    let record = CANONICAL_REGION_TABLE
-        .iter()
-        .find(|record| record.key == key)?;
-    BUILD_STENCIL_ARTIFACTS
-        .iter()
-        .find(|artifact| {
-            artifact.name == record.name && artifact_target_matches_host(artifact.target)
-        })
-        .map(|artifact| &artifact.stencil)
-        .or(Some(&record.stencil))
+    select_physical(key).map(|view| view.stencil)
+}
+
+pub fn select_physical(key: RegionKey) -> Option<PhysicalStencilView> {
+    let record = CANONICAL_REGION_TABLE.iter().find(|record| record.key == key)?;
+    let Some(artifact) = BUILD_STENCIL_ARTIFACTS.iter().find(|artifact| {
+        artifact.name == record.name && artifact_target_matches_host(artifact.target)
+    }) else {
+        return Some(PhysicalStencilView {
+            key,
+            record,
+            stencil: &record.stencil,
+            generated: false,
+        });
+    };
+    // Generated whole-function leaves cannot inherit a legacy continuation
+    // layout.  A fallthrough record therefore remains on its canonical bytes
+    // until the generated artifact carries matching continuation metadata.
+    if record.fallthrough.is_some() || !artifact.stencil.validate() {
+        return Some(PhysicalStencilView {
+            key,
+            record,
+            stencil: &record.stencil,
+            generated: false,
+        });
+    }
+    Some(PhysicalStencilView {
+        key,
+        record,
+        stencil: &artifact.stencil,
+        generated: true,
+    })
 }
 
 fn artifact_target_matches_host(target: &str) -> bool {

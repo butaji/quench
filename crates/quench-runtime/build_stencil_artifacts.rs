@@ -446,8 +446,11 @@ fn fingerprint(
     let schema = declarations
         .iter()
         .map(|item| {
+            let source = super::rust_leaf_recipe(item)
+                .map(|recipe| rust_source(item.name, recipe))
+                .unwrap_or_default();
             format!(
-                "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
+                "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{source}",
                 item.name,
                 item.abi,
                 item.operations,

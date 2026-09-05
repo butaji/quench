@@ -993,13 +993,14 @@ impl StencilArena {
         execute: impl FnOnce(usize) -> Result<T, E>,
         fallback: impl FnOnce() -> Result<T, E>,
     ) -> Result<T, E> {
-        let Some(record) = select_region(key) else {
+        let Some(view) = crate::stencil_select::select_physical(key) else {
             return fallback();
         };
+        let record = view.record;
         if !record.executable {
             return fallback();
         }
-        let stencil = crate::stencil_select::select_stencil(key).unwrap_or(&record.stencil);
+        let stencil = view.stencil;
         self.render_and_execute(cache, key, stencil, values, execute, fallback)
     }
 
@@ -1015,13 +1016,14 @@ impl StencilArena {
         rhs: f64,
         fallback: impl FnOnce() -> Result<f64, ArenaError>,
     ) -> Result<f64, ArenaError> {
-        let Some(record) = select_region(key) else {
+        let Some(view) = crate::stencil_select::select_physical(key) else {
             return fallback();
         };
+        let record = view.record;
         if !record.executable {
             return fallback();
         }
-        let stencil = crate::stencil_select::select_stencil(key).unwrap_or(&record.stencil);
+        let stencil = view.stencil;
         if let Some((tail, rel32_offset)) = record.fallthrough {
             return self.render_fallthrough_f64(
                 cache,
@@ -1060,13 +1062,14 @@ impl StencilArena {
         lhs: f64,
         rhs: f64,
     ) -> Result<bool, ArenaError> {
-        let Some(record) = select_region(key).filter(|record| record.executable) else {
+        let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.record.executable) else {
             return Err(ArenaError::ProtectionFailed);
         };
+        let record = view.record;
         if record.fallthrough.is_some() {
             return Err(ArenaError::ProtectionFailed);
         }
-        let stencil = crate::stencil_select::select_stencil(key).unwrap_or(&record.stencil);
+        let stencil = view.stencil;
         let address = self.render_or_get(cache, key, stencil, values)?;
         self.make_executable()?;
         match self.execute_bool(address, lhs, rhs) {
@@ -1087,15 +1090,16 @@ impl StencilArena {
         lhs: i32,
         rhs: i32,
     ) -> Result<i32, ArenaError> {
-        let Some(record) = select_region(key).filter(|record| record.executable) else {
+        let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.record.executable) else {
             return Err(ArenaError::ProtectionFailed);
         };
+        let record = view.record;
         if record.abi != crate::stencil_select::RegionAbi::ScalarI32
             || record.fallthrough.is_some()
         {
             return Err(ArenaError::ProtectionFailed);
         }
-        let stencil = crate::stencil_select::select_stencil(key).unwrap_or(&record.stencil);
+        let stencil = view.stencil;
         let address = self.render_or_get(cache, key, stencil, values)?;
         self.make_executable()?;
         match self.execute_i32(address, lhs, rhs) {
@@ -1116,15 +1120,16 @@ impl StencilArena {
         lhs: u32,
         rhs: u32,
     ) -> Result<u32, ArenaError> {
-        let Some(record) = select_region(key).filter(|record| record.executable) else {
+        let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.record.executable) else {
             return Err(ArenaError::ProtectionFailed);
         };
+        let record = view.record;
         if record.abi != crate::stencil_select::RegionAbi::ScalarU32
             || record.fallthrough.is_some()
         {
             return Err(ArenaError::ProtectionFailed);
         }
-        let stencil = crate::stencil_select::select_stencil(key).unwrap_or(&record.stencil);
+        let stencil = view.stencil;
         let address = self.render_or_get(cache, key, stencil, values)?;
         self.make_executable()?;
         match self.execute_u32(address, lhs, rhs) {
@@ -1170,15 +1175,16 @@ impl StencilArena {
         rhs: f64,
         third: f64,
     ) -> Result<f64, ArenaError> {
-        let Some(record) = select_region(key).filter(|record| record.executable) else {
+        let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.record.executable) else {
             return Err(ArenaError::ProtectionFailed);
         };
+        let record = view.record;
         // A fused chain is emitted as one complete stencil and therefore must
         // not recurse through the two-piece fallthrough renderer.
         if record.fallthrough.is_some() {
             return Err(ArenaError::ProtectionFailed);
         }
-        let address = self.render_or_get(cache, key, &record.stencil, values)?;
+        let address = self.render_or_get(cache, key, view.stencil, values)?;
         self.make_executable()?;
         let entry = self.f64x3_entry(address)?;
         Ok(entry(lhs, rhs, third))
@@ -2327,6 +2333,10 @@ mod tests {
         let site = QuickeningSite::<2>::new(Opcode::AddConst);
         let values = PatchValues::from_site(&site);
         let key = crate::stencil_select::add_const_region_key();
+        let view = crate::stencil_select::select_physical(key).expect("generated physical view");
+        assert!(view.generated, "test must use the generated artifact");
+        assert_eq!(view.record.abi, crate::stencil_select::RegionAbi::Scalar);
+        assert_ne!(view.stencil.bytes, view.record.stencil.bytes);
         assert_eq!(
             arena.render_selected_f64(&mut cache, key, &values, 3.5, 2.25, || Ok(0.0)),
             Ok(5.75)
