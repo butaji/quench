@@ -73,7 +73,7 @@ entries (`/tmp/quench-bitwise-arm-audit-20260905.log`).
 
 No micros command has been run for this matrix. Task 073 remains pending until
 all mandatory infrastructure rows and cross-layer contracts are complete.
-The current source revision `47fb4b639` also has an invocation-level
+Earlier source revision `47fb4b639` has an invocation-level
 interrupt-status transport test (`/tmp/quench-interrupt-status-20260905.log`):
 an interrupt after entry is classified as committed and cannot become an
 entry retry.
