@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `4011a5ced` (cleanup files remain
+Evidence below is bound to source revision `8fba5150d` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -74,6 +74,13 @@ profile test passes at `/tmp/quench-stencil-outcome-trace-20260905.log`; full
 normal and trace suites pass at `/tmp/quench-runtime-full-20260905-stencil-outcomes.log`
 and `/tmp/quench-runtime-trace-20260905-stencil-outcomes.log` (734 and 749
 passed respectively, zero failures, one ignored each).
+
+All stencil trace site maps now share a 256-key bound; existing keys continue
+counting while new identities are dropped after capacity. Normal and trace
+full suites pass at `/tmp/quench-runtime-full-20260905-stencil-site-cap.log`
+and `/tmp/quench-runtime-trace-20260905-stencil-site-cap.log` (734 and 749
+passed, zero failures, one ignored each), with the cap unit at
+`/tmp/quench-stencil-site-cap-20260905.log`.
 
 The generated catalog now records each target template's build-time helper-call
 effect; `validate_physical_template` compares that fact with decoded bytes and
