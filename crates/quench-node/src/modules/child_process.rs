@@ -887,6 +887,41 @@ fn validate_numeric_range(options: &Value, key: &str, infinity_ok: bool) -> Resu
     ])))
 }
 
+/// Validate credentials before constructing the logical child.  The host
+/// models most children in-process, so there is no OS `setuid(2)` call whose
+/// failure could otherwise surface through the synchronous spawn boundary.
+/// Match POSIX spawn's immediate EPERM for an unprivileged parent requesting a
+/// different uid/gid; equal credentials remain valid and root may select any
+/// target credential.
+pub fn validate_spawn_credentials(options: &Value) -> Result<(), VmError> {
+    #[cfg(unix)]
+    {
+        let uid = unsafe { libc::getuid() } as u64;
+        let gid = unsafe { libc::getgid() } as u64;
+        for (key, current) in [("uid", uid), ("gid", gid)] {
+            let Value::Number(requested) = execute::get_property(options, key) else {
+                continue;
+            };
+            if requested.is_finite()
+                && requested >= 0.0
+                && requested.fract() == 0.0
+                && current != 0
+                && requested as u64 != current
+            {
+                let error = quench_runtime::builtins::error(
+                    quench_runtime::ops::Builtin::Error,
+                    &[Value::String("spawn EPERM".into())],
+                );
+                let error = execute::set_property(error, "code", Value::String("EPERM".into()));
+                let error = execute::set_property(error, "errno", Value::Number(-1.0));
+                let error = execute::set_property(error, "syscall", Value::String("spawn".into()));
+                return Err(VmError::Thrown(error));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn invalid_arg_type() -> VmError {
     VmError::Thrown(host_api::object(vec![
         ("name".into(), Value::String("TypeError".into())),
