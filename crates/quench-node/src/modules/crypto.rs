@@ -1391,6 +1391,16 @@ pub fn key_object_from(
         execute::get_property(value, crate::modules::webcrypto::KEY_MARKER_PROP),
         Value::Boolean(true)
     ) {
+        let metadata = execute::get_property(value, crate::modules::webcrypto::KEY_META_PROP);
+        if !matches!(
+            execute::get_property(&metadata, "extractable"),
+            Value::Boolean(true)
+        ) {
+            return Err(crypto_error(
+                "ERR_INVALID_ARG_VALUE",
+                "The key must be an extractable CryptoKey",
+            ));
+        }
         return webcrypto_key_object(value);
     }
     Ok(value.clone())
