@@ -2518,7 +2518,7 @@ pub(crate) struct NativeNullishPlan {
     key: crate::stencil_fact::RegionKey,
     arena: Option<crate::stencil_arena::StencilArena>,
     shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
-    cache: crate::stencil_select::RenderedRegionCache,
+    physical: PhysicalState,
     site: crate::quickening::QuickeningSite<4>,
     installed: InstalledNullishEntry,
     #[cfg(test)]
@@ -2529,7 +2529,7 @@ impl NativeNullishPlan {
     #[inline]
     fn clear_shared_capabilities(&mut self) {
         self.installed = InstalledNullishEntry::Unpublished;
-        self.cache.clear();
+        self.physical.clear();
     }
 
     fn new_with_shared(
@@ -2560,7 +2560,7 @@ impl NativeNullishPlan {
                 key,
                 arena: None,
                 shared_arena: None,
-                cache: crate::stencil_select::RenderedRegionCache::new(),
+                physical: PhysicalState::new(),
                 site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Unary),
                 installed: InstalledNullishEntry::Unpublished,
                 #[cfg(test)]
@@ -2595,7 +2595,7 @@ impl NativeNullishPlan {
                 let mut slab = shared.borrow_mut();
                 let stencil = crate::stencil_select::select_stencil(self.key)
                     .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-                let address = slab.render_or_get(&mut self.cache, self.key, stencil, &values)?;
+                let address = slab.render_or_get(&mut self.physical.cache, self.key, stencil, &values)?;
                 slab.make_executable(address)?;
                 (address, slab.word_bool_entry(address)?)
             };
@@ -2638,7 +2638,7 @@ impl NativeNullishPlan {
             .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
         let stencil = crate::stencil_select::select_stencil(self.key)
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-        let address = arena.render_or_get(&mut self.cache, self.key, stencil, &values)?;
+        let address = arena.render_or_get(&mut self.physical.cache, self.key, stencil, &values)?;
         arena.make_executable()?;
         let entry = arena.word_bool_entry(address)?;
         self.installed = InstalledNullishEntry::Local(address);
@@ -2663,7 +2663,7 @@ impl std::fmt::Debug for NativeNullishPlan {
         formatter
             .debug_struct("NativeNullishPlan")
             .field("key", &self.key)
-            .field("cache_len", &self.cache.len())
+            .field("cache_len", &self.physical.cache.len())
             .finish()
     }
 }
