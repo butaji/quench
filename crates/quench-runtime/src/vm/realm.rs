@@ -315,6 +315,7 @@ fn child_context(parent: &VmContext, realm: RealmId) -> VmContext {
         persistent_host_values: Vec::new(),
         can_block: parent.can_block(),
         source_text: parent.source_text.clone(),
+        interrupt: parent.interrupt.clone(),
     }
 }
 
