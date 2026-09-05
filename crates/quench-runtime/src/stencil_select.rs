@@ -66,6 +66,12 @@ region_abi_catalog! {
         may_call_helper: false,
         interruptible_backedge: false
     },
+    TaggedWord {
+        context_arg_words: 0,
+        preserves_vm_registers: true,
+        may_call_helper: false,
+        interruptible_backedge: false
+    },
     ScalarI32 {
         context_arg_words: 0,
         preserves_vm_registers: true,
@@ -378,6 +384,13 @@ mod generated_region_admission_tests {
                     assert_ne!(record.stencil.bytes.len(), 44);
                     assert_ne!(record.stencil.bytes.len(), 76);
                 }
+                RegionAbi::TaggedWord => {
+                    assert!(matches!(record.stencil.bytes.len(), 4 | 8));
+                    assert!(matches!(
+                        record.operations.first(),
+                        Some(crate::ir::Opcode::Move | crate::ir::Opcode::GetN)
+                    ));
+                }
                 RegionAbi::ScalarI32 => {
                     assert!(matches!(record.stencil.bytes.len(), 5 | 8));
                     assert!(record.operations.starts_with(&[
@@ -424,12 +437,22 @@ mod generated_region_admission_tests {
         assert!(array.has_effect(crate::facts::OperationEffect::Control));
         assert!(array.requires_semantic_boundary());
         assert!(array.has_single_entry());
+        assert_eq!(
+            select_region(property_region_key()).expect("property row").abi,
+            RegionAbi::TaggedWord
+        );
+        assert_eq!(
+            select_region(move_region_key()).expect("move row").abi,
+            RegionAbi::TaggedWord
+        );
     }
 
     #[test]
     fn abi_contracts_keep_scalar_bridge_and_raw_entries_distinct() {
         assert_eq!(RegionAbi::Scalar.contract().context_arg_words, 0);
         assert!(RegionAbi::Scalar.contract().preserves_vm_registers);
+        assert_eq!(RegionAbi::TaggedWord.contract().context_arg_words, 0);
+        assert!(RegionAbi::TaggedWord.contract().preserves_vm_registers);
         assert_eq!(RegionAbi::ScalarI32.contract().context_arg_words, 0);
         assert!(RegionAbi::ScalarI32.contract().preserves_vm_registers);
         assert_eq!(RegionAbi::ScalarU32.contract().context_arg_words, 0);

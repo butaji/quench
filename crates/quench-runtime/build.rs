@@ -17,6 +17,7 @@ struct RegionDeclaration {
 #[derive(Clone, Copy)]
 enum DeclAbi {
     Scalar,
+    TaggedWord,
     ScalarI32,
     ScalarU32,
     Bridge,
@@ -440,7 +441,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "property",
         operations: &["GetN"],
-        abi: DeclAbi::Scalar,
+        abi: DeclAbi::TaggedWord,
         // The property leaf only loads a word from a slot that the complete
         // shape/accessor validator has already proven.  Ownership is retained
         // by the Rust register writer after the leaf returns the raw word.
@@ -455,7 +456,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "move",
         operations: &["Move"],
-        abi: DeclAbi::Scalar,
+        abi: DeclAbi::TaggedWord,
         // A pure Move leaf copies one canonical tagged word.  RegisterFile
         // performs the retain/release edge after this raw load returns.
         x86_bytes: &X86_MOVE_BYTES,
@@ -1356,6 +1357,7 @@ fn abi_expr(declaration: &RegionDeclaration) -> &'static str {
             .is_some_and(|target| target.starts_with("aarch64"));
     match declaration.abi {
         DeclAbi::Scalar => "crate::stencil_select::RegionAbi::Scalar",
+        DeclAbi::TaggedWord => "crate::stencil_select::RegionAbi::TaggedWord",
         DeclAbi::ScalarI32 => "crate::stencil_select::RegionAbi::ScalarI32",
         DeclAbi::ScalarU32 => "crate::stencil_select::RegionAbi::ScalarU32",
         DeclAbi::Bridge => "crate::stencil_select::RegionAbi::Bridge",
