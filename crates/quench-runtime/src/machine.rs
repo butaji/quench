@@ -2131,6 +2131,11 @@ fn validate_region_window(
         ));
     }
     let abi = contract.abi_contract();
+    if !record.stencil.validate() {
+        return Err(NativeDispatchError::Physical(
+            "native region stencil layout or relocation is invalid".into(),
+        ));
+    }
     if matches!(
         contract.abi,
         crate::stencil_select::RegionAbi::ArrayKernel
@@ -2139,6 +2144,30 @@ fn validate_region_window(
     {
         return Err(NativeDispatchError::Physical(
             "raw array region ABI permits an interior helper call".into(),
+        ));
+    }
+    let pointer_holes = record
+        .stencil
+        .holes
+        .iter()
+        .filter(|hole| matches!(hole.kind, crate::stencil_fact::HoleKind::Ptr64))
+        .count();
+    if matches!(
+        contract.abi,
+        crate::stencil_select::RegionAbi::ArrayKernel
+            | crate::stencil_select::RegionAbi::ArrayNumericLoop
+    ) && pointer_holes != 0
+    {
+        return Err(NativeDispatchError::Physical(
+            "raw array region contains an external pointer relocation".into(),
+        ));
+    }
+    if matches!(contract.abi, crate::stencil_select::RegionAbi::Bridge)
+        && abi.context_arg_words == 1
+        && pointer_holes != 1
+    {
+        return Err(NativeDispatchError::Physical(
+            "bridge region must carry exactly one context relocation".into(),
         ));
     }
     // Raw memory entries have no allocating helper boundary.  Keep this
