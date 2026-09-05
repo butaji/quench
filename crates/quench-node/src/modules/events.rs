@@ -185,12 +185,19 @@ fn add_listener(
     if let Some(receiver) = receiver {
         if let Some(id) = crate::modules::net::net_id(receiver) {
             if let Some(socket) = state.borrow().net.sockets.get(&id).cloned() {
-                let alpn = execute::get_property(
-                    &socket.borrow().js,
-                    crate::modules::tls::TLS_NEGOTIATED_ALPN_PROP,
-                );
-                if !matches!(alpn, Value::Undefined) {
-                    execute::set_property_in_place(receiver, "alpnProtocol", alpn);
+                // Listener registration can re-enter while a socket callback
+                // owns the mutable socket state (for example, a transferred
+                // IPC handle writing and ending in the same turn).  ALPN is
+                // derived metadata, so defer this probe instead of panicking
+                // on an overlapping RefCell borrow.
+                if let Ok(socket) = socket.try_borrow() {
+                    let alpn = execute::get_property(
+                        &socket.js,
+                        crate::modules::tls::TLS_NEGOTIATED_ALPN_PROP,
+                    );
+                    if !matches!(alpn, Value::Undefined) {
+                        execute::set_property_in_place(receiver, "alpnProtocol", alpn);
+                    }
                 }
             }
         }
