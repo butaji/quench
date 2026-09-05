@@ -169,8 +169,14 @@ impl RegionContract {
 
     pub const fn abi_is_well_formed(self) -> bool {
         let abi = self.abi_contract();
-        (!abi.preserves_vm_registers
-            || (abi.hardware_clobber_mask == 0 && abi.hardware_gpr_clobber_mask == 0))
+        let context_arity_ok = if self.abi.accepts_region_context() {
+            abi.context_arg_words == 1
+        } else {
+            abi.context_arg_words == 0
+        };
+        context_arity_ok
+            && (!abi.preserves_vm_registers
+                || (abi.hardware_clobber_mask == 0 && abi.hardware_gpr_clobber_mask == 0))
             && (abi.preserves_vm_registers
                 || abi.hardware_clobber_mask != 0
                 || abi.hardware_gpr_clobber_mask != 0)
@@ -422,7 +428,10 @@ mod generated_region_admission_tests {
                     ));
                 }
                 RegionAbi::ScalarWordBool => {
-                    assert!(matches!(record.stencil.bytes.len(), 6 | 8 | 20 | 24 | 27 | 32));
+                    assert!(matches!(
+                        record.stencil.bytes.len(),
+                        6 | 8 | 20 | 24 | 27 | 32
+                    ));
                     assert!(matches!(
                         record.operations,
                         [crate::ir::Opcode::Unary, crate::ir::Opcode::Return]
@@ -446,10 +455,9 @@ mod generated_region_admission_tests {
                 }
                 RegionAbi::ScalarU32 => {
                     assert!(matches!(record.stencil.bytes.len(), 7 | 8));
-                    assert!(record.operations.starts_with(&[
-                        crate::ir::Opcode::Binary,
-                        crate::ir::Opcode::Return
-                    ]));
+                    assert!(record
+                        .operations
+                        .starts_with(&[crate::ir::Opcode::Binary, crate::ir::Opcode::Return]));
                 }
                 RegionAbi::Bridge => {
                     assert!(
@@ -499,7 +507,9 @@ mod generated_region_admission_tests {
         assert!(array.requires_semantic_boundary());
         assert!(array.has_single_entry());
         assert_eq!(
-            select_region(property_region_key()).expect("property row").abi,
+            select_region(property_region_key())
+                .expect("property row")
+                .abi,
             RegionAbi::TaggedWord
         );
         assert_eq!(
@@ -522,9 +532,17 @@ mod generated_region_admission_tests {
         assert_eq!(RegionAbi::ArrayKernel.contract().context_arg_words, 1);
         assert!(!RegionAbi::ArrayKernel.contract().may_call_helper);
         assert!(!RegionAbi::Bridge.contract().interruptible_backedge);
-        assert!(RegionAbi::ArrayNumericLoop.contract().interruptible_backedge);
+        assert!(
+            RegionAbi::ArrayNumericLoop
+                .contract()
+                .interruptible_backedge
+        );
         for record in CANONICAL_REGION_TABLE {
             assert!(record.contract().abi_is_well_formed());
+            assert_eq!(
+                record.abi.accepts_region_context(),
+                record.contract().abi_contract().context_arg_words == 1
+            );
         }
         assert_eq!(RegionAbi::Scalar.contract().hardware_clobber_mask, 0);
         assert_eq!(RegionAbi::ArrayNumericLoop.contract().live_out_mask, 0x0003);
