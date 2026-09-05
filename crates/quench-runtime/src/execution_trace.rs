@@ -147,13 +147,18 @@ struct StencilKey {
     kind: &'static str,
 }
 
-const MAX_STENCIL_REJECTIONS: usize = 256;
+const MAX_STENCIL_SITES: usize = 256;
 
 #[cfg(feature = "execution-trace")]
 fn record_bounded<K: Eq + Hash>(map: &mut HashMap<K, u64>, key: K, capacity: usize) {
-    if map.len() < capacity || map.contains_key(&key) {
+    if admits_bounded(map, &key, capacity) {
         *map.entry(key).or_default() += 1;
     }
+}
+
+#[cfg(feature = "execution-trace")]
+fn admits_bounded<K: Eq + Hash, V>(map: &HashMap<K, V>, key: &K, capacity: usize) -> bool {
+    map.len() < capacity || map.contains_key(key)
 }
 
 #[cfg(feature = "execution-trace")]
@@ -162,7 +167,7 @@ fn record_stencil_rejection(
     key: StencilKey,
     reason: &'static str,
 ) {
-    record_bounded(&mut counters.stencil_rejections, (key, reason), MAX_STENCIL_REJECTIONS);
+    record_bounded(&mut counters.stencil_rejections, (key, reason), MAX_STENCIL_SITES);
 }
 
 #[cfg(feature = "execution-trace")]
@@ -1642,18 +1647,18 @@ pub(crate) fn stencil_observation(
         let (_, code_id) = code.trace_identity();
         COUNTERS.with(|counters| {
             let mut counters = counters.borrow_mut();
-            let counts = counters
-                .stencils
-                .entry(StencilKey {
-                    code: code_id,
-                    pc: pc as u32,
-                    kind,
-                })
-                .or_default();
-            if native {
-                counts.0 += 1;
-            } else {
-                counts.1 += 1;
+            let key = StencilKey {
+                code: code_id,
+                pc: pc as u32,
+                kind,
+            };
+            if admits_bounded(&counters.stencils, &key, MAX_STENCIL_SITES) {
+                let counts = counters.stencils.entry(key).or_default();
+                if native {
+                    counts.0 += 1;
+                } else {
+                    counts.1 += 1;
+                }
             }
         });
     }
@@ -1676,14 +1681,14 @@ pub(crate) fn stencil_iterations(
         let (_, code_id) = code.trace_identity();
         COUNTERS.with(|counters| {
             let mut counters = counters.borrow_mut();
-            *counters
-                .stencil_iterations
-                .entry(StencilKey {
-                    code: code_id,
-                    pc: pc as u32,
-                    kind,
-                })
-                .or_default() += iterations as u64;
+            let key = StencilKey {
+                code: code_id,
+                pc: pc as u32,
+                kind,
+            };
+            if admits_bounded(&counters.stencil_iterations, &key, MAX_STENCIL_SITES) {
+                *counters.stencil_iterations.entry(key).or_default() += iterations as u64;
+            }
         });
     }
     let _ = (code, pc, kind, iterations);
@@ -1743,7 +1748,7 @@ pub(crate) fn stencil_outcome(
                     },
                     outcome,
                 ),
-                MAX_STENCIL_REJECTIONS,
+                MAX_STENCIL_SITES,
             );
         });
     }
@@ -1767,14 +1772,18 @@ pub(crate) fn stencil_storage(
     if enabled() {
         let (_, code_id) = code.trace_identity();
         COUNTERS.with(|counters| {
-            counters.borrow_mut().stencil_storage.insert(
-                StencilKey {
-                    code: code_id,
-                    pc: pc as u32,
-                    kind,
-                },
-                (used_bytes as u64, capacity_bytes as u64),
-            );
+            let mut counters = counters.borrow_mut();
+            let key = StencilKey {
+                code: code_id,
+                pc: pc as u32,
+                kind,
+            };
+            if admits_bounded(&counters.stencil_storage, &key, MAX_STENCIL_SITES) {
+                counters.stencil_storage.insert(
+                    key,
+                    (used_bytes as u64, capacity_bytes as u64),
+                );
+            }
         });
     }
     let _ = (code, pc, kind, used_bytes, capacity_bytes);
@@ -2136,7 +2145,7 @@ mod lane_profile_tests {
     #[test]
     fn stencil_rejection_facts_have_a_fixed_capacity() {
         let mut counters = Counters::default();
-        for code in 0..MAX_STENCIL_REJECTIONS as u32 {
+        for code in 0..MAX_STENCIL_SITES as u32 {
             record_stencil_rejection(
                 &mut counters,
                 StencilKey {
@@ -2147,7 +2156,7 @@ mod lane_profile_tests {
                 "guard",
             );
         }
-        assert_eq!(counters.stencil_rejections.len(), MAX_STENCIL_REJECTIONS);
+        assert_eq!(counters.stencil_rejections.len(), MAX_STENCIL_SITES);
     }
 
     #[test]
@@ -2161,12 +2170,12 @@ mod lane_profile_tests {
         record_bounded(
             &mut counters.stencil_outcomes,
             (key, "native_completed"),
-            MAX_STENCIL_REJECTIONS,
+            MAX_STENCIL_SITES,
         );
         record_bounded(
             &mut counters.stencil_outcomes,
             (key, "fallback_completed"),
-            MAX_STENCIL_REJECTIONS,
+            MAX_STENCIL_SITES,
         );
         let profile = stencil_outcome_profile(&counters);
         assert_eq!(profile["code=4:pc=6:region:native_completed"], 1);
