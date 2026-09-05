@@ -4130,7 +4130,7 @@ impl NativeDispatchPlan {
             ));
         }
         if let Some(shared) = self.shared_arena.clone() {
-            let result = (|| {
+            let rendered = (|| {
                 let mut slab = shared.borrow_mut();
                 let view = crate::stencil_select::select_physical_for_abi(
                     key,
@@ -4151,21 +4151,30 @@ impl NativeDispatchPlan {
                         "native baseline protection failed: {error:?}"
                     ))
                 })?;
+                Ok::<_, NativeDispatchError>(address)
+            })();
+            let result = rendered.and_then(|address| {
                 let mut dispatch =
                     crate::vm::NativeDispatchContext::new(code, pc, entry, registers, context);
-                let status = slab
-                    .execute_dispatch(
-                        address,
-                        (&mut dispatch as *mut crate::vm::NativeDispatchContext<'_>)
-                            .cast::<std::ffi::c_void>(),
-                    )
-                    .map_err(|error| {
-                        NativeDispatchError::Physical(format!(
-                            "native baseline execution failed: {error:?}"
-                        ))
-                    })?;
+                let raw = (&mut dispatch as *mut crate::vm::NativeDispatchContext<'_>)
+                    .cast::<std::ffi::c_void>();
+                let lease = crate::stencil_arena::SharedStencilSlab::acquire_address_lease(
+                    &shared,
+                    address,
+                    crate::stencil_select::RegionAbi::Bridge,
+                )
+                .map_err(|error| {
+                    NativeDispatchError::Physical(format!(
+                        "native baseline lease failed: {error:?}"
+                    ))
+                })?;
+                let status = lease.invoke_dispatch(raw).map_err(|error| {
+                    NativeDispatchError::Physical(format!(
+                        "native baseline execution failed: {error:?}"
+                    ))
+                })?;
                 dispatch.finish(status)
-            })();
+            });
             if matches!(result, Err(NativeDispatchError::Physical(_))) {
                 self.physical.clear();
             }
@@ -4709,18 +4718,23 @@ impl NativeRegionPlan {
                     ));
                 }
             }
-            let status = arena
-                .borrow()
-                .execute_dispatch(
-                    address,
-                    (&mut region as *mut crate::vm::NativeRegionContext<'_>)
-                        .cast::<std::ffi::c_void>(),
-                )
-                .map_err(|error| {
-                    NativeDispatchError::Physical(format!(
-                        "native fused region execution failed: {error:?}"
-                    ))
-                })?;
+            let raw = (&mut region as *mut crate::vm::NativeRegionContext<'_>)
+                .cast::<std::ffi::c_void>();
+            let lease = crate::stencil_arena::SharedStencilSlab::acquire_address_lease(
+                &arena,
+                address,
+                view.abi,
+            )
+            .map_err(|error| {
+                NativeDispatchError::Physical(format!(
+                    "native fused region lease failed: {error:?}"
+                ))
+            })?;
+            let status = lease.invoke_dispatch(raw).map_err(|error| {
+                NativeDispatchError::Physical(format!(
+                    "native fused region execution failed: {error:?}"
+                ))
+            })?;
             region.finish(status)
         })();
         self.retire_on_failure(&result);
