@@ -380,18 +380,16 @@ pub fn select_stencil(key: RegionKey) -> Option<&'static Stencil> {
 
 pub fn select_physical(key: RegionKey) -> Option<PhysicalStencilView> {
     let record = CANONICAL_REGION_TABLE.iter().find(|record| record.key == key)?;
-    let Some(artifact) = BUILD_STENCIL_ARTIFACTS.iter().find(|artifact| {
-        artifact.key == key
-            && artifact.name == record.name
-            && artifact.abi == record.abi
-            && artifact_target_matches_host(artifact.target)
-    }) else {
+    let Some(artifact) = BUILD_STENCIL_ARTIFACTS
+        .iter()
+        .find(|artifact| artifact.key == key && artifact.name == record.name)
+    else {
         return Some(legacy_physical_view(key, record));
     };
-    if let Some(view) = generated_physical_view(key, record, artifact) {
-        return Some(view);
-    }
-    Some(legacy_physical_view(key, record))
+    // A matching identity reserves the generated representation.  If any
+    // ABI, target, layout, or effect contract differs, fail closed instead of
+    // silently substituting legacy bytes with generated metadata.
+    generated_physical_view(key, record, artifact)
 }
 
 fn legacy_physical_view(key: RegionKey, record: &'static RegionRecord) -> PhysicalStencilView {
@@ -416,17 +414,29 @@ fn generated_physical_view(
     record: &'static RegionRecord,
     artifact: &'static BuildStencilArtifact,
 ) -> Option<PhysicalStencilView> {
+    let fallthrough = artifact
+        .fallthrough
+        .as_ref()
+        .map(|stencil| (stencil, artifact.fallthrough_entry));
     let metadata_matches = artifact.name == record.name
         && artifact.key == key
         && artifact_target_matches_host(artifact.target)
         && artifact.abi == record.abi
         && artifact.entry == record.entry
         && artifact.external_entries == record.external_entries
-        && !artifact.has_fallthrough
-        && record.fallthrough.is_none();
+        && artifact.has_fallthrough == record.fallthrough.is_some()
+        && (artifact.has_fallthrough == fallthrough.is_some())
+        && artifact.fallthrough.is_none_or(|_| record.fallthrough.is_some())
+        && record.fallthrough.is_none_or(|(_, entry)| {
+            artifact.fallthrough_entry == entry
+        });
     let effects_match = artifact.executable == record.executable
         && artifact.template_calls_helper == record.template_calls_helper;
-    if !metadata_matches || !effects_match || !artifact.stencil.validate() {
+    if !metadata_matches
+        || !effects_match
+        || !artifact.stencil.validate()
+        || !artifact.fallthrough.is_none_or(|stencil| stencil.validate())
+    {
         return None;
     }
     Some(PhysicalStencilView {
@@ -437,7 +447,7 @@ fn generated_physical_view(
         abi: artifact.abi,
         entry: artifact.entry,
         external_entries: artifact.external_entries,
-        fallthrough: None,
+        fallthrough,
         executable: artifact.executable,
         template_calls_helper: artifact.template_calls_helper,
         target: Some(artifact.target),
@@ -1194,6 +1204,8 @@ mod tests {
             template_calls_helper: false,
             bytes: BYTES,
             stencil: Stencil { bytes: BYTES, holes: &[] },
+            fallthrough: None,
+            fallthrough_entry: 0,
         };
         static BAD_ENTRIES: BuildStencilArtifact = BuildStencilArtifact {
             name: "add_const",
@@ -1209,6 +1221,8 @@ mod tests {
             template_calls_helper: false,
             bytes: BYTES,
             stencil: Stencil { bytes: BYTES, holes: &[] },
+            fallthrough: None,
+            fallthrough_entry: 0,
         };
         let record = CANONICAL_REGION_TABLE
             .iter()

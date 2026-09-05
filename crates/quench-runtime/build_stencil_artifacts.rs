@@ -4,9 +4,10 @@ use std::{
     process::Command,
 };
 
+use object::endian::Endianness;
 use object::read::{Object, ObjectSection, ObjectSymbol};
 use object::SymbolSection;
-use object::{BinaryFormat, SectionKind};
+use object::{BinaryFormat, RelocationEncoding, RelocationKind, RelocationTarget, SectionKind};
 
 use super::RegionDeclaration;
 
@@ -34,6 +35,11 @@ fn supports_target(target: &str) -> bool {
 
 struct OwnedDirectory {
     path: PathBuf,
+}
+
+struct ExtractedObject {
+    bytes: Vec<u8>,
+    fallthrough: Option<Vec<u8>>,
 }
 
 impl Drop for OwnedDirectory {
@@ -136,7 +142,7 @@ fn empty_artifacts() -> String {
 }
 
 fn artifact_schema() -> &'static str {
-    "pub struct BuildStencilArtifact { pub name: &'static str, pub key: crate::stencil_fact::RegionKey, pub target: &'static str, pub compiler: &'static str, pub fingerprint: &'static str, pub abi: crate::stencil_select::RegionAbi, pub entry: u16, pub external_entries: &'static [u16], pub has_fallthrough: bool, pub executable: bool, pub template_calls_helper: bool, pub bytes: &'static [u8], pub stencil: crate::stencil_fact::Stencil }"
+    "pub struct BuildStencilArtifact { pub name: &'static str, pub key: crate::stencil_fact::RegionKey, pub target: &'static str, pub compiler: &'static str, pub fingerprint: &'static str, pub abi: crate::stencil_select::RegionAbi, pub entry: u16, pub external_entries: &'static [u16], pub has_fallthrough: bool, pub executable: bool, pub template_calls_helper: bool, pub bytes: &'static [u8], pub stencil: crate::stencil_fact::Stencil, pub fallthrough: Option<crate::stencil_fact::Stencil>, pub fallthrough_entry: u16 }"
 }
 
 fn extract_objects(declarations: &[RegionDeclaration]) -> String {
@@ -163,16 +169,34 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
         // it does not need the canonical byte-template holes (AddConst is the
         // first example). Unsupported hole-bearing recipes remain skipped
         // until a declared relocation plan exists.
-        let artifact = compile_one(
-            &root.path,
-            &target,
-            &compiler,
-            &flags,
-            &rustflags,
-            declaration,
-            recipe,
-        );
-        let (constant, row) = render_artifact(declaration, &target, &compiler, &fingerprint, &artifact);
+        let extracted = if declaration.name == "fallthrough" {
+            if !target.starts_with("aarch64") {
+                continue;
+            }
+            compile_fragment_pair(
+                &root.path,
+                &target,
+                &compiler,
+                &flags,
+                &rustflags,
+                declaration,
+            )
+        } else {
+            ExtractedObject {
+                bytes: compile_one(
+                    &root.path,
+                    &target,
+                    &compiler,
+                    &flags,
+                    &rustflags,
+                    declaration,
+                    recipe,
+                ),
+                fallthrough: None,
+            }
+        };
+        let (constant, row) =
+            render_artifact(declaration, &target, &compiler, &fingerprint, &extracted);
         constants.push(constant);
         rows.push(row);
     }
@@ -228,6 +252,86 @@ fn compile_one(
         .args([source.to_str().unwrap(), "-o", object.to_str().unwrap()]);
     run(&mut command, "compile Rust stencil object");
     parse_object(&object, &format!("q_{}", declaration.name))
+}
+
+fn compile_fragment_pair(
+    root: &Path,
+    target: &str,
+    compiler: &str,
+    flags: &[&str],
+    rustflags: &[String],
+    declaration: &RegionDeclaration,
+) -> ExtractedObject {
+    if !target.starts_with("aarch64") {
+        return ExtractedObject {
+            bytes: Vec::new(),
+            fallthrough: None,
+        };
+    }
+    let head = compile_assembly_fragment(
+        root,
+        target,
+        compiler,
+        flags,
+        rustflags,
+        "fallthrough_head",
+        aarch64_head_source(),
+        declaration.aarch64_holes,
+        Some("q_fallthrough_tail"),
+    );
+    let tail = compile_assembly_fragment(
+        root,
+        target,
+        compiler,
+        flags,
+        rustflags,
+        "fallthrough_tail",
+        aarch64_tail_source(),
+        &[],
+        None,
+    );
+    ExtractedObject {
+        bytes: head,
+        fallthrough: Some(tail),
+    }
+}
+
+fn compile_assembly_fragment(
+    root: &Path,
+    target: &str,
+    compiler: &str,
+    flags: &[&str],
+    rustflags: &[String],
+    name: &str,
+    source_text: &str,
+    expected_relocations: &[(u16, usize, &'static str)],
+    target_symbol: Option<&str>,
+) -> Vec<u8> {
+    let source = root.join(format!("{name}.rs"));
+    let object = root.join(format!("{name}.o"));
+    fs::write(&source, source_text).expect("write Rust assembly fragment");
+    let mut command = Command::new(compiler);
+    command
+        .args(["--target", target])
+        .args(flags)
+        .args(rustflags)
+        .args([source.to_str().unwrap(), "-o", object.to_str().unwrap()]);
+    run(&mut command, "compile Rust assembly fragment");
+    parse_object_range(
+        &object,
+        &format!("q_{name}"),
+        &format!("q_{name}_end"),
+        expected_relocations,
+        target_symbol,
+    )
+}
+
+fn aarch64_head_source() -> &'static str {
+    "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_fallthrough_head\nq_fallthrough_head:\n  fadd d0, d0, d1\n  b q_fallthrough_tail\nq_fallthrough_head_end:\n\"#);\n"
+}
+
+fn aarch64_tail_source() -> &'static str {
+    "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_fallthrough_tail\nq_fallthrough_tail:\n  ret\nq_fallthrough_tail_end:\n\"#);\n"
 }
 
 fn parse_object(path: &Path, name: &str) -> Vec<u8> {
@@ -310,6 +414,167 @@ fn parse_object(path: &Path, name: &str) -> Vec<u8> {
         );
     }
     output
+}
+
+fn parse_object_range(
+    path: &Path,
+    name: &str,
+    end_name: &str,
+    expected_relocations: &[(u16, usize, &'static str)],
+    target_symbol: Option<&str>,
+) -> Vec<u8> {
+    let data = fs::read(path).expect("read Rust fragment object");
+    let file = object::File::parse(&*data).expect("parse Rust fragment object");
+    assert_target_architecture(&file, env::var("TARGET").ok().as_deref());
+    assert_target_format(&file, env::var("TARGET").ok().as_deref());
+    reject_unwind_or_tls_sections(&file);
+    validate_fragment_relocations(&file, expected_relocations, target_symbol, "Rust fragment");
+    let (start_section, start_address) = find_text_symbol(&file, name);
+    let (end_section, end_address) = find_text_symbol(&file, end_name);
+    assert_eq!(start_section, end_section, "fragment bounds cross sections");
+    let section_index = start_section.expect("fragment start section");
+    let section = file
+        .sections()
+        .find(|section| section.index() == section_index)
+        .expect("fragment text section");
+    assert_eq!(
+        section.kind(),
+        SectionKind::Text,
+        "fragment is not executable text"
+    );
+    let start_offset = start_address
+        .checked_sub(section.address())
+        .expect("fragment start precedes section") as usize;
+    let end_offset = end_address
+        .checked_sub(section.address())
+        .expect("fragment end precedes section") as usize;
+    assert!(
+        start_offset < end_offset,
+        "fragment bounds are empty or reversed"
+    );
+    let bytes = section.uncompressed_data().expect("read fragment text");
+    assert!(end_offset <= bytes.len(), "fragment end exceeds section");
+    assert_eq!(start_offset, 0, "fragment entry is not at section start");
+    let output = bytes[start_offset..end_offset].to_vec();
+    assert!(!output.is_empty(), "fragment has empty instruction bounds");
+    if matches!(file.architecture(), object::Architecture::Aarch64) {
+        assert_eq!(output.len() % 4, 0, "AArch64 fragment bounds are invalid");
+    }
+    assert_no_other_global_text_symbols(&file, section_index, name);
+    output
+}
+
+fn validate_fragment_relocations(
+    file: &object::File<'_>,
+    expected: &[(u16, usize, &'static str)],
+    target_symbol: Option<&str>,
+    context: &str,
+) {
+    if let object::File::MachO64(macho) = file {
+        let mut relocation_count = 0;
+        for section in macho.sections() {
+            for relocation in section
+                .macho_relocations()
+                .expect("read Mach-O fragment relocations")
+            {
+                let info = relocation.info(Endianness::Little);
+                let expected_target = target_symbol.expect("declared Mach-O relocation target");
+                let (expected_offset, _, expected_kind) = expected
+                    .first()
+                    .copied()
+                    .expect("declared Mach-O relocation hole");
+                let target = macho
+                    .symbol_by_index(object::SymbolIndex(info.r_symbolnum as usize))
+                    .expect("Mach-O fragment relocation symbol")
+                    .name()
+                    .expect("Mach-O fragment relocation name")
+                    .trim_start_matches('_');
+                assert!(
+                    info.r_extern,
+                    "Mach-O fragment relocation must name a symbol"
+                );
+                assert_eq!(info.r_address, u32::from(expected_offset));
+                assert_eq!(target, expected_target);
+                assert_eq!(info.r_type, object::macho::ARM64_RELOC_BRANCH26);
+                assert!(info.r_pcrel && info.r_length == 2);
+                assert_eq!(expected_kind, "Branch26");
+                relocation_count += 1;
+            }
+        }
+        assert_eq!(
+            relocation_count,
+            expected.len(),
+            "{context} relocation count mismatch"
+        );
+        return;
+    }
+    let text_index = file
+        .sections()
+        .find(|section| section.kind() == SectionKind::Text)
+        .map(|section| section.index());
+    for (relocation_section, offset, relocation) in file.sections().flat_map(|section| {
+        section
+            .relocations()
+            .map(move |(offset, relocation)| (section.index(), offset, relocation))
+    }) {
+        let Some(text_section) = text_index else {
+            panic!("{context} relocation has no text section")
+        };
+        assert_eq!(
+            relocation_section, text_section,
+            "fragment relocation section mismatch"
+        );
+        let target_name = match relocation.target() {
+            RelocationTarget::Symbol(index) => file
+                .symbol_by_index(index)
+                .expect("fragment relocation symbol")
+                .name()
+                .expect("fragment relocation symbol name")
+                .trim_start_matches('_')
+                .to_owned(),
+            _ => panic!("{context} relocation does not name a declared symbol"),
+        };
+        let Some((expected_offset, _width, expected_kind)) = expected
+            .iter()
+            .find(|(expected_offset, _, _)| u64::from(*expected_offset) == offset)
+        else {
+            panic!("{context} relocation at {offset:#x} is undeclared")
+        };
+        assert_eq!(Some(target_name.as_str()), target_symbol);
+        assert_eq!(*expected_kind, "Branch26");
+        assert_eq!(u64::from(*expected_offset), offset);
+        assert_eq!(relocation.kind(), RelocationKind::PltRelative);
+        assert_eq!(relocation.encoding(), RelocationEncoding::AArch64Call);
+        assert_eq!(relocation.size(), 26);
+    }
+    let relocation_count = file
+        .sections()
+        .map(|section| section.relocations().count())
+        .sum::<usize>();
+    assert_eq!(
+        relocation_count,
+        expected.len(),
+        "{context} relocation count mismatch"
+    );
+}
+
+fn find_text_symbol<'data>(
+    file: &object::File<'data>,
+    name: &str,
+) -> (Option<object::SectionIndex>, u64) {
+    let mut symbols = file
+        .symbols()
+        .filter(|symbol| {
+            symbol
+                .name()
+                .ok()
+                .is_some_and(|value| value.trim_start_matches('_') == name)
+        })
+        .filter(|symbol| symbol.section_index().is_some())
+        .collect::<Vec<_>>();
+    assert_eq!(symbols.len(), 1, "fragment symbol {name} must be unique");
+    let symbol = symbols.pop().expect("fragment symbol exists");
+    (symbol.section_index(), symbol.address())
 }
 
 fn assert_no_other_global_text_symbols<'data>(
@@ -415,16 +680,30 @@ fn render_artifact(
     target: &str,
     compiler: &str,
     fingerprint: &str,
-    bytes: &[u8],
+    extracted: &ExtractedObject,
 ) -> (String, String) {
     let name = declaration.name;
-    let code = bytes
+    let code = extracted
+        .bytes
         .iter()
         .map(|byte| format!("0x{byte:02x}"))
         .collect::<Vec<_>>()
         .join(", ");
     let identifier = name.to_ascii_uppercase();
-    let constant = format!("const BYTES_{identifier}: &[u8] = &[{code}];");
+    let constant = format!(
+        "const BYTES_{identifier}: &[u8] = &[{code}];{}",
+        extracted
+            .fallthrough
+            .as_ref()
+            .map_or_else(String::new, |tail| {
+                let code = tail
+                    .iter()
+                    .map(|byte| format!("0x{byte:02x}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("\nconst FALLTHROUGH_{identifier}: &[u8] = &[{code}];")
+            })
+    );
     let entries = declaration
         .external_entries
         .iter()
@@ -432,14 +711,52 @@ fn render_artifact(
         .collect::<Vec<_>>()
         .join(", ");
     let row = format!(
-        "    BuildStencilArtifact {{ name: {name:?}, key: CANONICAL_{identifier}_KEY, target: {target:?}, compiler: {compiler:?}, fingerprint: {fingerprint:?}, abi: {}, entry: {}, external_entries: &[{}], has_fallthrough: {}, executable: true, template_calls_helper: {}, bytes: BYTES_{identifier}, stencil: crate::stencil_fact::Stencil {{ bytes: BYTES_{identifier}, holes: &[] }} }},",
+        "    BuildStencilArtifact {{ name: {name:?}, key: CANONICAL_{identifier}_KEY, target: {target:?}, compiler: {compiler:?}, fingerprint: {fingerprint:?}, abi: {}, entry: {}, external_entries: &[{}], has_fallthrough: {}, executable: true, template_calls_helper: {}, bytes: BYTES_{identifier}, stencil: crate::stencil_fact::Stencil {{ bytes: BYTES_{identifier}, holes: {} }}, fallthrough: {}, fallthrough_entry: {} }},",
         super::abi_expr(declaration),
         declaration.entry,
         entries,
         declaration.name == "fallthrough",
         super::target_template_calls_helper(declaration),
+        holes_expr(declaration, target, extracted.fallthrough.is_some()),
+        extracted.fallthrough.as_ref().map_or("None".to_owned(), |_| {
+            format!("Some(crate::stencil_fact::Stencil {{ bytes: FALLTHROUGH_{identifier}, holes: &[] }})")
+        }),
+        fallthrough_offset(declaration, target),
     );
     (constant, row)
+}
+
+fn fallthrough_offset(declaration: &RegionDeclaration, target: &str) -> u16 {
+    let holes = if target.starts_with("aarch64") {
+        declaration.aarch64_holes
+    } else {
+        declaration.holes
+    };
+    holes
+        .iter()
+        .find(|(_, _, kind)| *kind == "Branch26" || *kind == "Rel32")
+        .map_or(0, |(offset, _, _)| *offset)
+}
+
+fn holes_expr(declaration: &RegionDeclaration, target: &str, composable: bool) -> String {
+    if !composable {
+        return "&[]".to_owned();
+    }
+    let holes = if target.starts_with("aarch64") {
+        declaration.aarch64_holes
+    } else {
+        declaration.holes
+    };
+    let values = holes
+        .iter()
+        .map(|(offset, _width, kind)| {
+            format!(
+                "crate::stencil_fact::Hole {{ offset: {offset}, kind: crate::stencil_fact::HoleKind::{kind} }}"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("&[{values}]")
 }
 
 fn fingerprint(

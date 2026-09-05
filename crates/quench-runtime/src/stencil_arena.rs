@@ -50,6 +50,13 @@ pub const MAX_SHARED_SLAB_BYTES: usize = 4 * MAX_ARENA_BYTES;
 /// Workload-independent disposable code budget for one arena.
 pub const MAX_ARENA_BYTES: usize = 1 << 20;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PhysicalExecutionWitness {
+    pub key: crate::stencil_fact::RegionKey,
+    pub generated: bool,
+    pub fingerprint: Option<&'static str>,
+}
+
 #[inline]
 fn cache_signature<const N: usize>(stencil: &Stencil, values: &PatchValues<'_, N>) -> u64 {
     // If a stencil has no relocations, its bytes are independent of the
@@ -78,6 +85,7 @@ pub struct StencilArena {
     executable: bool,
     id: u64,
     published_abis: RefCell<HashMap<usize, crate::stencil_select::RegionAbi>>,
+    last_physical_execution: Cell<Option<PhysicalExecutionWitness>>,
 }
 
 /// Bounded collection of immutable-after-publication executable slabs.  Region
@@ -519,6 +527,7 @@ impl StencilArena {
             executable: false,
             id: NEXT_ARENA_ID.fetch_add(1, Ordering::Relaxed),
             published_abis: RefCell::new(HashMap::new()),
+            last_physical_execution: Cell::new(None),
         })
     }
 
@@ -533,6 +542,19 @@ impl StencilArena {
     }
     pub fn is_executable(&self) -> bool {
         self.executable
+    }
+
+    pub fn last_physical_execution(&self) -> Option<PhysicalExecutionWitness> {
+        self.last_physical_execution.get()
+    }
+
+    fn mark_physical_execution(&self, view: crate::stencil_select::PhysicalStencilView) {
+        self.last_physical_execution
+            .set(Some(PhysicalExecutionWitness {
+                key: view.key,
+                generated: view.generated,
+                fingerprint: view.fingerprint,
+            }));
     }
 
     /// Stable owner token used to validate cached entry pointers.  It is
@@ -1001,7 +1023,11 @@ impl StencilArena {
             return fallback();
         }
         let stencil = view.stencil;
-        self.render_and_execute(cache, key, stencil, values, execute, fallback)
+        let result = self.render_and_execute(cache, key, stencil, values, execute, fallback);
+        if result.is_ok() {
+            self.mark_physical_execution(view);
+        }
+        result
     }
 
     /// End-to-end executable entry for the proven-number Add+Return region.
@@ -1024,7 +1050,7 @@ impl StencilArena {
         }
         let stencil = view.stencil;
         if let Some((tail, rel32_offset)) = view.fallthrough {
-            return self.render_fallthrough_f64(
+            let result = self.render_fallthrough_f64(
                 cache,
                 key,
                 stencil,
@@ -1035,6 +1061,10 @@ impl StencilArena {
                 rhs,
                 fallback,
             );
+            if result.is_ok() {
+                self.mark_physical_execution(view);
+            }
+            return result;
         }
         let address = match self.render_or_get(cache, key, stencil, values) {
             Ok(address) => address,
@@ -1045,7 +1075,10 @@ impl StencilArena {
             return fallback();
         }
         match self.execute_f64(address, lhs, rhs) {
-            Ok(value) => Ok(value),
+            Ok(value) => {
+                self.mark_physical_execution(view);
+                Ok(value)
+            }
             Err(_) => {
                 cache.remove(key, cache_signature(stencil, values), address);
                 fallback()
@@ -1073,7 +1106,10 @@ impl StencilArena {
         let address = self.render_or_get(cache, key, stencil, values)?;
         self.make_executable()?;
         match self.execute_bool(address, lhs, rhs) {
-            Ok(value) => Ok(value),
+            Ok(value) => {
+                self.mark_physical_execution(view);
+                Ok(value)
+            }
             Err(error) => {
                 cache.remove(key, cache_signature(stencil, values), address);
                 Err(error)
@@ -1102,7 +1138,10 @@ impl StencilArena {
         let address = self.render_or_get(cache, key, stencil, values)?;
         self.make_executable()?;
         match self.execute_i32(address, lhs, rhs) {
-            Ok(value) => Ok(value),
+            Ok(value) => {
+                self.mark_physical_execution(view);
+                Ok(value)
+            }
             Err(error) => {
                 cache.remove(key, cache_signature(stencil, values), address);
                 Err(error)
@@ -1131,7 +1170,10 @@ impl StencilArena {
         let address = self.render_or_get(cache, key, stencil, values)?;
         self.make_executable()?;
         match self.execute_u32(address, lhs, rhs) {
-            Ok(value) => Ok(value),
+            Ok(value) => {
+                self.mark_physical_execution(view);
+                Ok(value)
+            }
             Err(error) => {
                 cache.remove(key, cache_signature(stencil, values), address);
                 Err(error)
@@ -1187,7 +1229,9 @@ impl StencilArena {
         let address = self.render_or_get(cache, key, view.stencil, values)?;
         self.make_executable()?;
         let entry = self.f64x3_entry(address)?;
-        Ok(entry(lhs, rhs, third))
+        let value = entry(lhs, rhs, third);
+        self.mark_physical_execution(view);
+        Ok(value)
     }
 
     /// Install a two-region Number chain. The head falls through by a direct
@@ -2324,6 +2368,24 @@ mod tests {
         assert_eq!(cache.len(), 1);
     }
 
+    #[cfg(all(quench_generated_stencil_artifacts, target_arch = "aarch64"))]
+    #[test]
+    fn generated_fallthrough_view_carries_declared_branch_and_tail() {
+        let key = crate::stencil_select::fallthrough_region_key();
+        let view = crate::stencil_select::select_physical(key).expect("physical view");
+        assert!(view.generated);
+        assert_eq!(view.stencil.holes.len(), 1);
+        assert_eq!(view.stencil.holes[0].offset, 4);
+        assert!(matches!(
+            view.stencil.holes[0].kind,
+            crate::stencil_fact::HoleKind::Branch26
+        ));
+        let (tail, entry) = view.fallthrough.expect("generated tail");
+        assert_eq!(entry, 4);
+        assert_eq!(tail.bytes, &[0xc0, 0x03, 0x5f, 0xd6]);
+        assert!(tail.holes.is_empty());
+    }
+
     #[cfg(quench_generated_stencil_artifacts)]
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
@@ -2345,6 +2407,12 @@ mod tests {
             arena.render_selected_f64(&mut cache, key, &values, 3.5, 2.25, || Ok(0.0)),
             Ok(5.75)
         );
+        let witness = arena
+            .last_physical_execution()
+            .expect("successful entry witness");
+        assert_eq!(witness.key, key);
+        assert!(witness.generated);
+        assert_eq!(witness.fingerprint, view.fingerprint);
     }
 
     #[cfg(quench_generated_stencil_artifacts)]

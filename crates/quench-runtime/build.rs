@@ -1556,6 +1556,7 @@ fn main() {
         verify_stencil_encodings();
     }
     println!("cargo:rustc-check-cfg=cfg(quench_production)");
+    println!("cargo:rustc-check-cfg=cfg(quench_generated_stencil_artifacts)");
     println!("cargo:rerun-if-env-changed=PROFILE");
     println!("cargo:rerun-if-env-changed=QUENCH_VERIFY_STENCIL_ENCODINGS");
     println!("cargo:rerun-if-env-changed=QUENCH_GENERATE_STENCIL_OBJECTS");
