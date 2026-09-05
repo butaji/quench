@@ -1728,6 +1728,26 @@ mod tests {
         assert!(entry(true_bits, true_bits) != 0);
         assert!(entry(true_bits, false_bits) == 0);
         assert!(entry(null_bits, null_bits) != 0);
+
+        let not_equal_key = crate::stencil_select::compare_not_equal_word_region_key();
+        let not_equal_record = crate::stencil_select::select_region(not_equal_key)
+            .expect("word inequality row");
+        let mut not_equal_arena = StencilArena::new(4096).unwrap();
+        let mut not_equal_cache = RenderedRegionCache::new();
+        let not_equal_address = not_equal_arena
+            .render_or_get(
+                &mut not_equal_cache,
+                not_equal_key,
+                &not_equal_record.stencil,
+                &values,
+            )
+            .unwrap();
+        not_equal_arena.make_executable().unwrap();
+        let not_equal = not_equal_arena
+            .word_pair_bool_entry(not_equal_address)
+            .unwrap();
+        assert!(not_equal(true_bits, false_bits) != 0);
+        assert!(not_equal(null_bits, null_bits) == 0);
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
