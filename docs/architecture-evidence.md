@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `938645d7d` (cleanup files remain
+Evidence below is bound to source revision `4011a5ced` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -67,6 +67,13 @@ The full normal runtime remains **734 passed, 0 failed, 1 ignored** and the
 execution-trace suite **748 passed, 0 failed, 1 ignored** at
 `/tmp/quench-runtime-full-20260905-arena-failure-cleanup.log` and
 `/tmp/quench-runtime-trace-20260905-arena-failure-cleanup.log`.
+
+Region outcomes now distinguish native completion, fallback completion,
+semantic error, physical rejection and committed failure in trace output. The
+profile test passes at `/tmp/quench-stencil-outcome-trace-20260905.log`; full
+normal and trace suites pass at `/tmp/quench-runtime-full-20260905-stencil-outcomes.log`
+and `/tmp/quench-runtime-trace-20260905-stencil-outcomes.log` (734 and 749
+passed respectively, zero failures, one ignored each).
 
 The generated catalog now records each target template's build-time helper-call
 effect; `validate_physical_template` compares that fact with decoded bytes and
