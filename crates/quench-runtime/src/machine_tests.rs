@@ -731,9 +731,10 @@ fn ordinary_residual_named_get_executes_guarded_property_stencil() {
     let code = function.code().expect("lowered named get");
     let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
     let plan = super::BaselinePlan::compile_for_test(code, policy);
-    let object = crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
-        vec![("value".into(), crate::value::Value::Number(7.0))],
-    )));
+    let object_data = std::rc::Rc::new(crate::value::ObjectData::new(vec![
+        ("value".into(), crate::value::Value::Number(7.0)),
+    ]));
+    let object = crate::value::Value::Object(std::rc::Rc::clone(&object_data));
     let mut registers = crate::register_file::RegisterFile::from_values(vec![
         crate::value::Value::Undefined,
         object,
@@ -760,9 +761,32 @@ fn ordinary_residual_named_get_executes_guarded_property_stencil() {
     )
     .expect("guarded named get execution");
     assert_eq!(completion, crate::completion::Completion::Return(crate::value::Value::Number(7.0)));
-    assert!(plan
+    let native_count = plan
         .native_property_at(0)
-        .is_some_and(|native| native.borrow().native_entry_count > 0));
+        .map(|native| native.borrow().native_entry_count)
+        .unwrap_or(0);
+    assert!(native_count > 0);
+    assert!(crate::execute::set_property_in_place(
+        &crate::value::Value::Object(object_data),
+        "other",
+        crate::value::Value::Number(1.0),
+    ));
+    registers.write(0, crate::value::Value::Undefined);
+    let (completion, _) = crate::vm::execute_baseline_code_from(
+        code,
+        &plan,
+        0,
+        &mut registers,
+        &context,
+        crate::environment::Environment::new(),
+    )
+    .expect("shape-change fallback");
+    assert_eq!(completion, crate::completion::Completion::Return(crate::value::Value::Number(7.0)));
+    assert_eq!(
+        plan.native_property_at(0).map(|native| native.borrow().native_entry_count),
+        Some(native_count),
+        "shape mutation must not re-enter the stale native slot"
+    );
 }
 
 #[test]
