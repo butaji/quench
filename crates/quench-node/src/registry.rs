@@ -2275,6 +2275,8 @@ node_api! {
     (SPEC_URL_PATTERN_EXEC, "legacy:url:pattern:exec", 2285),
     (SPEC_STDOUT_WRITE, "legacy:stdout:write", 0x0A09),
     (SPEC_STDERR_WRITE, "legacy:stderr:write", 0x0A0A),
+    (SPEC_STDOUT_END, "legacy:stdout:end", 0x0A31),
+    (SPEC_STDERR_END, "legacy:stderr:end", 0x0A32),
     (SPEC_NET_SOCKET_UNREF, "legacy:net:socket:unref", 2290),
     (SPEC_NET_SOCKET_REF, "legacy:net:socket:ref", 2291),
     (SPEC_NET_BLOCK_LIST, "legacy:net:block:list", 2292),

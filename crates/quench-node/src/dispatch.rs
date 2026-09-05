@@ -390,6 +390,8 @@ const CAP_PROCESS_REMOVE_LISTENER: u16 = 0x0A0E;
 const CAP_PROCESS_REMOVE_ALL_LISTENERS: u16 = 0x0A0F;
 const CAP_STDOUT_WRITE: u16 = 0x0A09;
 const CAP_STDERR_WRITE: u16 = 0x0A0A;
+const CAP_STDOUT_END: u16 = crate::registry::SPEC_STDOUT_END.cap;
+const CAP_STDERR_END: u16 = crate::registry::SPEC_STDERR_END.cap;
 const CAP_NET_GET_ASF_TIMEOUT: u16 = 0x1005;
 const CAP_NET_SET_ASF_TIMEOUT: u16 = 0x1006;
 const CAP_NET_SERVER_LISTEN: u16 = 0x1007;
@@ -1155,6 +1157,12 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
         }
         CAP_STDERR_WRITE => {
             |state, _receiver, args| crate::modules::process::stream_write(state, args, true)
+        }
+        CAP_STDOUT_END => {
+            |state, receiver, args| crate::modules::process::stream_end(state, receiver, args, false)
+        }
+        CAP_STDERR_END => {
+            |state, receiver, args| crate::modules::process::stream_end(state, receiver, args, true)
         }
         _ => return os_dispatch(cap),
     })
