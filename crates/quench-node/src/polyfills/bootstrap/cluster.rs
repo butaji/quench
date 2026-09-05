@@ -2,12 +2,21 @@
 
 pub const JS: &str = quench_js_check::checked_js!(
     r#"const __quenchRequireStreamIter = () => {
-  const toStreamable = Symbol.for("nodejs.stream.iter.toStreamable");
-  const toAsyncStreamable = Symbol.for("nodejs.stream.iter.toAsyncStreamable");
+  const toStreamable = Symbol.for("Stream.toStreamable");
+  const toAsyncStreamable = Symbol.for("Stream.toAsyncStreamable");
+  const broadcastProtocol = Symbol.for("Stream.broadcastProtocol");
+  const shareProtocol = Symbol.for("Stream.shareProtocol");
+  const shareSyncProtocol = Symbol.for("Stream.shareSyncProtocol");
+  const drainableProtocol = Symbol.for("Stream.drainableProtocol");
   const normalizeOptions = (options) => {
     if (options === undefined) return {};
     if (!options || typeof options !== "object") {
       throw Object.assign(new TypeError("options must be an object"), { code: "ERR_INVALID_ARG_TYPE" });
+    }
+    if (options.limit !== undefined && typeof options.limit !== "number") {
+      throw Object.assign(new TypeError("limit must be a number"), {
+        code: "ERR_INVALID_ARG_TYPE"
+      });
     }
     if (
       options.limit !== undefined &&
@@ -68,11 +77,11 @@ pub const JS: &str = quench_js_check::checked_js!(
       return;
     }
     if (source?.[Symbol.asyncIterator]) {
-      yield* source;
+      for await (const value of source) yield value;
       return;
     }
     if (source?.[Symbol.iterator]) {
-      yield* source;
+      for (const value of source) yield value;
       return;
     }
     throw new TypeError("source must be iterable");
@@ -236,8 +245,14 @@ pub const JS: &str = quench_js_check::checked_js!(
     }
     return chunks;
   };
-  const asyncBytes = async (source, options) =>
-    concat(await readAsync(source, normalizeOptions(options)));
+  const asyncBytes = async (source, options) => {
+    if (source && typeof source.on === "function") {
+      const consumers = globalThis.require("stream/consumers");
+      return consumers.bytes(source, normalizeOptions(options));
+    }
+    const chunks = await readAsync(source, normalizeOptions(options));
+    return concat(chunks);
+  };
   const syncBytes = (source, options) =>
     concat(syncChunks(source, normalizeOptions(options)));
   const decoderEncoding = (options) => {
@@ -251,7 +266,7 @@ pub const JS: &str = quench_js_check::checked_js!(
         .split(" ")
         .includes(normalized)
     ) {
-      throw Object.assign(new RangeError(`Unknown encoding: ${encoding}`), { code: "ERR_ENCODING_NOT_SUPPORTED" });
+      throw Object.assign(new RangeError(`Unknown encoding: ${encoding}`), { code: "ERR_INVALID_ARG_VALUE" });
     }
     return normalized === "latin1" ||
       normalized === "iso-8859-1" ||
@@ -266,7 +281,10 @@ pub const JS: &str = quench_js_check::checked_js!(
       return result;
     }
     try {
-      const result = new TextDecoder(encoding).decode(bytes);
+      // Node's stream/iter text consumer uses fatal decoding: malformed
+      // byte sequences reject with TypeError instead of silently replacing
+      // them with U+FFFD.
+      const result = new TextDecoder(encoding, { fatal: true }).decode(bytes);
       return encoding === "utf-8" && result.startsWith("\uFEFF")
         ? result.slice(1)
         : result;
@@ -278,7 +296,12 @@ pub const JS: &str = quench_js_check::checked_js!(
   };
   const asyncText = async (source, options) => {
     const opts = normalizeOptions(options);
-    return decodeText(await asyncBytes(source, opts), decoderEncoding(opts));
+    const encoding = decoderEncoding(opts);
+    if (source && typeof source.on === "function") {
+      const consumers = globalThis.require("stream/consumers");
+      return consumers.text(source, opts);
+    }
+    return decodeText(await asyncBytes(source, opts), encoding);
   };
   const syncText = (source, options) => {
     const opts = normalizeOptions(options);
@@ -302,7 +325,9 @@ pub const JS: &str = quench_js_check::checked_js!(
       : sourceSync(source);
   const tapSync = (observer) => {
     if (typeof observer !== "function") {
-      throw new TypeError("observer must be a function");
+      throw Object.assign(new TypeError("observer must be a function"), {
+        code: "ERR_INVALID_ARG_TYPE"
+      });
     }
     return (value) => {
       observer(value);
@@ -311,7 +336,9 @@ pub const JS: &str = quench_js_check::checked_js!(
   };
   const tap = (observer) => {
     if (typeof observer !== "function") {
-      throw new TypeError("observer must be a function");
+      throw Object.assign(new TypeError("observer must be a function"), {
+        code: "ERR_INVALID_ARG_TYPE"
+      });
     }
     return async (value) => {
       await observer(value);
@@ -362,42 +389,129 @@ pub const JS: &str = quench_js_check::checked_js!(
       }
     };
   };
-  const push = () => {
-    const queue = [];
-    const waiters = [];
-    let ended = false;
-    const readable = {
-      async *[Symbol.asyncIterator]() {
-        for (;;) {
-          if (queue.length) {
-            yield queue.shift();
-            continue;
-          }
-          if (ended) return;
-          const value = await new Promise((resolve) => waiters.push(resolve));
-          if (value === null) return;
-          yield value;
-        }
+  const validatePushOptions = (options) => {
+    if (options === undefined) return { budget: Infinity };
+    if (!options || typeof options !== "object" || Array.isArray(options)) {
+      throw Object.assign(new TypeError("options must be an object"), {
+        code: "ERR_INVALID_ARG_TYPE"
+      });
+    }
+    const budget = options.budget === undefined ? Infinity : options.budget;
+    if (typeof budget !== "number") {
+      throw Object.assign(new TypeError("budget must be a number"), {
+        code: "ERR_INVALID_ARG_TYPE"
+      });
+    }
+    if (budget !== Infinity && (!Number.isSafeInteger(budget) || budget < 16384)) {
+      throw Object.assign(new RangeError("budget must be at least 16384"), {
+        code: "ERR_OUT_OF_RANGE"
+      });
+    }
+    if (
+      options.signal !== undefined &&
+      (!options.signal || typeof options.signal.addEventListener !== "function")
+    ) {
+      throw Object.assign(new TypeError("signal must be an AbortSignal"), {
+        code: "ERR_INVALID_ARG_TYPE"
+      });
+    }
+    if (
+      options.backpressure !== undefined &&
+      !["strict", "unbounded", "drop-newest", "drop-oldest"].includes(
+        options.backpressure
+      )
+    ) {
+      throw Object.assign(new TypeError("invalid backpressure option"), {
+        code: "ERR_INVALID_ARG_VALUE"
+      });
+    }
+    return { ...options, budget };
+  };
+  const push = (options) => {
+    const opts = validatePushOptions(options);
+    const budget = opts.budget;
+    const readable = new NodeReadable({ objectMode: false });
+    const validateChunk = (value) => {
+      if (
+        typeof value !== "string" &&
+        !(value instanceof Uint8Array) &&
+        !(value instanceof ArrayBuffer) &&
+        !ArrayBuffer.isView(value)
+      ) {
+        throw Object.assign(new TypeError("chunk must be a string or buffer"), {
+          code: "ERR_INVALID_ARG_TYPE"
+        });
       }
     };
     const enqueue = (value) => {
-      const batch = Array.isArray(value) ? value : [NodeBuffer.from(value)];
-      const waiter = waiters.shift();
-      if (waiter) waiter(batch);
-      else queue.push(batch);
+      validateChunk(value);
+      readable.push(NodeBuffer.from(value));
     };
     return {
       writer: {
-        write(value) {
-          if (ended) throw new Error("write after end");
+        get canWrite() {
+          return !readable.destroyed && readable.readableLength < budget;
+        },
+        write(value, writeOptions) {
+          if (
+            writeOptions?.signal !== undefined &&
+            (!writeOptions.signal ||
+              typeof writeOptions.signal.addEventListener !== "function")
+          ) {
+            throw Object.assign(new TypeError("signal must be an AbortSignal"), {
+              code: "ERR_INVALID_ARG_TYPE"
+            });
+          }
+          if (writeOptions?.signal?.aborted) {
+            return Promise.reject(abortError(writeOptions.signal));
+          }
+          if (readable.readableEnded) throw new Error("write after end");
           enqueue(value);
           return true;
         },
-        end(value) {
+        writeSync(value) {
+          if (readable.readableEnded) return false;
+          enqueue(value);
+          return true;
+        },
+        writev(values, writeOptions) {
+          if (!Array.isArray(values)) {
+            throw Object.assign(new TypeError("chunks must be an array"), {
+              code: "ERR_INVALID_ARG_TYPE"
+            });
+          }
+          return Promise.all(
+            values.map((value) => this.write(value, writeOptions))
+          );
+        },
+        writevSync(values) {
+          if (!Array.isArray(values)) {
+            throw Object.assign(new TypeError("chunks must be an array"), {
+              code: "ERR_INVALID_ARG_TYPE"
+            });
+          }
+          for (const value of values) this.writeSync(value);
+          return true;
+        },
+        end(value, endOptions) {
+          if (endOptions?.signal !== undefined &&
+              (!endOptions.signal ||
+                typeof endOptions.signal.addEventListener !== "function")) {
+            throw Object.assign(new TypeError("signal must be an AbortSignal"), {
+              code: "ERR_INVALID_ARG_TYPE"
+            });
+          }
+          if (endOptions?.signal?.aborted) {
+            return Promise.reject(abortError(endOptions.signal));
+          }
           if (value !== undefined) enqueue(value);
-          ended = true;
-          while (waiters.length) waiters.shift()(null);
+          readable.push(null);
           return this;
+        },
+        endSync(value) {
+          if (value !== undefined) enqueue(value);
+          readable.push(null);
+          return -1;
         }
       },
       readable
@@ -477,6 +591,7 @@ pub const JS: &str = quench_js_check::checked_js!(
     };
   };
   const broadcast = (options = {}) => {
+    options = validatePushOptions(options);
     const consumers = new Set();
     const history = [];
     const budget = options.budget === undefined ? Infinity : options.budget;
@@ -523,6 +638,19 @@ pub const JS: &str = quench_js_check::checked_js!(
       return true;
     };
     const addConsumer = (options = {}) => {
+      if (!options || typeof options !== "object" || Array.isArray(options)) {
+        throw Object.assign(new TypeError("options must be an object"), {
+          code: "ERR_INVALID_ARG_TYPE"
+        });
+      }
+      if (
+        options.signal !== undefined &&
+        (!options.signal || typeof options.signal.addEventListener !== "function")
+      ) {
+        throw Object.assign(new TypeError("signal must be an AbortSignal"), {
+          code: "ERR_INVALID_ARG_TYPE"
+        });
+      }
       const consumer = {
         queue: history.slice(),
         waiters: [],
@@ -654,8 +782,19 @@ pub const JS: &str = quench_js_check::checked_js!(
       }
     }
     const writer = {
+      get canWrite() {
+        return !ended && totalBytes < budget;
+      },
       write(value, writeOptions) {
         if (ended) throw new Error("write after end");
+        if (
+          writeOptions?.signal !== undefined &&
+          (!writeOptions.signal || typeof writeOptions.signal.addEventListener !== "function")
+        ) {
+          throw Object.assign(new TypeError("signal must be an AbortSignal"), {
+            code: "ERR_INVALID_ARG_TYPE"
+          });
+        }
         if (writeOptions?.signal?.aborted) {
           return Promise.reject(abortError(writeOptions.signal));
         }
@@ -698,6 +837,13 @@ pub const JS: &str = quench_js_check::checked_js!(
       },
       writeSync(value) {
         if (ended) throw new Error("write after end");
+        if (!Array.isArray(value) && typeof value !== "string" &&
+            !(value instanceof Uint8Array) && !(value instanceof ArrayBuffer) &&
+            !ArrayBuffer.isView(value)) {
+          throw Object.assign(new TypeError("chunk must be a string or buffer"), {
+            code: "ERR_INVALID_ARG_TYPE"
+          });
+        }
         const bytes = (Array.isArray(value) ? value : [value]).reduce(
           (sum, item) =>
             sum + (item?.byteLength ?? NodeBuffer.byteLength(String(item))),
@@ -712,20 +858,38 @@ pub const JS: &str = quench_js_check::checked_js!(
         return publish(value);
       },
       writevSync(values) {
+        if (!Array.isArray(values)) {
+          throw Object.assign(new TypeError("chunks must be an array"), {
+            code: "ERR_INVALID_ARG_TYPE"
+          });
+        }
         return this.writeSync(values);
       },
       writev(values, options) {
+        if (!Array.isArray(values)) {
+          throw Object.assign(new TypeError("chunks must be an array"), {
+            code: "ERR_INVALID_ARG_TYPE"
+          });
+        }
         return this.write(values, options);
       },
-      async end(value) {
-        if (value?.signal?.aborted) {
+      end(value, endOptions) {
+        const options = endOptions ||
+          (value && typeof value === "object" && "signal" in value ? value : undefined);
+        if (options?.signal !== undefined &&
+            (!options.signal || typeof options.signal.addEventListener !== "function")) {
+          throw Object.assign(new TypeError("signal must be an AbortSignal"), {
+            code: "ERR_INVALID_ARG_TYPE"
+          });
+        }
+        if (options?.signal?.aborted) {
           return Promise.reject(
-            value.signal.reason || new Error("The operation was aborted")
+            options.signal.reason || new Error("The operation was aborted")
           );
         }
-        if (value !== undefined) publish(value);
+        if (value !== undefined && value !== options) publish(value);
         finish();
-        return totalBytes;
+        return Promise.resolve(totalBytes);
       },
       endSync(value) {
         if (value !== undefined) publish(value);
@@ -750,6 +914,9 @@ pub const JS: &str = quench_js_check::checked_js!(
         push(options) {
           return addConsumer(options);
         },
+        pull(options) {
+          return addConsumer(options);
+        },
         cancel(reason) {
           finish(reason);
         },
@@ -760,6 +927,8 @@ pub const JS: &str = quench_js_check::checked_js!(
     };
   };
   const shareSync = (source, options = {}) => {
+    validateReadableSource(source);
+    validatePushOptions(options);
     const sourceIterator = sourceSync(source)[Symbol.iterator]();
     const batches = [];
     const consumers = new Set();
@@ -875,6 +1044,7 @@ pub const JS: &str = quench_js_check::checked_js!(
   };
   const Broadcast = {
     from(source, options = {}) {
+      validateReadableSource(source);
       const protocol = Symbol.for("Stream.broadcastProtocol");
       if (source && typeof source[protocol] === "function") {
         const result = source[protocol](options);
@@ -906,6 +1076,22 @@ pub const JS: &str = quench_js_check::checked_js!(
     }
   };
   const writableCache = new WeakMap();
+  const validateWriterOptions = (options) => {
+    if (options === undefined) return;
+    if (!options || typeof options !== "object") {
+      throw Object.assign(new TypeError("options must be an object"), {
+        code: "ERR_INVALID_ARG_TYPE"
+      });
+    }
+    if (
+      options.signal !== undefined &&
+      (!options.signal || typeof options.signal.addEventListener !== "function")
+    ) {
+      throw Object.assign(new TypeError("signal must be an AbortSignal"), {
+        code: "ERR_INVALID_ARG_TYPE"
+      });
+    }
+  };
   const fromWritable = (writable, options = {}) => {
     if (!writable || typeof writable.write !== "function") {
       throw Object.assign(new TypeError("writable must be a Writable stream"), { code: "ERR_INVALID_ARG_TYPE" });
@@ -933,7 +1119,12 @@ pub const JS: &str = quench_js_check::checked_js!(
       get canWrite() {
         return writable.destroyed ? null : !writable.writableNeedDrain;
       },
-      async write(value) {
+      write(value, writeOptions) {
+        validateWriterOptions(writeOptions);
+        if (writeOptions?.signal?.aborted) {
+          return Promise.reject(abortError(writeOptions.signal));
+        }
+        return (async () => {
         if (state.ended) throw new Error("write after end");
         if (backpressure === "drop-newest" && state.blocked) return;
         const accepted = writable.write(value);
@@ -941,14 +1132,24 @@ pub const JS: &str = quench_js_check::checked_js!(
         if (!accepted && backpressure === "wait") {
           await new Promise((resolve) => queueMicrotask(resolve));
         }
+        })();
       },
-      async end(value) {
+      end(value, endOptions) {
+        const options = endOptions ||
+          (value && typeof value === "object" && "signal" in value ? value : undefined);
+        validateWriterOptions(options);
+        if (options?.signal?.aborted) {
+          return Promise.reject(abortError(options.signal));
+        }
+        return (async () => {
         if (state.ended) return;
-        if (value !== undefined) await this.write(value);
+        if (value !== undefined && value !== options) await this.write(value, options);
         state.ended = true;
         writable.end?.();
+        })();
       },
-      writev(chunks) {
+      writev(chunks, writeOptions) {
+        validateWriterOptions(writeOptions);
         if (!Array.isArray(chunks)) {
           throw Object.assign(new TypeError("chunks must be an array"), { code: "ERR_INVALID_ARG_TYPE" });
         }
@@ -961,7 +1162,7 @@ pub const JS: &str = quench_js_check::checked_js!(
             throw Object.assign(new TypeError("chunk must be a string or buffer"), { code: "ERR_INVALID_ARG_TYPE" });
           }
         }
-        return Promise.all(chunks.map((chunk) => this.write(chunk)));
+        return Promise.all(chunks.map((chunk) => this.write(chunk, writeOptions)));
       },
       writeSync() {
         return false;
@@ -983,6 +1184,7 @@ pub const JS: &str = quench_js_check::checked_js!(
       throw error;
     }
     const writable = new NodeWritable({
+      highWaterMark: Number.MAX_SAFE_INTEGER,
       write(chunk, encoding, callback) {
         if (typeof writer.writeSync === "function") {
           let accepted;
@@ -1068,10 +1270,83 @@ pub const JS: &str = quench_js_check::checked_js!(
         );
       };
     }
-    writable.writableHighWaterMark = Number.MAX_SAFE_INTEGER;
     return writable;
   };
+  const from = (source) =>
+    typeof source?.[Symbol.asyncIterator] === "function"
+      ? source
+      : { [Symbol.asyncIterator]: () => sourceAsync(source) };
+  const fromSync = (source) => ({ [Symbol.iterator]: () => sourceSync(source) });
+  const fromReadable = (readable) => from(readable);
+  const pipeTo = async (source, writer, options = {}) => {
+    if (!writer || typeof writer.write !== "function") {
+      throw Object.assign(new TypeError("writer must provide write()"), { code: "ERR_INVALID_ARG_TYPE" });
+    }
+    if (
+      options === null || typeof options !== "object" ||
+      (options.signal !== undefined &&
+        (!options.signal || typeof options.signal.addEventListener !== "function"))
+    ) {
+      throw Object.assign(new TypeError("signal must be an AbortSignal"), {
+        code: "ERR_INVALID_ARG_TYPE"
+      });
+    }
+    const iterator = sourceAsync(source)[Symbol.asyncIterator]();
+    for (;;) {
+      if (options.signal?.aborted) throw abortError(options.signal);
+      const step = await iterator.next();
+      if (step.done) break;
+      const values = Array.isArray(step.value) ? step.value : [step.value];
+      for (let index = 0; index < values.length; index++) await writer.write(values[index], options);
+    }
+    if (options.preventClose !== true) await writer.end?.();
+    return undefined;
+  };
+  const pipeToSync = (source, writer, options = {}) => {
+    if (!writer || typeof writer.writeSync !== "function") {
+      throw Object.assign(new TypeError("writer must provide writeSync()"), { code: "ERR_INVALID_ARG_TYPE" });
+    }
+    const batches = Array.isArray(source) ? source : sourceSync(source);
+    for (const batch of batches) {
+      const values = Array.isArray(batch) ? batch : [batch];
+      for (let index = 0; index < values.length; index++) writer.writeSync(values[index]);
+    }
+    if (options.preventClose !== true) writer.endSync?.();
+    return undefined;
+  };
+  const duplex = (options) => {
+    if (options !== undefined &&
+        (!options || typeof options !== "object" || Array.isArray(options))) {
+      throw Object.assign(new TypeError("options must be an object"), {
+        code: "ERR_INVALID_ARG_TYPE"
+      });
+    }
+    const a = push(options?.a ?? options);
+    const b = push(options?.b ?? options);
+    return [
+      { writer: a.writer, readable: b.readable, close: () => { a.writer.end(); b.writer.end(); } },
+      { writer: b.writer, readable: a.readable, close: () => { b.writer.end(); a.writer.end(); } }
+    ];
+  };
+  const share = (source, options = {}) => {
+    validateReadableSource(source);
+    return broadcast(options).broadcast;
+  };
+  const Share = { from: share };
+  const SyncShare = { fromSync: (source, options) => shareSync(source, options) };
+  const streamNamespace = {
+    push, duplex, from, fromSync, pull: (source) => source, pullSync,
+    pipeTo, pipeToSync, bytes: asyncBytes, bytesSync: syncBytes, text: asyncText,
+    textSync: syncText, arrayBuffer: async (source, options) => (await asyncBytes(source, options)).buffer,
+    arrayBufferSync: (source, options) => syncBytes(source, options).buffer,
+    array: asyncArray, arraySync: syncArray, merge, broadcast, share, shareSync,
+    broadcastProtocol, shareProtocol, shareSyncProtocol, drainableProtocol,
+    tap, tapSync, ondrain: (writer) => writer?.canWrite === null ? null : Promise.resolve(true)
+  };
   return {
+    Stream: Object.freeze(streamNamespace),
+    Share,
+    SyncShare,
     from: (source) =>
       typeof source?.[Symbol.asyncIterator] === "function"
         ? source
@@ -1090,6 +1365,10 @@ pub const JS: &str = quench_js_check::checked_js!(
       }
       return { [Symbol.iterator]: () => fromSyncSource(source) };
     },
+    fromReadable,
+    duplex,
+    pipeTo,
+    pipeToSync,
     text: asyncText,
     textSync: syncText,
     bytes: asyncBytes,
@@ -1102,7 +1381,12 @@ pub const JS: &str = quench_js_check::checked_js!(
     tap,
     tapSync,
     pullSync,
+    share,
     shareSync,
+    broadcastProtocol,
+    shareProtocol,
+    shareSyncProtocol,
+    drainableProtocol,
     toReadable,
     toReadableSync,
     push,
@@ -1114,10 +1398,31 @@ pub const JS: &str = quench_js_check::checked_js!(
     ondrain: (writer) =>
       writer?.canWrite === null ? null : Promise.resolve(true),
     pull: (readable, transform) => {
-      if (transform?.constructor?.name === "AsyncGeneratorFunction") {
+      if (
+        transform !== undefined &&
+        typeof transform !== "function" &&
+        typeof transform?.transform !== "function"
+      ) {
+        throw Object.assign(
+          new TypeError("transform must be a function or an object with transform()"),
+          { code: "ERR_INVALID_ARG_TYPE" }
+        );
+      }
+      if (
+        transform?.constructor?.name === "AsyncGeneratorFunction" ||
+        typeof transform?.transform === "function"
+      ) {
+        const transformSource = typeof transform?.transform === "function"
+          ? transform.transform
+          : transform;
+        if (transform?.__quench_direct_transform) {
+          return transformSource(sourceAsync(readable));
+        }
         return {
           async *[Symbol.asyncIterator]() {
-            yield* transform(sourceAsync(readable));
+            for await (const value of transformSource(sourceAsync(readable))) {
+              yield value;
+            }
           }
         };
       }
@@ -1325,6 +1630,8 @@ const __quenchVmModule = {
     }
     runInThisContext(options) {
       __quenchVmValidateScriptOptions(options);
+      if (typeof globalThis.__quench_vm_run_in_this_context === "function")
+        return globalThis.__quench_vm_run_in_this_context(this.code, options);
       return (0, eval)(this.code);
     }
     runInNewContext(context = {}, options) {
@@ -1358,6 +1665,8 @@ const __quenchVmModule = {
   },
   isContext: (value) => __quenchVmIsContext(value),
   runInThisContext: (code, options) => {
+    if (typeof globalThis.__quench_vm_run_in_this_context === "function")
+      return globalThis.__quench_vm_run_in_this_context(code, options);
     try {
       return (0, eval)(String(code));
     } catch (error) {
@@ -1687,3 +1996,9 @@ globalThis.__quench_require_part_02 = (name, specifier) => {
 };
 "#
 );
+
+pub fn stream_iter_js() -> &'static str {
+    JS.split_once("\nconst __quenchFinishClusterWorker")
+        .map(|(source, _)| source)
+        .unwrap_or("")
+}
