@@ -18,6 +18,8 @@ ABI/table), with ordinary-source native execution and coercive fallback covered
 at `4fe27aaf9` by `/tmp/quench-loose-equality-20260905.log`.
 The same source tree passes the non-trace runtime library suite (**730 passed,
 0 failed, 1 ignored**) at `/tmp/quench-runtime-full-20260905-loose-equality.log`.
+Host library regressions remain green (**4 passed**) at
+`/tmp/quench-node-full-20260905-loose-equality.log`.
 
 | Layer / family | Code and normal wiring | Executed evidence | Supported / safe boundary | Status and remaining gap |
 | --- | --- | --- | --- | --- |
