@@ -145,6 +145,24 @@ impl IterationBinding {
             previous,
         }
     }
+
+    pub(crate) fn install_cells<I>(bindings: I) -> Self
+    where
+        I: IntoIterator<Item = (u16, Rc<crate::value::BindingCell>)>,
+    {
+        let environment = current();
+        let previous = bindings
+            .into_iter()
+            .map(|(slot, cell)| {
+                environment.clear_immutable_slot(slot);
+                (slot, environment.replace_slot_cell(slot, cell))
+            })
+            .collect();
+        Self {
+            environment,
+            previous,
+        }
+    }
 }
 
 impl Drop for IterationBinding {
