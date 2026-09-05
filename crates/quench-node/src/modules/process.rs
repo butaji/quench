@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use quench_runtime::execute::VmError;
+use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
 use quench_runtime::value::Value;
 
@@ -56,6 +56,13 @@ pub struct ProcessState {
     pub trace_events: Vec<String>,
     pub trace_event_file: Option<std::path::PathBuf>,
     pub trace_timestamp: u64,
+    /// Invocation-level permission facts.  These are kept with the process
+    /// rather than inferred by child-process handlers so every host API sees
+    /// one policy and `drop()` can monotonically revoke a capability.
+    pub permission_enabled: bool,
+    pub permission_audit: bool,
+    pub permissions: HashSet<String>,
+    pub dropped_permissions: HashSet<String>,
 }
 
 impl Default for ProcessState {
@@ -106,6 +113,10 @@ impl ProcessState {
             trace_events: Vec::new(),
             trace_event_file: None,
             trace_timestamp: 0,
+            permission_enabled: false,
+            permission_audit: false,
+            permissions: HashSet::new(),
+            dropped_permissions: HashSet::new(),
         }
     }
 }
@@ -245,6 +256,171 @@ pub fn set_abort_on_uncaught_exception(state: &Rc<RefCell<HostState>>, exec_argv
         )
     });
     state.borrow_mut().process.abort_on_uncaught_exception = enabled;
+}
+
+/// Parse Node permission flags into one process-owned policy.  Flags are
+/// facts supplied by the invocation (or NODE_OPTIONS), never fixture/source
+/// hints.  An explicit `--permission`/`--permission-audit` list wins over
+/// NODE_OPTIONS so child invocations can intentionally replace inherited
+/// permissions just as Node does.
+pub fn configure_permissions(state: &Rc<RefCell<HostState>>, exec_argv: &[String]) {
+    let env_flags = std::env::var("NODE_OPTIONS")
+        .ok()
+        .map(|options| options.split_whitespace().map(str::to_owned).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let explicit_model = exec_argv
+        .iter()
+        .any(|flag| flag == "--permission" || flag == "--permission-audit");
+    let flags = if explicit_model || env_flags.is_empty() {
+        exec_argv
+    } else {
+        &env_flags
+    };
+    let enabled = flags
+        .iter()
+        .any(|flag| flag == "--permission" || flag == "--permission-audit");
+    let audit = flags.iter().any(|flag| flag == "--permission-audit");
+    let mut permissions = HashSet::new();
+    for flag in flags {
+        let scope = match flag.as_str() {
+            "--allow-child-process" => Some("child"),
+            "--allow-fs-read" => Some("fs.read"),
+            "--allow-fs-write" => Some("fs.write"),
+            "--allow-net" => Some("net"),
+            "--allow-worker" => Some("worker"),
+            "--allow-wasi" => Some("wasi"),
+            "--allow-inspector" => Some("inspector"),
+            "--allow-addons" => Some("addon"),
+            "--allow-ffi" => Some("ffi"),
+            "--allow-openssl-store" => Some("openssl.store"),
+            value if value.starts_with("--allow-fs-read=") => Some("fs.read"),
+            value if value.starts_with("--allow-fs-write=") => Some("fs.write"),
+            _ => None,
+        };
+        if let Some(scope) = scope {
+            permissions.insert(scope.to_string());
+        }
+    }
+    let mut process = state.borrow_mut();
+    process.process.permission_enabled = enabled;
+    process.process.permission_audit = audit;
+    process.process.permissions = permissions;
+}
+
+/// Return whether a process-owned permission is currently granted.  This
+/// does not treat a permission-looking substring in NODE_OPTIONS as a flag:
+/// only exact option tokens are accepted by `configure_permissions`.
+pub fn permission_allows(state: &Rc<RefCell<HostState>>, scope: &str) -> bool {
+    let process = state.borrow();
+    if !process.process.permission_enabled {
+        return true;
+    }
+    process.process.permissions.contains(scope)
+        && !process.process.dropped_permissions.contains(scope)
+}
+
+pub fn permission_enabled(state: &Rc<RefCell<HostState>>) -> bool {
+    state.borrow().process.permission_enabled
+}
+
+pub fn permission_audit(state: &Rc<RefCell<HostState>>) -> bool {
+    state.borrow().process.permission_audit
+}
+
+pub fn permission_error(scope: &str, resource: &str) -> VmError {
+    let (flag, label) = match scope {
+        "fs.write" => ("--allow-fs-write", "FileSystemWrite"),
+        "fs.read" => ("--allow-fs-read", "FileSystemRead"),
+        "child" => ("--allow-child-process", "ChildProcess"),
+        "net" => ("--allow-net", "Net"),
+        "worker" => ("--allow-worker", "Worker"),
+        _ => ("the corresponding allow flag", "Unknown"),
+    };
+    let mut error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String(format!(
+            "Access to this API has been restricted. Use {flag} to manage permissions."
+        ))],
+    );
+    execute::set_property_in_place(
+        &mut error,
+        "code",
+        Value::String("ERR_ACCESS_DENIED".into()),
+    );
+    execute::set_property_in_place(&mut error, "permission", Value::String(label.into()));
+    execute::set_property_in_place(&mut error, "resource", Value::String(resource.into()));
+    VmError::Thrown(error)
+}
+
+pub fn drop_permission(state: &Rc<RefCell<HostState>>, scope: &str) {
+    state
+        .borrow_mut()
+        .process
+        .dropped_permissions
+        .insert(scope.to_string());
+}
+
+/// Add the current process policy to a self-reexec's argv.  Node propagates
+/// permission flags to children unless the child supplies its own model
+/// flags (or a real model flag in NODE_OPTIONS).  Keeping this transform next
+/// to the policy prevents each child-process entry point from inventing its
+/// own inheritance rules.
+pub fn permission_exec_argv(
+    state: &Rc<RefCell<HostState>>,
+    mut args: Vec<String>,
+    env: Option<&Value>,
+) -> Vec<String> {
+    let (enabled, audit, permissions) = {
+        let process = state.borrow();
+        (
+            process.process.permission_enabled,
+            process.process.permission_audit,
+            process.process.permissions.clone(),
+        )
+    };
+    if !enabled
+        || args
+            .iter()
+            .any(|flag| flag == "--permission" || flag == "--permission-audit")
+    {
+        return args;
+    }
+    let node_options = env
+        .and_then(|value| {
+            let options = execute::get_property(value, "NODE_OPTIONS");
+            matches!(options, Value::String(_)).then(|| execute::to_js_string(&options).ok())
+        })
+        .flatten()
+        .unwrap_or_default();
+    if node_options
+        .split_whitespace()
+        .any(|flag| flag == "--permission" || flag == "--permission-audit")
+    {
+        return args;
+    }
+    let mut inherited = vec![if audit {
+        "--permission-audit".to_string()
+    } else {
+        "--permission".to_string()
+    }];
+    for (scope, flag) in [
+        ("child", "--allow-child-process"),
+        ("fs.read", "--allow-fs-read=*"),
+        ("fs.write", "--allow-fs-write=*"),
+        ("net", "--allow-net"),
+        ("worker", "--allow-worker"),
+        ("wasi", "--allow-wasi"),
+        ("inspector", "--allow-inspector"),
+        ("addon", "--allow-addons"),
+        ("ffi", "--allow-ffi"),
+        ("openssl.store", "--allow-openssl-store"),
+    ] {
+        if permissions.contains(scope) && !state.borrow().process.dropped_permissions.contains(scope) {
+            inherited.push(flag.to_string());
+        }
+    }
+    inherited.append(&mut args);
+    inherited
 }
 
 pub fn abort_on_uncaught_exception(state: &Rc<RefCell<HostState>>) -> bool {

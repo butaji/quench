@@ -6416,16 +6416,28 @@ pub fn process_permission_has(
             crate::modules::util::invalid_arg_received(&resource)
         )));
     }
-    let message = host_api::object(vec![
-        ("permission".into(), Value::String(permission.to_owned())),
-        ("resource".into(), resource),
-    ]);
-    crate::modules::diagnostics_channel::publish_named(
-        state,
-        &format!("node:permission-model:{}", permission_channel_suffix(&scope)),
-        message,
-    )?;
-    Ok(Value::Boolean(false))
+    let scope_name = match &scope {
+        Value::String(value) => value.as_str(),
+        _ => "",
+    };
+    let allowed = match scope_name {
+        "fs.read" | "fs.write" | "child" | "net" | "worker" | "wasi"
+        | "inspector" | "addon" | "ffi" | "openssl.store" =>
+            crate::modules::process::permission_allows(state, scope_name),
+        _ => false,
+    };
+    if !allowed && crate::modules::process::permission_audit(state) {
+        let message = host_api::object(vec![
+            ("permission".into(), Value::String(permission.to_owned())),
+            ("resource".into(), resource),
+        ]);
+        crate::modules::diagnostics_channel::publish_named(
+            state,
+            &format!("node:permission-model:{}", permission_channel_suffix(&scope)),
+            message,
+        )?;
+    }
+    Ok(Value::Boolean(allowed))
 }
 pub fn process_permission_drop(
     state: &Rc<RefCell<HostState>>,
@@ -6462,6 +6474,9 @@ pub fn process_permission_drop(
         &format!("node:permission-model:{}", permission_channel_suffix(&scope)),
         message,
     )?;
+    if let Value::String(scope) = scope {
+        crate::modules::process::drop_permission(state, &scope);
+    }
     Ok(Value::Undefined)
 }
 
@@ -7560,6 +7575,11 @@ pub fn cp_spawn_sync(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    let command_for_permission = args
+        .first()
+        .and_then(|value| execute::to_js_string(value).ok())
+        .unwrap_or_default();
+    ensure_child_process_permission(state, &command_for_permission)?;
     let command_nul = args
         .first()
         .and_then(|value| execute::to_js_string(value).ok())
@@ -7736,6 +7756,40 @@ pub fn cp_spawn_sync(
     crate::modules::child_process::spawn_sync(state, args)
 }
 
+fn ensure_child_process_permission(
+    state: &Rc<RefCell<HostState>>,
+    command: &str,
+) -> Result<(), VmError> {
+    if crate::modules::process::permission_enabled(state)
+        && !crate::modules::process::permission_audit(state)
+        && !crate::modules::process::permission_allows(state, "child")
+    {
+        let mut error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String(
+                "Access to this API has been restricted. Use --allow-child-process to manage permissions.".into(),
+            )],
+        );
+        execute::set_property_in_place(
+            &mut error,
+            "code",
+            Value::String("ERR_ACCESS_DENIED".into()),
+        );
+        execute::set_property_in_place(
+            &mut error,
+            "permission",
+            Value::String("ChildProcess".into()),
+        );
+        execute::set_property_in_place(
+            &mut error,
+            "resource",
+            Value::String(command.into()),
+        );
+        return Err(VmError::Thrown(error));
+    }
+    Ok(())
+}
+
 fn signal_number(signal: &str) -> Option<f64> {
     Some(match signal.to_ascii_uppercase().as_str() {
         "SIGHUP" => 1.0,
@@ -7807,6 +7861,18 @@ pub fn cp_spawn(
         }
         None => String::new(),
     };
+    let permission_resource = args
+        .get(2)
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+        .filter(|options| {
+            matches!(
+                execute::get_property(options, "\0quench:forkIpc"),
+                Value::Boolean(true)
+            )
+        })
+        .map(|_| state.borrow().process.exec_path.clone())
+        .unwrap_or_else(|| command.clone());
+    ensure_child_process_permission(state, &permission_resource)?;
     if command.is_empty() {
         return Err(VmError::Thrown(host_api::object(vec![
             ("name".into(), Value::String("TypeError".into())),
@@ -8583,6 +8649,14 @@ fn cp_run_host_child(
         .filter_map(|index| execute::get_property_result(child_args, &index.to_string()).ok())
         .map(|value| execute::to_js_string(&value).ok())
         .collect::<Option<Vec<_>>>()?;
+    let env = match execute::get_property(options, "env") {
+        Value::Object(_) | Value::ObjectAlias(_) => execute::get_property(options, "env"),
+        _ => {
+            let global = quench_runtime::vm::current_global_object();
+            execute::get_property(&execute::get_property(&global, "process"), "env")
+        }
+    };
+    let args = crate::modules::process::permission_exec_argv(state, args, Some(&env));
     // `spawn(execPath, [])` is still represented by the in-process model; a
     // real runner needs an entry script (or an explicit eval/print switch).
     let has_entry = args.iter().any(|arg| {
@@ -8608,13 +8682,6 @@ fn cp_run_host_child(
     if let Value::String(cwd) = execute::get_property(options, "cwd") {
         process.current_dir(cwd);
     }
-    let env = match execute::get_property(options, "env") {
-        Value::Object(_) | Value::ObjectAlias(_) => execute::get_property(options, "env"),
-        _ => {
-            let global = quench_runtime::vm::current_global_object();
-            execute::get_property(&execute::get_property(&global, "process"), "env")
-        }
-    };
     if matches!(env, Value::Object(_) | Value::ObjectAlias(_)) {
         let mut values = Vec::new();
         for key in execute::own_enumerable_keys(&env) {
@@ -10945,6 +11012,9 @@ pub fn cp_exec_sync(
     let command = args
         .first()
         .and_then(|value| execute::to_js_string(value).ok());
+    if let Some(command) = command.as_deref() {
+        ensure_child_process_permission(state, command)?;
+    }
     if command.as_deref().is_some_and(|value| value.contains('\0')) {
         return Err(cp_nul_error());
     }

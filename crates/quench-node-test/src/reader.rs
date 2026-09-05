@@ -148,6 +148,10 @@ impl NodeRunner {
             &self.host.state(),
             &fixture.exec_argv,
         );
+        quench_node::modules::process::configure_permissions(
+            &self.host.state(),
+            &fixture.exec_argv,
+        );
         if fixture
             .exec_argv
             .iter()
