@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `4c64f1480` (cleanup files remain
+Evidence below is bound to source revision `6b1bf50ae` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -56,6 +56,12 @@ typed shared-integer witness passing separately
 The shared comparison owner witness passes in both normal and trace builds
 (`/tmp/quench-shared-bool-focused-20260905-v3.log`,
 `/tmp/quench-shared-bool-trace-20260905.log`, 1 passed each).
+The fused Add-chain now has an invocation-local physical-entry witness; direct
+two-op execution passes in normal and trace builds
+(`/tmp/quench-add-chain-witness-20260905-v2.log`,
+`/tmp/quench-add-chain-witness-trace-20260905.log`, 1 passed each). The
+ordinary-source driver also asserts the witness whenever native policy admits
+the chain.
 
 Logical-not now reuses the corrected truthiness entries for proven numbers and
 tagged words; the ARM64 zero setup is encoded as `fmov d1, xzr` and is covered
