@@ -2251,16 +2251,10 @@ pub(crate) struct NativeTruthinessPlan {
 impl NativeTruthinessPlan {
     #[inline]
     fn clear_shared_capabilities(&mut self) {
-        self.cache.clear();
-        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-        {
-            self.entry = None;
-            self.word_entry = None;
-            self.pointer_entry = None;
-            self.shared_entry = None;
-            self.shared_word_entry = None;
-            self.shared_pointer_entry = None;
-        }
+        invalidate_plan_capabilities!(self, [
+            entry, word_entry, pointer_entry, shared_entry,
+            shared_word_entry, shared_pointer_entry
+        ], no_lifecycle);
     }
 
     #[inline]
@@ -2545,16 +2539,20 @@ impl std::fmt::Debug for NativeTruthinessPlan {
 /// Tagged-word nullish predicate. The byte template compares the raw execute
 /// word against the canonical Null/Undefined payloads; all other unary
 /// coercions remain on the ordinary semantic handler.
+#[derive(Clone, Copy)]
+enum InstalledNullishEntry {
+    Unpublished,
+    Local(extern "C" fn(u64) -> u64),
+    Shared(crate::stencil_arena::OwnedEntry<extern "C" fn(u64) -> u64>),
+}
+
 pub(crate) struct NativeNullishPlan {
     key: crate::stencil_fact::RegionKey,
     arena: Option<crate::stencil_arena::StencilArena>,
     shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
     cache: crate::stencil_select::RenderedRegionCache,
     site: crate::quickening::QuickeningSite<4>,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    entry: Option<extern "C" fn(u64) -> u64>,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    shared_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(u64) -> u64>>,
+    installed: InstalledNullishEntry,
     #[cfg(test)]
     native_entry_count: u64,
 }
@@ -2562,8 +2560,7 @@ pub(crate) struct NativeNullishPlan {
 impl NativeNullishPlan {
     #[inline]
     fn clear_shared_capabilities(&mut self) {
-        self.shared_entry = None;
-        self.entry = None;
+        self.installed = InstalledNullishEntry::Unpublished;
         self.cache.clear();
     }
 
@@ -2597,10 +2594,7 @@ impl NativeNullishPlan {
                 shared_arena: None,
                 cache: crate::stencil_select::RenderedRegionCache::new(),
                 site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Unary),
-                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-                entry: None,
-                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-                shared_entry: None,
+                installed: InstalledNullishEntry::Unpublished,
                 #[cfg(test)]
                 native_entry_count: 0,
             })
@@ -2617,7 +2611,7 @@ impl NativeNullishPlan {
         bits: u64,
     ) -> Result<bool, crate::stencil_arena::ArenaError> {
         if let Some(shared) = self.shared_arena.clone() {
-            if let Some(owned) = self.shared_entry {
+            if let InstalledNullishEntry::Shared(owned) = self.installed {
                 if let Ok(result) = shared.borrow().with_owned(owned, |entry| entry(bits)) {
                     #[cfg(test)]
                     {
@@ -2638,7 +2632,7 @@ impl NativeNullishPlan {
                 (address, slab.word_bool_entry(address)?)
             };
             let owned = shared.borrow().owned_word_bool_entry(address)?;
-            self.shared_entry = Some(owned);
+            self.installed = InstalledNullishEntry::Shared(owned);
             let result = shared
                 .borrow()
                 .with_owned(owned, |entry| entry(bits))
@@ -2653,7 +2647,7 @@ impl NativeNullishPlan {
             }
             return result;
         }
-        if let Some(entry) = self.entry {
+        if let InstalledNullishEntry::Local(entry) = self.installed {
             #[cfg(test)]
             {
                 self.native_entry_count = self.native_entry_count.saturating_add(1);
@@ -2674,7 +2668,7 @@ impl NativeNullishPlan {
         let address = arena.render_or_get(&mut self.cache, self.key, stencil, &values)?;
         arena.make_executable()?;
         let entry = arena.word_bool_entry(address)?;
-        self.entry = Some(entry);
+        self.installed = InstalledNullishEntry::Local(entry);
         #[cfg(test)]
         {
             self.native_entry_count = self.native_entry_count.saturating_add(1);
