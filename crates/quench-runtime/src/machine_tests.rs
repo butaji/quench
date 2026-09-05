@@ -103,6 +103,55 @@ fn baseline_region_admission_respects_declared_abi() {
     assert!(plan.native_region_at(0).is_none());
 }
 
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn baseline_scalar_entry_rebuilds_after_shared_owner_eviction() {
+    let function = super::FunctionCode::from_ops(vec![
+        super::Op::Binary {
+            dst: 0,
+            operator: crate::ops::BinaryOp::Add,
+            lhs: 1,
+            rhs: 2,
+        },
+        super::Op::Return { src: 0 },
+    ]);
+    let code = function.code().expect("compact code");
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut plan = super::BaselinePlan::compile_for_test(code, policy);
+    let native = plan.native_binary_at(0).expect("scalar entry");
+    let context = crate::vm::current_context_or_default();
+    let environment = crate::environment::Environment::new();
+    let mut registers = crate::register_file::RegisterFile::from_values(vec![
+        crate::value::Value::Undefined,
+        crate::value::Value::Number(2.0),
+        crate::value::Value::Number(3.0),
+    ]);
+    crate::vm::execute_baseline_code_from(
+        code,
+        &plan,
+        0,
+        &mut registers,
+        &context,
+        std::rc::Rc::clone(&environment),
+    )
+    .expect("first scalar execution");
+    assert_eq!(native.borrow().native_entry_count, 1);
+    assert_eq!(registers.read(0), Some(crate::value::Value::Number(5.0)));
+    assert_eq!(plan.shared_region_arena.borrow_mut().evict_idle(0), 1);
+    registers.write(0, crate::value::Value::Undefined);
+    crate::vm::execute_baseline_code_from(
+        code,
+        &plan,
+        0,
+        &mut registers,
+        &context,
+        environment,
+    )
+    .expect("scalar execution after owner eviction");
+    assert_eq!(native.borrow().native_entry_count, 2);
+    assert_eq!(registers.read(0), Some(crate::value::Value::Number(5.0)));
+}
+
 #[test]
 fn region_admission_rejects_noncanonical_operands_before_publication() {
     let record = crate::stencil_select::select_region(
