@@ -15,7 +15,7 @@ use crate::{
     ops::{Constant, Op},
     value::Value,
 };
-use std::{cell::RefCell, rc::Rc, sync::OnceLock};
+use std::{cell::RefCell, collections::BTreeSet, rc::Rc, sync::OnceLock};
 
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
@@ -4911,20 +4911,66 @@ impl PartialEq for BaselineEntry {
 
 impl Eq for BaselineEntry {}
 
-/// Conservative build-time liveness predicate for the fused Add pair. The
-/// compact operands mix registers with local slots and branch targets; treating
-/// every later operand as potentially register-valued may reject a few safe
-/// chains, but it cannot admit a chain that would lose an observable value.
-#[inline]
-fn register_mentioned_after(entries: &[BaselineEntry], start: usize, register: u16) -> bool {
-    entries.iter().skip(start).any(|entry| {
-        [
-            entry.instruction.a,
-            entry.instruction.b,
-            entry.instruction.c,
-        ]
-        .contains(&register)
-    })
+fn successor_pcs(entries: &[BaselineEntry], pc: usize) -> Vec<usize> {
+    let Some(entry) = entries.get(pc) else { return Vec::new() };
+    match entry.control {
+        crate::ir::ControlOperands::Next if pc + 1 < entries.len() => vec![pc + 1],
+        crate::ir::ControlOperands::Branch { target, .. } => {
+            let mut successors = vec![usize::from(target)];
+            if pc + 1 < entries.len() && !successors.contains(&(pc + 1)) {
+                successors.push(pc + 1);
+            }
+            successors
+        }
+        crate::ir::ControlOperands::Jump { target } => vec![usize::from(target)],
+        _ => Vec::new(),
+    }
+}
+
+fn register_liveness(entries: &[BaselineEntry]) -> Vec<BTreeSet<u16>> {
+    let mut live_in = vec![BTreeSet::new(); entries.len()];
+    let mut live_out = vec![BTreeSet::new(); entries.len()];
+    let mut changed = true;
+    let mut rounds = 0;
+    while changed && rounds <= entries.len().saturating_mul(2) {
+        changed = false;
+        rounds += 1;
+        for pc in (0..entries.len()).rev() {
+            let mut out = BTreeSet::new();
+            for successor in successor_pcs(entries, pc) {
+                if let Some(input) = live_in.get(successor) {
+                    out.extend(input.iter().copied());
+                }
+            }
+            let flow = entries[pc].instruction.register_flow();
+            let mut input = if flow.complete { out.clone() } else {
+                entries
+                    .iter()
+                    .flat_map(|entry| entry.instruction.register_flow().uses)
+                    .flatten()
+                    .collect()
+            };
+            if let Some(definition) = flow.definition {
+                input.remove(&definition);
+            }
+            input.extend(flow.uses.into_iter().flatten());
+            changed |= live_out[pc] != out || live_in[pc] != input;
+            live_out[pc] = out;
+            live_in[pc] = input;
+        }
+    }
+    live_out
+}
+
+fn region_entry_is_legal(entries: &[BaselineEntry], start: usize, end: usize) -> bool {
+    for predecessor in 0..entries.len() {
+        for successor in successor_pcs(entries, predecessor) {
+            if successor > start && successor < end && predecessor < start {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// Admission-time view of the generated region contract.  This keeps static
@@ -4947,14 +4993,7 @@ fn region_admission_matches(
         return false;
     }
     let end = start + contract.operations.len();
-    if entries[..start].iter().any(|entry| {
-        matches!(
-            entry.instruction.opcode.control_operands(entry.instruction),
-            crate::ir::ControlOperands::Branch { target, .. }
-                | crate::ir::ControlOperands::Jump { target }
-                if usize::from(target) > start && usize::from(target) < end
-        )
-    }) {
+    if !region_entry_is_legal(entries, start, end) {
         return false;
     }
     contract
@@ -5013,6 +5052,7 @@ impl BaselinePlan {
             })
             .collect::<Vec<_>>()
             .into();
+        let liveness = register_liveness(&entries);
         let shared_region_arena = Rc::new(RefCell::new(
             crate::stencil_arena::SharedStencilSlab::new(4096)
                 .expect("compile-time region slab capacity is valid"),
@@ -5092,7 +5132,9 @@ impl BaselinePlan {
                     // it out of regions where the first destination remains
                     // live; the canonical handlers then retain the complete
                     // residual value flow.
-                    && !register_mentioned_after(&entries, pc + 2, entry.instruction.a);
+                    && !liveness
+                        .get(pc + 1)
+                        .is_some_and(|live| live.contains(&entry.instruction.a));
                 admissible
                     .then(|| {
                         NativeAddChainPlan::new_with_arena(policy, Rc::clone(&shared_region_arena))
