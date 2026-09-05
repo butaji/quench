@@ -153,6 +153,23 @@ fn baseline_scalar_entry_rebuilds_after_shared_owner_eviction() {
 }
 
 #[test]
+fn composed_plan_retires_cached_bytes_after_committed_failure() {
+    let mut plan = super::NativeRegionPlan::new_for_test(
+        crate::stencil_select::array_loop_body_region_key(),
+    )
+    .expect("array region plan");
+    plan.cache.insert(
+        crate::stencil_fact::RegionKey(900),
+        0,
+        0x1000,
+    );
+    let committed: Result<crate::vm::DispatchTransition, super::NativeDispatchError> =
+        Err(super::NativeDispatchError::Committed("post-entry".into()));
+    plan.retire_on_failure(&committed);
+    assert_eq!(plan.cache.len(), 0, "committed bytes must not remain callable");
+}
+
+#[test]
 fn region_admission_rejects_noncanonical_operands_before_publication() {
     let record = crate::stencil_select::select_region(
         crate::stencil_select::loop_body_region_key(),
