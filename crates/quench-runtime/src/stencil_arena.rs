@@ -301,6 +301,16 @@ impl SharedStencilSlab {
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn word_pair_bool_entry(
+        &self,
+        address: usize,
+    ) -> Result<extern "C" fn(u64, u64) -> u64, ArenaError> {
+        self.slab_for(address)
+            .ok_or(ArenaError::ProtectionFailed)?
+            .word_pair_bool_entry(address)
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn f64x3_entry(
         &self,
         address: usize,
@@ -493,6 +503,19 @@ impl StencilArena {
         &self,
         address: usize,
     ) -> Result<extern "C" fn(u64) -> u64, ArenaError> {
+        let base = self.ptr as usize;
+        let end = base.saturating_add(self.cursor);
+        if !self.executable || address < base || address >= end {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        Ok(unsafe { std::mem::transmute(address) })
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn word_pair_bool_entry(
+        &self,
+        address: usize,
+    ) -> Result<extern "C" fn(u64, u64) -> u64, ArenaError> {
         let base = self.ptr as usize;
         let end = base.saturating_add(self.cursor);
         if !self.executable || address < base || address >= end {
@@ -1683,6 +1706,28 @@ mod tests {
         assert!(arena.execute_bool(address, 4.0, 4.0).unwrap());
         assert!(!arena.execute_bool(address, 4.0, 5.0).unwrap());
         assert!(!arena.execute_bool(address, f64::NAN, f64::NAN).unwrap());
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn executable_tagged_identity_equality_matches_non_numeric_values() {
+        let key = crate::stencil_select::compare_equal_word_region_key();
+        let record = crate::stencil_select::select_region(key).expect("word equality row");
+        let site = QuickeningSite::<2>::new(Opcode::Binary);
+        let values = PatchValues::from_site(&site);
+        let mut arena = StencilArena::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let address = arena
+            .render_or_get(&mut cache, key, &record.stencil, &values)
+            .unwrap();
+        arena.make_executable().unwrap();
+        let entry = arena.word_pair_bool_entry(address).unwrap();
+        let true_bits = crate::tagged_value::TaggedValue::bool(true).bits();
+        let false_bits = crate::tagged_value::TaggedValue::bool(false).bits();
+        let null_bits = crate::tagged_value::TaggedValue::null().bits();
+        assert!(entry(true_bits, true_bits) != 0);
+        assert!(entry(true_bits, false_bits) == 0);
+        assert!(entry(null_bits, null_bits) != 0);
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
