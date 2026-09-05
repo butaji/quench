@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `cba896efa` (cleanup files remain
+Evidence below is bound to source revision `ff5bf423b` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -23,6 +23,12 @@ Focused normal and execution-trace cache-owner tests pass at
 `/tmp/quench-add-chain-helper-trace-20260905.log` (1 passed each); the full
 normal runtime remains **734 passed, 0 failed, 1 ignored** at
 `/tmp/quench-runtime-full-20260905-addchain-publish-split.log`.
+
+Generated ABI validation now also checks that each declaration's context
+argument arity matches its typed entry family; the catalog consistency test
+passes at `/tmp/quench-abi-arity-contract-20260905.log` (1 passed), with the
+full runtime at `/tmp/quench-runtime-full-20260905-abi-arity.log` (734 passed,
+0 failed, 1 ignored).
 
 The generated catalog now records each target template's build-time helper-call
 effect; `validate_physical_template` compares that fact with decoded bytes and
