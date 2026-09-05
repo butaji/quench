@@ -23,6 +23,7 @@ pub(crate) fn verify_words(path: &Path, expected: &[u32]) {
     let file = object::File::parse(&*data).expect("parse Rust assembly object");
     assert_target_architecture(&file, env::var("TARGET").ok().as_deref());
     assert_single_text_section(&file);
+    reject_unwind_or_tls_sections(&file);
     let mut sections = file.sections().filter(|section| {
         section
             .name()
@@ -45,6 +46,7 @@ pub(crate) fn verify_symbols(path: &Path, names: &[&str]) {
     let file = object::File::parse(&*data).expect("parse Rust assembly object");
     assert_target_architecture(&file, env::var("TARGET").ok().as_deref());
     assert_single_text_section(&file);
+    reject_unwind_or_tls_sections(&file);
     let mut sections = file.sections().filter(|section| {
         section
             .name()
@@ -138,6 +140,7 @@ fn parse_object(path: &Path, name: &str) -> Vec<u8> {
     let file = object::File::parse(&*data).expect("parse Rust stencil object");
     assert_target_architecture(&file, env::var("TARGET").ok().as_deref());
     assert_single_text_section(&file);
+    reject_unwind_or_tls_sections(&file);
     for symbol in file.symbols() {
         if matches!(symbol.section(), SymbolSection::Undefined) {
             panic!("Rust stencil has undeclared external symbol {:?}", symbol.name());
@@ -188,6 +191,16 @@ fn assert_target_architecture<'data>(file: &object::File<'data>, target: Option<
     });
     if let Some(expected) = expected {
         assert_eq!(file.architecture(), expected, "Rust stencil target architecture mismatch");
+    }
+}
+
+fn reject_unwind_or_tls_sections<'data>(file: &object::File<'data>) {
+    for section in file.sections() {
+        let name = section.name().unwrap_or_default();
+        assert!(!matches!(name, ".eh_frame" | "__eh_frame" | ".gcc_except_table"),
+            "Rust leaf carries an unsupported unwind section {name}");
+        assert!(!matches!(section.kind(), SectionKind::Tls | SectionKind::UninitializedTls | SectionKind::TlsVariables),
+            "Rust leaf carries unsupported TLS data");
     }
 }
 
