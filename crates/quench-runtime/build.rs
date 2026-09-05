@@ -880,8 +880,15 @@ fn generate_stencil_catalog() {
                 "EXECUTABLE"
             };
             let abi = abi_expr(declaration);
+            let external_entries = declaration
+                .external_entries
+                .iter()
+                .map(|entry| entry.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
             format!(
-                "    crate::stencil_select::RegionRecord {{ key: CANONICAL_{name}_KEY, stencil: crate::stencil_fact::Stencil {{ bytes: CANONICAL_{name}_BYTES, holes: CANONICAL_{name}_HOLES }}, operations: CANONICAL_{name}_OPS, entry: 0, fallthrough: {fallthrough}, abi: {abi}, executable: {executable} }}, // declaration {index}",
+                "    crate::stencil_select::RegionRecord {{ key: CANONICAL_{name}_KEY, stencil: crate::stencil_fact::Stencil {{ bytes: CANONICAL_{name}_BYTES, holes: CANONICAL_{name}_HOLES }}, operations: CANONICAL_{name}_OPS, entry: {entry}, external_entries: &[{external_entries}], fallthrough: {fallthrough}, abi: {abi}, executable: {executable} }}, // declaration {index}",
+                entry = declaration.entry,
             )
         })
         .collect::<Vec<_>>()
