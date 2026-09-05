@@ -136,7 +136,7 @@ fn empty_artifacts() -> String {
 }
 
 fn artifact_schema() -> &'static str {
-    "pub struct BuildStencilArtifact { pub name: &'static str, pub target: &'static str, pub compiler: &'static str, pub fingerprint: &'static str, pub bytes: &'static [u8], pub stencil: crate::stencil_fact::Stencil }"
+    "pub struct BuildStencilArtifact { pub name: &'static str, pub target: &'static str, pub compiler: &'static str, pub fingerprint: &'static str, pub abi: crate::stencil_select::RegionAbi, pub bytes: &'static [u8], pub stencil: crate::stencil_fact::Stencil }"
 }
 
 fn extract_objects(declarations: &[RegionDeclaration]) -> String {
@@ -172,13 +172,7 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
             declaration,
             recipe,
         );
-        let (constant, row) = render_artifact(
-            declaration.name,
-            &target,
-            &compiler,
-            &fingerprint,
-            &artifact,
-        );
+        let (constant, row) = render_artifact(declaration, &target, &compiler, &fingerprint, &artifact);
         constants.push(constant);
         rows.push(row);
     }
@@ -417,12 +411,13 @@ fn validate_relocations<'data>(file: &object::File<'data>, context: &str) {
 }
 
 fn render_artifact(
-    name: &str,
+    declaration: &RegionDeclaration,
     target: &str,
     compiler: &str,
     fingerprint: &str,
     bytes: &[u8],
 ) -> (String, String) {
+    let name = declaration.name;
     let code = bytes
         .iter()
         .map(|byte| format!("0x{byte:02x}"))
@@ -430,7 +425,7 @@ fn render_artifact(
         .join(", ");
     let identifier = name.to_ascii_uppercase();
     let constant = format!("const BYTES_{identifier}: &[u8] = &[{code}];");
-    let row = format!("    BuildStencilArtifact {{ name: {name:?}, target: {target:?}, compiler: {compiler:?}, fingerprint: {fingerprint:?}, bytes: BYTES_{identifier}, stencil: crate::stencil_fact::Stencil {{ bytes: BYTES_{identifier}, holes: &[] }} }},");
+    let row = format!("    BuildStencilArtifact {{ name: {name:?}, target: {target:?}, compiler: {compiler:?}, fingerprint: {fingerprint:?}, abi: {}, bytes: BYTES_{identifier}, stencil: crate::stencil_fact::Stencil {{ bytes: BYTES_{identifier}, holes: &[] }} }},", super::abi_expr(declaration));
     (constant, row)
 }
 

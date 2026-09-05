@@ -354,7 +354,9 @@ pub fn select_stencil(key: RegionKey) -> Option<&'static Stencil> {
 pub fn select_physical(key: RegionKey) -> Option<PhysicalStencilView> {
     let record = CANONICAL_REGION_TABLE.iter().find(|record| record.key == key)?;
     let Some(artifact) = BUILD_STENCIL_ARTIFACTS.iter().find(|artifact| {
-        artifact.name == record.name && artifact_target_matches_host(artifact.target)
+        artifact.name == record.name
+            && artifact.abi == record.abi
+            && artifact_target_matches_host(artifact.target)
     }) else {
         return Some(PhysicalStencilView {
             key,
@@ -1088,6 +1090,7 @@ mod tests {
             }
             assert!(!artifact.fingerprint.is_empty());
             assert!(!artifact.target.is_empty());
+            assert_eq!(artifact.abi, record.abi);
         }
         if !BUILD_STENCIL_ARTIFACTS.is_empty() {
             let chain = BUILD_STENCIL_ARTIFACTS
