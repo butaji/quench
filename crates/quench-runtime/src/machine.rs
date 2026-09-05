@@ -3019,14 +3019,11 @@ impl NativeAddChainPlan {
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    fn render_shared(
+    fn publish_shared(
         &mut self,
         key: crate::stencil_fact::RegionKey,
         values: &crate::stencil_fact::PatchValues,
-        lhs: f64,
-        rhs: f64,
-        third: f64,
-    ) -> Result<f64, crate::stencil_arena::ArenaError> {
+    ) -> Result<crate::stencil_arena::OwnedEntry<extern "C" fn(f64, f64, f64) -> f64>, crate::stencil_arena::ArenaError> {
         let shared = self
             .shared_arena
             .clone()
@@ -3052,6 +3049,23 @@ impl NativeAddChainPlan {
         };
         let owned = shared.borrow().owned_entry(address, entry)?;
         self.shared_entry = Some(owned);
+        Ok(owned)
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn render_shared(
+        &mut self,
+        key: crate::stencil_fact::RegionKey,
+        values: &crate::stencil_fact::PatchValues,
+        lhs: f64,
+        rhs: f64,
+        third: f64,
+    ) -> Result<f64, crate::stencil_arena::ArenaError> {
+        let shared = self
+            .shared_arena
+            .clone()
+            .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
+        let owned = self.publish_shared(key, values)?;
         let result = shared.borrow().with_owned(owned, |entry| unsafe {
             invoke_f64x3_entry(entry, lhs, rhs, third)
         });
