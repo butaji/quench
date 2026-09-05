@@ -18,6 +18,8 @@ use crate::value::{FunctionValue, ObjectData, PrivateSlot, Value};
 // budget while allowing for Rust's larger per-node metadata.  The threshold
 // grows from this floor based on the surviving graph after each pass.
 const INITIAL_THRESHOLD: usize = 512 * 1024;
+const MAX_FRAME_ROOTS: usize = 64;
+const FRAME_ROOT_FALLBACK: usize = usize::MAX;
 
 thread_local! {
     static STATE: RefCell<State> = RefCell::new(State::default());
@@ -70,12 +72,23 @@ pub(crate) fn protect_frame(
     let frame_length = FRAME_ROOTS.with(|frames| {
         let mut frames = frames.borrow_mut();
         let length = frames.len();
+        if length == MAX_FRAME_ROOTS {
+            return FRAME_ROOT_FALLBACK;
+        }
         frames.push(FrameRoot {
             registers,
             environment: Rc::clone(environment),
         });
         length
     });
+    if frame_length == FRAME_ROOT_FALLBACK {
+        // The bounded registry is full only under pathological nesting. Keep
+        // the same complete semantics by taking the existing owned-word
+        // snapshot; RootGuard truncates it on exit.
+        ROOTS.with(|roots| {
+            registers.visit_values(|value| roots.borrow_mut().push(value));
+        });
+    }
     let environment_length = ENV_ROOTS.with(|roots| roots.borrow().len());
     RootGuard {
         value_length,
@@ -114,7 +127,9 @@ impl Drop for RootGuard {
     fn drop(&mut self) {
         ROOTS.with(|roots| roots.borrow_mut().truncate(self.value_length));
         ENV_ROOTS.with(|roots| roots.borrow_mut().truncate(self.environment_length));
-        FRAME_ROOTS.with(|frames| frames.borrow_mut().truncate(self.frame_length));
+        if self.frame_length != FRAME_ROOT_FALLBACK {
+            FRAME_ROOTS.with(|frames| frames.borrow_mut().truncate(self.frame_length));
+        }
     }
 }
 
@@ -670,5 +685,17 @@ mod tests {
         drop(registers);
         collect_cycles();
         assert!(weak.upgrade().is_none(), "temporary frame root leaked past bridge exit");
+    }
+
+    #[test]
+    fn frame_root_registry_is_bounded_with_complete_overflow_fallback() {
+        let registers = crate::register_file::RegisterFile::from_values(vec![Value::Number(1.0)]);
+        let environment = Environment::new();
+        let guards = (0..=MAX_FRAME_ROOTS)
+            .map(|_| protect_frame(&registers, &environment))
+            .collect::<Vec<_>>();
+        assert_eq!(FRAME_ROOTS.with(|frames| frames.borrow().len()), MAX_FRAME_ROOTS);
+        drop(guards);
+        assert_eq!(FRAME_ROOTS.with(|frames| frames.borrow().len()), 0);
     }
 }
