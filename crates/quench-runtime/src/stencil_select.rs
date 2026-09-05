@@ -59,6 +59,7 @@ macro_rules! region_abi_catalog {
 region_abi_catalog! {
     Scalar,
     TaggedWord,
+    ConstantWord,
     ScalarI32,
     ScalarU32,
     Bridge,
@@ -371,6 +372,13 @@ mod generated_region_admission_tests {
                     assert!(matches!(
                         record.operations.first(),
                         Some(crate::ir::Opcode::Move | crate::ir::Opcode::GetN)
+                    ));
+                }
+                RegionAbi::ConstantWord => {
+                    assert!(matches!(record.stencil.bytes.len(), 11 | 16));
+                    assert!(matches!(
+                        record.operations,
+                        [crate::ir::Opcode::LoadConst, crate::ir::Opcode::Return]
                     ));
                 }
                 RegionAbi::ScalarI32 => {

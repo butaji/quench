@@ -725,6 +725,41 @@ fn ordinary_source_lowering_executes_bitwise_not_and_falls_back_for_string() {
     assert!(executed, "ordinary source must execute the unary stencil");
 }
 
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn primitive_load_const_uses_rendered_machine_word_and_preserves_value() {
+    let code = crate::machine::ExecutableCode::from_ops(vec![
+        crate::ops::Op::Const {
+            dst: 0,
+            value: crate::ops::Constant::Number(42.5),
+        },
+        crate::ops::Op::Return { src: 0 },
+    ]);
+    let view = code.code();
+    let load = view
+        .instruction(0)
+        .expect("constant lowering emits LoadConst");
+    assert_eq!(load.opcode, crate::ir::Opcode::LoadConst);
+    let plan = super::BaselinePlan::compile_for_test(
+        view,
+        crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+    );
+    let native = plan.native_load_const_at(0).expect("primitive constant leaf");
+    let mut registers = crate::register_file::RegisterFile::with_undefined(4);
+    let context = crate::vm::current_context_or_default();
+    assert!(crate::vm::execute_baseline_code_from(
+        view,
+        &plan,
+        0,
+        &mut registers,
+        &context,
+        crate::environment::Environment::new(),
+    )
+    .is_ok());
+    assert_eq!(registers.read(0), Some(crate::value::Value::Number(42.5)));
+    assert!(native.borrow_mut().execute().is_ok());
+}
+
 #[test]
 fn region_verifier_rejects_physical_call_for_raw_abi() {
     #[cfg(target_arch = "aarch64")]
