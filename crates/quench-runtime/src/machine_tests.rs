@@ -758,6 +758,22 @@ fn primitive_load_const_uses_rendered_machine_word_and_preserves_value() {
     .is_ok());
     assert_eq!(registers.read(0), Some(crate::value::Value::Number(42.5)));
     assert!(native.borrow_mut().execute().is_ok());
+
+    let string_code = crate::machine::ExecutableCode::from_ops(vec![
+        crate::ops::Op::Const {
+            dst: 0,
+            value: crate::ops::Constant::String("heap-owned".into()),
+        },
+        crate::ops::Op::Return { src: 0 },
+    ]);
+    let string_plan = super::BaselinePlan::compile_for_test(
+        string_code.code(),
+        crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+    );
+    assert!(
+        string_plan.native_load_const_at(0).is_none(),
+        "heap-owning constants must use the complete canonical loader"
+    );
 }
 
 #[test]
