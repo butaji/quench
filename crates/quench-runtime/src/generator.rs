@@ -350,6 +350,16 @@ fn update_machine_frame(
     state: &GeneratorState,
     completion: &crate::completion::Completion,
 ) -> Result<(), VmError> {
+    if let Some(crate::continuation::SuspensionPoint::Nested { inner, outer }) =
+        state.suspension.clone()
+    {
+        push_initial_try_frames(generator)?;
+        if !has_loop_frame(generator, &outer) {
+            push_loop_suspension_frame(generator, state, *outer)?;
+        }
+        push_loop_suspension_frame(generator, state, *inner)?;
+        return Ok(());
+    }
     if let Some(crate::continuation::SuspensionPoint::Loop {
         label,
         body,
@@ -362,16 +372,17 @@ fn update_machine_frame(
         ..
     }) = state.suspension.clone()
     {
-        let resume = parent_resume_range(generator, state);
-        try_push_frame(
-            &mut generator.machine.borrow_mut(),
-            crate::machine::Frame::Loop {
+        push_initial_try_frames(generator)?;
+        push_loop_suspension_frame(
+            generator,
+            state,
+            crate::continuation::SuspensionPoint::Loop {
+                pc: 0,
                 label,
                 body,
                 test,
                 update,
                 body_resume,
-                resume,
                 dst,
                 yield_dst,
                 post_test,
@@ -404,6 +415,54 @@ fn update_machine_frame(
             phase: 0,
             iterator,
             destination: *dst,
+        },
+    )
+}
+
+fn has_loop_frame(
+    generator: &GeneratorData,
+    point: &crate::continuation::SuspensionPoint,
+) -> bool {
+    let crate::continuation::SuspensionPoint::Loop { body, .. } = point else {
+        return false;
+    };
+    generator.machine.borrow().frames.frames.iter().any(|frame| {
+        matches!(frame, crate::machine::Frame::Loop { body: current, .. } if current == body)
+    })
+}
+
+fn push_loop_suspension_frame(
+    generator: &GeneratorData,
+    state: &GeneratorState,
+    point: crate::continuation::SuspensionPoint,
+) -> Result<(), VmError> {
+    let crate::continuation::SuspensionPoint::Loop {
+        label,
+        body,
+        test,
+        update,
+        body_resume,
+        dst,
+        yield_dst,
+        post_test,
+        ..
+    } = point
+    else {
+        return Ok(());
+    };
+    let resume = parent_resume_range(generator, state);
+    try_push_frame(
+        &mut generator.machine.borrow_mut(),
+        crate::machine::Frame::Loop {
+            label,
+            body,
+            test,
+            update,
+            body_resume,
+            resume,
+            dst,
+            yield_dst,
+            post_test,
         },
     )
 }
@@ -457,36 +516,40 @@ fn find_yield_in_function(
     let range = function.range;
     function.code().and_then(|code| {
         for (index, op) in code.cold_ops() {
-            if let Op::Yield { src } = op {
-                return Some((
-                    crate::machine::CodeRange {
-                        code: range.code,
-                        start: range.start.saturating_add(index as u32 + 1),
-                        end: range.end,
-                    },
-                    *src,
-                ));
-            }
-            let nested = match op {
-                Op::Try { body, .. }
-                | Op::Loop { body, .. }
-                | Op::ForOf { body, .. }
-                | Op::ForIn { body, .. } => Some(body),
-                Op::Conditional {
-                    consequent,
-                    alternate,
-                    ..
-                } => {
-                    if let Some(found) = find_yield_in_function(consequent) {
+            let src = match op {
+                Op::Yield { src } | Op::Await { dst: src, .. } => *src,
+                _ => {
+                    let nested = match op {
+                        Op::Try { body, .. }
+                        | Op::Loop { body, .. }
+                        | Op::ForOf { body, .. }
+                        | Op::ForIn { body, .. } => Some(body),
+                        Op::Conditional {
+                            consequent,
+                            alternate,
+                            ..
+                        } => {
+                            if let Some(found) = find_yield_in_function(consequent) {
+                                return Some(found);
+                            }
+                            Some(alternate)
+                        }
+                        _ => None,
+                    };
+                    if let Some(found) = nested.and_then(find_yield_in_function) {
                         return Some(found);
                     }
-                    Some(alternate)
+                    continue;
                 }
-                _ => None,
             };
-            if let Some(found) = nested.and_then(find_yield_in_function) {
-                return Some(found);
-            }
+            return Some((
+                crate::machine::CodeRange {
+                    code: range.code,
+                    start: range.start.saturating_add(index as u32 + 1),
+                    end: range.end,
+                },
+                src,
+            ));
         }
         None
     })
