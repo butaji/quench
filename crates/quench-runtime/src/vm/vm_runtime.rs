@@ -7241,8 +7241,11 @@ mod compact_handler_tests {
                 function.enter_invocation(),
                 crate::machine::TierTransition::CompileBaseline
             );
-            let plan = function.baseline_plan().expect("baseline plan");
             let code = function.code().expect("function code");
+            let plan = crate::machine::BaselinePlan::compile_for_test(
+                code,
+                crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+            );
             let context = crate::vm::current_context_or_default();
             let mut registers = crate::register_file::RegisterFile::from_values(vec![
                 Value::Undefined,
@@ -7261,6 +7264,12 @@ mod compact_handler_tests {
             assert_eq!(
                 completion,
                 crate::completion::Completion::Return(Value::Number(expected))
+            );
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            assert!(
+                plan.native_binary_at(0)
+                    .is_some_and(|native| native.borrow().native_entry_count() > 0),
+                "numeric arithmetic must execute emitted bytes"
             );
         }
     }
