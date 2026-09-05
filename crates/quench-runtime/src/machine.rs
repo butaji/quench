@@ -2135,6 +2135,7 @@ fn constant_word_bits(constant: &crate::ops::Constant) -> Option<u64> {
 pub(crate) struct NativeTruthinessPlan {
     key: crate::stencil_fact::RegionKey,
     word_key: crate::stencil_fact::RegionKey,
+    pointer_key: crate::stencil_fact::RegionKey,
     arena: Option<crate::stencil_arena::StencilArena>,
     shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
     cache: crate::stencil_select::RenderedRegionCache,
@@ -2147,11 +2148,23 @@ pub(crate) struct NativeTruthinessPlan {
     shared_entry: Option<(usize, extern "C" fn(f64) -> u64)>,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     shared_word_entry: Option<(usize, extern "C" fn(u64) -> u64)>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pointer_entry: Option<extern "C" fn(u64) -> u64>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    shared_pointer_entry: Option<(usize, extern "C" fn(u64) -> u64)>,
     #[cfg(test)]
     native_entry_count: u64,
 }
 
 impl NativeTruthinessPlan {
+    #[inline]
+    fn note_entry(&mut self) {
+        #[cfg(test)]
+        {
+            self.native_entry_count = self.native_entry_count.saturating_add(1);
+        }
+    }
+
     fn new_with_shared(
         instruction: crate::ir::Instruction,
         policy: crate::stencil_policy::ExecutionPolicy,
@@ -2168,6 +2181,7 @@ impl NativeTruthinessPlan {
     ) -> Option<Self> {
         let key = crate::stencil_select::truthy_number_region_key();
         let word_key = crate::stencil_select::truthy_word_region_key();
+        let pointer_key = crate::stencil_select::truthy_pointer_word_region_key();
         (policy.native_leaves
             && instruction.opcode == crate::ir::Opcode::JumpIfFalse
             && crate::stencil_select::select_region(key).is_some_and(|record| {
@@ -2179,10 +2193,16 @@ impl NativeTruthinessPlan {
                 record.executable
                     && record.abi == crate::stencil_select::RegionAbi::ScalarWordBool
                     && validate_physical_template(record).is_ok()
+            })
+            && crate::stencil_select::select_region(pointer_key).is_some_and(|record| {
+                record.executable
+                    && record.abi == crate::stencil_select::RegionAbi::ScalarWordBool
+                    && validate_physical_template(record).is_ok()
             }))
             .then_some(Self {
                 key,
                 word_key,
+                pointer_key,
                 arena: None,
                 shared_arena: None,
                 cache: crate::stencil_select::RenderedRegionCache::new(),
@@ -2195,6 +2215,8 @@ impl NativeTruthinessPlan {
                 shared_entry: None,
                 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 shared_word_entry: None,
+                pointer_entry: None,
+                shared_pointer_entry: None,
                 #[cfg(test)]
                 native_entry_count: 0,
             })
@@ -2321,6 +2343,53 @@ impl NativeTruthinessPlan {
         {
             self.native_entry_count = self.native_entry_count.saturating_add(1);
         }
+        Ok(entry(value) != 0)
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn execute_pointer(
+        &mut self,
+        value: u64,
+    ) -> Result<bool, crate::stencil_arena::ArenaError> {
+        let values = crate::stencil_fact::PatchValues::from_site(&self.site);
+        if let Some(shared) = self.shared_arena.clone() {
+            if let Some((address, entry)) = self.shared_pointer_entry {
+                if let Ok(result) = shared.borrow().with_active(address, || entry(value)) {
+                    self.note_entry();
+                    return Ok(result != 0);
+                }
+                self.shared_pointer_entry = None;
+            }
+            let mut slab = shared.borrow_mut();
+            let stencil = crate::stencil_select::select_stencil(self.pointer_key)
+                .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+            let address = slab.render_or_get(&mut self.cache, self.pointer_key, stencil, &values)?;
+            slab.make_executable(address)?;
+            let entry = slab.word_bool_entry(address)?;
+            self.shared_pointer_entry = Some((address, entry));
+            drop(slab);
+            let result = shared.borrow().with_active(address, || entry(value))?;
+            self.note_entry();
+            return Ok(result != 0);
+        }
+        if let Some(entry) = self.pointer_entry {
+            self.note_entry();
+            return Ok(entry(value) != 0);
+        }
+        if self.arena.is_none() {
+            self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
+        }
+        let arena = self
+            .arena
+            .as_mut()
+            .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
+        let stencil = crate::stencil_select::select_stencil(self.pointer_key)
+            .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+        let address = arena.render_or_get(&mut self.cache, self.pointer_key, stencil, &values)?;
+        arena.make_executable()?;
+        let entry = arena.word_bool_entry(address)?;
+        self.pointer_entry = Some(entry);
+        self.note_entry();
         Ok(entry(value) != 0)
     }
 

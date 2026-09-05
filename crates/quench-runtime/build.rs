@@ -226,6 +226,10 @@ const fn x86_truthy_word_bytes() -> [u8; 20] {
     ]
 }
 
+const fn x86_truthy_pointer_bytes() -> [u8; 6] {
+    [0xB8, 1, 0, 0, 0, 0xC3] // mov eax, 1; ret
+}
+
 const fn x86_word_compare_bytes(setcc: u8) -> [u8; 10] {
     [
         0x48, 0x39, 0xF7, // cmp rdi, rsi
@@ -320,6 +324,7 @@ const X86_SHIFT_RIGHT_ZERO_BYTES: [u8; 7] = [0x89, 0xF1, 0xD3, 0xEF, 0x89, 0xF8,
 const X86_BITWISE_NOT_BYTES: [u8; 5] = x86_i32_unary_not();
 const X86_NULLISH_WORD_BYTES: [u8; 27] = x86_nullish_word_bytes();
 const X86_TRUTHY_WORD_BYTES: [u8; 20] = x86_truthy_word_bytes();
+const X86_TRUTHY_POINTER_BYTES: [u8; 6] = x86_truthy_pointer_bytes();
 const X86_WORD_EQUAL_BYTES: [u8; 10] = x86_word_compare_bytes(0x94);
 const X86_WORD_NOT_EQUAL_BYTES: [u8; 10] = x86_word_compare_bytes(0x95);
 const X86_DISPATCH_BYTES: [u8; 12] = x86_dispatch_bytes();
@@ -436,6 +441,7 @@ const AARCH64_SHIFT_RIGHT_ZERO_BYTES: [u8; 8] =
 const AARCH64_BITWISE_NOT_BYTES: [u8; 8] = aarch64_pair(aarch64_mvn_w0(), aarch64_ret());
 const AARCH64_NULLISH_WORD_BYTES: [u8; 32] = aarch64_nullish_word_bytes();
 const AARCH64_TRUTHY_WORD_BYTES: [u8; 24] = aarch64_truthy_word_bytes();
+const AARCH64_TRUTHY_POINTER_BYTES: [u8; 8] = aarch64_pair(0x5280_0020, aarch64_ret());
 const AARCH64_WORD_EQUAL_BYTES: [u8; 12] = aarch64_triple(
     aarch64_cmp_x0_x1(),
     aarch64_cset_eq_w0(),
@@ -1242,6 +1248,21 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         portable_bytes: &[0xC3],
         holes: &[(2, 8, "Literal64")],
         aarch64_holes: &[(16, 8, "Literal64")],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
+        name: "truthy_pointer_word",
+        // Object/array/function pointer tags are always truthy. Strings and
+        // other heap payloads remain on the complete coercion path because
+        // their truthiness depends on observable contents.
+        operations: &["JumpIfFalse"],
+        abi: DeclAbi::ScalarWordBool,
+        x86_bytes: &X86_TRUTHY_POINTER_BYTES,
+        aarch64_bytes: &AARCH64_TRUTHY_POINTER_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
         entry: 0,
         external_entries: &[0],
     },
