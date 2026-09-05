@@ -251,6 +251,22 @@ mod tests {
     }
 
     #[test]
+    fn aarch64_branch26_patches_nonzero_offset_without_touching_neighbors() {
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let values = PatchValues::from_site(&site)
+            .with_relative_target(12, 4)
+            .expect("aligned branch target");
+        let mut bytes = [0xA5u8; 12];
+        bytes[4..8].copy_from_slice(&0x1400_0000u32.to_le_bytes());
+        let original_prefix = bytes[..4].to_owned();
+        let original_suffix = bytes[8..].to_owned();
+        write_branch26(&mut bytes, 4, &values).expect("branch at offset four");
+        assert_eq!(&bytes[..4], original_prefix.as_slice());
+        assert_eq!(&bytes[8..], original_suffix.as_slice());
+        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 0x1400_0002);
+    }
+
+    #[test]
     fn aarch64_branch26_rejects_out_of_range_target() {
         let site = QuickeningSite::<2>::new(Opcode::Add);
         let values = PatchValues::from_site(&site)
