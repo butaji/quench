@@ -8,12 +8,45 @@
   const StringDecoder = deps.string_decoder.StringDecoder;
   const nextTick = process.nextTick;
 
+  // Stream internals must not call the public `listenerCount` method: Node
+  // permits user code to replace that method, while pipe/flow bookkeeping
+  // still needs the emitter's actual listener set.
+  function listenerCountOf(stream, name) {
+    return (stream._listenerWrappers || [])
+      .filter((entry) => entry.name === name).length;
+  }
+
+  function syncEventsView(stream) {
+    const events = Object.create(null);
+    for (const entry of stream._listenerWrappers || []) {
+      const current = events[entry.name];
+      events[entry.name] = current === undefined
+        ? entry.wrapper
+        : Array.isArray(current)
+        ? [...current, entry.wrapper]
+        : [current, entry.wrapper];
+    }
+    stream._events = events;
+    stream._eventsCount = Object.keys(events).length;
+  }
+
+  function preserveListenerArity(wrapper, listener) {
+    try {
+      Object.defineProperty(wrapper, "length", {
+        configurable: true,
+        value: Number(listener?.length) || 0
+      });
+    } catch (_) {}
+    return wrapper;
+  }
+
   // Shared EventEmitter delegation, mixed into every stream prototype.
   const emitterMethods = {
     on(name, fn) {
-      const wrapper = (...args) => fn.apply(this, args);
+      const wrapper = preserveListenerArity((...args) => fn.apply(this, args), fn);
       (this._listenerWrappers ||= []).push({ name, fn, wrapper });
       this._emitter.on(name, wrapper);
+      syncEventsView(this);
       if (name === "readable" && this._readableState) {
         this._readableState.readableListening = true;
       }
@@ -22,7 +55,7 @@
         fn.call(this);
       }
       if (name === "data" && !this.destroyed && this._readableState &&
-                 this.listenerCount("readable") === 0) {
+                 listenerCountOf(this, "readable") === 0) {
         this._readableState.readingMore = true;
         this.resume();
         // The first data listener starts pulling before the next promise
@@ -63,35 +96,38 @@
       return this.on(name, fn);
     },
     once(name, fn) {
-      const wrapper = (...args) => {
+      const wrapper = preserveListenerArity((...args) => {
         this._listenerWrappers = (this._listenerWrappers || [])
           .filter((entry) => entry.wrapper !== wrapper);
         fn.apply(this, args);
-      };
+      }, fn);
       (this._listenerWrappers ||= []).push({ name, fn, wrapper });
       this._emitter.once(name, wrapper);
+      syncEventsView(this);
       if (name === "readable" && this._readableState) {
         this._readableState.readableListening = true;
       }
       return this;
     },
     prependListener(name, fn) {
-      const wrapper = (...args) => fn.apply(this, args);
+      const wrapper = preserveListenerArity((...args) => fn.apply(this, args), fn);
       (this._listenerWrappers ||= []).push({ name, fn, wrapper });
       this._emitter.prependListener(name, wrapper);
+      syncEventsView(this);
       if (name === "readable" && this._readableState) {
         this._readableState.readableListening = true;
       }
       return this;
     },
     prependOnceListener(name, fn) {
-      const wrapper = (...args) => {
+      const wrapper = preserveListenerArity((...args) => {
         this._listenerWrappers = (this._listenerWrappers || [])
           .filter((entry) => entry.wrapper !== wrapper);
         fn.apply(this, args);
-      };
+      }, fn);
       (this._listenerWrappers ||= []).push({ name, fn, wrapper });
       this._emitter.prependOnceListener(name, wrapper);
+      syncEventsView(this);
       if (name === "readable" && this._readableState) {
         this._readableState.readableListening = true;
       }
@@ -102,8 +138,9 @@
       const entry = [...wrappers].reverse().find((item) => item.name === name && item.fn === fn);
       this._emitter.removeListener(name, entry?.wrapper || fn);
       if (entry) this._listenerWrappers = wrappers.filter((item) => item !== entry);
+      syncEventsView(this);
       if (name === "data" && this._readableState &&
-          this.listenerCount("data") === 0 && this.listenerCount("readable") === 0) {
+          listenerCountOf(this, "data") === 0 && listenerCountOf(this, "readable") === 0) {
         this._readableState.flowing = false;
         this._readableState.readingMore = false;
       }
@@ -119,8 +156,9 @@
           ? []
           : this._listenerWrappers.filter((entry) => entry.name !== name);
       }
+      syncEventsView(this);
       if ((name === undefined || name === "data") && this._readableState &&
-          this.listenerCount("data") === 0 && this.listenerCount("readable") === 0) {
+          listenerCountOf(this, "data") === 0 && listenerCountOf(this, "readable") === 0) {
         this._readableState.flowing = false;
         this._readableState.readingMore = false;
       }
@@ -243,6 +281,8 @@
 
   function initReadable(stream, options) {
     if (!stream._emitter) stream._emitter = new EventEmitter();
+    stream._listenerWrappers ||= [];
+    syncEventsView(stream);
     stream._readableState = {
       objectMode: !!(options.objectMode || options.readableObjectMode),
       highWaterMark: defaultHwm(options, "readable"),
@@ -268,6 +308,7 @@
       awaitDrainWriters: null,
       pipeCount: 0,
       pipes: [],
+      pipeListeners: [],
       autoDestroy: options.autoDestroy !== false,
       defaultEncoding: validateEncoding(options.defaultEncoding || "utf8")
     };
@@ -320,7 +361,7 @@
       st.resumeEventPending = false;
       stream._emitter.emit("resume");
     }
-    if (stream.listenerCount("readable") > 0 &&
+    if (listenerCountOf(stream, "readable") > 0 &&
         (st.buffer.length > 0 || st.ended)) {
       if (st.buffer.length > 0) st.needReadable = false;
       st.emittedReadable = true;
@@ -381,17 +422,17 @@
     }
     if (st.buffer.length === 0 && st.ended && !st.endEmitted &&
         !st.endScheduled && (st.flowing ||
-          (stream.listenerCount("data") === 0 &&
-           stream.listenerCount("readable") === 0 &&
-           stream.listenerCount("end") === 0))) {
+          (listenerCountOf(stream, "data") === 0 &&
+           listenerCountOf(stream, "readable") === 0 &&
+           listenerCountOf(stream, "end") === 0))) {
       st.endScheduled = true;
       nextTick(() => nextTick(() => {
         st.endScheduled = false;
         if (st.buffer.length === 0 && st.ended && !st.endEmitted &&
             (st.flowing ||
-              (stream.listenerCount("data") === 0 &&
-               stream.listenerCount("readable") === 0 &&
-               stream.listenerCount("end") === 0))) {
+              (listenerCountOf(stream, "data") === 0 &&
+               listenerCountOf(stream, "readable") === 0 &&
+               listenerCountOf(stream, "end") === 0))) {
           st.endEmitted = true;
           st.needReadable = false;
           st.readingMore = false;
@@ -596,15 +637,15 @@
             buffered < st.highWaterMark) {
           nextTick(() => {
             if (!this.destroyed && !st.ended && !st.reading &&
-                (st.readingMore || st.flowing || this.listenerCount("readable") > 0)) {
+                (st.readingMore || st.flowing || listenerCountOf(this, "readable") > 0)) {
               requestRead(this);
             }
           });
         }
       }
       const syncReadable = chunk === null && this._isTransform &&
-        st.buffer.length > 0 && this.listenerCount("readable") > 0;
-      if (syncReadable || (this._isTransform && st.flowing && this.listenerCount("data") > 0)) {
+        st.buffer.length > 0 && listenerCountOf(this, "readable") > 0;
+      if (syncReadable || (this._isTransform && st.flowing && listenerCountOf(this, "data") > 0)) {
         flowReadable(this);
       }
       else if (st.flowing || !st.awaitDrainWriters) scheduleFlow(this);
@@ -682,9 +723,9 @@
           }
         }
         finishIfEnded();
-        if (this.listenerCount("data") > 0) {
+        if (listenerCountOf(this, "data") > 0) {
           if (chunk !== null && chunk !== undefined) this.readableDidRead = true;
-          if (!st.ended && this.listenerCount("readable") > 0) st.reading = true;
+          if (!st.ended && listenerCountOf(this, "readable") > 0) st.reading = true;
           this._emitter.emit("data", chunk);
         }
         if (st.buffer.length === 0 && !st.ended && !st.reading) {
@@ -729,9 +770,9 @@
           }
         }
         finishIfEnded();
-        if (this.listenerCount("data") > 0) {
+        if (listenerCountOf(this, "data") > 0) {
           if (chunk !== null && chunk !== undefined) this.readableDidRead = true;
-          if (!st.ended && this.listenerCount("readable") > 0) st.reading = true;
+          if (!st.ended && listenerCountOf(this, "readable") > 0) st.reading = true;
           this._emitter.emit("data", chunk);
         }
         if (st.buffer.length === 0 && !st.ended && !st.reading) {
@@ -750,7 +791,7 @@
         return chunk;
       }
       finishIfEnded();
-      if (st.ended && st.buffer.length === 0 && this.listenerCount("readable") > 0) {
+      if (st.ended && st.buffer.length === 0 && listenerCountOf(this, "readable") > 0) {
         st.needReadable = true;
       }
       if (this._passThrough) finishWritable(this);
@@ -829,6 +870,7 @@
         if (!options || options.end !== false) dest.end();
       };
       const onclose = () => dest.destroy?.();
+      sourceState.pipeListeners.push({ dest, ondata });
       source.on("data", ondata);
       source.on("end", onend);
       source.on("end", cleanup);
@@ -840,16 +882,27 @@
     }
 
     unpipe(dest) {
-      this.removeAllListeners("data");
       const pipes = this._readableState.pipes;
       const index = dest ? pipes.indexOf(dest) : -1;
       if (dest && index >= 0) {
         pipes.splice(index, 1);
+        this._readableState.pipeCount = Math.max(0, this._readableState.pipeCount - 1);
+        const handlers = this._readableState.pipeListeners || [];
+        const handlerIndex = handlers.findIndex((entry) => entry.dest === dest);
+        if (handlerIndex >= 0) {
+          const [{ ondata }] = handlers.splice(handlerIndex, 1);
+          this.removeListener("data", ondata);
+        }
         dest.emit("unpipe", this);
       } else if (!dest) {
         pipes.length = 0;
+        this._readableState.pipeCount = 0;
+        const handlers = this._readableState.pipeListeners || [];
+        for (const { ondata } of handlers.splice(0)) {
+          this.removeListener("data", ondata);
+        }
       }
-      if (pipes.length === 0 && this.listenerCount("data") === 0) {
+      if (pipes.length === 0 && listenerCountOf(this, "data") === 0) {
         this._readableState.flowing = false;
         this._readableState.readingMore = false;
         this._readableState.reading = false;
@@ -1566,6 +1619,8 @@
 
   function initWritable(stream, options) {
     if (!stream._emitter) stream._emitter = new EventEmitter();
+    stream._listenerWrappers ||= [];
+    syncEventsView(stream);
     stream._writableState = {
       objectMode: !!(options.objectMode || options.writableObjectMode),
       writable: options.writable === false ? false : undefined,
