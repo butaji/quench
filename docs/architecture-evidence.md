@@ -1,11 +1,20 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `b80faee86` (cleanup files remain
+Evidence below is bound to source revision `43c8b2da0` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
 functional commits.
+
+Latest source-only cache-hit refinement is at `43c8b2da0`: fused Add-chain
+cache hits now defer `PatchValues` construction until a render is required,
+while retaining lifecycle/owner validation. Focused cache-reuse evidence is
+`/tmp/quench-add-chain-cache-order-20260905.log` (1 passed); canonical fused
+Add-chain equivalence is `/tmp/quench-add-chain-canonical-20260905.log` (1
+passed), and the full runtime library suite is
+`/tmp/quench-runtime-full-20260905-addchain-cache-order.log` (734 passed, 0
+failed, 1 ignored).
 
 The generated catalog now records each target template's build-time helper-call
 effect; `validate_physical_template` compares that fact with decoded bytes and
