@@ -4483,15 +4483,17 @@ impl NativeRegionPlan {
             return None;
         }
         let view = crate::stencil_select::select_physical(key)?;
-        let record = crate::stencil_select::select_region(key).filter(|record| {
-            record.executable
-                && !record.operations.is_empty()
-                && validate_physical_view(record, view.stencil).is_ok()
-                && record.abi.accepts_region_context()
-                && view.executable
-                && view.stencil.validate()
-                && view.abi == record.abi
-        })?;
+        let record = view.record;
+        if !record.executable
+            || record.operations.is_empty()
+            || validate_physical_view(record, view.stencil).is_err()
+            || !record.abi.accepts_region_context()
+            || !view.executable
+            || !view.stencil.validate()
+            || view.abi != record.abi
+        {
+            return None;
+        }
         Some(Self {
             arena: Some(arena),
             physical: PhysicalState::new(),
@@ -4563,9 +4565,7 @@ impl NativeRegionPlan {
             let arena = self.arena.as_ref().ok_or_else(|| {
                 NativeDispatchError::Physical("native fused region arena missing".into())
             })?;
-            let record = crate::stencil_select::select_region(key).ok_or_else(|| {
-                NativeDispatchError::Physical("native fused region stencil missing".into())
-            })?;
+            let record = view.record;
             let contract = record.contract();
             if !contract.legal_external_entry(0) {
                 return Err(NativeDispatchError::Physical(
