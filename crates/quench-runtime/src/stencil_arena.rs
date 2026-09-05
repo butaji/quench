@@ -85,6 +85,17 @@ pub struct SharedStencilSlab {
     peak_dispatches: Cell<usize>,
 }
 
+struct ActiveUse<'a> {
+    owner: &'a SharedStencilSlab,
+}
+
+impl Drop for ActiveUse<'_> {
+    fn drop(&mut self) {
+        let active = self.owner.active_dispatches.get();
+        self.owner.active_dispatches.set(active.saturating_sub(1));
+    }
+}
+
 impl SharedStencilSlab {
     pub fn new(slab_capacity: usize) -> Result<Self, ArenaError> {
         if slab_capacity == 0 || slab_capacity > MAX_ARENA_BYTES {
@@ -267,13 +278,7 @@ impl SharedStencilSlab {
         context: *mut std::ffi::c_void,
     ) -> Result<u64, ArenaError> {
         let slab = self.slab_for(address).ok_or(ArenaError::ProtectionFailed)?;
-        let active = self.active_dispatches.get().saturating_add(1);
-        self.active_dispatches.set(active);
-        self.peak_dispatches
-            .set(self.peak_dispatches.get().max(active));
-        let result = slab.execute_dispatch(address, context);
-        self.active_dispatches.set(active.saturating_sub(1));
-        result
+        self.with_active(address, || slab.execute_dispatch(address, context))?
     }
 
     /// Execute a typed scalar entry while retaining the owning slab.  The
@@ -292,8 +297,8 @@ impl SharedStencilSlab {
         self.active_dispatches.set(active);
         self.peak_dispatches
             .set(self.peak_dispatches.get().max(active));
+        let _guard = ActiveUse { owner: self };
         let result = invoke();
-        self.active_dispatches.set(active.saturating_sub(1));
         Ok(result)
     }
 }
