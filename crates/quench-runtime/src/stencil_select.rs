@@ -38,6 +38,10 @@ pub struct RenderedRegion {
     pub key: RegionKey,
     pub signature: u64,
     pub address: usize,
+    /// Identity of the executable slab that owns `address`.  A raw address
+    /// is not sufficient: an OS may reuse a mapping after an arena is
+    /// dropped, so cache entries must never become callable in a new owner.
+    pub owner: u64,
 }
 
 /// Disposable, fixed-capacity memo table.  Replacement is round-robin and is
@@ -70,12 +74,34 @@ impl RenderedRegionCache {
             .map(|entry| entry.address)
     }
 
+    pub fn get_owned(&self, key: RegionKey, signature: u64, owner: u64) -> Option<usize> {
+        self.entries
+            .iter()
+            .flatten()
+            .find(|entry| {
+                entry.key == key && entry.signature == signature && entry.owner == owner
+            })
+            .map(|entry| entry.address)
+    }
+
     pub fn insert(&mut self, key: RegionKey, signature: u64, address: usize) -> usize {
+        self.insert_owned(key, signature, address, 0)
+    }
+
+    pub fn insert_owned(
+        &mut self,
+        key: RegionKey,
+        signature: u64,
+        address: usize,
+        owner: u64,
+    ) -> usize {
         if let Some(entry) = self
             .entries
             .iter_mut()
             .flatten()
-            .find(|entry| entry.key == key && entry.signature == signature)
+            .find(|entry| {
+                entry.key == key && entry.signature == signature && entry.owner == owner
+            })
         {
             entry.address = address;
             return address;
@@ -85,6 +111,7 @@ impl RenderedRegionCache {
             key,
             signature,
             address,
+            owner,
         });
         self.next = (self.next + 1) % MAX_RENDERED_REGIONS;
         address
