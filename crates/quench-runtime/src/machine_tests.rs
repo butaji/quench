@@ -413,6 +413,7 @@ fn non_x86_native_execution_rejects_before_mapping() {
         opcode: crate::ir::Opcode::Add,
         key: crate::stencil_select::numeric_region_key(crate::ir::Opcode::Add).unwrap(),
         returns_boolean: false,
+        integer_op: None,
     };
     assert!(plan.execute(1.0, 2.0).is_err());
     assert!(plan.arena.is_none());
@@ -429,7 +430,9 @@ fn native_numeric_entry_pointer_is_cached_after_first_render() {
         opcode: crate::ir::Opcode::Add,
         key: crate::stencil_select::numeric_region_key(crate::ir::Opcode::Add).unwrap(),
         returns_boolean: false,
+        integer_op: None,
         entry: None,
+        int_entry: None,
     };
     assert_eq!(plan.execute(1.5, 2.25), Ok(3.75));
     assert!(plan.entry.is_some());
@@ -481,6 +484,108 @@ fn native_strict_numeric_equality_uses_typed_scalar_entry() {
         assert_eq!(ordered.execute(lhs, rhs), Ok(expected));
         assert_eq!(ordered.execute(f64::NAN, rhs), Ok(0.0), "operator {operator:?}");
     }
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn native_bitwise_i32_regions_guard_number_conversion() {
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let instruction = crate::ir::Instruction {
+        opcode: crate::ir::Opcode::Binary,
+        flags: 0,
+        a: 0,
+        b: 1,
+        c: 2,
+    };
+    for (operator, lhs, rhs, expected) in [
+        (crate::ops::BinaryOp::BitwiseAnd, 0xF0F0_i32, 0x0FF0_i32, 0x00F0_i32),
+        (crate::ops::BinaryOp::BitwiseOr, 0xF000_i32, 0x00F0_i32, 0xF0F0_i32),
+        (crate::ops::BinaryOp::BitwiseXor, -1_i32, 0x0F0F_i32, !0x0F0F_i32),
+    ] {
+        let mut plan = super::NativeBinaryPlan::new(
+            crate::ir::Instruction {
+                flags: crate::ir::compact_binary_id(operator),
+                ..instruction
+            },
+            policy,
+        )
+        .expect("i32 bitwise region");
+        assert_eq!(plan.execute(f64::from(lhs), f64::from(rhs)), Ok(f64::from(expected)));
+        assert!(plan.execute(1.5, f64::from(rhs)).is_err());
+        assert!(plan.execute(f64::NAN, f64::from(rhs)).is_err());
+    }
+}
+
+#[test]
+fn ordinary_source_lowering_admits_guarded_bitwise_region() {
+    let program = crate::reduce::reduce_source("var x = 240; x = x & 15; x;")
+        .expect("bitwise source lowers");
+    let code = program.code();
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let has_plan = |view: crate::machine::CodeView<'_>| {
+        let plan = super::BaselinePlan::compile_for_test(view, policy);
+        (0..view.len()).any(|pc| {
+            view.instruction(pc).is_some_and(|instruction| {
+                instruction.opcode == crate::ir::Opcode::Binary
+                    && matches!(
+                        crate::ir::compact_binary_operator(instruction.flags),
+                        Some(crate::ops::BinaryOp::BitwiseAnd)
+                    )
+                    && plan.native_binary_at(pc).is_some()
+            })
+        })
+    };
+    let mut admitted = has_plan(code);
+    let mut executed = false;
+    code.cold_ops().for_each(|(_, op)| {
+        op.visit_bodies(&mut |body| {
+            let Some(view) = body.code() else { return };
+            admitted |= has_plan(view);
+            if executed {
+                return;
+            }
+            let Some(binary_pc) = (0..view.len()).find(|pc| {
+                view.instruction(*pc).is_some_and(|instruction| {
+                    instruction.opcode == crate::ir::Opcode::Binary
+                        && crate::ir::compact_binary_operator(instruction.flags)
+                            == Some(crate::ops::BinaryOp::BitwiseAnd)
+                })
+            }) else {
+                return;
+            };
+            let plan = super::BaselinePlan::compile_for_test(view, policy);
+            let run = |input: f64, expected: f64| {
+                let mut registers = crate::register_file::RegisterFile::with_undefined(
+                    usize::from(view.register_count()).max(8),
+                );
+                let environment = crate::environment::Environment::new();
+                environment.set(5, crate::value::Value::Number(input));
+                let context = crate::vm::current_context_or_default();
+                let result = crate::vm::execute_baseline_code_from(
+                    view,
+                    &plan,
+                    binary_pc.saturating_sub(2),
+                    &mut registers,
+                    &context,
+                    std::rc::Rc::clone(&environment),
+                );
+                assert!(result.is_ok(), "ordinary driver rejected bitwise fallback");
+                assert_eq!(environment.get(5), crate::value::Value::Number(expected));
+            };
+            run(240.0, 0.0);
+            run(1.5, 1.0);
+            run(f64::NAN, 0.0);
+            run(f64::INFINITY, 0.0);
+            run(4_294_967_297.0, 1.0);
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            assert!(plan
+                .native_binary_at(binary_pc)
+                .is_some_and(|native| native.borrow().int_entry.is_some()));
+            executed = true;
+        });
+    });
+    assert!(admitted, "ordinary source must reach the guarded bitwise plan");
+    assert!(executed, "ordinary driver must execute the lowered bitwise body");
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
