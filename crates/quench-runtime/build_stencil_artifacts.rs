@@ -74,10 +74,13 @@ fn extractable(declaration: &RegionDeclaration) -> bool {
 }
 
 fn rust_source(declaration: &RegionDeclaration) -> String {
-    let body = super::rust_leaf_recipe(declaration.operations)
-        .expect("extractable recipe")
-        .expression();
-    format!("#![no_std]\n#[no_mangle]\n#[inline(never)]\npub extern \"C\" fn q_{}(a: f64, b: f64) -> f64 {{ {} }}\n", declaration.name, body)
+    let recipe = super::rust_leaf_recipe(declaration.operations).expect("extractable recipe");
+    format!(
+        "#![no_std]\n#[no_mangle]\n#[inline(never)]\npub extern \"C\" fn q_{}({}) -> f64 {{ {} }}\n",
+        declaration.name,
+        recipe.parameters(),
+        recipe.expression()
+    )
 }
 
 fn compile_one(root: &Path, target: &str, compiler: &str, flags: &[&str], declaration: &RegionDeclaration) -> Vec<u8> {

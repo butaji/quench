@@ -37,6 +37,7 @@ enum RustLeafRecipe {
     Sub,
     Mul,
     Div,
+    AddChain,
 }
 
 impl RustLeafRecipe {
@@ -46,6 +47,14 @@ impl RustLeafRecipe {
             Self::Sub => "a - b",
             Self::Mul => "a * b",
             Self::Div => "a / b",
+            Self::AddChain => "(a + b) + c",
+        }
+    }
+
+    const fn parameters(self) -> &'static str {
+        match self {
+            Self::AddChain => "a: f64, b: f64, c: f64",
+            _ => "a: f64, b: f64",
         }
     }
 }
@@ -56,6 +65,7 @@ fn rust_leaf_recipe(operations: &[&str]) -> Option<RustLeafRecipe> {
         ["Sub", "Return"] => Some(RustLeafRecipe::Sub),
         ["Mul", "Return"] => Some(RustLeafRecipe::Mul),
         ["Div", "Return"] => Some(RustLeafRecipe::Div),
+        ["Add", "Add"] => Some(RustLeafRecipe::AddChain),
         _ => None,
     }
 }

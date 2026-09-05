@@ -1022,5 +1022,16 @@ mod tests {
             assert!(!artifact.fingerprint.is_empty());
             assert!(!artifact.target.is_empty());
         }
+        if !BUILD_STENCIL_ARTIFACTS.is_empty() {
+            let chain = BUILD_STENCIL_ARTIFACTS
+                .iter()
+                .find(|artifact| artifact.name == "add_chain")
+                .expect("Rust generation must include the fused arithmetic chain");
+            let chain_record = CANONICAL_REGION_TABLE
+                .iter()
+                .find(|record| record.name == "add_chain")
+                .expect("fused chain declaration");
+            assert_eq!(chain.bytes, chain_record.stencil.bytes);
+        }
     }
 }
