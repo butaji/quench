@@ -196,8 +196,13 @@ impl<'a> NativeRegionContext<'a> {
                     "native region rejected without a semantic error".into(),
                 )),
             },
-            NativeStatus::CommittedError => Err(crate::machine::NativeDispatchError::Committed(
-                "native region reported a post-entry failure".into(),
+            NativeStatus::CommittedError if self.entry_started => {
+                Err(crate::machine::NativeDispatchError::Committed(
+                    "native region reported a post-entry failure".into(),
+                ))
+            }
+            NativeStatus::CommittedError => Err(crate::machine::NativeDispatchError::Physical(
+                "native region reported a pre-entry failure".into(),
             )),
             NativeStatus::Interrupt if self.entry_started => Err(
                 crate::machine::NativeDispatchError::Committed(
@@ -5858,9 +5863,10 @@ mod compact_handler_tests {
     }
 
     #[test]
-    fn committed_region_status_transport_preserves_non_retryable_kind() {
+    fn committed_region_status_before_entry_remains_retryable_rejection() {
         let code = crate::machine::ExecutableCode::from_ops(vec![Op::Return { src: 0 }]);
         let mut registers = crate::register_file::RegisterFile::from_values(vec![Value::Number(9.0)]);
+        let before = registers.clone();
         let context = crate::vm::current_context_or_default();
         let mut bridge_context = super::NativeRegionContext::new(
             code.code(),
@@ -5879,12 +5885,34 @@ mod compact_handler_tests {
                 .cast::<std::ffi::c_void>(),
         );
         assert_eq!(status, super::NATIVE_DISPATCH_COMMITTED_ERROR);
-        let before = registers.clone();
         assert!(matches!(
             bridge_context.finish(status),
-            Err(crate::machine::NativeDispatchError::Committed(_))
+            Err(crate::machine::NativeDispatchError::Physical(message))
+                if message.contains("pre-entry")
         ));
         assert_eq!(registers, before, "committed status must not replay the region");
+    }
+
+    #[test]
+    fn committed_region_status_after_entry_is_not_retryable() {
+        let code = crate::machine::ExecutableCode::from_ops(vec![Op::Return { src: 0 }]);
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![Value::Number(9.0)]);
+        let before = registers.clone();
+        let context = crate::vm::current_context_or_default();
+        let mut region = super::NativeRegionContext::new(
+            code.code(),
+            0,
+            &[crate::ir::Opcode::Return],
+            &mut registers,
+            &context,
+        );
+        region.entry_started = true;
+        assert!(matches!(
+            region.finish(super::NATIVE_DISPATCH_COMMITTED_ERROR),
+            Err(crate::machine::NativeDispatchError::Committed(message))
+                if message.contains("post-entry")
+        ));
+        assert_eq!(registers, before, "post-entry failure must not trigger replay");
     }
 
     #[test]
