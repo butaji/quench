@@ -5687,6 +5687,44 @@ mod compact_handler_tests {
     }
 
     #[test]
+    fn unknown_region_status_keeps_entry_boundary_meaning() {
+        let code = crate::machine::ExecutableCode::from_ops(vec![Op::Return { src: 0 }]);
+        let context = crate::vm::current_context_or_default();
+        let mut before_registers = crate::register_file::RegisterFile::from_values(vec![
+            Value::Number(1.0),
+        ]);
+        let before = super::NativeRegionContext::new(
+            code.code(),
+            0,
+            &[crate::ir::Opcode::Return],
+            &mut before_registers,
+            &context,
+        );
+        assert!(matches!(
+            before.finish(0xFFFF),
+            Err(crate::machine::NativeDispatchError::Physical(message))
+                if message.contains("invalid entry status")
+        ));
+
+        let mut after_registers = crate::register_file::RegisterFile::from_values(vec![
+            Value::Number(1.0),
+        ]);
+        let mut after = super::NativeRegionContext::new(
+            code.code(),
+            0,
+            &[crate::ir::Opcode::Return],
+            &mut after_registers,
+            &context,
+        );
+        after.entry_started = true;
+        assert!(matches!(
+            after.finish(0xFFFF),
+            Err(crate::machine::NativeDispatchError::Committed(message))
+                if message.contains("invalid post-entry status")
+        ));
+    }
+
+    #[test]
     fn fallback_consumes_post_entry_completion_without_retry() {
         const OPS: &[crate::ir::Opcode] = &[crate::ir::Opcode::StoreLocal, crate::ir::Opcode::Return];
         let code = crate::machine::ExecutableCode::from_ops(vec![
