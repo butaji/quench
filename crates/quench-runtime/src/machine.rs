@@ -2230,6 +2230,11 @@ impl NativeRegionPlan {
             let record = crate::stencil_select::select_region(key).ok_or_else(|| {
                 NativeDispatchError::Physical("native fused region stencil missing".into())
             })?;
+            if record.entry != 0 || !record.external_entries.contains(&0) {
+                return Err(NativeDispatchError::Physical(
+                    "native fused region has no legal external entry".into(),
+                ));
+            }
             // The generated declaration carries the physical ABI.  Fail
             // closed if metadata and the selected invocation path disagree;
             // an opcode-prefix match is never sufficient to pass a scalar

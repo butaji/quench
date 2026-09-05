@@ -25,6 +25,9 @@ pub struct RegionRecord {
     pub stencil: Stencil,
     pub operations: &'static [crate::ir::Opcode],
     pub entry: u16,
+    /// All legal external entry offsets, generated from the declaration.
+    /// Runtime admission may enter only at one of these boundaries.
+    pub external_entries: &'static [u16],
     pub fallthrough: Option<(&'static Stencil, u16)>,
     pub abi: RegionAbi,
     /// Some regions describe IC data/layout but do not yet contain a complete
