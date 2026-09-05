@@ -25,9 +25,11 @@ pub enum RegionAbi {
 /// second semantic implementation of the operations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AbiContract {
-    /// Number of machine words in the erased context argument. Scalar leaves
-    /// use typed FP/word arguments and therefore have no context pointer.
-    pub context_words: u8,
+    /// Number of pointer arguments carrying the erased context. Scalar leaves
+    /// use typed FP/word arguments and therefore have no context pointer; the
+    /// pointed-to `repr(C)` records have their own independently verified
+    /// field layout.
+    pub context_arg_words: u8,
     /// Whether VM register state is preserved by the physical entry itself.
     /// Raw kernels write only their explicit context/live-out fields.
     pub preserves_vm_registers: bool,
@@ -44,25 +46,25 @@ impl RegionAbi {
     pub const fn contract(self) -> AbiContract {
         match self {
             Self::Scalar => AbiContract {
-                context_words: 0,
+                context_arg_words: 0,
                 preserves_vm_registers: true,
                 may_call_helper: false,
                 interruptible_backedge: false,
             },
             Self::Bridge => AbiContract {
-                context_words: 1,
+                context_arg_words: 1,
                 preserves_vm_registers: false,
                 may_call_helper: true,
                 interruptible_backedge: true,
             },
             Self::ArrayKernel => AbiContract {
-                context_words: 1,
+                context_arg_words: 1,
                 preserves_vm_registers: false,
                 may_call_helper: false,
                 interruptible_backedge: false,
             },
             Self::ArrayNumericLoop => AbiContract {
-                context_words: 1,
+                context_arg_words: 1,
                 preserves_vm_registers: false,
                 may_call_helper: false,
                 interruptible_backedge: false,
@@ -387,10 +389,10 @@ mod generated_region_admission_tests {
 
     #[test]
     fn abi_contracts_keep_scalar_bridge_and_raw_entries_distinct() {
-        assert_eq!(RegionAbi::Scalar.contract().context_words, 0);
+        assert_eq!(RegionAbi::Scalar.contract().context_arg_words, 0);
         assert!(RegionAbi::Scalar.contract().preserves_vm_registers);
         assert!(RegionAbi::Bridge.contract().may_call_helper);
-        assert_eq!(RegionAbi::ArrayKernel.contract().context_words, 1);
+        assert_eq!(RegionAbi::ArrayKernel.contract().context_arg_words, 1);
         assert!(!RegionAbi::ArrayKernel.contract().may_call_helper);
         assert!(
             !RegionAbi::ArrayNumericLoop
