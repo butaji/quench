@@ -543,8 +543,15 @@ fn attach_loop_completion(
     dst: u16,
     completion: crate::completion::Completion,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    let value = crate::execute::read_register(registers, dst)?;
-    Ok(completion.update_empty(value))
+    if matches!(
+        completion,
+        crate::completion::Completion::Break { value: None, .. }
+            | crate::completion::Completion::Continue { value: None, .. }
+    ) {
+        let value = crate::execute::read_register(registers, dst)?;
+        return Ok(completion.update_empty(value));
+    }
+    Ok(completion)
 }
 
 fn unpack_for_of<'a>(
