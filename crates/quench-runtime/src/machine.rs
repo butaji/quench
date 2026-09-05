@@ -2224,6 +2224,17 @@ fn constant_word_bits(constant: &crate::ops::Constant) -> Option<u64> {
 
 /// Numeric ToBoolean leaf. Objects, strings and symbols retain the complete
 /// coercion gateway; this body only handles Number values with no re-entry.
+#[derive(Clone, Copy)]
+enum InstalledTruthinessEntry {
+    Unpublished,
+    NumberLocal(extern "C" fn(f64) -> u64),
+    NumberShared(crate::stencil_arena::OwnedEntry<extern "C" fn(f64) -> u64>),
+    WordLocal(extern "C" fn(u64) -> u64),
+    WordShared(crate::stencil_arena::OwnedEntry<extern "C" fn(u64) -> u64>),
+    PointerLocal(extern "C" fn(u64) -> u64),
+    PointerShared(crate::stencil_arena::OwnedEntry<extern "C" fn(u64) -> u64>),
+}
+
 pub(crate) struct NativeTruthinessPlan {
     key: crate::stencil_fact::RegionKey,
     word_key: crate::stencil_fact::RegionKey,
@@ -2232,18 +2243,7 @@ pub(crate) struct NativeTruthinessPlan {
     shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
     cache: crate::stencil_select::RenderedRegionCache,
     site: crate::quickening::QuickeningSite<2>,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    entry: Option<extern "C" fn(f64) -> u64>,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    word_entry: Option<extern "C" fn(u64) -> u64>,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    shared_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(f64) -> u64>>,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    shared_word_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(u64) -> u64>>,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    pointer_entry: Option<extern "C" fn(u64) -> u64>,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    shared_pointer_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(u64) -> u64>>,
+    installed: InstalledTruthinessEntry,
     #[cfg(test)]
     native_entry_count: u64,
 }
@@ -2251,10 +2251,8 @@ pub(crate) struct NativeTruthinessPlan {
 impl NativeTruthinessPlan {
     #[inline]
     fn clear_shared_capabilities(&mut self) {
-        invalidate_plan_capabilities!(self, [
-            entry, word_entry, pointer_entry, shared_entry,
-            shared_word_entry, shared_pointer_entry
-        ], no_lifecycle);
+        self.installed = InstalledTruthinessEntry::Unpublished;
+        self.cache.clear();
     }
 
     #[inline]
@@ -2311,16 +2309,7 @@ impl NativeTruthinessPlan {
                 shared_arena: None,
                 cache: crate::stencil_select::RenderedRegionCache::new(),
                 site: crate::quickening::QuickeningSite::new(instruction.opcode),
-                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-                entry: None,
-                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-                word_entry: None,
-                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-                shared_entry: None,
-                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-                shared_word_entry: None,
-                pointer_entry: None,
-                shared_pointer_entry: None,
+                installed: InstalledTruthinessEntry::Unpublished,
                 #[cfg(test)]
                 native_entry_count: 0,
             })
@@ -2333,7 +2322,7 @@ impl NativeTruthinessPlan {
     ) -> Result<bool, crate::stencil_arena::ArenaError> {
         let values = crate::stencil_fact::PatchValues::from_site(&self.site);
         if let Some(shared) = self.shared_arena.clone() {
-            if let Some(owned) = self.shared_entry {
+            if let InstalledTruthinessEntry::NumberShared(owned) = self.installed {
                 if let Ok(result) = shared.borrow().with_owned(owned, |entry| entry(value)) {
                     #[cfg(test)]
                     {
@@ -2353,7 +2342,7 @@ impl NativeTruthinessPlan {
                 (address, slab.bool_unary_entry(address)?)
             };
             let owned = shared.borrow().owned_bool_unary_entry(address)?;
-            self.shared_entry = Some(owned);
+            self.installed = InstalledTruthinessEntry::NumberShared(owned);
             return match shared.borrow().with_owned(owned, |entry| entry(value)) {
                 Ok(result) => {
                     #[cfg(test)]
@@ -2368,7 +2357,7 @@ impl NativeTruthinessPlan {
                 }
             };
         }
-        if let Some(entry) = self.entry {
+        if let InstalledTruthinessEntry::NumberLocal(entry) = self.installed {
             #[cfg(test)]
             {
                 self.native_entry_count = self.native_entry_count.saturating_add(1);
@@ -2388,7 +2377,7 @@ impl NativeTruthinessPlan {
         let address = arena.render_or_get(&mut self.cache, self.key, stencil, &values)?;
         arena.make_executable()?;
         let entry = arena.bool_unary_entry(address)?;
-        self.entry = Some(entry);
+        self.installed = InstalledTruthinessEntry::NumberLocal(entry);
         #[cfg(test)]
         {
             self.native_entry_count = self.native_entry_count.saturating_add(1);
@@ -2404,7 +2393,7 @@ impl NativeTruthinessPlan {
         let values = crate::stencil_fact::PatchValues::from_site(&self.site)
             .with_constant_bits(crate::tagged_value::TaggedValue::bool(true).bits());
         if let Some(shared) = self.shared_arena.clone() {
-            if let Some(owned) = self.shared_word_entry {
+            if let InstalledTruthinessEntry::WordShared(owned) = self.installed {
                 if let Ok(result) = shared.borrow().with_owned(owned, |entry| entry(value)) {
                     #[cfg(test)]
                     {
@@ -2412,7 +2401,7 @@ impl NativeTruthinessPlan {
                     }
                     return Ok(result != 0);
                 }
-                self.shared_word_entry = None;
+                self.installed = InstalledTruthinessEntry::Unpublished;
             }
             let mut slab = shared.borrow_mut();
             let stencil = crate::stencil_select::select_stencil(self.word_key)
@@ -2422,7 +2411,7 @@ impl NativeTruthinessPlan {
             let entry = slab.word_bool_entry(address)?;
             drop(slab);
             let owned = shared.borrow().owned_word_bool_entry(address)?;
-            self.shared_word_entry = Some(owned);
+            self.installed = InstalledTruthinessEntry::WordShared(owned);
             let result = match shared.borrow().with_owned(owned, |entry| entry(value)) {
                 Ok(result) => result,
                 Err(error) => {
@@ -2436,7 +2425,7 @@ impl NativeTruthinessPlan {
             }
             return Ok(result != 0);
         }
-        if let Some(entry) = self.word_entry {
+        if let InstalledTruthinessEntry::WordLocal(entry) = self.installed {
             #[cfg(test)]
             {
                 self.native_entry_count = self.native_entry_count.saturating_add(1);
@@ -2455,7 +2444,7 @@ impl NativeTruthinessPlan {
         let address = arena.render_or_get(&mut self.cache, self.word_key, stencil, &values)?;
         arena.make_executable()?;
         let entry = arena.word_bool_entry(address)?;
-        self.word_entry = Some(entry);
+        self.installed = InstalledTruthinessEntry::WordLocal(entry);
         #[cfg(test)]
         {
             self.native_entry_count = self.native_entry_count.saturating_add(1);
@@ -2470,12 +2459,12 @@ impl NativeTruthinessPlan {
     ) -> Result<bool, crate::stencil_arena::ArenaError> {
         let values = crate::stencil_fact::PatchValues::from_site(&self.site);
         if let Some(shared) = self.shared_arena.clone() {
-            if let Some(owned) = self.shared_pointer_entry {
+            if let InstalledTruthinessEntry::PointerShared(owned) = self.installed {
                 if let Ok(result) = shared.borrow().with_owned(owned, |entry| entry(value)) {
                     self.note_entry();
                     return Ok(result != 0);
                 }
-                self.shared_pointer_entry = None;
+                self.installed = InstalledTruthinessEntry::Unpublished;
             }
             let mut slab = shared.borrow_mut();
             let stencil = crate::stencil_select::select_stencil(self.pointer_key)
@@ -2485,7 +2474,7 @@ impl NativeTruthinessPlan {
             let entry = slab.word_bool_entry(address)?;
             drop(slab);
             let owned = shared.borrow().owned_word_bool_entry(address)?;
-            self.shared_pointer_entry = Some(owned);
+            self.installed = InstalledTruthinessEntry::PointerShared(owned);
             let result = match shared.borrow().with_owned(owned, |entry| entry(value)) {
                 Ok(result) => result,
                 Err(error) => {
@@ -2496,7 +2485,7 @@ impl NativeTruthinessPlan {
             self.note_entry();
             return Ok(result != 0);
         }
-        if let Some(entry) = self.pointer_entry {
+        if let InstalledTruthinessEntry::PointerLocal(entry) = self.installed {
             self.note_entry();
             return Ok(entry(value) != 0);
         }
@@ -2512,7 +2501,7 @@ impl NativeTruthinessPlan {
         let address = arena.render_or_get(&mut self.cache, self.pointer_key, stencil, &values)?;
         arena.make_executable()?;
         let entry = arena.word_bool_entry(address)?;
-        self.pointer_entry = Some(entry);
+        self.installed = InstalledTruthinessEntry::PointerLocal(entry);
         self.note_entry();
         Ok(entry(value) != 0)
     }
