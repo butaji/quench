@@ -824,6 +824,13 @@ pub fn derive_bits(
     }
     let length = match args.get(2) {
         Some(Value::Number(value)) if value.is_finite() && value.fract() == 0.0 && *value >= 0.0 => {
+            if *value > i32::MAX as f64 {
+                return Ok(settled(Err(error(
+                    Builtin::TypeError,
+                    Some("ERR_OUT_OF_RANGE"),
+                    "The requested length is outside the supported range",
+                ))));
+            }
             let length = *value as usize;
             if length % 8 != 0 {
                 return Ok(settled(Err(operation_error(
