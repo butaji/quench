@@ -214,7 +214,7 @@ impl SharedStencilSlab {
         remove
     }
 
-    fn reclaim_for(&mut self, additional: usize) -> bool {
+    fn reclaim_for(&mut self, additional: usize, cache: &mut RenderedRegionCache) -> bool {
         if self.active_dispatches.get() != 0 {
             return false;
         }
@@ -224,7 +224,9 @@ impl SharedStencilSlab {
             > MAX_SHARED_SLAB_BYTES
             && self.slabs.len() > 1
         {
+            let owner = self.slabs[0].id();
             self.slabs.remove(0);
+            cache.remove_owner(owner);
         }
         self.total_capacity().saturating_add(additional) <= MAX_SHARED_SLAB_BYTES
     }
@@ -243,7 +245,7 @@ impl SharedStencilSlab {
                 Err(error) => return Err(error),
             }
         }
-        if !self.reclaim_for(self.slab_capacity) {
+        if !self.reclaim_for(self.slab_capacity, cache) {
             return Err(ArenaError::Exhausted);
         }
         let mut slab = StencilArena::new(self.slab_capacity)?;
@@ -1783,6 +1785,7 @@ mod tests {
             bytes: &BYTES,
             holes: &[],
         };
+        let mut first_owner = None;
         for raw_key in 0..=MAX_SHARED_SLAB_BYTES / MAX_ARENA_BYTES {
             let key = crate::stencil_fact::RegionKey(200 + raw_key as u64);
             if raw_key == MAX_SHARED_SLAB_BYTES / MAX_ARENA_BYTES {
@@ -1794,10 +1797,20 @@ mod tests {
                 pool.active_dispatches.set(0);
             }
             let address = pool.render_or_get(&mut cache, key, &stencil, &values).unwrap();
+            if raw_key == 0 {
+                first_owner = pool.owner_for(address);
+            }
             pool.make_executable(address).unwrap();
         }
         assert_eq!(pool.capacity(), MAX_SHARED_SLAB_BYTES);
         assert_eq!(pool.slab_count(), 4);
+        assert_eq!(
+            first_owner.and_then(|owner| {
+                cache.get_owned(crate::stencil_fact::RegionKey(200), 0, owner)
+            }),
+            None,
+            "global-cap reclamation must prune retired owner rows"
+        );
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
