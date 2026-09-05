@@ -1036,11 +1036,11 @@ impl StencilArena {
             return fallback();
         }
         let stencil = view.stencil;
-        let result = self.render_and_execute(cache, key, stencil, values, execute, fallback);
-        if result.is_ok() {
-            self.mark_physical_execution(view);
-        }
-        result
+        // This generic adapter accepts a caller closure and is also used by
+        // modeled ABI tests. Only typed machine-entry wrappers may publish an
+        // execution witness, so a successful closure cannot masquerade as
+        // native instruction execution in diagnostics.
+        self.render_and_execute(cache, key, stencil, values, execute, fallback)
     }
 
     /// End-to-end executable entry for the proven-number Add+Return region.
@@ -2559,6 +2559,24 @@ mod tests {
         assert_eq!(result, Ok(23));
         assert_eq!(cache.len(), 0);
         assert_eq!(arena.used(), 1);
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn modeled_entry_callback_does_not_publish_native_witness() {
+        let mut arena = StencilArena::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let values = PatchValues::from_site(&site);
+        let result = arena.render_selected_or_fallback(
+            &mut cache,
+            crate::stencil_select::numeric_region_key(Opcode::Add).unwrap(),
+            &values,
+            |_| Ok::<_, ()>(12.0),
+            || Ok::<_, ()>(0.0),
+        );
+        assert_eq!(result, Ok(12.0));
+        assert!(arena.last_physical_execution().is_none());
     }
 
     #[test]
