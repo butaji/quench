@@ -2923,9 +2923,18 @@ impl NativeUnaryPlan {
         };
         let owned = shared.borrow().owned_entry(address, entry)?;
         self.shared_number_entry = Some(owned);
-        let result = shared.borrow().with_owned(owned, |entry| entry(value))?;
-        self.note_entry();
-        Ok(result)
+        match shared.borrow().with_owned(owned, |entry| entry(value)) {
+            Ok(result) => {
+                self.note_entry();
+                Ok(result)
+            }
+            Err(error) => {
+                self.shared_number_entry = None;
+                self.cache.clear();
+                self.lifecycle.reset();
+                Err(error)
+            }
+        }
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -3001,7 +3010,15 @@ impl NativeUnaryPlan {
                 error
             })?;
             let owned = shared.borrow().owned_entry(address, entry)?;
-            let result = shared.borrow().with_owned(owned, |entry| entry(operand))?;
+            let result = match shared.borrow().with_owned(owned, |entry| entry(operand)) {
+                Ok(result) => result,
+                Err(error) => {
+                    self.shared_entry = None;
+                    self.cache.clear();
+                    self.lifecycle.reset();
+                    return Err(error);
+                }
+            };
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             {
                 self.shared_entry = Some(owned);
