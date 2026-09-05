@@ -2113,8 +2113,7 @@ fn native_property_uses_rendered_address_without_remapping() {
     let mut plan = super::NativePropertyPlan {
         arena: None,
         shared_arena: None,
-        cache: crate::stencil_select::RenderedRegionCache::new(),
-        lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
+        physical: super::PhysicalState::new(),
         opcode: crate::ir::Opcode::GetN,
         installed: super::InstalledPropertyEntry::Unpublished,
         native_entry_count: 0,
