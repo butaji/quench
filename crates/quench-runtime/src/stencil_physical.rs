@@ -95,3 +95,43 @@ pub(crate) fn gpr_clobber_mask(bytes: &[u8]) -> u16 {
         0
     }
 }
+
+/// Fail-closed validation for the restricted AArch64 raw-kernel vocabulary.
+/// A byte-pattern hit is not an instruction proof: every word must be one of
+/// the declared load/store, arithmetic, branch, compare, move, or return
+/// forms before ABI effects are trusted.
+pub(crate) fn validate_raw_instruction_stream(bytes: &[u8]) -> Result<(), &'static str> {
+    #[cfg(target_arch = "aarch64")]
+    {
+        if bytes.len() % 4 != 0 {
+            return Err("raw stencil is not instruction aligned");
+        }
+        for word in bytes.chunks_exact(4) {
+            let encoded = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
+            if !known_aarch64_raw_instruction(encoded) {
+                return Err("raw stencil contains an unknown instruction");
+            }
+        }
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    let _ = bytes;
+    Ok(())
+}
+
+#[cfg(target_arch = "aarch64")]
+fn known_aarch64_raw_instruction(encoded: u32) -> bool {
+    encoded == 0xD65F_03C0
+        || encoded & 0xFFC0_0000 == 0xF940_0000
+        || encoded & 0xFFC0_0000 == 0xF900_0000
+        || encoded & 0xFFC0_0000 == 0xFD40_0000
+        || encoded & 0xFFC0_0000 == 0xFD00_0000
+        || encoded & 0xFFE0_0000 == 0x8B00_0000
+        || encoded & 0xFFC0_0000 == 0x9100_0000
+        || encoded & 0xFF80_0000 == 0x5280_0000
+        || encoded & 0xFC00_0000 == 0x1400_0000
+        || encoded & 0xFF00_0010 == 0x5400_0000
+        || encoded & 0x7F00_0000 == 0x3500_0000
+        || encoded & 0xFF20_FC00 == 0x1E20_2800
+        || encoded & 0xFF20_FC00 == 0x1E20_4000
+        || encoded & 0xFFE0_FC1F == 0xEB00_001F
+}
