@@ -48,7 +48,18 @@ pub struct AbiContract {
 }
 
 macro_rules! region_abi_catalog {
-    ($( $name:ident => ($region_context:expr, $priority:expr) ),+ $(,)?) => {
+    ($( $name:ident => {
+        context: $region_context:expr,
+        priority: $priority:expr,
+        context_words: $context_words:expr,
+        preserves_vm_registers: $preserves_vm_registers:expr,
+        may_call_helper: $may_call_helper:expr,
+        interruptible_backedge: $interruptible_backedge:expr,
+        hardware_clobber_mask: $hardware_clobber_mask:expr,
+        hardware_gpr_clobber_mask: $hardware_gpr_clobber_mask:expr,
+        live_out_mask: $live_out_mask:expr,
+        root_materialization_required: $root_materialization_required:expr
+    }),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
         pub enum RegionAbi { $( $name ),+ }
 
@@ -62,24 +73,21 @@ macro_rules! region_abi_catalog {
             }
 
             pub const fn contract(self) -> AbiContract {
-                canonical_abi_contract(self)
+                match self {
+                    $(Self::$name => AbiContract {
+                        context_arg_words: $context_words,
+                        preserves_vm_registers: $preserves_vm_registers,
+                        may_call_helper: $may_call_helper,
+                        interruptible_backedge: $interruptible_backedge,
+                        hardware_clobber_mask: $hardware_clobber_mask,
+                        hardware_gpr_clobber_mask: $hardware_gpr_clobber_mask,
+                        live_out_mask: $live_out_mask,
+                        root_materialization_required: $root_materialization_required,
+                    }),+
+                }
             }
         }
     };
-}
-
-region_abi_catalog! {
-    Scalar => (false, 0),
-    TaggedWord => (false, 0),
-    ConstantWord => (false, 0),
-    ScalarBool => (false, 0),
-    ScalarWordBool => (false, 0),
-    ScalarWordPairBool => (false, 0),
-    ScalarI32 => (false, 0),
-    ScalarU32 => (false, 0),
-    Bridge => (true, 1),
-    ArrayKernel => (true, 2),
-    ArrayNumericLoop => (true, 3),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
