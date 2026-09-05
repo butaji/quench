@@ -1,23 +1,25 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `58ea0431c` (cleanup files remain
+Evidence below is bound to source revision `cdbdc0cee` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
 functional commits.
 
-Current source revision is `2ab5d324c`. The generated ABI invocation is now
+Current source revision is `cdbdc0cee`. The generated ABI invocation is now
 derived from `build.rs::REGION_DECLARATIONS` rather than a second handwritten
 ABI table. Native owner-mismatch paths clear every typed capability, cache and
 lifecycle token across scalar, unary, constant, nullish, fused, local and
-property plans. Focused native-owner coverage is **45 passed, 0 failed** at
-`/tmp/quench-native-owner-lifetime-20260905.log`; same-tree full runtime is
+property plans. `SharedStencilSlab` now exposes only typed owner-capability
+constructors; callers cannot pair an arbitrary address with an independent
+function pointer. Focused native-owner coverage is **45 passed, 0 failed** at
+`/tmp/quench-native-capability-boundary-20260905.log`; same-tree full runtime is
 **736 passed, 0 failed, 1 ignored** at
-`/tmp/quench-runtime-full-20260905-owner-clear.log`, trace runtime is
+`/tmp/quench-runtime-full-20260905-capability-boundary.log`, trace runtime is
 **751 passed, 0 failed, 1 ignored** at
-`/tmp/quench-runtime-trace-20260905-owner-clear.log`, and host tests are
-**4 passed, 0 failed** at `/tmp/quench-node-full-20260905-owner-clear.log`.
+`/tmp/quench-runtime-trace-20260905-capability-boundary.log`, and host tests are
+**4 passed, 0 failed** at `/tmp/quench-node-full-20260905-capability-boundary.log`.
 
 The region ABI now distinguishes a `CommittedError` received before entry
 from one received after entry; the former remains a safe ordinary fallback,
