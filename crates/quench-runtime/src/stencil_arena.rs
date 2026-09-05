@@ -6,7 +6,7 @@
 
 use crate::stencil_fact::{PatchValues, Stencil};
 use crate::stencil_patch::{apply_holes, PatchError};
-use crate::stencil_select::{select_region, RenderedRegionCache};
+use crate::stencil_select::RenderedRegionCache;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -928,8 +928,8 @@ impl StencilArena {
     }
 
     fn record_abi(&self, address: usize, key: crate::stencil_fact::RegionKey) {
-        if let Some(abi) = select_region(key).map(|record| record.abi) {
-            self.published_abis.borrow_mut().insert(address, abi);
+        if let Some(view) = crate::stencil_select::select_physical(key) {
+            self.published_abis.borrow_mut().insert(address, view.abi);
         }
     }
 
