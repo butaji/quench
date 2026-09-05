@@ -7674,6 +7674,14 @@ fn signal_number(signal: &str) -> Option<f64> {
     })
 }
 
+pub fn cp_get_valid_stdio(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::child_process::get_valid_stdio(args)
+}
+
 pub fn cp_spawn(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
@@ -10058,6 +10066,7 @@ fn fork_child_start(
     let Some((filename, source)) = resolve_child_entry(requested_path) else {
         return Ok(());
     };
+    let child_options = execute::get_property(child, "\0childOptions");
     let global = quench_runtime::vm::current_global_object();
     let process = execute::get_property(&global, "process");
     let timers_before = state
@@ -10080,6 +10089,18 @@ fn fork_child_start(
     let console = execute::get_property(&global, "console");
     let previous_console_stdout = execute::get_property(&console, "_stdout");
     let previous_console_stderr = execute::get_property(&console, "_stderr");
+    // `fork()` inherits the parent's stdio unless `silent: true` (which
+    // cp_fork normalizes to explicit pipe descriptors).  Preserve that
+    // boundary for a real child runner: writes from a nested fork must reach
+    // the outer runner's stdout/stderr rather than an unobserved synthetic
+    // ChildProcess stream.
+    let inherited_stdio = matches!(
+        execute::get_property(&child_options, "stdio"),
+        Value::Undefined
+    ) && !matches!(
+        execute::get_property(&child_options, "silent"),
+        Value::Boolean(true)
+    );
     let argv0 = execute::get_property_result(&previous_argv, "0")
         .unwrap_or_else(|_| Value::String("quench-node".into()));
     let mut child_argv = vec![argv0, Value::String(filename.clone())];
@@ -10093,7 +10114,6 @@ fn fork_child_start(
     }
     execute::set_property_in_place(&process, "argv", host_api::array(child_argv));
     execute::set_property_in_place(&process, "connected", Value::Boolean(true));
-    let child_options = execute::get_property(child, "\0childOptions");
     let child_env = execute::get_property(&child_options, "env");
     if matches!(child_env, Value::Object(_) | Value::ObjectAlias(_)) {
         // OS environments are string maps.  Normalize fork options before
@@ -10119,7 +10139,7 @@ fn fork_child_start(
         execute::set_property_in_place(&process, "execPath", Value::String(exec_path));
     }
     let child_stdout = execute::get_property(child, "stdout");
-    if matches!(child_stdout, Value::Object(_) | Value::ObjectAlias(_)) {
+    if !inherited_stdio && matches!(child_stdout, Value::Object(_) | Value::ObjectAlias(_)) {
         execute::set_property_in_place(&child_stdout, "\0forkStdoutTarget", Value::Boolean(true));
         execute::set_property_in_place(
             &child_stdout,
@@ -10134,7 +10154,7 @@ fn fork_child_start(
         );
     }
     let child_stderr = execute::get_property(child, "stderr");
-    if matches!(child_stderr, Value::Object(_) | Value::ObjectAlias(_)) {
+    if !inherited_stdio && matches!(child_stderr, Value::Object(_) | Value::ObjectAlias(_)) {
         execute::set_property_in_place(&child_stderr, "\0forkStderrTarget", Value::Boolean(true));
         execute::set_property_in_place(
             &child_stderr,
@@ -10145,7 +10165,7 @@ fn fork_child_start(
         execute::set_property_in_place(&console, "_stderr", child_stderr);
     }
     let child_stdin = execute::get_property(child, "stdin");
-    if matches!(child_stdin, Value::Object(_) | Value::ObjectAlias(_)) {
+    if !inherited_stdio && matches!(child_stdin, Value::Object(_) | Value::ObjectAlias(_)) {
         execute::set_property_in_place(&child_stdin, "\0forkStdinTarget", Value::Boolean(true));
         execute::set_property_in_place(&process, "stdin", child_stdin);
     }
