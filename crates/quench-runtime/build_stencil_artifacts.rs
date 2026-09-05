@@ -1,6 +1,7 @@
 use std::{env, fs, path::{Path, PathBuf}, process::Command};
 
 use object::read::{Object, ObjectSection, ObjectSymbol};
+use object::SectionKind;
 use object::SymbolSection;
 
 use super::RegionDeclaration;
@@ -20,6 +21,7 @@ pub(crate) fn generate(out_dir: &Path, declarations: &[RegionDeclaration]) {
 pub(crate) fn verify_words(path: &Path, expected: &[u32]) {
     let data = fs::read(path).expect("read Rust assembly object");
     let file = object::File::parse(&*data).expect("parse Rust assembly object");
+    assert_single_text_section(&file);
     let mut sections = file.sections().filter(|section| {
         section
             .name()
@@ -40,6 +42,7 @@ pub(crate) fn verify_words(path: &Path, expected: &[u32]) {
 pub(crate) fn verify_symbols(path: &Path, names: &[&str]) {
     let data = fs::read(path).expect("read Rust assembly object");
     let file = object::File::parse(&*data).expect("parse Rust assembly object");
+    assert_single_text_section(&file);
     let mut sections = file.sections().filter(|section| {
         section
             .name()
@@ -131,6 +134,7 @@ fn compile_one(root: &Path, target: &str, compiler: &str, flags: &[&str], declar
 fn parse_object(path: &Path, name: &str) -> Vec<u8> {
     let data = fs::read(path).expect("read Rust stencil object");
     let file = object::File::parse(&*data).expect("parse Rust stencil object");
+    assert_single_text_section(&file);
     for symbol in file.symbols() {
         if matches!(symbol.section(), SymbolSection::Undefined) {
             panic!("Rust stencil has undeclared external symbol {:?}", symbol.name());
@@ -159,6 +163,14 @@ fn parse_object(path: &Path, name: &str) -> Vec<u8> {
     let output = bytes.to_vec();
     assert!(!output.is_empty() && output.len() % 4 == 0, "Rust stencil has invalid instruction bounds");
     output
+}
+
+fn assert_single_text_section<'data>(file: &object::File<'data>) {
+    let text_sections = file
+        .sections()
+        .filter(|section| section.kind() == SectionKind::Text)
+        .count();
+    assert_eq!(text_sections, 1, "Rust stencil must have one executable text section");
 }
 
 fn render_artifact(
