@@ -406,7 +406,7 @@ fn legacy_physical_view(key: RegionKey, record: &'static RegionRecord) -> Physic
         fallthrough: record.fallthrough,
         executable: record.executable,
         template_calls_helper: record.template_calls_helper,
-        target: None,
+        target: option_env!("QUENCH_BUILD_TARGET"),
         fingerprint: None,
     }
 }
