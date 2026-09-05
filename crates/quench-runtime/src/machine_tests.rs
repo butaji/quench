@@ -445,6 +445,8 @@ fn non_x86_native_execution_rejects_before_mapping() {
         returns_boolean: false,
         integer_op: None,
         integer_unsigned: false,
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        shared_entry_address: None,
         native_entry_count: 0,
     };
     assert!(plan.execute(1.0, 2.0).is_err());
@@ -468,6 +470,7 @@ fn native_numeric_entry_pointer_is_cached_after_first_render() {
         entry: None,
         int_entry: None,
         uint_entry: None,
+        shared_entry_address: None,
         native_entry_count: 0,
     };
     assert_eq!(plan.execute(1.5, 2.25), Ok(3.75));
@@ -475,6 +478,33 @@ fn native_numeric_entry_pointer_is_cached_after_first_render() {
     let used = plan.arena.as_ref().expect("rendered arena").used();
     assert_eq!(plan.execute(4.0, 5.0), Ok(9.0));
     assert_eq!(plan.arena.as_ref().expect("cached arena").used(), used);
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn native_numeric_shared_entry_reuses_live_owner_and_recovers_after_eviction() {
+    let instruction = crate::ir::Instruction {
+        opcode: crate::ir::Opcode::Add,
+        flags: crate::ir::compact_binary_id(crate::ops::BinaryOp::Add),
+        a: 0,
+        b: 1,
+        c: 2,
+    };
+    let shared = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("slab"),
+    ));
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut plan = super::NativeBinaryPlan::new_with_shared(instruction, policy, shared.clone())
+        .expect("shared numeric plan");
+    assert_eq!(plan.execute(1.5, 2.25), Ok(3.75));
+    let used = shared.borrow().used();
+    assert!(plan.entry.is_some());
+    assert!(plan.shared_entry_address.is_some());
+    assert_eq!(plan.execute(4.0, 5.0), Ok(9.0));
+    assert_eq!(shared.borrow().used(), used);
+    assert_eq!(shared.borrow_mut().evict_idle(0), 1);
+    assert_eq!(plan.execute(4.0, 5.0), Ok(9.0));
+    assert!(plan.shared_entry_address.is_some(), "eviction must rebuild the entry");
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
