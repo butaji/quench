@@ -27,7 +27,25 @@ use crate::host::HostState;
 pub(crate) const KEY_MARKER_PROP: &str = "\0quench:webcrypto:key";
 pub(crate) const KEY_DATA_PROP: &str = "\0quench:webcrypto:key-data";
 pub(crate) const KEY_FORMAT_PROP: &str = "\0quench:webcrypto:key-format";
-const KEY_META_PROP: &str = "\0quench:webcrypto:key-meta";
+pub(crate) const KEY_META_PROP: &str = "\0quench:webcrypto:key-meta";
+
+thread_local! {
+    // CryptoKey instances can be created while a promise continuation is
+    // running with a sandbox/worker global as the current VM realm.  The
+    // constructor's prototype is a host fact owned by the root context, so
+    // retain that identity once during module construction instead of
+    // resolving a realm-local marker for every operation.
+    static KEY_PROTOTYPE: RefCell<Option<Value>> = const { RefCell::new(None) };
+}
+
+fn key_prototype() -> Value {
+    KEY_PROTOTYPE.with(|prototype| {
+        prototype.borrow().clone().unwrap_or_else(|| {
+            let global = quench_runtime::vm::current_global_object();
+            execute::get_property(&global, "__quench_crypto_key_prototype")
+        })
+    })
+}
 
 fn settled(result: Result<Value, VmError>) -> Value {
     Value::Promise(Rc::new(PromiseData::new(match result {
@@ -116,6 +134,7 @@ fn key(
         Value::String(name) => host_api::object(vec![("name".into(), Value::String(name))]),
         value => value,
     };
+    let algorithm = normalize_key_algorithm(algorithm);
     let usages = normalize_usages(&usages);
     let value = host_api::object(vec![
         ("type".into(), Value::String("secret".into())),
@@ -133,6 +152,54 @@ fn key(
         KEY_DATA_PROP,
         crate::modules::buffer_proto::make_buffer(&data.unwrap_or_default()),
     )
+}
+
+fn normalize_key_algorithm(algorithm: Value) -> Value {
+    let algorithm = crate::modules::clone::deep_clone(algorithm);
+    let hash = execute::get_property(&algorithm, "hash");
+    if let Value::String(name) = hash {
+        let pairs = execute::own_enumerable_keys(&algorithm)
+            .into_iter()
+            .map(|key| {
+                let value = if key == "hash" {
+                    host_api::object(vec![("name".into(), Value::String(name.clone()))])
+                } else {
+                    execute::get_property(&algorithm, &key)
+                };
+                (key, value)
+            })
+            .collect();
+        host_api::object(pairs)
+    } else {
+        algorithm
+    }
+}
+
+pub(crate) fn clone_key(value: &Value) -> Option<Value> {
+    if !matches!(
+        execute::get_property(value, KEY_MARKER_PROP),
+        Value::Boolean(true)
+    ) {
+        return None;
+    }
+    let metadata = execute::get_property(value, KEY_META_PROP);
+    let algorithm =
+        crate::modules::clone::deep_clone(execute::get_property(&metadata, "algorithm"));
+    let usages = crate::modules::clone::deep_clone(execute::get_property(&metadata, "usages"));
+    let extractable = matches!(
+        execute::get_property(&metadata, "extractable"),
+        Value::Boolean(true)
+    );
+    let key_type = execute::to_js_string(&execute::get_property(&metadata, "type")).ok()?;
+    let format = execute::to_js_string(&execute::get_property(value, KEY_FORMAT_PROP))
+        .unwrap_or_else(|_| "raw".into());
+    let data =
+        crate::modules::crypto::bytes_from_value(&execute::get_property(value, KEY_DATA_PROP));
+    Some(key_metadata(
+        key(&key_prototype(), algorithm, extractable, usages, data),
+        &key_type,
+        &format,
+    ))
 }
 
 fn normalize_usages(value: &Value) -> Value {
@@ -224,8 +291,12 @@ fn key_getter(name: &str) -> Option<Value> {
         "String.fromCharCode(0) + {:?}",
         KEY_META_PROP.trim_start_matches('\0')
     );
+    let marker = format!(
+        "String.fromCharCode(0) + {:?}",
+        KEY_MARKER_PROP.trim_start_matches('\0')
+    );
     let source = format!(
-        "(name) => function() {{ const value = this[{metadata}][name]; return name === \"usages\" ? Array.from(value) : value; }}"
+        "(name) => function() {{ const receiver = this; if ((receiver === null) || ((typeof receiver !== \"object\") && (typeof receiver !== \"function\")) || receiver[{marker}] !== true) {{ const error = new TypeError(\"Illegal invocation\"); error.code = \"ERR_INVALID_THIS\"; throw error; }} const value = receiver[{metadata}][name]; if (name === \"usages\") return Array.from(value); if (name === \"algorithm\") return structuredClone(value); return value; }}"
     );
     let factory = eval_function(&source).ok()?;
     execute::call(&factory, &Value::Undefined, &[Value::String(name.into())]).ok()
@@ -531,8 +602,7 @@ pub fn import_key(
     } else {
         args.get(1).and_then(bytes)
     };
-    let prototype = quench_runtime::vm::current_global_object();
-    let prototype = execute::get_property(&prototype, "__quench_crypto_key_prototype");
+    let prototype = key_prototype();
     let key_type = match format.as_str() {
         "pkcs8" => "private",
         "spki" => "public",
@@ -557,6 +627,9 @@ pub fn export_key(
         .unwrap_or_default()
         .to_ascii_lowercase();
     let key = args.get(1).unwrap_or(&Value::Undefined);
+    if let Some(error) = invalid_key_this(key) {
+        return Ok(settled(Err(error)));
+    }
     if !matches!(
         format.as_str(),
         "raw" | "raw-secret" | "jwk" | "spki" | "pkcs8"
@@ -567,8 +640,9 @@ pub fn export_key(
             "The provided value is not a valid enum value of type KeyFormat",
         ))));
     }
+    let metadata = execute::get_property(key, KEY_META_PROP);
     if !matches!(
-        execute::get_property(key, "extractable"),
+        execute::get_property(&metadata, "extractable"),
         Value::Boolean(true)
     ) {
         let value = quench_runtime::builtins::error(
@@ -583,11 +657,19 @@ pub fn export_key(
     let result = match format.as_str() {
         "raw" | "raw-secret" | "spki" | "pkcs8" => array_buffer(&data),
         "jwk" => {
-            let algorithm = execute::get_property(key, "algorithm");
-            let hash = execute::to_js_string(&execute::get_property(&algorithm, "hash"))
-                .unwrap_or_default()
+            let algorithm = execute::get_property(&metadata, "algorithm");
+            let hash_value = execute::get_property(&algorithm, "hash");
+            let hash_name = match hash_value {
+                Value::String(name) => name,
+                value => execute::to_js_string(&execute::get_property(&value, "name"))
+                    .unwrap_or_default(),
+            };
+            let hash = hash_name
                 .to_ascii_uppercase()
-                .replace('-', "");
+                .replace('-', "")
+                .strip_prefix("SHA")
+                .unwrap_or(&hash_name)
+                .to_string();
             let name = execute::to_js_string(&execute::get_property(&algorithm, "name"))
                 .unwrap_or_default();
             let alg = if hash.is_empty() || !name.eq_ignore_ascii_case("HMAC") {
@@ -602,7 +684,7 @@ pub fn export_key(
                     Value::String(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data)),
                 ),
                 ("alg".into(), alg),
-                ("key_ops".into(), execute::get_property(key, "usages")),
+                ("key_ops".into(), execute::get_property(&metadata, "usages")),
                 ("ext".into(), Value::Boolean(true)),
             ])
         }
@@ -622,10 +704,7 @@ pub fn to_crypto_key(
         crate::modules::crypto::KEY_DATA_PROP,
     ))
     .unwrap_or_default();
-    let prototype = execute::get_property(
-        &quench_runtime::vm::current_global_object(),
-        "__quench_crypto_key_prototype",
-    );
+    let prototype = key_prototype();
     let mut algorithm = args.first().cloned().unwrap_or(Value::Undefined);
     if let Value::String(name) = algorithm {
         algorithm = host_api::object(vec![("name".into(), Value::String(name))]);
@@ -687,10 +766,7 @@ pub fn generate_key(
             | "X25519"
             | "X448"
     ) {
-        let prototype = execute::get_property(
-            &quench_runtime::vm::current_global_object(),
-            "__quench_crypto_key_prototype",
-        );
+        let prototype = key_prototype();
         let requested_usages = args
             .get(2)
             .cloned()
@@ -722,10 +798,7 @@ pub fn generate_key(
         ]))));
     }
     if name == "HMAC" {
-        let prototype = execute::get_property(
-            &quench_runtime::vm::current_global_object(),
-            "__quench_crypto_key_prototype",
-        );
+        let prototype = key_prototype();
         let extractable = matches!(args.get(1), Some(Value::Boolean(true)));
         let usages = args
             .get(2)
@@ -763,10 +836,7 @@ pub fn generate_key(
             | "KMAC128"
             | "KMAC256"
     ) {
-        let prototype = execute::get_property(
-            &quench_runtime::vm::current_global_object(),
-            "__quench_crypto_key_prototype",
-        );
+        let prototype = key_prototype();
         let extractable = matches!(args.get(1), Some(Value::Boolean(true)));
         let usages = args
             .get(2)
@@ -1690,9 +1760,9 @@ fn chacha_algorithm(value: &Value) -> Option<(Vec<u8>, Vec<u8>)> {
 }
 
 pub fn build() -> (Value, Value) {
-    let prototype = host_api::object(Vec::new());
+    let public_prototype = host_api::object(Vec::new());
     let constructor = crate::host::capability(crate::registry::SPEC_WEBCRYPTO_KEY_CONSTRUCT);
-    let constructor = execute::set_property(constructor, "prototype", prototype.clone());
+    let constructor = execute::set_property(constructor, "prototype", public_prototype.clone());
     let crypto = host_api::object(vec![
         (
             "getRandomValues".into(),
@@ -1775,7 +1845,7 @@ pub fn build() -> (Value, Value) {
             ]),
         ),
     ]);
-    let _ = execute::set_property_in_place(&prototype, "constructor", constructor.clone());
+    let _ = execute::set_property_in_place(&public_prototype, "constructor", constructor.clone());
     for name in ["type", "extractable", "algorithm", "usages"] {
         let Some(getter) = key_getter(name) else {
             continue;
@@ -1785,7 +1855,29 @@ pub fn build() -> (Value, Value) {
             ("enumerable".into(), Value::Boolean(true)),
             ("configurable".into(), Value::Boolean(true)),
         ]);
-        let _ = execute::define_property(prototype.clone(), name, descriptor);
+        let _ = execute::define_property(public_prototype.clone(), name, descriptor);
     }
+    let instance_prototype = host_api::object(Vec::new());
+    let instance_prototype = execute::set_prototype_of(&instance_prototype, &public_prototype)
+        .unwrap_or(instance_prototype);
+    let _ = execute::set_property_in_place(&instance_prototype, "constructor", constructor.clone());
+    if let Some(factory) = eval_function(
+        "(prototype) => function(value) { if (value === null || value === undefined) return false; let current = value; while (current !== null && current !== undefined) { if (current === prototype) return true; current = Object.getPrototypeOf(current); } return false; }",
+    )
+    .ok()
+    {
+        if let Ok(has_instance) = execute::call(
+            &factory,
+            &Value::Undefined,
+            std::slice::from_ref(&instance_prototype),
+        ) {
+            let _ = execute::set_callable_property(
+                &constructor,
+                "Symbol.hasInstance",
+                has_instance,
+            );
+        }
+    }
+    KEY_PROTOTYPE.with(|stored| *stored.borrow_mut() = Some(instance_prototype));
     (crypto, constructor)
 }

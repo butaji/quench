@@ -702,7 +702,13 @@ pub fn type_predicate(name: &str, value: &Value) -> bool {
             ),
             Ok(Value::Boolean(true))
         ),
-        "isCryptoKey" => false,
+        "isCryptoKey" => matches!(
+            quench_runtime::execute::get_property_result(
+                value,
+                crate::modules::webcrypto::KEY_MARKER_PROP,
+            ),
+            Ok(Value::Boolean(true))
+        ),
         _ => false,
     }
 }
@@ -1374,6 +1380,30 @@ pub fn inspect_minimal(value: &Value) -> String {
 }
 
 pub fn inspect_with_depth(value: &Value, depth: usize) -> String {
+    if matches!(
+        quench_runtime::execute::get_property(value, crate::modules::webcrypto::KEY_MARKER_PROP),
+        Value::Boolean(true)
+    ) {
+        let metadata =
+            quench_runtime::execute::get_property(value, crate::modules::webcrypto::KEY_META_PROP);
+        let key_type =
+            inspect_with_depth(&quench_runtime::execute::get_property(&metadata, "type"), 0);
+        let extractable = inspect_with_depth(
+            &quench_runtime::execute::get_property(&metadata, "extractable"),
+            0,
+        );
+        let algorithm = inspect_with_depth(
+            &quench_runtime::execute::get_property(&metadata, "algorithm"),
+            depth.saturating_sub(1),
+        );
+        let usages = inspect_with_depth(
+            &quench_runtime::execute::get_property(&metadata, "usages"),
+            depth.saturating_sub(1),
+        );
+        return format!(
+            "CryptoKey {{ type: {key_type}, extractable: {extractable}, algorithm: {algorithm}, usages: {usages} }}"
+        );
+    }
     if let Some(rendered) = broadcast_channel_render(value, depth) {
         return rendered;
     }
@@ -1508,6 +1538,12 @@ pub fn inspect_with_options(
     max_array_length: Option<usize>,
     getters: bool,
 ) -> String {
+    if matches!(
+        quench_runtime::execute::get_property(value, crate::modules::webcrypto::KEY_MARKER_PROP),
+        Value::Boolean(true)
+    ) {
+        return inspect_with_depth(value, depth);
+    }
     if !show_hidden {
         for name in ["String", "Boolean", "Number", "Symbol", "BigInt"] {
             if boxed_constructor(value, name) {

@@ -5,6 +5,9 @@ use quench_runtime::value::Value;
 use std::rc::Rc;
 
 pub fn deep_clone(value: Value) -> Value {
+    if let Some(clone) = crate::modules::webcrypto::clone_key(&value) {
+        return clone;
+    }
     // AbortSignal transfer keeps the source signal live and delivers the same
     // abort state to the receiving port.  Preserve the canonical host target
     // instead of reducing it to an ordinary object.
