@@ -977,6 +977,13 @@ fn require_impl(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
             "__nodeCommon",
         );
         if matches!(common, Value::Object(_) | Value::ObjectAlias(_)) {
+            if matches!(execute::get_property(&common, "skipIfPerfettoEnabled"), Value::Undefined) {
+                let _ = execute::set_property_in_place(
+                    &common,
+                    "skipIfPerfettoEnabled",
+                    crate::host::capability(crate::registry::SPEC_COMMON_SKIP_IF_PERFETTO),
+                );
+            }
             return Ok(common);
         }
     }
@@ -3039,7 +3046,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         }
         "inspector" => Some(crate::modules::inspector::build()),
         "v8" => crate::modules::compat_extra::v8(state).ok(),
-        "trace_events" => Some(crate::host::namespace_object_from_pairs(vec![])),
+        "trace_events" => Some(crate::modules::trace_events::build()),
         "repl" => Some(crate::modules::repl::build()),
         "wasi" => Some(crate::modules::wasi::build()),
         "worker_threads" => crate::modules::compat_extra::worker_threads(state).ok(),

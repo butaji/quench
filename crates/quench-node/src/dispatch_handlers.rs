@@ -8545,6 +8545,10 @@ fn cp_run_host_child(
         process.env_clear().envs(values);
         process.env("QUENCH_CHILD_RUNNER", "1");
     }
+    if let Some(eval_index) = args.iter().position(|arg| arg == "-e" || arg == "--eval") {
+        let exec_argv = serde_json::to_string(&args[..eval_index]).unwrap_or_else(|_| "[]".into());
+        process.env("QUENCH_EXEC_ARGV", exec_argv);
+    }
     let input = execute::to_js_string(&execute::get_property(
         &execute::get_property(child, "stdin"),
         "\0childStdinText",

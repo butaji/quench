@@ -264,7 +264,10 @@ fn new_net_object(
         vec![
             (
                 "Symbol(async_id_symbol)\0quench".into(),
-                Value::Number(id as f64),
+                // Keep transport identities in a disjoint range from
+                // HTTPCLIENTREQUEST ids; both are observable async resources
+                // and must not retire one another's destroy callbacks.
+                Value::Number(id as f64 + 1_000_000.0),
             ),
             (
                 "Symbol(trigger_async_id_symbol)\0quench".into(),
