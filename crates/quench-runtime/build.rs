@@ -31,49 +31,79 @@ enum DeclAbi {
     ArrayNumericLoop,
 }
 
-#[derive(Clone, Copy)]
-enum RustLeafRecipe {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DeclOp {
+    Unknown,
     Add,
     Sub,
     Mul,
     Div,
     AddConst,
-    AddChain,
+    Return,
 }
 
-impl RustLeafRecipe {
-    const fn expression(self) -> &'static str {
-        match self {
-            Self::Add => "a + b",
-            Self::Sub => "a - b",
-            Self::Mul => "a * b",
-            Self::Div => "a / b",
-            Self::AddConst => "a + b",
-            Self::AddChain => "(a + b) + c",
-        }
+fn parse_decl_op(name: &str) -> DeclOp {
+    match name {
+        "Add" => DeclOp::Add,
+        "Sub" => DeclOp::Sub,
+        "Mul" => DeclOp::Mul,
+        "Div" => DeclOp::Div,
+        "AddConst" => DeclOp::AddConst,
+        "Return" => DeclOp::Return,
+        _ => DeclOp::Unknown,
     }
+}
 
-    const fn parameters(self) -> &'static str {
-        match self {
-            Self::AddChain => "a: f64, b: f64, c: f64",
-            _ => "a: f64, b: f64",
+macro_rules! rust_leaf_catalog {
+    ($( $variant:ident { ops: [$($op:ident),+], params: $params:literal, expression: $expression:literal } ),+ $(,)?) => {
+        #[derive(Clone, Copy)]
+        enum RustLeafRecipe { $( $variant ),+ }
+
+        impl RustLeafRecipe {
+            const fn expression(self) -> &'static str {
+                match self { $( Self::$variant => $expression ),+ }
+            }
+
+            const fn parameters(self) -> &'static str {
+                match self { $( Self::$variant => $params ),+ }
+            }
         }
+
+        fn recipe_for_ops(ops: &[DeclOp]) -> Option<RustLeafRecipe> {
+            match ops {
+                $( [$(DeclOp::$op),+] => Some(RustLeafRecipe::$variant), )+
+                _ => None,
+            }
+        }
+    };
+}
+
+rust_leaf_catalog! {
+    Add { ops: [Add, Return], params: "a: f64, b: f64", expression: "a + b" },
+    Sub { ops: [Sub, Return], params: "a: f64, b: f64", expression: "a - b" },
+    Mul { ops: [Mul, Return], params: "a: f64, b: f64", expression: "a * b" },
+    Div { ops: [Div, Return], params: "a: f64, b: f64", expression: "a / b" },
+    AddConst { ops: [AddConst, Return], params: "a: f64, b: f64", expression: "a + b" },
+    AddChain { ops: [Add, Add], params: "a: f64, b: f64, c: f64", expression: "(a + b) + c" },
+}
+
+fn typed_decl_ops(operations: &[&str]) -> Option<[DeclOp; 4]> {
+    if operations.len() > 4 {
+        return None;
     }
+    let mut typed = [DeclOp::Unknown; 4];
+    for (index, operation) in operations.iter().enumerate() {
+        typed[index] = parse_decl_op(operation);
+    }
+    Some(typed)
 }
 
 fn rust_leaf_recipe(declaration: &RegionDeclaration) -> Option<RustLeafRecipe> {
     if !matches!(declaration.abi, DeclAbi::Scalar) {
         return None;
     }
-    match declaration.operations {
-        ["Add", "Return"] => Some(RustLeafRecipe::Add),
-        ["Sub", "Return"] => Some(RustLeafRecipe::Sub),
-        ["Mul", "Return"] => Some(RustLeafRecipe::Mul),
-        ["Div", "Return"] => Some(RustLeafRecipe::Div),
-        ["AddConst", "Return"] => Some(RustLeafRecipe::AddConst),
-        ["Add", "Add"] => Some(RustLeafRecipe::AddChain),
-        _ => None,
-    }
+    let typed = typed_decl_ops(declaration.operations)?;
+    recipe_for_ops(&typed[..declaration.operations.len()])
 }
 
 const fn le32(word: u32) -> [u8; 4] {
