@@ -288,7 +288,7 @@ impl SharedStencilSlab {
     ) -> Result<usize, ArenaError> {
         let selected = crate::stencil_select::select_physical_for_abi(view.key, view.abi)
             .ok_or(ArenaError::ProtectionFailed)?;
-        if !view.matches(&selected) {
+        if !view.contract().abi_is_well_formed() || !view.matches(&selected) {
             return Err(ArenaError::ProtectionFailed);
         }
         self.render_or_get(cache, view.key, view.stencil, values)
@@ -998,7 +998,7 @@ impl StencilArena {
     ) -> Result<usize, ArenaError> {
         let selected = crate::stencil_select::select_physical_for_abi(view.key, view.abi)
             .ok_or(ArenaError::ProtectionFailed)?;
-        if !view.matches(&selected) {
+        if !view.contract().abi_is_well_formed() || !view.matches(&selected) {
             return Err(ArenaError::ProtectionFailed);
         }
         self.render_or_get(cache, view.key, view.stencil, values)
