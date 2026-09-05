@@ -115,7 +115,8 @@ macro_rules! typed_owned_entry {
             address: usize,
         ) -> Result<EntryToken<$ty>, ArenaError> {
             let entry = self.$entry(address)?;
-            self.owned_entry(address, entry, $abi)
+            let owner = self.owner_for(address).ok_or(ArenaError::ProtectionFailed)?;
+            Ok(EntryToken { address, owner, abi: $abi, entry })
         }
     };
 }
@@ -235,16 +236,6 @@ impl SharedStencilSlab {
 
     pub(crate) fn owner_for(&self, address: usize) -> Option<u64> {
         self.slab_for(address).map(StencilArena::id)
-    }
-
-    fn owned_entry<F: Copy>(
-        &self,
-        address: usize,
-        entry: F,
-        abi: crate::stencil_select::RegionAbi,
-    ) -> Result<EntryToken<F>, ArenaError> {
-        let owner = self.owner_for(address).ok_or(ArenaError::ProtectionFailed)?;
-        Ok(EntryToken { address, owner, abi, entry })
     }
 
     typed_owned_entry!(owned_f64_entry, f64_entry, extern "C" fn(f64, f64) -> f64, crate::stencil_select::RegionAbi::Scalar);
