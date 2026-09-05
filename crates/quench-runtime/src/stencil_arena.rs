@@ -2375,6 +2375,12 @@ mod tests {
         );
         assert_eq!(arena.used(), used);
         assert_eq!(cache.len(), 1);
+        let witness = arena
+            .last_physical_execution()
+            .expect("fallthrough must execute selected bytes");
+        assert_eq!(witness.key, key);
+        #[cfg(quench_generated_stencil_artifacts)]
+        assert!(witness.generated);
     }
 
     #[cfg(all(quench_generated_stencil_artifacts, target_arch = "aarch64"))]
