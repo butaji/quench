@@ -4355,6 +4355,11 @@ impl NativeRegionPlan {
                 "native fused region stencil missing".into(),
             ));
         };
+        let Some(view) = crate::stencil_select::select_physical(key) else {
+            return Err(NativeDispatchError::Physical(
+                "native fused region physical view rejected".into(),
+            ));
+        };
         if record.operations != operations {
             return Err(NativeDispatchError::Physical(
                 "native fused region operation contract changed".into(),
@@ -4393,7 +4398,7 @@ impl NativeRegionPlan {
             }
             let address = arena
                 .borrow_mut()
-                .render_or_get(&mut self.physical.cache, key, &record.stencil, &values)
+                .render_or_get(&mut self.physical.cache, key, view.stencil, &values)
                 .map_err(|error| {
                     NativeDispatchError::Physical(format!(
                         "native fused region render failed: {error:?}"
@@ -4420,7 +4425,7 @@ impl NativeRegionPlan {
                 capacity_bytes,
             );
             let mut region = crate::vm::NativeRegionContext::new_with_abi(
-                code, pc, operations, record.abi, registers, context,
+                code, pc, operations, view.abi, registers, context,
             );
             #[cfg(not(target_arch = "aarch64"))]
             if matches!(
@@ -4436,7 +4441,7 @@ impl NativeRegionPlan {
             // Other rows retain the canonical bridge until they have an
             // equally complete physical implementation.
             #[cfg(target_arch = "aarch64")]
-            match record.abi {
+            match view.abi {
                 crate::stencil_select::RegionAbi::ArrayKernel => {
                     let physical = crate::vm::execute_composed_array_kernel(&mut region, |raw| {
                         arena.borrow().execute_dispatch_with_abi(

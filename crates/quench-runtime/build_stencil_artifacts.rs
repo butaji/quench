@@ -162,9 +162,6 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
     let mut constants = Vec::new();
     let mut rows = Vec::new();
     for declaration in declarations {
-        let Some(recipe) = super::rust_leaf_recipe(declaration) else {
-            continue;
-        };
         // A generated whole-function recipe owns its arguments directly, so
         // it does not need the canonical byte-template holes (AddConst is the
         // first example). Unsupported hole-bearing recipes remain skipped
@@ -181,7 +178,28 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
                 &rustflags,
                 declaration,
             )
+        } else if declaration.name == "array_numeric_loop" {
+            if !target.starts_with("aarch64") {
+                continue;
+            }
+            ExtractedObject {
+                bytes: compile_assembly_fragment(
+                    &root.path,
+                    &target,
+                    &compiler,
+                    &flags,
+                    &rustflags,
+                    "array_numeric_loop",
+                    aarch64_array_loop_source(),
+                    &[],
+                    None,
+                ),
+                fallthrough: None,
+            }
         } else {
+            let Some(recipe) = super::rust_leaf_recipe(declaration) else {
+                continue;
+            };
             ExtractedObject {
                 bytes: compile_one(
                     &root.path,
@@ -332,6 +350,47 @@ fn aarch64_head_source() -> &'static str {
 
 fn aarch64_tail_source() -> &'static str {
     "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_fallthrough_tail\nq_fallthrough_tail:\n  ret\nq_fallthrough_tail_end:\n\"#);\n"
+}
+
+fn aarch64_array_loop_source() -> &'static str {
+    r##"#![no_std]
+use core::arch::global_asm;
+global_asm!(r#"
+.text
+.p2align 2
+.globl q_array_numeric_loop
+q_array_numeric_loop:
+  ldr x1, [x0, #16]
+  ldr x2, [x0, #24]
+  ldr d0, [x0, #40]
+  fmov d1, d0
+  b 1f
+1:
+  cmp x1, x2
+  b.hs 2f
+  ldr x3, [x0]
+  add x4, x3, x1, lsl #3
+  ldr d1, [x4]
+  ldr d2, [x0, #32]
+  fadd d1, d1, d2
+  str d1, [x4]
+  add x1, x1, #1
+  str x1, [x0, #16]
+  ldr x5, [x0, #48]
+  ldrb w6, [x5]
+  cbnz w6, 3f
+  b 1b
+2:
+  str d1, [x0, #40]
+  mov w0, #1
+  ret
+3:
+  str d1, [x0, #40]
+  mov w0, #4
+  ret
+q_array_numeric_loop_end:
+"#);
+"##
 }
 
 fn parse_object(path: &Path, name: &str) -> Vec<u8> {
