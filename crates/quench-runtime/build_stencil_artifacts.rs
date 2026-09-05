@@ -17,6 +17,26 @@ pub(crate) fn generate(out_dir: &Path, declarations: &[RegionDeclaration]) {
         .expect("write generated stencil artifacts");
 }
 
+pub(crate) fn verify_words(path: &Path, expected: &[u32]) {
+    let data = fs::read(path).expect("read Rust assembly object");
+    let file = object::File::parse(&*data).expect("parse Rust assembly object");
+    let mut sections = file.sections().filter(|section| {
+        section
+            .name()
+            .ok()
+            .is_some_and(|name| name == ".text" || name == "__text")
+    });
+    let section = sections.next().expect("Rust assembly text section");
+    assert!(sections.next().is_none(), "assembly verifier found multiple text sections");
+    assert!(section.relocations().next().is_none(), "assembly verifier found an undeclared relocation");
+    let bytes = section.uncompressed_data().expect("read Rust assembly text");
+    assert!(!bytes.is_empty() && bytes.len() % 4 == 0, "assembly verifier found invalid instruction bounds");
+    for word in expected {
+        let needle = word.to_le_bytes();
+        assert!(bytes.chunks_exact(4).any(|chunk| chunk == needle), "assembly word {word:08x} missing from extracted text");
+    }
+}
+
 fn empty_artifacts() -> String {
     format!(
         "{HEADER}pub struct BuildStencilArtifact {{ pub name: &'static str, pub target: &'static str, pub compiler: &'static str, pub fingerprint: &'static str, pub bytes: &'static [u8], pub stencil: crate::stencil_fact::Stencil }}\npub static BUILD_STENCIL_ARTIFACTS: &[BuildStencilArtifact] = &[];\n"
@@ -29,14 +49,18 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
     let flags = ["--crate-type=lib", "--emit=obj", "-Copt-level=2", "-Cpanic=abort", "-Coverflow-checks=off", "--edition=2021"];
     let fingerprint = fingerprint(&target, &compiler, &flags, declarations);
     let root = unique_directory();
+    let mut constants = Vec::new();
     let mut rows = Vec::new();
     for declaration in declarations.iter().filter(|item| extractable(item)) {
         let artifact = compile_one(&root, &target, &compiler, &flags, declaration);
-        rows.push(render_artifact(declaration.name, &target, &compiler, &fingerprint, &artifact));
+        let (constant, row) = render_artifact(declaration.name, &target, &compiler, &fingerprint, &artifact);
+        constants.push(constant);
+        rows.push(row);
     }
     assert!(!rows.is_empty(), "no extractable Rust stencil declarations");
     let generated = format!(
-        "{HEADER}pub struct BuildStencilArtifact {{ pub name: &'static str, pub target: &'static str, pub compiler: &'static str, pub fingerprint: &'static str, pub bytes: &'static [u8], pub stencil: crate::stencil_fact::Stencil }}\npub static BUILD_STENCIL_ARTIFACTS: &[BuildStencilArtifact] = &[\n{}\n];\n",
+        "{HEADER}pub struct BuildStencilArtifact {{ pub name: &'static str, pub target: &'static str, pub compiler: &'static str, pub fingerprint: &'static str, pub bytes: &'static [u8], pub stencil: crate::stencil_fact::Stencil }}\n{}\npub static BUILD_STENCIL_ARTIFACTS: &[BuildStencilArtifact] = &[\n{}\n];\n",
+        constants.join("\n"),
         rows.join("\n")
     );
     let _ = fs::remove_dir_all(root);
@@ -44,21 +68,15 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
 }
 
 fn extractable(declaration: &RegionDeclaration) -> bool {
-    declaration.holes.is_empty() && declaration.aarch64_holes.is_empty() && recipe(declaration.operations).is_some()
-}
-
-fn recipe(operations: &[&str]) -> Option<&'static str> {
-    match operations {
-        ["Add", "Return"] => Some("a + b"),
-        ["Sub", "Return"] => Some("a - b"),
-        ["Mul", "Return"] => Some("a * b"),
-        ["Div", "Return"] => Some("a / b"),
-        _ => None,
-    }
+    declaration.holes.is_empty()
+        && declaration.aarch64_holes.is_empty()
+        && super::rust_leaf_recipe(declaration.operations).is_some()
 }
 
 fn rust_source(declaration: &RegionDeclaration) -> String {
-    let body = recipe(declaration.operations).expect("extractable recipe");
+    let body = super::rust_leaf_recipe(declaration.operations)
+        .expect("extractable recipe")
+        .expression();
     format!("#![no_std]\n#[no_mangle]\n#[inline(never)]\npub extern \"C\" fn q_{}(a: f64, b: f64) -> f64 {{ {} }}\n", declaration.name, body)
 }
 
@@ -80,8 +98,14 @@ fn parse_object(path: &Path, name: &str) -> Vec<u8> {
             panic!("Rust stencil has undeclared external symbol {:?}", symbol.name());
         }
     }
-    let section = file.sections().find(|section| section.name().ok().is_some_and(|name| name == ".text" || name == "__text"))
-        .expect("Rust stencil text section");
+    let mut sections = file.sections().filter(|section| {
+        section
+            .name()
+            .ok()
+            .is_some_and(|name| name == ".text" || name == "__text")
+    });
+    let section = sections.next().expect("Rust stencil text section");
+    assert!(sections.next().is_none(), "Rust stencil has multiple text sections");
     let section_index = section.index();
     let bytes = section.uncompressed_data().expect("read Rust stencil text");
     assert_eq!(section.size() as usize, bytes.len(), "Rust stencil text size is ambiguous");
@@ -99,16 +123,42 @@ fn parse_object(path: &Path, name: &str) -> Vec<u8> {
     output
 }
 
-fn render_artifact(name: &str, target: &str, compiler: &str, fingerprint: &str, bytes: &[u8]) -> String {
+fn render_artifact(
+    name: &str,
+    target: &str,
+    compiler: &str,
+    fingerprint: &str,
+    bytes: &[u8],
+) -> (String, String) {
     let code = bytes.iter().map(|byte| format!("0x{byte:02x}")).collect::<Vec<_>>().join(", ");
-    format!("    BuildStencilArtifact {{ name: {name:?}, target: {target:?}, compiler: {compiler:?}, fingerprint: {fingerprint:?}, bytes: &[{code}], stencil: crate::stencil_fact::Stencil {{ bytes: &[{code}], holes: &[] }} }},")
+    let identifier = name.to_ascii_uppercase();
+    let constant = format!("const BYTES_{identifier}: &[u8] = &[{code}];");
+    let row = format!("    BuildStencilArtifact {{ name: {name:?}, target: {target:?}, compiler: {compiler:?}, fingerprint: {fingerprint:?}, bytes: BYTES_{identifier}, stencil: crate::stencil_fact::Stencil {{ bytes: BYTES_{identifier}, holes: &[] }} }},");
+    (constant, row)
 }
 
 fn fingerprint(target: &str, compiler: &str, flags: &[&str], declarations: &[RegionDeclaration]) -> String {
     let version = command_output(Command::new(compiler).arg("-vV"), "read rustc identity");
-    let schema = declarations.iter().map(|item| format!("{}:{:?}:{:?}", item.name, item.abi, item.operations)).collect::<Vec<_>>().join("|");
+    let features = env::var("CARGO_CFG_TARGET_FEATURE").unwrap_or_default();
+    let rustflags = env::var("CARGO_ENCODED_RUSTFLAGS").unwrap_or_default();
+    let schema = declarations
+        .iter()
+        .map(|item| {
+            format!(
+                "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
+                item.name,
+                item.abi,
+                item.operations,
+                item.x86_bytes,
+                item.aarch64_bytes,
+                item.holes,
+                item.aarch64_holes,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("|");
     let mut hash = 0xcbf29ce484222325u64;
-    for byte in format!("{target}\n{version}\n{flags:?}\n{schema}\nabi-v3").bytes() {
+    for byte in format!("{target}\n{version}\n{features}\n{rustflags}\n{flags:?}\n{schema}\nrust-leaf-recipes-v1\nabi-v3").bytes() {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
@@ -121,9 +171,17 @@ fn rustc_path() -> String {
 
 fn unique_directory() -> PathBuf {
     let base = env::var_os("OUT_DIR").map(PathBuf::from).expect("OUT_DIR for Rust stencil artifacts");
-    let directory = base.join(format!("stencil-objects-{}", std::process::id()));
-    fs::create_dir_all(&directory).expect("create Rust stencil object directory");
-    directory
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock before epoch")
+        .as_nanos();
+    for attempt in 0..8u8 {
+        let directory = base.join(format!("stencil-objects-{stamp}-{}-{attempt}", std::process::id()));
+        if fs::create_dir(&directory).is_ok() {
+            return directory;
+        }
+    }
+    panic!("cannot create unique Rust stencil object directory")
 }
 
 fn run(command: &mut Command, description: &str) {
