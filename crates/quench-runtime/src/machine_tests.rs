@@ -104,6 +104,41 @@ fn baseline_region_admission_respects_declared_abi() {
 }
 
 #[test]
+fn generated_scalar_and_array_rows_route_through_declared_abis() {
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    for ops in [
+        vec![super::Op::Move { dst: 0, src: 1 }],
+        vec![super::Op::GetProperty {
+            dst: 0,
+            object: 1,
+            key: "x".into(),
+        }],
+    ] {
+        let function = super::FunctionCode::from_ops(ops);
+        let code = function.code().expect("compact code");
+        let plan = super::BaselinePlan::compile_for_test(code, policy);
+        // Move and GetN bytes use scalar/raw-word entry ABIs.  They must not
+        // be called as NativeRegionContext bridges merely because their
+        // opcode appears in the generated catalog.
+        assert!(plan.native_region_at(0).is_none());
+    }
+
+    // The array rows are generated with a distinct ABI.  Their executable
+    // entry is reached only by the residual lowering/admission tests, while
+    // this check ensures the catalog itself cannot silently classify them as
+    // scalar entries.
+    let array_record = crate::stencil_select::select_region(
+        crate::stencil_select::array_loop_body_region_key(),
+    )
+    .expect("array row");
+    assert!(matches!(
+        array_record.abi,
+        crate::stencil_select::RegionAbi::ArrayKernel
+            | crate::stencil_select::RegionAbi::Bridge
+    ));
+}
+
+#[test]
 fn hot_function_builds_one_reusable_baseline_plan() {
     let function = super::FunctionCode::from_ops(vec![super::Op::Move { dst: 0, src: 0 }]);
     function.set_tier_threshold_for_test(2);
