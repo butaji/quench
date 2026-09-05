@@ -37,6 +37,8 @@ post-entry no-replay and fault-PC checks pass at
 `/tmp/quench-array-fault-pc-bridge-20260905.log` (1 passed each); full runtime
 is **734 passed, 0 failed, 1 ignored** at
 `/tmp/quench-runtime-full-20260905-array-fault-pc.log`.
+The separate execution-trace runtime also remains green at **746 passed, 0
+failed, 1 ignored** (`/tmp/quench-runtime-trace-20260905-array-fault-pc.log`).
 
 The generated catalog now records each target template's build-time helper-call
 effect; `validate_physical_template` compares that fact with decoded bytes and
