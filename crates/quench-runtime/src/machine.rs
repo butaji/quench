@@ -2651,6 +2651,11 @@ fn validate_region_window(
             "native stencil contains a call outside its ABI contract".into(),
         ));
     }
+    if abi.interruptible_backedge && !stencil_contains_interrupt_checkpoint(record.stencil.bytes) {
+        return Err(NativeDispatchError::Physical(
+            "interruptible region has no verified native checkpoint".into(),
+        ));
+    }
     if !record.stencil.validate() {
         return Err(NativeDispatchError::Physical(
             "native region stencil layout or relocation is invalid".into(),
@@ -2775,6 +2780,31 @@ fn stencil_contains_call(bytes: &[u8]) -> bool {
             });
     }
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        let _ = bytes;
+        false
+    }
+}
+
+/// Check the physical poll sequence independently of the ABI declaration.
+/// The declaration says a region *requires* interruption; this scan proves
+/// that the selected target template actually contains the load/conditional
+/// branch used by the raw loop. Other targets reject until they provide an
+/// equivalent checkpoint rather than inheriting an unverified capability.
+fn stencil_contains_interrupt_checkpoint(bytes: &[u8]) -> bool {
+    #[cfg(target_arch = "aarch64")]
+    {
+        let words: Vec<u32> = bytes
+            .chunks_exact(4)
+            .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+            .collect();
+        return words.windows(3).any(|window| {
+            window[0] == 0xF940_1805
+                && window[1] == 0x3940_00A6
+                && window[2] & 0xFF00_001F == 0x3500_0006
+        });
+    }
+    #[cfg(not(target_arch = "aarch64"))]
     {
         let _ = bytes;
         false
@@ -4598,6 +4628,18 @@ mod tests {
         assert!(range.contains(6));
         assert!(!range.contains(7));
         assert!(super::CodeRange::new(super::CodeId(2), 8, 7).is_none());
+    }
+
+    #[test]
+    fn interruptible_template_requires_a_physical_checkpoint() {
+        let absent = [0u8; 12];
+        assert!(!super::stencil_contains_interrupt_checkpoint(&absent));
+        #[cfg(target_arch = "aarch64")]
+        {
+            let words = [0xF940_1805u32, 0x3940_00A6, 0x3500_0006];
+            let bytes: Vec<u8> = words.iter().flat_map(|word| word.to_le_bytes()).collect();
+            assert!(super::stencil_contains_interrupt_checkpoint(&bytes));
+        }
     }
 
     #[test]
