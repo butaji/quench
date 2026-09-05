@@ -3277,7 +3277,12 @@ fn quickened_prototype_slot_data(
     let mut owner = receiver as *const crate::value::ObjectData;
     for _ in 0..4 {
         let owner_ref = unsafe { owner.as_ref()? };
-        if owner_ref.has_replacement() || owner_ref.is_dictionary() {
+        if owner_ref.has_replacement()
+            || owner_ref.is_dictionary()
+            || owner_ref.is_realm_global()
+            || owner_ref.is_script_global_view()
+            || owner_ref.has_regexp_internal_slot()
+        {
             return None;
         }
         if let Some(slot) = owner_ref.hot_properties().position_rev(key) {
