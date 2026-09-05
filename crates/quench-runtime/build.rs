@@ -18,6 +18,7 @@ struct RegionDeclaration {
 enum DeclAbi {
     Scalar,
     TaggedWord,
+    ConstantWord,
     ScalarI32,
     ScalarU32,
     Bridge,
@@ -377,6 +378,15 @@ const AARCH64_ADD_CHAIN_BYTES: [u8; 12] = aarch64_triple(
     aarch64_fadd_d(0, 0, 2),
     aarch64_ret(),
 );
+const X86_LOAD_CONST_BYTES: [u8; 11] = [
+    0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0xC3,
+];
+const AARCH64_LOAD_CONST_BYTES: [u8; 16] = {
+    let mut out = [0; 16];
+    put32(&mut out, 0, 0x5800_0040); // ldr x0, #8
+    put32(&mut out, 4, aarch64_ret());
+    out
+};
 const AARCH64_ADD_CONST_BYTES: [u8; 24] = aarch64_add_const_bytes();
 const AARCH64_DISPATCH_BYTES: [u8; 16] = aarch64_dispatch_bytes();
 
@@ -1005,6 +1015,18 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         entry: 0,
         external_entries: &[0],
     },
+    RegionDeclaration {
+        name: "load_const",
+        operations: &["LoadConst", "Return"],
+        abi: DeclAbi::ConstantWord,
+        x86_bytes: &X86_LOAD_CONST_BYTES,
+        aarch64_bytes: &AARCH64_LOAD_CONST_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[(2, 8, "Literal64")],
+        aarch64_holes: &[(8, 8, "Literal64")],
+        entry: 0,
+        external_entries: &[0],
+    },
 ];
 
 fn main() {
@@ -1311,6 +1333,7 @@ const fn canonical_abi_contract(abi: crate::stencil_select::RegionAbi) -> crate:
     match abi {
         crate::stencil_select::RegionAbi::Scalar
         | crate::stencil_select::RegionAbi::TaggedWord
+        | crate::stencil_select::RegionAbi::ConstantWord
         | crate::stencil_select::RegionAbi::ScalarI32
         | crate::stencil_select::RegionAbi::ScalarU32 => crate::stencil_select::AbiContract {
             context_arg_words: 0,
@@ -1431,6 +1454,7 @@ fn abi_expr(declaration: &RegionDeclaration) -> &'static str {
     match declaration.abi {
         DeclAbi::Scalar => "crate::stencil_select::RegionAbi::Scalar",
         DeclAbi::TaggedWord => "crate::stencil_select::RegionAbi::TaggedWord",
+        DeclAbi::ConstantWord => "crate::stencil_select::RegionAbi::ConstantWord",
         DeclAbi::ScalarI32 => "crate::stencil_select::RegionAbi::ScalarI32",
         DeclAbi::ScalarU32 => "crate::stencil_select::RegionAbi::ScalarU32",
         DeclAbi::Bridge => "crate::stencil_select::RegionAbi::Bridge",

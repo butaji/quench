@@ -2032,6 +2032,123 @@ impl std::fmt::Debug for NativeBinaryPlan {
     }
 }
 
+fn constant_word_bits(constant: &crate::ops::Constant) -> Option<u64> {
+    let value = match constant {
+        crate::ops::Constant::Number(value) => crate::value::Value::Number(*value),
+        crate::ops::Constant::Boolean(value) => crate::value::Value::Boolean(*value),
+        crate::ops::Constant::Null => crate::value::Value::Null,
+        crate::ops::Constant::Undefined => crate::value::Value::Undefined,
+        crate::ops::Constant::String(_)
+        | crate::ops::Constant::StringUnits(_)
+        | crate::ops::Constant::BigInt(_) => return None,
+    };
+    value.to_tagged().map(|tagged| tagged.bits())
+}
+
+/// Native primitive constant leaf. Heap-owning constants stay on the
+/// canonical loader; this body only publishes an immutable tagged word.
+pub(crate) struct NativeLoadConstPlan {
+    bits: u64,
+    key: crate::stencil_fact::RegionKey,
+    arena: Option<crate::stencil_arena::StencilArena>,
+    shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
+    cache: crate::stencil_select::RenderedRegionCache,
+    site: crate::quickening::QuickeningSite<2>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    entry: Option<extern "C" fn() -> u64>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    shared_entry: Option<(usize, extern "C" fn() -> u64)>,
+}
+
+impl std::fmt::Debug for NativeLoadConstPlan {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativeLoadConstPlan")
+            .field("bits", &self.bits)
+            .field("key", &self.key)
+            .field("cache_len", &self.cache.len())
+            .finish()
+    }
+}
+
+impl NativeLoadConstPlan {
+    fn new_with_shared(
+        bits: u64,
+        policy: crate::stencil_policy::ExecutionPolicy,
+        shared: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
+    ) -> Option<Self> {
+        let mut plan = Self::new(bits, policy)?;
+        plan.shared_arena = Some(shared);
+        Some(plan)
+    }
+
+    fn new(bits: u64, policy: crate::stencil_policy::ExecutionPolicy) -> Option<Self> {
+        let key = crate::stencil_select::load_const_region_key();
+        (policy.native_leaves
+            && crate::stencil_select::select_region(key).is_some_and(|record| {
+                record.executable
+                    && record.abi == crate::stencil_select::RegionAbi::ConstantWord
+                    && validate_physical_template(record).is_ok()
+            }))
+            .then_some(Self {
+                bits,
+                key,
+                arena: None,
+                shared_arena: None,
+                cache: crate::stencil_select::RenderedRegionCache::new(),
+                site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::LoadConst),
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+                entry: None,
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+                shared_entry: None,
+            })
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn execute(&mut self) -> Result<u64, crate::stencil_arena::ArenaError> {
+        let values = crate::stencil_fact::PatchValues::from_site(&self.site)
+            .with_constant_bits(self.bits);
+        if let Some(shared) = self.shared_arena.clone() {
+            if let Some((address, entry)) = self.shared_entry {
+                if let Ok(result) = shared.borrow().with_active(address, || entry()) {
+                    return Ok(result);
+                }
+                self.shared_entry = None;
+            }
+            let (address, entry) = {
+                let mut slab = shared.borrow_mut();
+                let stencil = crate::stencil_select::select_stencil(self.key)
+                    .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+                let address = slab.render_or_get(&mut self.cache, self.key, stencil, &values)?;
+                slab.make_executable(address)?;
+                (address, slab.constant_word_entry(address)?)
+            };
+            self.shared_entry = Some((address, entry));
+            return shared.borrow().with_active(address, || entry());
+        }
+        if let Some(entry) = self.entry {
+            return Ok(entry());
+        }
+        if self.arena.is_none() {
+            self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
+        }
+        let arena = self
+            .arena
+            .as_mut()
+            .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
+        let address = arena.render_or_get(&mut self.cache, self.key, crate::stencil_select::select_stencil(self.key).ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?, &values)?;
+        arena.make_executable()?;
+        let entry = arena.constant_word_entry(address)?;
+        self.entry = Some(entry);
+        Ok(entry())
+    }
+
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    pub(crate) fn execute(&mut self) -> Result<u64, crate::stencil_arena::ArenaError> {
+        Err(crate::stencil_arena::ArenaError::ProtectionFailed)
+    }
+}
+
 /// Typed unary leaf for the exact Number-to-Int32 bitwise-not subset. Other
 /// unary operators retain the canonical residual handler and coercion order.
 pub(crate) struct NativeUnaryPlan {
@@ -3234,6 +3351,7 @@ impl NativeRegionPlan {
                 crate::stencil_select::RegionAbi::Bridge => "bridge",
                 crate::stencil_select::RegionAbi::Scalar => "scalar",
                 crate::stencil_select::RegionAbi::TaggedWord => "tagged_word",
+                crate::stencil_select::RegionAbi::ConstantWord => "constant_word",
                 crate::stencil_select::RegionAbi::ScalarI32 => "scalar_i32",
                 crate::stencil_select::RegionAbi::ScalarU32 => "scalar_u32",
             };
@@ -3298,6 +3416,11 @@ impl NativeRegionPlan {
                         "tagged-word ABI cannot enter a region context".into(),
                     ));
                 }
+                crate::stencil_select::RegionAbi::ConstantWord => {
+                    return Err(NativeDispatchError::Physical(
+                        "constant-word ABI cannot enter a region context".into(),
+                    ));
+                }
                 crate::stencil_select::RegionAbi::ScalarI32 => {
                     return Err(NativeDispatchError::Physical(
                         "scalar i32 ABI cannot enter a region context".into(),
@@ -3360,6 +3483,7 @@ pub(crate) struct BaselinePlan {
     /// is an admission map only; each leaf still executes through the same
     /// complete handler on a failed numeric guard or unsupported platform.
     native_binary: Rc<[Option<Rc<RefCell<NativeBinaryPlan>>>]>,
+    native_load_const: Rc<[Option<Rc<RefCell<NativeLoadConstPlan>>>]>,
     native_unary: Rc<[Option<Rc<RefCell<NativeUnaryPlan>>>]>,
     native_add_chains: Rc<[Option<Rc<RefCell<NativeAddChainPlan>>>]>,
     native_move: Rc<[Option<Rc<RefCell<NativeMovePlan>>>]>,
@@ -3509,6 +3633,26 @@ impl BaselinePlan {
             })
             .collect::<Vec<_>>()
             .into();
+        let native_load_const = entries
+            .iter()
+            .map(|entry| {
+                (entry.instruction.opcode == crate::ir::Opcode::LoadConst)
+                    .then(|| {
+                        code.constant(entry.instruction.b)
+                            .and_then(constant_word_bits)
+                    })
+                    .flatten()
+                    .and_then(|bits| {
+                        NativeLoadConstPlan::new_with_shared(
+                            bits,
+                            policy,
+                            Rc::clone(&shared_region_arena),
+                        )
+                    })
+                    .map(|native| Rc::new(RefCell::new(native)))
+            })
+            .collect::<Vec<_>>()
+            .into();
         let native_unary = entries
             .iter()
             .map(|entry| {
@@ -3600,6 +3744,7 @@ impl BaselinePlan {
                                 record.abi,
                                     crate::stencil_select::RegionAbi::Scalar
                                     | crate::stencil_select::RegionAbi::TaggedWord
+                                    | crate::stencil_select::RegionAbi::ConstantWord
                                     | crate::stencil_select::RegionAbi::ScalarI32
                                     | crate::stencil_select::RegionAbi::ScalarU32
                             )
@@ -3625,6 +3770,7 @@ impl BaselinePlan {
             entries,
             osr_entries,
             native_binary,
+            native_load_const,
             native_unary,
             native_add_chains,
             native_move,
@@ -3645,6 +3791,13 @@ impl BaselinePlan {
 
     pub(crate) fn native_binary_at(&self, pc: usize) -> Option<&RefCell<NativeBinaryPlan>> {
         self.native_binary.get(pc).and_then(Option::as_deref)
+    }
+
+    pub(crate) fn native_load_const_at(
+        &self,
+        pc: usize,
+    ) -> Option<&RefCell<NativeLoadConstPlan>> {
+        self.native_load_const.get(pc).and_then(Option::as_deref)
     }
 
     pub(crate) fn native_unary_at(&self, pc: usize) -> Option<&RefCell<NativeUnaryPlan>> {
@@ -3693,6 +3846,7 @@ pub(crate) struct OptimizingPlan {
 pub(crate) struct OptimizingEntry {
     pub(crate) baseline: BaselineEntry,
     pub(crate) native_binary: Option<Rc<RefCell<NativeBinaryPlan>>>,
+    pub(crate) native_load_const: Option<Rc<RefCell<NativeLoadConstPlan>>>,
     pub(crate) native_unary: Option<Rc<RefCell<NativeUnaryPlan>>>,
     pub(crate) native_move: Option<Rc<RefCell<NativeMovePlan>>>,
     pub(crate) native_property: Option<Rc<RefCell<NativePropertyPlan>>>,
@@ -3718,6 +3872,7 @@ impl OptimizingPlan {
             .map(|(pc, entry)| OptimizingEntry {
                 baseline: *entry,
                 native_binary: baseline.native_binary.get(pc).and_then(Clone::clone),
+                native_load_const: baseline.native_load_const.get(pc).and_then(Clone::clone),
                 native_unary: baseline.native_unary.get(pc).and_then(Clone::clone),
                 native_move: baseline.native_move.get(pc).and_then(Clone::clone),
                 native_property: baseline.native_property.get(pc).and_then(Clone::clone),

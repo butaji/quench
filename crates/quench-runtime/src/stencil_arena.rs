@@ -271,6 +271,16 @@ impl SharedStencilSlab {
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn constant_word_entry(
+        &self,
+        address: usize,
+    ) -> Result<extern "C" fn() -> u64, ArenaError> {
+        self.slab_for(address)
+            .ok_or(ArenaError::ProtectionFailed)?
+            .constant_word_entry(address)
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn f64x3_entry(
         &self,
         address: usize,
@@ -450,6 +460,19 @@ impl StencilArena {
         &self,
         address: usize,
     ) -> Result<extern "C" fn(f64, f64) -> f64, ArenaError> {
+        let base = self.ptr as usize;
+        let end = base.saturating_add(self.cursor);
+        if !self.executable || address < base || address >= end {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        Ok(unsafe { std::mem::transmute(address) })
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn constant_word_entry(
+        &self,
+        address: usize,
+    ) -> Result<extern "C" fn() -> u64, ArenaError> {
         let base = self.ptr as usize;
         let end = base.saturating_add(self.cursor);
         if !self.executable || address < base || address >= end {
@@ -1532,6 +1555,24 @@ mod tests {
             .render_selected_f64(&mut cache, key, &values, f64::NAN, 1.0, || Ok(1.0))
             .unwrap();
         assert!(nan.is_nan());
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn executable_primitive_constant_returns_patched_tagged_word() {
+        let key = crate::stencil_select::load_const_region_key();
+        let record = crate::stencil_select::select_region(key).expect("constant declaration");
+        let site = QuickeningSite::<2>::new(Opcode::LoadConst);
+        let values = PatchValues::from_site(&site)
+            .with_constant_bits(crate::tagged_value::TaggedValue::number(42.5).bits());
+        let mut arena = StencilArena::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let address = arena
+            .render_or_get(&mut cache, key, &record.stencil, &values)
+            .unwrap();
+        arena.make_executable().unwrap();
+        let entry = arena.constant_word_entry(address).unwrap();
+        assert_eq!(entry(), crate::tagged_value::TaggedValue::number(42.5).bits());
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
