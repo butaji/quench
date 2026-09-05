@@ -407,6 +407,7 @@ fn native_add_const_rejects_constant_left_for_signed_zero_order() {
 fn non_x86_native_execution_rejects_before_mapping() {
     let mut plan = super::NativeBinaryPlan {
         arena: None,
+        shared_arena: None,
         cache: crate::stencil_select::RenderedRegionCache::new(),
         lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
@@ -425,6 +426,7 @@ fn non_x86_native_execution_rejects_before_mapping() {
 fn native_numeric_entry_pointer_is_cached_after_first_render() {
     let mut plan = super::NativeBinaryPlan {
         arena: None,
+        shared_arena: None,
         cache: crate::stencil_select::RenderedRegionCache::new(),
         lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
