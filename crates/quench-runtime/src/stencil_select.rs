@@ -385,6 +385,10 @@ pub fn select_physical(key: RegionKey) -> Option<PhysicalStencilView> {
 }
 
 fn artifact_target_matches_host(target: &str) -> bool {
+    let exact_target = option_env!("QUENCH_BUILD_TARGET").is_some_and(|expected| expected == target);
+    if !exact_target {
+        return false;
+    }
     #[cfg(target_arch = "aarch64")]
     return target.starts_with("aarch64");
     #[cfg(target_arch = "x86_64")]
