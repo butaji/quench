@@ -5,7 +5,7 @@
 //! the CLI after execution, keeping measurement I/O outside VM semantics.
 
 #[cfg(feature = "execution-trace")]
-use std::{cell::RefCell, collections::HashMap, sync::OnceLock};
+use std::{cell::RefCell, collections::HashMap, hash::Hash, sync::OnceLock};
 
 macro_rules! heap_lifecycles {
     ($($kind:ident => ($allocated:ident, $dropped:ident, $wire:literal)),+ $(,)?) => {
@@ -150,17 +150,19 @@ struct StencilKey {
 const MAX_STENCIL_REJECTIONS: usize = 256;
 
 #[cfg(feature = "execution-trace")]
+fn record_bounded<K: Eq + Hash>(map: &mut HashMap<K, u64>, key: K, capacity: usize) {
+    if map.len() < capacity || map.contains_key(&key) {
+        *map.entry(key).or_default() += 1;
+    }
+}
+
+#[cfg(feature = "execution-trace")]
 fn record_stencil_rejection(
     counters: &mut Counters,
     key: StencilKey,
     reason: &'static str,
 ) {
-    let key = (key, reason);
-    if counters.stencil_rejections.len() < MAX_STENCIL_REJECTIONS
-        || counters.stencil_rejections.contains_key(&key)
-    {
-        *counters.stencil_rejections.entry(key).or_default() += 1;
-    }
+    record_bounded(&mut counters.stencil_rejections, (key, reason), MAX_STENCIL_REJECTIONS);
 }
 
 #[cfg(feature = "execution-trace")]
@@ -201,6 +203,7 @@ struct Counters {
     quickening: HashMap<&'static str, (u64, u64)>,
     stencils: HashMap<StencilKey, (u64, u64)>,
     stencil_rejections: HashMap<(StencilKey, &'static str), u64>,
+    stencil_outcomes: HashMap<(StencilKey, &'static str), u64>,
     stencil_iterations: HashMap<StencilKey, u64>,
     stencil_storage: HashMap<StencilKey, (u64, u64)>,
     compact_sites: HashMap<CompactSiteKey, u64>,
@@ -247,6 +250,7 @@ impl Default for Counters {
             quickening: HashMap::new(),
             stencils: HashMap::new(),
             stencil_rejections: HashMap::new(),
+            stencil_outcomes: HashMap::new(),
             stencil_iterations: HashMap::new(),
             stencil_storage: HashMap::new(),
             compact_sites: HashMap::new(),
@@ -1714,6 +1718,38 @@ pub(crate) fn stencil_rejection(
     let _ = (code, pc, kind, reason);
 }
 
+/// Record the exact post-entry outcome of a selected region. Outcomes are
+/// separate from hit/miss and rejection facts, so a committed exit cannot be
+/// mistaken for a retryable admission miss.
+#[inline(always)]
+pub(crate) fn stencil_outcome(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    kind: &'static str,
+    outcome: &'static str,
+) {
+    #[cfg(feature = "execution-trace")]
+    if enabled() {
+        let (_, code_id) = code.trace_identity();
+        COUNTERS.with(|counters| {
+            let mut counters = counters.borrow_mut();
+            record_bounded(
+                &mut counters.stencil_outcomes,
+                (
+                    StencilKey {
+                        code: code_id,
+                        pc: pc as u32,
+                        kind,
+                    },
+                    outcome,
+                ),
+                MAX_STENCIL_REJECTIONS,
+            );
+        });
+    }
+    let _ = (code, pc, kind, outcome);
+}
+
 /// Record the bounded physical storage observed by a selected region.  This
 /// is optional attribution only; uninstrumented execution does not touch the
 /// map.  The pair is `(used_bytes, capacity_bytes)` for the owning shared
@@ -1772,6 +1808,20 @@ fn stencil_rejection_profile(
         .map(|(&(key, reason), &count)| {
             (
                 format!("code={}:pc={}:{}:{}", key.code, key.pc, key.kind, reason),
+                serde_json::json!(count),
+            )
+        })
+        .collect()
+}
+
+#[cfg(feature = "execution-trace")]
+fn stencil_outcome_profile(counters: &Counters) -> serde_json::Map<String, serde_json::Value> {
+    counters
+        .stencil_outcomes
+        .iter()
+        .map(|(&(key, outcome), &count)| {
+            (
+                format!("code={}:pc={}:{}:{}", key.code, key.pc, key.kind, outcome),
                 serde_json::json!(count),
             )
         })
@@ -1965,6 +2015,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "quickening": quickening,
                 "stencil": stencil_profile(&counters),
                 "stencil_rejections": stencil_rejection_profile(&counters),
+                "stencil_outcomes": stencil_outcome_profile(&counters),
                 "stencil_storage": counters
                     .stencil_storage
                     .iter()
@@ -2097,6 +2148,29 @@ mod lane_profile_tests {
             );
         }
         assert_eq!(counters.stencil_rejections.len(), MAX_STENCIL_REJECTIONS);
+    }
+
+    #[test]
+    fn stencil_outcome_profile_distinguishes_native_and_fallback_completion() {
+        let mut counters = Counters::default();
+        let key = StencilKey {
+            code: 4,
+            pc: 6,
+            kind: "region",
+        };
+        record_bounded(
+            &mut counters.stencil_outcomes,
+            (key, "native_completed"),
+            MAX_STENCIL_REJECTIONS,
+        );
+        record_bounded(
+            &mut counters.stencil_outcomes,
+            (key, "fallback_completed"),
+            MAX_STENCIL_REJECTIONS,
+        );
+        let profile = stencil_outcome_profile(&counters);
+        assert_eq!(profile["code=4:pc=6:region:native_completed"], 1);
+        assert_eq!(profile["code=4:pc=6:region:fallback_completed"], 1);
     }
 
     #[test]

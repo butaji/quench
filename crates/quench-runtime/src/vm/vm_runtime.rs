@@ -1705,6 +1705,16 @@ pub(crate) fn execute_optimized_code_step_from(
                     "region",
                     native_executed,
                 );
+                crate::execution_trace::stencil_outcome(
+                    code,
+                    start,
+                    "region",
+                    if native_executed {
+                        "native_completed"
+                    } else {
+                        "fallback_completed"
+                    },
+                );
                 crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
                 let next = match transition.target {
                     DispatchTarget::Callee(next) => next,
@@ -1722,6 +1732,7 @@ pub(crate) fn execute_optimized_code_step_from(
                     "region",
                     native_executed,
                 );
+                crate::execution_trace::stencil_outcome(code, start, "region", "semantic_error");
                 return completion_step_after_error(registers, error, start + 1)
                     .map(|step| (step.completion, step.next));
             }
@@ -1732,6 +1743,7 @@ pub(crate) fn execute_optimized_code_step_from(
                     "region",
                     native_executed,
                 );
+                crate::execution_trace::stencil_outcome(code, start, "region", "semantic_error");
                 return completion_step_after_error(registers, error, pc + 1)
                     .map(|step| (step.completion, step.next));
             }
@@ -1743,6 +1755,12 @@ pub(crate) fn execute_optimized_code_step_from(
                     "region",
                     "physical_entry",
                 );
+                crate::execution_trace::stencil_outcome(
+                    code,
+                    start,
+                    "region",
+                    "physical_reject",
+                );
                 crate::execution_trace::leaf_rejection("optimizing_native_region");
             }
             Err(crate::machine::NativeDispatchError::Committed(message)) => {
@@ -1751,6 +1769,12 @@ pub(crate) fn execute_optimized_code_step_from(
                     start,
                     "region",
                     "post_entry_failure",
+                );
+                crate::execution_trace::stencil_outcome(
+                    code,
+                    start,
+                    "region",
+                    "committed_failure",
                 );
                 return Err(VmError::EvalError(format!(
                     "committed native region failure: {message}"
