@@ -1538,17 +1538,14 @@ impl NativeBinaryPlan {
             (crate::stencil_select::numeric_region_key(opcode)?, false, None)
         } else if opcode == crate::ir::Opcode::IncI {
             (crate::stencil_select::increment_region_key(), false, None)
-        } else if opcode == crate::ir::Opcode::Binary
-            && instruction.flags == crate::ir::compact_binary_id(crate::ops::BinaryOp::StrictEqual)
-        {
-            (crate::stencil_select::compare_equal_region_key(), true, None)
-        } else if opcode == crate::ir::Opcode::Binary
-            && instruction.flags
-                == crate::ir::compact_binary_id(crate::ops::BinaryOp::StrictNotEqual)
-        {
-            (crate::stencil_select::compare_not_equal_region_key(), true, None)
         } else if opcode == crate::ir::Opcode::Binary {
             let key = match crate::ir::compact_binary_operator(instruction.flags) {
+                Some(crate::ops::BinaryOp::Equal | crate::ops::BinaryOp::StrictEqual) => {
+                    crate::stencil_select::compare_equal_region_key()
+                }
+                Some(crate::ops::BinaryOp::NotEqual | crate::ops::BinaryOp::StrictNotEqual) => {
+                    crate::stencil_select::compare_not_equal_region_key()
+                }
                 Some(crate::ops::BinaryOp::BitwiseAnd) => {
                     return Self::new_integer(instruction, policy,
                         crate::stencil_select::bitwise_and_region_key(),

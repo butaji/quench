@@ -654,6 +654,104 @@ fn native_strict_numeric_equality_uses_typed_scalar_entry() {
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
+fn native_numeric_equality_covers_loose_numbers_and_falls_back_for_coercion() {
+    let program = crate::reduce::reduce_source("var left = 7; var right = 7; left == right;")
+        .expect("loose equality source lowers");
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut executed = false;
+    let mut inspect = |view: crate::machine::CodeView<'_>| {
+        if executed {
+            return;
+        }
+        let Some(pc) = (0..view.len()).find(|pc| {
+            view.instruction(*pc).is_some_and(|instruction| {
+                instruction.opcode == crate::ir::Opcode::Binary
+                    && crate::ir::compact_binary_operator(instruction.flags)
+                        == Some(crate::ops::BinaryOp::Equal)
+            })
+        }) else {
+            return;
+        };
+        let plan = super::BaselinePlan::compile_for_test(view, policy);
+        let native = plan.native_binary_at(pc).expect("numeric equality leaf");
+        let instruction = view.instruction(pc).expect("equality instruction");
+        let mut registers = crate::register_file::RegisterFile::with_undefined(
+            usize::from(view.register_count()).max(8),
+        );
+        registers.write(usize::from(instruction.b), crate::value::Value::Number(7.0));
+        registers.write(usize::from(instruction.c), crate::value::Value::Number(7.0));
+        let context = crate::vm::current_context_or_default();
+        let environment = crate::environment::Environment::new();
+        crate::vm::execute_baseline_code_from(
+            view,
+            &plan,
+            pc,
+            &mut registers,
+            &context,
+            std::rc::Rc::clone(&environment),
+        )
+        .expect("numeric equality execution");
+        assert_eq!(
+            registers.read(usize::from(instruction.a)),
+            Some(crate::value::Value::Boolean(true))
+        );
+        let before = native.borrow().native_entry_count;
+        assert!(before > 0, "numeric equality must execute emitted bytes");
+
+        let mut hostile = crate::register_file::RegisterFile::with_undefined(
+            usize::from(view.register_count()).max(8),
+        );
+        hostile.write(
+            usize::from(instruction.b),
+            crate::value::Value::String("7".into()),
+        );
+        hostile.write(usize::from(instruction.c), crate::value::Value::Number(7.0));
+        crate::vm::execute_baseline_code_from(
+            view,
+            &plan,
+            pc,
+            &mut hostile,
+            &context,
+            environment,
+        )
+        .expect("coercive equality fallback");
+        assert_eq!(
+            hostile.read(usize::from(instruction.a)),
+            Some(crate::value::Value::Boolean(true))
+        );
+        assert_eq!(
+            native.borrow().native_entry_count,
+            before,
+            "string coercion must remain on the canonical path"
+        );
+        let mut not_equal = super::NativeBinaryPlan::new(
+            crate::ir::Instruction {
+                opcode: crate::ir::Opcode::Binary,
+                flags: crate::ir::compact_binary_id(crate::ops::BinaryOp::NotEqual),
+                a: 0,
+                b: 1,
+                c: 2,
+            },
+            policy,
+        )
+        .expect("numeric inequality leaf");
+        assert_eq!(not_equal.execute(7.0, 8.0), Ok(1.0));
+        assert_eq!(not_equal.execute(f64::NAN, 7.0), Ok(1.0));
+        executed = true;
+    };
+    inspect(program.code());
+    program.code().cold_ops().for_each(|(_, op)| {
+        op.visit_bodies(&mut |body| {
+            if let Some(view) = body.code() {
+                inspect(view);
+            }
+        });
+    });
+    assert!(executed, "ordinary source must reach loose numeric equality");
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
 fn native_bitwise_i32_regions_guard_number_conversion() {
     let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
     let instruction = crate::ir::Instruction {
