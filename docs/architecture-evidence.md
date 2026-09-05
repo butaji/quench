@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `1212ea6a6` (cleanup files remain
+Evidence below is bound to source revision `69f34f47e` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -79,3 +79,8 @@ post-entry committed failures; direct retirement coverage passes
 (`/tmp/quench-composed-retire-20260905.log`) and full runtime at
 `1212ea6a6` is **722 passed, 0 failed, 1 ignored**
 (`/tmp/quench-runtime-full-20260905-composed-retire.log`).
+The same retirement test now confirms ordinary semantic errors preserve valid
+physical code; focused coverage is **1 passed**
+(`/tmp/quench-region-retire-distinction-20260905.log`) and full runtime at
+`69f34f47e` is **722 passed, 0 failed, 1 ignored**
+(`/tmp/quench-runtime-full-20260905-retire-distinction.log`).
