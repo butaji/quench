@@ -2130,6 +2130,17 @@ fn validate_region_window(
             "native region contract has no legal entry".into(),
         ));
     }
+    let abi = contract.abi_contract();
+    if matches!(
+        contract.abi,
+        crate::stencil_select::RegionAbi::ArrayKernel
+            | crate::stencil_select::RegionAbi::ArrayNumericLoop
+    ) && abi.may_call_helper
+    {
+        return Err(NativeDispatchError::Physical(
+            "raw array region ABI permits an interior helper call".into(),
+        ));
+    }
     // Raw memory entries have no allocating helper boundary.  Keep this
     // check declaration-derived so a future row cannot accidentally acquire
     // an allocating operation merely by reusing the array ABI bytes.
