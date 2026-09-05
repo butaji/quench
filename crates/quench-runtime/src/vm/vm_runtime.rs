@@ -1346,7 +1346,7 @@ pub(crate) fn execute_composed_array_numeric_loop(
             "composed_array_numeric_loop_interrupt",
             kernel.index.saturating_sub(index),
         );
-        return Ok(Some(handler_transition(pc, None)));
+        return Ok(Some(resume_region_transition(pc)));
     }
     let completed_after_interrupt =
         status == NATIVE_DISPATCH_INTERRUPT && kernel.index == end;
@@ -3088,6 +3088,15 @@ fn handler_transition(
         next_pc: pc + 1,
         completion,
         target,
+    }
+}
+
+#[inline]
+fn resume_region_transition(pc: usize) -> DispatchTransition {
+    DispatchTransition {
+        next_pc: pc,
+        completion: None,
+        target: DispatchTarget::Callee(pc),
     }
 }
 
@@ -6770,6 +6779,11 @@ mod compact_handler_tests {
                                 registers.write_number(usize::from(index_register), 0.0);
                             }
                             let context = crate::vm::current_context_or_default();
+                            // Exercise the real normal-driver checkpoint: the
+                            // first native iteration must publish its state,
+                            // clear the request, and resume the same residual
+                            // entry without replaying that store.
+                            context.request_interrupt();
                             let _environment_guard =
                                 crate::locals::EnvironmentGuard::install(Rc::clone(&environment));
                             let execution = crate::vm::execute_baseline_code_from(
@@ -6784,6 +6798,12 @@ mod compact_handler_tests {
                                 .native_region_at(shape_pc)
                                 .is_some_and(|region| region.borrow().last_native_execution());
                             if execution.is_ok() && native_execution {
+                                assert!(
+                                    unsafe { &*context.interrupt_flag() }
+                                        .load(std::sync::atomic::Ordering::Acquire)
+                                        == false,
+                                    "normal driver must consume the native checkpoint"
+                                );
                                 assert_eq!(array_data.dense_number_at(0), Some(2.0));
                                 assert_eq!(array_data.dense_number_at(1), Some(3.0));
                                 assert_eq!(array_data.dense_number_at(2), Some(4.0));
