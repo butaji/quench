@@ -1255,6 +1255,67 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
             );
         };
         on_instruction();
+        // A composed region is a baseline admission consequence, not an
+        // optimizing-view-only experiment. Try it at the same canonical
+        // residual PC used by ordinary execution. A physical rejection is a
+        // pre-entry miss and falls through to the existing per-op handlers;
+        // every post-entry outcome is propagated without replay.
+        if let Some(native) = plan.native_region_at(pc) {
+            let (region_result, native_executed) = {
+                let mut native = native.borrow_mut();
+                let result = native.execute(code, pc, registers, context);
+                (result, native.last_native_execution())
+            };
+            crate::execution_trace::stencil_observation(
+                code,
+                pc,
+                "baseline_region",
+                native_executed,
+            );
+            match region_result {
+                Ok(transition) => {
+                    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                    let target = transition.target;
+                    let next = match target {
+                        DispatchTarget::Callee(next) => next,
+                        DispatchTarget::Exit => transition.next_pc,
+                    };
+                    if let Some(completion) = transition
+                        .completion
+                        .filter(|value| !matches!(value, crate::completion::Completion::Normal))
+                    {
+                        return completion_step_after_transition(registers, completion, next);
+                    }
+                    match target {
+                        DispatchTarget::Callee(_) => {
+                            pc = next;
+                            continue;
+                        }
+                        DispatchTarget::Exit => {
+                            return completion_step_after_transition(
+                                registers,
+                                crate::completion::Completion::Normal,
+                                next,
+                            );
+                        }
+                    }
+                }
+                Err(crate::machine::NativeDispatchError::Semantic(error)) => {
+                    return completion_step_after_error(registers, error, pc + 1);
+                }
+                Err(crate::machine::NativeDispatchError::SemanticAt { pc: fault_pc, error }) => {
+                    return completion_step_after_error(registers, error, fault_pc + 1);
+                }
+                Err(crate::machine::NativeDispatchError::Committed(message)) => {
+                    return Err(VmError::EvalError(format!(
+                        "committed native region failure: {message}"
+                    )));
+                }
+                Err(crate::machine::NativeDispatchError::Physical(_)) => {
+                    crate::execution_trace::leaf_rejection("baseline_native_region");
+                }
+            }
+        }
         // Indexed property lowering emits an explicit coercibility check before
         // AGetI/ASetI. Once the object word is already known non-nullish, the
         // check has no observable work left: elide it and keep the canonical
@@ -4603,14 +4664,19 @@ mod compact_handler_tests {
                             }
                             let context = crate::vm::current_context_or_default();
                             let _environment_guard =
-                                crate::locals::EnvironmentGuard::install(environment);
-                            let Some(region) = plan.native_region_at(shape_pc) else {
-                                return;
-                            };
-                            let execution = region
-                                .borrow_mut()
-                                .execute(body_code, shape_pc, &mut registers, &context);
-                            if execution.is_ok() && region.borrow().last_native_execution() {
+                                crate::locals::EnvironmentGuard::install(Rc::clone(&environment));
+                            let execution = crate::vm::execute_baseline_code_from(
+                                body_code,
+                                &plan,
+                                shape_pc,
+                                &mut registers,
+                                &context,
+                                Rc::clone(&environment),
+                            );
+                            let native_execution = plan
+                                .native_region_at(shape_pc)
+                                .is_some_and(|region| region.borrow().last_native_execution());
+                            if execution.is_ok() && native_execution {
                                 assert_eq!(array_data.dense_number_at(0), Some(2.0));
                                 assert_eq!(array_data.dense_number_at(1), Some(3.0));
                                 assert_eq!(array_data.dense_number_at(2), Some(4.0));
