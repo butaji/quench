@@ -677,6 +677,7 @@ fn native_add_chain_executes_two_ops_with_one_entry() {
 fn native_move_uses_rendered_address_without_remapping() {
     let mut plan = super::NativeMovePlan {
         arena: None,
+        shared_arena: None,
         cache: crate::stencil_select::RenderedRegionCache::new(),
         lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Move),
@@ -696,6 +697,7 @@ fn native_move_uses_rendered_address_without_remapping() {
 fn native_property_uses_rendered_address_without_remapping() {
     let mut plan = super::NativePropertyPlan {
         arena: None,
+        shared_arena: None,
         cache: crate::stencil_select::RenderedRegionCache::new(),
         lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
         opcode: crate::ir::Opcode::GetN,
