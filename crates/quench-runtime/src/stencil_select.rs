@@ -1028,6 +1028,11 @@ mod tests {
 
     #[test]
     fn extracted_build_artifacts_match_canonical_bytes() {
+        #[cfg(quench_generated_stencil_artifacts)]
+        assert!(
+            !BUILD_STENCIL_ARTIFACTS.is_empty(),
+            "enabled Rust extraction must publish at least one artifact"
+        );
         for artifact in BUILD_STENCIL_ARTIFACTS {
             let record = CANONICAL_REGION_TABLE
                 .iter()
