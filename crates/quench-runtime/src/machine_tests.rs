@@ -1955,8 +1955,7 @@ fn native_add_chain_executes_two_ops_with_one_entry() {
     let mut plan = super::NativeAddChainPlan {
         arena: None,
         shared_arena: None,
-        cache: crate::stencil_select::RenderedRegionCache::new(),
-        lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
+        physical: super::PhysicalState::new(),
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
         installed: super::InstalledF64x3Entry::Unpublished,
         native_entry_count: 0,
