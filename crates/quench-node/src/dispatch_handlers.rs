@@ -6,6 +6,7 @@
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::io::{Read, Write};
 use std::rc::Rc;
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -7883,11 +7884,15 @@ pub fn cp_spawn(
         || command.ends_with("/sed")
         || command == "wc"
         || command.ends_with("/wc")
+        || command == "head"
+        || command.ends_with("/head")
     {
         let filter = if command.ends_with("grep") {
             "grep"
         } else if command.ends_with("sed") {
             "sed"
+        } else if command.ends_with("head") {
+            "head"
         } else {
             "wc"
         };
@@ -8302,9 +8307,27 @@ fn cp_stdio_target(options: &Value, index: usize) -> Option<Value> {
 }
 
 fn apply_cp_stdio_surface(child: &Value, options: &Value, streams: [&Value; 3]) {
+    let process = quench_runtime::execute::get_property(
+        &quench_runtime::vm::current_global_object(),
+        "process",
+    );
+    let inherited = [
+        quench_runtime::execute::get_property(&process, "stdin"),
+        quench_runtime::execute::get_property(&process, "stdout"),
+        quench_runtime::execute::get_property(&process, "stderr"),
+    ];
     let descriptor = execute::get_property(options, "stdio");
     let slots = match descriptor {
         Value::String(ref kind) if kind == "ignore" || kind == "inherit" => {
+            if kind == "inherit" {
+                for (index, target) in inherited.iter().enumerate() {
+                    execute::set_property_in_place(
+                        child,
+                        &format!("\0childInherit{}", index),
+                        target.clone(),
+                    );
+                }
+            }
             vec![Value::Null, Value::Null, Value::Null]
         }
         Value::Array(ref entries) => (0..3)
@@ -8315,9 +8338,17 @@ fn apply_cp_stdio_surface(child: &Value, options: &Value, streams: [&Value; 3]) 
                 )
                 .unwrap_or(Value::Undefined);
                 match entry {
-                    Value::String(ref kind) if kind == "ignore" || kind == "inherit" => Value::Null,
+                    Value::String(ref kind) if kind == "ignore" => Value::Null,
+                    Value::String(ref kind) if kind == "inherit" => {
+                        execute::set_property_in_place(
+                            child,
+                            &format!("\0childInherit{}", index),
+                            inherited[index].clone(),
+                        );
+                        Value::Null
+                    }
                     Value::String(ref kind) if kind == "ipc" => Value::Undefined,
-                    Value::Object(_) | Value::ObjectAlias(_) => Value::Null,
+                    Value::Object(_) | Value::ObjectAlias(_) => entry,
                     _ => streams[index].clone(),
                 }
             })
@@ -8329,6 +8360,20 @@ fn apply_cp_stdio_surface(child: &Value, options: &Value, streams: [&Value; 3]) 
     execute::set_property_in_place(child, "stdin", execute::get_property(&stdio, "0"));
     execute::set_property_in_place(child, "stdout", execute::get_property(&stdio, "1"));
     execute::set_property_in_place(child, "stderr", execute::get_property(&stdio, "2"));
+}
+
+fn cp_inherit_write(child: &Value, index: usize, text: &str) -> Result<(), VmError> {
+    if text.is_empty() {
+        return Ok(());
+    }
+    let target = execute::get_property(child, &format!("\0childInherit{}", index));
+    let write = execute::get_property(&target, "write");
+    if matches!(target, Value::Object(_) | Value::ObjectAlias(_))
+        && quench_runtime::is_callable(&write)
+    {
+        execute::call(&write, &target, &[Value::String(text.to_string())])?;
+    }
+    Ok(())
 }
 
 fn cp_pipe_write(
@@ -8371,6 +8416,7 @@ fn cp_pipe_key(source: &Value) -> Option<u64> {
 
 fn cp_run_host_child(
     state: &Rc<RefCell<HostState>>,
+    child: &Value,
     command: &Value,
     child_args: &Value,
     options: &Value,
@@ -8438,7 +8484,23 @@ fn cp_run_host_child(
         process.env_clear().envs(values);
         process.env("QUENCH_CHILD_RUNNER", "1");
     }
-    let output = process.output().ok()?;
+    let input = execute::to_js_string(&execute::get_property(
+        &execute::get_property(child, "stdin"),
+        "\0childStdinText",
+    ))
+    .unwrap_or_default();
+    let mut process = process
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .ok()?;
+    if !input.is_empty() {
+        if let Some(mut stdin) = process.stdin.take() {
+            let _ = stdin.write_all(input.as_bytes());
+        }
+    }
+    let output = process.wait_with_output().ok()?;
     Some((
         output.stdout,
         output.stderr,
@@ -8519,6 +8581,22 @@ pub fn cp_spawn_output_emit(
         execute::get_property(child, "\0childCatEcho"),
         Value::Boolean(true)
     ) {
+        // With inherited stdio the synthetic cat represents the OS child
+        // directly.  Feed it the runner's real stdin and publish the bytes
+        // through the inherited stdout stream; pipe-backed cat instances
+        // remain driven by cp_stdin_write/cp_stdin_end below.
+        let inherited_stdin = execute::get_property(child, "\0childInherit0");
+        let inherited_stdout = execute::get_property(child, "\0childInherit1");
+        if matches!(inherited_stdin, Value::Object(_) | Value::ObjectAlias(_))
+            && matches!(inherited_stdout, Value::Object(_) | Value::ObjectAlias(_))
+        {
+            let mut bytes = Vec::new();
+            let _ = std::io::stdin().read_to_end(&mut bytes);
+            if !bytes.is_empty() {
+                let text = String::from_utf8_lossy(&bytes);
+                cp_inherit_write(child, 1, &text)?;
+            }
+        }
         return Ok(Value::Undefined);
     }
     let command = execute::get_property(child, "\0childCommand");
@@ -8548,7 +8626,7 @@ pub fn cp_spawn_output_emit(
     let real_child = if source_driven {
         None
     } else {
-        cp_run_host_child(state, &command, &child_args, &child_options).or_else(|| {
+        cp_run_host_child(state, child, &command, &child_args, &child_options).or_else(|| {
             // `exec()` passes a self-reexec through the shell when its
             // command is a complete string. Preserve that real subprocess
             // result instead of projecting the generic success default.
@@ -8840,7 +8918,11 @@ pub fn cp_spawn_output_emit(
                 || value.ends_with("/sed")
                 || value == "wc"
                 || value.ends_with("/wc")
+                || value == "head"
+                || value.ends_with("/head")
     );
+    cp_inherit_write(child, 1, &stdout_text)?;
+    cp_inherit_write(child, 2, &stderr_text)?;
     if filter_process {
         // Filter output is driven by stdin writes. Keep the process and its
         // streams alive until cp_stdin_end observes upstream completion.
@@ -9085,21 +9167,27 @@ pub fn cp_stdin_write(
     let Some(receiver) = receiver else {
         return Ok(Value::Boolean(true));
     };
-    if matches!(
-        execute::get_property(receiver, "\0childStdinScript"),
-        Value::Boolean(true)
-    ) {
-        let chunk = args.first().cloned().unwrap_or(Value::Undefined);
-        let text = execute::to_js_string(&chunk).unwrap_or_default();
-        let previous_text = match execute::get_property(receiver, "\0childStdinText") {
-            Value::String(value) => value,
-            _ => String::new(),
-        };
+    // Keep the write payload on the logical stdin stream until the host child
+    // starts.  This is the shared hand-off for self-reexec children: the
+    // parent writes during the same turn in which spawn() returns, while the
+    // Rust process is launched by the queued spawn-output phase.
+    let chunk = args.first().cloned().unwrap_or(Value::Undefined);
+    let text = execute::to_js_string(&chunk).unwrap_or_default();
+    let previous_text = match execute::get_property(receiver, "\0childStdinText") {
+        Value::String(value) => value,
+        _ => String::new(),
+    };
+    if !text.is_empty() {
         execute::set_property_in_place(
             receiver,
             "\0childStdinText",
             Value::String(format!("{previous_text}{text}")),
         );
+    }
+    if matches!(
+        execute::get_property(receiver, "\0childStdinScript"),
+        Value::Boolean(true)
+    ) {
         let size = match chunk {
             Value::Uint8Array(view) => view.length,
             Value::DataView(view) => view.byte_length,
@@ -9119,17 +9207,22 @@ pub fn cp_stdin_write(
         execute::get_property(receiver, "\0childCatEcho"),
         Value::Boolean(true)
     ) {
-        let chunk = args.first().cloned().unwrap_or(Value::Undefined);
-        let text = execute::to_js_string(&chunk).unwrap_or_default();
-        let previous = match execute::get_property(receiver, "\0childStdinText") {
-            Value::String(value) => value,
-            _ => String::new(),
-        };
-        execute::set_property_in_place(
-            receiver,
-            "\0childStdinText",
-            Value::String(format!("{previous}{text}")),
-        );
+        let child = execute::get_property(receiver, "\0childStdinProcess");
+        let stdout = execute::get_property(&child, "stdout");
+        if !text.is_empty() {
+            execute::set_property_in_place(
+                receiver,
+                "\0childCatStreamed",
+                Value::Boolean(true),
+            );
+            cp_inherit_write(&child, 1, &text)?;
+            cp_pipe_write(state, &stdout, Value::String(text.clone()))?;
+            crate::modules::events::method_emit(
+                state,
+                Some(&stdout),
+                &[Value::String("data".into()), Value::String(text)],
+            )?;
+        }
         return Ok(Value::Boolean(true));
     }
     // A forked script runs in the host realm, but its process.stdout must
@@ -9192,6 +9285,39 @@ pub fn cp_stdin_write(
                 "\0childFilterBytes",
                 Value::Number((previous + text.len()) as f64),
             );
+            return Ok(Value::Boolean(true));
+        }
+        if filter == "head" {
+            if matches!(
+                execute::get_property(receiver, "\0childFilterMatched"),
+                Value::Boolean(true)
+            ) {
+                return Ok(Value::Boolean(true));
+            }
+            let limit = execute::to_js_string(&execute::get_property(
+                receiver,
+                "\0childFilterArg",
+            ))
+            .ok()
+            .and_then(|value| value.strip_prefix("-n").unwrap_or(&value).parse::<usize>().ok())
+            .unwrap_or(10);
+            let output = text
+                .split_inclusive('\n')
+                .take(limit)
+                .collect::<String>();
+            if !output.is_empty() {
+                execute::set_property_in_place(
+                    receiver,
+                    "\0childFilterMatched",
+                    Value::Boolean(true),
+                );
+                cp_pipe_write(state, &target, Value::String(output.clone()))?;
+                crate::modules::events::method_emit(
+                    state,
+                    Some(&target),
+                    &[Value::String("data".into()), Value::String(output)],
+                )?;
+            }
             return Ok(Value::Boolean(true));
         }
         let output = if filter == "grep" {
@@ -9265,6 +9391,9 @@ pub fn cp_stdin_end(
     let Some(receiver) = receiver else {
         return Ok(Value::Undefined);
     };
+    if !args.is_empty() && !matches!(args.first(), Some(Value::Undefined)) {
+        cp_stdin_write(state, Some(receiver), args)?;
+    }
     if matches!(
         execute::get_property(receiver, "\0childCatEcho"),
         Value::Boolean(true)
@@ -9272,11 +9401,20 @@ pub fn cp_stdin_end(
         let child = execute::get_property(receiver, "\0childStdinProcess");
         let output = execute::get_property(receiver, "\0childStdinText");
         let stdout = execute::get_property(&child, "stdout");
-        crate::modules::events::method_emit(
-            state,
-            Some(&stdout),
-            &[Value::String("data".into()), output],
-        )?;
+        if !matches!(
+            execute::get_property(receiver, "\0childCatStreamed"),
+            Value::Boolean(true)
+        ) {
+            let output_text = execute::to_js_string(&output).unwrap_or_default();
+            cp_inherit_write(&child, 1, &output_text)?;
+            cp_pipe_write(state, &stdout, output.clone())?;
+            crate::modules::events::method_emit(
+                state,
+                Some(&stdout),
+                &[Value::String("data".into()), output],
+            )?;
+        }
+        cp_pipe_end(state, &stdout)?;
         for event in ["end", "close"] {
             crate::modules::events::method_emit(
                 state,
@@ -9297,9 +9435,6 @@ pub fn cp_stdin_end(
         execute::get_property(receiver, "\0childStdinScript"),
         Value::Boolean(true)
     ) {
-        if !args.is_empty() && !matches!(args.first(), Some(Value::Undefined)) {
-            cp_stdin_write(state, Some(receiver), args)?;
-        }
         let child = execute::get_property(receiver, "\0childStdinProcess");
         let module_input = match execute::get_property(&child, "\0childArgs") {
             Value::Array(args) => (0..args.logical_len()).any(|index| {
