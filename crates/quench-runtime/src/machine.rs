@@ -2193,6 +2193,27 @@ impl NativeRegionPlan {
             .with_pointer_bits(crate::vm::native_region_bridge as *const () as usize);
         let key = self.key;
         let operations = self.operations;
+        // Verify the complete immutable residual window before rendering or
+        // publishing executable bytes.  A stale/quickened opcode is therefore
+        // a cheap RejectBeforeEntry and cannot consume slab capacity or leave
+        // a physical mapping behind for a region that was never legal.
+        for (offset, expected) in operations.iter().copied().enumerate() {
+            let Some(window_pc) = pc.checked_add(offset) else {
+                return Err(NativeDispatchError::Physical(
+                    "native fused region pc overflow".into(),
+                ));
+            };
+            let Some(instruction) = code.instruction(window_pc) else {
+                return Err(NativeDispatchError::Physical(
+                    "native fused region window is incomplete".into(),
+                ));
+            };
+            if instruction.opcode != expected {
+                return Err(NativeDispatchError::Physical(
+                    "native fused region opcode changed before publication".into(),
+                ));
+            }
+        }
         if !crate::stencil_select::select_region(key)
             .is_some_and(|record| record.executable && record.operations == operations)
             || self.lifecycle.observe_site(&self.site, key, true)
