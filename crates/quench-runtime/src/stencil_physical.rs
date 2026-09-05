@@ -63,8 +63,11 @@ pub(crate) fn simd_clobber_mask(bytes: &[u8]) -> u16 {
                 if register < 16 { mask | (1u16 << register) } else { u16::MAX }
             });
     }
-    let _ = bytes;
-    0
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        let _ = bytes;
+        0
+    }
 }
 
 pub(crate) fn gpr_clobber_mask(bytes: &[u8]) -> u16 {
@@ -86,6 +89,9 @@ pub(crate) fn gpr_clobber_mask(bytes: &[u8]) -> u16 {
                 if register < 16 { mask | (1u16 << register) } else { u16::MAX }
             });
     }
-    let _ = bytes;
-    0
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        let _ = bytes;
+        0
+    }
 }
