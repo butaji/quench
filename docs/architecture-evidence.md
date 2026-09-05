@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `5f6830ee1` (cleanup files remain
+Evidence below is bound to source revision `375445281` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -32,6 +32,10 @@ functional commits.
 
 No micros command has been run for this matrix. Task 073 remains pending until
 all mandatory infrastructure rows and cross-layer contracts are complete.
+The fused indexed-update declaration also matches ordinary frontend lowering:
+`ordinary_source_lowering_executes_fused_indexed_numeric_update` passed at
+`375445281` (`/tmp/quench-array-update-source-20260905.log`), while its
+destructive-alias sibling remains canonical fallback.
 The ordinary-source nullish case is explicitly admission plus canonical execution
 coverage; its native-byte witness remains the separate direct normal-driver test.
 The prototype-property G path now has a normal baseline-driver witness in
