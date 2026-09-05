@@ -181,12 +181,25 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
 }
 
 fn rust_source(name: &str, recipe: super::RustLeafRecipe) -> String {
+    assert_valid_symbol_name(name);
     format!(
         "#![no_std]\n#[no_mangle]\n#[inline(never)]\npub extern \"C\" fn q_{}({}) -> f64 {{ {} }}\n",
         name,
         recipe.parameters(),
         recipe.expression()
     )
+}
+
+fn assert_valid_symbol_name(name: &str) {
+    let mut chars = name.chars();
+    let valid_start = chars
+        .next()
+        .is_some_and(|character| character == '_' || character.is_ascii_alphabetic());
+    assert!(valid_start, "invalid Rust stencil symbol name {name:?}");
+    assert!(
+        chars.all(|character| character == '_' || character.is_ascii_alphanumeric()),
+        "invalid Rust stencil symbol name {name:?}"
+    );
 }
 
 fn compile_one(
