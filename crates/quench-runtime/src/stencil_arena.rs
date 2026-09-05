@@ -35,6 +35,11 @@ fn flush_icache(ptr: *const u8, len: usize) {
 
 const PAGE: usize = 4096;
 static NEXT_ARENA_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Global bound for the disposable physical region pool.  A plan may rotate
+/// from an RX slab to a fresh RW slab, but never allocate an unbounded number
+/// of executable mappings.
+pub const MAX_SHARED_SLAB_BYTES: usize = 4 * MAX_ARENA_BYTES;
 /// Workload-independent disposable code budget for one arena.
 pub const MAX_ARENA_BYTES: usize = 1 << 20;
 
@@ -65,6 +70,111 @@ pub struct StencilArena {
     cursor: usize,
     executable: bool,
     id: u64,
+}
+
+/// Bounded collection of immutable-after-publication executable slabs.  Region
+/// plans share this owner rather than each allocating a 4 KiB mapping. A new
+/// slab is created only when every existing slab is RX or exhausted; published
+/// slabs remain alive for the pool lifetime, so cached entry addresses cannot
+/// dangle during replacement.
+pub struct SharedStencilSlab {
+    slabs: Vec<StencilArena>,
+    slab_capacity: usize,
+}
+
+impl SharedStencilSlab {
+    pub fn new(slab_capacity: usize) -> Result<Self, ArenaError> {
+        if slab_capacity == 0 || slab_capacity > MAX_ARENA_BYTES {
+            return Err(ArenaError::InvalidCapacity);
+        }
+        Ok(Self {
+            slabs: Vec::new(),
+            slab_capacity,
+        })
+    }
+
+    fn total_capacity(&self) -> usize {
+        self.slabs
+            .iter()
+            .map(StencilArena::capacity)
+            .sum()
+    }
+
+    pub fn slab_count(&self) -> usize {
+        self.slabs.len()
+    }
+
+    pub fn used(&self) -> usize {
+        self.slabs.iter().map(StencilArena::used).sum()
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.slabs.iter().map(StencilArena::capacity).sum()
+    }
+
+    pub fn render_or_get<const N: usize>(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        key: crate::stencil_fact::RegionKey,
+        stencil: &Stencil,
+        values: &PatchValues<'_, N>,
+    ) -> Result<usize, ArenaError> {
+        for slab in &mut self.slabs {
+            match slab.render_or_get(cache, key, stencil, values) {
+                Ok(address) => return Ok(address),
+                Err(ArenaError::ProtectionFailed | ArenaError::Exhausted) => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        if self
+            .total_capacity()
+            .saturating_add(self.slab_capacity)
+            > MAX_SHARED_SLAB_BYTES
+        {
+            return Err(ArenaError::Exhausted);
+        }
+        let mut slab = StencilArena::new(self.slab_capacity)?;
+        let address = slab.render_or_get(cache, key, stencil, values)?;
+        self.slabs.push(slab);
+        Ok(address)
+    }
+
+    fn slab_for(&self, address: usize) -> Option<&StencilArena> {
+        self.slabs.iter().find(|slab| slab.owns_address(address))
+    }
+
+    fn slab_for_mut(&mut self, address: usize) -> Option<&mut StencilArena> {
+        self.slabs
+            .iter_mut()
+            .find(|slab| slab.owns_address(address))
+    }
+
+    pub fn make_executable(&mut self, address: usize) -> Result<(), ArenaError> {
+        self.slab_for_mut(address)
+            .ok_or(ArenaError::ProtectionFailed)?
+            .make_executable()
+    }
+
+    pub fn execute_dispatch(
+        &self,
+        address: usize,
+        context: *mut std::ffi::c_void,
+    ) -> Result<u64, ArenaError> {
+        self.slab_for(address)
+            .ok_or(ArenaError::ProtectionFailed)?
+            .execute_dispatch(address, context)
+    }
+}
+
+impl std::fmt::Debug for SharedStencilSlab {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SharedStencilSlab")
+            .field("slabs", &self.slabs.len())
+            .field("used", &self.used())
+            .field("capacity", &self.capacity())
+            .finish()
+    }
 }
 
 impl StencilArena {
@@ -869,6 +979,49 @@ mod tests {
             .unwrap();
         assert_eq!(second.used(), stencil.bytes.len());
         assert_eq!(cache.get_owned(key, 0, second.id()), Some(second_address));
+    }
+
+    #[test]
+    fn shared_slab_rotates_only_after_publication_and_stays_bounded() {
+        let mut pool = SharedStencilSlab::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let site = QuickeningSite::<2>::new(Opcode::GetProperty);
+        let values = PatchValues::from_site(&site);
+        static BYTES: [u8; 4096] = [0; 4096];
+        let stencil = Stencil {
+            bytes: &BYTES,
+            holes: &[],
+        };
+        let first = pool
+            .render_or_get(&mut cache, crate::stencil_fact::RegionKey(101), &stencil, &values)
+            .unwrap();
+        pool.make_executable(first).unwrap();
+        let second = pool
+            .render_or_get(&mut cache, crate::stencil_fact::RegionKey(102), &stencil, &values)
+            .unwrap();
+        assert_ne!(first, second);
+        assert_eq!(pool.slab_count(), 2);
+        assert_eq!(pool.capacity(), 8192);
+        assert!(pool.capacity() <= MAX_SHARED_SLAB_BYTES);
+    }
+
+    #[test]
+    fn shared_slab_rejects_an_oversized_render_without_publishing() {
+        let mut pool = SharedStencilSlab::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let site = QuickeningSite::<2>::new(Opcode::GetProperty);
+        let values = PatchValues::from_site(&site);
+        static TOO_LARGE: [u8; 8192] = [0; 8192];
+        let stencil = Stencil {
+            bytes: &TOO_LARGE,
+            holes: &[],
+        };
+        assert_eq!(
+            pool.render_or_get(&mut cache, crate::stencil_fact::RegionKey(103), &stencil, &values),
+            Err(ArenaError::Exhausted)
+        );
+        assert_eq!(pool.slab_count(), 0);
+        assert_eq!(cache.len(), 0);
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
