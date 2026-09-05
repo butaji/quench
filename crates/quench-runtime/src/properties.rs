@@ -585,7 +585,7 @@ fn install_named_shape_site(
 }
 
 #[inline(always)]
-fn assignment_source_is_direct(
+pub(crate) fn assignment_source_is_direct(
     registers: &crate::register_file::RegisterFile,
     source: u16,
 ) -> bool {

@@ -3182,6 +3182,9 @@ fn try_native_property_store(
     ) else {
         return false;
     };
+    if !crate::properties::assignment_source_is_direct(registers, source) {
+        return false;
+    }
     let Some(source_ptr) = registers.word_ptr(usize::from(source)) else {
         return false;
     };
@@ -4273,6 +4276,40 @@ mod compact_handler_tests {
         assert_eq!(cell.load(), Value::Number(9.0));
         assert_eq!(
             cell_plan
+                .native_store_property_at(0)
+                .unwrap()
+                .borrow()
+                .native_entry_count(),
+            0
+        );
+
+        let source_cell = crate::value::BindingCell::new(Value::Number(11.0));
+        let source_object = Rc::new(ObjectData::new(vec![
+            ("value".into(), Value::Number(2.0)),
+        ]));
+        let source_plan = crate::machine::BaselinePlan::compile_for_test(
+            code,
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        );
+        let mut source_registers = crate::register_file::RegisterFile::from_values(vec![
+            Value::Object(Rc::clone(&source_object)),
+            Value::BindingCell(Rc::clone(&source_cell)),
+        ]);
+        crate::vm::execute_baseline_code_from(
+            code,
+            &source_plan,
+            0,
+            &mut source_registers,
+            &context,
+            crate::environment::Environment::new(),
+        )
+        .expect("binding-cell source fallback");
+        assert_eq!(
+            crate::vm::get_property_result(&Value::Object(source_object), "value").unwrap(),
+            Value::Number(11.0)
+        );
+        assert_eq!(
+            source_plan
                 .native_store_property_at(0)
                 .unwrap()
                 .borrow()
