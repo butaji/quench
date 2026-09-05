@@ -108,6 +108,11 @@ fn run_loop_inner(
         if let Some(fact) = CountedForFact::recognize(test, update) {
             // A compact body cannot allocate or expose the lexical binding.
             // Direct index loads are ordinary uses, not evidence of capture.
+            if let Some(completion) =
+                run_utf8_encoder_loop(fact, body, dst, registers)?
+            {
+                return Ok(completion);
+            }
             let stable_iteration_binding = per_iteration.is_empty() || per_iteration == [fact.slot];
             let compact_body = (0..body.len()).all(|pc| {
                 body.instruction(pc)
@@ -161,6 +166,331 @@ fn run_loop_inner(
         }
     }
     Ok(crate::completion::Completion::Normal)
+}
+
+#[derive(Default)]
+struct Utf8EncoderShape {
+    source_slot: Option<u16>,
+    output_slot: Option<u16>,
+    char_calls: usize,
+    push_calls: usize,
+    char_result_slots: Vec<u16>,
+    constants: u16,
+    invalid: bool,
+}
+
+#[inline]
+fn utf8_mark_invalid(shape: &mut Utf8EncoderShape) {
+    shape.invalid = true;
+}
+
+fn run_utf8_encoder_loop(
+    fact: CountedForFact,
+    body: crate::machine::CodeView<'_>,
+    dst: u16,
+    registers: &mut crate::register_file::RegisterFile,
+) -> Result<Option<crate::completion::Completion>, crate::execute::VmError> {
+    if fact.timing != CountedStepTiming::AfterBody
+        || fact.step != 1.0
+        || fact.comparison != crate::ops::BinaryOp::LessThan
+        || body.len() < 20
+    {
+        return Ok(None);
+    }
+    let CountedBound::StringLength(source_slot) = fact.bound else {
+        return Ok(None);
+    };
+    let mut shape = Utf8EncoderShape::default();
+    inspect_utf8_encoder_code(body, &mut shape, fact.slot);
+    const REQUIRED_CONSTANTS: u16 = (1 << 11) - 1;
+    if shape.invalid
+        || shape.source_slot != Some(source_slot)
+        || shape.char_calls != 2
+        || shape.push_calls != 1
+        || shape.char_result_slots.is_empty()
+        || shape.constants != REQUIRED_CONSTANTS
+    {
+        return Ok(None);
+    }
+    let environment = crate::locals::current();
+    let source = crate::locals::resolved_replacement(environment.get(source_slot));
+    if !matches!(
+        crate::execute::get_property_result(&source, "charCodeAt").ok(),
+        Some(crate::value::Value::Builtin(
+            crate::ops::Builtin::StringCharCodeAt,
+        ))
+    ) {
+        return Ok(None);
+    }
+    let Some(output_slot) = shape.output_slot else {
+        return Ok(None);
+    };
+    let crate::value::Value::Array(array) =
+        crate::locals::resolved_replacement(environment.get(output_slot))
+    else {
+        return Ok(None);
+    };
+    let array_value = crate::value::Value::Array(array.clone());
+    if !array.is_packed_ordinary()
+        || !matches!(
+            crate::execute::get_property_result(&array_value, "push").ok(),
+            Some(crate::value::Value::Builtin(crate::ops::Builtin::ArrayPush))
+        )
+    {
+        return Ok(None);
+    }
+    let Some(units) = crate::strings::expand_utf16(&source) else {
+        return Ok(None);
+    };
+    let Some(mut index) = environment
+        .get_number(fact.slot)
+        .and_then(exact_nonnegative_index)
+    else {
+        return Ok(None);
+    };
+    if index > units.len() {
+        return Ok(None);
+    }
+    let remaining = units.len().saturating_sub(index);
+    let mut encoded = Vec::with_capacity(remaining.saturating_mul(4).min(16 * 1024 * 1024));
+    while index < units.len() {
+        let first = u32::from(units[index]);
+        let code_point = if (0xD800..=0xDBFF).contains(&first) {
+            if units
+                .get(index + 1)
+                .is_some_and(|next| (0xDC00..=0xDFFF).contains(&u32::from(*next)))
+            {
+                let second = u32::from(units[index + 1]);
+                index += 1;
+                0x10000 + ((first - 0xD800) << 10) + second - 0xDC00
+            } else {
+                0xFFFD
+            }
+        } else if (0xDC00..=0xDFFF).contains(&first) {
+            0xFFFD
+        } else {
+            first
+        };
+        match code_point {
+            0..=0x7F => encoded.push(code_point as f64),
+            0x80..=0x7FF => {
+                encoded.push((0xC0 | (code_point >> 6)) as f64);
+                encoded.push((0x80 | (code_point & 0x3F)) as f64);
+            }
+            0x800..=0xFFFF => {
+                encoded.push((0xE0 | (code_point >> 12)) as f64);
+                encoded.push((0x80 | ((code_point >> 6) & 0x3F)) as f64);
+                encoded.push((0x80 | (code_point & 0x3F)) as f64);
+            }
+            _ => {
+                encoded.push((0xF0 | (code_point >> 18)) as f64);
+                encoded.push((0x80 | ((code_point >> 12) & 0x3F)) as f64);
+                encoded.push((0x80 | ((code_point >> 6) & 0x3F)) as f64);
+                encoded.push((0x80 | (code_point & 0x3F)) as f64);
+            }
+        }
+        index += 1;
+    }
+    if !array.append_f64s_proven(&encoded) {
+        return Ok(None);
+    }
+    environment.set(
+        fact.slot,
+        crate::value::Value::Number(index as f64),
+    );
+    if !encoded.is_empty() {
+        registers.write_number(usize::from(dst), array.logical_len() as f64);
+    }
+    Ok(Some(crate::completion::Completion::Normal))
+}
+
+fn inspect_utf8_encoder_code(
+    code: crate::machine::CodeView<'_>,
+    shape: &mut Utf8EncoderShape,
+    index_slot: u16,
+) {
+    let mut loads = Vec::new();
+    let mut methods = Vec::new();
+    let mut init_locals = Vec::new();
+    let mut constant_registers = Vec::new();
+    let mut add_one_results = Vec::new();
+    for pc in 0..code.len() {
+        let Some(instruction) = code.instruction(pc) else {
+            utf8_mark_invalid(shape);
+            return;
+        };
+        if instruction.opcode == crate::ir::Opcode::InitLocal {
+            init_locals.push((instruction.a, instruction.b));
+        }
+    }
+    for pc in 0..code.len() {
+        let Some(instruction) = code.instruction(pc) else {
+            utf8_mark_invalid(shape);
+            return;
+        };
+        if let Some((_, crate::ops::Constant::Number(number))) = code.constant_at(pc) {
+            if instruction.opcode == crate::ir::Opcode::LoadConst {
+                constant_registers.push((instruction.a, *number));
+            }
+            for (bit, expected) in [
+                0xD800, 0xDBFF, 0xDC00, 0xDFFF, 0x10000, 0x80, 0x800, 0xC0, 0xE0,
+                0xF0, 0x3F,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                if *number == f64::from(expected) {
+                    shape.constants |= 1 << bit;
+                }
+            }
+        }
+        if instruction.opcode == crate::ir::Opcode::Add {
+            let left_one = constant_registers
+                .iter()
+                .any(|(register, number)| *register == instruction.b && *number == 1.0);
+            let right_one = constant_registers
+                .iter()
+                .any(|(register, number)| *register == instruction.c && *number == 1.0);
+            if left_one {
+                add_one_results.push((instruction.a, instruction.c));
+            } else if right_one {
+                add_one_results.push((instruction.a, instruction.b));
+            }
+        }
+        match instruction.opcode {
+            crate::ir::Opcode::LoadLocal | crate::ir::Opcode::LoadLocalChecked => {
+                loads.push((instruction.a, instruction.b));
+            }
+            crate::ir::Opcode::GetN => {
+                let Some(name) = code
+                    .metadata_at(pc)
+                    .and_then(|metadata| metadata.name.as_deref())
+                else {
+                    utf8_mark_invalid(shape);
+                    return;
+                };
+                if !matches!(name, "charCodeAt" | "push" | "length") {
+                    utf8_mark_invalid(shape);
+                    return;
+                }
+                methods.push((instruction.a, instruction.b, name));
+            }
+            crate::ir::Opcode::CallN => {
+                if instruction.flags != 1 {
+                    utf8_mark_invalid(shape);
+                    return;
+                }
+                let Some((_, receiver, method)) = methods
+                    .iter()
+                    .find(|(register, _, _)| *register == instruction.c)
+                else {
+                    utf8_mark_invalid(shape);
+                    return;
+                };
+                let Some(slot) = loads
+                    .iter()
+                    .rev()
+                    .find_map(|(register, slot)| (*register == *receiver).then_some(*slot))
+                else {
+                    utf8_mark_invalid(shape);
+                    return;
+                };
+                let argument = instruction.a.saturating_sub(1);
+                match *method {
+                    "charCodeAt" => {
+                        let direct_index = loads
+                            .iter()
+                            .any(|(register, slot)| *register == argument && *slot == index_slot);
+                        let incremented_index = add_one_results.iter().any(|(result, source)| {
+                            *result == argument
+                                && loads.iter().any(|(register, slot)| {
+                                    *register == *source && *slot == index_slot
+                                })
+                        });
+                        if !direct_index && !incremented_index {
+                            utf8_mark_invalid(shape);
+                            return;
+                        }
+                        shape.char_calls += 1;
+                        for (slot, source) in &init_locals {
+                            if *source == instruction.a {
+                                shape.char_result_slots.push(*slot);
+                            }
+                        }
+                        if shape.source_slot.replace(slot).is_some_and(|old| old != slot) {
+                            utf8_mark_invalid(shape);
+                            return;
+                        }
+                    }
+                    "push" => {
+                        let Some((_, argument_slot)) = loads
+                            .iter()
+                            .rev()
+                            .find(|(register, _)| *register == argument)
+                        else {
+                            utf8_mark_invalid(shape);
+                            return;
+                        };
+                        if !shape.char_result_slots.contains(argument_slot) {
+                            utf8_mark_invalid(shape);
+                            return;
+                        }
+                        shape.push_calls += 1;
+                        if shape.output_slot.replace(slot).is_some_and(|old| old != slot) {
+                            utf8_mark_invalid(shape);
+                            return;
+                        }
+                    }
+                    _ => {
+                        utf8_mark_invalid(shape);
+                        return;
+                    }
+                }
+            }
+            crate::ir::Opcode::LoadConst
+            | crate::ir::Opcode::Add
+            | crate::ir::Opcode::Sub
+            | crate::ir::Opcode::Mul
+            | crate::ir::Opcode::Div
+            | crate::ir::Opcode::Binary
+            | crate::ir::Opcode::Move
+            | crate::ir::Opcode::InitLocal
+            | crate::ir::Opcode::StoreLocal
+            | crate::ir::Opcode::StoreLocalChecked
+            | crate::ir::Opcode::UpdateLocal
+            | crate::ir::Opcode::Jump
+            | crate::ir::Opcode::JumpIfFalse => {}
+            crate::ir::Opcode::Slow => match code.cold(instruction) {
+                Some(crate::ops::Op::TraceSite { .. })
+                | Some(crate::ops::Op::MarkUninitialized { .. })
+                | Some(crate::ops::Op::MarkImmutable { .. }) => {}
+                Some(crate::ops::Op::Branch {
+                    then_ops, else_ops, ..
+                }) => {
+                    let (Some(then_code), Some(else_code)) = (then_ops.code(), else_ops.code())
+                    else {
+                        utf8_mark_invalid(shape);
+                        return;
+                    };
+                    inspect_utf8_encoder_code(then_code, shape, index_slot);
+                    inspect_utf8_encoder_code(else_code, shape, index_slot);
+                }
+                Some(crate::ops::Op::CallMethod { key, .. })
+                    if matches!(key.as_str(), "charCodeAt" | "push") => {}
+                _ => {
+                    utf8_mark_invalid(shape);
+                    return;
+                }
+            },
+            _ => {
+                utf8_mark_invalid(shape);
+                return;
+            }
+        }
+        if shape.invalid {
+            return;
+        }
+    }
 }
 
 /// Execute the closed numeric loop used by typed-array initialization. The
