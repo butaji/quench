@@ -2924,7 +2924,7 @@ impl NativeLoadConstPlan {
                 .with_constant_bits(self.bits);
             let address = {
                 let mut slab = shared.borrow_mut();
-                let view = crate::stencil_select::select_stencil_for_abi(
+                let view = crate::stencil_select::select_physical_for_abi(
                     self.key,
                     crate::stencil_select::RegionAbi::ConstantWord,
                 )
@@ -2972,7 +2972,7 @@ impl NativeLoadConstPlan {
             .arena
             .as_mut()
             .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
-        let view = crate::stencil_select::select_stencil_for_abi(
+        let view = crate::stencil_select::select_physical_for_abi(
             self.key,
             crate::stencil_select::RegionAbi::ConstantWord,
         )
@@ -3115,7 +3115,7 @@ impl NativeUnaryPlan {
             .with_constant_bits(0x8000_0000_0000_0000);
         let address = {
             let mut slab = shared.borrow_mut();
-            let view = crate::stencil_select::select_stencil_for_abi(
+            let view = crate::stencil_select::select_physical_for_abi(
                 self.key,
                 crate::stencil_select::RegionAbi::Scalar,
             )
@@ -3163,7 +3163,7 @@ impl NativeUnaryPlan {
             .arena
             .as_mut()
             .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
-        let view = crate::stencil_select::select_stencil_for_abi(
+        let view = crate::stencil_select::select_physical_for_abi(
             self.key,
             crate::stencil_select::RegionAbi::Scalar,
         )
@@ -3206,7 +3206,7 @@ impl NativeUnaryPlan {
             let values = crate::stencil_fact::PatchValues::from_site(&self.site);
             let rendered = (|| -> Result<usize, crate::stencil_arena::ArenaError> {
                 let mut slab = shared.borrow_mut();
-                let view = crate::stencil_select::select_stencil_for_abi(
+                let view = crate::stencil_select::select_physical_for_abi(
                     self.key,
                     crate::stencil_select::RegionAbi::ScalarI32,
                 )
@@ -3244,7 +3244,7 @@ impl NativeUnaryPlan {
             .arena
             .as_mut()
             .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
-        let view = crate::stencil_select::select_stencil_for_abi(
+        let view = crate::stencil_select::select_physical_for_abi(
             self.key,
             crate::stencil_select::RegionAbi::ScalarI32,
         )
@@ -3373,7 +3373,7 @@ impl NativeAddChainPlan {
             .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
         let rendered = (|| -> Result<usize, crate::stencil_arena::ArenaError> {
             let mut slab = shared.borrow_mut();
-            let view = crate::stencil_select::select_stencil_for_abi(
+            let view = crate::stencil_select::select_physical_for_abi(
                 key,
                 crate::stencil_select::RegionAbi::Scalar,
             )
@@ -3663,7 +3663,7 @@ impl NativeMovePlan {
         if let Some(shared) = self.shared_arena.clone() {
             let rendered = (|| -> Result<usize, crate::stencil_arena::ArenaError> {
                 let mut slab = shared.borrow_mut();
-                let view = crate::stencil_select::select_stencil_for_abi(
+                let view = crate::stencil_select::select_physical_for_abi(
                     key,
                     crate::stencil_select::RegionAbi::TaggedWord,
                 )
@@ -3878,7 +3878,7 @@ impl NativePropertyPlan {
             }
             let rendered = (|| -> Result<usize, crate::stencil_arena::ArenaError> {
                 let mut slab = shared.borrow_mut();
-                let view = crate::stencil_select::select_stencil_for_abi(
+                let view = crate::stencil_select::select_physical_for_abi(
                     key,
                     crate::stencil_select::RegionAbi::TaggedWord,
                 )
