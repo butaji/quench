@@ -1274,6 +1274,23 @@ mod tests {
             fallthrough: None,
             fallthrough_entry: 9,
         };
+        static BAD_ABI: BuildStencilArtifact = BuildStencilArtifact {
+            name: "add_const",
+            key: RegionKey(0),
+            target: TARGET,
+            compiler: "test",
+            fingerprint: "test",
+            abi: RegionAbi::TaggedWord,
+            entry: 0,
+            external_entries: &[0],
+            has_fallthrough: false,
+            executable: true,
+            template_calls_helper: false,
+            bytes: BYTES,
+            stencil: Stencil { bytes: BYTES, holes: &[] },
+            fallthrough: None,
+            fallthrough_entry: 0,
+        };
         let record = CANONICAL_REGION_TABLE
             .iter()
             .find(|record| record.name == "add_const")
@@ -1281,6 +1298,7 @@ mod tests {
         assert!(generated_physical_view(record.key, record, &BAD_ENTRY).is_none());
         assert!(generated_physical_view(record.key, record, &BAD_ENTRIES).is_none());
         assert!(generated_physical_view(record.key, record, &BAD_LAYOUT).is_none());
+        assert!(generated_physical_view(record.key, record, &BAD_ABI).is_none());
 
         static BAD_TARGET: BuildStencilArtifact = BuildStencilArtifact {
             name: "add_const",
