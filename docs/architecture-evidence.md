@@ -36,6 +36,8 @@ The fused indexed-update declaration also matches ordinary frontend lowering:
 `ordinary_source_lowering_executes_fused_indexed_numeric_update` passed at
 `375445281` (`/tmp/quench-array-update-source-20260905.log`), while its
 destructive-alias sibling remains canonical fallback.
+The host/API boundary also compiles against this source (`cargo check -p
+quench-node --no-default-features`, `/tmp/quench-node-check-20260905-fused-update.log`).
 The ordinary-source nullish case is explicitly admission plus canonical execution
 coverage; its native-byte witness remains the separate direct normal-driver test.
 The prototype-property G path now has a normal baseline-driver witness in
