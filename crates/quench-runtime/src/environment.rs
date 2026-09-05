@@ -1225,6 +1225,24 @@ impl Environment {
         previous.cell()
     }
 
+    pub(crate) fn capture_slot_cell(&self, slot: u16) -> Rc<crate::value::BindingCell> {
+        self.ensure_slot(slot).cell()
+    }
+
+    pub(crate) fn replace_slot_cell(
+        &self,
+        slot: u16,
+        cell: Rc<crate::value::BindingCell>,
+    ) -> Rc<crate::value::BindingCell> {
+        let previous = self.ensure_slot(slot).cell();
+        self.slots.borrow_mut().replace(
+            usize::from(slot),
+            BindingRef::new(SlotStore::from_cell(cell), 0),
+        );
+        self.initialize(slot);
+        previous
+    }
+
     pub(crate) fn restore_slot(&self, slot: u16, value: Rc<crate::value::BindingCell>) {
         let binding = BindingRef::new(SlotStore::from_cell(value), 0);
         self.slots.borrow_mut().replace(usize::from(slot), binding);
