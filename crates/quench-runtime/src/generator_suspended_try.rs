@@ -18,9 +18,10 @@ fn suspended_try<'a>(
                 .code
                 .code()?
                 .cold_ops()
-                .find_map(|(_, candidate)| match candidate {
+                .find_map(|(candidate_index, candidate)| match candidate {
                     candidate @ Op::Try { body, .. }
-                        if body.code().is_some_and(|body| {
+                        if candidate_index == index
+                            && body.code().is_some_and(|body| {
                             body.cold_ops()
                                 .any(|(_, op)| matches!(op, Op::Await { .. }))
                         }) =>
@@ -39,9 +40,17 @@ fn try_yield_parts<'a>(
     body: &'a crate::machine::FunctionCode,
 ) -> Option<(&'a Op, &'a Op, crate::machine::CodeView<'a>)> {
     let body = body.code()?;
+    let destination = crate::generator::peek_await_destination();
     let (yield_index, yield_op) = body
         .cold_ops()
-        .find(|(_, candidate)| suspended_try_op(candidate, generator))?;
+        .find(|(_, candidate)| {
+            suspended_try_op(candidate, generator)
+                && match (destination, candidate) {
+                    (Some(destination), Op::Await { dst, .. }) => *dst == destination,
+                    (Some(_), Op::Yield { .. }) => false,
+                    _ => true,
+                }
+        })?;
     Some((op, yield_op, body.slice(yield_index + 1, body.len())?))
 }
 
@@ -65,10 +74,14 @@ fn resume_suspended_try(
     if completion.is_suspension() {
         return Ok(Some(completion));
     }
-    execute_with_generator_registers(generator, |registers| {
+    let completion = execute_with_generator_registers(generator, |registers| {
         complete_suspended_try(try_op, registers, completion)
-    })
-    .map(Some)
+    })?;
+    if matches!(completion, crate::completion::Completion::Normal) {
+        let resume = parent_resume_range(generator, state);
+        return resume_generator_range(generator, state, resume, completion).map(Some);
+    }
+    Ok(Some(completion))
 }
 
 fn complete_suspended_try(
