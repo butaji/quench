@@ -1524,3 +1524,15 @@ The host and AArch64 runtime suites each pass **642 tests** (one ignored), and
 the Node host suite passes **4 tests**. Encoding verification succeeds with
 `QUENCH_VERIFY_STENCIL_ENCODINGS=1`; micros remain gated pending the remaining
 resource/root/safepoint and broader region-lifetime completion work.
+
+## Region ownership and frame-root checkpoint (2026-09-04)
+
+Rendered cache entries now carry a monotonic executable-arena owner token;
+lookups require the same owner before a raw address can be called. This closes
+the mapping-reuse/dangling-entry case while keeping the existing bounded cache
+and W^X arena disposal model. Native array-loop admission is capped at 4,096
+iterations until the physical ABI has an interrupt-poll instruction, with
+larger loops taking the complete residual path. Call-frame root protection now
+visits tagged register words directly instead of allocating an intermediate
+snapshot vector. Focused owner, root, and ARM byte-execution tests pass; a
+shared multi-plan slab and full native safepoint/root map remain unimplemented.
