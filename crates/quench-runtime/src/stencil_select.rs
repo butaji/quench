@@ -432,11 +432,11 @@ pub fn select_physical(key: RegionKey) -> Option<PhysicalStencilView> {
     generated_physical_view(key, record, artifact)
 }
 
-fn unique_artifact(
-    artifacts: &'static [BuildStencilArtifact],
+fn unique_artifact<'a>(
+    artifacts: &'a [BuildStencilArtifact],
     key: RegionKey,
     name: &str,
-) -> Result<Option<&'static BuildStencilArtifact>, ()> {
+) -> Result<Option<&'a BuildStencilArtifact>, ()> {
     let mut matches = artifacts
         .iter()
         .filter(|artifact| artifact.key == key && artifact.name == name);
@@ -1403,6 +1403,14 @@ mod tests {
             .find(|record| record.abi == RegionAbi::Scalar)
             .expect("scalar catalog row");
         assert!(select_physical_for_abi(scalar.key, RegionAbi::TaggedWord).is_none());
+    }
+
+    #[cfg(quench_generated_stencil_artifacts)]
+    #[test]
+    fn duplicate_generated_artifacts_fail_closed() {
+        let first = *BUILD_STENCIL_ARTIFACTS.first().expect("generated artifact");
+        let duplicate = [first, first];
+        assert!(unique_artifact(&duplicate, first.key, first.name).is_err());
     }
 
 }
