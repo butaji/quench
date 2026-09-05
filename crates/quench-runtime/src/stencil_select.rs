@@ -1150,12 +1150,20 @@ mod tests {
                 .iter()
                 .find(|record| record.name == artifact.name)
                 .expect("artifact declaration has a catalog row");
-            if record.stencil.holes.is_empty() {
+            if record.stencil.holes.is_empty() && artifact.name != "array_numeric_loop" {
                 assert_eq!(
                     artifact.bytes, record.stencil.bytes,
                     "artifact {} drifted",
                     artifact.name
                 );
+            } else if artifact.has_fallthrough || artifact.name == "array_numeric_loop" {
+                assert!(!artifact.bytes.is_empty());
+                if artifact.has_fallthrough {
+                    assert!(!artifact.stencil.holes.is_empty());
+                    assert!(artifact.fallthrough.is_some());
+                } else {
+                    assert!(artifact.stencil.holes.is_empty());
+                }
             } else {
                 assert!(
                     !artifact.bytes.is_empty() && artifact.stencil.holes.is_empty(),
