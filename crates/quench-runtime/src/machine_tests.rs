@@ -1039,6 +1039,18 @@ fn native_add_chain_executes_two_ops_with_one_entry() {
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
+fn native_increment_uses_add_const_template_for_number_subset() {
+    let instruction = crate::ir::Instruction::inc_i(0, 1, false);
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut plan = super::NativeBinaryPlan::new(instruction, policy)
+        .expect("declared increment body");
+    assert_eq!(plan.execute(4.5, 1.0), Ok(5.5));
+    assert_eq!(plan.execute(-0.0, 1.0), Ok(1.0));
+    assert!(plan.execute(f64::NAN, 1.0).unwrap().is_nan());
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
 fn native_add_chain_shared_entry_reuses_owner_after_eviction() {
     let shared = std::rc::Rc::new(std::cell::RefCell::new(
         crate::stencil_arena::SharedStencilSlab::new(4096).expect("slab"),
