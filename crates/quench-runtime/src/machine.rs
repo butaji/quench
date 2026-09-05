@@ -2863,29 +2863,28 @@ fn validate_physical_template(
         .iter()
         .filter(|hole| matches!(hole.kind, crate::stencil_fact::HoleKind::Ptr64))
         .count();
-    let pointer_contract = match contract.abi {
-        crate::stencil_select::RegionAbi::Bridge => 1,
-        crate::stencil_select::RegionAbi::ArrayKernel
-        | crate::stencil_select::RegionAbi::ArrayNumericLoop
-        | crate::stencil_select::RegionAbi::Scalar
-        | crate::stencil_select::RegionAbi::TaggedWord
-        | crate::stencil_select::RegionAbi::ScalarI32
-        | crate::stencil_select::RegionAbi::ScalarU32 => 0,
-    };
+    let pointer_contract = abi_pointer_hole_contract(contract.abi);
     if pointer_holes != pointer_contract {
         return Err(format!(
             "ABI permits {pointer_contract} external pointer relocations, template has {pointer_holes}"
         ));
     }
-    if matches!(
+    if raw_region_declares_allocation(contract) {
+        return Err("raw array region declares an allocating operation".into());
+    }
+    Ok(())
+}
+
+fn abi_pointer_hole_contract(abi: crate::stencil_select::RegionAbi) -> usize {
+    matches!(abi, crate::stencil_select::RegionAbi::Bridge) as usize
+}
+
+fn raw_region_declares_allocation(contract: crate::stencil_select::RegionContract) -> bool {
+    matches!(
         contract.abi,
         crate::stencil_select::RegionAbi::ArrayKernel
             | crate::stencil_select::RegionAbi::ArrayNumericLoop
     ) && contract.has_effect(crate::facts::OperationEffect::Allocate)
-    {
-        return Err("raw array region declares an allocating operation".into());
-    }
-    Ok(())
 }
 
 /// Detect direct helper calls in the physical template independently of the
