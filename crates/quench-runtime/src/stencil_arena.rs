@@ -15,6 +15,10 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod resource;
+#[cfg(feature = "execution-trace")]
+pub(crate) use resource::ExecutableResourceSnapshot;
+
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
 extern "C" {
     fn sys_icache_invalidate(start: *const std::ffi::c_void, size: usize);
