@@ -8667,11 +8667,20 @@ fn cp_run_host_child(
     let args = crate::modules::process::permission_exec_argv(state, args, Some(&env));
     // `spawn(execPath, [])` is still represented by the in-process model; a
     // real runner needs an entry script (or an explicit eval/print switch).
+    // Version probes are the one argument-only entry point supported by the
+    // compatibility runner. Keep them on the real runner boundary so their
+    // stdout/status can flow through arbitrary inherited stdio handles (for
+    // example a socket passed as fd 1), rather than falling through to the
+    // runner's usage error.
+    let version_probe = args.iter().any(|arg| arg == "-v" || arg == "--version");
     let has_entry = args.iter().any(|arg| {
         (arg.ends_with(".js") || arg.ends_with(".mjs") || arg.ends_with(".cjs"))
             && std::path::Path::new(arg).is_file()
     });
-    if !has_entry && !args.iter().any(|arg| arg == "-e" || arg == "--eval") {
+    if !has_entry
+        && !version_probe
+        && !args.iter().any(|arg| arg == "-e" || arg == "--eval")
+    {
         return None;
     }
     // `process.execPath` points at the compatibility runner selected by the
