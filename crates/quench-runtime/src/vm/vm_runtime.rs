@@ -1,6 +1,7 @@
 include!("vm_generator_step.rs");
 include!("vm_completion_step.rs");
 include!("vm_native_status.rs");
+include!("vm_native_outcome.rs");
 
 /// Opaque state passed through the generated baseline entry trampoline. The
 /// lifetime is only used while the synchronous call is active; the machine
@@ -12,9 +13,7 @@ pub(crate) struct NativeDispatchContext<'a> {
     entry: crate::machine::BaselineEntry,
     registers: *mut crate::register_file::RegisterFile,
     context: *const VmContext,
-    result: Option<DispatchTransition>,
-    error: Option<VmError>,
-    error_pc: Option<usize>,
+    outcome: Option<NativeBridgeOutcome>,
     entry_started: bool,
 }
 
@@ -32,9 +31,7 @@ impl<'a> NativeDispatchContext<'a> {
             entry,
             registers,
             context,
-            result: None,
-            error: None,
-            error_pc: None,
+            outcome: None,
             entry_started: false,
         }
     }
@@ -43,57 +40,7 @@ impl<'a> NativeDispatchContext<'a> {
         self,
         status: u64,
     ) -> Result<DispatchTransition, crate::machine::NativeDispatchError> {
-        match NativeStatus::from(status) {
-            NativeStatus::Ok => self.result.ok_or_else(|| {
-                if self.entry_started {
-                    crate::machine::NativeDispatchError::Committed(
-                        "native bridge entered without a transition".into(),
-                    )
-                } else {
-                    crate::machine::NativeDispatchError::Physical(
-                        "native bridge returned without a transition".into(),
-                    )
-                }
-            }),
-            NativeStatus::SemanticError => self.error.map_or_else(
-                || {
-                    Err(if self.entry_started {
-                        crate::machine::NativeDispatchError::Committed(
-                            "native bridge lost its post-entry error".into(),
-                        )
-                    } else {
-                        crate::machine::NativeDispatchError::Physical(
-                            "native bridge returned an empty semantic error".into(),
-                        )
-                    })
-                },
-                |error| match self.error_pc {
-                    Some(pc) => Err(crate::machine::NativeDispatchError::SemanticAt {
-                        pc,
-                        error,
-                    }),
-                    None => Err(crate::machine::NativeDispatchError::Semantic(error)),
-                },
-            ),
-            NativeStatus::Interrupt if self.entry_started => Err(
-                crate::machine::NativeDispatchError::Committed(
-                    "native bridge interrupted after committed progress".into(),
-                ),
-            ),
-            NativeStatus::Interrupt => Err(crate::machine::NativeDispatchError::Physical(
-                "native bridge interrupted before entry".into(),
-            )),
-            NativeStatus::CommittedError | NativeStatus::Unknown(_) if self.entry_started => Err(
-                crate::machine::NativeDispatchError::Committed(
-                "native bridge returned an invalid post-entry status".into(),
-                ),
-            ),
-            NativeStatus::CommittedError | NativeStatus::Unknown(_) => Err(
-                crate::machine::NativeDispatchError::Physical(
-                "native bridge returned an invalid entry status".into(),
-                ),
-            ),
-        }
+        finish_native_outcome(status, self.outcome, self.entry_started, "bridge")
     }
 }
 
@@ -108,9 +55,7 @@ pub(crate) struct NativeRegionContext<'a> {
     abi: crate::stencil_select::RegionAbi,
     registers: *mut crate::register_file::RegisterFile,
     context: *const VmContext,
-    result: Option<DispatchTransition>,
-    error: Option<VmError>,
-    error_pc: Option<usize>,
+    outcome: Option<NativeBridgeOutcome>,
     entry_started: bool,
     /// Set immediately before invoking rendered bytes; unlike a successful
     /// transition this remains a witness even when the physical call exits
@@ -153,9 +98,7 @@ impl<'a> NativeRegionContext<'a> {
             abi,
             registers,
             context,
-            result: None,
-            error: None,
-            error_pc: None,
+            outcome: None,
             entry_started: false,
             native_entered: false,
             #[cfg(test)]
@@ -167,60 +110,7 @@ impl<'a> NativeRegionContext<'a> {
         self,
         status: u64,
     ) -> Result<DispatchTransition, crate::machine::NativeDispatchError> {
-        match NativeStatus::from(status) {
-            NativeStatus::Ok => match self.result {
-                Some(result) => Ok(result),
-                None if self.entry_started => Err(
-                    crate::machine::NativeDispatchError::Committed(
-                        "native region entered without a transition".into(),
-                    ),
-                ),
-                None => Err(crate::machine::NativeDispatchError::Physical(
-                    "native region rejected without a transition".into(),
-                )),
-            },
-            NativeStatus::SemanticError => match self.error {
-                Some(error) => match self.error_pc {
-                    Some(pc) => Err(crate::machine::NativeDispatchError::SemanticAt {
-                        pc,
-                        error,
-                    }),
-                    None => Err(crate::machine::NativeDispatchError::Semantic(error)),
-                },
-                None if self.entry_started => Err(
-                    crate::machine::NativeDispatchError::Committed(
-                        "native region lost its post-entry error".into(),
-                    ),
-                ),
-                None => Err(crate::machine::NativeDispatchError::Physical(
-                    "native region rejected without a semantic error".into(),
-                )),
-            },
-            NativeStatus::CommittedError if self.entry_started => {
-                Err(crate::machine::NativeDispatchError::Committed(
-                    "native region reported a post-entry failure".into(),
-                ))
-            }
-            NativeStatus::CommittedError => Err(crate::machine::NativeDispatchError::Physical(
-                "native region reported a pre-entry failure".into(),
-            )),
-            NativeStatus::Interrupt if self.entry_started => Err(
-                crate::machine::NativeDispatchError::Committed(
-                    "native region interrupted after committed progress".into(),
-                ),
-            ),
-            NativeStatus::Interrupt => Err(crate::machine::NativeDispatchError::Physical(
-                "native region interrupted before entry".into(),
-            )),
-            NativeStatus::Unknown(_) if self.entry_started => Err(
-                crate::machine::NativeDispatchError::Committed(
-                    "native region returned an invalid post-entry status".into(),
-                ),
-            ),
-            NativeStatus::Unknown(_) => Err(crate::machine::NativeDispatchError::Physical(
-                "native region returned an invalid entry status".into(),
-            )),
-        }
+        finish_native_outcome(status, self.outcome, self.entry_started, "region")
     }
 }
 
@@ -355,12 +245,14 @@ pub(crate) extern "C" fn native_dispatch_bridge(raw: *mut std::ffi::c_void) -> u
     };
     match result {
         Ok(transition) => {
-            dispatch.result = Some(transition);
+            dispatch.outcome = Some(NativeBridgeOutcome::Transition(transition));
             NATIVE_DISPATCH_OK
         }
         Err(error) => {
-            dispatch.error_pc = Some(dispatch.pc);
-            dispatch.error = Some(error);
+            dispatch.outcome = Some(NativeBridgeOutcome::Throw {
+                pc: dispatch.pc,
+                error,
+            });
             NATIVE_DISPATCH_SEMANTIC_ERROR
         }
     }
@@ -419,7 +311,7 @@ pub(crate) extern "C" fn native_region_bridge(raw: *mut std::ffi::c_void) -> u64
                     "composed_array_loop",
                     true,
                 );
-                region.result = Some(transition);
+                region.outcome = Some(NativeBridgeOutcome::Transition(transition));
                 return NATIVE_DISPATCH_OK;
             }
             Some(Err(error)) => {
@@ -431,8 +323,7 @@ pub(crate) extern "C" fn native_region_bridge(raw: *mut std::ffi::c_void) -> u64
                         return NATIVE_DISPATCH_COMMITTED_ERROR
                     }
                 };
-                region.error_pc = Some(pc);
-                region.error = Some(error);
+                region.outcome = Some(NativeBridgeOutcome::Throw { pc, error });
                 return NATIVE_DISPATCH_SEMANTIC_ERROR;
             }
             None => {
@@ -454,17 +345,18 @@ pub(crate) extern "C" fn native_region_bridge(raw: *mut std::ffi::c_void) -> u64
 
     match execute_region_fallback(region) {
         Ok(transition) => {
-            region.result = Some(transition);
+            region.outcome = Some(NativeBridgeOutcome::Transition(transition));
             NATIVE_DISPATCH_OK
         }
         Err(crate::machine::NativeDispatchError::SemanticAt { pc, error }) => {
-            region.error_pc = Some(pc);
-            region.error = Some(error);
+            region.outcome = Some(NativeBridgeOutcome::Throw { pc, error });
             NATIVE_DISPATCH_SEMANTIC_ERROR
         }
         Err(crate::machine::NativeDispatchError::Semantic(error)) => {
-            region.error_pc = Some(region.pc);
-            region.error = Some(error);
+            region.outcome = Some(NativeBridgeOutcome::Throw {
+                pc: region.pc,
+                error,
+            });
             NATIVE_DISPATCH_SEMANTIC_ERROR
         }
         Err(crate::machine::NativeDispatchError::Physical(_)) => 0,
@@ -6441,6 +6333,30 @@ mod compact_handler_tests {
         dispatch.entry_started = true;
         assert!(matches!(
             dispatch.finish(0),
+            Err(crate::machine::NativeDispatchError::Committed(_))
+        ));
+    }
+
+    #[test]
+    fn bridge_status_cannot_contradict_the_typed_outcome() {
+        let transition = super::handler_transition(1, None);
+        assert!(matches!(
+            super::finish_native_outcome(
+                super::NATIVE_DISPATCH_SEMANTIC_ERROR,
+                Some(super::NativeBridgeOutcome::Transition(transition)),
+                true,
+                "region",
+            ),
+            Err(crate::machine::NativeDispatchError::Committed(_))
+        ));
+        let error = crate::vm::VmError::EvalError("exact fault".into());
+        assert!(matches!(
+            super::finish_native_outcome(
+                super::NATIVE_DISPATCH_OK,
+                Some(super::NativeBridgeOutcome::Throw { pc: 7, error }),
+                true,
+                "region",
+            ),
             Err(crate::machine::NativeDispatchError::Committed(_))
         ));
     }
