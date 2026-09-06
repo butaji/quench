@@ -65,6 +65,32 @@ Start with fixed placement contracts; select precompiled transfer/spill forms or
 split. Do not quietly turn placement selection into unrestricted runtime register
 allocation. Record why candidate regions were rejected and the cost of planning.
 
+The selected local algorithm is deliberately smaller than a general compiler:
+
+```text
+canonical CFG + operand/effect facts
+  -> disposable block value/use graph
+  -> fact specialization + folding + effect-safe DCE/CSE
+  -> finite recipe/fusion selection
+  -> fixed ABI-role placement
+  -> copy + typed relocation
+  -> narrow verified peephole + publication
+```
+
+Prioritize known-fact specialization and dispatch/guard-removing fusion. They can
+remove generic lookup, decoding and materialization; full SSA or global allocation
+would add much more machinery without matching Quench's finite-template problem.
+Strength reduction means choosing an existing target recipe/addressing form, not
+inventing a general instruction selector. Local value numbering stops at calls,
+coercions, allocation and every fact-specific invalidation edge. Constant folding
+and DCE apply only to operations already proven pure and non-throwing.
+
+Post-layout peepholes use a small target-specific table keyed by decoded admitted
+instructions and relocation roles. Identity moves and branches to the following
+instruction are initial cases. Rewriting is transactional: update all dependent
+offsets and revalidate, or publish the original verified region. Unknown bytes,
+data boundaries or relocation kinds never enter the optimizer.
+
 Rust macros generate contracts, matcher metadata and test schemas. Rust source
 is compiled with rustc/LLVM offline, then extracted with validated relocations.
 LLVM optimizes within an offline template; copying adjacent templates does not
