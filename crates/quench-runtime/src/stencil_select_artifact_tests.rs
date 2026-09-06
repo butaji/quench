@@ -268,8 +268,14 @@ fn typed_selection_carries_the_verified_view_and_rejects_wrong_abi() {
 
 #[cfg(quench_generated_stencil_artifacts)]
 #[test]
-fn duplicate_generated_artifacts_fail_closed() {
-    let first = *BUILD_STENCIL_ARTIFACTS.first().expect("generated artifact");
-    let duplicate = [first, first];
-    assert!(unique_artifact(&duplicate, first.key, first.name).is_err());
+fn generated_artifact_index_is_total_unique_and_identity_preserving() {
+    let mut seen = std::collections::HashSet::new();
+    for artifact in BUILD_STENCIL_ARTIFACTS {
+        assert!(seen.insert(artifact.key), "duplicate generated key");
+        assert!(std::ptr::eq(
+            build_stencil_artifact_lookup(artifact.key).expect("generated artifact"),
+            artifact
+        ));
+    }
+    assert!(build_stencil_artifact_lookup(RegionKey(u64::MAX)).is_none());
 }

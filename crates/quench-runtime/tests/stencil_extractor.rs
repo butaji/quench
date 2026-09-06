@@ -3,8 +3,8 @@ mod build_stencil_contract;
 
 mod harness {
     use super::build_stencil_contract::{
-        rust_assembly_recipe, rust_leaf_recipe, DeclAbi, RecipeComposition, RegionDeclaration,
-        RustAssemblyRecipe, RustLeafRecipe,
+        region_key_name, rust_assembly_recipe, rust_leaf_recipe, DeclAbi, RecipeComposition,
+        RegionDeclaration, RustAssemblyRecipe, RustLeafRecipe,
     };
 
     fn abi_expr(_: &RegionDeclaration) -> String {

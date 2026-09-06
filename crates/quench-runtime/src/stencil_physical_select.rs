@@ -15,32 +15,13 @@ pub fn select_physical_for_abi(key: RegionKey, abi: RegionAbi) -> Option<Physica
 
 pub fn select_physical(key: RegionKey) -> Option<PhysicalStencilView> {
     let record = canonical_region_lookup(key)?;
-    let artifact = match unique_artifact(BUILD_STENCIL_ARTIFACTS, key, record.name) {
-        Ok(Some(artifact)) => artifact,
-        Ok(None) => return Some(legacy_physical_view(key, record)),
-        Err(()) => return None,
+    let Some(artifact) = build_stencil_artifact_lookup(key) else {
+        return Some(legacy_physical_view(key, record));
     };
     // A matching identity reserves the generated representation.  If any
     // ABI, target, layout, or effect contract differs, fail closed instead of
     // silently substituting legacy bytes with generated metadata.
     generated_physical_view(key, record, artifact)
-}
-
-fn unique_artifact<'a>(
-    artifacts: &'a [BuildStencilArtifact],
-    key: RegionKey,
-    name: &str,
-) -> Result<Option<&'a BuildStencilArtifact>, ()> {
-    let mut matches = artifacts
-        .iter()
-        .filter(|artifact| artifact.key == key && artifact.name == name);
-    let Some(first) = matches.next() else {
-        return Ok(None);
-    };
-    if matches.next().is_some() {
-        return Err(());
-    }
-    Ok(Some(first))
 }
 
 fn legacy_physical_view(key: RegionKey, record: &'static RegionRecord) -> PhysicalStencilView {
