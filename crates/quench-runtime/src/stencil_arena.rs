@@ -197,6 +197,34 @@ pub struct SharedStencilSlab {
 struct LeaseState {
     active: Cell<usize>,
     peak: Cell<usize>,
+    owners: RefCell<HashMap<u64, usize>>,
+}
+
+impl LeaseState {
+    fn acquire(&self, owner: u64) {
+        let active = self.active.get().saturating_add(1);
+        self.active.set(active);
+        self.peak.set(self.peak.get().max(active));
+        let mut owners = self.owners.borrow_mut();
+        let count = owners.entry(owner).or_default();
+        *count = count.saturating_add(1);
+    }
+
+    fn release(&self, owner: u64) {
+        self.active.set(self.active.get().saturating_sub(1));
+        let mut owners = self.owners.borrow_mut();
+        let Some(count) = owners.get_mut(&owner) else {
+            return;
+        };
+        *count = count.saturating_sub(1);
+        if *count == 0 {
+            owners.remove(&owner);
+        }
+    }
+
+    fn owns_active_lease(&self, owner: u64) -> bool {
+        self.owners.borrow().get(&owner).copied().unwrap_or(0) != 0
+    }
 }
 
 /// A non-owning typed entry token paired with the slab generation that
@@ -254,8 +282,7 @@ impl AllocationLease {
 
 impl Drop for AllocationLease {
     fn drop(&mut self) {
-        let active = self.state.active.get();
-        self.state.active.set(active.saturating_sub(1));
+        self.state.release(self.owner_id);
         let _ = &self.owner;
     }
 }
@@ -314,6 +341,7 @@ impl SharedStencilSlab {
             lease_state: std::rc::Rc::new(LeaseState {
                 active: Cell::new(0),
                 peak: Cell::new(0),
+                owners: RefCell::new(HashMap::new()),
             }),
         })
     }
@@ -354,26 +382,16 @@ impl SharedStencilSlab {
         self.lease_state.peak.get()
     }
 
-    /// Drop published slabs only at an idle ownership boundary.  Callers keep
-    /// cache entries, but each entry carries the slab generation, so a later
-    /// lookup cannot treat an evicted address as callable.  Shared plans do
-    /// not retain typed function pointers; they resolve them while borrowing
-    /// the live owner immediately before execution.
+    /// Drop slabs that have no allocation-retaining lease. Each cache entry
+    /// carries its slab generation, so an evicted address cannot become
+    /// callable again if the OS later reuses that address.
     pub fn evict_idle(&mut self, retain: usize) -> usize {
-        if self.active_dispatches.get() != 0 || self.active_leases() != 0 {
+        if self.active_dispatches.get() != 0 {
             return 0;
         }
-        let remove = self.slabs.len().saturating_sub(retain);
-        if remove == 0 {
-            return 0;
-        }
-        let released = self.slabs[..remove]
-            .iter()
-            .map(StencilArena::capacity)
-            .sum();
-        self.slabs.drain(0..remove);
+        let (owners, released) = self.remove_idle_owners(retain);
         release_global_bytes(released);
-        remove
+        owners.len()
     }
 
     /// Evict idle slabs and prune their derived cache rows in one ownership
@@ -385,42 +403,52 @@ impl SharedStencilSlab {
         cache: &mut RenderedRegionCache,
         retain: usize,
     ) -> usize {
-        if self.active_dispatches.get() != 0 || self.active_leases() != 0 {
+        if self.active_dispatches.get() != 0 {
             return 0;
         }
-        let remove = self.slabs.len().saturating_sub(retain);
-        if remove == 0 {
-            return 0;
-        }
-        let released = self.slabs[..remove]
-            .iter()
-            .map(StencilArena::capacity)
-            .sum();
-        let owners = self.slabs[..remove]
-            .iter()
-            .map(StencilArena::id)
-            .collect::<Vec<_>>();
-        self.slabs.drain(0..remove);
+        let (owners, released) = self.remove_idle_owners(retain);
         release_global_bytes(released);
-        for owner in owners {
-            cache.remove_owner(owner);
+        for owner in &owners {
+            cache.remove_owner(*owner);
         }
-        remove
+        owners.len()
+    }
+
+    fn remove_idle_owners(&mut self, retain: usize) -> (Vec<u64>, usize) {
+        let remove = self.slabs.len().saturating_sub(retain);
+        let mut owners = Vec::with_capacity(remove);
+        let state = &self.lease_state;
+        self.slabs.retain(|slab| {
+            let evict = owners.len() < remove && !state.owns_active_lease(slab.id());
+            if evict {
+                owners.push(slab.id());
+            }
+            !evict
+        });
+        let released = owners.len().saturating_mul(self.slab_capacity);
+        (owners, released)
     }
 
     fn reclaim_for(&mut self, additional: usize, cache: &mut RenderedRegionCache) -> bool {
         if self.total_capacity().saturating_add(additional) <= MAX_SHARED_SLAB_BYTES {
             return true;
         }
-        if self.active_dispatches.get() != 0 || self.active_leases() != 0 {
+        if self.active_dispatches.get() != 0 {
             return false;
         }
         while self.total_capacity().saturating_add(additional) > MAX_SHARED_SLAB_BYTES
             && self.slabs.len() > 1
         {
-            let owner = self.slabs[0].id();
-            let released = self.slabs[0].capacity();
-            self.slabs.remove(0);
+            let Some(index) = self
+                .slabs
+                .iter()
+                .position(|slab| !self.lease_state.owns_active_lease(slab.id()))
+            else {
+                return false;
+            };
+            let owner = self.slabs[index].id();
+            let released = self.slabs[index].capacity();
+            self.slabs.remove(index);
             release_global_bytes(released);
             cache.remove_owner(owner);
         }
@@ -553,9 +581,7 @@ impl SharedStencilSlab {
             pool.validate_address(address, owner_id, abi)?;
             std::rc::Rc::clone(&pool.lease_state)
         };
-        let active = state.active.get().saturating_add(1);
-        state.active.set(active);
-        state.peak.set(state.peak.get().max(active));
+        state.acquire(owner_id);
         Ok(AllocationLease {
             owner: std::rc::Rc::clone(owner),
             state,
@@ -2459,6 +2485,48 @@ mod tests {
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
+    fn active_lease_allows_independent_idle_slab_reclamation() {
+        let shared = std::rc::Rc::new(std::cell::RefCell::new(
+            SharedStencilSlab::new(4096).expect("slab"),
+        ));
+        let key = crate::stencil_select::numeric_region_key(Opcode::Add).unwrap();
+        let record = crate::stencil_select::select_region(key).unwrap();
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let values = PatchValues::from_site(&site);
+        let mut cache = RenderedRegionCache::new();
+        let address = shared
+            .borrow_mut()
+            .render_or_get(&mut cache, key, &record.stencil, &values)
+            .unwrap();
+        shared.borrow_mut().make_executable(address).unwrap();
+        shared
+            .borrow_mut()
+            .render_or_get(
+                &mut cache,
+                crate::stencil_fact::RegionKey(0xbee),
+                &Stencil {
+                    bytes: &[0],
+                    holes: &[],
+                },
+                &values,
+            )
+            .unwrap();
+        assert_eq!(shared.borrow().slab_count(), 2);
+        let token = shared.borrow().owned_f64_entry(address).unwrap();
+        let lease = SharedStencilSlab::acquire_owned(&shared, token).unwrap();
+        let result = lease.invoke(|entry| {
+            assert_eq!(shared.borrow_mut().evict_idle_with_cache(&mut cache, 0), 1);
+            assert_eq!(shared.borrow().capacity(), 4096);
+            entry(4.0, 5.0)
+        });
+        assert_eq!(result, Ok(9.0));
+        assert_eq!(shared.borrow_mut().evict_idle_with_cache(&mut cache, 0), 1);
+        assert_eq!(shared.borrow().capacity(), 0);
+        assert_eq!(cache.len(), 0);
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
     fn raw_allocation_lease_protects_region_dispatch() {
         let shared = std::rc::Rc::new(std::cell::RefCell::new(
             SharedStencilSlab::new(4096).expect("slab"),
@@ -2496,7 +2564,7 @@ mod tests {
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
-    fn active_lease_rejects_reclaim_that_would_drop_live_code() {
+    fn active_lease_preserves_own_code_while_reclaiming_idle_slabs() {
         let shared = std::rc::Rc::new(std::cell::RefCell::new(
             SharedStencilSlab::new(MAX_ARENA_BYTES).expect("slab"),
         ));
@@ -2542,8 +2610,9 @@ mod tests {
             },
             &values,
         );
-        assert_eq!(result, Err(ArenaError::Exhausted));
-        drop(lease);
+        assert!(result.is_ok());
+        assert_eq!(shared.borrow().capacity(), MAX_SHARED_SLAB_BYTES);
+        assert_eq!(lease.invoke(|entry| entry(8.0, 5.0)), Ok(13.0));
         assert_eq!(shared.borrow().active_leases(), 0);
     }
 
@@ -2660,6 +2729,7 @@ mod tests {
         let state = std::rc::Rc::new(LeaseState {
             active: Cell::new(1),
             peak: Cell::new(1),
+            owners: RefCell::new(HashMap::from([(owner.wrapping_add(1), 1)])),
         });
         let lease = AllocationLease {
             owner: std::rc::Rc::clone(&shared),
@@ -3506,37 +3576,39 @@ mod tests {
         extern "C" fn helper(context: *mut std::ffi::c_void) -> u64 {
             let state = unsafe { &*(context as *const Reentry<'_>) };
             state.effects.set(state.effects.get().saturating_add(1));
+            let Ok(nested) = SharedStencilSlab::acquire_owned(state.pool, state.nested) else {
+                return 1;
+            };
             {
                 let mut pool = state.pool.borrow_mut();
-                let retired = pool.evict_idle(1);
-                assert_eq!(retired, 0, "outer lease must retain published code");
+                if pool.active_leases() != 2 || pool.evict_idle(0) != 0 {
+                    return 2;
+                }
+                if render_fresh_during_reentry(&mut pool).is_err() {
+                    return 3;
+                }
             }
-            let nested = SharedStencilSlab::acquire_owned(state.pool, state.nested)
-                .expect("nested typed lease");
-            let nested_result = nested
-                .invoke(|entry| entry(2.0, 3.0))
-                .expect("nested native entry");
-            assert_eq!(nested_result, 5.0);
-            let mut pool = state.pool.borrow_mut();
-            assert_eq!(
-                pool.active_leases(),
-                1,
-                "outer lease survives nested return"
-            );
+            if nested.invoke(|entry| entry(2.0, 3.0)) != Ok(5.0) {
+                return 4;
+            }
+            if state.pool.borrow().active_leases() != 1 {
+                return 5;
+            }
+            0xB0B0_7E5u64
+        }
+
+        fn render_fresh_during_reentry(pool: &mut SharedStencilSlab) -> Result<usize, ArenaError> {
             let fresh = Stencil {
                 bytes: &[0, 0, 0, 0],
                 holes: &[],
             };
-            let mut cache = RenderedRegionCache::new();
-            assert!(pool
-                .render_or_get(
-                    &mut cache,
-                    crate::stencil_fact::RegionKey(0xbee),
-                    &fresh,
-                    &PatchValues::from_site(&QuickeningSite::<2>::new(Opcode::Add)),
-                )
-                .is_ok());
-            0xB0B0_7E5u64
+            let site = QuickeningSite::<2>::new(Opcode::Add);
+            pool.render_or_get(
+                &mut RenderedRegionCache::new(),
+                crate::stencil_fact::RegionKey(0xbee),
+                &fresh,
+                &PatchValues::from_site(&site),
+            )
         }
 
         let shared = std::rc::Rc::new(std::cell::RefCell::new(
