@@ -4405,8 +4405,7 @@ impl std::fmt::Debug for NativePropertyPlan {
 /// every miss, throw, call, and control transition remains authoritative in
 /// `run_baseline_instruction`.
 pub(crate) struct NativeDispatchPlan {
-    arena: Option<crate::stencil_arena::StencilArena>,
-    shared_arena: Option<Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>>,
+    storage: PhysicalStorage,
     physical: PhysicalState,
     site: crate::quickening::QuickeningSite<4>,
     opcode: crate::ir::Opcode,
@@ -4449,7 +4448,7 @@ impl NativeDispatchPlan {
         shared_arena: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
     ) -> Option<Self> {
         let mut plan = Self::new(instruction, policy)?;
-        plan.shared_arena = Some(shared_arena);
+        plan.storage = PhysicalStorage::Shared(shared_arena);
         Some(plan)
     }
 
@@ -4464,8 +4463,7 @@ impl NativeDispatchPlan {
         crate::stencil_select::select_region(key)
             .filter(|record| record.executable && validate_physical_template(record).is_ok())?;
         Some(Self {
-            arena: None,
-            shared_arena: None,
+            storage: PhysicalStorage::Local(None),
             physical: PhysicalState::new(),
             site: crate::quickening::QuickeningSite::new(instruction.opcode),
             opcode: instruction.opcode,
@@ -4491,7 +4489,7 @@ impl NativeDispatchPlan {
                 "native baseline entry unavailable".into(),
             ));
         }
-        if let Some(shared) = self.shared_arena.clone() {
+        if let Some(shared) = self.storage.shared() {
             let rendered = (|| {
                 let mut slab = shared.borrow_mut();
                 let view = crate::stencil_select::select_physical_for_abi(
@@ -4545,20 +4543,9 @@ impl NativeDispatchPlan {
             );
             return result;
         }
-        if self.arena.is_none() {
-            match crate::stencil_arena::StencilArena::new(4096) {
-                Ok(arena) => self.arena = Some(arena),
-                Err(error) => {
-                    self.physical.lifecycle.reset();
-                    return Err(NativeDispatchError::Physical(format!(
-                        "native baseline mapping failed: {error:?}"
-                    )));
-                }
-            }
-        }
         let result = (|| {
-            let arena = self.arena.as_mut().ok_or_else(|| {
-                NativeDispatchError::Physical("native baseline arena missing".into())
+            let arena = self.storage.local_mut().map_err(|error| {
+                NativeDispatchError::Physical(format!("native baseline mapping failed: {error:?}"))
             })?;
             let view = crate::stencil_select::select_physical_for_abi(
                 key,
@@ -4601,7 +4588,7 @@ impl NativeDispatchPlan {
             // The trampoline carries no persistent semantic state. If mapping,
             // protection, or the bridge fails, discard the physical view and
             // make the caller use the complete ordinary path next time.
-            self.arena.take();
+            self.storage.reset_local();
         }
         self.physical.apply_dispatch_outcome(&result, None);
         result
@@ -4615,12 +4602,7 @@ impl std::fmt::Debug for NativeDispatchPlan {
             .field("opcode", &self.opcode)
             .field(
                 "used_bytes",
-                &self
-                    .shared_arena
-                    .as_ref()
-                    .map(|arena| arena.borrow().used())
-                    .or_else(|| self.arena.as_ref().map(|arena| arena.used()))
-                    .unwrap_or(0),
+                &self.storage.used(),
             )
             .field("cache_len", &self.physical.cache.len())
             .finish()
