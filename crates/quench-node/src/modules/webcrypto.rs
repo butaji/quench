@@ -15,7 +15,7 @@ use base64::Engine;
 use chacha20poly1305::ChaCha20Poly1305;
 use cipher::{generic_array::GenericArray, BlockDecrypt, BlockEncrypt};
 use hmac::{Hmac, Mac};
-use openssl::{pkey::PKey, rsa::Rsa};
+use openssl::{bn::BigNum, pkey::PKey, rsa::Rsa};
 use p256::elliptic_curve::sec1::ToEncodedPoint as P256ToEncodedPoint;
 use p256::{
     ecdh::diffie_hellman as p256_diffie_hellman, PublicKey as P256PublicKey,
@@ -2459,6 +2459,68 @@ pub fn generate_key(
             | "X25519"
             | "X448"
     ) {
+        if matches!(name.as_str(), "RSA-OAEP" | "RSA-PSS" | "RSASSA-PKCS1-V1_5") {
+            if algorithm_hash(&algorithm).is_none() {
+                return Ok(settled(Err(not_supported("Unrecognized hash algorithm"))));
+            }
+            let modulus = execute::get_property(&algorithm, "modulusLength");
+            let modulus = match modulus {
+                Value::Undefined => {
+                    return Ok(settled(Err(error(
+                        Builtin::TypeError,
+                        Some("ERR_MISSING_OPTION"),
+                        "The \"modulusLength\" property is required",
+                    ))));
+                }
+                Value::Number(value)
+                    if value.is_finite() && value.fract() == 0.0 && value >= 0.0 =>
+                {
+                    value as usize
+                }
+                _ => {
+                    return Ok(settled(Err(error(
+                        Builtin::TypeError,
+                        Some("ERR_INVALID_ARG_TYPE"),
+                        "The \"modulusLength\" property must be a number",
+                    ))));
+                }
+            };
+            if modulus < 512 {
+                return Ok(settled(Err(operation_error(
+                    "algorithm.modulusLength must be at least 512",
+                ))));
+            }
+            let exponent = execute::get_property(&algorithm, "publicExponent");
+            let Some(exponent) = bytes(&exponent) else {
+                return Ok(settled(Err(error(
+                    Builtin::TypeError,
+                    Some("ERR_INVALID_ARG_TYPE"),
+                    "algorithm.publicExponent must be an integer array",
+                ))));
+            };
+            if exponent.is_empty() {
+                return Ok(settled(Err(operation_error(
+                    "algorithm.publicExponent must be at least 3",
+                ))));
+            }
+        }
+        if matches!(name.as_str(), "ECDH" | "ECDSA") {
+            let curve = execute::get_property(&algorithm, "namedCurve");
+            let curve = match curve {
+                Value::String(value) => value.to_ascii_uppercase(),
+                Value::Undefined => {
+                    return Ok(settled(Err(error(
+                        Builtin::TypeError,
+                        Some("ERR_MISSING_OPTION"),
+                        "The \"namedCurve\" property is required",
+                    ))));
+                }
+                _ => return Ok(settled(Err(not_supported("Unrecognized named curve")))),
+            };
+            if !matches!(curve.as_str(), "P-256" | "P-384" | "P-521") {
+                return Ok(settled(Err(not_supported("Unrecognized named curve"))));
+            }
+        }
         let prototype = key_prototype();
         let requested_usages = args
             .get(2)
@@ -2488,7 +2550,18 @@ pub fn generate_key(
                 (Some(private.to_vec()), Some(x448(&private, &base).to_vec()))
             }
             "RSA-OAEP" | "RSA-PSS" | "RSASSA-PKCS1-V1_5" => {
-                let rsa = Rsa::generate(2048).ok();
+                let modulus = match execute::get_property(&algorithm, "modulusLength") {
+                    Value::Number(value) if value.is_finite() => value as u32,
+                    _ => 2048,
+                };
+                let exponent = bytes(&execute::get_property(&algorithm, "publicExponent"))
+                    .map(|bytes| bytes.into_iter().fold(0_u32, |value, byte| {
+                        value.checked_shl(8).unwrap_or(0) | u32::from(byte)
+                    }))
+                    .unwrap_or(65_537);
+                let rsa = BigNum::from_u32(exponent)
+                    .ok()
+                    .and_then(|exponent| Rsa::generate_with_e(modulus, &exponent).ok());
                 let Some(rsa) = rsa else {
                     return Ok(settled(Err(error(
                         Builtin::Error,
@@ -2619,6 +2692,11 @@ pub fn generate_key(
             Ok(usages) => usages,
             Err(error) => return Ok(settled(Err(error))),
         };
+        if !matches!(execute::get_property(&algorithm, "hash"), Value::Undefined)
+            && algorithm_hash(&algorithm).is_none()
+        {
+            return Ok(settled(Err(not_supported("Unrecognized hash algorithm"))));
+        }
         let bits = match execute::get_property(&algorithm, "length") {
             Value::Number(value) if value.is_finite() && value > 0.0 => value as usize,
             Value::Undefined => {
