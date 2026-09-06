@@ -6,6 +6,7 @@ use std::cell::RefCell;
 use std::io::{Cursor, Read, Write};
 use std::rc::Rc;
 
+use flate2::{Compress, Compression, Decompress, FlushCompress, FlushDecompress};
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
 use quench_runtime::value::Value;
@@ -216,6 +217,7 @@ fn stream_prototype() -> Value {
             "destroy",
             "_processChunk",
             "read",
+            "setEncoding",
         ]
         .into_iter()
         .map(|name| (name.to_string(), stream_method_value(name)))
@@ -255,10 +257,8 @@ fn stream_mode(value: &Value) -> Result<StreamMode, VmError> {
 }
 
 fn info_requested(options: &Value) -> bool {
-    matches!(
-        options,
-        Value::Object(_) | Value::ObjectAlias(_)
-    ) && matches!(execute::get_property(options, "info"), Value::Boolean(true))
+    matches!(options, Value::Object(_) | Value::ObjectAlias(_))
+        && matches!(execute::get_property(options, "info"), Value::Boolean(true))
 }
 
 fn brotli_error(name: quench_runtime::ops::Builtin, code: &str, message: &str) -> VmError {
@@ -451,7 +451,10 @@ fn validate_options(options: &Value, mode: StreamMode) -> Result<(), VmError> {
             "The options argument must be an object",
         ));
     }
-    if matches!(mode, StreamMode::BrotliCompress | StreamMode::BrotliDecompress) {
+    if matches!(
+        mode,
+        StreamMode::BrotliCompress | StreamMode::BrotliDecompress
+    ) {
         validate_brotli_params(options)?;
     }
     let window_min = if matches!(mode, StreamMode::Gzip | StreamMode::Gunzip) {
@@ -470,7 +473,10 @@ fn validate_options(options: &Value, mode: StreamMode) -> Result<(), VmError> {
         (
             "flush",
             0.0,
-            if matches!(mode, StreamMode::BrotliCompress | StreamMode::BrotliDecompress) {
+            if matches!(
+                mode,
+                StreamMode::BrotliCompress | StreamMode::BrotliDecompress
+            ) {
                 3.0
             } else {
                 5.0
@@ -479,7 +485,10 @@ fn validate_options(options: &Value, mode: StreamMode) -> Result<(), VmError> {
         (
             "finishFlush",
             0.0,
-            if matches!(mode, StreamMode::BrotliCompress | StreamMode::BrotliDecompress) {
+            if matches!(
+                mode,
+                StreamMode::BrotliCompress | StreamMode::BrotliDecompress
+            ) {
                 3.0
             } else {
                 5.0
@@ -536,10 +545,24 @@ fn validate_options(options: &Value, mode: StreamMode) -> Result<(), VmError> {
         }
     }
     let dictionary = execute::get_property(options, "dictionary");
-    if !matches!(
+    let dictionary_is_buffer_source = matches!(
         dictionary,
-        Value::Undefined | Value::Uint8Array(_) | Value::ArrayBuffer(_) | Value::DataView(_)
-    ) {
+        Value::Undefined
+            | Value::Uint8Array(_)
+            | Value::Int8Array(_)
+            | Value::Uint8ClampedArray(_)
+            | Value::Uint16Array(_)
+            | Value::Int16Array(_)
+            | Value::Uint32Array(_)
+            | Value::Int32Array(_)
+            | Value::Float32Array(_)
+            | Value::Float64Array(_)
+            | Value::BigInt64Array(_)
+            | Value::BigUint64Array(_)
+            | Value::ArrayBuffer(_)
+            | Value::DataView(_)
+    );
+    if !dictionary_is_buffer_source {
         return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
             "The \"options.dictionary\" property must be an instance of Buffer, TypedArray, DataView, or ArrayBuffer.{}",
             crate::modules::buffer_enc::invalid_arg_received(&dictionary)
@@ -632,19 +655,72 @@ fn transform_with_options(
     input: &[u8],
     options: &Value,
 ) -> Result<Vec<u8>, VmError> {
+    let dictionary = bytes_of(&execute::get_property(options, "dictionary")).unwrap_or_default();
+    if matches!(mode, StreamMode::Inflate | StreamMode::InflateRaw)
+        || (!dictionary.is_empty() && matches!(mode, StreamMode::Deflate | StreamMode::DeflateRaw))
+    {
+        return flate_transform_with_dictionary(mode, input, options, &dictionary)
+            .map_err(|error| zlib_error(&error));
+    }
     if matches!(mode, StreamMode::BrotliCompress) {
         return brotli_compress_with_options(input, options)
-            .map_err(|error| zlib_error(&error.to_string()));
+            .map_err(|error| coded_zlib_error(&error.to_string()));
     }
     if matches!(mode, StreamMode::BrotliDecompress) {
         return brotli_decompress_with_options(input, options)
-            .map_err(|error| zlib_error(&error.to_string()));
+            .map_err(|error| coded_zlib_error(&error.to_string()));
     }
     if matches!(mode, StreamMode::ZstdCompress) {
         return zstd_compress_with_options(input, options)
             .map_err(|error| zlib_error(&error.to_string()));
     }
     transform(mode, input)
+}
+
+fn flate_level(options: &Value) -> Compression {
+    match execute::get_property(options, "level") {
+        Value::Number(level) if level.is_finite() => Compression::new(level as u32),
+        _ => Compression::default(),
+    }
+}
+
+fn flate_transform_with_dictionary(
+    mode: StreamMode,
+    input: &[u8],
+    options: &Value,
+    dictionary: &[u8],
+) -> Result<Vec<u8>, String> {
+    let raw = matches!(mode, StreamMode::DeflateRaw | StreamMode::InflateRaw);
+    if matches!(mode, StreamMode::Deflate | StreamMode::DeflateRaw) {
+        let mut compressor = Compress::new(flate_level(options), !raw);
+        compressor
+            .set_dictionary(dictionary)
+            .map_err(|error| error.to_string())?;
+        let mut output = Vec::with_capacity(input.len().saturating_add(64));
+        compressor
+            .compress_vec(input, &mut output, FlushCompress::Finish)
+            .map_err(|error| error.to_string())?;
+        return Ok(output);
+    }
+    let mut decompressor = Decompress::new(!raw);
+    let mut output = Vec::with_capacity(input.len().saturating_mul(2));
+    let first = decompressor.decompress_vec(input, &mut output, FlushDecompress::Finish);
+    if let Err(error) = first {
+        if error.needs_dictionary().is_some() {
+            if dictionary.is_empty() {
+                return Err("Missing dictionary".into());
+            }
+            decompressor
+                .set_dictionary(dictionary)
+                .map_err(|_| "Bad dictionary".to_string())?;
+            decompressor
+                .decompress_vec(input, &mut output, FlushDecompress::Finish)
+                .map_err(|retry_error| retry_error.to_string())?;
+        } else {
+            return Err(error.to_string());
+        }
+    }
+    Ok(output)
 }
 
 fn zlib_error(message: &str) -> VmError {
@@ -658,6 +734,18 @@ fn zlib_error(message: &str) -> VmError {
         return VmError::Thrown(error);
     }
     execute::type_error(message)
+}
+
+fn coded_zlib_error(message: &str) -> VmError {
+    let value = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String(message.into())],
+    );
+    VmError::Thrown(execute::set_property(
+        value,
+        "code",
+        Value::String("ERR_ZLIB_ERROR".into()),
+    ))
 }
 
 fn stream_write(stream: &Value, args: &[Value]) -> Result<Value, VmError> {
@@ -798,16 +886,13 @@ fn stream_on(stream: &Value, args: &[Value]) -> Result<Value, VmError> {
 
 fn stream_flush(stream: &Value, args: &[Value]) -> Result<Value, VmError> {
     let mode = stream_mode(&execute::get_property(stream, "\0zlib:mode"))?;
+    let requested_kind = flush_kind(mode, args)?;
     if matches!(mode, StreamMode::Deflate)
         && matches!(execute::get_property(stream, "_level"), Value::Number(level) if level == 0.0)
     {
-        let flush_kind = args.iter().find_map(|value| match value {
-            Value::Number(number) => Some(*number),
-            _ => None,
-        });
         let current = execute::get_property(stream, "\0zlib:output");
         let empty = matches!(&current, Value::Uint8Array(view) if view.length == 0);
-        let output = if flush_kind == Some(0.0) && empty {
+        let output = if requested_kind == Some(0.0) && empty {
             vec![0x78, 0x01]
         } else if empty {
             stored_sync_block(&input_bytes(stream))?
@@ -820,7 +905,7 @@ fn stream_flush(stream: &Value, args: &[Value]) -> Result<Value, VmError> {
                 "\0zlib:output",
                 crate::modules::buffer_proto::make_buffer(&output),
             );
-            if flush_kind != Some(0.0) {
+            if requested_kind != Some(0.0) {
                 execute::set_property_in_place(
                     stream,
                     "\0zlib:input",
@@ -834,6 +919,36 @@ fn stream_flush(stream: &Value, args: &[Value]) -> Result<Value, VmError> {
         execute::call(callback, stream, &[])?;
     }
     Ok(stream.clone())
+}
+
+fn flush_kind(mode: StreamMode, args: &[Value]) -> Result<Option<f64>, VmError> {
+    let Some(value) = args.first() else {
+        return Ok(None);
+    };
+    if matches!(value, Value::Undefined) || quench_runtime::is_callable(value) {
+        return Ok(None);
+    }
+    let Value::Number(number) = value else {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"kind\" argument must be of type number.".into(),
+        ));
+    };
+    if number.is_nan() {
+        return Ok(None);
+    }
+    let maximum = match mode {
+        StreamMode::BrotliCompress | StreamMode::BrotliDecompress => 3.0,
+        StreamMode::ZstdCompress | StreamMode::ZstdDecompress => 2.0,
+        _ => 5.0,
+    };
+    if !number.is_finite() || number.fract() != 0.0 || *number < 0.0 || *number > maximum {
+        return Err(crate::modules::buffer_enc::out_of_range(
+            "kind",
+            &format!(">= 0 and <= {maximum}"),
+            &execute::number_to_js_string(*number),
+        ));
+    }
+    Ok(Some(*number))
 }
 
 fn stream_destroy(stream: &Value, args: &[Value]) -> Result<Value, VmError> {
@@ -903,11 +1018,13 @@ fn stream_process_chunk(stream: &Value, args: &[Value]) -> Result<Value, VmError
         }
     }
     let mode = stream_mode(&execute::get_property(stream, "\0zlib:mode"))?;
-    Ok(crate::modules::buffer_proto::make_buffer(&transform_with_options(
-        mode,
-        &bytes_of(args.first().unwrap_or(&Value::Undefined))?,
-        &execute::get_property(stream, "\0zlib:options"),
-    )?))
+    Ok(crate::modules::buffer_proto::make_buffer(
+        &transform_with_options(
+            mode,
+            &bytes_of(args.first().unwrap_or(&Value::Undefined))?,
+            &execute::get_property(stream, "\0zlib:options"),
+        )?,
+    ))
 }
 
 fn stream_read(stream: &Value) -> Value {
@@ -922,6 +1039,18 @@ fn stream_read(stream: &Value) -> Value {
         );
         output
     }
+}
+
+fn stream_set_encoding(stream: &Value, args: &[Value]) -> Result<Value, VmError> {
+    let encoding = execute::to_js_string(args.first().unwrap_or(&Value::Undefined))
+        .map_err(|_| execute::type_error("Unknown encoding: undefined"))?;
+    if !encoding.eq_ignore_ascii_case("utf8") && !encoding.eq_ignore_ascii_case("utf-8") {
+        return Err(execute::type_error(&format!(
+            "Unknown encoding: {encoding}"
+        )));
+    }
+    execute::set_property_in_place(stream, "\0zlib:encoding", Value::String("utf8".into()));
+    Ok(stream.clone())
 }
 
 fn stream_method(
@@ -955,6 +1084,7 @@ fn stream_method(
         "destroy" => stream_destroy(stream, args),
         "flush" | "close" | "reset" | "resume" => stream_flush(stream, args),
         "_processChunk" => stream_process_chunk(stream, args),
+        "setEncoding" => stream_set_encoding(stream, args),
         "pipe" => {
             if let Some(destination) = args.first() {
                 execute::set_property_in_place(stream, "\0zlib:pipe", destination.clone());
@@ -1029,12 +1159,10 @@ pub fn async_handler(
         )
     };
     if !quench_runtime::is_callable(callback) {
-        return Err(crate::modules::buffer_enc::invalid_arg_type(
-            format!(
-                "The \"callback\" argument must be of type function.{}",
-                crate::modules::util::invalid_arg_received(callback)
-            ),
-        ));
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"callback\" argument must be of type function.{}",
+            crate::modules::util::invalid_arg_received(callback)
+        )));
     }
     let bytes = bytes_of(input)?;
     let output = transform_with_options(mode, &bytes, options)
@@ -1148,10 +1276,7 @@ fn brotli_compress(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
     brotli_compress_with_options(data, &Value::Undefined)
 }
 
-fn brotli_compress_with_options(
-    data: &[u8],
-    options: &Value,
-) -> Result<Vec<u8>, std::io::Error> {
+fn brotli_compress_with_options(data: &[u8], options: &Value) -> Result<Vec<u8>, std::io::Error> {
     let params = brotli_params(options);
     let dictionary = bytes_of(&execute::get_property(options, "dictionary")).unwrap_or_default();
     if dictionary.is_empty() {
@@ -1168,12 +1293,11 @@ fn brotli_compress_with_options(
     let mut writer = brotli::IoWriterWrapper(&mut output);
     let mut input_buffer = [0_u8; 4096];
     let mut output_buffer = [0_u8; 4096];
-    let mut callback = |_: &mut brotli::enc::interface::PredictionModeContextMap<
-        brotli::InputReferenceMut,
-    >,
-                        _: &mut [brotli::enc::interface::StaticCommand],
-                        _: brotli::InputPair,
-                        _: &mut brotli::enc::StandardAlloc| {};
+    let mut callback =
+        |_: &mut brotli::enc::interface::PredictionModeContextMap<brotli::InputReferenceMut>,
+         _: &mut [brotli::enc::interface::StaticCommand],
+         _: brotli::InputPair,
+         _: &mut brotli::enc::StandardAlloc| {};
     brotli::enc::BrotliCompressCustomIoCustomDict(
         &mut reader,
         &mut writer,
@@ -1192,10 +1316,7 @@ fn brotli_decompress(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
     brotli_decompress_with_options(data, &Value::Undefined)
 }
 
-fn brotli_decompress_with_options(
-    data: &[u8],
-    options: &Value,
-) -> Result<Vec<u8>, std::io::Error> {
+fn brotli_decompress_with_options(data: &[u8], options: &Value) -> Result<Vec<u8>, std::io::Error> {
     let dictionary = bytes_of(&execute::get_property(options, "dictionary")).unwrap_or_default();
     let mut decoder = if dictionary.is_empty() {
         brotli::Decompressor::new(Cursor::new(data), 4096)
@@ -1211,10 +1332,7 @@ fn zstd_compress(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
     zstd::stream::encode_all(data, 3)
 }
 
-fn zstd_compress_with_options(
-    data: &[u8],
-    options: &Value,
-) -> Result<Vec<u8>, std::io::Error> {
+fn zstd_compress_with_options(data: &[u8], options: &Value) -> Result<Vec<u8>, std::io::Error> {
     let params = execute::get_property(options, "params");
     let level = match execute::get_property(&params, "100") {
         Value::Number(value) if value.is_finite() => value as i32,
@@ -1440,8 +1558,14 @@ pub fn build() -> Value {
     let zstd_compress = constructor(StreamMode::ZstdCompress, &prototype, "ZstdCompress");
     let zstd_decompress = constructor(StreamMode::ZstdDecompress, &prototype, "ZstdDecompress");
     let module = crate::host::namespace_object(vec![
-        ("gzipSync", codec_sync("gzipSync", StreamMode::Gzip, &prototype)),
-        ("gunzipSync", codec_sync("gunzipSync", StreamMode::Gunzip, &prototype)),
+        (
+            "gzipSync",
+            codec_sync("gzipSync", StreamMode::Gzip, &prototype),
+        ),
+        (
+            "gunzipSync",
+            codec_sync("gunzipSync", StreamMode::Gunzip, &prototype),
+        ),
         (
             "deflateRawSync",
             codec_sync("deflateRawSync", StreamMode::DeflateRaw, &prototype),
@@ -1450,15 +1574,25 @@ pub fn build() -> Value {
             "inflateRawSync",
             codec_sync("inflateRawSync", StreamMode::InflateRaw, &prototype),
         ),
-        ("deflateSync", codec_sync("deflateSync", StreamMode::Deflate, &prototype)),
-        ("inflateSync", codec_sync("inflateSync", StreamMode::Inflate, &prototype)),
+        (
+            "deflateSync",
+            codec_sync("deflateSync", StreamMode::Deflate, &prototype),
+        ),
+        (
+            "inflateSync",
+            codec_sync("inflateSync", StreamMode::Inflate, &prototype),
+        ),
         (
             "brotliCompressSync",
             codec_sync("brotliCompressSync", StreamMode::BrotliCompress, &prototype),
         ),
         (
             "brotliDecompressSync",
-            codec_sync("brotliDecompressSync", StreamMode::BrotliDecompress, &prototype),
+            codec_sync(
+                "brotliDecompressSync",
+                StreamMode::BrotliDecompress,
+                &prototype,
+            ),
         ),
         (
             "zstdCompressSync",
@@ -1468,7 +1602,10 @@ pub fn build() -> Value {
             "zstdDecompressSync",
             codec_sync("zstdDecompressSync", StreamMode::ZstdDecompress, &prototype),
         ),
-        ("unzipSync", codec_sync("unzipSync", StreamMode::Unzip, &prototype)),
+        (
+            "unzipSync",
+            codec_sync("unzipSync", StreamMode::Unzip, &prototype),
+        ),
         (
             "crc32",
             crate::host::capability(crate::registry::SPEC_ZLIB_CRC32),
@@ -1506,16 +1643,31 @@ pub fn build() -> Value {
         ("inflate", async_creator(StreamMode::Inflate, &prototype)),
         ("gzip", async_creator(StreamMode::Gzip, &prototype)),
         ("gunzip", async_creator(StreamMode::Gunzip, &prototype)),
-        ("deflateRaw", async_creator(StreamMode::DeflateRaw, &prototype)),
-        ("inflateRaw", async_creator(StreamMode::InflateRaw, &prototype)),
+        (
+            "deflateRaw",
+            async_creator(StreamMode::DeflateRaw, &prototype),
+        ),
+        (
+            "inflateRaw",
+            async_creator(StreamMode::InflateRaw, &prototype),
+        ),
         ("unzip", async_creator(StreamMode::Unzip, &prototype)),
-        ("brotliCompress", async_creator(StreamMode::BrotliCompress, &prototype)),
+        (
+            "brotliCompress",
+            async_creator(StreamMode::BrotliCompress, &prototype),
+        ),
         (
             "brotliDecompress",
             async_creator(StreamMode::BrotliDecompress, &prototype),
         ),
-        ("zstdCompress", async_creator(StreamMode::ZstdCompress, &prototype)),
-        ("zstdDecompress", async_creator(StreamMode::ZstdDecompress, &prototype)),
+        (
+            "zstdCompress",
+            async_creator(StreamMode::ZstdCompress, &prototype),
+        ),
+        (
+            "zstdDecompress",
+            async_creator(StreamMode::ZstdDecompress, &prototype),
+        ),
         ("Deflate", deflate),
         ("Inflate", inflate),
         ("Gzip", gzip),
