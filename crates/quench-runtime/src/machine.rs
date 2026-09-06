@@ -3447,8 +3447,7 @@ enum InstalledF64x3Entry {
 }
 
 pub(crate) struct NativeAddChainPlan {
-    arena: Option<crate::stencil_arena::StencilArena>,
-    shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
+    storage: PhysicalStorage,
     physical: PhysicalState,
     bindings: crate::stencil_plan::F64x3Bindings,
     control: crate::stencil_cfg::RegionControlPlan,
@@ -3477,7 +3476,7 @@ impl NativeAddChainPlan {
         control: crate::stencil_cfg::RegionControlPlan,
     ) -> Option<Self> {
         let mut plan = Self::new(policy, bindings, control)?;
-        plan.shared_arena = Some(shared_arena);
+        plan.storage = PhysicalStorage::Shared(shared_arena);
         Some(plan)
     }
 
@@ -3505,8 +3504,7 @@ impl NativeAddChainPlan {
             && crate::stencil_region_layout::validate_selected_control(view, &control).is_ok())
         .then_some(())?;
         Some(Self {
-            arena: None,
-            shared_arena: None,
+            storage: PhysicalStorage::Local(None),
             physical: PhysicalState::new(),
             bindings,
             control,
@@ -3549,7 +3547,7 @@ impl NativeAddChainPlan {
         third: f64,
     ) -> Result<Option<f64>, crate::stencil_arena::ArenaError> {
         let (Some(shared), InstalledF64x3Entry::Shared(owned)) =
-            (self.shared_arena.clone(), self.installed)
+            (self.storage.shared(), self.installed)
         else {
             return Ok(None);
         };
@@ -3578,8 +3576,8 @@ impl NativeAddChainPlan {
         crate::stencil_arena::ArenaError,
     > {
         let shared = self
-            .shared_arena
-            .clone()
+            .storage
+            .shared()
             .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
         let rendered = (|| {
             let mut slab = shared.borrow_mut();
@@ -3621,8 +3619,8 @@ impl NativeAddChainPlan {
         third: f64,
     ) -> Result<f64, crate::stencil_arena::ArenaError> {
         let shared = self
-            .shared_arena
-            .clone()
+            .storage
+            .shared()
             .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
         let owned = self.publish_shared(key, values)?;
         let result = invoke_shared_entry!(shared, owned, |entry| unsafe {
@@ -3660,14 +3658,14 @@ impl NativeAddChainPlan {
         .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
         crate::stencil_region_layout::validate_selected_control(view, &self.control)
             .map_err(|_| crate::stencil_arena::ArenaError::ProtectionFailed)?;
-        if self.arena.is_none() {
-            self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
-        }
-        let result = self
-            .arena
-            .as_mut()
-            .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?
-            .render_selected_f64x3(&mut self.physical.cache, key, values, lhs, rhs, third);
+        let result = self.storage.local_mut()?.render_selected_f64x3(
+            &mut self.physical.cache,
+            key,
+            values,
+            lhs,
+            rhs,
+            third,
+        );
         if result.is_ok() {
             #[cfg(test)]
             {
@@ -3677,7 +3675,7 @@ impl NativeAddChainPlan {
                 );
             }
             self.note_entry();
-            if let Some(arena) = self.arena.as_ref() {
+            if let Some(arena) = self.storage.local() {
                 let signature = crate::stencil_arena::physical_cache_signature(
                     crate::stencil_select::select_physical(key).expect("installed view"),
                     &values,
@@ -3691,7 +3689,7 @@ impl NativeAddChainPlan {
                 }
             }
         } else {
-            self.arena.take();
+            self.storage.reset_local();
             self.physical.clear();
         }
         result
@@ -3705,9 +3703,9 @@ impl NativeAddChainPlan {
         rhs: f64,
         third: f64,
     ) -> Result<f64, crate::stencil_arena::ArenaError> {
-        if self.shared_arena.is_none() {
+        if self.storage.shared().is_none() {
             if let InstalledF64x3Entry::Local(address) = self.installed {
-                if let Some(arena) = self.arena.as_ref() {
+                if let Some(arena) = self.storage.local() {
                     if let Ok(entry) = arena.f64x3_entry(address) {
                         let result = unsafe { invoke_f64x3_entry(entry, lhs, rhs, third) };
                         self.note_entry();
@@ -3728,7 +3726,7 @@ impl NativeAddChainPlan {
         }
         let site = self.site.clone();
         let values = crate::stencil_fact::PatchValues::from_site(&site);
-        if self.shared_arena.is_some() {
+        if self.storage.shared().is_some() {
             return self.render_shared(key, &values, lhs, rhs, third);
         }
         self.render_local(key, &values, lhs, rhs, third)
@@ -3741,12 +3739,7 @@ impl std::fmt::Debug for NativeAddChainPlan {
             .debug_struct("NativeAddChainPlan")
             .field(
                 "used_bytes",
-                &self
-                    .shared_arena
-                    .as_ref()
-                    .map(|arena| arena.borrow().used())
-                    .or_else(|| self.arena.as_ref().map(|arena| arena.used()))
-                    .unwrap_or(0),
+                &self.storage.used(),
             )
             .field("cache_len", &self.physical.cache.len())
             .finish()

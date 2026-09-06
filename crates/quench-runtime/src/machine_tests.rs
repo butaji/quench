@@ -2441,8 +2441,7 @@ fn ordinary_source_lowering_executes_tagged_identity_inequality() {
 #[test]
 fn native_add_chain_executes_two_ops_with_one_entry() {
     let mut plan = super::NativeAddChainPlan {
-        arena: None,
-        shared_arena: None,
+        storage: super::PhysicalStorage::Local(None),
         physical: super::PhysicalState::new(),
         bindings: crate::stencil_plan::F64x3Bindings {
             inputs: [0, 1, 2],
@@ -2460,14 +2459,14 @@ fn native_add_chain_executes_two_ops_with_one_entry() {
         super::InstalledF64x3Entry::Local(_)
     ));
     assert_eq!(plan.native_entry_count(), 1);
-    let used = plan.arena.as_ref().expect("rendered chain").used();
+    let used = plan.storage.used();
     let view =
         crate::stencil_select::select_physical(crate::stencil_select::add_chain_region_key())
             .expect("selected chain");
     let tail = view.fallthrough.expect("declared native successor");
     assert_eq!(used, view.stencil.bytes.len() + tail.stencil.bytes.len());
     assert_eq!(plan.execute(-2.0, 3.0, 5.0), Ok(6.0));
-    assert_eq!(plan.arena.as_ref().expect("cached chain").used(), used);
+    assert_eq!(plan.storage.used(), used);
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
