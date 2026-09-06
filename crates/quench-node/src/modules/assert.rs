@@ -304,7 +304,7 @@ pub fn build_value() -> Value {
     value
 }
 
-const ASSERT_REJECTS: &str = r#"(promiseOrFn, expected, message) => {
+const ASSERT_REJECTS: &str = r#"(() => { const nativeResolve = Promise.resolve; const nativeThen = Promise.prototype.then; return (promiseOrFn, expected, message) => {
   const receivedType = (value) => {
     if (value === undefined) return "undefined";
     if (value === null) return "null";
@@ -335,7 +335,7 @@ const ASSERT_REJECTS: &str = r#"(promiseOrFn, expected, message) => {
     error.code = "ERR_INVALID_ARG_TYPE";
     return Promise.reject(error);
   }
-  return Promise.resolve(input).then(
+  return nativeThen.call(nativeResolve.call(Promise, input),
     () => {
       return Promise.reject(Object.assign(new (require("assert").AssertionError)({message: message || `Missing expected rejection${typeof expected === "function" ? ` (${expected.name || "mustNotCall"})` : ""}.`}), {
       code: "ERR_ASSERTION", operator: "rejects", generatedMessage: !message
@@ -388,9 +388,9 @@ const ASSERT_REJECTS: &str = r#"(promiseOrFn, expected, message) => {
       return error;
     }
   );
-}"#;
+}; })()"#;
 
-const ASSERT_DOES_NOT_REJECT: &str = r#"(promiseOrFn, message) => {
+const ASSERT_DOES_NOT_REJECT: &str = r#"(() => { const nativeResolve = Promise.resolve; const nativeThen = Promise.prototype.then; return (promiseOrFn, message) => {
   const receivedType = (value) => {
     if (value === undefined) return "undefined";
     if (value === null) return "null";
@@ -421,7 +421,7 @@ const ASSERT_DOES_NOT_REJECT: &str = r#"(promiseOrFn, message) => {
     error.code = "ERR_INVALID_ARG_TYPE";
     return Promise.reject(error);
   }
-  return Promise.resolve(input).then(
+  return nativeThen.call(nativeResolve.call(Promise, input),
     (value) => value,
     (error) => {
       const customMessage = typeof message === "function" ? message(error) : message;
@@ -430,7 +430,7 @@ const ASSERT_DOES_NOT_REJECT: &str = r#"(promiseOrFn, message) => {
       }));
     }
   );
-}"#;
+}; })()"#;
 
 fn eval_function(source: &str) -> Result<Value, VmError> {
     let program = quench_runtime::reduce::reduce_global_script_source(source)
