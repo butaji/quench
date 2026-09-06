@@ -26,6 +26,12 @@ impl FusionCost {
         added_transfers: 0,
     };
 
+    const LOCAL_BINARY: Self = Self {
+        removed_dispatches: 2,
+        removed_materializations: 2,
+        added_transfers: 0,
+    };
+
     const fn profitable(self) -> bool {
         self.removed_dispatches + self.removed_materializations > self.added_transfers
     }
@@ -34,6 +40,14 @@ impl FusionCost {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct AddChainSelection {
     pub bindings: F64x3Bindings,
+    pub cost: FusionCost,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LocalBinarySelection {
+    pub slots: [u16; 2],
+    pub output: Register,
+    pub operation: Instruction,
     pub cost: FusionCost,
 }
 
@@ -50,6 +64,44 @@ pub(crate) fn select_add_chain(
         bindings,
         cost: FusionCost::ADD_CHAIN,
     })
+}
+
+pub(crate) fn select_local_binary(
+    loads: [Instruction; 2],
+    operation: Instruction,
+    live_after: &BTreeSet<Register>,
+) -> Option<LocalBinarySelection> {
+    if loads.iter().any(|load| load.opcode != Opcode::LoadLocal)
+        || loads[0].a == loads[1].a
+        || operation.flags != 0
+        || operation.opcode.numeric_operator().is_none()
+    {
+        return None;
+    }
+    let slots = operation_slots(loads, operation)?;
+    let overwritten = operation.a;
+    let lost_live_value = loads
+        .iter()
+        .any(|load| load.a != overwritten && live_after.contains(&load.a));
+    if lost_live_value || !FusionCost::LOCAL_BINARY.profitable() {
+        return None;
+    }
+    Some(LocalBinarySelection {
+        slots,
+        output: operation.a,
+        operation,
+        cost: FusionCost::LOCAL_BINARY,
+    })
+}
+
+fn operation_slots(loads: [Instruction; 2], operation: Instruction) -> Option<[u16; 2]> {
+    let slot_for = |register| {
+        loads
+            .iter()
+            .find(|load| load.a == register)
+            .map(|load| load.b)
+    };
+    Some([slot_for(operation.b)?, slot_for(operation.c)?])
 }
 
 fn add_chain_bindings(first: Instruction, second: Instruction) -> Option<F64x3Bindings> {
@@ -100,18 +152,33 @@ mod tests {
         let mut guarded = add(3, 1, 2);
         guarded.flags = 1;
         assert!(select_add_chain(guarded, add(5, 3, 4), &BTreeSet::new()).is_none());
+        assert!(select_add_chain(
+            Instruction::binary_operator(3, crate::ops::BinaryOp::Subtract, 1, 2,),
+            add(5, 3, 4),
+            &BTreeSet::new(),
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn local_binary_selection_forwards_slots_and_removes_materialization() {
+        let selected = select_local_binary(
+            [Instruction::load_local(4, 9), Instruction::load_local(7, 3)],
+            Instruction::add(1, 7, 4),
+            &BTreeSet::new(),
+        )
+        .unwrap();
+        assert_eq!(selected.slots, [3, 9]);
+        assert_eq!(selected.output, 1);
+        assert!(selected.cost.profitable());
+    }
+
+    #[test]
+    fn local_binary_selection_rejects_live_or_unrelated_loads() {
+        let loads = [Instruction::load_local(4, 9), Instruction::load_local(7, 3)];
         assert!(
-            select_add_chain(
-                Instruction::binary_operator(
-                    3,
-                    crate::ops::BinaryOp::Subtract,
-                    1,
-                    2,
-                ),
-                add(5, 3, 4),
-                &BTreeSet::new(),
-            )
-            .is_none()
+            select_local_binary(loads, Instruction::add(1, 7, 4), &BTreeSet::from([4])).is_none()
         );
+        assert!(select_local_binary(loads, Instruction::add(1, 7, 8), &BTreeSet::new()).is_none());
     }
 }

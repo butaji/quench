@@ -1575,7 +1575,7 @@ fn number_to_int32(value: f64) -> i32 {
 }
 
 impl NativeBinaryPlan {
-    fn new_with_shared(
+    pub(crate) fn new_with_shared(
         instruction: crate::ir::Instruction,
         policy: crate::stencil_policy::ExecutionPolicy,
         shared_arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
@@ -4984,6 +4984,7 @@ enum NativeAdmission {
     Nullish(Rc<RefCell<NativeNullishPlan>>),
     Unary(Rc<RefCell<NativeUnaryPlan>>),
     AddChain(Rc<RefCell<NativeAddChainPlan>>),
+    LocalBinary(Rc<RefCell<crate::stencil_fusion::NativeLocalBinaryPlan>>),
     Move(Rc<RefCell<NativeMovePlan>>),
     LoadLocal(Rc<RefCell<NativeMovePlan>>),
     StoreLocal(Rc<RefCell<NativeMovePlan>>),
@@ -5002,6 +5003,7 @@ impl std::fmt::Debug for NativeAdmission {
             Self::Nullish(_) => "nullish",
             Self::Unary(_) => "unary",
             Self::AddChain(_) => "add_chain",
+            Self::LocalBinary(_) => "local_binary",
             Self::Move(_) => "move",
             Self::LoadLocal(_) => "load_local",
             Self::StoreLocal(_) => "store_local",
@@ -5325,6 +5327,9 @@ fn add_chain_admission(
     policy: crate::stencil_policy::ExecutionPolicy,
     arena: &SharedStencilPool,
 ) -> Option<NativeAdmission> {
+    if !region_entry_is_legal(entries, pc, pc.checked_add(2)?) {
+        return None;
+    }
     let entry = entries.get(pc)?;
     let next = entries.get(pc + 1)?;
     let live_after = liveness.get(pc + 1)?;
@@ -5335,6 +5340,32 @@ fn add_chain_admission(
     )?;
     NativeAddChainPlan::new_with_arena(policy, Rc::clone(arena), selection.bindings)
         .map(|plan| NativeAdmission::AddChain(Rc::new(RefCell::new(plan))))
+}
+
+fn local_binary_admission(
+    entries: &[BaselineEntry],
+    liveness: &[BTreeSet<u16>],
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    let end = pc.checked_add(3)?;
+    if !region_entry_is_legal(entries, pc, end) {
+        return None;
+    }
+    let loads = [entries.get(pc)?.instruction, entries.get(pc + 1)?.instruction];
+    let operation = entries.get(pc + 2)?.instruction;
+    let selection = crate::stencil_plan::select_local_binary(
+        loads,
+        operation,
+        liveness.get(pc + 2)?,
+    )?;
+    let plan = crate::stencil_fusion::NativeLocalBinaryPlan::new(
+        selection,
+        policy,
+        Rc::clone(arena),
+    )?;
+    Some(NativeAdmission::LocalBinary(Rc::new(RefCell::new(plan))))
 }
 
 fn region_admission(
@@ -5400,6 +5431,10 @@ fn build_admissions(
             pc,
             add_chain_admission(entries, &liveness, pc, policy, &arena),
         );
+        builder.push_optional(
+            pc,
+            local_binary_admission(entries, &liveness, pc, policy, &arena),
+        );
         collect_memory_admissions(&mut builder, pc, entry.instruction, policy, &arena);
         builder.push_optional(pc, region_admission(entries, pc, policy, &arena));
     }
@@ -5414,6 +5449,12 @@ impl BaselinePlan {
         policy: crate::stencil_policy::ExecutionPolicy,
     ) -> Self {
         Self::compile(code, policy)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn native_storage_for_test(&self) -> (usize, usize, usize) {
+        let arena = self.shared_region_arena.borrow();
+        (arena.used(), arena.capacity(), arena.slab_count())
     }
 
     fn compile(code: CodeView<'_>, policy: crate::stencil_policy::ExecutionPolicy) -> Self {
@@ -5461,6 +5502,12 @@ impl BaselinePlan {
         native_load_const_at,
         LoadConst,
         NativeLoadConstPlan
+    );
+    typed_admission_accessors!(
+        local_binary_handle_at,
+        native_local_binary_at,
+        LocalBinary,
+        crate::stencil_fusion::NativeLocalBinaryPlan
     );
     typed_admission_accessors!(
         truthiness_handle_at,
@@ -5558,6 +5605,11 @@ impl OptimizingEntry {
     optimizing_admission_accessors!(native_truthiness, Truthiness, NativeTruthinessPlan);
     optimizing_admission_accessors!(native_nullish, Nullish, NativeNullishPlan);
     optimizing_admission_accessors!(native_unary, Unary, NativeUnaryPlan);
+    optimizing_admission_accessors!(
+        native_local_binary,
+        LocalBinary,
+        crate::stencil_fusion::NativeLocalBinaryPlan
+    );
     optimizing_admission_accessors!(native_move, Move, NativeMovePlan);
     optimizing_admission_accessors!(native_load_local, LoadLocal, NativeMovePlan);
     optimizing_admission_accessors!(native_store_local, StoreLocal, NativeMovePlan);
@@ -5577,6 +5629,14 @@ impl std::fmt::Debug for OptimizingPlan {
 }
 
 impl OptimizingPlan {
+    #[cfg(test)]
+    pub(crate) fn compile_for_test(
+        baseline: &BaselinePlan,
+        policy: crate::stencil_policy::ExecutionPolicy,
+    ) -> Self {
+        Self::compile(baseline, policy)
+    }
+
     fn compile(baseline: &BaselinePlan, _policy: crate::stencil_policy::ExecutionPolicy) -> Self {
         let entries = baseline
             .entries
