@@ -1130,13 +1130,55 @@ fn region_matches_generated_array_decl(
 }
 
 #[cfg(target_arch = "aarch64")]
-fn array_loop_binding_contract_matches(
-    key: crate::stencil_fact::RegionKey,
+fn array_loop_output_contract_supported(
+    outputs: &[crate::stencil_select::PhysicalOutput],
     instructions: &[crate::ir::Instruction],
-    start: usize,
 ) -> bool {
-    crate::stencil_select::select_region(key)
-        .is_some_and(|record| record.bindings_match(instructions, start))
+    use crate::stencil_select::{PhysicalOutputDestination::*, PhysicalOutputValue::*};
+    let allowed = outputs.iter().all(|output| {
+        matches!(
+            (output.value, output.destination),
+            (Array, Register(_))
+                | (Index, Register(_))
+                | (Index, LocalSlot(_))
+                | (Result, Register(_))
+        )
+    });
+    let destinations_exist = outputs.iter().all(|output| match output.destination {
+        Register(operand) | LocalSlot(operand) => operand.read(instructions).is_some(),
+    });
+    allowed
+        && destinations_exist
+        && outputs
+            .iter()
+            .any(|output| matches!((output.value, output.destination), (Index, LocalSlot(_))))
+}
+
+#[cfg(target_arch = "aarch64")]
+fn materialize_array_loop_outputs(
+    outputs: &[crate::stencil_select::PhysicalOutput],
+    instructions: &[crate::ir::Instruction],
+    registers: &mut crate::register_file::RegisterFile,
+    array: &crate::value::Value,
+    index: usize,
+    result: f64,
+) {
+    use crate::stencil_select::{PhysicalOutputDestination::*, PhysicalOutputValue::*};
+    for output in outputs {
+        let destination = match output.destination {
+            Register(operand) | LocalSlot(operand) => operand.read(instructions),
+        };
+        let Some(destination) = destination else { continue };
+        match (output.value, output.destination) {
+            (Array, Register(_)) => registers.write(usize::from(destination), array.clone()),
+            (Index, Register(_)) => registers.write_number(usize::from(destination), index as f64),
+            (Index, LocalSlot(_)) => {
+                crate::locals::write(destination, crate::value::Value::Number(index as f64));
+            }
+            (Result, Register(_)) => registers.write_number(usize::from(destination), result),
+            _ => unreachable!("output contract is checked before native entry"),
+        }
+    }
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -1322,9 +1364,13 @@ pub(crate) fn execute_composed_array_numeric_loop(
         return Ok(None);
     }
     let registers = unsafe { &mut *region.registers };
+    let key = crate::stencil_select::array_numeric_loop_region_key();
+    let Some(record) = crate::stencil_select::select_region(key) else {
+        return Ok(None);
+    };
     if !region_matches_generated_array_decl(
         region,
-        crate::stencil_select::array_numeric_loop_region_key(),
+        key,
     ) || region.operations.len() != 19
     {
         return Ok(None);
@@ -1343,14 +1389,12 @@ pub(crate) fn execute_composed_array_numeric_loop(
     {
         return Ok(None);
     }
-    let [load_index, load_end, _, _, load_array, _, _, _, load_array_body, _, _, _, add_value, set,
-        move_result, _, _, store_index, _] = instructions.as_slice()
+    let [load_index, load_end, _, _, load_array, _, _, _, load_array_body, _, _, _, add_value, _, _,
+        _, _, _, _] = instructions.as_slice()
     else { return Ok(None) };
-    if !array_loop_binding_contract_matches(
-        crate::stencil_select::array_numeric_loop_region_key(),
-        &instructions,
-        pc,
-    ) {
+    if !record.bindings_match(&instructions, pc)
+        || !array_loop_output_contract_supported(record.outputs, &instructions)
+    {
         return Ok(None);
     }
     let Some(crate::ops::Op::RequireObjectCoercible { src }) = code.cold_at(pc + 9) else {
@@ -1423,11 +1467,14 @@ pub(crate) fn execute_composed_array_numeric_loop(
     })?;
     if status == NATIVE_DISPATCH_INTERRUPT && kernel.index < end {
         vm_context.clear_interrupt();
-        crate::locals::write(store_index.b, crate::value::Value::Number(kernel.index as f64));
-        registers.write(usize::from(set.a), array_value);
-        registers.write_number(usize::from(add_value.a), kernel.result);
-        registers.write_number(usize::from(move_result.a), kernel.result);
-        registers.write_number(usize::from(load_index.a), kernel.index as f64);
+        materialize_array_loop_outputs(
+            record.outputs,
+            &instructions,
+            registers,
+            &array_value,
+            kernel.index,
+            kernel.result,
+        );
         crate::execution_trace::stencil_iterations(
             code,
             pc,
@@ -1443,11 +1490,14 @@ pub(crate) fn execute_composed_array_numeric_loop(
             "array loop kernel returned incomplete progress".into(),
         ));
     }
-    crate::locals::write(store_index.b, crate::value::Value::Number(kernel.index as f64));
-    registers.write(usize::from(set.a), array_value);
-    registers.write_number(usize::from(add_value.a), kernel.result);
-    registers.write_number(usize::from(move_result.a), kernel.result);
-    registers.write_number(usize::from(load_index.a), kernel.index as f64);
+    materialize_array_loop_outputs(
+        record.outputs,
+        &instructions,
+        registers,
+        &array_value,
+        kernel.index,
+        kernel.result,
+    );
     crate::execution_trace::stencil_iterations(
         code,
         pc,
@@ -4747,6 +4797,7 @@ mod compact_handler_tests {
             stencil: crate::stencil_fact::Stencil { bytes: &[], holes: &[] },
             operations: &[crate::ir::Opcode::Move, crate::ir::Opcode::Move],
             bindings: &BINDINGS,
+            outputs: &[],
             entry: 0,
             external_entries: &[0],
             fallthrough: None,

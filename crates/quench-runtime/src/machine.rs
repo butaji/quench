@@ -5389,6 +5389,29 @@ fn region_admission_matches(
     }
     cfg.region_matches(entries, start, contract.operations)
         && record.bindings_match_entries(entries, start)
+        && region_outputs_cover_exit(entries, cfg, start, record)
+}
+
+fn region_outputs_cover_exit(
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    start: usize,
+    record: &crate::stencil_select::RegionRecord,
+) -> bool {
+    if record.outputs.is_empty() {
+        let abi = record.abi.contract();
+        if abi.preserves_vm_registers || abi.may_call_helper {
+            return true;
+        }
+    }
+    let Some(end) = start.checked_add(record.operations.len()) else {
+        return false;
+    };
+    if end == entries.len() {
+        return true;
+    }
+    cfg.live_in_at(end)
+        .is_some_and(|live| record.outputs_cover_live_definitions(entries, start, live))
 }
 
 type SharedStencilPool = Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>;
@@ -7509,6 +7532,7 @@ mod tests {
             },
             operations: &OPS,
             bindings: &[],
+            outputs: &[],
             entry: 0,
             external_entries: &ENTRIES,
             fallthrough: None,
@@ -7547,6 +7571,7 @@ mod tests {
             },
             operations: &OPS,
             bindings: &[],
+            outputs: &[],
             entry: 0,
             external_entries: &ENTRIES,
             fallthrough: None,
@@ -7574,6 +7599,7 @@ mod tests {
             },
             operations: &OPS,
             bindings: &[],
+            outputs: &[],
             entry: 0,
             external_entries: &ENTRIES,
             fallthrough: None,
@@ -7601,6 +7627,7 @@ mod tests {
             },
             operations: &OPS,
             bindings: &[],
+            outputs: &[],
             entry: 0,
             external_entries: &ENTRIES,
             fallthrough: None,
@@ -7631,6 +7658,7 @@ mod tests {
             },
             operations: &OPS,
             bindings: &[],
+            outputs: &[],
             entry: 0,
             external_entries: &ENTRIES,
             fallthrough: None,
@@ -7655,6 +7683,7 @@ mod tests {
             stencil: bridge.stencil,
             operations: &OPS,
             bindings: &[],
+            outputs: &[],
             entry: 0,
             external_entries: &ENTRIES,
             fallthrough: None,
@@ -7682,6 +7711,7 @@ mod tests {
             },
             operations: &OPS,
             bindings: &[],
+            outputs: &[],
             entry: 0,
             external_entries: &ENTRIES,
             fallthrough: None,
@@ -7692,6 +7722,51 @@ mod tests {
         let error = super::validate_physical_template(&record)
             .expect_err("a drifted physical effect must fail closed");
         assert!(error.contains("declared helper boundary"));
+    }
+
+    #[test]
+    fn raw_region_admission_requires_every_live_definition_output() {
+        static OPS: [crate::ir::Opcode; 1] = [crate::ir::Opcode::Move];
+        static OUTPUTS: [crate::stencil_select::PhysicalOutput; 1] =
+            [crate::stencil_select::PhysicalOutput {
+                value: crate::stencil_select::PhysicalOutputValue::Result,
+                destination: crate::stencil_select::PhysicalOutputDestination::Register(
+                    crate::stencil_select::PhysicalOperand {
+                        operation: 0,
+                        field: crate::stencil_select::PhysicalOperandField::A,
+                    },
+                ),
+            }];
+        let entry = |instruction: crate::ir::Instruction| super::BaselineEntry {
+            instruction,
+            handler: instruction.opcode.handler(),
+            control: instruction.opcode.control_operands(instruction),
+        };
+        let entries = [
+            entry(crate::ir::Instruction::move_(2, 1)),
+            entry(crate::ir::Instruction::ret(2)),
+        ];
+        let cfg = crate::stencil_cfg::ControlFlowFacts::new(&entries, &[None, None]);
+        let mut record = crate::stencil_select::RegionRecord {
+            name: "live_output_test",
+            key: crate::stencil_fact::RegionKey(23),
+            stencil: crate::stencil_fact::Stencil {
+                bytes: &[],
+                holes: &[],
+            },
+            operations: &OPS,
+            bindings: &[],
+            outputs: &OUTPUTS,
+            entry: 0,
+            external_entries: &[0],
+            fallthrough: None,
+            abi: crate::stencil_select::RegionAbi::ArrayNumericLoop,
+            template_calls_helper: false,
+            executable: true,
+        };
+        assert!(super::region_admission_matches(&entries, &cfg, 0, &record));
+        record.outputs = &[];
+        assert!(!super::region_admission_matches(&entries, &cfg, 0, &record));
     }
 
     #[test]
