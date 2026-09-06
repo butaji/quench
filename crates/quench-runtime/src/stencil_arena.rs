@@ -811,6 +811,12 @@ impl SharedStencilSlab {
         extern "C" fn(*mut crate::native_property::NativePropertyWriteContext) -> u32,
         crate::stencil_select::RegionAbi::PropertyWriteGuard
     );
+    typed_owned_entry!(
+        owned_compare_branch_entry,
+        compare_branch_entry,
+        extern "C" fn(*mut crate::native_control::NativeCompareBranchContext) -> u32,
+        crate::stencil_select::RegionAbi::CompareBranch
+    );
 
     pub(crate) fn with_owned<F: Copy, R>(
         &self,
@@ -979,6 +985,19 @@ impl SharedStencilSlab {
         self.slab_for(address)
             .ok_or(ArenaError::ProtectionFailed)?
             .property_write_guard_entry(address)
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn compare_branch_entry(
+        &self,
+        address: usize,
+    ) -> Result<
+        extern "C" fn(*mut crate::native_control::NativeCompareBranchContext) -> u32,
+        ArenaError,
+    > {
+        self.slab_for(address)
+            .ok_or(ArenaError::ProtectionFailed)?
+            .compare_branch_entry(address)
     }
 
     pub fn execute_dispatch(
@@ -1166,6 +1185,23 @@ impl StencilArena {
         address: usize,
     ) -> Result<extern "C" fn(f64, f64) -> f64, ArenaError> {
         self.require_abi(address, crate::stencil_select::RegionAbi::Scalar)?;
+        let base = self.ptr as usize;
+        let end = base.saturating_add(self.cursor);
+        if !self.executable || address < base || address >= end {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        Ok(unsafe { std::mem::transmute(address) })
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn compare_branch_entry(
+        &self,
+        address: usize,
+    ) -> Result<
+        extern "C" fn(*mut crate::native_control::NativeCompareBranchContext) -> u32,
+        ArenaError,
+    > {
+        self.require_abi(address, crate::stencil_select::RegionAbi::CompareBranch)?;
         let base = self.ptr as usize;
         let end = base.saturating_add(self.cursor);
         if !self.executable || address < base || address >= end {

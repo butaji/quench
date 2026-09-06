@@ -620,6 +620,10 @@ mod generated_region_admission_tests {
                     assert!(matches!(record.stencil.bytes.len(), 12 | 20 | 32 | 44))
                 }
                 RegionAbi::ArrayNumericLoop => assert_eq!(record.stencil.bytes.len(), 100),
+                RegionAbi::CompareBranch => {
+                    assert_eq!(record.operations, [crate::ir::Opcode::Binary, crate::ir::Opcode::JumpIfFalse]);
+                    assert_eq!(record.stencil.bytes.len(), 56);
+                }
             }
         }
     }
