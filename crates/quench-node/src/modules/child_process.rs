@@ -429,54 +429,6 @@ pub fn spawn_sync(
         return run_compat_test_child(&child_args, options);
     }
 
-    if command == state.borrow().process.exec_path
-        && child_args.iter().any(|arg| arg == "spawnchild")
-    {
-        let stdout = if child_args.first().map(String::as_str) == Some("-e") {
-            child_args
-                .get(1)
-                .map(|source| script_output(source, "console.log"))
-                .unwrap_or_default()
-        } else {
-            b"this is stdout\n".to_vec()
-        };
-        let stderr = if child_args.first().map(String::as_str) == Some("-e") {
-            child_args
-                .get(1)
-                .map(|source| script_output(source, "console.error"))
-                .unwrap_or_default()
-        } else {
-            b"this is stderr\n".to_vec()
-        };
-        if let Some(limit) = max_buffer(options) {
-            if stdout.len() > limit || stderr.len() > limit {
-                let mut error = quench_runtime::builtins::error(
-                    quench_runtime::ops::Builtin::Error,
-                    &[Value::String("spawnSync ENOBUFS".into())],
-                );
-                execute::set_property_in_place(&mut error, "code", Value::String("ENOBUFS".into()));
-                execute::set_property_in_place(&mut error, "errno", Value::Number(-105.0));
-                let stdout_value = output_value(&stdout, options);
-                let stderr_value = output_value(&stderr, options);
-                return Ok(host_api::object(vec![
-                    ("pid".into(), Value::Number(0.0)),
-                    ("status".into(), Value::Null),
-                    ("signal".into(), Value::Null),
-                    ("error".into(), error),
-                    ("stdout".into(), stdout_value),
-                    ("stderr".into(), stderr_value),
-                ]));
-            }
-        }
-        return Ok(host_api::object(vec![
-            ("pid".into(), Value::Number(0.0)),
-            ("status".into(), Value::Number(0.0)),
-            ("signal".into(), Value::Null),
-            ("stdout".into(), output_value(&stdout, options)),
-            ("stderr".into(), output_value(&stderr, options)),
-        ]));
-    }
-
     let host_exec = state.borrow().process.exec_path.clone();
     let is_host_exec = command == host_exec
         || matches!(
