@@ -33,15 +33,27 @@ pub(crate) fn register_liveness(
     entries: &[BaselineEntry],
     operand_windows: &[Option<&[u16]>],
 ) -> Vec<BTreeSet<u16>> {
+    bounded_register_liveness(
+        entries,
+        operand_windows,
+        entries.len().saturating_mul(2).saturating_add(1),
+    )
+}
+
+fn bounded_register_liveness(
+    entries: &[BaselineEntry],
+    operand_windows: &[Option<&[u16]>],
+    round_limit: usize,
+) -> Vec<BTreeSet<u16>> {
     let conservative = all_register_uses(entries, operand_windows);
     let mut live_in = vec![BTreeSet::new(); entries.len()];
     let mut live_out = live_in.clone();
-    for _ in 0..=entries.len().saturating_mul(2) {
+    for _ in 0..round_limit {
         if !liveness_round(entries, operand_windows, &conservative, &mut live_in, &mut live_out) {
-            break;
+            return live_out;
         }
     }
-    live_out
+    vec![conservative; entries.len()]
 }
 
 fn liveness_round(
@@ -155,6 +167,16 @@ mod tests {
         ]);
         let live = register_liveness(&entries, &[None, None, None]);
         assert_eq!(live[0], BTreeSet::from([1, 2]));
+    }
+
+    #[test]
+    fn liveness_budget_exhaustion_is_conservative() {
+        let entries = entries(&[
+            crate::ir::Instruction::move_(2, 1),
+            crate::ir::Instruction::ret(2),
+        ]);
+        let live = bounded_register_liveness(&entries, &[None, None], 0);
+        assert_eq!(live, vec![BTreeSet::from([1, 2]); 2]);
     }
 
     #[test]
