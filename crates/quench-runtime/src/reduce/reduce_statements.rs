@@ -14,6 +14,11 @@ const SCRIPT_THIS_SLOT: &str = "\0script_this";
 pub(super) const MODULE_THIS_SLOT: &str = "\0module_this";
 pub(super) const IMPORT_META_SLOT: &str = "\0import_meta";
 type ReducedStatements = (Vec<Op>, HashMap<String, u16>, u16);
+pub(super) struct ReducedStatementOps {
+    pub(super) ops: Vec<Op>,
+    pub(super) last_value: Option<u16>,
+    pub(super) frame_register_count: u16,
+}
 type ReducedProgram = (
     ProgramDb,
     Vec<Op>,
@@ -235,7 +240,7 @@ pub fn reduce_statements_with_locals(
     locals: HashMap<String, u16>,
     next_slot: u16,
 ) -> Result<Vec<Op>, Vec<String>> {
-    let (mut ops, _) = reduce_statements_opt(
+    let mut reduced = reduce_statements_opt(
         statements,
         facts,
         locals,
@@ -246,12 +251,12 @@ pub fn reduce_statements_with_locals(
             directive_completion: None,
         },
     )?;
-    ops.push(Op::Const {
+    reduced.ops.push(Op::Const {
         dst: 0,
         value: crate::ops::Constant::Undefined,
     });
-    ops.push(Op::Return { src: 0 });
-    Ok(ops)
+    reduced.ops.push(Op::Return { src: 0 });
+    Ok(reduced.ops)
 }
 pub fn reduce_expression_statements_with_locals(
     statements: &[Statement<'_>],
@@ -270,7 +275,7 @@ pub fn reduce_expression_statements_with_locals(
             directive_completion: None,
         },
     )
-    .map(|(ops, _)| ops)
+    .map(|reduced| reduced.ops)
 }
 pub fn reduce_statements_no_tail(
     statements: &[Statement<'_>],
@@ -298,6 +303,7 @@ pub fn reduce_statements_no_tail_value(
             directive_completion: None,
         },
     )
+    .map(|reduced| (reduced.ops, reduced.last_value))
 }
 
 pub(crate) struct StatementsOptions {
@@ -312,7 +318,7 @@ fn reduce_statements_opt(
     mut locals: HashMap<String, u16>,
     mut next_slot: u16,
     options: StatementsOptions,
-) -> Result<(Vec<Op>, Option<u16>), Vec<String>> {
+) -> Result<ReducedStatementOps, Vec<String>> {
     let StatementsOptions {
         tail,
         eval_behavior,
@@ -346,7 +352,11 @@ fn reduce_statements_opt(
         None => ops,
     };
     let ops = finish_statements_opt(ops, last_value, tail)?;
-    Ok((ops, last_value))
+    Ok(ReducedStatementOps {
+        ops,
+        last_value,
+        frame_register_count: next_register,
+    })
 }
 
 fn initialize_statement_reduction(
@@ -530,8 +540,7 @@ pub fn reduce_function_declaration(
         return Err(vec!["Function without body".to_string()]);
     };
     let slot = declaration_slot(identifier.name.as_str(), next_slot, locals, facts);
-    let (reduced, parameter_count, metadata) =
-        reduce_function_body(function, body, facts, locals)?;
+    let (reduced, parameter_count, metadata) = reduce_function_body(function, body, facts, locals)?;
     let reserve = *next_register;
     *next_register = next_register.saturating_add(1);
     ops.push(Op::Const {
