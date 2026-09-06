@@ -136,6 +136,8 @@ mod stencil_fusion;
 mod stencil_fusion_tests;
 #[cfg(test)]
 mod stencil_bridge_tests;
+#[cfg(test)]
+mod stencil_property_integration_tests;
 mod stencil_plan;
 mod stencil_policy;
 pub mod stencil_select;
