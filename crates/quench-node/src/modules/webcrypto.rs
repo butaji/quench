@@ -14,13 +14,19 @@ use aes_gcm::{
 use base64::Engine;
 use chacha20poly1305::ChaCha20Poly1305;
 use cipher::{generic_array::GenericArray, BlockDecrypt, BlockEncrypt};
+use p384::{
+    ecdh::diffie_hellman as p384_diffie_hellman, PublicKey as P384PublicKey,
+    SecretKey as P384SecretKey,
+};
+use p521::{
+    ecdh::diffie_hellman as p521_diffie_hellman, PublicKey as P521PublicKey,
+    SecretKey as P521SecretKey,
+};
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
 use quench_runtime::ops::Builtin;
 use quench_runtime::value::{ArrayBufferData, PromiseData, PromiseState, Value};
 use rand::RngCore;
-use p384::{ecdh::diffie_hellman as p384_diffie_hellman, PublicKey as P384PublicKey, SecretKey as P384SecretKey};
-use p521::{ecdh::diffie_hellman as p521_diffie_hellman, PublicKey as P521PublicKey, SecretKey as P521SecretKey};
 use sha3::{
     digest::ExtendableOutput, digest::Update as ShaUpdate, digest::XofReader, TurboShake128,
     TurboShake128Core, TurboShake256, TurboShake256Core,
@@ -32,6 +38,7 @@ pub(crate) const KEY_MARKER_PROP: &str = "\0quench:webcrypto:key";
 pub(crate) const KEY_DATA_PROP: &str = "\0quench:webcrypto:key-data";
 pub(crate) const KEY_FORMAT_PROP: &str = "\0quench:webcrypto:key-format";
 pub(crate) const KEY_META_PROP: &str = "\0quench:webcrypto:key-meta";
+const KEY_JWK_PROP: &str = "\0quench:webcrypto:jwk";
 const KEY_PUBLIC_ALGORITHM_PROP: &str = "\0quench:webcrypto:public-algorithm";
 const KEY_PUBLIC_USAGES_PROP: &str = "\0quench:webcrypto:public-usages";
 
@@ -289,7 +296,11 @@ impl X25519Field {
         let exponent_low = 0xeb_u8;
         for bit in (0..255).rev() {
             result = result.square();
-            let set = if bit < 8 { (exponent_low >> bit) & 1 } else { 1 };
+            let set = if bit < 8 {
+                (exponent_low >> bit) & 1
+            } else {
+                1
+            };
             if set != 0 {
                 result = result.mul(self);
             }
@@ -561,7 +572,9 @@ fn cfrg_key_bytes(key: &Value, private: bool) -> Option<Vec<u8>> {
         &[&[0x03, 0x21, 0x00], &[0x03, 0x39, 0x00]]
     };
     for marker in markers {
-        let Some(position) = data.windows(marker.len()).position(|window| window == *marker)
+        let Some(position) = data
+            .windows(marker.len())
+            .position(|window| window == *marker)
         else {
             continue;
         };
@@ -647,8 +660,8 @@ fn cfrg_derive_bits(
     }
     let private = cfrg_key_bytes(base_key, true)
         .ok_or_else(|| operation_error("Invalid private key data"))?;
-    let public = cfrg_key_bytes(&public, false)
-        .ok_or_else(|| operation_error("Invalid public key data"))?;
+    let public =
+        cfrg_key_bytes(&public, false).ok_or_else(|| operation_error("Invalid public key data"))?;
     if private.len() != size || public.len() != size {
         return Err(operation_error("Key data has the wrong length"));
     }
@@ -746,9 +759,10 @@ fn ecdh_derive_bits(
     let curve = execute::to_js_string(&curve_value)
         .unwrap_or_default()
         .to_ascii_uppercase();
-    let public_curve = execute::to_js_string(&execute::get_property(&public_algorithm, "namedCurve"))
-        .unwrap_or_default()
-        .to_ascii_uppercase();
+    let public_curve =
+        execute::to_js_string(&execute::get_property(&public_algorithm, "namedCurve"))
+            .unwrap_or_default()
+            .to_ascii_uppercase();
     if curve != public_curve {
         return Err(operation_error("Named curve mismatch"));
     }
@@ -848,6 +862,293 @@ fn key(
     )
 }
 
+fn key_with_jwk(
+    prototype: &Value,
+    algorithm: Value,
+    extractable: bool,
+    usages: Value,
+    data: Option<Vec<u8>>,
+    jwk: Option<&Value>,
+) -> Value {
+    let value = key(prototype, algorithm, extractable, usages, data);
+    jwk.map_or(value.clone(), |jwk| {
+        define_hidden(
+            value,
+            KEY_JWK_PROP,
+            crate::modules::clone::deep_clone(jwk.clone()),
+        )
+    })
+}
+
+struct DerReader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> DerReader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn take(&mut self, tag: u8) -> Option<&'a [u8]> {
+        if self.bytes.get(self.offset).copied()? != tag {
+            return None;
+        }
+        self.offset += 1;
+        let first = *self.bytes.get(self.offset)?;
+        self.offset += 1;
+        let length = if first & 0x80 == 0 {
+            usize::from(first)
+        } else {
+            let count = usize::from(first & 0x7f);
+            if count == 0 || count > std::mem::size_of::<usize>() {
+                return None;
+            }
+            let end = self.offset.checked_add(count)?;
+            let encoded = self.bytes.get(self.offset..end)?;
+            self.offset = end;
+            encoded
+                .iter()
+                .try_fold(0usize, |value, byte| value.checked_mul(256)?.checked_add(usize::from(*byte)))?
+        };
+        let end = self.offset.checked_add(length)?;
+        let result = self.bytes.get(self.offset..end)?;
+        self.offset = end;
+        Some(result)
+    }
+}
+
+fn rsa_der_components(data: &[u8], format: &str) -> Option<(Vec<u8>, Vec<u8>)> {
+    let mut outer = DerReader::new(data);
+    let sequence = outer.take(0x30)?;
+    let rsa_der = match format {
+        "spki" => {
+            let mut spki = DerReader::new(sequence);
+            spki.take(0x30)?;
+            let bit_string = spki.take(0x03)?;
+            bit_string.get(1..)?
+        }
+        "pkcs8" => {
+            let mut pkcs8 = DerReader::new(sequence);
+            pkcs8.take(0x02)?;
+            pkcs8.take(0x30)?;
+            pkcs8.take(0x04)?
+        }
+        _ => return None,
+    };
+    let mut rsa_outer = DerReader::new(rsa_der);
+    let rsa_sequence = rsa_outer.take(0x30)?;
+    let mut rsa = DerReader::new(rsa_sequence);
+    if format == "pkcs8" {
+        rsa.take(0x02)?;
+    }
+    let modulus = rsa.take(0x02)?.to_vec();
+    let exponent = rsa.take(0x02)?.to_vec();
+    Some((modulus, exponent))
+}
+
+fn rsa_modulus_bits(modulus: &[u8]) -> Option<usize> {
+    let first = modulus.iter().position(|byte| *byte != 0)?;
+    let significant = &modulus[first..];
+    Some((significant.len() - 1) * 8 + (8 - significant[0].leading_zeros() as usize))
+}
+
+fn rsa_algorithm_metadata(
+    algorithm: Value,
+    format: &str,
+    data: Option<&[u8]>,
+    jwk: Option<&Value>,
+) -> Value {
+    let name = algorithm_name(&algorithm).to_ascii_uppercase();
+    if !matches!(
+        name.as_str(),
+        "RSA-OAEP" | "RSA-PSS" | "RSASSA-PKCS1-V1_5"
+    ) {
+        return algorithm;
+    }
+    let components = jwk
+        .and_then(|value| {
+            let modulus = execute::to_js_string(&execute::get_property(value, "n")).ok()?;
+            let exponent = execute::to_js_string(&execute::get_property(value, "e")).ok()?;
+            Some((
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(modulus)
+                    .ok()?,
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(exponent)
+                    .ok()?,
+            ))
+        })
+        .or_else(|| data.and_then(|bytes| rsa_der_components(bytes, format)));
+    let Some((modulus, exponent)) = components else {
+        return algorithm;
+    };
+    let Some(bits) = rsa_modulus_bits(&modulus) else {
+        return algorithm;
+    };
+    let normalized = normalize_key_algorithm(algorithm);
+    let normalized = execute::set_property(
+        normalized,
+        "modulusLength",
+        Value::Number(bits as f64),
+    );
+    execute::set_property(normalized, "publicExponent", host_api::bytes(&exponent))
+}
+
+fn named_import_error(name: &str, message: &str) -> VmError {
+    let value = quench_runtime::builtins::error(Builtin::Error, &[Value::String(message.into())]);
+    VmError::Thrown(execute::set_property(
+        value,
+        "name",
+        Value::String(name.into()),
+    ))
+}
+
+fn rsa_jwk_algorithm(name: &str, hash: &Value) -> Option<String> {
+    let hash = execute::to_js_string(&execute::get_property(hash, "name")).ok()?;
+    let hash = hash.to_ascii_uppercase();
+    let suffix = hash.strip_prefix("SHA-")?;
+    match name {
+        "RSA-PSS" => Some(format!("PS{}", if suffix == "1" { "1" } else { suffix })),
+        "RSASSA-PKCS1-V1_5" => {
+            Some(format!("RS{}", if suffix == "1" { "1" } else { suffix }))
+        }
+        "RSA-OAEP" => Some(if suffix == "1" {
+            "RSA-OAEP".into()
+        } else {
+            format!("RSA-OAEP-{suffix}")
+        }),
+        _ => None,
+    }
+}
+
+fn validate_rsa_import(
+    algorithm: &Value,
+    format: &str,
+    data: Option<&[u8]>,
+    jwk: Option<&Value>,
+    usages: &Value,
+) -> Result<(), VmError> {
+    let name = algorithm_name(algorithm).to_ascii_uppercase();
+    if !matches!(
+        name.as_str(),
+        "RSA-OAEP" | "RSA-PSS" | "RSASSA-PKCS1-V1_5"
+    ) {
+        return Ok(());
+    }
+    let private = format == "pkcs8" || jwk.is_some_and(|value| {
+        execute::get_property(value, "d") != Value::Undefined
+    });
+    if private && usage_names(usages).is_empty() {
+        return Err(named_import_error(
+            "SyntaxError",
+            "Usages cannot be empty when importing a private key.",
+        ));
+    }
+    if format == "jwk" {
+        let Some(jwk) = jwk else {
+            return Err(named_import_error("DataError", "Invalid keyData"));
+        };
+        let kty = execute::to_js_string(&execute::get_property(jwk, "kty"))
+            .unwrap_or_default();
+        let modulus = execute::to_js_string(&execute::get_property(jwk, "n"))
+            .ok()
+            .and_then(|value| {
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(value).ok()
+            });
+        let exponent = execute::to_js_string(&execute::get_property(jwk, "e"))
+            .ok()
+            .and_then(|value| {
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(value).ok()
+            });
+        if kty != "RSA" || modulus.is_none() || exponent.is_none() {
+            return Err(named_import_error("DataError", "Invalid keyData"));
+        }
+        if private
+            && ["d", "p", "q", "dp", "dq", "qi"]
+                .iter()
+                .any(|field| {
+                    execute::to_js_string(&execute::get_property(jwk, field))
+                        .ok()
+                        .and_then(|value| {
+                            base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(value).ok()
+                        })
+                        .is_none()
+                })
+        {
+            return Err(named_import_error("DataError", "Invalid keyData"));
+        }
+        if let Value::String(use_value) = execute::get_property(jwk, "use") {
+            let expected = if name == "RSA-OAEP" { "enc" } else { "sig" };
+            if use_value != expected {
+                return Err(named_import_error(
+                    "DataError",
+                    "Invalid JWK \"use\" Parameter",
+                ));
+            }
+        }
+        if let Value::String(alg_value) = execute::get_property(jwk, "alg") {
+            let hash = execute::get_property(algorithm, "hash");
+            if let Some(expected) = rsa_jwk_algorithm(&name, &hash) {
+                if alg_value != expected {
+                    return Err(named_import_error(
+                        "DataError",
+                        "JWK \"alg\" does not match the requested algorithm",
+                    ));
+                }
+            }
+        }
+        return Ok(());
+    }
+    if matches!(format, "spki" | "pkcs8")
+        && data.and_then(|value| rsa_der_components(value, format)).is_none()
+    {
+        return Err(named_import_error("DataError", "Invalid key type"));
+    }
+    Ok(())
+}
+
+fn imported_key_type(format: &str, algorithm: &Value, jwk: Option<&Value>) -> &'static str {
+    match format {
+        "pkcs8" => "private",
+        "spki" | "raw-public" => "public",
+        "jwk" => {
+            if jwk.is_some_and(|value| {
+                execute::get_property(value, "d") != Value::Undefined
+            }) {
+                "private"
+            } else if jwk.is_some_and(|value| {
+                execute::to_js_string(&execute::get_property(value, "kty"))
+                    .is_ok_and(|name| name == "oct")
+            }) {
+                "secret"
+            } else {
+                "public"
+            }
+        }
+        "raw" | "raw-secret" => {
+            let name = algorithm_name(algorithm).to_ascii_uppercase();
+            if matches!(
+                name.as_str(),
+                "RSA-OAEP"
+                    | "RSA-PSS"
+                    | "RSASSA-PKCS1-V1_5"
+                    | "ECDSA"
+                    | "ECDH"
+                    | "ED25519"
+                    | "ED448"
+                    | "X25519"
+                    | "X448"
+            ) {
+                "public"
+            } else {
+                "secret"
+            }
+        }
+        _ => "public",
+    }
+}
+
 fn normalize_key_algorithm(algorithm: Value) -> Value {
     let algorithm = crate::modules::clone::deep_clone(algorithm);
     let hash = execute::get_property(&algorithm, "hash");
@@ -889,8 +1190,17 @@ pub(crate) fn clone_key(value: &Value) -> Option<Value> {
         .unwrap_or_else(|_| "raw".into());
     let data =
         crate::modules::crypto::bytes_from_value(&execute::get_property(value, KEY_DATA_PROP));
+    let jwk = execute::get_property(value, KEY_JWK_PROP);
+    let jwk = matches!(jwk, Value::Object(_) | Value::ObjectAlias(_)).then_some(jwk);
     Some(key_metadata(
-        key(&key_prototype(), algorithm, extractable, usages, data),
+        key_with_jwk(
+            &key_prototype(),
+            algorithm,
+            extractable,
+            usages,
+            data,
+            jwk.as_ref(),
+        ),
         &key_type,
         &format,
     ))
@@ -958,6 +1268,30 @@ fn asymmetric_usages(name: &str, requested: &Value) -> Result<(Value, Value), Vm
         .cloned()
         .collect::<Vec<_>>();
     Ok((usage_array(&private), usage_array(&public)))
+}
+
+fn symmetric_usages(name: &str, requested: &Value) -> Result<Value, VmError> {
+    let allowed: &[&str] = match name {
+        "HMAC" | "KMAC128" | "KMAC256" => &["sign", "verify"],
+        "AES-CTR"
+        | "AES-CBC"
+        | "AES-GCM"
+        | "AES-KW"
+        | "AES-OCB"
+        | "CHACHA20-POLY1305" => &["encrypt", "decrypt", "wrapKey", "unwrapKey"],
+        _ => return Err(not_supported("Unrecognized algorithm name")),
+    };
+    let requested = usage_names(requested);
+    if requested.is_empty() {
+        return Err(usage_error("Usages cannot be empty"));
+    }
+    if requested
+        .iter()
+        .any(|usage| !allowed.contains(&usage.as_str()))
+    {
+        return Err(usage_error("Unsupported key usage"));
+    }
+    Ok(usage_array(&requested))
 }
 
 fn usage_error(message: &str) -> VmError {
@@ -1308,13 +1642,27 @@ pub fn import_key(
         args.get(1).and_then(bytes)
     };
     let prototype = key_prototype();
-    let key_type = match format.as_str() {
-        "pkcs8" => "private",
-        "spki" => "public",
-        _ => "secret",
-    };
+    let jwk = (format == "jwk").then(|| args.get(1).cloned()).flatten();
+    let key_type = imported_key_type(&format, &algorithm, jwk.as_ref());
+    if let Err(error) = validate_rsa_import(
+        &algorithm,
+        &format,
+        data.as_deref(),
+        jwk.as_ref(),
+        &usages,
+    ) {
+        return Ok(settled(Err(error)));
+    }
+    let algorithm = rsa_algorithm_metadata(algorithm, &format, data.as_deref(), jwk.as_ref());
     Ok(settled(Ok(key_metadata(
-        key(&prototype, algorithm, extractable, usages, data),
+        key_with_jwk(
+            &prototype,
+            algorithm,
+            extractable,
+            usages,
+            data,
+            jwk.as_ref(),
+        ),
         key_type,
         &format,
     ))))
@@ -1389,6 +1737,22 @@ pub fn export_key(
                         _ => String::new(),
                     })
                 };
+                let jwk = execute::get_property(key, KEY_JWK_PROP);
+                if matches!(jwk, Value::Object(_) | Value::ObjectAlias(_)) {
+                    let jwk = execute::set_property(jwk, "alg", alg);
+                    let jwk = execute::set_property(
+                        jwk,
+                        "key_ops",
+                        crate::modules::clone::deep_clone(execute::get_property(
+                            &metadata, "usages",
+                        )),
+                    );
+                    return Ok(settled(Ok(execute::set_property(
+                        jwk,
+                        "ext",
+                        Value::Boolean(true),
+                    ))));
+                }
                 return Ok(settled(Ok(host_api::object(vec![
                     ("kty".into(), Value::String("RSA".into())),
                     ("alg".into(), alg),
@@ -1560,6 +1924,10 @@ pub fn generate_key(
             .get(2)
             .cloned()
             .unwrap_or_else(|| host_api::array(Vec::new()));
+        let usages = match symmetric_usages("HMAC", &usages) {
+            Ok(usages) => usages,
+            Err(error) => return Ok(settled(Err(error))),
+        };
         let bits = match execute::get_property(&algorithm, "length") {
             Value::Number(value) if value.is_finite() && value > 0.0 => value as usize,
             Value::Undefined => {
@@ -1607,6 +1975,10 @@ pub fn generate_key(
             .get(2)
             .cloned()
             .unwrap_or_else(|| host_api::array(Vec::new()));
+        let usages = match symmetric_usages(&name, &usages) {
+            Ok(usages) => usages,
+            Err(error) => return Ok(settled(Err(error))),
+        };
         let length = if name.starts_with("AES-") {
             match execute::get_property(&algorithm, "length") {
                 Value::Undefined => {
