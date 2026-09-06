@@ -4,7 +4,9 @@ mod build_stencil_artifacts;
 mod build_stencil_contract;
 mod build_stencil_templates;
 
-use build_stencil_contract::{rust_leaf_recipe, DeclAbi, RegionDeclaration, RustLeafRecipe};
+use build_stencil_contract::{
+    rust_assembly_recipe, rust_leaf_recipe, DeclAbi, RegionDeclaration, RustLeafRecipe,
+};
 
 const fn le32(word: u32) -> [u8; 4] {
     word.to_le_bytes()

@@ -3583,6 +3583,8 @@ pub(crate) struct NativeMovePlan {
     installed: InstalledWordEntry,
     #[cfg(test)]
     native_entry_count: u64,
+    #[cfg(test)]
+    last_native_view: Option<crate::stencil_select::PhysicalStencilView>,
 }
 
 impl NativeMovePlan {
@@ -3639,6 +3641,8 @@ impl NativeMovePlan {
             installed: InstalledWordEntry::Unpublished,
             #[cfg(test)]
             native_entry_count: 0,
+            #[cfg(test)]
+            last_native_view: None,
         })
     }
 
@@ -3650,9 +3654,23 @@ impl NativeMovePlan {
         }
     }
 
+    fn note_view(&mut self, view: crate::stencil_select::PhysicalStencilView) {
+        #[cfg(test)]
+        {
+            self.last_native_view = Some(view);
+        }
+        #[cfg(not(test))]
+        let _ = view;
+    }
+
     #[cfg(test)]
     pub(crate) fn native_entry_count(&self) -> u64 {
         self.native_entry_count
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_native_view(&self) -> Option<crate::stencil_select::PhysicalStencilView> {
+        self.last_native_view
     }
 
     #[inline]
@@ -3702,7 +3720,7 @@ impl NativeMovePlan {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
         }
         if let Some(shared) = self.shared_arena.clone() {
-            let rendered = (|| -> Result<usize, crate::stencil_arena::ArenaError> {
+            let rendered = (|| -> Result<_, crate::stencil_arena::ArenaError> {
                 let mut slab = shared.borrow_mut();
                 let view = crate::stencil_select::select_physical_for_abi(
                     key,
@@ -3712,9 +3730,9 @@ impl NativeMovePlan {
                 let address =
                     slab.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
                 slab.make_executable(address)?;
-                Ok(address)
+                Ok((address, view))
             })();
-            let address = match rendered {
+            let (address, view) = match rendered {
                 Ok(rendered) => rendered,
                 Err(error) => {
                     self.physical.clear();
@@ -3727,6 +3745,7 @@ impl NativeMovePlan {
             return match result {
                 Ok(value) => {
                     self.note_entry();
+                    self.note_view(view);
                     Ok(value)
                 }
                 Err(error) => {
@@ -3757,12 +3776,15 @@ impl NativeMovePlan {
             let address =
                 arena.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
             arena.make_executable()?;
-            arena.execute_tagged_word(address, source)
+            arena
+                .execute_tagged_word(address, source)
+                .map(|value| (value, view))
         })();
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-        if result.is_ok() {
+        if let Ok((_, view)) = &result {
             let signature = crate::stencil_select::select_physical(key)
                 .map(|view| crate::stencil_arena::physical_cache_signature(view, &values));
+            self.note_view(*view);
             self.note_entry();
             if let Some(arena) = self.arena.as_ref() {
                 if let Some(address) = signature
@@ -3783,7 +3805,7 @@ impl NativeMovePlan {
                 self.installed = InstalledWordEntry::Unpublished;
             }
         }
-        result
+        result.map(|(value, _)| value)
     }
 
 }
