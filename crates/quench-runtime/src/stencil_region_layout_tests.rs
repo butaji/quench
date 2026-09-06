@@ -249,6 +249,122 @@ mod tests {
         assert_ne!(&output[..8], CONDITIONAL_BYTES);
     }
 
+    #[test]
+    fn planned_region_derives_labels_and_branch_bindings_from_cfg_points() {
+        let (control, operations) = branched_control();
+        let site = QuickeningSite::<1>::new(Opcode::JumpIfFalse);
+        let values = PatchValues::from_site(&site);
+        let fragments = planned_conditional_fragments(values);
+        let transfers = planned_conditional_transfers();
+        let mut output = Vec::new();
+        compose_planned_region(&control, &operations, &fragments, &transfers, &mut output)
+            .expect("compose point-bound region");
+        assert_eq!(output.len(), 16);
+        assert_ne!(&output[..8], CONDITIONAL_BYTES);
+    }
+
+    #[test]
+    fn planned_region_rejects_incomplete_cfg_transactionally() {
+        let (control, operations) = branched_control();
+        let site = QuickeningSite::<1>::new(Opcode::JumpIfFalse);
+        let values = PatchValues::from_site(&site);
+        let fragments = planned_conditional_fragments(values);
+        let transfers = planned_conditional_transfers();
+        let mut output = vec![7, 8, 9];
+        assert_eq!(
+            compose_planned_region(
+                &control,
+                &operations,
+                &fragments,
+                &transfers[..1],
+                &mut output,
+            ),
+            Err(LayoutError::RelocationContract)
+        );
+        assert_eq!(output, [7, 8, 9]);
+    }
+
+    #[test]
+    fn planned_region_rejects_ambiguous_or_unknown_points() {
+        let (control, operations) = branched_control();
+        let site = QuickeningSite::<1>::new(Opcode::JumpIfFalse);
+        let values = PatchValues::from_site(&site);
+        let mut fragments = planned_conditional_fragments(values);
+        fragments[2].point = RegionPoint::Operation(1);
+        let mut output = vec![4, 5, 6];
+        assert_eq!(
+            compose_planned_region(
+                &control,
+                &operations,
+                &fragments,
+                &planned_conditional_transfers(),
+                &mut output,
+            ),
+            Err(LayoutError::RelocationContract)
+        );
+        let valid = planned_conditional_fragments(values);
+        let mut transfers = planned_conditional_transfers();
+        transfers[1].target = RegionPoint::Exit(99);
+        assert_eq!(
+            compose_planned_region(&control, &operations, &valid, &transfers, &mut output),
+            Err(LayoutError::RelocationContract)
+        );
+        assert_eq!(output, [4, 5, 6]);
+    }
+
+    fn branched_control() -> (crate::stencil_cfg::RegionControlPlan, [Opcode; 3]) {
+        let instructions = [
+            crate::ir::Instruction::jump_if_false(0, 2),
+            crate::ir::Instruction::move_(0, 1),
+            crate::ir::Instruction::ret(0),
+        ];
+        let entries: Vec<_> = instructions.iter().copied().map(baseline_entry).collect();
+        let facts = crate::stencil_cfg::ControlFlowFacts::new(&entries, &[None; 3]);
+        let control = facts.region_control(0, 3).expect("branched region");
+        (control, [Opcode::JumpIfFalse, Opcode::Move, Opcode::Return])
+    }
+
+    fn planned_conditional_fragments(
+        values: PatchValues<'_, 1>,
+    ) -> [PlannedFragment<'static, '_, 1>; 3] {
+        [
+            PlannedFragment {
+                point: RegionPoint::Operation(0),
+                stencil: &CONDITIONAL_STENCIL,
+                values,
+            },
+            PlannedFragment {
+                point: RegionPoint::Operation(1),
+                stencil: &EXIT_STENCIL,
+                values,
+            },
+            PlannedFragment {
+                point: RegionPoint::Operation(2),
+                stencil: &EXIT_STENCIL,
+                values,
+            },
+        ]
+    }
+
+    fn planned_conditional_transfers() -> [PlannedTransfer; 2] {
+        [
+            PlannedTransfer {
+                source: RegionPoint::Operation(0),
+                offset: 0,
+                target: RegionPoint::Operation(1),
+                addend: 0,
+                kind: FixupKind::Aarch64CondBranch19,
+            },
+            PlannedTransfer {
+                source: RegionPoint::Operation(0),
+                offset: 4,
+                target: RegionPoint::Operation(2),
+                addend: 0,
+                kind: FixupKind::Aarch64Branch26,
+            },
+        ]
+    }
+
     fn conditional_fragments(
         values: PatchValues<'_, 1>,
     ) -> [crate::stencil_layout::StencilFragment<'static, '_, 1>; 3] {
