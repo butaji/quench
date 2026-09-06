@@ -141,6 +141,8 @@ mod stencil_fusion;
 mod stencil_fusion_tests;
 #[cfg(test)]
 mod stencil_bridge_tests;
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
+mod stencil_compare_branch_tests;
 #[cfg(test)]
 mod stencil_property_integration_tests;
 mod stencil_plan;
