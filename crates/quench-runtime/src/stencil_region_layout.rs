@@ -11,6 +11,12 @@ use crate::stencil_select::{PhysicalRelocation, PhysicalStencilView};
 const ENTRY_LABEL: LabelId = LabelId(0);
 const FALLTHROUGH_LABEL: LabelId = LabelId(1);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct OperationPlacement {
+    pub(crate) label: LabelId,
+    pub(crate) operation_offset: u8,
+}
+
 pub(crate) fn validate_selected_control(
     view: PhysicalStencilView,
     control: &crate::stencil_cfg::RegionControlPlan,
@@ -18,10 +24,69 @@ pub(crate) fn validate_selected_control(
     if control.span_len() != view.record.operations.len() || !control.is_linear() {
         return Err(LayoutError::RelocationContract);
     }
-    view.fallthrough
-        .is_some()
-        .then_some(())
-        .ok_or(LayoutError::MissingSuccessor)
+    view.fallthrough.ok_or(LayoutError::MissingSuccessor)?;
+    let placements = [
+        OperationPlacement {
+            label: ENTRY_LABEL,
+            operation_offset: 0,
+        },
+        OperationPlacement {
+            label: FALLTHROUGH_LABEL,
+            operation_offset: 1,
+        },
+    ];
+    validate_controlled_fixups(
+        control,
+        view.record.operations,
+        &placements,
+        &selected_fixups(view)?,
+    )
+}
+
+pub(crate) fn validate_controlled_fixups(
+    control: &crate::stencil_cfg::RegionControlPlan,
+    operations: &[crate::ir::Opcode],
+    placements: &[OperationPlacement],
+    fixups: &[Fixup],
+) -> Result<(), LayoutError> {
+    validate_placements(control, operations, placements)?;
+    for fixup in fixups {
+        let source = placements
+            .get(usize::from(fixup.fragment))
+            .ok_or(LayoutError::InvalidFragment(fixup.fragment))?;
+        let target = placements
+            .iter()
+            .find(|placement| placement.label == fixup.target)
+            .ok_or(LayoutError::UndefinedLabel(fixup.target))?;
+        if !control.permits_operation_transfer(
+            operations,
+            usize::from(source.operation_offset),
+            usize::from(target.operation_offset),
+        ) {
+            return Err(LayoutError::RelocationContract);
+        }
+    }
+    Ok(())
+}
+
+fn validate_placements(
+    control: &crate::stencil_cfg::RegionControlPlan,
+    operations: &[crate::ir::Opcode],
+    placements: &[OperationPlacement],
+) -> Result<(), LayoutError> {
+    if control.span_len() != operations.len() || placements.len() != operations.len() {
+        return Err(LayoutError::RelocationContract);
+    }
+    for (index, placement) in placements.iter().enumerate() {
+        if usize::from(placement.operation_offset) != index
+            || placements[..index]
+                .iter()
+                .any(|prior| prior.label == placement.label)
+        {
+            return Err(LayoutError::RelocationContract);
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_compare_branch_control(
@@ -200,6 +265,59 @@ mod tests {
             validate_compare_branch_control(view, &linear),
             Err(LayoutError::RelocationContract)
         );
+    }
+
+    #[test]
+    fn controlled_fixups_follow_canonical_branch_and_backedge_edges() {
+        let instructions = [
+            crate::ir::Instruction::jump_if_false(0, 0),
+            crate::ir::Instruction::ret(0),
+        ];
+        let entries: Vec<_> = instructions.iter().copied().map(baseline_entry).collect();
+        let facts = crate::stencil_cfg::ControlFlowFacts::new(&entries, &[None; 2]);
+        let control = facts.region_control(0, 2).expect("bounded branch loop");
+        let placements = placements();
+        let backedge = fixup(0, ENTRY_LABEL);
+        let fallthrough = fixup(0, FALLTHROUGH_LABEL);
+        assert!(validate_controlled_fixups(
+            &control,
+            &[Opcode::JumpIfFalse, Opcode::Return],
+            &placements,
+            &[backedge, fallthrough],
+        )
+        .is_ok());
+        assert_eq!(
+            validate_controlled_fixups(
+                &control,
+                &[Opcode::JumpIfFalse, Opcode::Return],
+                &placements,
+                &[fixup(1, ENTRY_LABEL)],
+            ),
+            Err(LayoutError::RelocationContract)
+        );
+    }
+
+    fn placements() -> [OperationPlacement; 2] {
+        [
+            OperationPlacement {
+                label: ENTRY_LABEL,
+                operation_offset: 0,
+            },
+            OperationPlacement {
+                label: FALLTHROUGH_LABEL,
+                operation_offset: 1,
+            },
+        ]
+    }
+
+    fn fixup(fragment: u8, target: LabelId) -> Fixup {
+        Fixup {
+            fragment,
+            offset: 0,
+            target,
+            addend: 0,
+            kind: FixupKind::Aarch64CondBranch19,
+        }
     }
 
     fn baseline_entry(instruction: crate::ir::Instruction) -> crate::machine::BaselineEntry {
