@@ -22,10 +22,11 @@ pub(crate) struct Fragment<'a> {
     pub(crate) bytes: &'a [u8],
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct StencilFragment<'a> {
+#[derive(Clone, Copy)]
+pub(crate) struct StencilFragment<'a, 'values, const N: usize> {
     pub(crate) label: LabelId,
     pub(crate) stencil: &'a Stencil,
+    pub(crate) values: PatchValues<'values, N>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -212,34 +213,35 @@ pub(crate) fn compose_fallthrough<const N: usize>(
         StencilFragment {
             label: LabelId(0),
             stencil: head,
+            values: *values,
         },
         StencilFragment {
             label: LabelId(1),
             stencil: tail,
+            values: *values,
         },
     ];
     let fixups = chain_fixups(head, kind);
     if !has_fixup_at(&fixups, branch_offset) {
         return Err(LayoutError::MissingFixup(0, branch_offset));
     }
-    compose_region(&fragments, &fixups, values, output)
+    compose_region(&fragments, &fixups, output)
 }
 
 pub(crate) fn compose_region<const N: usize>(
-    fragments: &[StencilFragment<'_>],
+    fragments: &[StencilFragment<'_, '_, N>],
     fixups: &[Fixup],
-    values: &PatchValues<'_, N>,
     output: &mut Vec<u8>,
 ) -> Result<(), LayoutError> {
     validate_composition_budget(fragments, fixups)?;
     validate_stencil_fixups(fragments, fixups)?;
-    let patched = patch_stencil_fragments(fragments, values)?;
+    let patched = patch_stencil_fragments(fragments)?;
     let physical = fragments_from_bytes(fragments, &patched);
     StencilLayout::new(&physical, fixups).finalize_into(output)
 }
 
-fn validate_composition_budget(
-    fragments: &[StencilFragment<'_>],
+fn validate_composition_budget<const N: usize>(
+    fragments: &[StencilFragment<'_, '_, N>],
     fixups: &[Fixup],
 ) -> Result<(), LayoutError> {
     if fragments.len() > MAX_LAYOUT_FRAGMENTS {
@@ -258,7 +260,9 @@ fn validate_composition_budget(
     validate_composition_bytes(fragments)
 }
 
-fn validate_composition_bytes(fragments: &[StencilFragment<'_>]) -> Result<(), LayoutError> {
+fn validate_composition_bytes<const N: usize>(
+    fragments: &[StencilFragment<'_, '_, N>],
+) -> Result<(), LayoutError> {
     let mut byte_len = 0usize;
     for fragment in fragments {
         byte_len = byte_len
@@ -271,8 +275,8 @@ fn validate_composition_bytes(fragments: &[StencilFragment<'_>]) -> Result<(), L
     Ok(())
 }
 
-fn validate_stencil_fixups(
-    fragments: &[StencilFragment<'_>],
+fn validate_stencil_fixups<const N: usize>(
+    fragments: &[StencilFragment<'_, '_, N>],
     fixups: &[Fixup],
 ) -> Result<(), LayoutError> {
     for (index, fragment) in fragments.iter().enumerate() {
@@ -307,8 +311,8 @@ fn validate_declared_holes(
     Ok(())
 }
 
-fn validate_fixup_declaration(
-    fragments: &[StencilFragment<'_>],
+fn validate_fixup_declaration<const N: usize>(
+    fragments: &[StencilFragment<'_, '_, N>],
     fixup: Fixup,
 ) -> Result<(), LayoutError> {
     let stencil = fragments
@@ -333,12 +337,11 @@ fn fixup_matches_hole(fixup: Fixup, fragment: u8, hole: crate::stencil_fact::Hol
 }
 
 fn patch_stencil_fragments<const N: usize>(
-    fragments: &[StencilFragment<'_>],
-    values: &PatchValues<'_, N>,
+    fragments: &[StencilFragment<'_, '_, N>],
 ) -> Result<Vec<Vec<u8>>, LayoutError> {
     fragments
         .iter()
-        .map(|fragment| patch_non_relative(fragment.stencil, values))
+        .map(|fragment| patch_non_relative(fragment.stencil, &fragment.values))
         .collect()
 }
 
@@ -357,8 +360,8 @@ fn patch_non_relative<const N: usize>(
     Ok(bytes)
 }
 
-fn fragments_from_bytes<'a>(
-    fragments: &[StencilFragment<'_>],
+fn fragments_from_bytes<'a, const N: usize>(
+    fragments: &[StencilFragment<'_, '_, N>],
     bytes: &'a [Vec<u8>],
 ) -> Vec<Fragment<'a>> {
     fragments
