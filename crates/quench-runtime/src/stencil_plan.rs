@@ -6,6 +6,9 @@
 use crate::ir::{Instruction, Opcode, Register};
 use std::collections::BTreeSet;
 
+pub(crate) const MAX_BLOCK_VALUES: usize = 8;
+pub(crate) type DiscardedRegisters = [Option<Register>; MAX_BLOCK_VALUES];
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct F64x3Bindings {
     pub inputs: [Register; 3],
@@ -92,8 +95,72 @@ pub(crate) struct LocalBinarySelection {
     pub output: Register,
     pub operation: Instruction,
     pub span: u8,
-    pub discarded: [Option<Register>; 3],
+    pub discarded: DiscardedRegisters,
     pub cost: FusionCost,
+}
+
+/// Disposable value/use view for one bounded straight-line residual window.
+///
+/// Instructions remain the semantic authority. This view only retains the
+/// numeric definitions needed to select an existing physical specialization.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct BlockValueGraph {
+    producers: [NumericProducer; MAX_BLOCK_VALUES],
+    len: u8,
+}
+
+impl BlockValueGraph {
+    pub(crate) const fn new() -> Self {
+        const EMPTY: NumericProducer = NumericProducer {
+            output: 0,
+            definition: NumericDefinition::Alias(0),
+        };
+        Self {
+            producers: [EMPTY; MAX_BLOCK_VALUES],
+            len: 0,
+        }
+    }
+
+    pub(crate) fn push(
+        &mut self,
+        instruction: Instruction,
+        constant_bits: impl FnOnce(u16) -> Option<u64>,
+    ) -> bool {
+        let Some(producer) = numeric_producer(instruction, constant_bits) else {
+            return false;
+        };
+        if usize::from(self.len) == MAX_BLOCK_VALUES
+            || self
+                .producers()
+                .iter()
+                .any(|item| item.output == producer.output)
+        {
+            return false;
+        }
+        self.producers[usize::from(self.len)] = producer;
+        self.len += 1;
+        true
+    }
+
+    pub(crate) fn select(
+        &self,
+        operation: Instruction,
+        live_after: &BTreeSet<Register>,
+    ) -> Option<LocalBinarySelection> {
+        select_local_binary(self.producers(), operation, live_after)
+    }
+
+    pub(crate) fn first(&self) -> Option<NumericProducer> {
+        (self.len != 0).then_some(self.producers[0])
+    }
+
+    pub(crate) const fn len(self) -> usize {
+        self.len as usize
+    }
+
+    fn producers(&self) -> &[NumericProducer] {
+        &self.producers[..usize::from(self.len)]
+    }
 }
 
 pub(crate) fn select_add_chain(
@@ -116,7 +183,7 @@ pub(crate) fn select_local_binary(
     operation: Instruction,
     live_after: &BTreeSet<Register>,
 ) -> Option<LocalBinarySelection> {
-    if !(2..=3).contains(&producers.len()) || duplicate_definitions(producers) {
+    if !(2..=MAX_BLOCK_VALUES).contains(&producers.len()) || duplicate_definitions(producers) {
         return None;
     }
     let operator = numeric_operation(operation)?;
@@ -228,8 +295,8 @@ fn add_const_inputs(
     }
 }
 
-fn discarded_registers(producers: &[NumericProducer], output: Register) -> [Option<Register>; 3] {
-    let mut discarded = [None; 3];
+fn discarded_registers(producers: &[NumericProducer], output: Register) -> DiscardedRegisters {
+    let mut discarded = [None; MAX_BLOCK_VALUES];
     let mut length = 0;
     for producer in producers.iter().map(|producer| producer.output) {
         if producer != output && !discarded.contains(&Some(producer)) {
@@ -238,6 +305,28 @@ fn discarded_registers(producers: &[NumericProducer], output: Register) -> [Opti
         }
     }
     discarded
+}
+
+fn numeric_producer(
+    instruction: Instruction,
+    constant_bits: impl FnOnce(u16) -> Option<u64>,
+) -> Option<NumericProducer> {
+    let flow = instruction.register_flow();
+    if instruction.opcode.effects() != &[crate::facts::OperationEffect::Pure] || !flow.complete {
+        return None;
+    }
+    let definition = match instruction.opcode {
+        Opcode::LoadLocal => NumericDefinition::Source(NumericSource::Local(instruction.b)),
+        Opcode::LoadConst => {
+            NumericDefinition::Source(NumericSource::Constant(constant_bits(instruction.b)?))
+        }
+        Opcode::Move if instruction.flags == 0 => NumericDefinition::Alias(instruction.b),
+        _ => return None,
+    };
+    Some(NumericProducer {
+        output: flow.definition?,
+        definition,
+    })
 }
 
 fn operation_sources(

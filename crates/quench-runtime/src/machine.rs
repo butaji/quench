@@ -5507,70 +5507,56 @@ fn select_local_numeric(
     liveness: &[BTreeSet<u16>],
     pc: usize,
 ) -> Option<crate::stencil_plan::LocalBinarySelection> {
-    let load = entries.get(pc)?.instruction;
-    for producer_count in [3, 2] {
-        if let Some(selection) =
-            select_numeric_producers(code, entries, liveness, pc, producer_count)
-        {
+    let mut graph = crate::stencil_plan::BlockValueGraph::new();
+    for offset in 0..crate::stencil_plan::MAX_BLOCK_VALUES {
+        let instruction = entries.get(pc.checked_add(offset)?)?.instruction;
+        if !graph.push(instruction, |constant| {
+            let crate::ops::Constant::Number(value) = code.constant(constant)? else {
+                return None;
+            };
+            Some(value.to_bits())
+        }) {
+            return None;
+        }
+        if let Some(selection) = select_graph_operation(code, entries, liveness, pc, graph) {
             return Some(selection);
         }
     }
-    let end = pc.checked_add(2)?;
-    let operation = entries.get(pc + 1)?.instruction;
-    let bits = match code.constant(operation.c)? {
-        crate::ops::Constant::Number(value) => value.to_bits(),
-        _ => return None,
-    };
-    region_entry_is_legal(entries, pc, end).then_some(())?;
-    let producer = numeric_producer(code, load)?;
-    crate::stencil_plan::select_source_add_const(producer, operation, bits, liveness.get(pc + 1)?)
+    None
 }
 
-fn select_numeric_producers(
+fn select_graph_operation(
     code: CodeView<'_>,
     entries: &[BaselineEntry],
     liveness: &[BTreeSet<u16>],
     pc: usize,
-    count: usize,
+    graph: crate::stencil_plan::BlockValueGraph,
 ) -> Option<crate::stencil_plan::LocalBinarySelection> {
-    let end = pc.checked_add(count + 1)?;
+    let operation_pc = pc.checked_add(graph.len())?;
+    let operation = entries.get(operation_pc)?.instruction;
+    let end = operation_pc.checked_add(1)?;
     region_entry_is_legal(entries, pc, end).then_some(())?;
-    let producers = entries
-        .get(pc..pc + count)?
-        .iter()
-        .map(|entry| numeric_producer(code, entry.instruction))
-        .collect::<Option<Vec<_>>>()?;
-    crate::stencil_plan::select_local_binary(
-        &producers,
-        entries.get(pc + count)?.instruction,
-        liveness.get(pc + count)?,
-    )
+    let live_after = liveness.get(operation_pc)?;
+    if graph.len() >= 2 {
+        return graph.select(operation, live_after);
+    }
+    select_graph_add_const(code, graph.first()?, operation, live_after)
 }
 
-fn numeric_producer(
+fn select_graph_add_const(
     code: CodeView<'_>,
-    instruction: crate::ir::Instruction,
-) -> Option<crate::stencil_plan::NumericProducer> {
-    use crate::stencil_plan::{NumericDefinition, NumericProducer, NumericSource};
-    let definition = match instruction.opcode {
-        crate::ir::Opcode::LoadLocal => {
-            NumericDefinition::Source(NumericSource::Local(instruction.b))
-        }
-        crate::ir::Opcode::LoadConst => match code.constant(instruction.b)? {
-            crate::ops::Constant::Number(value) => {
-                NumericDefinition::Source(NumericSource::Constant(value.to_bits()))
-            }
-            _ => return None,
-        },
-        crate::ir::Opcode::Move if instruction.flags == 0 => {
-            NumericDefinition::Alias(instruction.b)
-        }
+    producer: crate::stencil_plan::NumericProducer,
+    operation: crate::ir::Instruction,
+    live_after: &BTreeSet<u16>,
+) -> Option<crate::stencil_plan::LocalBinarySelection> {
+    if operation.opcode != crate::ir::Opcode::AddConst {
+        return None;
+    }
+    let bits = match code.constant(operation.c)? {
+        crate::ops::Constant::Number(value) => value.to_bits(),
         _ => return None,
     };
-    Some(NumericProducer {
-        output: instruction.a,
-        definition,
-    })
+    crate::stencil_plan::select_source_add_const(producer, operation, bits, live_after)
 }
 
 fn region_admission(
