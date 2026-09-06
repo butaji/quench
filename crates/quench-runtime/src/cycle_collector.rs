@@ -12,7 +12,7 @@ use std::{
     rc::{Rc, Weak},
 };
 
-use crate::value::{FunctionValue, ObjectData, PrivateSlot, Value};
+use crate::value::{FunctionValue, ObjectData, PrivateSlot, PromiseData, Value};
 
 // Keep the trigger in the same order of magnitude as QuickJS's allocation
 // budget while allowing for Rust's larger per-node metadata.  The threshold
@@ -26,12 +26,6 @@ thread_local! {
     static ROOTS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
     static ENV_ROOTS: RefCell<Vec<Rc<crate::environment::Environment>>> = const { RefCell::new(Vec::new()) };
     static FRAME_ROOTS: RefCell<Vec<FrameRoot>> = const { RefCell::new(Vec::new()) };
-    // A pending async continuation owns its GeneratorData through the
-    // PromiseContinuation, but that owner is not itself a trial-deletion
-    // graph node. Keep only a weak registration here and root the generator's
-    // live environment/registers while the promise is pending.
-    static SUSPENDED_GENERATORS: RefCell<HashMap<usize, Weak<crate::value::GeneratorData>>> =
-        RefCell::new(HashMap::new());
 }
 
 struct FrameRoot {
@@ -114,21 +108,6 @@ pub(crate) fn retain_active_environment(environment: &Rc<crate::environment::Env
     ENV_ROOTS.with(|roots| roots.borrow_mut().push(Rc::clone(environment)));
 }
 
-pub(crate) fn retain_suspended_generator(generator: &Rc<crate::value::GeneratorData>) {
-    SUSPENDED_GENERATORS.with(|roots| {
-        roots
-            .borrow_mut()
-            .insert(Rc::as_ptr(generator) as usize, Rc::downgrade(generator));
-    });
-}
-
-pub(crate) fn release_suspended_generator(generator: &Rc<crate::value::GeneratorData>) {
-    let key = Rc::as_ptr(generator) as usize;
-    SUSPENDED_GENERATORS.with(|roots| {
-        roots.borrow_mut().remove(&key);
-    });
-}
-
 pub(crate) fn protect_environment(environment: &Rc<crate::environment::Environment>) -> RootGuard {
     let value_length = ROOTS.with(|roots| roots.borrow().len());
     let environment_length = ENV_ROOTS.with(|roots| {
@@ -159,6 +138,7 @@ struct State {
     objects: HashMap<usize, Weak<ObjectData>>,
     functions: HashMap<usize, Weak<FunctionValue>>,
     generators: HashMap<usize, Weak<crate::value::GeneratorData>>,
+    promises: HashMap<usize, Weak<PromiseData>>,
     bytes_since_gc: usize,
     threshold: usize,
     collecting: bool,
@@ -168,6 +148,7 @@ enum Node {
     Object(Rc<ObjectData>),
     Function(Rc<FunctionValue>),
     Generator(Rc<crate::value::GeneratorData>),
+    Promise(Rc<PromiseData>),
 }
 
 impl Node {
@@ -176,6 +157,7 @@ impl Node {
             Self::Object(value) => Rc::as_ptr(value) as usize,
             Self::Function(value) => Rc::as_ptr(value) as usize,
             Self::Generator(value) => Rc::as_ptr(value) as usize,
+            Self::Promise(value) => Rc::as_ptr(value) as usize,
         }
     }
 }
@@ -227,6 +209,21 @@ pub(crate) fn track_generator(value: &Rc<crate::value::GeneratorData>) {
     });
 }
 
+pub(crate) fn track_promise(value: &Rc<PromiseData>) {
+    STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        let key = Rc::as_ptr(value) as usize;
+        if state
+            .promises
+            .get(&key)
+            .is_none_or(|entry| entry.strong_count() == 0)
+        {
+            state.promises.insert(key, Rc::downgrade(value));
+            state.bytes_since_gc = state.bytes_since_gc.saturating_add(256);
+        }
+    });
+}
+
 /// Track a heap value encountered at a mutable property edge.
 pub(crate) fn track_value(value: &Value) {
     match value {
@@ -238,6 +235,7 @@ pub(crate) fn track_value(value: &Value) {
             }
         }
         Value::Generator(generator) => track_generator(generator),
+        Value::Promise(promise) => track_promise(promise),
         _ => {}
     }
 }
@@ -264,10 +262,10 @@ pub(crate) fn collect_cycles() {
     if let Value::Object(global) = crate::vm::current_global_object() {
         track_object(&global);
     }
-    let (objects, functions, generators) = STATE.with(|state| {
+    let (objects, functions, generators, promises) = STATE.with(|state| {
         let mut state = state.borrow_mut();
         if state.collecting {
-            return (Vec::new(), Vec::new(), Vec::new());
+            return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         }
         state.collecting = true;
         state.bytes_since_gc = 0;
@@ -287,13 +285,20 @@ pub(crate) fn collect_cycles() {
                 .values()
                 .filter_map(Weak::upgrade)
                 .collect::<Vec<_>>(),
+            state
+                .promises
+                .values()
+                .filter_map(Weak::upgrade)
+                .collect::<Vec<_>>(),
         )
     });
 
-    let mut nodes = Vec::with_capacity(objects.len() + functions.len() + generators.len());
+    let mut nodes =
+        Vec::with_capacity(objects.len() + functions.len() + generators.len() + promises.len());
     nodes.extend(objects.into_iter().map(Node::Object));
     nodes.extend(functions.into_iter().map(Node::Function));
     nodes.extend(generators.into_iter().map(Node::Generator));
+    nodes.extend(promises.into_iter().map(Node::Promise));
     let mut ids = HashMap::with_capacity(nodes.len());
     nodes.retain(|node| ids.insert(node.key(), ids.len()).is_none());
     let mut edges = vec![Vec::new(); nodes.len()];
@@ -318,6 +323,7 @@ pub(crate) fn collect_cycles() {
             Node::Generator(generator) => {
                 append_generator_edges(generator, &ids, &mut edges[index]);
             }
+            Node::Promise(promise) => append_promise_edges(promise, &ids, &mut edges[index]),
         }
     }
 
@@ -335,6 +341,7 @@ pub(crate) fn collect_cycles() {
             Node::Object(value) => Rc::strong_count(value),
             Node::Function(value) => Rc::strong_count(value),
             Node::Generator(value) => Rc::strong_count(value),
+            Node::Promise(value) => Rc::strong_count(value),
         };
         // `nodes` owns one temporary reference to every candidate.
         external[index] = strong.saturating_sub(1) > incoming[index];
@@ -369,7 +376,6 @@ pub(crate) fn collect_cycles() {
             }
         }
     });
-    root_suspended_generators(&ids, &mut external);
     // The global object is a host/runtime root even when no VM call frame is
     // active (for example, between repeated benchmark runs). Marking its
     // registry node lets the normal graph walk preserve globally reachable
@@ -409,6 +415,7 @@ pub(crate) fn collect_cycles() {
                 Node::Object(object) => clear_object_edges(object, &doomed, &ids),
                 Node::Function(function) => clear_function_edges(function, &doomed, &ids),
                 Node::Generator(_) => {}
+                Node::Promise(promise) => clear_promise_edges(promise),
             }
         }
     }
@@ -422,41 +429,11 @@ pub(crate) fn collect_cycles() {
         state.objects.retain(|_, entry| entry.strong_count() > 0);
         state.functions.retain(|_, entry| entry.strong_count() > 0);
         state.generators.retain(|_, entry| entry.strong_count() > 0);
+        state.promises.retain(|_, entry| entry.strong_count() > 0);
         // QuickJS adapts its next pass to the surviving allocation volume.
         // Keep a floor so small programs do not turn collection into a tax.
         state.threshold = (live.max(1) * 256).max(INITIAL_THRESHOLD);
         state.collecting = false;
-    });
-}
-
-fn root_suspended_generators(ids: &HashMap<usize, usize>, external: &mut [bool]) {
-    SUSPENDED_GENERATORS.with(|roots| {
-        let mut roots = roots.borrow_mut();
-        roots.retain(|_, entry| {
-            let Some(generator) = entry.upgrade() else {
-                return false;
-            };
-            mark_direct_root_value(
-                &Value::Function(Rc::clone(&generator.function)),
-                ids,
-                external,
-            );
-            mark_direct_root_value(&generator.receiver, ids, external);
-            for value in &generator.arguments {
-                mark_direct_root_value(value, ids, external);
-            }
-            let machine = generator.machine.borrow();
-            if let Some(environment) = machine.environment() {
-                for value in environment.cycle_values() {
-                    mark_direct_root_value(&value, ids, external);
-                }
-            }
-            machine
-                .registers
-                .values
-                .visit_values(|value| mark_direct_root_value(&value, ids, external));
-            true
-        });
     });
 }
 
@@ -501,6 +478,7 @@ fn append_edges(value: &Value, ids: &HashMap<usize, usize>, output: &mut Vec<usi
                 append_generator_edges(generator, ids, output);
             }
         }
+        Value::Promise(promise) => append_promise_node(promise, ids, output),
         _ => {}
     }
 }
@@ -529,6 +507,18 @@ fn append_generator_edges(
         .registers
         .values
         .visit_values(|value| append_edges(&value, ids, output));
+    if let Some(state) = generator.state.borrow().as_ref() {
+        if let Some(async_for_of) = state.async_for_of.as_ref() {
+            append_edges(&async_for_of.iterator, ids, output);
+        }
+        if let Some(completion) = state.pending_completion.as_ref() {
+            completion.visit_values(|value| append_edges(value, ids, output));
+        }
+    }
+    for (value, promise) in generator.async_next_queue.borrow().iter() {
+        append_edges(value, ids, output);
+        append_promise_node(promise, ids, output);
+    }
 }
 
 fn mark_direct_root_value(value: &Value, ids: &HashMap<usize, usize>, external: &mut [bool]) {
@@ -590,6 +580,15 @@ fn mark_direct_root_value(value: &Value, ids: &HashMap<usize, usize>, external: 
                     .values
                     .visit_values(|value| visit(&value, ids, external, seen));
             }
+            Value::Promise(promise) => {
+                let key = Rc::as_ptr(promise) as usize;
+                if !seen.insert(key) {
+                    return;
+                }
+                if let Some(&id) = ids.get(&key) {
+                    external[id] = true;
+                }
+            }
             Value::BindingCell(cell) => {
                 let key = Rc::as_ptr(cell) as usize;
                 if seen.insert(key) {
@@ -622,7 +621,6 @@ fn mark_direct_root_value(value: &Value, ids: &HashMap<usize, usize>, external: 
             | Value::Uint8ClampedArray(_)
             | Value::Uint16Array(_)
             | Value::DataView(_)
-            | Value::Promise(_)
             | Value::Map(_)
             | Value::Set(_)
             | Value::Iterator(_)
@@ -653,6 +651,9 @@ pub(crate) fn value_points_to_doomed(
         Value::WeakFunction(_) => false,
         Value::BindingCell(cell) => value_points_to_doomed(&cell.load(), doomed, ids),
         Value::Generator(generator) => generator_points_to_doomed(generator, doomed, ids),
+        Value::Promise(promise) => ids
+            .get(&(Rc::as_ptr(promise) as usize))
+            .is_some_and(|id| doomed.contains(id)),
         _ => false,
     }
 }
@@ -760,11 +761,47 @@ fn clear_function_edges(
     }
 }
 
+include!("cycle_collector_promise.rs");
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::environment::Environment;
     use crate::value::ObjectData;
+
+    fn generator_with_register(value: Value) -> Rc<crate::value::GeneratorData> {
+        let environment = Environment::new();
+        let code = crate::machine::FunctionCode::from_ops(Vec::new());
+        let function = Rc::new(FunctionValue {
+            code: code.clone(),
+            params: 0,
+            captures: environment,
+            with_captures: Vec::new(),
+            properties: Rc::new(RefCell::new(Vec::new())),
+            private_slots: Rc::new(RefCell::new(Vec::new())),
+            private_environment: Default::default(),
+            instance_fields: Rc::new(RefCell::new(Vec::new())),
+            kind: crate::ops::FunctionKind::Ordinary,
+            strictness: crate::ops::FunctionStrictness::Sloppy,
+            is_async: true,
+            mapped_arguments: false,
+        });
+        let mut machine =
+            crate::machine::Machine::with_function(&code, crate::machine::EnvironmentRef(0), 1);
+        machine.registers.values = crate::register_file::RegisterFile::from_values(vec![value]);
+        Rc::new(crate::value::GeneratorData {
+            function,
+            machine: crate::value::ExecutionCell::new(machine),
+            receiver: Value::Undefined,
+            arguments: Vec::new(),
+            done: RefCell::new(false),
+            state: RefCell::new(None),
+            pending_yield: RefCell::new(false),
+            executing: RefCell::new(false),
+            running: RefCell::new(false),
+            async_next_queue: RefCell::new(std::collections::VecDeque::new()),
+        })
+    }
 
     #[test]
     fn trial_deletion_breaks_unreachable_object_cycle() {
@@ -850,7 +887,7 @@ mod tests {
     }
 
     #[test]
-    fn suspended_generator_root_transfers_and_reclaims_cycle() {
+    fn owned_generator_roots_then_reclaims_capture_cycle() {
         let environment = Environment::new();
         let code = crate::machine::FunctionCode::from_ops(Vec::new());
         let function = Rc::new(FunctionValue {
@@ -885,7 +922,6 @@ mod tests {
             async_next_queue: RefCell::new(std::collections::VecDeque::new()),
         });
         let weak = Rc::downgrade(&function);
-        retain_suspended_generator(&generator);
         drop(function);
         collect_cycles();
         assert!(
@@ -893,7 +929,6 @@ mod tests {
             "pending continuation lost its root"
         );
 
-        release_suspended_generator(&generator);
         drop(generator);
         drop(environment);
         collect_cycles();
@@ -901,6 +936,35 @@ mod tests {
             weak.upgrade().is_none(),
             "released continuation retained a cycle"
         );
+    }
+
+    #[test]
+    fn promise_graph_roots_then_reclaims_suspended_generator_cycle() {
+        let awaited = crate::value::PromiseData::allocate(crate::value::PromiseState::Pending);
+        let result = crate::value::PromiseData::allocate(crate::value::PromiseState::Pending);
+        let generator = generator_with_register(Value::Promise(Rc::clone(&awaited)));
+        track_generator(&generator);
+        awaited.continuations.borrow_mut().push(
+            crate::value::PromiseContinuation::AsyncGenerator {
+                generator: Rc::clone(&generator),
+                result: Rc::clone(&result),
+                async_function: true,
+            },
+        );
+        let weak_awaited = Rc::downgrade(&awaited);
+        let weak_generator = Rc::downgrade(&generator);
+        let weak_result = Rc::downgrade(&result);
+        drop(result);
+        drop(generator);
+        collect_cycles();
+        assert!(weak_awaited.upgrade().is_some());
+        assert!(weak_generator.upgrade().is_some());
+        assert!(weak_result.upgrade().is_some());
+        drop(awaited);
+        collect_cycles();
+        assert!(weak_awaited.upgrade().is_none());
+        assert!(weak_generator.upgrade().is_none());
+        assert!(weak_result.upgrade().is_none());
     }
 
     #[test]

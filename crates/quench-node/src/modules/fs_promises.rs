@@ -15,7 +15,7 @@ fn settle(result: Result<Value, VmError>) -> Value {
         Err(VmError::Thrown(error)) => PromiseState::Rejected(error),
         Err(_) => PromiseState::Rejected(Value::String("I/O error".to_string())),
     };
-    Value::Promise(Rc::new(PromiseData::new(state)))
+    Value::Promise(PromiseData::allocate(state))
 }
 
 fn run(state: &Rc<RefCell<HostState>>, args: &[Value], name: &str) -> Result<Value, VmError> {

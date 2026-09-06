@@ -470,9 +470,9 @@ fn fs_read_async(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn fulfilled(value: Value) -> Value {
-    Value::Promise(Rc::new(quench_runtime::value::PromiseData::new(
+    Value::Promise(quench_runtime::value::PromiseData::allocate(
         quench_runtime::value::PromiseState::Fulfilled(value),
-    )))
+    ))
 }
 
 fn fs_write_promise(arguments: &[Value]) -> Result<Value, VmError> {

@@ -114,9 +114,9 @@ impl QuenchNodeHost {
             .ok_or(VmError::NotCallable)?;
         let promise_id = self.next_promise.get();
         self.next_promise.set(promise_id.saturating_add(1));
-        let promise = Rc::new(quench_runtime::value::PromiseData::new(
+        let promise = quench_runtime::value::PromiseData::allocate(
             quench_runtime::value::PromiseState::Pending,
-        ));
+        );
         self.pending_promises
             .borrow_mut()
             .insert(promise_id, promise.clone());

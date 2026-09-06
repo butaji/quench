@@ -420,7 +420,7 @@ fn timers_promises_set_immediate(arguments: &[Value]) -> Result<Value, VmError> 
     ))
 }
 fn timer_promise_settled_with(value: Value) -> Value {
-    Value::Promise(Rc::new(quench_runtime::value::PromiseData::new(
+    Value::Promise(quench_runtime::value::PromiseData::allocate(
         quench_runtime::value::PromiseState::Fulfilled(value),
-    )))
+    ))
 }

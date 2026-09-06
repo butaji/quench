@@ -201,7 +201,7 @@ fn promise(result: Result<Value, VmError>) -> Value {
         Err(VmError::Thrown(value)) => PromiseState::Rejected(value),
         Err(_) => PromiseState::Rejected(Value::Undefined),
     };
-    Value::Promise(Rc::new(PromiseData::new(state)))
+    Value::Promise(PromiseData::allocate(state))
 }
 
 fn move_stack(receiver: Option<&Value>) -> Result<Value, VmError> {
