@@ -5390,42 +5390,10 @@ fn region_admission_matches(
     if !contract.executable
         || !contract.has_single_entry()
         || !contract.legal_external_entry(0)
-        || start
-            .checked_add(contract.operations.len())
-            .is_none_or(|end| end > entries.len())
     {
         return false;
     }
-    let end = start + contract.operations.len();
-    if !cfg.region_entry_is_legal(start, end) {
-        return false;
-    }
-    contract
-        .operations
-        .iter()
-        .enumerate()
-        .all(|(offset, expected)| {
-            let entry = &entries[start + offset];
-            if entry.instruction.opcode != *expected
-                || !expected.operands_are_canonical([
-                    entry.instruction.a,
-                    entry.instruction.b,
-                    entry.instruction.c,
-                ])
-            {
-                return false;
-            }
-            match expected.control_operands(entry.instruction) {
-                crate::ir::ControlOperands::Return { .. } => start + offset + 1 == end,
-                crate::ir::ControlOperands::Branch { target, .. }
-                | crate::ir::ControlOperands::Jump { target } => {
-                    let target = usize::from(target);
-                    target >= start && target <= end
-                }
-                crate::ir::ControlOperands::Loop { .. } => false,
-                crate::ir::ControlOperands::Next => true,
-            }
-        })
+    cfg.region_matches(entries, start, contract.operations)
 }
 
 type SharedStencilPool = Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>;

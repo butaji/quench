@@ -67,6 +67,56 @@ impl ControlFlowFacts {
                     .all(|predecessor| (start..end).contains(predecessor))
             })
     }
+
+    pub(crate) fn region_matches(
+        &self,
+        entries: &[BaselineEntry],
+        start: usize,
+        operations: &[crate::ir::Opcode],
+    ) -> bool {
+        let Some(end) = start.checked_add(operations.len()) else {
+            return false;
+        };
+        !operations.is_empty()
+            && end <= entries.len()
+            && self.region_entry_is_legal(start, end)
+            && operations.iter().enumerate().all(|(offset, opcode)| {
+                entry_matches_region(&entries[start + offset], *opcode, start, end, start + offset)
+            })
+    }
+}
+
+fn entry_matches_region(
+    entry: &BaselineEntry,
+    expected: crate::ir::Opcode,
+    start: usize,
+    end: usize,
+    pc: usize,
+) -> bool {
+    entry.instruction.opcode == expected
+        && expected.operands_are_canonical([
+            entry.instruction.a,
+            entry.instruction.b,
+            entry.instruction.c,
+        ])
+        && control_stays_in_region(expected.control_operands(entry.instruction), start, end, pc)
+}
+
+fn control_stays_in_region(
+    control: crate::ir::ControlOperands,
+    start: usize,
+    end: usize,
+    pc: usize,
+) -> bool {
+    match control {
+        crate::ir::ControlOperands::Return { .. } => pc + 1 == end,
+        crate::ir::ControlOperands::Branch { target, .. }
+        | crate::ir::ControlOperands::Jump { target } => {
+            (start..=end).contains(&usize::from(target))
+        }
+        crate::ir::ControlOperands::Loop { .. } => false,
+        crate::ir::ControlOperands::Next => true,
+    }
 }
 
 fn successors(entries: &[BaselineEntry], pc: usize) -> Successors {
@@ -284,6 +334,47 @@ mod tests {
         ]);
         let external_facts = ControlFlowFacts::new(&external, &[None, None, None]);
         assert!(!external_facts.region_entry_is_legal(0, 2));
+    }
+
+    #[test]
+    fn region_shape_uses_canonical_operands_and_cfg_edges() {
+        let valid = entries(&[
+            crate::ir::Instruction::move_(0, 1),
+            crate::ir::Instruction::jump_if_false(0, 2),
+            crate::ir::Instruction::ret(0),
+        ]);
+        let facts = ControlFlowFacts::new(&valid, &[None; 3]);
+        assert!(facts.region_matches(
+            &valid,
+            0,
+            &[crate::ir::Opcode::Move, crate::ir::Opcode::JumpIfFalse]
+        ));
+
+        let mut noncanonical = valid.clone();
+        noncanonical[0].instruction.c = 1;
+        let facts = ControlFlowFacts::new(&noncanonical, &[None; 3]);
+        assert!(!facts.region_matches(
+            &noncanonical,
+            0,
+            &[crate::ir::Opcode::Move, crate::ir::Opcode::JumpIfFalse]
+        ));
+    }
+
+    #[test]
+    fn region_shape_rejects_operation_drift_and_external_entry() {
+        let entries = entries(&[
+            crate::ir::Instruction::move_(0, 1),
+            crate::ir::Instruction::jump(1),
+            crate::ir::Instruction::ret(0),
+            crate::ir::Instruction::jump(1),
+        ]);
+        let facts = ControlFlowFacts::new(&entries, &[None; 4]);
+        assert!(!facts.region_matches(
+            &entries,
+            0,
+            &[crate::ir::Opcode::Move, crate::ir::Opcode::Jump]
+        ));
+        assert!(!facts.region_matches(&entries, 0, &[crate::ir::Opcode::Add]));
     }
 
     #[test]
