@@ -93,6 +93,62 @@ impl Op {
         }
     }
 
+    pub(crate) fn detach_store_links(
+        &mut self,
+        store: &std::rc::Rc<std::sync::OnceLock<std::rc::Weak<crate::machine::CodeStore>>>,
+    ) {
+        match self {
+            Self::AppendInstanceField(op) => {
+                if let Some(initializer) = &mut op.initializer {
+                    initializer.body.detach_internal_store(store);
+                }
+            }
+            Self::MakeFunction { body, .. }
+            | Self::MakeFunctionWithKind { body, .. }
+            | Self::Label { body, .. }
+            | Self::With { body, .. }
+            | Self::WithDispose { body, .. }
+            | Self::PrivateScope { body, .. }
+            | Self::StaticBlock { body, .. }
+            | Self::IteratorBinding { body, .. }
+            | Self::ForIn { body, .. }
+            | Self::ForOf { body, .. } => body.detach_internal_store(store),
+            Self::Branch { then_ops, else_ops, .. }
+            | Self::Conditional {
+                consequent: then_ops,
+                alternate: else_ops,
+                ..
+            } => {
+                then_ops.detach_internal_store(store);
+                else_ops.detach_internal_store(store);
+            }
+            Self::Try { body, handler, finalizer, .. } => {
+                body.detach_internal_store(store);
+                if let Some(handler) = handler {
+                    handler.detach_internal_store(store);
+                }
+                if let Some(finalizer) = finalizer {
+                    finalizer.detach_internal_store(store);
+                }
+            }
+            Self::Loop { init, test, body, update, .. } => {
+                init.detach_internal_store(store);
+                test.detach_internal_store(store);
+                body.detach_internal_store(store);
+                update.detach_internal_store(store);
+            }
+            Self::Switch { cases, .. } => {
+                for (test, body) in cases {
+                    if let Some(test) = test {
+                        test.detach_internal_store(store);
+                    }
+                    body.detach_internal_store(store);
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub(crate) fn body_count(&self) -> usize {
         let mut count = 0;
         self.visit_bodies(&mut |_| count += 1);

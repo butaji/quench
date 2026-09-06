@@ -1114,7 +1114,7 @@ impl CodeArena {
     }
 
     pub fn freeze(self) -> Rc<CodeStore> {
-        Rc::new(CodeStore {
+        let mut store = Rc::new(CodeStore {
             instructions: self.instructions.into_boxed_slice().into(),
             cold: self.cold.into_boxed_slice().into(),
             ranges: self.ranges.into_boxed_slice().into(),
@@ -1137,7 +1137,16 @@ impl CodeArena {
                 .into(),
             operand_windows: self.operand_windows.into_boxed_slice().into(),
             catch_ranges: self.catch_ranges.into_boxed_slice().into(),
-        })
+        });
+        let weak = Rc::new(OnceLock::new());
+        if let Some(store) = Rc::get_mut(&mut store) {
+            let cold = Rc::get_mut(&mut store.cold).expect("cold store is uniquely owned");
+            for op in cold {
+                op.detach_store_links(&weak);
+            }
+        }
+        let _ = weak.set(Rc::downgrade(&store));
+        store
     }
 }
 
@@ -5706,9 +5715,84 @@ impl ExecutableCode {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
+enum CodeStoreLink {
+    Strong(Rc<OnceLock<Rc<CodeStore>>>),
+    Deferred {
+        weak: Rc<OnceLock<std::rc::Weak<CodeStore>>>,
+        promoted: OnceLock<Rc<CodeStore>>,
+    },
+}
+
+impl CodeStoreLink {
+    fn resolve_ref(&self) -> Option<&CodeStore> {
+        match self {
+            Self::Strong(link) => link.get().map(Rc::as_ref),
+            Self::Deferred { weak, promoted } => {
+                if promoted.get().is_none() {
+                    let _ = promoted.set(weak.get()?.upgrade()?);
+                }
+                promoted.get().map(Rc::as_ref)
+            }
+        }
+    }
+
+    fn resolve(&self) -> Option<Rc<CodeStore>> {
+        match self {
+            Self::Strong(link) => link.get().cloned(),
+            Self::Deferred { weak, promoted } => promoted
+                .get()
+                .cloned()
+                .or_else(|| weak.get().and_then(std::rc::Weak::upgrade)),
+        }
+    }
+
+    fn promoted(&self) -> Self {
+        match self.resolve() {
+            Some(store) => {
+                let link = Rc::new(OnceLock::new());
+                let _ = link.set(store);
+                Self::Strong(link)
+            }
+            None => self.clone(),
+        }
+    }
+
+    fn same_store(&self, other: &Self) -> bool {
+        self.resolve()
+            .zip(other.resolve())
+            .is_some_and(|(left, right)| Rc::ptr_eq(&left, &right))
+    }
+
+    fn detach(&mut self, store: &Rc<OnceLock<std::rc::Weak<CodeStore>>>) {
+        *self = Self::Deferred {
+            weak: store.clone(),
+            promoted: OnceLock::new(),
+        };
+    }
+}
+
+impl Clone for CodeStoreLink {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Strong(link) => Self::Strong(link.clone()),
+            Self::Deferred { weak, promoted } => {
+                let next = OnceLock::new();
+                if let Some(store) = promoted.get() {
+                    let _ = next.set(store.clone());
+                }
+                Self::Deferred {
+                    weak: weak.clone(),
+                    promoted: next,
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct FunctionCode {
-    store: Rc<OnceLock<Rc<CodeStore>>>,
+    store: CodeStoreLink,
     pub range: CodeRange,
     source: Option<Rc<[Op]>>,
     capture_slots: Rc<[u16]>,
@@ -5716,12 +5800,25 @@ pub struct FunctionCode {
     tier: Rc<RefCell<TierState>>,
 }
 
+impl Clone for FunctionCode {
+    fn clone(&self) -> Self {
+        Self {
+            store: self.store.promoted(),
+            range: self.range,
+            source: self.source.clone(),
+            capture_slots: self.capture_slots.clone(),
+            facts: self.facts.clone(),
+            tier: self.tier.clone(),
+        }
+    }
+}
+
 impl FunctionCode {
     pub fn from_ops(body: Vec<Op>) -> Self {
         let capture_slots = collect_capture_slots(&body);
         let (_, range, store) = freeze_tree(body);
         Self {
-            store,
+            store: CodeStoreLink::Strong(store),
             range,
             source: None,
             capture_slots,
@@ -5733,7 +5830,7 @@ impl FunctionCode {
     pub fn pending(body: Vec<Op>) -> Self {
         let capture_slots = collect_capture_slots(&body);
         Self {
-            store: Rc::new(OnceLock::new()),
+            store: CodeStoreLink::Strong(Rc::new(OnceLock::new())),
             range: CodeRange {
                 code: CodeId(0),
                 start: 0,
@@ -5767,7 +5864,7 @@ impl FunctionCode {
             .into_iter()
             .zip(capture_slots)
             .map(|(range, capture_slots)| Self {
-                store: store.clone(),
+                store: CodeStoreLink::Strong(store.clone()),
                 range,
                 source: None,
                 capture_slots,
@@ -5781,7 +5878,7 @@ impl FunctionCode {
         let linked = Rc::new(OnceLock::new());
         let _ = linked.set(store);
         Self {
-            store: linked,
+            store: CodeStoreLink::Strong(linked),
             range,
             source: None,
             capture_slots: Rc::from([u16::MAX]),
@@ -5995,11 +6092,11 @@ impl FunctionCode {
     }
 
     pub(crate) fn code(&self) -> Option<CodeView<'_>> {
-        self.store.get()?.code(self.range)
+        self.store.resolve_ref()?.code(self.range)
     }
 
     pub(crate) fn store(&self) -> Option<Rc<CodeStore>> {
-        self.store.get().cloned()
+        self.store.resolve()
     }
 
     pub(crate) fn capture_slots(&self) -> &[u16] {
@@ -6023,7 +6120,7 @@ impl FunctionCode {
         }
         self.source = Some(body.clone().into_boxed_slice().into());
         self.range = arena.append(body);
-        self.store = store.clone();
+        self.store = CodeStoreLink::Strong(store.clone());
     }
 
     pub(crate) fn rehome_contents(
@@ -6039,7 +6136,24 @@ impl FunctionCode {
             op.rehome_bodies(arena, store);
         }
         self.source = Some(body.into_boxed_slice().into());
-        self.store = store.clone();
+        self.store = CodeStoreLink::Strong(store.clone());
+    }
+
+    pub(crate) fn detach_internal_store(
+        &mut self,
+        store: &Rc<OnceLock<std::rc::Weak<CodeStore>>>,
+    ) {
+        self.store.detach(store);
+        if let Some(source) = &mut self.source {
+            for op in Rc::make_mut(source) {
+                op.detach_store_links(store);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_internal_store_link(&self) -> bool {
+        matches!(self.store, CodeStoreLink::Deferred { .. })
     }
 }
 
@@ -6202,7 +6316,7 @@ impl PartialEq for FunctionCode {
         self.range == other.range
             && self.source == other.source
             && self.facts == other.facts
-            && (self.source.is_some() || Rc::ptr_eq(&self.store, &other.store))
+            && (self.source.is_some() || self.store.same_store(&other.store))
     }
 }
 
