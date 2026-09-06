@@ -29,6 +29,10 @@ impl StatementReducer {
         self.locals.clone()
     }
 
+    pub(super) const fn frame_register_count(&self) -> u16 {
+        self.next_register
+    }
+
     pub(super) fn new_with_global(source_type: SourceType, global: bool) -> Self {
         Self::new_with_modes(source_type, global, global)
     }
