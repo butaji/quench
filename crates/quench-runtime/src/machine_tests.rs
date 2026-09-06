@@ -525,10 +525,12 @@ fn composed_plan_retires_cached_bytes_after_committed_failure() {
         0,
         0x2000,
     );
-    let semantic: Result<crate::vm::DispatchTransition, super::NativeDispatchError> =
-        Err(super::NativeDispatchError::Semantic(crate::vm::VmError::EvalError(
-            "ordinary throw".into(),
-        )));
+    let semantic: Result<crate::vm::DispatchTransition, super::NativeDispatchError> = Err(
+        super::NativeDispatchError::SemanticAt {
+            pc: 0,
+            error: crate::vm::VmError::EvalError("ordinary throw".into()),
+        },
+    );
     plan.physical.apply_dispatch_outcome(&semantic, None);
     assert_eq!(plan.physical.cache.len(), 1, "semantic errors do not invalidate physical code");
 }

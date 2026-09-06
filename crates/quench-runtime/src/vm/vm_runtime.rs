@@ -317,7 +317,6 @@ pub(crate) extern "C" fn native_region_bridge(raw: *mut std::ffi::c_void) -> u64
             Some(Err(error)) => {
                 let (pc, error) = match error {
                     crate::machine::NativeDispatchError::SemanticAt { pc, error } => (pc, error),
-                    crate::machine::NativeDispatchError::Semantic(error) => (region.pc, error),
                     crate::machine::NativeDispatchError::Committed(_)
                     | crate::machine::NativeDispatchError::Physical(_) => {
                         return NATIVE_DISPATCH_COMMITTED_ERROR
@@ -350,13 +349,6 @@ pub(crate) extern "C" fn native_region_bridge(raw: *mut std::ffi::c_void) -> u64
         }
         Err(crate::machine::NativeDispatchError::SemanticAt { pc, error }) => {
             region.outcome = Some(NativeBridgeOutcome::Throw { pc, error });
-            NATIVE_DISPATCH_SEMANTIC_ERROR
-        }
-        Err(crate::machine::NativeDispatchError::Semantic(error)) => {
-            region.outcome = Some(NativeBridgeOutcome::Throw {
-                pc: region.pc,
-                error,
-            });
             NATIVE_DISPATCH_SEMANTIC_ERROR
         }
         Err(crate::machine::NativeDispatchError::Physical(_)) => 0,
@@ -1686,17 +1678,6 @@ pub(crate) fn execute_optimized_code_step_from(
                     .unwrap_or(crate::completion::Completion::Normal);
                 return Ok((completion, next));
             }
-            Err(crate::machine::NativeDispatchError::Semantic(error)) => {
-                crate::execution_trace::stencil_observation(
-                    code,
-                    start,
-                    "region",
-                    native_executed,
-                );
-                crate::execution_trace::stencil_outcome(code, start, "region", "semantic_error");
-                return completion_step_after_error(registers, error, start + 1)
-                    .map(|step| (step.completion, step.next));
-            }
             Err(crate::machine::NativeDispatchError::SemanticAt { pc, error }) => {
                 crate::execution_trace::stencil_observation(
                     code,
@@ -2147,11 +2128,6 @@ pub(crate) fn execute_optimized_code_step_from(
                     .unwrap_or(crate::completion::Completion::Normal);
                 return Ok((completion, next));
             }
-            Err(crate::machine::NativeDispatchError::Semantic(error)) => {
-                crate::execution_trace::stencil_observation(code, start, "dispatch", true);
-                return completion_step_after_error(registers, error, start + 1)
-                    .map(|step| (step.completion, step.next));
-            }
             Err(crate::machine::NativeDispatchError::SemanticAt { pc, error }) => {
                 crate::execution_trace::stencil_observation(code, start, "dispatch", true);
                 return completion_step_after_error(registers, error, pc + 1)
@@ -2283,9 +2259,6 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                             );
                         }
                     }
-                }
-                Err(crate::machine::NativeDispatchError::Semantic(error)) => {
-                    return completion_step_after_error(registers, error, pc + 1);
                 }
                 Err(crate::machine::NativeDispatchError::SemanticAt { pc: fault_pc, error }) => {
                     return completion_step_after_error(registers, error, fault_pc + 1);
@@ -2748,10 +2721,6 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                     crate::execution_trace::stencil_observation(code, pc, "dispatch", true);
                     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
                     transition
-                }
-                Err(crate::machine::NativeDispatchError::Semantic(error)) => {
-                    crate::execution_trace::stencil_observation(code, pc, "dispatch", true);
-                    return completion_step_after_error(registers, error, pc + 1)
                 }
                 Err(crate::machine::NativeDispatchError::SemanticAt { pc: fault_pc, error }) => {
                     crate::execution_trace::stencil_observation(code, pc, "dispatch", true);
