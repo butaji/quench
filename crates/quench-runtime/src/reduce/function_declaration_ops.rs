@@ -25,13 +25,17 @@ fn name_function_declaration(
 fn function_declaration_op(
     dst: u16,
     body: Vec<Op>,
+    frame_register_count: u16,
     params: u16,
     captures: u16,
     metadata: functions::FunctionMetadata,
 ) -> Op {
     Op::MakeFunctionWithKind {
         dst,
-        body: crate::machine::FunctionCode::pending(body).with_facts(crate::facts::FunctionFacts {
+        body: crate::machine::FunctionCode::pending_with_declared_frame(
+            body,
+            frame_register_count,
+        ).with_facts(crate::facts::FunctionFacts {
             direct_constructor: metadata.direct_constructor.clone(),
             composed_constructor: metadata.composed_constructor.clone(),
         }),

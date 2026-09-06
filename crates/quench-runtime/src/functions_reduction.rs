@@ -1,3 +1,14 @@
+pub(crate) struct ReducedFunctionOps {
+    pub(crate) body: Vec<Op>,
+    pub(crate) captures: u16,
+    pub(crate) frame_register_count: u16,
+}
+
+struct ReducedFunctionBody {
+    body: Vec<Op>,
+    frame_register_count: u16,
+}
+
 pub(super) fn reduce_function_ops(
     statements: &[oxc::ast::ast::Statement<'_>],
     formal: &oxc::ast::ast::FormalParameters<'_>,
@@ -6,7 +17,7 @@ pub(super) fn reduce_function_ops(
     parameter_count: u16,
     locals: &HashMap<String, u16>,
     arrow_expression: Option<bool>,
-) -> Option<(Vec<Op>, u16)> {
+) -> Option<ReducedFunctionOps> {
     reduce_function_ops_named(
         statements,
         formal,
@@ -26,7 +37,7 @@ fn reduce_function_ops_named(
     locals: &HashMap<String, u16>,
     arrow_expression: Option<bool>,
     self_name: Option<(&str, bool)>,
-) -> Option<(Vec<Op>, u16)> {
+) -> Option<ReducedFunctionOps> {
     let (parameters, parameter_count) = parameters;
     let lexical_receiver = arrow_expression.is_some();
     let (parameters, body_locals, captures, rest) = prepare_function_scope(
@@ -38,7 +49,7 @@ fn reduce_function_ops_named(
     );
     let self_name_slot = self_name
         .and_then(|(name, immutable)| immutable.then(|| body_locals.get(name)).flatten().copied());
-    let prefix = reduce_function_body(
+    let reduced = reduce_function_body(
         (statements, formal),
         facts,
         (&parameters, body_locals),
@@ -47,7 +58,11 @@ fn reduce_function_ops_named(
         rest,
         self_name_slot,
     )?;
-    Some((bind_rest(prefix, rest, parameter_count, captures), captures))
+    Some(ReducedFunctionOps {
+        body: bind_rest(reduced.body, rest, parameter_count, captures),
+        captures,
+        frame_register_count: reduced.frame_register_count,
+    })
 }
 
 pub(crate) fn reduce_named_declaration(
@@ -58,7 +73,7 @@ pub(crate) fn reduce_named_declaration(
     name: &str,
     kind: FunctionKind,
     is_async: bool,
-) -> Result<(Vec<Op>, u16), Vec<String>> {
+) -> Result<ReducedFunctionOps, Vec<String>> {
     let (parameters, parameter_count) = crate::function_parameters::bindings(formal)?;
     let strictness = crate::reduce_support::function_strictness(body, facts.strict);
     let tail_calls = tail_calls_enabled(strictness, kind, is_async);
@@ -93,7 +108,7 @@ fn reduce_function_body(
     arrow_expression: Option<bool>,
     rest: Option<u16>,
     self_name_slot: Option<u16>,
-) -> Option<Vec<Op>> {
+) -> Option<ReducedFunctionBody> {
     let captured_name_slot = locals
         .1
         .values()
@@ -175,12 +190,12 @@ fn reduce_function_body_inner(
     layout: (u16, u16),
     arrow_expression: Option<bool>,
     rest: Option<u16>,
-) -> Option<Vec<Op>> {
+) -> Option<ReducedFunctionBody> {
     let (statements, formal) = syntax;
     let (parameters, body_locals) = locals;
     let captures = layout.1;
     let ordered = ordered_function_declarations_first(statements);
-    let mut prefix = crate::function_parameters::prefix(
+    let (mut prefix, prefix_register_count) = crate::function_parameters::prefix(
         formal,
         facts,
         parameters,
@@ -207,8 +222,12 @@ fn reduce_function_body_inner(
     facts.eval_var_barrier = inherited_barrier;
     facts.eval_formals = inherited_formals;
     prefix.extend((!prefix.is_empty()).then_some(Op::ParameterEnd));
-    prefix.extend(body_ops?);
-    Some(prefix)
+    let body = body_ops?;
+    prefix.extend(body.body);
+    Some(ReducedFunctionBody {
+        body: prefix,
+        frame_register_count: prefix_register_count.max(body.frame_register_count),
+    })
 }
 
 fn prepare_function_scope(
@@ -280,14 +299,14 @@ fn function_local_count(
     crate::reduce_support::register_base(locals).max(minimum)
 }
 
-pub(crate) fn reduce_selected_body(
+fn reduce_selected_body(
     statements: &[oxc::ast::ast::Statement<'_>],
     order: &[usize],
     facts: &mut ProgramDb,
     parameters: HashMap<String, u16>,
     local_count: u16,
     expression_body: bool,
-) -> Option<Vec<Op>> {
+) -> Option<ReducedFunctionBody> {
     let ordered = ordered_body_statements(statements, order)?;
     let mut locals = parameters;
     let mut ops = Vec::new();
@@ -327,7 +346,10 @@ pub(crate) fn reduce_selected_body(
         Some(stack) => crate::using_scope::wrap(ops, stack, await_using, &mut next_register).ok()?,
         None => ops,
     };
-    finalize_function_body(ops, last, expression_body)
+    Some(ReducedFunctionBody {
+        body: finalize_function_body(ops, last, expression_body)?,
+        frame_register_count: next_register,
+    })
 }
 
 fn ordered_body_statements<'a>(
@@ -373,6 +395,7 @@ fn emit_function_op(
     ops: &mut Vec<Op>,
     next_register: &mut u16,
     body: Vec<Op>,
+    frame_register_count: u16,
     params: u16,
     captures: u16,
     metadata: FunctionMetadata,
@@ -382,7 +405,10 @@ fn emit_function_op(
     *next_register = next_register.saturating_add(1);
     ops.push(Op::MakeFunctionWithKind {
         dst: register,
-        body: crate::machine::FunctionCode::pending(body).with_facts(crate::facts::FunctionFacts {
+        body: crate::machine::FunctionCode::pending_with_declared_frame(
+            body,
+            frame_register_count,
+        ).with_facts(crate::facts::FunctionFacts {
             direct_constructor: metadata.direct_constructor.clone(),
             composed_constructor: metadata.composed_constructor.clone(),
         }),
@@ -450,7 +476,7 @@ pub(crate) fn reduce_expression_kind_source(
         facts.tail_calls,
         facts.function_dynamic_scope_floor,
     ) = inherited;
-    let (body_ops, captures) = reduced?;
+    let reduced = reduced?;
     let source = source_override.or_else(|| {
         facts
             .reduction_source
@@ -460,9 +486,10 @@ pub(crate) fn reduce_expression_kind_source(
     Some(emit_function_expression(
         ops,
         next_register,
-        body_ops,
+        reduced.body,
+        reduced.frame_register_count,
         parameter_count,
-        captures,
+        reduced.captures,
         FunctionMetadata {
             kind: emitted_kind,
             length: crate::function_parameters::expected_argument_count(&function.params),
@@ -492,15 +519,16 @@ pub(crate) fn reduce_arrow(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    let (body_ops, captures, strictness) = reduce_arrow_body(function, facts, locals)?;
+    let (reduced, strictness) = reduce_arrow_body(function, facts, locals)?;
     Some(emit_function_op(
         ops,
         next_register,
-        body_ops,
+        reduced.body,
+        reduced.frame_register_count,
         crate::function_parameters::bindings(&function.params)
             .map(|(_, count)| count)
             .ok()?,
-        captures,
+        reduced.captures,
         FunctionMetadata {
             kind: FunctionKind::Arrow,
             length: crate::function_parameters::expected_argument_count(&function.params),
@@ -521,7 +549,7 @@ fn reduce_arrow_body(
     function: &oxc::ast::ast::ArrowFunctionExpression<'_>,
     facts: &mut ProgramDb,
     locals: &HashMap<String, u16>,
-) -> Option<(Vec<Op>, u16, crate::ops_meta::FunctionStrictness)> {
+) -> Option<(ReducedFunctionOps, crate::ops_meta::FunctionStrictness)> {
     let strictness = crate::reduce_support::function_strictness(&function.body, facts.strict);
     let (parameters, parameter_count) =
         crate::function_parameters::bindings(&function.params).ok()?;
@@ -542,8 +570,7 @@ fn reduce_arrow_body(
         facts.tail_calls,
         facts.function_dynamic_scope_floor,
     ) = inherited;
-    let (body_ops, captures) = reduced?;
-    Some((body_ops, captures, strictness))
+    Some((reduced?, strictness))
 }
 
 pub(super) fn make(

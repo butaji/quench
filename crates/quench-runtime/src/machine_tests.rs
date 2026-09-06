@@ -222,6 +222,30 @@ fn ordinary_source_call_frames_use_declared_argument_windows() {
 }
 
 #[test]
+fn ordinary_source_freezes_lowering_frame_width() {
+    let mut source = String::from("function f(){");
+    for _ in 0..80 {
+        source.push_str("try{}finally{}");
+    }
+    source.push_str("return 1}if(f()!==1)throw 0");
+    let program = crate::reduce::reduce_source(&source).expect("source lowers");
+    let mut widths = Vec::new();
+    crate::stencil_test_support::visit_code_views(program.code(), &mut |code| {
+        for (_, op) in code.cold_ops() {
+            if let super::Op::MakeFunctionWithKind { body, .. } = op {
+                if let Some(declared) = body.declared_frame_register_count() {
+                    widths.push((declared, body.required_register_count()));
+                }
+            }
+        }
+    });
+    assert!(!widths.is_empty(), "source produced no declared function frame");
+    assert!(widths.iter().all(|(declared, linked)| declared == linked));
+    crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default())
+        .expect("source executes");
+}
+
+#[test]
 fn nested_function_registers_do_not_widen_the_caller_frame() {
     let nested = super::FunctionCode::pending(vec![
         super::Op::Move { dst: 200, src: 199 },

@@ -3,16 +3,16 @@ fn reduce_function_body(
     body: &oxc::ast::ast::FunctionBody<'_>,
     facts: &mut ProgramDb,
     locals: &HashMap<String, u16>,
-) -> Result<(Vec<Op>, u16, u16, functions::FunctionMetadata), Vec<String>> {
+) -> Result<(functions::ReducedFunctionOps, u16, functions::FunctionMetadata), Vec<String>> {
     let (_, parameter_count) = crate::function_parameters::bindings(&function.params)?;
     let strictness = crate::reduce_support::function_strictness(body, facts.strict);
     let metadata = function_metadata(function, strictness, locals);
-    let (body_ops, captures) = functions::reduce_named_declaration(
+    let reduced = functions::reduce_named_declaration(
         body, &function.params, facts, locals,
         function.id.as_ref().map_or("", |id| id.name.as_str()),
         functions::function_kind(function), function.r#async,
     )?;
-    Ok((body_ops, parameter_count, captures, metadata))
+    Ok((reduced, parameter_count, metadata))
 }
 
 fn function_metadata(
@@ -92,14 +92,18 @@ pub fn reduce_default_function_declaration(
     };
     let slot = declaration_slot("default", next_slot, locals, facts);
     let (_, parameter_count) = crate::function_parameters::bindings(&function.params)?;
-    let (body_ops, captures) = functions::reduce_named_declaration(
+    let reduced = functions::reduce_named_declaration(
         body, &function.params, facts, locals, "default",
         functions::function_kind(function), function.r#async,
     )?;
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
     ops.push(function_declaration_op(
-        register, body_ops, parameter_count, captures,
+        register,
+        reduced.body,
+        reduced.frame_register_count,
+        parameter_count,
+        reduced.captures,
         function_metadata(
             function,
             crate::reduce_support::function_strictness(body, facts.strict),

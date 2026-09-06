@@ -475,6 +475,31 @@ impl CodeArena {
         }
         self.append(body)
     }
+
+    fn append_tree_with_frame_register_count(
+        &mut self,
+        body: Vec<Op>,
+        store: &Rc<OnceLock<Rc<CodeStore>>>,
+        frame_register_count: u16,
+    ) -> CodeRange {
+        let range = self.append_tree(body, store);
+        if let Some(width) = self.register_counts.get_mut(range.code.0 as usize) {
+            *width = frame_register_count;
+        }
+        range
+    }
+
+    fn append_with_frame_register_count(
+        &mut self,
+        body: Vec<Op>,
+        frame_register_count: u16,
+    ) -> CodeRange {
+        let range = self.append(body);
+        if let Some(width) = self.register_counts.get_mut(range.code.0 as usize) {
+            *width = frame_register_count;
+        }
+        range
+    }
     pub fn append_slice(&mut self, body: &[Op]) -> CodeRange {
         let nested = body.iter().map(Op::body_count).sum::<usize>();
         self.ranges.reserve(nested.saturating_add(1));
@@ -6359,6 +6384,14 @@ impl ExecutableCode {
         Self { store, entry }
     }
 
+    pub(crate) fn from_ops_with_frame_register_count(
+        body: Vec<Op>,
+        frame_register_count: u16,
+    ) -> Self {
+        let (store, entry, _) = freeze_tree_with_frame_register_count(body, frame_register_count);
+        Self { store, entry }
+    }
+
     pub fn store(&self) -> Rc<CodeStore> {
         self.store.clone()
     }
@@ -6452,6 +6485,7 @@ pub struct FunctionCode {
     store: CodeStoreLink,
     pub range: CodeRange,
     source: Option<Rc<[Op]>>,
+    declared_frame_register_count: Option<u16>,
     capture_slots: Rc<[u16]>,
     facts: Rc<crate::facts::FunctionFacts>,
     tier: Rc<RefCell<TierState>>,
@@ -6463,6 +6497,7 @@ impl Clone for FunctionCode {
             store: self.store.promoted(),
             range: self.range,
             source: self.source.clone(),
+            declared_frame_register_count: self.declared_frame_register_count,
             capture_slots: self.capture_slots.clone(),
             facts: self.facts.clone(),
             tier: self.tier.clone(),
@@ -6478,6 +6513,24 @@ impl FunctionCode {
             store: CodeStoreLink::Strong(store),
             range,
             source: None,
+            declared_frame_register_count: None,
+            capture_slots,
+            facts: Rc::default(),
+            tier: Rc::new(RefCell::new(TierState::new())),
+        }
+    }
+
+    pub(crate) fn from_ops_with_declared_frame(
+        body: Vec<Op>,
+        frame_register_count: u16,
+    ) -> Self {
+        let capture_slots = collect_capture_slots(&body);
+        let (_, range, store) = freeze_tree_with_frame_register_count(body, frame_register_count);
+        Self {
+            store: CodeStoreLink::Strong(store),
+            range,
+            source: None,
+            declared_frame_register_count: Some(frame_register_count),
             capture_slots,
             facts: Rc::default(),
             tier: Rc::new(RefCell::new(TierState::new())),
@@ -6485,6 +6538,20 @@ impl FunctionCode {
     }
 
     pub fn pending(body: Vec<Op>) -> Self {
+        Self::pending_with_frame_register_count(body, None)
+    }
+
+    pub(crate) fn pending_with_declared_frame(
+        body: Vec<Op>,
+        frame_register_count: u16,
+    ) -> Self {
+        Self::pending_with_frame_register_count(body, Some(frame_register_count))
+    }
+
+    fn pending_with_frame_register_count(
+        body: Vec<Op>,
+        declared_frame_register_count: Option<u16>,
+    ) -> Self {
         let capture_slots = collect_capture_slots(&body);
         Self {
             store: CodeStoreLink::Strong(Rc::new(OnceLock::new())),
@@ -6494,6 +6561,7 @@ impl FunctionCode {
                 end: body.len() as u32,
             },
             source: Some(body.into_boxed_slice().into()),
+            declared_frame_register_count,
             capture_slots,
             facts: Rc::default(),
             tier: Rc::new(RefCell::new(TierState::new())),
@@ -6524,6 +6592,7 @@ impl FunctionCode {
                 store: CodeStoreLink::Strong(store.clone()),
                 range,
                 source: None,
+                declared_frame_register_count: None,
                 capture_slots,
                 facts: Rc::default(),
                 tier: Rc::new(RefCell::new(TierState::new())),
@@ -6538,6 +6607,7 @@ impl FunctionCode {
             store: CodeStoreLink::Strong(linked),
             range,
             source: None,
+            declared_frame_register_count: None,
             capture_slots: Rc::from([u16::MAX]),
             facts: Rc::default(),
             tier: Rc::new(RefCell::new(TierState::new())),
@@ -6736,6 +6806,11 @@ impl FunctionCode {
         self.code().map(CodeView::frame_register_count).unwrap_or(0)
     }
 
+    #[cfg(test)]
+    pub(crate) fn declared_frame_register_count(&self) -> Option<u16> {
+        self.declared_frame_register_count
+    }
+
     pub(crate) fn code(&self) -> Option<CodeView<'_>> {
         self.store.resolve_ref()?.code(self.range)
     }
@@ -6766,7 +6841,10 @@ impl FunctionCode {
             op.rehome_bodies(arena, store);
         }
         self.source = Some(body.clone().into_boxed_slice().into());
-        self.range = arena.append(body);
+        self.range = match self.declared_frame_register_count {
+            Some(width) => arena.append_with_frame_register_count(body, width),
+            None => arena.append(body),
+        };
         self.store = CodeStoreLink::Strong(store.clone());
     }
 
@@ -6955,10 +7033,23 @@ fn freeze_tree(body: Vec<Op>) -> (Rc<CodeStore>, CodeRange, Rc<OnceLock<Rc<CodeS
     (store, range, linked)
 }
 
+fn freeze_tree_with_frame_register_count(
+    body: Vec<Op>,
+    frame_register_count: u16,
+) -> (Rc<CodeStore>, CodeRange, Rc<OnceLock<Rc<CodeStore>>>) {
+    let mut arena = CodeArena::new();
+    let linked = Rc::new(OnceLock::new());
+    let range = arena.append_tree_with_frame_register_count(body, &linked, frame_register_count);
+    let store = arena.freeze();
+    let _ = linked.set(store.clone());
+    (store, range, linked)
+}
+
 impl PartialEq for FunctionCode {
     fn eq(&self, other: &Self) -> bool {
         self.range == other.range
             && self.source == other.source
+            && self.declared_frame_register_count == other.declared_frame_register_count
             && self.facts == other.facts
             && (self.source.is_some() || self.store.same_store(&other.store))
     }
