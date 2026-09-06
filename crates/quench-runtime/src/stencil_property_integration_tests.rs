@@ -129,12 +129,18 @@ fn run_local_property(
     pc: usize,
     receiver: Value,
 ) -> Value {
-    let native = plan
-        .native_local_property_at(pc)
-        .expect("local property plan");
-    let slot = native.borrow().selection().receiver_slot;
     let environment = crate::environment::Environment::new();
+    let slot = local_property_slot(plan, pc);
     environment.set(slot, receiver);
+    execute_local_property(code, plan, pc, environment).expect("local property execution")
+}
+
+fn execute_local_property(
+    code: CodeView<'_>,
+    plan: &BaselinePlan,
+    pc: usize,
+    environment: Rc<crate::environment::Environment>,
+) -> Result<Value, crate::execute::VmError> {
     let mut registers = crate::register_file::RegisterFile::with_undefined(
         usize::from(code.register_count()).max(8),
     );
@@ -145,12 +151,26 @@ fn run_local_property(
         &mut registers,
         &crate::vm::current_context_or_default(),
         environment,
-    )
-    .expect("local property execution");
+    )?;
     let Completion::Return(value) = completion else {
         panic!("local property function must return")
     };
-    value
+    Ok(value)
+}
+
+fn local_property_slot(plan: &BaselinePlan, pc: usize) -> u16 {
+    plan.native_local_property_at(pc)
+        .expect("local property plan")
+        .borrow()
+        .selection()
+        .receiver_slot
+}
+
+fn local_property_count(plan: &BaselinePlan, pc: usize) -> u64 {
+    plan.native_local_property_at(pc)
+        .expect("local property plan")
+        .borrow()
+        .native_entry_count()
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -175,10 +195,14 @@ fn ordinary_source_fuses_local_load_with_guarded_property_get() {
         run_local_property(code, &plan, pc, receiver()),
         Value::Number(11.0)
     );
-    let native = plan.native_local_property_at(pc).unwrap().borrow();
-    assert_eq!(native.native_entry_count(), 1);
-    assert_eq!(native.local_read_count(), 2);
-    drop(native);
+    assert_eq!(local_property_count(&plan, pc), 1);
+    assert_eq!(
+        plan.native_local_property_at(pc)
+            .unwrap()
+            .borrow()
+            .local_read_count(),
+        2
+    );
     assert_eq!(
         plan.native_load_local_at(pc)
             .map(|native| native.borrow().native_entry_count())
@@ -190,13 +214,41 @@ fn ordinary_source_fuses_local_load_with_guarded_property_get() {
         run_local_property(code, &plan, pc, Value::String("x".into())),
         Value::Undefined
     );
-    assert_eq!(
-        plan.native_local_property_at(pc)
-            .unwrap()
-            .borrow()
-            .native_entry_count(),
-        1
+    assert_eq!(local_property_count(&plan, pc), 1);
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn fused_property_replays_deleted_binding_as_reference_error() {
+    let (body, plan, get_pc) = source_plan();
+    let code = body.code().unwrap();
+    let pc = (0..get_pc)
+        .find(|pc| plan.native_local_property_at(*pc).is_some())
+        .expect("source producer window is admitted");
+    let chain = prototype_chain(11.0);
+    let environment = crate::environment::Environment::new();
+    environment.set(
+        local_property_slot(&plan, pc),
+        Value::Object(chain.receiver),
     );
+    assert_eq!(
+        execute_local_property(code, &plan, pc, environment.clone()).unwrap(),
+        Value::Number(11.0)
+    );
+    assert_eq!(
+        execute_local_property(code, &plan, pc, environment.clone()).unwrap(),
+        Value::Number(11.0)
+    );
+    let entries = local_property_count(&plan, pc);
+    let slot = local_property_slot(&plan, pc);
+    let _shared = environment.slot_cell(slot);
+    environment.mark_deleted_slot(slot);
+    let result = execute_local_property(code, &plan, pc, environment);
+    assert!(
+        matches!(result, Err(crate::execute::VmError::Thrown(_))),
+        "deleted binding must throw, got {result:?}"
+    );
+    assert_eq!(local_property_count(&plan, pc), entries);
 }
 
 #[cfg(target_arch = "aarch64")]
