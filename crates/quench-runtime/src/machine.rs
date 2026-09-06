@@ -4159,7 +4159,7 @@ impl NativePropertyPlan {
             .shared_arena
             .clone()
             .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
-        let address = {
+        let (address, view) = {
             let mut slab = shared.borrow_mut();
             let view = crate::stencil_select::select_physical_for_abi(
                 key,
@@ -4168,11 +4168,17 @@ impl NativePropertyPlan {
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
             let address = slab.render_physical_view_or_get(&mut self.physical.cache, view, values)?;
             slab.make_executable(address)?;
-            address
+            (address, view)
         };
         let owned = shared.borrow().owned_property_write_guard_entry(address)?;
         let result = invoke_shared_entry!(shared, owned, |entry| entry(context));
         self.installed = InstalledPropertyEntry::WriteShared(owned);
+        #[cfg(not(test))]
+        let _ = view;
+        #[cfg(test)]
+        if result.is_ok() {
+            self.last_native_view = Some(view);
+        }
         self.finish_property_write(result)
     }
 
@@ -4194,7 +4200,14 @@ impl NativePropertyPlan {
         arena.make_executable()?;
         let entry = arena.property_write_guard_entry(address)?;
         self.installed = InstalledPropertyEntry::WriteLocal(address);
-        self.finish_property_write(Ok(entry(context)))
+        let result = entry(context);
+        #[cfg(not(test))]
+        let _ = view;
+        #[cfg(test)]
+        {
+            self.last_native_view = Some(view);
+        }
+        self.finish_property_write(Ok(result))
     }
 }
 

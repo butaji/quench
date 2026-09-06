@@ -220,7 +220,7 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
                 &rustflags,
                 declaration,
             )
-        } else if declaration.name == "array_numeric_loop" {
+        } else if let Some(source) = super::build_stencil_templates::whole_region(declaration.name) {
             if !target.starts_with("aarch64") {
                 continue;
             }
@@ -231,27 +231,8 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
                     &compiler,
                     &flags,
                     &rustflags,
-                    "array_numeric_loop",
-                    super::build_stencil_templates::aarch64_array_loop(),
-                    &[],
-                )
-                .bytes,
-                fallthrough: None,
-                relocations: Vec::new(),
-            }
-        } else if declaration.name == "prototype_property" {
-            if !target.starts_with("aarch64") {
-                continue;
-            }
-            ExtractedObject {
-                bytes: compile_assembly_fragment(
-                    &root.path,
-                    &target,
-                    &compiler,
-                    &flags,
-                    &rustflags,
-                    "prototype_property",
-                    super::build_stencil_templates::aarch64_prototype_property(),
+                    declaration.name,
+                    source,
                     &[],
                 )
                 .bytes,
@@ -934,19 +915,13 @@ fn fingerprint(
         .map(|item| {
             let source = super::rust_leaf_recipe(item)
                 .map(|recipe| rust_source(item.name, recipe))
-                .or_else(|| match item.name {
-                    "fallthrough" => Some(
-                        super::build_stencil_templates::aarch64_head().to_owned()
-                            + super::build_stencil_templates::aarch64_tail(),
-                    ),
-                    "array_numeric_loop" => {
-                        Some(super::build_stencil_templates::aarch64_array_loop().to_owned())
-                    }
-                    "prototype_property" => Some(
-                        super::build_stencil_templates::aarch64_prototype_property().to_owned(),
-                    ),
-                    _ => None,
+                .or_else(|| {
+                    super::build_stencil_templates::whole_region(item.name).map(str::to_owned)
                 })
+                .or_else(|| (item.name == "fallthrough").then(|| {
+                    super::build_stencil_templates::aarch64_head().to_owned()
+                        + super::build_stencil_templates::aarch64_tail()
+                }))
                 .unwrap_or_default();
             format!(
                 "{name}:{abi:?}:{ops:?}:{x86:?}:{arm:?}:{portable:?}:{holes:?}:{arm_holes:?}:{entry}:{external:?}:{source}",
