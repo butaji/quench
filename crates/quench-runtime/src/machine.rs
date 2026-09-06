@@ -2410,7 +2410,8 @@ impl NativeBinaryPlan {
                 crate::stencil_select::RegionAbi::CompareBranch,
             )
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-            let address = slab.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
+            let address =
+                slab.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
             slab.make_executable(address)?;
             address
         };
@@ -2468,9 +2469,8 @@ fn invoke_compare_branch(
     true_pc: usize,
     false_pc: usize,
 ) -> Result<crate::native_control::NativeCompareBranchOutcome, crate::stencil_arena::ArenaError> {
-    let mut context = crate::native_control::NativeCompareBranchContext::new(
-        lhs, rhs, true_pc, false_pc,
-    );
+    let mut context =
+        crate::native_control::NativeCompareBranchContext::new(lhs, rhs, true_pc, false_pc);
     let status = crate::stencil_arena::SharedStencilSlab::acquire_owned(shared, token)?
         .invoke(|entry| entry(&mut context))?;
     context
@@ -3028,10 +3028,7 @@ impl PhysicalState {
     fn apply_dispatch_outcome<T>(
         &mut self,
         result: &Result<T, NativeDispatchError>,
-        published: Option<(
-            &Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
-            usize,
-        )>,
+        published: Option<(&Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>, usize)>,
     ) {
         match result {
             Err(NativeDispatchError::Physical(_)) => self.clear(),
@@ -4001,7 +3998,6 @@ impl NativeMovePlan {
         }
         result.map(|(value, _)| value)
     }
-
 }
 
 impl std::fmt::Debug for NativeMovePlan {
@@ -4095,9 +4091,7 @@ impl NativePropertyPlan {
             _ => return None,
         };
         crate::stencil_select::select_region(key).filter(|record| {
-            record.executable
-                && record.abi == abi
-                && validate_physical_template(record).is_ok()
+            record.executable && record.abi == abi && validate_physical_template(record).is_ok()
         })?;
         Some(Self {
             arena: None,
@@ -4138,7 +4132,8 @@ impl NativePropertyPlan {
             if let InstalledPropertyEntry::ReadLocal {
                 key: installed_key,
                 address,
-            } = self.installed {
+            } = self.installed
+            {
                 if installed_key == key {
                     if let Some(arena) = self.arena.as_ref() {
                         if let Ok(entry) = arena.property_guard_entry(address) {
@@ -4168,7 +4163,8 @@ impl NativePropertyPlan {
             if let InstalledPropertyEntry::ReadShared {
                 key: installed_key,
                 entry: owned,
-            } = self.installed {
+            } = self.installed
+            {
                 if installed_key == key {
                     match invoke_shared_entry!(shared, owned, |entry| entry(&mut context)) {
                         Ok(status) => {
@@ -4382,7 +4378,8 @@ impl NativePropertyPlan {
                 crate::stencil_select::RegionAbi::PropertyWriteGuard,
             )
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-            let address = slab.render_physical_view_or_get(&mut self.physical.cache, view, values)?;
+            let address =
+                slab.render_physical_view_or_get(&mut self.physical.cache, view, values)?;
             slab.make_executable(address)?;
             (address, view)
         };
@@ -5387,13 +5384,11 @@ fn region_admission_matches(
     record: &crate::stencil_select::RegionRecord,
 ) -> bool {
     let contract = record.contract();
-    if !contract.executable
-        || !contract.has_single_entry()
-        || !contract.legal_external_entry(0)
-    {
+    if !contract.executable || !contract.has_single_entry() || !contract.legal_external_entry(0) {
         return false;
     }
     cfg.region_matches(entries, start, contract.operations)
+        && record.bindings_match_entries(entries, start)
 }
 
 type SharedStencilPool = Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>;
@@ -5494,11 +5489,12 @@ fn compare_branch_at(
     }
     let end = branch_pc.checked_add(1)?;
     let physical_key = comparison_branch_key(comparison.flags);
-    cfg.region_entry_is_legal(start, end).then_some(CompareBranch {
-        false_target: u16::try_from(false_target).ok()?,
-        span: u8::try_from(end.checked_sub(start)?).ok()?,
-        physical_key,
-    })
+    cfg.region_entry_is_legal(start, end)
+        .then_some(CompareBranch {
+            false_target: u16::try_from(false_target).ok()?,
+            span: u8::try_from(end.checked_sub(start)?).ok()?,
+            physical_key,
+        })
 }
 
 fn comparison_branch_key(flags: u8) -> Option<crate::stencil_fact::RegionKey> {
@@ -5586,11 +5582,8 @@ fn add_chain_admission(
     let entry = entries.get(pc)?;
     let next = entries.get(pc + 1)?;
     let live_after = cfg.live_out().get(pc + 1)?;
-    let selection = crate::stencil_plan::select_add_chain(
-        entry.instruction,
-        next.instruction,
-        live_after,
-    )?;
+    let selection =
+        crate::stencil_plan::select_add_chain(entry.instruction, next.instruction, live_after)?;
     NativeAddChainPlan::new_with_arena(policy, Rc::clone(arena), selection.bindings)
         .map(|plan| NativeAdmission::AddChain(Rc::new(RefCell::new(plan))))
 }
@@ -5604,11 +5597,8 @@ fn local_binary_admission(
     arena: &SharedStencilPool,
 ) -> Option<NativeAdmission> {
     let selection = select_local_numeric(code, entries, cfg, pc)?;
-    let plan = crate::stencil_fusion::NativeLocalBinaryPlan::new(
-        selection,
-        policy,
-        Rc::clone(arena),
-    )?;
+    let plan =
+        crate::stencil_fusion::NativeLocalBinaryPlan::new(selection, policy, Rc::clone(arena))?;
     Some(NativeAdmission::LocalBinary(Rc::new(RefCell::new(plan))))
 }
 
@@ -5621,11 +5611,8 @@ fn local_property_admission(
     arena: &SharedStencilPool,
 ) -> Option<NativeAdmission> {
     let selection = select_local_property(code, entries, cfg, pc)?;
-    let plan = crate::stencil_fusion::NativeLocalPropertyPlan::new(
-        selection,
-        policy,
-        Rc::clone(arena),
-    )?;
+    let plan =
+        crate::stencil_fusion::NativeLocalPropertyPlan::new(selection, policy, Rc::clone(arena))?;
     Some(NativeAdmission::LocalProperty(Rc::new(RefCell::new(plan))))
 }
 
@@ -5691,7 +5678,10 @@ fn select_value_window<T: crate::stencil_plan::RankedSelection>(
         let Some(selection) = select(code, graph, operation, live_after) else {
             continue;
         };
-        if best.as_ref().is_none_or(|current| selection.rank() > current.rank()) {
+        if best
+            .as_ref()
+            .is_none_or(|current| selection.rank() > current.rank())
+        {
             best = Some(selection);
         }
     }
@@ -5789,10 +5779,7 @@ fn collect_admissions_at(
 ) {
     let entry = entries[pc];
     collect_numeric_admissions(builder, entries, cfg, pc, entry, code, policy, arena);
-    builder.push_optional(
-        pc,
-        add_chain_admission(entries, cfg, pc, policy, arena),
-    );
+    builder.push_optional(pc, add_chain_admission(entries, cfg, pc, policy, arena));
     builder.push_optional(
         pc,
         local_binary_admission(code, entries, cfg, pc, policy, arena),
@@ -5809,7 +5796,10 @@ fn build_admissions(
     code: CodeView<'_>,
     entries: &[BaselineEntry],
     policy: crate::stencil_policy::ExecutionPolicy,
-) -> (Option<Rc<AdmissionStorage<NativeAdmission>>>, SharedStencilPool) {
+) -> (
+    Option<Rc<AdmissionStorage<NativeAdmission>>>,
+    SharedStencilPool,
+) {
     let arena = Rc::new(RefCell::new(
         crate::stencil_arena::SharedStencilSlab::new(4096)
             .expect("compile-time region slab capacity is valid"),
@@ -7518,6 +7508,7 @@ mod tests {
                 holes: &HOLES,
             },
             operations: &OPS,
+            bindings: &[],
             entry: 0,
             external_entries: &ENTRIES,
             fallthrough: None,
@@ -7555,6 +7546,7 @@ mod tests {
                 holes: &[],
             },
             operations: &OPS,
+            bindings: &[],
             entry: 0,
             external_entries: &ENTRIES,
             fallthrough: None,
@@ -7581,6 +7573,7 @@ mod tests {
                 holes: &[],
             },
             operations: &OPS,
+            bindings: &[],
             entry: 0,
             external_entries: &ENTRIES,
             fallthrough: None,
@@ -7607,6 +7600,7 @@ mod tests {
                 holes: &[],
             },
             operations: &OPS,
+            bindings: &[],
             entry: 0,
             external_entries: &ENTRIES,
             fallthrough: None,
@@ -7636,6 +7630,7 @@ mod tests {
                 holes: &[],
             },
             operations: &OPS,
+            bindings: &[],
             entry: 0,
             external_entries: &ENTRIES,
             fallthrough: None,
@@ -7659,6 +7654,7 @@ mod tests {
             key: crate::stencil_fact::RegionKey(2),
             stencil: bridge.stencil,
             operations: &OPS,
+            bindings: &[],
             entry: 0,
             external_entries: &ENTRIES,
             fallthrough: None,
@@ -7685,6 +7681,7 @@ mod tests {
                 holes: &[],
             },
             operations: &OPS,
+            bindings: &[],
             entry: 0,
             external_entries: &ENTRIES,
             fallthrough: None,

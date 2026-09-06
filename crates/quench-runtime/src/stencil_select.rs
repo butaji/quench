@@ -5,9 +5,10 @@
 //! miss. Instruction selection and CFG reasoning do not belong here.
 
 use crate::facts::OperationEffect;
-pub use crate::stencil_cache::{
-    RenderedRegion, RenderedRegionCache, MAX_RENDERED_REGIONS,
+pub use crate::stencil_binding::{
+    PhysicalBinding, PhysicalBindingValue, PhysicalOperand, PhysicalOperandField,
 };
+pub use crate::stencil_cache::{RenderedRegion, RenderedRegionCache, MAX_RENDERED_REGIONS};
 use crate::stencil_fact::{FactState, RegionId, RegionKey, Stencil};
 
 /// Physical calling convention declared by a stencil row.  Selection uses
@@ -108,6 +109,9 @@ pub struct RegionRecord {
     pub key: RegionKey,
     pub stencil: Stencil,
     pub operations: &'static [crate::ir::Opcode],
+    /// Physical operand relationships generated from the recipe declaration.
+    /// These constrain wiring only; opcode semantics remain canonical IR facts.
+    pub bindings: &'static [PhysicalBinding],
     pub entry: u16,
     /// All legal external entry offsets, generated from the declaration.
     /// Runtime admission may enter only at one of these boundaries.
@@ -375,10 +379,13 @@ fn generated_physical_view(
     record: &'static RegionRecord,
     artifact: &'static BuildStencilArtifact,
 ) -> Option<PhysicalStencilView> {
-    let fallthrough = artifact.fallthrough.as_ref().map(|stencil| PhysicalFallthrough {
-        stencil,
-        target: record.fallthrough.map_or("", |item| item.target),
-    });
+    let fallthrough = artifact
+        .fallthrough
+        .as_ref()
+        .map(|stencil| PhysicalFallthrough {
+            stencil,
+            target: record.fallthrough.map_or("", |item| item.target),
+        });
     let metadata_matches = artifact.name == record.name
         && artifact_identity_matches(artifact, record)
         && artifact.key == key
@@ -559,9 +566,7 @@ mod generated_region_admission_tests {
     fn generated_abi_classification_matches_physical_entry_shape() {
         for record in CANONICAL_REGION_TABLE {
             match record.abi {
-                RegionAbi::ScalarF64Binary
-                | RegionAbi::ScalarF64Unary
-                | RegionAbi::ScalarF64x3 => {
+                RegionAbi::ScalarF64Binary | RegionAbi::ScalarF64Unary | RegionAbi::ScalarF64x3 => {
                     assert!(!record.stencil.bytes.is_empty());
                     assert_ne!(record.stencil.bytes.len(), 44);
                     assert_ne!(record.stencil.bytes.len(), 76);
@@ -652,7 +657,10 @@ mod generated_region_admission_tests {
                 }
                 RegionAbi::ArrayNumericLoop => assert_eq!(record.stencil.bytes.len(), 100),
                 RegionAbi::CompareBranch => {
-                    assert_eq!(record.operations, [crate::ir::Opcode::Binary, crate::ir::Opcode::JumpIfFalse]);
+                    assert_eq!(
+                        record.operations,
+                        [crate::ir::Opcode::Binary, crate::ir::Opcode::JumpIfFalse]
+                    );
                     assert_eq!(record.stencil.bytes.len(), 56);
                 }
             }
@@ -721,7 +729,10 @@ mod generated_region_admission_tests {
         assert!(RegionAbi::TaggedWord.contract().preserves_vm_registers);
         assert_eq!(RegionAbi::PropertyGuard.contract().context_arg_words, 1);
         assert!(!RegionAbi::PropertyGuard.contract().may_call_helper);
-        assert_eq!(RegionAbi::PropertyWriteGuard.contract().context_arg_words, 1);
+        assert_eq!(
+            RegionAbi::PropertyWriteGuard.contract().context_arg_words,
+            1
+        );
         assert!(!RegionAbi::PropertyWriteGuard.contract().may_call_helper);
         assert_eq!(RegionAbi::ScalarI32.contract().context_arg_words, 0);
         assert!(RegionAbi::ScalarI32.contract().preserves_vm_registers);
@@ -1186,8 +1197,7 @@ mod tests {
         );
         assert!(cache.allocated_entries() <= MAX_RENDERED_REGIONS);
         assert!(
-            cache.allocated_bytes()
-                <= MAX_RENDERED_REGIONS * std::mem::size_of::<RenderedRegion>()
+            cache.allocated_bytes() <= MAX_RENDERED_REGIONS * std::mem::size_of::<RenderedRegion>()
         );
         cache.clear();
         assert_eq!(cache.allocated_entries(), 0);
@@ -1250,11 +1260,13 @@ mod tests {
                 );
             }
             for hole in artifact.stencil.holes {
-                assert!(hole.kind == crate::stencil_fact::HoleKind::Literal64
-                    || artifact
-                        .relocations
-                        .iter()
-                        .any(|relocation| relocation.offset == hole.offset));
+                assert!(
+                    hole.kind == crate::stencil_fact::HoleKind::Literal64
+                        || artifact
+                            .relocations
+                            .iter()
+                            .any(|relocation| relocation.offset == hole.offset)
+                );
             }
         }
         if !BUILD_STENCIL_ARTIFACTS.is_empty() {
