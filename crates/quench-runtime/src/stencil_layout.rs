@@ -10,6 +10,7 @@ use crate::stencil_patch::{
 
 pub(crate) const MAX_LAYOUT_FRAGMENTS: usize = 8;
 pub(crate) const MAX_LAYOUT_FIXUPS: usize = 16;
+pub(crate) const MAX_LAYOUT_HOLES: usize = 32;
 pub(crate) const MAX_LAYOUT_BYTES: usize = 4096;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -19,6 +20,12 @@ pub(crate) struct LabelId(pub(crate) u8);
 pub(crate) struct Fragment<'a> {
     pub(crate) label: LabelId,
     pub(crate) bytes: &'a [u8],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct StencilFragment<'a> {
+    pub(crate) label: LabelId,
+    pub(crate) stencil: &'a Stencil,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -41,6 +48,7 @@ pub(crate) struct Fixup {
 pub(crate) enum LayoutError {
     FragmentBudget,
     FixupBudget,
+    HoleBudget,
     ByteBudget,
     DuplicateLabel(LabelId),
     UndefinedLabel(LabelId),
@@ -48,6 +56,10 @@ pub(crate) enum LayoutError {
     FixupOutOfBounds,
     OverlappingFixups,
     TargetOutOfBounds,
+    InvalidStencil(u8),
+    MissingFixup(u8, u16),
+    DuplicateFixup(u8, u16),
+    UnexpectedFixup(u8, u16),
     Patch(PatchError),
 }
 
@@ -196,56 +208,144 @@ pub(crate) fn compose_fallthrough<const N: usize>(
     kind: FixupKind,
     output: &mut Vec<u8>,
 ) -> Result<(), LayoutError> {
-    validate_chain(head, tail, branch_offset, kind)?;
-    let head_bytes = patch_non_branch_holes(head, values, kind)?;
-    let tail_bytes = patch_non_branch_holes(tail, values, kind)?;
     let fragments = [
-        Fragment {
+        StencilFragment {
             label: LabelId(0),
-            bytes: &head_bytes,
+            stencil: head,
         },
-        Fragment {
+        StencilFragment {
             label: LabelId(1),
-            bytes: &tail_bytes,
+            stencil: tail,
         },
     ];
     let fixups = chain_fixups(head, kind);
-    StencilLayout::new(&fragments, &fixups).finalize_into(output)
+    if !has_fixup_at(&fixups, branch_offset) {
+        return Err(LayoutError::MissingFixup(0, branch_offset));
+    }
+    compose_region(&fragments, &fixups, values, output)
 }
 
-fn validate_chain(
-    head: &Stencil,
-    tail: &Stencil,
-    branch_offset: u16,
-    kind: FixupKind,
+pub(crate) fn compose_region<const N: usize>(
+    fragments: &[StencilFragment<'_>],
+    fixups: &[Fixup],
+    values: &PatchValues<'_, N>,
+    output: &mut Vec<u8>,
 ) -> Result<(), LayoutError> {
-    if !head.validate() || !tail.validate() || has_relative_hole(tail) {
-        return Err(LayoutError::Patch(PatchError::UnsupportedOffset));
+    validate_composition_budget(fragments, fixups)?;
+    validate_stencil_fixups(fragments, fixups)?;
+    let patched = patch_stencil_fragments(fragments, values)?;
+    let physical = fragments_from_bytes(fragments, &patched);
+    StencilLayout::new(&physical, fixups).finalize_into(output)
+}
+
+fn validate_composition_budget(
+    fragments: &[StencilFragment<'_>],
+    fixups: &[Fixup],
+) -> Result<(), LayoutError> {
+    if fragments.len() > MAX_LAYOUT_FRAGMENTS {
+        return Err(LayoutError::FragmentBudget);
     }
-    let expected = hole_kind(kind).ok_or(LayoutError::Patch(PatchError::UnsupportedOffset))?;
-    if !head
-        .holes
+    if fixups.len() > MAX_LAYOUT_FIXUPS {
+        return Err(LayoutError::FixupBudget);
+    }
+    let holes = fragments
         .iter()
-        .any(|hole| hole.offset == branch_offset && hole.kind == expected)
-    {
-        return Err(LayoutError::Patch(PatchError::UnsupportedOffset));
+        .map(|item| item.stencil.holes.len())
+        .sum::<usize>();
+    if holes > MAX_LAYOUT_HOLES {
+        return Err(LayoutError::HoleBudget);
+    }
+    validate_composition_bytes(fragments)
+}
+
+fn validate_composition_bytes(fragments: &[StencilFragment<'_>]) -> Result<(), LayoutError> {
+    let mut byte_len = 0usize;
+    for fragment in fragments {
+        byte_len = byte_len
+            .checked_add(fragment.stencil.bytes.len())
+            .ok_or(LayoutError::ByteBudget)?;
+        if byte_len > MAX_LAYOUT_BYTES {
+            return Err(LayoutError::ByteBudget);
+        }
     }
     Ok(())
 }
 
-fn patch_non_branch_holes<const N: usize>(
+fn validate_stencil_fixups(
+    fragments: &[StencilFragment<'_>],
+    fixups: &[Fixup],
+) -> Result<(), LayoutError> {
+    for (index, fragment) in fragments.iter().enumerate() {
+        let index = u8::try_from(index).map_err(|_| LayoutError::FragmentBudget)?;
+        if !fragment.stencil.validate() {
+            return Err(LayoutError::InvalidStencil(index));
+        }
+        validate_declared_holes(index, fragment.stencil, fixups)?;
+    }
+    for fixup in fixups {
+        validate_fixup_declaration(fragments, *fixup)?;
+    }
+    Ok(())
+}
+
+fn validate_declared_holes(
+    fragment: u8,
     stencil: &Stencil,
-    values: &PatchValues<'_, N>,
-    kind: FixupKind,
-) -> Result<Vec<u8>, LayoutError> {
-    let expected = hole_kind(kind).ok_or(LayoutError::Patch(PatchError::UnsupportedOffset))?;
+    fixups: &[Fixup],
+) -> Result<(), LayoutError> {
+    for hole in stencil.holes.iter().filter(|hole| is_relative(hole.kind)) {
+        let count = fixups
+            .iter()
+            .filter(|fixup| fixup_matches_hole(**fixup, fragment, *hole))
+            .count();
+        match count {
+            0 => return Err(LayoutError::MissingFixup(fragment, hole.offset)),
+            1 => {}
+            _ => return Err(LayoutError::DuplicateFixup(fragment, hole.offset)),
+        }
+    }
+    Ok(())
+}
+
+fn validate_fixup_declaration(
+    fragments: &[StencilFragment<'_>],
+    fixup: Fixup,
+) -> Result<(), LayoutError> {
+    let stencil = fragments
+        .get(usize::from(fixup.fragment))
+        .ok_or(LayoutError::InvalidFragment(fixup.fragment))?
+        .stencil;
     if stencil
         .holes
         .iter()
-        .any(|hole| is_relative(hole.kind) && hole.kind != expected)
+        .any(|hole| fixup_matches_hole(fixup, fixup.fragment, *hole))
     {
-        return Err(LayoutError::Patch(PatchError::UnsupportedOffset));
+        Ok(())
+    } else {
+        Err(LayoutError::UnexpectedFixup(fixup.fragment, fixup.offset))
     }
+}
+
+fn fixup_matches_hole(fixup: Fixup, fragment: u8, hole: crate::stencil_fact::Hole) -> bool {
+    fixup.fragment == fragment
+        && fixup.offset == hole.offset
+        && hole_kind(fixup.kind) == Some(hole.kind)
+}
+
+fn patch_stencil_fragments<const N: usize>(
+    fragments: &[StencilFragment<'_>],
+    values: &PatchValues<'_, N>,
+) -> Result<Vec<Vec<u8>>, LayoutError> {
+    fragments
+        .iter()
+        .map(|fragment| patch_non_relative(fragment.stencil, values))
+        .collect()
+}
+
+fn patch_non_relative<const N: usize>(
+    stencil: &Stencil,
+    values: &PatchValues<'_, N>,
+) -> Result<Vec<u8>, LayoutError> {
     let holes = stencil
         .holes
         .iter()
@@ -255,6 +355,20 @@ fn patch_non_branch_holes<const N: usize>(
     let mut bytes = stencil.bytes.to_vec();
     apply_holes(&mut bytes, &holes, values).map_err(LayoutError::Patch)?;
     Ok(bytes)
+}
+
+fn fragments_from_bytes<'a>(
+    fragments: &[StencilFragment<'_>],
+    bytes: &'a [Vec<u8>],
+) -> Vec<Fragment<'a>> {
+    fragments
+        .iter()
+        .zip(bytes)
+        .map(|(fragment, bytes)| Fragment {
+            label: fragment.label,
+            bytes,
+        })
+        .collect()
 }
 
 fn chain_fixups(head: &Stencil, kind: FixupKind) -> Vec<Fixup> {
@@ -274,6 +388,10 @@ fn chain_fixups(head: &Stencil, kind: FixupKind) -> Vec<Fixup> {
         .collect()
 }
 
+fn has_fixup_at(fixups: &[Fixup], offset: u16) -> bool {
+    fixups.iter().any(|fixup| fixup.offset == offset)
+}
+
 const fn hole_kind(kind: FixupKind) -> Option<HoleKind> {
     match kind {
         FixupKind::X86Rel32 => Some(HoleKind::Rel32),
@@ -284,10 +402,6 @@ const fn hole_kind(kind: FixupKind) -> Option<HoleKind> {
 
 const fn is_relative(kind: HoleKind) -> bool {
     matches!(kind, HoleKind::Rel32 | HoleKind::Branch26)
-}
-
-fn has_relative_hole(stencil: &Stencil) -> bool {
-    stencil.holes.iter().any(|hole| is_relative(hole.kind))
 }
 
 fn validate_disjoint(ranges: &[std::ops::Range<usize>]) -> Result<(), LayoutError> {
