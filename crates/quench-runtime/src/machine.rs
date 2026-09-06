@@ -5755,7 +5755,7 @@ fn region_admission(
                 && record.abi.accepts_region_context()
                 && region_admission_matches(entries, cfg, pc, record)
         })
-        .max_by_key(|record| record.abi.priority())?;
+        .max_by_key(|record| crate::stencil_select::admission_rank(record))?;
     NativeRegionPlan::new_with_arena(record.key, policy, Rc::clone(arena))
         .map(|plan| NativeAdmission::Region(Rc::new(RefCell::new(plan))))
 }
