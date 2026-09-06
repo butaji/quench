@@ -9,6 +9,7 @@
 //! transition rather than Rust recursion.
 
 pub use crate::identity::{CodeId, CodeRange, EnvironmentRef, FrameId, PackedCompletion};
+use crate::stencil_admission::{AdmissionBuilder, AdmissionEntry, AdmissionStorage};
 use crate::{
     completion::Completion,
     ir::ConstantKey,
@@ -5053,8 +5054,7 @@ pub(crate) struct BaselinePlan {
     /// Sparse physical admissions.  The fixed-width span index is the only
     /// per-PC storage; alternatives are retained as typed records in one
     /// compact flat array, so polymorphic sites do not lose valid choices.
-    admission_index: Rc<[AdmissionSpan]>,
-    admissions: Rc<[NativeAdmission]>,
+    admission: Option<Rc<AdmissionStorage<NativeAdmission>>>,
     /// All composed entries in one baseline view share a bounded slab owner.
     /// Scalar leaves retain their narrower per-plan arenas until they acquire
     /// an equally typed shared physical contract.
@@ -5107,6 +5107,34 @@ enum NativeAdmission {
     Region(Rc<RefCell<NativeRegionPlan>>),
 }
 
+impl AdmissionEntry for NativeAdmission {
+    fn retained_metadata_bytes(&self) -> usize {
+        use crate::stencil_admission_budget::shared_value_bytes;
+        match self {
+            Self::Binary(_) => shared_value_bytes::<RefCell<NativeBinaryPlan>>(),
+            Self::LoadConst(_) => shared_value_bytes::<RefCell<NativeLoadConstPlan>>(),
+            Self::Truthiness(_) => shared_value_bytes::<RefCell<NativeTruthinessPlan>>(),
+            Self::Nullish(_) => shared_value_bytes::<RefCell<NativeNullishPlan>>(),
+            Self::Unary(_) => shared_value_bytes::<RefCell<NativeUnaryPlan>>(),
+            Self::AddChain(_) => shared_value_bytes::<RefCell<NativeAddChainPlan>>(),
+            Self::LocalBinary(_) => {
+                shared_value_bytes::<RefCell<crate::stencil_fusion::NativeLocalBinaryPlan>>()
+            }
+            Self::LocalProperty(_) => {
+                shared_value_bytes::<RefCell<crate::stencil_fusion::NativeLocalPropertyPlan>>()
+            }
+            Self::Move(_) | Self::LoadLocal(_) | Self::StoreLocal(_) => {
+                shared_value_bytes::<RefCell<NativeMovePlan>>()
+            }
+            Self::StoreProperty(_) | Self::Property(_) => {
+                shared_value_bytes::<RefCell<NativePropertyPlan>>()
+            }
+            Self::Dispatch(_) => shared_value_bytes::<RefCell<NativeDispatchPlan>>(),
+            Self::Region(_) => shared_value_bytes::<RefCell<NativeRegionPlan>>(),
+        }
+    }
+}
+
 impl std::fmt::Debug for NativeAdmission {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let name = match self {
@@ -5127,49 +5155,6 @@ impl std::fmt::Debug for NativeAdmission {
             Self::Region(_) => "region",
         };
         formatter.write_str(name)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct AdmissionSpan {
-    start: u32,
-    len: u16,
-}
-
-struct AdmissionBuilder {
-    spans: Vec<AdmissionSpan>,
-    entries: Vec<NativeAdmission>,
-}
-
-impl AdmissionBuilder {
-    fn new(instruction_count: usize) -> Self {
-        Self {
-            spans: vec![AdmissionSpan::default(); instruction_count],
-            entries: Vec::new(),
-        }
-    }
-
-    fn push(&mut self, pc: usize, admission: NativeAdmission) {
-        let Some(span) = self.spans.get_mut(pc) else {
-            return;
-        };
-        if span.len == 0 {
-            span.start = self.entries.len() as u32;
-        }
-        if let Some(len) = span.len.checked_add(1) {
-            span.len = len;
-            self.entries.push(admission);
-        }
-    }
-
-    fn push_optional(&mut self, pc: usize, admission: Option<NativeAdmission>) {
-        if let Some(admission) = admission {
-            self.push(pc, admission);
-        }
-    }
-
-    fn finish(self) -> (Rc<[AdmissionSpan]>, Rc<[NativeAdmission]>) {
-        (self.spans.into(), self.entries.into())
     }
 }
 
@@ -5365,7 +5350,7 @@ fn region_admission_matches(
 type SharedStencilPool = Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>;
 
 fn collect_numeric_admissions(
-    builder: &mut AdmissionBuilder,
+    builder: &mut AdmissionBuilder<NativeAdmission>,
     pc: usize,
     entry: BaselineEntry,
     code: CodeView<'_>,
@@ -5447,7 +5432,7 @@ fn property_admission(
 }
 
 fn collect_memory_admissions(
-    builder: &mut AdmissionBuilder,
+    builder: &mut AdmissionBuilder<NativeAdmission>,
     pc: usize,
     instruction: crate::ir::Instruction,
     policy: crate::stencil_policy::ExecutionPolicy,
@@ -5639,15 +5624,38 @@ fn baseline_osr_entries(code: CodeView<'_>) -> Rc<[u32]> {
         .into()
 }
 
+fn collect_admissions_at(
+    builder: &mut AdmissionBuilder<NativeAdmission>,
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    liveness: &[BTreeSet<u16>],
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) {
+    let entry = entries[pc];
+    collect_numeric_admissions(builder, pc, entry, code, policy, arena);
+    builder.push_optional(
+        pc,
+        add_chain_admission(entries, liveness, pc, policy, arena),
+    );
+    builder.push_optional(
+        pc,
+        local_binary_admission(code, entries, liveness, pc, policy, arena),
+    );
+    builder.push_optional(
+        pc,
+        local_property_admission(code, entries, liveness, pc, policy, arena),
+    );
+    collect_memory_admissions(builder, pc, entry.instruction, policy, arena);
+    builder.push_optional(pc, region_admission(entries, pc, policy, arena));
+}
+
 fn build_admissions(
     code: CodeView<'_>,
     entries: &[BaselineEntry],
     policy: crate::stencil_policy::ExecutionPolicy,
-) -> (
-    Rc<[AdmissionSpan]>,
-    Rc<[NativeAdmission]>,
-    SharedStencilPool,
-) {
+) -> (Option<Rc<AdmissionStorage<NativeAdmission>>>, SharedStencilPool) {
     let operand_windows = (0..entries.len())
         .map(|pc| code.operand_window_at(pc))
         .collect::<Vec<_>>();
@@ -5657,25 +5665,13 @@ fn build_admissions(
             .expect("compile-time region slab capacity is valid"),
     ));
     let mut builder = AdmissionBuilder::new(entries.len());
-    for (pc, entry) in entries.iter().copied().enumerate() {
-        collect_numeric_admissions(&mut builder, pc, entry, code, policy, &arena);
-        builder.push_optional(
-            pc,
-            add_chain_admission(entries, &liveness, pc, policy, &arena),
-        );
-        builder.push_optional(
-            pc,
-            local_binary_admission(code, entries, &liveness, pc, policy, &arena),
-        );
-        builder.push_optional(
-            pc,
-            local_property_admission(code, entries, &liveness, pc, policy, &arena),
-        );
-        collect_memory_admissions(&mut builder, pc, entry.instruction, policy, &arena);
-        builder.push_optional(pc, region_admission(entries, pc, policy, &arena));
+    for pc in 0..entries.len() {
+        if builder.exhausted() {
+            break;
+        }
+        collect_admissions_at(&mut builder, code, entries, &liveness, pc, policy, &arena);
     }
-    let (index, admissions) = builder.finish();
-    (index, admissions, arena)
+    (builder.finish().map(Rc::new), arena)
 }
 
 impl BaselinePlan {
@@ -5701,13 +5697,11 @@ impl BaselinePlan {
     fn compile(code: CodeView<'_>, policy: crate::stencil_policy::ExecutionPolicy) -> Self {
         let entries = baseline_entries(code);
         let osr_entries = baseline_osr_entries(code);
-        let (admission_index, admissions, shared_region_arena) =
-            build_admissions(code, &entries, policy);
+        let (admission, shared_region_arena) = build_admissions(code, &entries, policy);
         Self {
             entries,
             osr_entries,
-            admission_index,
-            admissions,
+            admission,
             shared_region_arena,
         }
     }
@@ -5721,12 +5715,9 @@ impl BaselinePlan {
     }
 
     fn admissions_at(&self, pc: usize) -> &[NativeAdmission] {
-        let Some(span) = self.admission_index.get(pc) else {
-            return &[];
-        };
-        let start = span.start as usize;
-        let end = start.saturating_add(span.len as usize);
-        self.admissions.get(start..end).unwrap_or(&[])
+        self.admission
+            .as_deref()
+            .map_or(&[], |storage| storage.entries_at(pc))
     }
 
     fn native_handle<T>(
@@ -5823,28 +5814,22 @@ impl BaselinePlan {
 /// unsupported operation still goes through the complete baseline handler.
 #[derive(Clone)]
 pub(crate) struct OptimizingPlan {
-    entries: Rc<[OptimizingEntry]>,
+    entries: Rc<[BaselineEntry]>,
+    admission: Option<Rc<AdmissionStorage<NativeAdmission>>>,
 }
 
-#[derive(Clone)]
-pub(crate) struct OptimizingEntry {
+#[derive(Clone, Copy)]
+pub(crate) struct OptimizingEntry<'a> {
     pub(crate) baseline: BaselineEntry,
-    admissions: Rc<[NativeAdmission]>,
-    admission_span: AdmissionSpan,
+    admissions: &'a [NativeAdmission],
 }
 
-impl OptimizingEntry {
-    fn admission_at(&self) -> &[NativeAdmission] {
-        let start = self.admission_span.start as usize;
-        let end = start.saturating_add(self.admission_span.len as usize);
-        self.admissions.get(start..end).unwrap_or(&[])
-    }
-
+impl OptimizingEntry<'_> {
     fn native_handle<T>(
         &self,
         select: impl Fn(&NativeAdmission) -> Option<&Rc<RefCell<T>>>,
     ) -> Option<&RefCell<T>> {
-        self.admission_at().iter().find_map(select).map(Rc::as_ref)
+        self.admissions.iter().find_map(select).map(Rc::as_ref)
     }
 
     optimizing_admission_accessors!(native_binary, Binary, NativeBinaryPlan);
@@ -5890,26 +5875,24 @@ impl OptimizingPlan {
     }
 
     fn compile(baseline: &BaselinePlan, _policy: crate::stencil_policy::ExecutionPolicy) -> Self {
-        let entries = baseline
-            .entries
-            .iter()
-            .enumerate()
-            .map(|(pc, entry)| OptimizingEntry {
-                baseline: *entry,
-                admissions: Rc::clone(&baseline.admissions),
-                admission_span: baseline.admission_index[pc],
-            })
-            .collect::<Vec<_>>()
-            .into();
-        Self { entries }
+        Self {
+            entries: Rc::clone(&baseline.entries),
+            admission: baseline.admission.clone(),
+        }
     }
 
     pub(crate) fn len(&self) -> usize {
         self.entries.len()
     }
 
-    pub(crate) fn entry(&self, pc: usize) -> Option<&OptimizingEntry> {
-        self.entries.get(pc)
+    pub(crate) fn entry(&self, pc: usize) -> Option<OptimizingEntry<'_>> {
+        Some(OptimizingEntry {
+            baseline: *self.entries.get(pc)?,
+            admissions: self
+                .admission
+                .as_deref()
+                .map_or(&[], |storage| storage.entries_at(pc)),
+        })
     }
 }
 

@@ -226,20 +226,30 @@ fn baseline_region_admission_respects_declared_abi() {
 
 #[test]
 fn baseline_admissions_use_sparse_indexed_storage() {
-    let function = super::FunctionCode::from_ops(vec![super::Op::Return { src: 0 }]);
+    let function = numeric_admission_function(1);
     let code = function.code().expect("compact code");
     let plan = super::BaselinePlan::compile_for_test(
         code,
         crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
     );
-    assert_eq!(plan.admission_index.len(), plan.entries.len());
-    assert!(plan.admissions.len() <= plan.entries.len() * 13);
-    assert!(std::mem::size_of::<super::AdmissionSpan>() <= 8);
+    let admission = plan.admission.as_ref().expect("numeric admission");
+    assert_eq!(admission.spans_len(), plan.entries.len());
+    assert!(admission.entries_len() <= plan.entries.len() * 13);
+    assert!(admission.charged_bytes() > 0);
+    assert!(
+        admission.charged_bytes()
+            <= crate::stencil_admission_budget::MAX_OWNER_ADMISSION_BYTES
+    );
+    assert!(
+        crate::stencil_admission_budget::global_admission_bytes()
+            <= crate::stencil_admission_budget::MAX_GLOBAL_ADMISSION_BYTES
+    );
+    assert!(std::mem::size_of::<crate::stencil_admission::AdmissionSpan>() <= 8);
     eprintln!(
         "baseline-admission-layout entries={} sparse={} span={} record={}",
         plan.entries.len(),
-        plan.admissions.len(),
-        std::mem::size_of::<super::AdmissionSpan>(),
+        admission.entries_len(),
+        std::mem::size_of::<crate::stencil_admission::AdmissionSpan>(),
         std::mem::size_of::<super::NativeAdmission>()
     );
 }
@@ -266,7 +276,7 @@ fn disabled_native_policy_keeps_admission_and_executable_storage_empty() {
         function.code().expect("compact code"),
         disabled,
     );
-    assert!(plan.admissions.is_empty());
+    assert!(plan.admission.is_none());
     assert_eq!(plan.shared_region_arena.borrow().slab_count(), 0);
     assert_eq!(plan.shared_region_arena.borrow().capacity(), 0);
 }
@@ -287,14 +297,90 @@ fn optimizing_entries_reuse_sparse_admission_storage() {
     let baseline = super::BaselinePlan::compile_for_test(code, policy);
     let optimizing = super::OptimizingPlan::compile(&baseline, policy);
     assert_eq!(optimizing.entries.len(), baseline.entries.len());
-    assert!(optimizing
-        .entries
-        .iter()
-        .all(|entry| std::rc::Rc::ptr_eq(&entry.admissions, &baseline.admissions)));
-    assert!(optimizing
-        .entries
-        .iter()
-        .all(|entry| entry.admission_at().len() <= 13));
+    assert!(std::rc::Rc::ptr_eq(&optimizing.entries, &baseline.entries));
+    let baseline_admission = baseline.admission.as_ref().expect("baseline admission");
+    let optimizing_admission = optimizing
+        .admission
+        .as_ref()
+        .expect("optimizing admission");
+    assert!(std::rc::Rc::ptr_eq(
+        optimizing_admission,
+        baseline_admission
+    ));
+    assert!((0..optimizing.len()).all(|pc| {
+        optimizing
+            .entry(pc)
+            .is_some_and(|entry| entry.admissions.len() <= 13)
+    }));
+}
+
+fn numeric_admission_function(count: usize) -> super::FunctionCode {
+    let mut operations = Vec::with_capacity(count + 1);
+    operations.extend((0..count).map(|_| super::Op::Binary {
+        dst: 0,
+        operator: crate::ops::BinaryOp::Add,
+        lhs: 1,
+        rhs: 2,
+    }));
+    operations.push(super::Op::Return { src: 0 });
+    super::FunctionCode::from_ops(operations)
+}
+
+#[test]
+fn admission_metadata_stays_within_owner_budget_and_falls_back() {
+    let function = numeric_admission_function(2048);
+    let code = function.code().expect("compact code");
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let plan = super::BaselinePlan::compile_for_test(code, policy);
+    assert!(
+        plan.admission
+            .as_ref()
+            .expect("bounded prefix")
+            .charged_bytes()
+            <= crate::stencil_admission_budget::MAX_OWNER_ADMISSION_BYTES
+    );
+    let cold = (0..2048)
+        .find(|pc| plan.admissions_at(*pc).is_empty())
+        .expect("owner budget must leave a canonical suffix");
+    let mut registers = crate::register_file::RegisterFile::with_undefined(3);
+    registers.write_number(1, 1.0);
+    registers.write_number(2, 2.0);
+    let result = crate::vm::execute_baseline_code_from(
+        code,
+        &plan,
+        cold,
+        &mut registers,
+        &crate::vm::current_context_or_default(),
+        crate::environment::Environment::new(),
+    );
+    assert!(matches!(
+        result,
+        Ok((
+            crate::completion::Completion::Return(crate::value::Value::Number(3.0)),
+            _
+        ))
+    ));
+}
+
+#[test]
+fn final_plan_view_owns_one_admission_charge() {
+    let baseline = super::BaselinePlan::compile_for_test(
+        numeric_admission_function(1).code().unwrap(),
+        crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+    );
+    let weak = std::rc::Rc::downgrade(
+        baseline.admission.as_ref().expect("populated admission"),
+    );
+    let clone = baseline.clone();
+    let optimizing = super::OptimizingPlan::compile(
+        &baseline,
+        crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+    );
+    drop(baseline);
+    drop(clone);
+    assert!(weak.upgrade().is_some());
+    drop(optimizing);
+    assert!(weak.upgrade().is_none());
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
