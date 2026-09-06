@@ -55,6 +55,14 @@ impl RegisterFlow {
         Self { uses: [Some(source), None, None], definition: Some(definition), complete: true }
     }
 
+    pub const fn define(definition: Register) -> Self {
+        Self {
+            uses: [None; 3],
+            definition: Some(definition),
+            complete: true,
+        }
+    }
+
     pub const fn binary(definition: Register, left: Register, right: Register) -> Self {
         Self { uses: [Some(left), Some(right), None], definition: Some(definition), complete: true }
     }
@@ -779,7 +787,8 @@ impl Instruction {
         use Opcode::*;
         match self.opcode {
             LoadConst => RegisterFlow { uses: [None; 3], definition: Some(self.a), complete: true },
-            Move | LoadLocal | LoadLocalChecked => RegisterFlow::unary(self.a, self.b),
+            Move if self.flags == 0 => RegisterFlow::unary(self.a, self.b),
+            Move | LoadLocal | LoadLocalChecked => RegisterFlow::define(self.a),
             Add | Sub | Mul | Div | Binary => RegisterFlow::binary(self.a, self.b, self.c),
             AddConst | Unary | IncI => RegisterFlow::unary(self.a, self.b),
             JumpIfFalse | Return => RegisterFlow::store(self.a),
@@ -1624,6 +1633,16 @@ mod tests {
         assert_eq!(constant.uses, [Some(1), None, None]);
         let branch = Instruction::jump_if_false(4, 8).register_flow();
         assert_eq!(branch.uses, [Some(4), None, None]);
+        let local = Instruction::load_local(3, u16::MAX).register_flow();
+        assert_eq!(local.definition, Some(3));
+        assert_eq!(local.uses, [None; 3]);
+        let local_move = Instruction::move_local(5, u16::MAX, u16::MAX - 1).register_flow();
+        assert_eq!(local_move.definition, Some(5));
+        assert_eq!(local_move.uses, [None; 3]);
+        assert_eq!(
+            Instruction::move_(5, 4).register_flow().uses,
+            [Some(4), None, None]
+        );
         assert!(!Instruction {
             opcode: Opcode::ForI,
             flags: 0,

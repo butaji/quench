@@ -7021,10 +7021,35 @@ mod tests {
     fn frame_width_uses_operand_roles_not_constant_pool_words() {
         let add_const = crate::ir::Instruction::add_const(4, 1, u16::MAX);
         let load = crate::ir::Instruction::load_const(3, u16::MAX);
+        let local = crate::ir::Instruction::load_local(3, u16::MAX);
+        let checked = crate::ir::Instruction::load_local_checked(3, u16::MAX);
+        let local_move = crate::ir::Instruction::move_local(3, u16::MAX, u16::MAX - 1);
         let call = crate::ir::Instruction::call_registered_window(12, 2, 7, 4);
         assert_eq!(super::register_count_for(&[add_const]), 5);
         assert_eq!(super::register_count_for(&[load]), 4);
+        assert_eq!(super::register_count_for(&[local]), 4);
+        assert_eq!(super::register_count_for(&[checked]), 4);
+        assert_eq!(super::register_count_for(&[local_move]), 4);
         assert_eq!(super::register_count_for(&[call]), 13);
+    }
+
+    #[test]
+    fn liveness_excludes_local_slot_identifiers() {
+        let entries = [
+            super::BaselineEntry {
+                instruction: crate::ir::Instruction::load_local(3, u16::MAX),
+                handler: crate::ir::Opcode::LoadLocal.handler(),
+                control: crate::ir::ControlOperands::Next,
+            },
+            super::BaselineEntry {
+                instruction: crate::ir::Instruction::ret(4),
+                handler: crate::ir::Opcode::Return.handler(),
+                control: crate::ir::ControlOperands::Return { source: 4 },
+            },
+        ];
+        let liveness = super::register_liveness(&entries);
+        assert_eq!(liveness[0], std::collections::BTreeSet::from([4]));
+        assert!(!liveness[0].contains(&u16::MAX));
     }
 
     #[test]
