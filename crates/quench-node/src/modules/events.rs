@@ -386,6 +386,43 @@ pub fn method_on(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let result = add_listener(state, receiver, args, false, false)?;
+    // Native zlib streams expose backpressure through the same EventEmitter
+    // surface.  A flush can clear `needDrain` before user code attaches its
+    // listener; consume that one pending transition at registration time so
+    // listener ordering remains observable without a JS-side stream shim.
+    if matches!(args.first(), Some(Value::String(event)) if event == "drain")
+        && receiver.is_some_and(|stream| {
+            matches!(
+                execute::get_property(stream, "\0zlib:pendingDrain"),
+                Value::Boolean(true)
+            )
+        })
+    {
+        let stream = receiver.expect("checked receiver");
+        execute::set_property_in_place(stream, "\0zlib:pendingDrain", Value::Boolean(false));
+        if let Some(listener) = args.get(1).filter(|value| quench_runtime::is_callable(value)) {
+            execute::call(listener, stream, &[])?;
+        }
+    }
+    if matches!(args.first(), Some(Value::String(event)) if event == "data")
+        && receiver.is_some()
+    {
+        let stream = receiver.expect("checked receiver");
+        let pending = execute::get_property(stream, "\0zlib:pendingData");
+        if let Value::Array(chunks) = pending {
+            if let Some(listener) = args.get(1).filter(|value| quench_runtime::is_callable(value)) {
+                for index in 0..chunks.len() {
+                    let chunk = chunks.get(index).unwrap_or(Value::Undefined);
+                    execute::call(listener, stream, &[chunk])?;
+                }
+                execute::set_property_in_place(
+                    stream,
+                    "\0zlib:pendingData",
+                    host_api::array(Vec::new()),
+                );
+            }
+        }
+    }
     if matches!(args.first(), Some(Value::String(event)) if event == "keylog")
         && receiver.is_some_and(|value| {
             matches!(

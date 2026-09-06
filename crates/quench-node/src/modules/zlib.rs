@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::io::{Cursor, Read, Write};
 use std::rc::Rc;
 
-use flate2::{Compress, Compression, Decompress, FlushCompress, FlushDecompress};
+use flate2::{Compress, Compression, Decompress, FlushCompress, FlushDecompress, Status};
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
 use quench_runtime::value::Value;
@@ -153,6 +153,135 @@ enum StreamMode {
     BrotliDecompress,
     ZstdCompress,
     ZstdDecompress,
+}
+
+/// The stateful subset of zlib streams backed by flate2's in-memory API.
+/// Keeping this state outside the JavaScript value preserves the host/runtime
+/// boundary while allowing `write`, `flush`, and `end` to advance one native
+/// deflater rather than repeatedly recompressing all prior input.
+pub(crate) struct IncrementalCompressor {
+    compressor: Compress,
+    finished: bool,
+}
+
+pub(crate) struct IncrementalDecompressor {
+    decompressor: Decompress,
+    finished: bool,
+}
+
+impl IncrementalDecompressor {
+    fn new(mode: StreamMode, options: &Value) -> Option<Self> {
+        let decompressor = match mode {
+            StreamMode::Gunzip => {
+                let bits = match execute::get_property(options, "windowBits") {
+                    Value::Number(bits) if bits.is_finite() => bits as u8,
+                    _ => 15,
+                };
+                Decompress::new_gzip(bits)
+            }
+            StreamMode::Inflate => Decompress::new(true),
+            StreamMode::InflateRaw => Decompress::new(false),
+            // Auto-detection requires seeing the first bytes; retain the
+            // existing whole-input path for unzip streams.
+            StreamMode::Unzip | StreamMode::BrotliDecompress | StreamMode::ZstdDecompress => {
+                return None
+            }
+            _ => return None,
+        };
+        Some(Self {
+            decompressor,
+            finished: false,
+        })
+    }
+
+    fn process(&mut self, input: &[u8], flush: FlushDecompress) -> Result<Vec<u8>, String> {
+        if self.finished {
+            return Err("write after end".into());
+        }
+        let mut output = Vec::with_capacity(input.len().saturating_mul(2).max(64 * 1024));
+        let mut consumed = 0usize;
+        loop {
+            let before_in = self.decompressor.total_in();
+            let status = self
+                .decompressor
+                .decompress_vec(&input[consumed..], &mut output, flush)
+                .map_err(|error| error.to_string())?;
+            let used = (self.decompressor.total_in() - before_in) as usize;
+            consumed = consumed.saturating_add(used).min(input.len());
+            let output_full = output.len() == output.capacity();
+            if output_full {
+                output.reserve(64 * 1024);
+            }
+            if !output_full
+                && (consumed == input.len() || !matches!(status, Status::BufError))
+            {
+                break;
+            }
+            if used == 0 && !output_full {
+                break;
+            }
+        }
+        if matches!(flush, FlushDecompress::Finish) {
+            self.finished = true;
+        }
+        Ok(output)
+    }
+}
+
+impl IncrementalCompressor {
+    fn new(mode: StreamMode, options: &Value) -> Option<Result<Self, String>> {
+        let is_flate = matches!(
+            mode,
+            StreamMode::Gzip | StreamMode::Deflate | StreamMode::DeflateRaw
+        );
+        if !is_flate {
+            return None;
+        }
+        let level = flate_level(options);
+        let window_bits = match execute::get_property(options, "windowBits") {
+            Value::Number(number) if number.is_finite() && number.fract() == 0.0 => {
+                Some(number as u8)
+            }
+            _ => None,
+        };
+        let mut compressor = match mode {
+            StreamMode::Gzip => Compress::new_gzip(level, window_bits.unwrap_or(15)),
+            StreamMode::Deflate => window_bits.map_or_else(
+                || Compress::new(level, true),
+                |bits| Compress::new_with_window_bits(level, true, bits),
+            ),
+            StreamMode::DeflateRaw => window_bits.map_or_else(
+                || Compress::new(level, false),
+                |bits| Compress::new_with_window_bits(level, false, bits),
+            ),
+            _ => unreachable!(),
+        };
+        let dictionary = bytes_of(&execute::get_property(options, "dictionary"))
+            .unwrap_or_default();
+        if !dictionary.is_empty() {
+            if let Err(error) = compressor.set_dictionary(&dictionary) {
+                return Some(Err(error.to_string()));
+            }
+        }
+        Some(Ok(Self {
+            compressor,
+            finished: false,
+        }))
+    }
+
+    fn process(&mut self, input: &[u8], flush: FlushCompress) -> Result<Vec<u8>, String> {
+        if self.finished {
+            return Err("write after end".into());
+        }
+        let mut output = Vec::with_capacity(input.len().saturating_add(64));
+        self.compressor
+            .compress_vec(input, &mut output, flush)
+            .map_err(|error| error.to_string())?;
+        if matches!(flush, FlushCompress::Finish) {
+            self.finished = true;
+        }
+        Ok(output)
+    }
 }
 
 impl StreamMode {
@@ -392,6 +521,7 @@ fn stream_value(
         ("\0zlib:error", host_api::array(Vec::new())),
         ("\0zlib:finish", host_api::array(Vec::new())),
         ("\0zlib:close", host_api::array(Vec::new())),
+        ("\0zlib:drain", host_api::array(Vec::new())),
         ("\0zlib:readable", host_api::array(Vec::new())),
         ("\0zlib:options", options.clone()),
         (
@@ -403,8 +533,43 @@ fn stream_value(
             crate::modules::buffer_proto::make_buffer(&[]),
         ),
         ("\0zlib:paramsZero", Value::Boolean(false)),
+        ("\0zlib:pendingPipe", host_api::array(Vec::new())),
+        ("\0zlib:pendingData", host_api::array(Vec::new())),
     ] {
         execute::set_property_in_place(&value, key, item);
+    }
+    let high_water_mark = match execute::get_property(options, "highWaterMark") {
+        Value::Number(number) if number.is_finite() && number >= 0.0 => number,
+        _ => 16_384.0,
+    };
+    let writable_state = host_api::object(vec![
+        ("needDrain".into(), Value::Boolean(false)),
+        ("length".into(), Value::Number(0.0)),
+        ("highWaterMark".into(), Value::Number(high_water_mark)),
+    ]);
+    for (key, item) in [
+        ("writableHighWaterMark", Value::Number(high_water_mark)),
+        ("writableLength", Value::Number(0.0)),
+        ("writableNeedDrain", Value::Boolean(false)),
+        ("_writableState", writable_state),
+        ("\0zlib:pendingDrain", Value::Boolean(false)),
+    ] {
+        execute::set_property_in_place(&value, key, item);
+    }
+    if let Some(codec) = IncrementalCompressor::new(mode, options) {
+        match codec {
+            Ok(codec) => {
+                if let Some(identity) = value.object_identity() {
+                    state.borrow_mut().zlib_compressors.insert(identity, codec);
+                }
+            }
+            Err(message) => return Err(zlib_error(&message)),
+        }
+    }
+    if let Some(codec) = IncrementalDecompressor::new(mode, options) {
+        if let Some(identity) = value.object_identity() {
+            state.borrow_mut().zlib_decompressors.insert(identity, codec);
+        }
     }
     for (key, item) in [
         ("readable", Value::Boolean(true)),
@@ -578,6 +743,7 @@ fn event_key(event: &str) -> Option<&'static str> {
         "error" => Some("\0zlib:error"),
         "finish" => Some("\0zlib:finish"),
         "close" => Some("\0zlib:close"),
+        "drain" => Some("\0zlib:drain"),
         "readable" => Some("\0zlib:readable"),
         _ => None,
     }
@@ -625,6 +791,122 @@ fn append_input(stream: &Value, value: &Value) -> Result<(), VmError> {
         crate::modules::buffer_proto::make_buffer(&bytes),
     );
     Ok(())
+}
+
+fn append_output(stream: &Value, bytes: &[u8]) {
+    if bytes.is_empty() {
+        return;
+    }
+    let mut output = bytes_of(&execute::get_property(stream, "\0zlib:output"))
+        .unwrap_or_default();
+    output.extend_from_slice(bytes);
+    execute::set_property_in_place(
+        stream,
+        "\0zlib:output",
+        crate::modules::buffer_proto::make_buffer(&output),
+    );
+}
+
+fn queue_stream_chunks(stream: &Value, key: &str, bytes: &[u8]) {
+    if bytes.is_empty() {
+        return;
+    }
+    let current = execute::get_property(stream, key);
+    let Value::Array(list) = current else {
+        return;
+    };
+    execute::set_array_index_in_place(
+        &Value::Array(list.clone()),
+        list.len(),
+        crate::modules::buffer_proto::make_buffer(bytes),
+    );
+}
+
+fn has_data_listener(stream: &Value) -> bool {
+    let listener = execute::get_property(&execute::get_property(stream, "_events"), "data");
+    quench_runtime::is_callable(&listener)
+        || matches!(listener, Value::Array(ref list) if list.len() > 0)
+}
+
+fn write_to_pipe(stream: &Value) -> Result<(), VmError> {
+    let destination = execute::get_property(stream, "\0zlib:pipe");
+    if !matches!(destination, Value::Object(_) | Value::ObjectAlias(_)) {
+        return Ok(());
+    }
+    let bytes = bytes_of(&execute::get_property(stream, "\0zlib:output"))
+        .unwrap_or_default();
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    let write = execute::get_property(&destination, "write");
+    if quench_runtime::is_callable(&write) {
+        let pending = execute::get_property(stream, "\0zlib:pendingPipe");
+        if let Value::Array(list) = pending {
+            for index in 0..list.len() {
+                let chunk = list.get(index).unwrap_or(Value::Undefined);
+                let _ = execute::call(&write, &destination, &[chunk])?;
+            }
+        } else {
+            let chunk = crate::modules::buffer_proto::make_buffer(&bytes);
+            let _ = execute::call(&write, &destination, &[chunk])?;
+        }
+        execute::set_property_in_place(stream, "\0zlib:pendingPipe", host_api::array(Vec::new()));
+        execute::set_property_in_place(
+            stream,
+            "\0zlib:output",
+            crate::modules::buffer_proto::make_buffer(&[]),
+        );
+    }
+    Ok(())
+}
+
+fn incremental_process(
+    state: &Rc<RefCell<HostState>>,
+    stream: &Value,
+    input: &[u8],
+    flush: FlushCompress,
+) -> Result<Vec<u8>, VmError> {
+    let Some(identity) = stream.object_identity() else {
+        return Ok(Vec::new());
+    };
+    let result = state
+        .borrow_mut()
+        .zlib_compressors
+        .get_mut(&identity)
+        .map(|codec| codec.process(input, flush));
+    match result {
+        Some(Ok(bytes)) => {
+            append_output(stream, &bytes);
+            queue_stream_chunks(stream, "\0zlib:pendingPipe", &bytes);
+            Ok(bytes)
+        }
+        Some(Err(message)) => Err(zlib_error(&message)),
+        None => Ok(Vec::new()),
+    }
+}
+
+fn incremental_decompress(
+    state: &Rc<RefCell<HostState>>,
+    stream: &Value,
+    input: &[u8],
+    flush: FlushDecompress,
+) -> Result<Vec<u8>, VmError> {
+    let Some(identity) = stream.object_identity() else {
+        return Ok(Vec::new());
+    };
+    let result = state
+        .borrow_mut()
+        .zlib_decompressors
+        .get_mut(&identity)
+        .map(|codec| codec.process(input, flush));
+    match result {
+        Some(Ok(bytes)) => {
+            append_output(stream, &bytes);
+            Ok(bytes)
+        }
+        Some(Err(message)) => Err(zlib_error(&message)),
+        None => Ok(Vec::new()),
+    }
 }
 
 fn transform(mode: StreamMode, input: &[u8]) -> Result<Vec<u8>, VmError> {
@@ -748,7 +1030,11 @@ fn coded_zlib_error(message: &str) -> VmError {
     ))
 }
 
-fn stream_write(stream: &Value, args: &[Value]) -> Result<Value, VmError> {
+fn stream_write(
+    state: &Rc<RefCell<HostState>>,
+    stream: &Value,
+    args: &[Value],
+) -> Result<Value, VmError> {
     if matches!(
         execute::get_property(stream, "\0zlib:ended"),
         Value::Boolean(true)
@@ -756,9 +1042,50 @@ fn stream_write(stream: &Value, args: &[Value]) -> Result<Value, VmError> {
         return Err(execute::type_error("write after end"));
     }
     let value = args.first().unwrap_or(&Value::Undefined);
+    let value_bytes = bytes_of(value)?;
     append_input(stream, value)?;
+    let incremental = stream.object_identity().is_some_and(|identity| {
+        state.borrow().zlib_compressors.contains_key(&identity)
+    });
+    if incremental {
+        let _ = incremental_process(state, stream, &value_bytes, FlushCompress::None)?;
+    }
+    let current_length = match execute::get_property(stream, "writableLength") {
+        Value::Number(length) if length.is_finite() && length >= 0.0 => length,
+        _ => 0.0,
+    };
+    let high_water_mark = match execute::get_property(stream, "writableHighWaterMark") {
+        Value::Number(mark) if mark.is_finite() && mark >= 0.0 => mark,
+        _ => 16_384.0,
+    };
+    let writable_length = current_length + value_bytes.len() as f64;
+    let need_drain = writable_length >= high_water_mark;
+    execute::set_property_in_place(stream, "writableLength", Value::Number(writable_length));
+    execute::set_property_in_place(stream, "writableNeedDrain", Value::Boolean(need_drain));
+    let writable_state = execute::get_property(stream, "_writableState");
+    execute::set_property_in_place(&writable_state, "length", Value::Number(writable_length));
+    execute::set_property_in_place(&writable_state, "needDrain", Value::Boolean(need_drain));
     let mode = stream_mode(&execute::get_property(stream, "\0zlib:mode"))?;
-    if matches!(
+    let incremental_decompression = stream.object_identity().is_some_and(|identity| {
+        state.borrow().zlib_decompressors.contains_key(&identity)
+    });
+    if incremental_decompression {
+        // A compressor flush establishes a deflate block boundary. Ask the
+        // decoder to expose that complete block immediately so a piped
+        // decompressor and a callback-driven `.read()` observe each write.
+        let bytes = incremental_decompress(state, stream, &value_bytes, FlushDecompress::Sync)?;
+        for chunk in bytes.chunks(16_384) {
+            if has_data_listener(stream) {
+                emit_event(
+                    stream,
+                    "data",
+                    &[crate::modules::buffer_proto::make_buffer(chunk)],
+                )?;
+            } else {
+                queue_stream_chunks(stream, "\0zlib:pendingData", chunk);
+            }
+        }
+    } else if matches!(
         mode,
         StreamMode::Gunzip | StreamMode::Inflate | StreamMode::InflateRaw | StreamMode::Unzip
     ) {
@@ -784,7 +1111,7 @@ fn stream_write(stream: &Value, args: &[Value]) -> Result<Value, VmError> {
     {
         execute::call(callback, stream, &[])?;
     }
-    Ok(Value::Boolean(true))
+    Ok(Value::Boolean(!need_drain))
 }
 
 fn stream_end(
@@ -792,14 +1119,34 @@ fn stream_end(
     stream: &Value,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if args
-        .first()
-        .is_some_and(|value| !matches!(value, Value::Undefined))
-    {
-        append_input(stream, args.first().unwrap())?;
+    let end_input = args.first().filter(|value| {
+        !matches!(value, Value::Undefined) && !quench_runtime::is_callable(value)
+    });
+    if let Some(value) = end_input {
+        append_input(stream, value)?;
     }
     let mode = stream_mode(&execute::get_property(stream, "\0zlib:mode"))?;
-    let bytes = if matches!(mode, StreamMode::Deflate)
+    let incremental = stream.object_identity().is_some_and(|identity| {
+        state.borrow().zlib_compressors.contains_key(&identity)
+    });
+    let incremental_decompression = stream.object_identity().is_some_and(|identity| {
+        state.borrow().zlib_decompressors.contains_key(&identity)
+    });
+    let bytes = if incremental {
+        let input = end_input
+            .map(bytes_of)
+            .transpose()?
+            .unwrap_or_default();
+        incremental_process(state, stream, &input, FlushCompress::Finish)?;
+        Ok(bytes_of(&execute::get_property(stream, "\0zlib:output"))?)
+    } else if incremental_decompression {
+        let input = end_input
+            .map(bytes_of)
+            .transpose()?
+            .unwrap_or_default();
+        incremental_decompress(state, stream, &input, FlushDecompress::Finish)?;
+        Ok(bytes_of(&execute::get_property(stream, "\0zlib:output"))?)
+    } else if matches!(mode, StreamMode::Deflate)
         && matches!(
             execute::get_property(stream, "\0zlib:paramsZero"),
             Value::Boolean(true)
@@ -848,6 +1195,9 @@ fn stream_end(
                     let _ = execute::call(&end, &Value::Object(destination), &[]);
                 }
             }
+            if let Some(callback) = args.iter().find(|value| quench_runtime::is_callable(value)) {
+                execute::call(callback, stream, &[])?;
+            }
         }
         Err(error) => {
             execute::set_property_in_place(stream, "_closed", Value::Boolean(true));
@@ -863,6 +1213,10 @@ fn stream_end(
     }
     execute::set_property_in_place(stream, "\0zlib:ended", Value::Boolean(true));
     execute::set_property_in_place(stream, "ended", Value::Boolean(true));
+    if let Some(identity) = stream.object_identity() {
+        state.borrow_mut().zlib_compressors.remove(&identity);
+        state.borrow_mut().zlib_decompressors.remove(&identity);
+    }
     let _ = state;
     Ok(stream.clone())
 }
@@ -876,18 +1230,63 @@ fn stream_on(stream: &Value, args: &[Value]) -> Result<Value, VmError> {
     }
     if let Some(key) = event_key(&event) {
         let listeners = execute::get_property(stream, key);
-        let Value::Array(list) = listeners else {
-            return Ok(stream.clone());
-        };
-        execute::set_array_index_in_place(&Value::Array(list.clone()), list.len(), callback);
+        if let Value::Array(list) = listeners {
+            execute::set_array_index_in_place(
+                &Value::Array(list.clone()),
+                list.len(),
+                callback.clone(),
+            );
+        }
+    }
+    if event == "data" {
+        let pending = execute::get_property(stream, "\0zlib:pendingData");
+        if let Value::Array(chunks) = pending {
+            for index in 0..chunks.len() {
+                let chunk = chunks.get(index).unwrap_or(Value::Undefined);
+                execute::call(&callback, stream, &[chunk])?;
+            }
+            execute::set_property_in_place(
+                stream,
+                "\0zlib:pendingData",
+                host_api::array(Vec::new()),
+            );
+        }
+    }
+    if event == "drain"
+        && matches!(
+            execute::get_property(stream, "\0zlib:pendingDrain"),
+            Value::Boolean(true)
+        )
+    {
+        execute::set_property_in_place(stream, "\0zlib:pendingDrain", Value::Boolean(false));
+        execute::call(&callback, stream, &[])?;
     }
     Ok(stream.clone())
 }
 
-fn stream_flush(stream: &Value, args: &[Value]) -> Result<Value, VmError> {
+fn stream_flush(
+    state: &Rc<RefCell<HostState>>,
+    stream: &Value,
+    args: &[Value],
+) -> Result<Value, VmError> {
     let mode = stream_mode(&execute::get_property(stream, "\0zlib:mode"))?;
     let requested_kind = flush_kind(mode, args)?;
-    if matches!(mode, StreamMode::Deflate)
+    let incremental = stream.object_identity().is_some_and(|identity| {
+        state.borrow().zlib_compressors.contains_key(&identity)
+    });
+    if incremental {
+        let flush = match requested_kind.unwrap_or(3.0) as u8 {
+            0 => FlushCompress::None,
+            1 => FlushCompress::Partial,
+            2 => FlushCompress::Sync,
+            3 => FlushCompress::Full,
+            // flate2/miniz does not expose a separate block-only operation;
+            // Sync is the closest complete, byte-aligned boundary.
+            _ => FlushCompress::Sync,
+        };
+        let _ = incremental_process(state, stream, &[], flush)?;
+        write_to_pipe(stream)?;
+    } else if matches!(mode, StreamMode::Deflate)
         && matches!(execute::get_property(stream, "_level"), Value::Number(level) if level == 0.0)
     {
         let current = execute::get_property(stream, "\0zlib:output");
@@ -913,6 +1312,14 @@ fn stream_flush(stream: &Value, args: &[Value]) -> Result<Value, VmError> {
                 );
             }
         }
+    }
+    if matches!(execute::get_property(stream, "writableNeedDrain"), Value::Boolean(true)) {
+        execute::set_property_in_place(stream, "writableLength", Value::Number(0.0));
+        execute::set_property_in_place(stream, "writableNeedDrain", Value::Boolean(false));
+        let writable_state = execute::get_property(stream, "_writableState");
+        execute::set_property_in_place(&writable_state, "length", Value::Number(0.0));
+        execute::set_property_in_place(&writable_state, "needDrain", Value::Boolean(false));
+        execute::set_property_in_place(stream, "\0zlib:pendingDrain", Value::Boolean(true));
     }
     let callback = args.iter().find(|value| quench_runtime::is_callable(value));
     if let Some(callback) = callback {
@@ -1037,7 +1444,15 @@ fn stream_read(stream: &Value) -> Value {
             "\0zlib:output",
             crate::modules::buffer_proto::make_buffer(&[]),
         );
-        output
+        if matches!(
+            execute::get_property(stream, "\0zlib:encoding"),
+            Value::String(ref encoding) if encoding.eq_ignore_ascii_case("utf8")
+        ) {
+            let bytes = bytes_of(&output).unwrap_or_default();
+            Value::String(String::from_utf8_lossy(&bytes).into_owned())
+        } else {
+            output
+        }
     }
 }
 
@@ -1062,7 +1477,7 @@ fn stream_method(
     let stream = receiver.ok_or(VmError::NotCallable)?;
     match method {
         "on" | "once" => stream_on(stream, args),
-        "write" => stream_write(stream, args),
+        "write" => stream_write(state, stream, args),
         "end" => stream_end(state, stream, args),
         "params" => {
             validate_params(args)?;
@@ -1082,7 +1497,7 @@ fn stream_method(
             Ok(stream.clone())
         }
         "destroy" => stream_destroy(stream, args),
-        "flush" | "close" | "reset" | "resume" => stream_flush(stream, args),
+        "flush" | "close" | "reset" | "resume" => stream_flush(state, stream, args),
         "_processChunk" => stream_process_chunk(stream, args),
         "setEncoding" => stream_set_encoding(stream, args),
         "pipe" => {
