@@ -658,7 +658,7 @@ fn iterate_loop_values(
                     if matches!(completion, crate::completion::Completion::Suspend(_)) {
                         let mut pending = pending.clone();
                         pending.body_pc = body_pc;
-                        pending.await_dst = body_await_destination(body, body_pc);
+                        pending.await_dst = body_await_destination(body, body_pc, registers);
                         pending.bindings = capture_iteration_bindings(slot, iteration_slots);
                         remember_pending_async_for_of(pending);
                     } else {
@@ -714,7 +714,7 @@ pub(crate) fn resume_async_for_of(
                         if matches!(completion, crate::completion::Completion::Suspend(_)) {
                             let mut pending = spec.clone();
                             pending.body_pc = next_pc;
-                            pending.await_dst = body_await_destination(body, next_pc);
+                            pending.await_dst = body_await_destination(body, next_pc, registers);
                             pending.bindings =
                                 capture_iteration_bindings(spec.slot, &spec.iteration_slots);
                             return Ok((completion, Some(pending)));
@@ -766,7 +766,7 @@ pub(crate) fn resume_async_for_of(
                     if matches!(completion, crate::completion::Completion::Suspend(_)) {
                         let mut pending = spec.clone();
                         pending.body_pc = body_next_pc;
-                        pending.await_dst = body_await_destination(body, body_next_pc);
+                        pending.await_dst = body_await_destination(body, body_next_pc, registers);
                         pending.bindings =
                             capture_iteration_bindings(spec.slot, &spec.iteration_slots);
                         return Ok((completion, Some(pending)));
@@ -804,15 +804,38 @@ fn step_iterator_value(
     }
 }
 
-fn body_await_destination(body: crate::machine::CodeView<'_>, body_pc: usize) -> u16 {
-    body_pc
-        .checked_sub(1)
-        .and_then(|index| body.cold_at(index))
+fn body_await_destination(
+    body: crate::machine::CodeView<'_>,
+    body_pc: usize,
+    registers: &crate::register_file::RegisterFile,
+) -> u16 {
+    let destination = body
+        .cold_at(body_pc.saturating_sub(1))
         .and_then(|op| match op {
             crate::ops::Op::Await { dst, .. } => Some(*dst),
+            crate::ops::Op::Branch {
+                condition,
+                then_ops,
+                else_ops,
+            } => {
+                let truthy = crate::execute::read_register(registers, *condition)
+                    .ok()
+                    .is_some_and(|value| crate::execute::is_truthy(&value));
+                let branch = if truthy { then_ops } else { else_ops };
+                branch
+                    .code()
+                    .and_then(|code| {
+                        code.find_cold(|op| matches!(op, crate::ops::Op::Await { .. }))
+                    })
+                    .and_then(|(_, op)| match op {
+                        crate::ops::Op::Await { dst, .. } => Some(*dst),
+                        _ => None,
+                    })
+            }
             _ => None,
         })
-        .unwrap_or(0)
+        .unwrap_or(0);
+    destination
 }
 
 fn capture_iteration_bindings(
@@ -886,6 +909,16 @@ fn execute_async_loop_body(
     label: &Option<String>,
     start: usize,
 ) -> Result<(crate::completion::LoopTransition, usize), crate::execute::VmError> {
+    if start > 0 {
+        if let Some(completion) = resume_async_loop_branch(registers, body, start)? {
+            if !matches!(completion, crate::completion::Completion::Normal) {
+                return Ok((
+                    crate::completion::Completion::into_loop_transition(completion, label),
+                    start,
+                ));
+            }
+        }
+    }
     let mut pc = start;
     loop {
         let step = {
@@ -919,6 +952,36 @@ fn execute_async_loop_body(
     }
 }
 
+fn resume_async_loop_branch(
+    registers: &mut crate::register_file::RegisterFile,
+    body: crate::machine::CodeView<'_>,
+    start: usize,
+) -> Result<Option<crate::completion::Completion>, crate::execute::VmError> {
+    let Some(crate::ops::Op::Branch {
+        condition,
+        then_ops,
+        else_ops,
+    }) = body.cold_at(start.saturating_sub(1))
+    else {
+        return Ok(None);
+    };
+    let truthy = crate::execute::read_register(registers, *condition)
+        .map(|value| crate::execute::is_truthy(&value))?;
+    let branch = if truthy { then_ops } else { else_ops };
+    let Some(branch) = branch.code() else {
+        return Ok(None);
+    };
+    let Some((index, crate::ops::Op::Await { .. })) =
+        branch.find_cold(|op| matches!(op, crate::ops::Op::Await { .. }))
+    else {
+        return Ok(None);
+    };
+    let suffix = branch
+        .slice(index + 1, branch.len())
+        .ok_or(crate::execute::VmError::MissingReturn)?;
+    crate::vm::execute_code_completion_in_current_frame(suffix, registers).map(Some)
+}
+
 fn execute_loop_body_with_context(
     registers: &mut crate::register_file::RegisterFile,
     label: &Option<String>,
@@ -939,7 +1002,12 @@ include!("loops_while.rs");
 
 #[cfg(test)]
 mod tests {
-    use super::{live_for_of, reset_fixture_state, take_live_for_of, LIVE_FOR_OF};
+    use super::{
+        body_await_destination, live_for_of, reset_fixture_state, take_live_for_of, LIVE_FOR_OF,
+    };
+    use crate::machine::FunctionCode;
+    use crate::ops::Op;
+    use crate::register_file::RegisterFile;
     use crate::value::Value;
 
     #[test]
@@ -959,5 +1027,19 @@ mod tests {
         LIVE_FOR_OF.with(|live| live.push(Value::Number(1.0)));
         reset_fixture_state();
         assert_eq!(live_for_of(), None);
+    }
+
+    #[test]
+    fn async_branch_await_uses_selected_branch_destination() {
+        let then_ops = FunctionCode::from_ops(vec![Op::Await { dst: 7, src: 1 }]);
+        let else_ops = FunctionCode::from_ops(vec![Op::Await { dst: 9, src: 1 }]);
+        let body = FunctionCode::from_ops(vec![Op::Branch {
+            condition: 0,
+            then_ops,
+            else_ops,
+        }]);
+        let registers = RegisterFile::from_values(vec![Value::Boolean(true), Value::Undefined]);
+
+        assert_eq!(body_await_destination(body.code().expect("body code"), 1, &registers), 7);
     }
 }
