@@ -121,6 +121,24 @@ pub fn advanced_clone(value: Value) -> Value {
     advanced_clone_inner(value, &mut seen)
 }
 
+fn advanced_buffer_view(value: &Value) -> bool {
+    let prototype = quench_runtime::execute::get_prototype_of(value).unwrap_or(Value::Undefined);
+    let buffer_prototype = crate::modules::buffer_proto::buffer_prototype();
+    let has_own_constructor = quench_runtime::execute::has_own_property(value, "constructor");
+    if has_own_constructor {
+        let global = quench_runtime::vm::current_global_object();
+        return quench_runtime::execute::same_value(
+            &quench_runtime::execute::get_property(value, "constructor"),
+            &quench_runtime::execute::get_property(&global, "Buffer"),
+        );
+    }
+    quench_runtime::execute::same_value(&prototype, &buffer_prototype)
+        && quench_runtime::execute::same_value(
+            &quench_runtime::execute::get_property(&prototype, "constructor"),
+            &crate::modules::buffer_proto::canonical_buffer_constructor(),
+        )
+}
+
 fn advanced_clone_inner(value: Value, seen: &mut HashMap<u64, Value>) -> Value {
     if let Some(clone) = crate::modules::crypto::clone_key_object(&value) {
         return clone;
@@ -173,13 +191,7 @@ fn advanced_clone_inner(value: Value, seen: &mut HashMap<u64, Value>) -> Value {
             let cloned = Value::Uint8Array(Rc::new(
                 quench_runtime::value::Uint8ArrayData::new(Rc::new(buffer), 0, length),
             ));
-            let global = quench_runtime::vm::current_global_object();
-            let constructor = quench_runtime::execute::get_property(&value, "constructor");
-            let buffer_constructor = quench_runtime::execute::get_property(&global, "Buffer");
-            let prototype = if quench_runtime::execute::same_value(
-                &constructor,
-                &buffer_constructor,
-            ) {
+            let prototype = if advanced_buffer_view(&value) {
                 crate::modules::buffer_proto::buffer_prototype()
             } else {
                 Value::Builtin(quench_runtime::ops::Builtin::Uint8ArrayPrototype)
