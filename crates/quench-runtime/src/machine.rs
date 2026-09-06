@@ -5481,14 +5481,18 @@ fn select_local_numeric(
 ) -> Option<crate::stencil_plan::LocalBinarySelection> {
     let load = entries.get(pc)?.instruction;
     if region_entry_is_legal(entries, pc, pc.checked_add(3)?) {
-        let loads = [load, entries.get(pc + 1)?.instruction];
-        let operation = entries.get(pc + 2)?.instruction;
-        if let Some(selection) = crate::stencil_plan::select_local_binary(
-            loads,
-            operation,
-            liveness.get(pc + 2)?,
-        ) {
-            return Some(selection);
+        let next = entries.get(pc + 1)?.instruction;
+        if let (Some(first), Some(second)) =
+            (numeric_producer(code, load), numeric_producer(code, next))
+        {
+            let operation = entries.get(pc + 2)?.instruction;
+            if let Some(selection) = crate::stencil_plan::select_local_binary(
+                [first, second],
+                operation,
+                liveness.get(pc + 2)?,
+            ) {
+                return Some(selection);
+            }
         }
     }
     let end = pc.checked_add(2)?;
@@ -5499,6 +5503,25 @@ fn select_local_numeric(
     };
     region_entry_is_legal(entries, pc, end).then_some(())?;
     crate::stencil_plan::select_local_add_const(load, operation, bits, liveness.get(pc + 1)?)
+}
+
+fn numeric_producer(
+    code: CodeView<'_>,
+    instruction: crate::ir::Instruction,
+) -> Option<crate::stencil_plan::NumericProducer> {
+    use crate::stencil_plan::{NumericProducer, NumericSource};
+    let source = match instruction.opcode {
+        crate::ir::Opcode::LoadLocal => NumericSource::Local(instruction.b),
+        crate::ir::Opcode::LoadConst => match code.constant(instruction.b)? {
+            crate::ops::Constant::Number(value) => NumericSource::Constant(value.to_bits()),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    Some(NumericProducer {
+        output: instruction.a,
+        source,
+    })
 }
 
 fn region_admission(

@@ -23,12 +23,20 @@ fn execute_case(
     let selection = native.borrow().selection();
     let environment = crate::environment::Environment::new();
     match selection.inputs {
-        crate::stencil_plan::LocalNumericInputs::Slots(slots) => {
-            environment.set(slots[0], values[0].clone());
-            environment.set(slots[1], values[1].clone());
-        }
-        crate::stencil_plan::LocalNumericInputs::RepeatedSlot(slot) => {
-            environment.set(slot, values[0].clone());
+        crate::stencil_plan::LocalNumericInputs::Sources(sources) => {
+            let mut value_index = 0;
+            let mut assigned = [None; 2];
+            for source in sources {
+                let crate::stencil_plan::NumericSource::Local(slot) = source else {
+                    continue;
+                };
+                if assigned.contains(&Some(slot)) {
+                    continue;
+                }
+                environment.set(slot, values[value_index].clone());
+                assigned[value_index] = Some(slot);
+                value_index += 1;
+            }
         }
         crate::stencil_plan::LocalNumericInputs::SlotConstant { slot, .. } => {
             environment.set(slot, values[0].clone());
@@ -126,7 +134,10 @@ fn exercise_repeated_source_view(view: CodeView<'_>) -> bool {
         plan.native_local_binary_at(*pc).is_some_and(|native| {
             matches!(
                 native.borrow().selection().inputs,
-                crate::stencil_plan::LocalNumericInputs::RepeatedSlot(_)
+                crate::stencil_plan::LocalNumericInputs::Sources([
+                    crate::stencil_plan::NumericSource::Local(first),
+                    crate::stencil_plan::NumericSource::Local(second),
+                ]) if first == second
             )
         })
     }) else {
@@ -144,6 +155,35 @@ fn exercise_repeated_source_view(view: CodeView<'_>) -> bool {
         hostile,
         (Completion::Return(Value::String("xx".into())), 1, 2)
     );
+    true
+}
+
+fn exercise_constant_left_source_view(view: CodeView<'_>) -> bool {
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let plan = BaselinePlan::compile_for_test(view, policy);
+    let Some(pc) = (0..view.len()).find(|pc| {
+        plan.native_local_binary_at(*pc).is_some_and(|native| {
+            matches!(
+                native.borrow().selection().inputs,
+                crate::stencil_plan::LocalNumericInputs::Sources([
+                    crate::stencil_plan::NumericSource::Constant(_),
+                    crate::stencil_plan::NumericSource::Local(_),
+                ])
+            )
+        })
+    }) else {
+        return false;
+    };
+    let numeric = execute_case(view, &plan, pc, [Value::Number(1.25), Value::Undefined]);
+    assert_eq!(numeric, (Completion::Return(Value::Number(1.25)), 1, 1));
+    let hostile = execute_case(
+        view,
+        &plan,
+        pc,
+        [Value::String("x".into()), Value::Undefined],
+    );
+    assert!(matches!(hostile.0, Completion::Return(Value::Number(value)) if value.is_nan()));
+    assert_eq!((hostile.1, hostile.2), (1, 2));
     true
 }
 
@@ -181,6 +221,21 @@ fn ordinary_source_fuses_local_load_with_numeric_constant() {
         executed |= exercise_constant_source_view(view);
     });
     assert!(executed, "source must execute the constant physical entry");
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn ordinary_source_propagates_left_constant_without_swapping_operands() {
+    let program = crate::reduce::reduce_source("function f(x){return 2.5-x} f(1)")
+        .expect("ordinary source lowers");
+    let mut executed = false;
+    visit_views(program.code(), &mut |view| {
+        executed |= exercise_constant_left_source_view(view);
+    });
+    assert!(
+        executed,
+        "source must execute the constant-left physical entry"
+    );
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
