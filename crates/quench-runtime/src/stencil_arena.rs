@@ -136,18 +136,15 @@ fn generated_chain_relocation_is_declared(
     } else {
         crate::stencil_fact::HoleKind::Rel32
     };
-    let Some(target) = view.relocations.first().map(|relocation| relocation.target) else {
+    let Some(fallthrough) = view.fallthrough else {
         return false;
     };
-    if target.is_empty() {
-        return false;
-    }
     view.relocations.len() == view.stencil.holes.len()
         && view.relocations.iter().all(|relocation| {
             view.stencil.holes.iter().any(|hole| {
                 hole.offset == relocation.offset
                     && hole.kind == relocation.kind
-                    && relocation.target == target
+                    && relocation.target == fallthrough.target
                     && relocation.addend == 0
             })
         })
@@ -3549,6 +3546,7 @@ mod tests {
             fallthrough: Some(crate::stencil_select::PhysicalFallthrough {
                 stencil: &BAD_TAIL,
                 fixup_offset: tail.fixup_offset,
+                target: tail.target,
             }),
             ..view
         };
@@ -3557,6 +3555,17 @@ mod tests {
         let site = QuickeningSite::<2>::new(Opcode::Add);
         let values = PatchValues::from_site(&site);
         let result = arena.render_physical_view_or_get(&mut cache, bad_view, &values);
+        assert_eq!(result, Err(ArenaError::ProtectionFailed));
+        assert_eq!(arena.used(), 0);
+        assert_eq!(cache.len(), 0);
+        let wrong_target = crate::stencil_select::PhysicalStencilView {
+            fallthrough: Some(crate::stencil_select::PhysicalFallthrough {
+                target: "q_unrelated_successor",
+                ..tail
+            }),
+            ..view
+        };
+        let result = arena.render_physical_view_or_get(&mut cache, wrong_target, &values);
         assert_eq!(result, Err(ArenaError::ProtectionFailed));
         assert_eq!(arena.used(), 0);
         assert_eq!(cache.len(), 0);
@@ -3668,6 +3677,7 @@ mod tests {
             fallthrough: Some(crate::stencil_select::PhysicalFallthrough {
                 stencil: &BAD_TAIL,
                 fixup_offset: 0,
+                target: "q_unexpected_tail",
             }),
             ..view
         };

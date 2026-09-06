@@ -128,6 +128,7 @@ pub struct RegionRecord {
 pub struct PhysicalFallthrough {
     pub stencil: &'static Stencil,
     pub fixup_offset: u16,
+    pub target: &'static str,
 }
 
 /// The mechanical semantic contract of a generated region row.  The row's
@@ -283,12 +284,7 @@ impl PhysicalStencilView {
             && self.external_entries == other.external_entries
             && self.stencil.bytes == other.stencil.bytes
             && self.stencil.holes == other.stencil.holes
-            && self.fallthrough.map(|item| item.fixup_offset)
-                == other.fallthrough.map(|item| item.fixup_offset)
-            && self.fallthrough.zip(other.fallthrough).is_none_or(|(left, right)| {
-                left.stencil.bytes == right.stencil.bytes
-                    && left.stencil.holes == right.stencil.holes
-            })
+            && self.fallthrough == other.fallthrough
             && self.executable == other.executable
             && self.template_calls_helper == other.template_calls_helper
             && self.target == other.target
@@ -383,6 +379,7 @@ fn generated_physical_view(
     let fallthrough = artifact.fallthrough.as_ref().map(|stencil| PhysicalFallthrough {
         stencil,
         fixup_offset: artifact.fallthrough_fixup_offset,
+        target: record.fallthrough.map_or("", |item| item.target),
     });
     let metadata_matches = artifact.name == record.name
         && artifact_identity_matches(artifact, record)
@@ -400,7 +397,7 @@ fn generated_physical_view(
             .is_none_or(|_| record.fallthrough.is_some())
         && record
             .fallthrough
-            .is_none_or(|item| artifact.fallthrough_fixup_offset == item.fixup_offset);
+            .is_none_or(|item| artifact_fallthrough_matches(artifact, item));
     let effects_match = artifact.executable == record.executable
         && artifact.template_calls_helper == record.template_calls_helper;
     if !metadata_matches
@@ -431,6 +428,27 @@ fn generated_physical_view(
         target: Some(artifact.target),
         fingerprint: Some(artifact.fingerprint),
     })
+}
+
+fn artifact_fallthrough_matches(
+    artifact: &BuildStencilArtifact,
+    fallthrough: PhysicalFallthrough,
+) -> bool {
+    let is_relative = |relocation: &&PhysicalRelocation| {
+        matches!(
+            relocation.kind,
+            crate::stencil_fact::HoleKind::Branch26 | crate::stencil_fact::HoleKind::Rel32
+        )
+    };
+    let relative_count = artifact.relocations.iter().filter(is_relative).count();
+    artifact.fallthrough_fixup_offset == fallthrough.fixup_offset
+        && !fallthrough.target.is_empty()
+        && relative_count > 0
+        && artifact
+            .relocations
+            .iter()
+            .filter(is_relative)
+            .all(|relocation| relocation.target == fallthrough.target)
 }
 
 fn relocations_match(stencil: Stencil, relocations: &[PhysicalRelocation]) -> bool {
