@@ -35,15 +35,103 @@ pub(crate) fn execute_with_context(
         None => crate::execute::is_truthy(&crate::execute::read_register(registers, *condition)?),
     };
     let selected = if truthy { then_ops } else { else_ops };
-    let Some(selected_code) = selected.code() else {
+    let Some(code) = selected.code() else {
         return missing_return();
     };
-    crate::vm::execute_function_code_completion_with_context(
-        selected,
-        selected_code,
-        registers,
-        context,
-    )
+    crate::vm::with_current_context(context, || execute_selected(registers, selected, code))
+}
+
+fn execute_selected(
+    registers: &mut crate::register_file::RegisterFile,
+    owner: &crate::machine::FunctionCode,
+    code: crate::machine::CodeView<'_>,
+) -> Result<Completion, VmError> {
+    let _ = owner.enter_invocation();
+    let mut pc = 0;
+    loop {
+        let step = crate::vm::execute_code_completion_step_with_owner(code, owner, pc, registers)?;
+        let next = step.next;
+        let suspended_pc = step.suspended_pc;
+        match step.completion {
+            Completion::Call(continuation) => {
+                crate::vm::vm_ops::execute_call_continuation(registers, continuation)?;
+                pc = next;
+            }
+            completion if completion.is_suspension() => {
+                return branch_suspension(code, next, suspended_pc, completion);
+            }
+            completion => return Ok(completion),
+        }
+    }
+}
+
+fn branch_suspension(
+    code: crate::machine::CodeView<'_>,
+    next: usize,
+    suspended_pc: Option<usize>,
+    completion: Completion,
+) -> Result<Completion, VmError> {
+    let pc = suspended_pc.or_else(|| next.checked_sub(1));
+    let yield_dst = pc
+        .and_then(|pc| code.cold_at(pc))
+        .and_then(suspension_destination)
+        .or_else(|| completion.suspension_point().and_then(point_destination))
+        .ok_or(VmError::MissingReturn)?;
+    let point = crate::continuation::SuspensionPoint::Branch {
+        body_resume: suffix(code.range(), next),
+        yield_dst,
+    };
+    Ok(wrap_suspension(completion, point))
+}
+
+fn suspension_destination(op: &Op) -> Option<u16> {
+    match op {
+        Op::Await { dst, .. } | Op::Yield { src: dst } => Some(*dst),
+        _ => None,
+    }
+}
+
+fn point_destination(point: &crate::continuation::SuspensionPoint) -> Option<u16> {
+    match point {
+        crate::continuation::SuspensionPoint::Yield { src, .. }
+        | crate::continuation::SuspensionPoint::Loop { yield_dst: src, .. }
+        | crate::continuation::SuspensionPoint::Branch { yield_dst: src, .. } => Some(*src),
+        crate::continuation::SuspensionPoint::YieldStar { dst, .. } => Some(*dst),
+        crate::continuation::SuspensionPoint::Nested { inner, .. } => point_destination(inner),
+    }
+}
+
+fn suffix(range: crate::machine::CodeRange, next: usize) -> crate::machine::CodeRange {
+    crate::machine::CodeRange {
+        code: range.code,
+        start: range.start.saturating_add(next as u32),
+        end: range.end,
+    }
+}
+
+fn wrap_suspension(
+    completion: Completion,
+    outer: crate::continuation::SuspensionPoint,
+) -> Completion {
+    match completion {
+        Completion::Suspend(value) => Completion::SuspendAt(value, outer),
+        Completion::Yield(value) => Completion::YieldAt(value, outer),
+        Completion::SuspendAt(value, inner) => Completion::SuspendAt(
+            value,
+            crate::continuation::SuspensionPoint::Nested {
+                inner: Box::new(inner),
+                outer: Box::new(outer),
+            },
+        ),
+        Completion::YieldAt(value, inner) => Completion::YieldAt(
+            value,
+            crate::continuation::SuspensionPoint::Nested {
+                inner: Box::new(inner),
+                outer: Box::new(outer),
+            },
+        ),
+        other => other,
+    }
 }
 
 #[cfg(test)]

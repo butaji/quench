@@ -1,29 +1,17 @@
-# WebAssembly rules
+# WebAssembly boundary
 
-Quench has one runtime and language-specific frontends. The Wasm frontend owns
-decoding, validation, and conversion to the common register HIR. The runtime
-owns instantiation, execution, memory, tables, exceptions, and host calls.
+`quench-wasm` owns decoding, validation and spec-script adaptation;
+`quench-runtime` owns execution, memory, tables, exceptions and host calls.
+Third-party decoding/validation is allowed; a separate guest executor is not.
 
-## Rules
+Use the shared typed register machinery and preserve distinct Wasm traps,
+tagged exceptions and JavaScript throw behavior at their shared boundaries.
+Instance memory/table lifetime and reference roots must follow actual runtime
+ownership; do not substitute a scratch arena for escaping state.
 
-- Wasm enters the Native layer; JavaScript and Typed TypeScript use the same
-  Native | Fast | Dynamic ladder where their facts permit.
-- A guard or a box is the only layer transition. Do not create per-language
-  object models or a second executor.
-- HIR is typed and register-based. The interpreter executes specialised MIR;
-  it does not simulate a Wasm operand stack.
-- Third-party decoding, validation, and wast parsing are allowed. Third-party
-  execution and a guest Wasm interpreter are not.
-- Native values remain unboxed where the representation is known. Dynamic
-  operations remain available for values whose meaning is unknown.
-- Use one tracing GC for long-lived heap objects and an arena only for bounded
-  scratch. Instance memory and tables have instance lifetime; table references
-  are GC roots.
-- Traps, tagged Wasm exceptions, and Dynamic throws share one unwind walk but
-  retain distinct matching rules.
-- The spectest harness is a host adapter over the common call ABI. Node's
-  `WebAssembly` API is a separate compatibility surface.
-- Compatibility is measured by every directive in the vendored spec suite,
-  including proposals. Do not use a skip list or file-only scoring.
-- Tests assert observable validity, linking, instantiation, results, traps,
-  exceptions, exhaustion, and host effects—not internal HIR or register shape.
+The spectest adapter and Node's `WebAssembly` API are different host surfaces.
+Measure every directive in the vendored specification suite, including proposals:
+validity, linking, instantiation, values, traps, exhaustion and host effects.
+No fixture recognizers or skip-list-based claims. See
+[the runner](../crates/quench-wasm-test/README.md) and [repository rules](../AGENTS.md).
+These are requirements, not an assertion of complete conformance.

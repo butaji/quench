@@ -278,11 +278,13 @@ impl PhysicalStencilView {
             && self.external_entries == other.external_entries
             && self.stencil.bytes == other.stencil.bytes
             && self.stencil.holes == other.stencil.holes
-            && self.fallthrough.map(|(_, entry)| entry)
-                == other.fallthrough.map(|(_, entry)| entry)
-            && self.fallthrough.zip(other.fallthrough).is_none_or(|((left, _), (right, _))| {
-                left.bytes == right.bytes && left.holes == right.holes
-            })
+            && self.fallthrough.map(|(_, entry)| entry) == other.fallthrough.map(|(_, entry)| entry)
+            && self
+                .fallthrough
+                .zip(other.fallthrough)
+                .is_none_or(|((left, _), (right, _))| {
+                    left.bytes == right.bytes && left.holes == right.holes
+                })
             && self.executable == other.executable
             && self.template_calls_helper == other.template_calls_helper
             && self.target == other.target
@@ -421,17 +423,15 @@ pub fn select_stencil(key: RegionKey) -> Option<PhysicalStencilView> {
 /// Select one complete physical view for an ABI-specific entry.  Callers
 /// should retain this value through rendering and publication so bytes and
 /// boundary metadata cannot be selected independently.
-pub fn select_physical_for_abi(
-    key: RegionKey,
-    abi: RegionAbi,
-) -> Option<PhysicalStencilView> {
-    select_physical(key).filter(|view| {
-        view.executable && view.abi == abi && view.contract().abi_is_well_formed()
-    })
+pub fn select_physical_for_abi(key: RegionKey, abi: RegionAbi) -> Option<PhysicalStencilView> {
+    select_physical(key)
+        .filter(|view| view.executable && view.abi == abi && view.contract().abi_is_well_formed())
 }
 
 pub fn select_physical(key: RegionKey) -> Option<PhysicalStencilView> {
-    let record = CANONICAL_REGION_TABLE.iter().find(|record| record.key == key)?;
+    let record = CANONICAL_REGION_TABLE
+        .iter()
+        .find(|record| record.key == key)?;
     let artifact = match unique_artifact(BUILD_STENCIL_ARTIFACTS, key, record.name) {
         Ok(Some(artifact)) => artifact,
         Ok(None) => return Some(legacy_physical_view(key, record)),
@@ -501,17 +501,21 @@ fn generated_physical_view(
         && artifact.external_entries == record.external_entries
         && artifact.has_fallthrough == record.fallthrough.is_some()
         && (artifact.has_fallthrough == fallthrough.is_some())
-        && artifact.fallthrough.is_none_or(|_| record.fallthrough.is_some())
-        && record.fallthrough.is_none_or(|(_, entry)| {
-            artifact.fallthrough_entry == entry
-        });
+        && artifact
+            .fallthrough
+            .is_none_or(|_| record.fallthrough.is_some())
+        && record
+            .fallthrough
+            .is_none_or(|(_, entry)| artifact.fallthrough_entry == entry);
     let effects_match = artifact.executable == record.executable
         && artifact.template_calls_helper == record.template_calls_helper;
     if !metadata_matches
         || !effects_match
         || !artifact.stencil.validate()
         || !relocations_match(artifact.stencil, artifact.relocations)
-        || !artifact.fallthrough.is_none_or(|stencil| stencil.validate())
+        || !artifact
+            .fallthrough
+            .is_none_or(|stencil| stencil.validate())
     {
         return None;
     }
@@ -538,9 +542,10 @@ fn generated_physical_view(
 fn relocations_match(stencil: Stencil, relocations: &[PhysicalRelocation]) -> bool {
     relocations.iter().all(|relocation| {
         !relocation.target.is_empty()
-            && stencil.holes.iter().any(|hole| {
-                hole.offset == relocation.offset && hole.kind == relocation.kind
-            })
+            && stencil
+                .holes
+                .iter()
+                .any(|hole| hole.offset == relocation.offset && hole.kind == relocation.kind)
     })
 }
 
@@ -552,7 +557,8 @@ fn artifact_identity_matches(artifact: &BuildStencilArtifact, record: &RegionRec
 }
 
 fn artifact_target_matches_host(target: &str) -> bool {
-    let exact_target = option_env!("QUENCH_BUILD_TARGET").is_some_and(|expected| expected == target);
+    let exact_target =
+        option_env!("QUENCH_BUILD_TARGET").is_some_and(|expected| expected == target);
     if !exact_target {
         return false;
     }
@@ -1321,7 +1327,10 @@ mod tests {
             bytes: BYTES,
             data: &[],
             relocations: &[],
-            stencil: Stencil { bytes: BYTES, holes: &[] },
+            stencil: Stencil {
+                bytes: BYTES,
+                holes: &[],
+            },
             fallthrough: None,
             fallthrough_entry: 0,
         };
@@ -1341,7 +1350,10 @@ mod tests {
             bytes: BYTES,
             data: &[],
             relocations: &[],
-            stencil: Stencil { bytes: BYTES, holes: &[] },
+            stencil: Stencil {
+                bytes: BYTES,
+                holes: &[],
+            },
             fallthrough: None,
             fallthrough_entry: 0,
         };
@@ -1361,7 +1373,10 @@ mod tests {
             bytes: BYTES,
             data: &[],
             relocations: &[],
-            stencil: Stencil { bytes: BYTES, holes: &[] },
+            stencil: Stencil {
+                bytes: BYTES,
+                holes: &[],
+            },
             fallthrough: None,
             fallthrough_entry: 9,
         };
@@ -1381,7 +1396,10 @@ mod tests {
             bytes: BYTES,
             data: &[],
             relocations: &[],
-            stencil: Stencil { bytes: BYTES, holes: &[] },
+            stencil: Stencil {
+                bytes: BYTES,
+                holes: &[],
+            },
             fallthrough: None,
             fallthrough_entry: 0,
         };
@@ -1405,7 +1423,10 @@ mod tests {
                 kind: crate::stencil_fact::HoleKind::Branch26,
                 target: "q_missing",
             }],
-            stencil: Stencil { bytes: BYTES, holes: &[] },
+            stencil: Stencil {
+                bytes: BYTES,
+                holes: &[],
+            },
             fallthrough: None,
             fallthrough_entry: 0,
         };
@@ -1436,7 +1457,10 @@ mod tests {
             bytes: BYTES,
             data: &[],
             relocations: &[],
-            stencil: Stencil { bytes: BYTES, holes: &[] },
+            stencil: Stencil {
+                bytes: BYTES,
+                holes: &[],
+            },
             fallthrough: None,
             fallthrough_entry: 0,
         };
@@ -1472,5 +1496,4 @@ mod tests {
         let duplicate = [first, first];
         assert!(unique_artifact(&duplicate, first.key, first.name).is_err());
     }
-
 }

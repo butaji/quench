@@ -118,7 +118,7 @@ fn advance_parent_loop_after_try(
     };
     let mut machine = generator.machine.borrow_mut();
     let Some(crate::machine::Frame::Loop {
-        body_resume: current,
+        phase_resume: current,
         ..
     }) = machine.frames.frames.last_mut()
     else {
