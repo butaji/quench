@@ -346,6 +346,73 @@ fn baseline_scalar_entry_rebuilds_after_shared_owner_eviction() {
     assert_eq!(registers.read(0), Some(crate::value::Value::Number(5.0)));
 }
 
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn warm_numeric_region_reuses_one_publication() {
+    let function = numeric_add_function();
+    let code = function.code().expect("numeric code");
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let plan = super::BaselinePlan::compile_for_test(code, policy);
+    let context = crate::vm::current_context_or_default();
+    let mut registers = crate::register_file::RegisterFile::with_undefined(3);
+    execute_numeric_add(code, &plan, &mut registers, &context);
+    let published = {
+        let slab = plan.shared_region_arena.borrow();
+        (slab.slab_count(), slab.used(), slab.capacity())
+    };
+    for _ in 0..8 {
+        execute_numeric_add(code, &plan, &mut registers, &context);
+    }
+    assert_eq!(registers.read_number(0), Some(5.0));
+    assert_eq!(plan.native_binary_at(0).unwrap().borrow().native_entry_count(), 9);
+    let slab = plan.shared_region_arena.borrow();
+    assert_eq!((slab.slab_count(), slab.used(), slab.capacity()), published);
+    assert_eq!(slab.slab_count(), 1, "stable hits share one slab");
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn broken_numeric_fact_does_not_render_native_add() {
+    let function = numeric_add_function();
+    let code = function.code().expect("numeric code");
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let plan = super::BaselinePlan::compile_for_test(code, policy);
+    let mut registers = crate::register_file::RegisterFile::from_values(vec![
+        crate::value::Value::Undefined,
+        crate::value::Value::String("a".into()),
+        crate::value::Value::Number(1.0),
+    ]);
+    let context = crate::vm::current_context_or_default();
+    crate::vm::execute_baseline_code_from(
+        code, &plan, 0, &mut registers, &context, crate::environment::Environment::new(),
+    ).expect("generic Add fallback executes");
+    assert_eq!(registers.read(0), Some(crate::value::Value::String("a1".into())));
+    assert_eq!(plan.native_binary_at(0).unwrap().borrow().native_entry_count(), 0);
+    assert_eq!(plan.shared_region_arena.borrow().capacity(), 0);
+}
+
+fn numeric_add_function() -> super::FunctionCode {
+    super::FunctionCode::from_ops(vec![
+        super::Op::Binary {
+            dst: 0, operator: crate::ops::BinaryOp::Add, lhs: 1, rhs: 2,
+        },
+        super::Op::Return { src: 0 },
+    ])
+}
+
+fn execute_numeric_add(
+    code: super::CodeView<'_>,
+    plan: &super::BaselinePlan,
+    registers: &mut crate::register_file::RegisterFile,
+    context: &crate::vm::VmContext,
+) {
+    registers.write_number(1, 2.0);
+    registers.write_number(2, 3.0);
+    crate::vm::execute_baseline_code_from(
+        code, plan, 0, registers, context, crate::environment::Environment::new(),
+    ).expect("numeric region executes");
+}
+
 #[test]
 fn composed_plan_retires_cached_bytes_after_committed_failure() {
     let mut plan = super::NativeRegionPlan::new_for_test(
