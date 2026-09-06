@@ -511,7 +511,7 @@ fn composed_plan_retires_cached_bytes_after_committed_failure() {
         0x1000,
     );
     let committed: Result<crate::vm::DispatchTransition, super::NativeDispatchError> =
-        Err(super::NativeDispatchError::Committed("post-entry".into()));
+        Err(super::NativeDispatchError::committed(0, "post-entry"));
     plan.physical.apply_dispatch_outcome(&committed, None);
     assert_eq!(plan.physical.cache.len(), 0, "committed bytes must not remain callable");
     assert_eq!(
