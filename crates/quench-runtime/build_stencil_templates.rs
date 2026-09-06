@@ -6,6 +6,25 @@ pub(crate) fn aarch64_tail() -> &'static str {
     "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_fallthrough_tail\nq_fallthrough_tail:\n  ret\nq_fallthrough_tail_end:\n\"#);\n"
 }
 
+fn aarch64_add_chain_head() -> &'static str {
+    "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_add_chain_head\nq_add_chain_head:\n  fadd d0, d0, d1\n  b q_add_chain_tail\nq_add_chain_head_end:\n\"#);\n"
+}
+
+fn aarch64_add_chain_tail() -> &'static str {
+    "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_add_chain_tail\nq_add_chain_tail:\n  fadd d0, d0, d2\n  ret\nq_add_chain_tail_end:\n\"#);\n"
+}
+
+pub(crate) fn fragment_sources(
+    recipe: crate::build_stencil_contract::RustAssemblyRecipe,
+) -> Option<(&'static str, &'static str)> {
+    use crate::build_stencil_contract::RustAssemblyRecipe::{AddChain, Fallthrough};
+    match recipe {
+        Fallthrough => Some((aarch64_head(), aarch64_tail())),
+        AddChain => Some((aarch64_add_chain_head(), aarch64_add_chain_tail())),
+        _ => None,
+    }
+}
+
 const AARCH64_ARRAY_LOOP: &str = r##"#![no_std]
 use core::arch::global_asm;
 global_asm!(r#"
@@ -264,6 +283,9 @@ fn nullish_word_source(name: &str) -> String {
 pub(crate) fn assembly_source(recipe: crate::build_stencil_contract::RustAssemblyRecipe) -> String {
     use crate::build_stencil_contract::RustAssemblyRecipe::*;
     match recipe {
+        Fallthrough | AddChain => fragment_sources(recipe)
+            .map(|(head, tail)| head.to_owned() + tail)
+            .expect("declared fragment pair"),
         CompareEqualBranch => compare_branch_source(recipe.name(), "eq", false),
         CompareNotEqualBranch => compare_branch_source(recipe.name(), "ne", true),
         CompareLessBranch => compare_branch_source(recipe.name(), "lt", false),

@@ -50,6 +50,7 @@ fn compile_fragment_pair(
     flags: &[&str],
     rustflags: &[String],
     declaration: &RegionDeclaration,
+    recipe: RustAssemblyRecipe,
 ) -> ExtractedObject {
     if !target.starts_with("aarch64") {
         return ExtractedObject {
@@ -59,6 +60,19 @@ fn compile_fragment_pair(
             holes: Vec::new(),
         };
     }
+    let (head_source, tail_source) = super::build_stencil_templates::fragment_sources(recipe)
+        .expect("declared fragment-pair source");
+    let (head_name, tail_name, tail_symbol) = match recipe {
+        RustAssemblyRecipe::Fallthrough => (
+            "fallthrough_head",
+            "fallthrough_tail",
+            "q_fallthrough_tail",
+        ),
+        RustAssemblyRecipe::AddChain => {
+            ("add_chain_head", "add_chain_tail", "q_add_chain_tail")
+        }
+        _ => panic!("whole assembly recipe passed as fragment pair"),
+    };
     let expected = declaration
         .aarch64_holes
         .iter()
@@ -67,7 +81,7 @@ fn compile_fragment_pair(
             offset: u64::from(*offset),
             width: *width,
             kind,
-            target: "q_fallthrough_tail",
+            target: tail_symbol,
             addend: 0,
         })
         .collect::<Vec<_>>();
@@ -77,8 +91,8 @@ fn compile_fragment_pair(
         compiler,
         flags,
         rustflags,
-        "fallthrough_head",
-        super::build_stencil_templates::aarch64_head(),
+        head_name,
+        head_source,
         &expected,
         &[],
     );
@@ -88,8 +102,8 @@ fn compile_fragment_pair(
         compiler,
         flags,
         rustflags,
-        "fallthrough_tail",
-        super::build_stencil_templates::aarch64_tail(),
+        tail_name,
+        tail_source,
         &[],
         &[],
     );
