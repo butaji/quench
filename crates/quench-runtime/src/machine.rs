@@ -5553,30 +5553,46 @@ fn select_value_window<T: crate::stencil_plan::RankedSelection>(
     let mut graph = crate::stencil_plan::BlockValueGraph::new();
     let mut best: Option<T> = None;
     for offset in 0..crate::stencil_plan::MAX_BLOCK_VALUES {
-        let instruction = entries.get(pc.checked_add(offset)?)?.instruction;
-        if !graph.push(instruction, |constant| {
+        let Some((operation_pc, operation, end)) =
+            extend_value_window(code, entries, pc, offset, &mut graph)
+        else {
+            break;
+        };
+        let Some(live_after) = liveness.get(operation_pc) else {
+            break;
+        };
+        if !region_entry_is_legal(entries, pc, end) {
+            continue;
+        }
+        let Some(selection) = select(code, graph, operation, live_after) else {
+            continue;
+        };
+        if best.as_ref().is_none_or(|current| selection.rank() > current.rank()) {
+            best = Some(selection);
+        }
+    }
+    best
+}
+
+fn extend_value_window(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    pc: usize,
+    offset: usize,
+    graph: &mut crate::stencil_plan::BlockValueGraph,
+) -> Option<(usize, crate::ir::Instruction, usize)> {
+    let instruction = entries.get(pc.checked_add(offset)?)?.instruction;
+    graph
+        .push(instruction, |constant| {
             let crate::ops::Constant::Number(value) = code.constant(constant)? else {
                 return None;
             };
             Some(value.to_bits())
-        }) {
-            break;
-        }
-        let operation_pc = pc.checked_add(graph.len())?;
-        let operation = entries.get(operation_pc)?.instruction;
-        let end = operation_pc.checked_add(1)?;
-        if region_entry_is_legal(entries, pc, end) {
-            if let Some(selection) = select(code, graph, operation, liveness.get(operation_pc)?) {
-                let replace = best
-                    .as_ref()
-                    .is_none_or(|current| selection.rank() > current.rank());
-                if replace {
-                    best = Some(selection);
-                }
-            }
-        }
-    }
-    best
+        })
+        .then_some(())?;
+    let operation_pc = pc.checked_add(graph.len())?;
+    let operation = entries.get(operation_pc)?.instruction;
+    Some((operation_pc, operation, operation_pc.checked_add(1)?))
 }
 
 fn select_graph_add_const(
@@ -7279,6 +7295,27 @@ mod tests {
         let liveness = super::register_liveness(&entries, &[None, None]);
         assert_eq!(liveness[0], std::collections::BTreeSet::from([4]));
         assert!(!liveness[0].contains(&u16::MAX));
+    }
+
+    #[test]
+    fn value_window_keeps_best_candidate_at_code_boundary() {
+        let function = super::FunctionCode::from_ops(vec![
+            super::Op::LoadLocal { dst: 4, slot: 0 },
+            super::Op::LoadLocal { dst: 7, slot: 1 },
+            super::Op::Binary {
+                dst: 1,
+                operator: crate::ops::BinaryOp::Add,
+                lhs: 4,
+                rhs: 7,
+            },
+        ]);
+        let code = function.code().expect("compact code");
+        let entries = super::baseline_entries(code);
+        let windows = vec![None; entries.len()];
+        let liveness = super::register_liveness(&entries, &windows);
+        let selected = super::select_local_numeric(code, &entries, &liveness, 0)
+            .expect("earlier profitable candidate survives exhausted lookahead");
+        assert_eq!(selected.span, 3);
     }
 
     #[test]
