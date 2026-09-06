@@ -52,15 +52,42 @@ const __quenchWebCryptoSubtle = {
   }
 };
 if (typeof globalThis.SubtleCrypto !== "function") {
-  class SubtleCrypto {}
-  SubtleCrypto.supports = (_operation, _algorithm, length) => {
-    if (!Number.isInteger(length) || length < 0 || length > 0x7fffffff) {
+  class SubtleCrypto {
+    constructor() {
+      const error = new TypeError("Illegal constructor");
+      error.code = "ERR_ILLEGAL_CONSTRUCTOR";
+      throw error;
+    }
+  }
+  SubtleCrypto.supports = function(operation, algorithm, length) {
+    if (this === undefined || this === globalThis) {
+      const error = new TypeError("Value of \\\"this\\\" must be of type SubtleCrypto");
+      error.code = "ERR_INVALID_THIS";
+      throw error;
+    }
+    // getPublicKey has no length parameter.  Its support is determined by
+    // the asymmetric key algorithms implemented by the Rust key path.
+    if (operation === "getPublicKey") {
+      const name = String(algorithm?.name || algorithm).toUpperCase();
+      return ["ECDH", "ECDSA", "RSA-OAEP", "RSA-PSS",
+              "RSASSA-PKCS1-V1_5", "ED25519", "ED448", "X25519", "X448"]
+        .includes(name);
+    }
+    if (length !== undefined &&
+        (!Number.isInteger(length) || length < 0 || length > 0x7fffffff)) {
       const error = new TypeError("The requested length is outside the supported range");
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
     }
     return true;
   };
+  for (const name of ["encrypt", "decrypt", "sign", "verify", "digest", "generateKey", "deriveKey", "deriveBits", "importKey", "exportKey", "wrapKey", "unwrapKey", "getPublicKey"]) {
+    SubtleCrypto.prototype[name] = function() {
+      const error = new TypeError("Value of \\\"this\\\" must be of type SubtleCrypto");
+      error.code = "ERR_INVALID_THIS";
+      return Promise.reject(error);
+    };
+  }
   Object.defineProperty(globalThis, "SubtleCrypto", {
     configurable: true,
     enumerable: false,
@@ -68,7 +95,47 @@ if (typeof globalThis.SubtleCrypto !== "function") {
     value: SubtleCrypto,
   });
 }
+if (typeof globalThis.Crypto !== "function") {
+  class Crypto {
+    constructor() {
+      const error = new TypeError("Illegal constructor");
+      error.code = "ERR_ILLEGAL_CONSTRUCTOR";
+      throw error;
+    }
+    get subtle() {
+      const error = new TypeError("Value of \\\"this\\\" must be of type Crypto");
+      error.code = "ERR_INVALID_THIS";
+      throw error;
+    }
+    randomUUID() {
+      const error = new TypeError("Value of \\\"this\\\" must be of type Crypto");
+      error.code = "ERR_INVALID_THIS";
+      throw error;
+    }
+    getRandomValues() {
+      const error = new TypeError("Value of \\\"this\\\" must be of type Crypto");
+      error.code = "ERR_INVALID_THIS";
+      throw error;
+    }
+  }
+  Object.defineProperty(globalThis, "Crypto", {
+    configurable: true,
+    enumerable: false,
+    writable: true,
+    value: Crypto,
+  });
+}
 const __quenchGlobalCrypto = globalThis.crypto || {};
+Object.defineProperty(__quenchGlobalCrypto, "constructor", {
+  configurable: true,
+  value: globalThis.Crypto,
+});
+if (__quenchGlobalCrypto.subtle) {
+  Object.defineProperty(__quenchGlobalCrypto.subtle, "constructor", {
+    configurable: true,
+    value: globalThis.SubtleCrypto,
+  });
+}
 if (!__quenchGlobalCrypto.getRandomValues) {
   __quenchGlobalCrypto.getRandomValues = function(values) {
     if (this !== __quenchGlobalCrypto) {
