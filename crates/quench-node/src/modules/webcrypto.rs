@@ -128,9 +128,7 @@ fn bytes(value: &Value) -> Option<Vec<u8>> {
         }};
     }
     match value {
-        Value::ArrayBuffer(buffer)
-            if !buffer.shared && buffer.max_byte_length.is_none() =>
-        {
+        Value::ArrayBuffer(buffer) if !buffer.shared && buffer.max_byte_length.is_none() => {
             Some(buffer.bytes.borrow().clone())
         }
         Value::DataView(view) => view!(view),
@@ -1030,12 +1028,9 @@ fn ec_curve_from_der(data: &[u8]) -> Option<&'static str> {
     const P256: &[u8] = &[0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
     const P384: &[u8] = &[0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22];
     const P521: &[u8] = &[0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x23];
-    if data.windows(P256.len()).any(|window| window == P256)
-        || matches!(data.len(), 32 | 65)
-    {
+    if data.windows(P256.len()).any(|window| window == P256) || matches!(data.len(), 32 | 65) {
         Some("P-256")
-    } else if data.windows(P384.len()).any(|window| window == P384)
-        || matches!(data.len(), 48 | 97)
+    } else if data.windows(P384.len()).any(|window| window == P384) || matches!(data.len(), 48 | 97)
     {
         Some("P-384")
     } else if data.windows(P521.len()).any(|window| window == P521)
@@ -1045,6 +1040,127 @@ fn ec_curve_from_der(data: &[u8]) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+fn der_length(length: usize) -> Vec<u8> {
+    if length < 0x80 {
+        return vec![length as u8];
+    }
+    let mut bytes = Vec::new();
+    let mut value = length;
+    while value != 0 {
+        bytes.push((value & 0xff) as u8);
+        value >>= 8;
+    }
+    bytes.reverse();
+    let mut encoded = Vec::with_capacity(bytes.len() + 1);
+    encoded.push(0x80 | bytes.len() as u8);
+    encoded.extend(bytes);
+    encoded
+}
+
+fn der_tlv(tag: u8, content: &[u8]) -> Vec<u8> {
+    let mut encoded = Vec::with_capacity(content.len() + 2);
+    encoded.push(tag);
+    encoded.extend(der_length(content.len()));
+    encoded.extend(content);
+    encoded
+}
+
+fn normalize_ec_public_point(data: &[u8]) -> Option<Vec<u8>> {
+    if data.first() == Some(&0x04) {
+        return Some(data.to_vec());
+    }
+    let point = match data.len() {
+        33 if matches!(data.first(), Some(0x02 | 0x03)) => P256PublicKey::from_sec1_bytes(data)
+            .ok()?
+            .to_encoded_point(false)
+            .as_bytes()
+            .to_vec(),
+        49 if matches!(data.first(), Some(0x02 | 0x03)) => P384PublicKey::from_sec1_bytes(data)
+            .ok()?
+            .to_encoded_point(false)
+            .as_bytes()
+            .to_vec(),
+        67 if matches!(data.first(), Some(0x02 | 0x03)) => P521PublicKey::from_sec1_bytes(data)
+            .ok()?
+            .to_sec1_point(false)
+            .as_bytes()
+            .to_vec(),
+        _ => return None,
+    };
+    Some(point)
+}
+
+fn normalize_ec_spki(data: &[u8]) -> Option<Vec<u8>> {
+    let mut outer = DerReader::new(data);
+    let sequence = outer.take(0x30)?;
+    let mut spki = DerReader::new(sequence);
+    let algorithm = spki.take(0x30)?;
+    let bit_string = spki.take(0x03)?;
+    let unused_bits = bit_string.first().copied()?;
+    if unused_bits != 0 {
+        return None;
+    }
+    let point = normalize_ec_public_point(bit_string.get(1..)?)?;
+    if point == bit_string.get(1..)? {
+        return Some(data.to_vec());
+    }
+    let algorithm = der_tlv(0x30, algorithm);
+    let mut bits = Vec::with_capacity(point.len() + 1);
+    bits.push(0);
+    bits.extend(point);
+    let bit_string = der_tlv(0x03, &bits);
+    let mut content = Vec::with_capacity(algorithm.len() + bit_string.len());
+    content.extend(algorithm);
+    content.extend(bit_string);
+    Some(der_tlv(0x30, &content))
+}
+
+fn valid_ec_private_key(data: &[u8], curve: &str) -> bool {
+    let size = match curve {
+        "P-256" => 32,
+        "P-384" => 48,
+        "P-521" => 66,
+        _ => return false,
+    };
+    if data.len() == size {
+        return match curve {
+            "P-256" => P256SecretKey::from_slice(data).is_ok(),
+            "P-384" => P384SecretKey::from_slice(data).is_ok(),
+            "P-521" => P521SecretKey::from_slice(data).is_ok(),
+            _ => false,
+        };
+    }
+    let Some(position) = data
+        .windows(2)
+        .position(|window| window[0] == 0x04 && usize::from(window[1]) == size)
+    else {
+        return false;
+    };
+    let Some(scalar) = data.get(position + 2..position + 2 + size) else {
+        return false;
+    };
+    let valid_scalar = match curve {
+        "P-256" => P256SecretKey::from_slice(&scalar).is_ok(),
+        "P-384" => P384SecretKey::from_slice(&scalar).is_ok(),
+        "P-521" => P521SecretKey::from_slice(&scalar).is_ok(),
+        _ => false,
+    };
+    let has_public = data.contains(&0xa1);
+    valid_scalar && has_public
+}
+
+fn has_ec_algorithm_identifier(data: &[u8]) -> bool {
+    // id-ecPublicKey (1.2.840.10045.2.1), present in both EC SPKI and
+    // PKCS#8 AlgorithmIdentifier sequences.  Checking this before curve
+    // metadata prevents an RSA key from being accepted as an EC key merely
+    // because its DER happens to parse as a sequence.
+    const EC_PUBLIC_KEY: &[u8] = &[0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01];
+    data.windows(EC_PUBLIC_KEY.len()).any(|window| window == EC_PUBLIC_KEY)
+        // Generated CryptoKeys retain raw EC material internally; accepting
+        // canonical point/scalar sizes keeps their host round-trip compatible.
+        || matches!(data.len(), 32 | 48 | 65 | 66 | 97 | 133)
 }
 
 fn rsa_algorithm_metadata(
@@ -1082,16 +1198,10 @@ fn rsa_algorithm_metadata(
     // through ordinary [[Set]] would invoke a user-poisoned inherited setter
     // (or expose its getter later), leaking Object.prototype values into the
     // imported CryptoKey algorithm.
-    let _ = execute::set_property_in_place(
-        &normalized,
-        "modulusLength",
-        Value::Number(bits as f64),
-    );
-    let _ = execute::set_property_in_place(
-        &normalized,
-        "publicExponent",
-        host_api::bytes(&exponent),
-    );
+    let _ =
+        execute::set_property_in_place(&normalized, "modulusLength", Value::Number(bits as f64));
+    let _ =
+        execute::set_property_in_place(&normalized, "publicExponent", host_api::bytes(&exponent));
     normalized
 }
 
@@ -1203,6 +1313,66 @@ fn validate_rsa_import(
             .is_none()
     {
         return Err(named_import_error("DataError", "Invalid key type"));
+    }
+    Ok(())
+}
+
+fn validate_ec_jwk(algorithm: &Value, jwk: Option<&Value>, key_type: &str) -> Result<(), VmError> {
+    let Some(jwk) = jwk else {
+        return Err(named_import_error("DataError", "Invalid keyData"));
+    };
+    let kty = execute::to_js_string(&execute::get_property(jwk, "kty")).unwrap_or_default();
+    if kty != "EC" {
+        return Err(named_import_error("DataError", "Invalid key type"));
+    }
+    let requested_curve =
+        execute::to_js_string(&execute::get_property(algorithm, "namedCurve")).unwrap_or_default();
+    let curve = match execute::get_property(jwk, "crv") {
+        Value::String(curve) if !curve.is_empty() => curve,
+        _ => return Err(named_import_error("DataError", "Invalid keyData")),
+    };
+    if !curve.eq_ignore_ascii_case(&requested_curve) {
+        return Err(named_import_error(
+            "DataError",
+            "JWK \"crv\" does not match the requested algorithm",
+        ));
+    }
+    for field in ["x", "y"] {
+        if !matches!(execute::get_property(jwk, field), Value::String(_)) {
+            return Err(named_import_error("DataError", "Invalid keyData"));
+        }
+    }
+    if key_type == "private" && !matches!(execute::get_property(jwk, "d"), Value::String(_)) {
+        return Err(named_import_error("DataError", "Invalid keyData"));
+    }
+    if let Value::String(use_value) = execute::get_property(jwk, "use") {
+        let expected = if algorithm_name(algorithm).eq_ignore_ascii_case("ECDSA") {
+            "sig"
+        } else {
+            "enc"
+        };
+        if use_value != expected {
+            return Err(named_import_error(
+                "DataError",
+                "Invalid JWK \"use\" Parameter",
+            ));
+        }
+    }
+    if algorithm_name(algorithm).eq_ignore_ascii_case("ECDSA") {
+        if let Value::String(alg_value) = execute::get_property(jwk, "alg") {
+            let expected = match requested_curve.to_ascii_uppercase().as_str() {
+                "P-256" => "ES256",
+                "P-384" => "ES384",
+                "P-521" => "ES512",
+                _ => "",
+            };
+            if !expected.is_empty() && alg_value != expected {
+                return Err(named_import_error(
+                    "DataError",
+                    "JWK \"alg\" does not match the requested algorithm",
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -1392,7 +1562,10 @@ fn validate_symmetric_jwk(
         Value::Undefined => {}
         Value::String(value)
             if symmetric_jwk_algorithm(name, algorithm, data).as_deref()
-                == Some(value.as_str()) => {}
+                == Some(value.as_str())
+                || (name == "HMAC"
+                    && algorithm_hash(algorithm).is_some_and(|hash| hash.starts_with("SHA3-"))) => {
+        }
         _ => {
             return Err(named_import_error(
                 "DataError",
@@ -2056,9 +2229,32 @@ pub fn digest(
 }
 
 fn usages_from_mask(value: &Value) -> Value {
-    let mask = match value { Value::Number(value) if value.is_finite() && *value >= 0.0 => *value as u32, _ => 0 };
-    let names = ["encrypt", "decrypt", "sign", "verify", "deriveKey", "deriveBits", "wrapKey", "unwrapKey", "encapsulateKey", "encapsulateBits", "decapsulateKey", "decapsulateBits"];
-    host_api::array(names.into_iter().enumerate().filter(|(index, _)| mask & (1_u32 << index) != 0).map(|(_, name)| Value::String(name.into())).collect())
+    let mask = match value {
+        Value::Number(value) if value.is_finite() && *value >= 0.0 => *value as u32,
+        _ => 0,
+    };
+    let names = [
+        "encrypt",
+        "decrypt",
+        "sign",
+        "verify",
+        "deriveKey",
+        "deriveBits",
+        "wrapKey",
+        "unwrapKey",
+        "encapsulateKey",
+        "encapsulateBits",
+        "decapsulateKey",
+        "decapsulateBits",
+    ];
+    host_api::array(
+        names
+            .into_iter()
+            .enumerate()
+            .filter(|(index, _)| mask & (1_u32 << index) != 0)
+            .map(|(_, name)| Value::String(name.into()))
+            .collect(),
+    )
 }
 
 fn adopt_job_result(promise: &Rc<PromiseData>, result: Result<Value, VmError>) {
@@ -2066,7 +2262,10 @@ fn adopt_job_result(promise: &Rc<PromiseData>, result: Result<Value, VmError>) {
         Ok(Value::Promise(inner)) => match inner.state.borrow().clone() {
             PromiseState::Fulfilled(value) => quench_runtime::resolve_promise(promise, value),
             PromiseState::Rejected(reason) => quench_runtime::reject_promise(promise, reason),
-            PromiseState::Pending => quench_runtime::reject_promise(promise, Value::String("Operation did not settle".into())),
+            PromiseState::Pending => quench_runtime::reject_promise(
+                promise,
+                Value::String("Operation did not settle".into()),
+            ),
         },
         Ok(value) => quench_runtime::resolve_promise(promise, value),
         Err(VmError::Thrown(reason)) => quench_runtime::reject_promise(promise, reason),
@@ -2077,7 +2276,9 @@ fn adopt_job_result(promise: &Rc<PromiseData>, result: Result<Value, VmError>) {
 fn queued_job(operation: Rc<dyn Fn() -> Result<Value, VmError>>) -> Value {
     let promise = Rc::new(PromiseData::new(PromiseState::Pending));
     let result = promise.clone();
-    quench_runtime::module_bindings::enqueue_job(Rc::new(move || adopt_job_result(&result, operation())));
+    quench_runtime::module_bindings::enqueue_job(Rc::new(move || {
+        adopt_job_result(&result, operation())
+    }));
     Value::Promise(promise)
 }
 
@@ -2086,101 +2287,229 @@ fn subtle_value() -> Value {
     execute::get_property(&execute::get_property(&global, "crypto"), "subtle")
 }
 
-pub fn hash_job_construct(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+pub fn hash_job_construct(
+    _state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
     Ok(host_api::object(vec![
-        ("run".into(), crate::host::capability(crate::registry::SPEC_INTERNAL_CRYPTO_HASH_JOB_RUN)),
-        ("\0quench:crypto-job:algorithm".into(), args.get(1).cloned().unwrap_or(Value::Undefined)),
-        ("\0quench:crypto-job:data".into(), args.get(2).cloned().unwrap_or(Value::Undefined)),
+        (
+            "run".into(),
+            crate::host::capability(crate::registry::SPEC_INTERNAL_CRYPTO_HASH_JOB_RUN),
+        ),
+        (
+            "\0quench:crypto-job:algorithm".into(),
+            args.get(1).cloned().unwrap_or(Value::Undefined),
+        ),
+        (
+            "\0quench:crypto-job:data".into(),
+            args.get(2).cloned().unwrap_or(Value::Undefined),
+        ),
     ]))
 }
 
-pub fn hash_job_run(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>, _args: &[Value]) -> Result<Value, VmError> {
+pub fn hash_job_run(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
     let receiver = receiver.ok_or(VmError::NotCallable)?;
     let algorithm = execute::get_property(receiver, "\0quench:crypto-job:algorithm");
     let data = execute::get_property(receiver, "\0quench:crypto-job:data");
     let subtle = subtle_value();
     let state = state.clone();
-    Ok(queued_job(Rc::new(move || digest(&state, Some(&subtle), &[algorithm.clone(), data.clone()]))))
+    Ok(queued_job(Rc::new(move || {
+        digest(&state, Some(&subtle), &[algorithm.clone(), data.clone()])
+    })))
 }
 
-pub fn secret_key_gen_job_construct(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+pub fn secret_key_gen_job_construct(
+    _state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
     Ok(host_api::object(vec![
-        ("run".into(), crate::host::capability(crate::registry::SPEC_INTERNAL_CRYPTO_SECRET_KEY_GEN_JOB_RUN)),
-        ("\0quench:crypto-job:algorithm".into(), args.get(2).cloned().unwrap_or(Value::Undefined)),
-        ("\0quench:crypto-job:usages".into(), args.get(3).map(usages_from_mask).unwrap_or_else(|| host_api::array(Vec::new()))),
-        ("\0quench:crypto-job:extractable".into(), args.get(4).cloned().unwrap_or(Value::Boolean(false))),
+        (
+            "run".into(),
+            crate::host::capability(crate::registry::SPEC_INTERNAL_CRYPTO_SECRET_KEY_GEN_JOB_RUN),
+        ),
+        (
+            "\0quench:crypto-job:algorithm".into(),
+            args.get(2).cloned().unwrap_or(Value::Undefined),
+        ),
+        (
+            "\0quench:crypto-job:usages".into(),
+            args.get(3)
+                .map(usages_from_mask)
+                .unwrap_or_else(|| host_api::array(Vec::new())),
+        ),
+        (
+            "\0quench:crypto-job:extractable".into(),
+            args.get(4).cloned().unwrap_or(Value::Boolean(false)),
+        ),
     ]))
 }
 
-pub fn secret_key_gen_job_run(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>, _args: &[Value]) -> Result<Value, VmError> {
+pub fn secret_key_gen_job_run(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
     let receiver = receiver.ok_or(VmError::NotCallable)?;
     let algorithm = execute::get_property(receiver, "\0quench:crypto-job:algorithm");
     let usages = execute::get_property(receiver, "\0quench:crypto-job:usages");
     let extractable = execute::get_property(receiver, "\0quench:crypto-job:extractable");
     let subtle = subtle_value();
     let state = state.clone();
-    Ok(queued_job(Rc::new(move || generate_key(&state, Some(&subtle), &[algorithm.clone(), extractable.clone(), usages.clone()]))))
+    Ok(queued_job(Rc::new(move || {
+        generate_key(
+            &state,
+            Some(&subtle),
+            &[algorithm.clone(), extractable.clone(), usages.clone()],
+        )
+    })))
 }
 
-pub fn ec_key_pair_gen_job_construct(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    let public = args.get(4).map(usages_from_mask).unwrap_or_else(|| host_api::array(Vec::new()));
-    let private = args.get(5).map(usages_from_mask).unwrap_or_else(|| host_api::array(Vec::new()));
+pub fn ec_key_pair_gen_job_construct(
+    _state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let public = args
+        .get(4)
+        .map(usages_from_mask)
+        .unwrap_or_else(|| host_api::array(Vec::new()));
+    let private = args
+        .get(5)
+        .map(usages_from_mask)
+        .unwrap_or_else(|| host_api::array(Vec::new()));
     let mut names = Vec::new();
     for usages in [&public, &private] {
         if let Value::Number(length) = execute::get_property(usages, "length") {
             for index in 0..length as usize {
                 let usage = execute::get_property(usages, &index.to_string());
-                if !names.iter().any(|value: &Value| value == &usage) { names.push(usage); }
+                if !names.iter().any(|value: &Value| value == &usage) {
+                    names.push(usage);
+                }
             }
         }
     }
     Ok(host_api::object(vec![
-        ("run".into(), crate::host::capability(crate::registry::SPEC_INTERNAL_CRYPTO_EC_KEY_PAIR_GEN_JOB_RUN)),
-        ("\0quench:crypto-job:algorithm".into(), args.get(3).cloned().unwrap_or(Value::Undefined)),
+        (
+            "run".into(),
+            crate::host::capability(crate::registry::SPEC_INTERNAL_CRYPTO_EC_KEY_PAIR_GEN_JOB_RUN),
+        ),
+        (
+            "\0quench:crypto-job:algorithm".into(),
+            args.get(3).cloned().unwrap_or(Value::Undefined),
+        ),
         ("\0quench:crypto-job:usages".into(), host_api::array(names)),
-        ("\0quench:crypto-job:extractable".into(), args.get(6).cloned().unwrap_or(Value::Boolean(false))),
+        (
+            "\0quench:crypto-job:extractable".into(),
+            args.get(6).cloned().unwrap_or(Value::Boolean(false)),
+        ),
     ]))
 }
 
-pub fn ec_key_pair_gen_job_run(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>, _args: &[Value]) -> Result<Value, VmError> {
+pub fn ec_key_pair_gen_job_run(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
     let receiver = receiver.ok_or(VmError::NotCallable)?;
     let algorithm = execute::get_property(receiver, "\0quench:crypto-job:algorithm");
     let usages = execute::get_property(receiver, "\0quench:crypto-job:usages");
     let extractable = execute::get_property(receiver, "\0quench:crypto-job:extractable");
     let subtle = subtle_value();
     let state = state.clone();
-    Ok(queued_job(Rc::new(move || generate_key(&state, Some(&subtle), &[algorithm.clone(), extractable.clone(), usages.clone()]))))
+    Ok(queued_job(Rc::new(move || {
+        generate_key(
+            &state,
+            Some(&subtle),
+            &[algorithm.clone(), extractable.clone(), usages.clone()],
+        )
+    })))
 }
 
-pub fn aes_cipher_job_construct(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    let Some(iv) = args.get(5).and_then(crate::modules::crypto::bytes_from_value) else { return Err(error(Builtin::Error, None, "Invalid initialization vector")); };
-    if iv.len() != 16 { return Err(error(Builtin::Error, None, "Invalid initialization vector")); }
+pub fn aes_cipher_job_construct(
+    _state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(iv) = args
+        .get(5)
+        .and_then(crate::modules::crypto::bytes_from_value)
+    else {
+        return Err(error(Builtin::Error, None, "Invalid initialization vector"));
+    };
+    if iv.len() != 16 {
+        return Err(error(Builtin::Error, None, "Invalid initialization vector"));
+    }
     Ok(host_api::object(vec![
-        ("run".into(), crate::host::capability(crate::registry::SPEC_INTERNAL_CRYPTO_AES_CIPHER_JOB_RUN)),
-        ("\0quench:crypto-job:mode".into(), args.get(1).cloned().unwrap_or(Value::Undefined)),
-        ("\0quench:crypto-job:key".into(), args.get(2).cloned().unwrap_or(Value::Undefined)),
-        ("\0quench:crypto-job:data".into(), args.get(3).cloned().unwrap_or(Value::Undefined)),
-        ("\0quench:crypto-job:iv".into(), args.get(5).cloned().unwrap_or(Value::Undefined)),
+        (
+            "run".into(),
+            crate::host::capability(crate::registry::SPEC_INTERNAL_CRYPTO_AES_CIPHER_JOB_RUN),
+        ),
+        (
+            "\0quench:crypto-job:mode".into(),
+            args.get(1).cloned().unwrap_or(Value::Undefined),
+        ),
+        (
+            "\0quench:crypto-job:key".into(),
+            args.get(2).cloned().unwrap_or(Value::Undefined),
+        ),
+        (
+            "\0quench:crypto-job:data".into(),
+            args.get(3).cloned().unwrap_or(Value::Undefined),
+        ),
+        (
+            "\0quench:crypto-job:iv".into(),
+            args.get(5).cloned().unwrap_or(Value::Undefined),
+        ),
     ]))
 }
 
-pub fn aes_cipher_job_run(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>, _args: &[Value]) -> Result<Value, VmError> {
+pub fn aes_cipher_job_run(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
     let receiver = receiver.ok_or(VmError::NotCallable)?;
     let mode = execute::get_property(receiver, "\0quench:crypto-job:mode");
     let key_handle = execute::get_property(receiver, "\0quench:crypto-job:key");
     let data = execute::get_property(receiver, "\0quench:crypto-job:data");
     let iv = execute::get_property(receiver, "\0quench:crypto-job:iv");
     let export = execute::get_property(&key_handle, "export");
-    let raw = execute::call(&export, &key_handle, &[]).ok().and_then(|value| bytes(&value)).ok_or_else(|| error(Builtin::TypeError, Some("ERR_INVALID_ARG_TYPE"), "Invalid AES key"))?;
-    let algorithm = host_api::object(vec![("name".into(), Value::String("AES-CBC".into())), ("iv".into(), iv)]);
+    let raw = execute::call(&export, &key_handle, &[])
+        .ok()
+        .and_then(|value| bytes(&value))
+        .ok_or_else(|| {
+            error(
+                Builtin::TypeError,
+                Some("ERR_INVALID_ARG_TYPE"),
+                "Invalid AES key",
+            )
+        })?;
+    let algorithm = host_api::object(vec![
+        ("name".into(), Value::String("AES-CBC".into())),
+        ("iv".into(), iv),
+    ]);
     let encrypting = matches!(mode, Value::Number(value) if value == 1.0);
-    let usages = host_api::array(vec![Value::String(if encrypting { "encrypt" } else { "decrypt" }.into())]);
-    let crypto_key = key(&key_prototype(), algorithm.clone(), false, usages, Some(raw));
+    let usages = host_api::array(vec![Value::String(
+        if encrypting { "encrypt" } else { "decrypt" }.into(),
+    )]);
+    let crypto_key = key(
+        &key_prototype(),
+        algorithm.clone(),
+        false,
+        usages,
+        Some(raw),
+    );
     let subtle = subtle_value();
     let state = state.clone();
     Ok(queued_job(Rc::new(move || {
         let args = [algorithm.clone(), crypto_key.clone(), data.clone()];
-        if encrypting { encrypt(&state, Some(&subtle), &args) } else { decrypt(&state, Some(&subtle), &args) }
+        if encrypting {
+            encrypt(&state, Some(&subtle), &args)
+        } else {
+            decrypt(&state, Some(&subtle), &args)
+        }
     })))
 }
 
@@ -2202,6 +2531,13 @@ pub fn import_key(
     if let Some(result) = invalid_subtle_this(receiver) {
         return Ok(result);
     }
+    if args.len() < 5 {
+        return Ok(settled(Err(error(
+            Builtin::TypeError,
+            Some("ERR_MISSING_ARGS"),
+            "The \"keyUsages\" argument must be specified",
+        ))));
+    }
     let format = execute::to_js_string(args.first().unwrap_or(&Value::Undefined))
         .unwrap_or_default()
         .to_ascii_lowercase();
@@ -2212,7 +2548,18 @@ pub fn import_key(
         return Ok(settled(Err(error(
             Builtin::TypeError,
             Some("ERR_INVALID_ARG_VALUE"),
-            "The provided value is not a valid enum value of type KeyFormat",
+            if format == "keyobject" {
+                "'KeyObject' is not a valid enum value of type KeyFormat"
+            } else {
+                "The provided value is not a valid enum value of type KeyFormat"
+            },
+        ))));
+    }
+    if format != "jwk" && args.get(1).and_then(bytes).is_none() {
+        return Ok(settled(Err(error(
+            Builtin::TypeError,
+            Some("ERR_INVALID_ARG_TYPE"),
+            "The keyData argument must be an ArrayBuffer or a view",
         ))));
     }
     let algorithm = args.get(2).cloned().unwrap_or(Value::Undefined);
@@ -2250,9 +2597,26 @@ pub fn import_key(
     } else {
         args.get(1).and_then(bytes)
     };
+    let ec_algorithm = matches!(algorithm_name_upper.as_str(), "ECDSA" | "ECDH");
+    if ec_algorithm {
+        if format == "raw" {
+            if let Some(raw) = data.as_deref().and_then(normalize_ec_public_point) {
+                data = Some(raw);
+            }
+        } else if format == "spki" {
+            if let Some(spki) = data.as_deref().and_then(normalize_ec_spki) {
+                data = Some(spki);
+            }
+        }
+    }
     let prototype = key_prototype();
     let jwk = (format == "jwk").then(|| args.get(1).cloned()).flatten();
     let key_type = imported_key_type(&format, &algorithm, jwk.as_ref());
+    if matches!(algorithm_name_upper.as_str(), "ECDSA" | "ECDH") && format == "jwk" {
+        if let Err(error) = validate_ec_jwk(&algorithm, jwk.as_ref(), key_type) {
+            return Ok(settled(Err(error)));
+        }
+    }
     if let Err(error) =
         validate_rsa_import(&algorithm, &format, data.as_deref(), jwk.as_ref(), &usages)
     {
@@ -2273,11 +2637,36 @@ pub fn import_key(
         data = symmetric_data;
     }
     let algorithm_name_upper = algorithm_name(&algorithm).to_ascii_uppercase();
+    if matches!(
+        algorithm_name_upper.as_str(),
+        "RSA-OAEP"
+            | "RSA-PSS"
+            | "RSASSA-PKCS1-V1_5"
+            | "ECDSA"
+            | "ECDH"
+            | "ED25519"
+            | "ED448"
+            | "X25519"
+            | "X448"
+    ) && key_type == "private"
+        && all_usage_names(&usages).is_empty()
+    {
+        return Ok(settled(Err(syntax_error(
+            "Usages cannot be empty when importing a private key.",
+        ))));
+    }
     if matches!(algorithm_name_upper.as_str(), "ECDSA" | "ECDH")
         && matches!(format.as_str(), "spki" | "pkcs8")
     {
-        let requested_curve = execute::to_js_string(&execute::get_property(&algorithm, "namedCurve"))
-            .unwrap_or_default();
+        if !has_ec_algorithm_identifier(data.as_deref().unwrap_or_default()) {
+            return Ok(settled(Err(named_import_error(
+                "DataError",
+                "Invalid key type",
+            ))));
+        }
+        let requested_curve =
+            execute::to_js_string(&execute::get_property(&algorithm, "namedCurve"))
+                .unwrap_or_default();
         if let Some(actual_curve) = data.as_deref().and_then(ec_curve_from_der) {
             if !requested_curve.eq_ignore_ascii_case(actual_curve) {
                 return Ok(settled(Err(named_import_error(
@@ -2285,6 +2674,14 @@ pub fn import_key(
                     "Named curve mismatch",
                 ))));
             }
+        }
+        if format == "pkcs8"
+            && !valid_ec_private_key(data.as_deref().unwrap_or_default(), &requested_curve)
+        {
+            return Ok(settled(Err(named_import_error(
+                "DataError",
+                "Invalid keyData",
+            ))));
         }
     }
     if matches!(
@@ -2300,14 +2697,16 @@ pub fn import_key(
             | "X448"
     ) && !all_usage_names(&usages).is_empty()
     {
-        if let Ok((private_usages, public_usages)) =
-            asymmetric_usages(&algorithm_name_upper, &usages)
-        {
-            let disallowed = (key_type == "public" && !all_usage_names(&private_usages).is_empty())
-                || (key_type == "private" && !all_usage_names(&public_usages).is_empty());
-            if disallowed {
-                return Ok(settled(Err(syntax_error("Unsupported key usage"))));
+        match asymmetric_usages(&algorithm_name_upper, &usages) {
+            Ok((private_usages, public_usages)) => {
+                let disallowed = (key_type == "public"
+                    && !all_usage_names(&private_usages).is_empty())
+                    || (key_type == "private" && !all_usage_names(&public_usages).is_empty());
+                if disallowed {
+                    return Ok(settled(Err(syntax_error("Unsupported key usage"))));
+                }
             }
+            Err(error) => return Ok(settled(Err(error))),
         }
     }
     let algorithm = imported_algorithm_metadata(algorithm, &format, data.as_deref());
@@ -2378,9 +2777,7 @@ pub fn export_key(
     }
     let data = bytes(&execute::get_property(key, KEY_DATA_PROP)).unwrap_or_default();
     let result = match format.as_str() {
-        "raw" | "raw-secret" | "raw-public" | "raw-seed" | "spki" | "pkcs8" => {
-            array_buffer(&data)
-        }
+        "raw" | "raw-secret" | "raw-public" | "raw-seed" | "spki" | "pkcs8" => array_buffer(&data),
         "jwk" => {
             let algorithm = execute::get_property(&metadata, "algorithm");
             let hash_value = execute::get_property(&algorithm, "hash");
@@ -2439,10 +2836,27 @@ pub fn export_key(
                     ("ext".into(), Value::Boolean(true)),
                 ]))));
             }
-            let alg = if hash.is_empty() || is_sha3 || !name.eq_ignore_ascii_case("HMAC") {
-                Value::Undefined
-            } else {
-                Value::String(format!("HS{hash}"))
+            let existing_jwk = execute::get_property(key, KEY_JWK_PROP);
+            if matches!(existing_jwk, Value::Object(_) | Value::ObjectAlias(_))
+                && execute::to_js_string(&execute::get_property(&existing_jwk, "kty"))
+                    .is_ok_and(|kty| kty == "EC")
+            {
+                let jwk = execute::set_property(
+                    existing_jwk,
+                    "key_ops",
+                    crate::modules::clone::deep_clone(execute::get_property(&metadata, "usages")),
+                );
+                return Ok(settled(Ok(execute::set_property(
+                    jwk,
+                    "ext",
+                    Value::Boolean(true),
+                ))));
+            }
+            let alg = match name.to_ascii_uppercase().as_str() {
+                "KMAC128" => Value::String("K128".into()),
+                "KMAC256" => Value::String("K256".into()),
+                "HMAC" if !hash.is_empty() && !is_sha3 => Value::String(format!("HS{hash}")),
+                _ => Value::Undefined,
             };
             host_api::object(vec![
                 ("kty".into(), Value::String("oct".into())),
@@ -2521,8 +2935,8 @@ pub fn wrap_key(
         usage_array(&["encrypt".to_string()]),
         bytes(&execute::get_property(wrapping_key, KEY_DATA_PROP)),
     );
-    let wrapping_type = execute::to_js_string(&key_slot(wrapping_key, "type"))
-        .unwrap_or_else(|_| "secret".into());
+    let wrapping_type =
+        execute::to_js_string(&key_slot(wrapping_key, "type")).unwrap_or_else(|_| "secret".into());
     let encrypt_key = key_metadata(encrypt_key, &wrapping_type, "raw");
     let encrypted = encrypt(
         state,
@@ -2583,7 +2997,10 @@ pub fn unwrap_key(
         .to_ascii_lowercase();
     let key_data = if format == "jwk" {
         let Some(bytes) = bytes(&decrypted) else {
-            return Ok(settled(Err(named_import_error("DataError", "Invalid keyData"))));
+            return Ok(settled(Err(named_import_error(
+                "DataError",
+                "Invalid keyData",
+            ))));
         };
         let text = String::from_utf8(bytes)
             .map_err(|_| named_import_error("DataError", "Invalid keyData"));
@@ -2603,7 +3020,12 @@ pub fn unwrap_key(
                 }
                 value
             }
-            Err(_) => return Ok(settled(Err(named_import_error("DataError", "Invalid keyData")))),
+            Err(_) => {
+                return Ok(settled(Err(named_import_error(
+                    "DataError",
+                    "Invalid keyData",
+                ))))
+            }
         }
     } else {
         decrypted
@@ -2616,7 +3038,9 @@ pub fn unwrap_key(
             key_data,
             args.get(4).cloned().unwrap_or(Value::Undefined),
             args.get(5).cloned().unwrap_or(Value::Boolean(false)),
-            args.get(6).cloned().unwrap_or_else(|| host_api::array(Vec::new())),
+            args.get(6)
+                .cloned()
+                .unwrap_or_else(|| host_api::array(Vec::new())),
         ],
     )?;
     Ok(imported)
@@ -2843,9 +3267,11 @@ pub fn generate_key(
                     _ => 2048,
                 };
                 let exponent = bytes(&execute::get_property(&algorithm, "publicExponent"))
-                    .map(|bytes| bytes.into_iter().fold(0_u32, |value, byte| {
-                        value.checked_shl(8).unwrap_or(0) | u32::from(byte)
-                    }))
+                    .map(|bytes| {
+                        bytes.into_iter().fold(0_u32, |value, byte| {
+                            value.checked_shl(8).unwrap_or(0) | u32::from(byte)
+                        })
+                    })
                     .unwrap_or(65_537);
                 let rsa = BigNum::from_u32(exponent)
                     .ok()
@@ -2864,64 +3290,102 @@ pub fn generate_key(
                         "key generation failed",
                     ))));
                 };
-                let private = pkey
-                    .private_key_to_pem_pkcs8()
-                    .ok()
-                    .and_then(pem_to_der);
+                let private = pkey.private_key_to_pem_pkcs8().ok().and_then(pem_to_der);
                 let public = pkey.public_key_to_der().ok();
                 (private, public)
             }
-            "ECDH" | "ECDSA" => match algorithm_name(&execute::get_property(&algorithm, "namedCurve"))
-                .to_ascii_uppercase()
-                .as_str()
-            {
-                "P-256" => {
-                    let secret = P256SecretKey::random(&mut rand::thread_rng());
-                    let public = secret.public_key();
-                    (
-                        Some(secret.to_bytes().to_vec()),
-                        Some(public.to_encoded_point(false).as_bytes().to_vec()),
-                    )
+            "ECDH" | "ECDSA" => {
+                match algorithm_name(&execute::get_property(&algorithm, "namedCurve"))
+                    .to_ascii_uppercase()
+                    .as_str()
+                {
+                    "P-256" => {
+                        let secret = P256SecretKey::random(&mut rand::thread_rng());
+                        let public = secret.public_key();
+                        (
+                            Some(secret.to_bytes().to_vec()),
+                            Some(public.to_encoded_point(false).as_bytes().to_vec()),
+                        )
+                    }
+                    "P-384" => {
+                        let secret = P384SecretKey::random(&mut rand::thread_rng());
+                        let public = secret.public_key();
+                        (
+                            Some(secret.to_bytes().to_vec()),
+                            Some(public.to_encoded_point(false).as_bytes().to_vec()),
+                        )
+                    }
+                    "P-521" => {
+                        let secret = loop {
+                            let mut raw = [0_u8; 66];
+                            rand::thread_rng().fill_bytes(&mut raw);
+                            raw[0] &= 1;
+                            if let Ok(secret) = P521SecretKey::from_slice(&raw) {
+                                break secret;
+                            }
+                        };
+                        let public = secret.public_key();
+                        (
+                            Some(secret.to_bytes().to_vec()),
+                            Some(public.to_encoded_point(false).as_bytes().to_vec()),
+                        )
+                    }
+                    _ => (None, None),
                 }
-                "P-384" => {
-                    let secret = P384SecretKey::random(&mut rand::thread_rng());
-                    let public = secret.public_key();
-                    (
-                        Some(secret.to_bytes().to_vec()),
-                        Some(public.to_encoded_point(false).as_bytes().to_vec()),
-                    )
-                }
-                "P-521" => {
-                    let secret = loop {
-                        let mut raw = [0_u8; 66];
-                        rand::thread_rng().fill_bytes(&mut raw);
-                        raw[0] &= 1;
-                        if let Ok(secret) = P521SecretKey::from_slice(&raw) {
-                            break secret;
-                        }
-                    };
-                    let public = secret.public_key();
-                    (
-                        Some(secret.to_bytes().to_vec()),
-                        Some(public.to_encoded_point(false).as_bytes().to_vec()),
-                    )
-                }
-                _ => (None, None),
-            },
+            }
             _ => (None, None),
         };
-        let rsa_jwk = if matches!(
-            name.as_str(),
-            "RSA-OAEP" | "RSA-PSS" | "RSASSA-PKCS1-V1_5"
-        ) {
-            private_data
-                .as_deref()
-                .and_then(rsa_jwks)
+        let rsa_jwk = if matches!(name.as_str(), "RSA-OAEP" | "RSA-PSS" | "RSASSA-PKCS1-V1_5") {
+            private_data.as_deref().and_then(rsa_jwks)
         } else {
             None
         };
-        let private_value = match (&private_data, &rsa_jwk) {
-            (Some(data), Some((private, _))) => key_with_jwk(
+        let ec_jwk = if matches!(name.as_str(), "ECDSA" | "ECDH") {
+            let curve = execute::to_js_string(&execute::get_property(&algorithm, "namedCurve"))
+                .unwrap_or_default();
+            let point = public_data.as_deref();
+            let scalar = private_data.as_deref();
+            if let (Some(point), Some(scalar)) = (point, scalar) {
+                let size = point.len().saturating_sub(1) / 2;
+                if point.first() == Some(&0x04) && size > 0 && point.len() == 1 + size * 2 {
+                    let encode = |bytes: &[u8]| {
+                        Value::String(
+                            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes),
+                        )
+                    };
+                    let public = host_api::object(vec![
+                        ("kty".into(), Value::String("EC".into())),
+                        ("crv".into(), Value::String(curve.clone())),
+                        ("x".into(), encode(&point[1..1 + size])),
+                        ("y".into(), encode(&point[1 + size..])),
+                    ]);
+                    let private = host_api::object(vec![
+                        ("kty".into(), Value::String("EC".into())),
+                        ("crv".into(), Value::String(curve)),
+                        ("x".into(), execute::get_property(&public, "x")),
+                        ("y".into(), execute::get_property(&public, "y")),
+                        ("d".into(), encode(scalar)),
+                    ]);
+                    Some((private, public))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let private_value = match (&private_data, &rsa_jwk, &ec_jwk) {
+            (Some(data), Some((private, _)), _) => key_with_jwk(
+                &prototype,
+                algorithm.clone(),
+                extractable,
+                private_usages,
+                Some(data.clone()),
+                Some(private),
+            ),
+            (Some(data), _, Some((private, _))) => key_with_jwk(
                 &prototype,
                 algorithm.clone(),
                 extractable,
@@ -2937,13 +3401,17 @@ pub fn generate_key(
                 private_data,
             ),
         };
-        let private_key = key_metadata(
-            private_value,
-            "private",
-            "pkcs8",
-        );
-        let public_value = match (&public_data, &rsa_jwk) {
-            (Some(data), Some((_, public))) => key_with_jwk(
+        let private_key = key_metadata(private_value, "private", "pkcs8");
+        let public_value = match (&public_data, &rsa_jwk, &ec_jwk) {
+            (Some(data), Some((_, public)), _) => key_with_jwk(
+                &prototype,
+                algorithm.clone(),
+                extractable,
+                public_usages,
+                Some(data.clone()),
+                Some(public),
+            ),
+            (Some(data), _, Some((_, public))) => key_with_jwk(
                 &prototype,
                 algorithm.clone(),
                 extractable,
@@ -2959,11 +3427,7 @@ pub fn generate_key(
                 public_data,
             ),
         };
-        let public_key = key_metadata(
-            public_value,
-            "public",
-            "spki",
-        );
+        let public_key = key_metadata(public_value, "public", "spki");
         return Ok(settled(Ok(host_api::object(vec![
             ("privateKey".into(), private_key),
             ("publicKey".into(), public_key),
@@ -3100,10 +3564,8 @@ fn operation_error(message: &str) -> VmError {
 fn operation_error_with_cause(message: &str, cause_message: &str) -> VmError {
     let value = quench_runtime::builtins::error(Builtin::Error, &[Value::String(message.into())]);
     let value = execute::set_property(value, "name", Value::String("OperationError".into()));
-    let cause = quench_runtime::builtins::error(
-        Builtin::Error,
-        &[Value::String(cause_message.into())],
-    );
+    let cause =
+        quench_runtime::builtins::error(Builtin::Error, &[Value::String(cause_message.into())]);
     VmError::Thrown(execute::set_property(value, "cause", cause))
 }
 
@@ -3159,11 +3621,13 @@ fn pbkdf2_webcrypto(
             }
             Value::Number(integer)
         }
-        _ => return Err(error(
-            Builtin::TypeError,
-            Some("ERR_INVALID_ARG_TYPE"),
-            "The \"iterations\" member must be of type number",
-        )),
+        _ => {
+            return Err(error(
+                Builtin::TypeError,
+                Some("ERR_INVALID_ARG_TYPE"),
+                "The \"iterations\" member must be of type number",
+            ))
+        }
     };
     let key_data = execute::get_property(key.unwrap_or(&Value::Undefined), KEY_DATA_PROP);
     let Some(key_data) = bytes(&key_data) else {
@@ -3809,8 +4273,8 @@ pub fn supports(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let operation = execute::to_js_string(args.first().unwrap_or(&Value::Undefined))
-        .unwrap_or_default();
+    let operation =
+        execute::to_js_string(args.first().unwrap_or(&Value::Undefined)).unwrap_or_default();
     if matches!(operation.as_str(), "deriveBits" | "deriveKey") {
         if let Some(length) = args.get(2) {
             let valid = matches!(
@@ -3932,7 +4396,10 @@ pub fn supports(
                 | "X448"
         ),
         "deriveBits" | "deriveKey" => {
-            matches!(upper.as_str(), "HKDF" | "PBKDF2" | "ECDH" | "X25519" | "X448")
+            matches!(
+                upper.as_str(),
+                "HKDF" | "PBKDF2" | "ECDH" | "X25519" | "X448"
+            )
         }
         "encrypt" | "decrypt" => matches!(
             upper.as_str(),
@@ -5039,13 +5506,17 @@ pub fn subtle_crypto_constructor() -> Value {
         ("verify", crate::registry::SPEC_WEBCRYPTO_VERIFY),
         ("wrapKey", crate::registry::SPEC_WEBCRYPTO_WRAP_KEY),
         ("unwrapKey", crate::registry::SPEC_WEBCRYPTO_UNWRAP_KEY),
-        ("getPublicKey", crate::registry::SPEC_WEBCRYPTO_GET_PUBLIC_KEY),
+        (
+            "getPublicKey",
+            crate::registry::SPEC_WEBCRYPTO_GET_PUBLIC_KEY,
+        ),
     ];
     for (name, spec) in methods {
         let _ = execute::set_property_in_place(&prototype, name, crate::host::capability(spec));
     }
     let _ = execute::set_property_in_place(&prototype, "constructor", constructor.clone());
-    let _ = execute::set_callable_property(&constructor, "name", Value::String("SubtleCrypto".into()));
+    let _ =
+        execute::set_callable_property(&constructor, "name", Value::String("SubtleCrypto".into()));
     let _ = execute::set_callable_property(&constructor, "prototype", prototype);
     let _ = execute::set_callable_property(
         &constructor,
