@@ -2225,7 +2225,7 @@ impl NativeBinaryPlan {
                 let mut slab = shared.borrow_mut();
                 let view = crate::stencil_select::select_physical_for_abi(
                     key,
-                    crate::stencil_select::RegionAbi::Scalar,
+                    crate::stencil_select::RegionAbi::ScalarF64Binary,
                 )
                 .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
                 let address =
@@ -3271,7 +3271,7 @@ impl NativeUnaryPlan {
             Some(crate::ops::UnaryOp::Minus) => (
                 crate::stencil_select::negate_region_key(),
                 NativeUnaryKind::Negate,
-                crate::stencil_select::RegionAbi::Scalar,
+                crate::stencil_select::RegionAbi::ScalarF64Unary,
             ),
             _ => return None,
         };
@@ -3321,7 +3321,7 @@ impl NativeUnaryPlan {
             let mut slab = shared.borrow_mut();
             let view = crate::stencil_select::select_physical_for_abi(
                 self.key,
-                crate::stencil_select::RegionAbi::Scalar,
+                crate::stencil_select::RegionAbi::ScalarF64Unary,
             )
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
             let address =
@@ -3368,7 +3368,7 @@ impl NativeUnaryPlan {
             .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
         let view = crate::stencil_select::select_physical_for_abi(
             self.key,
-            crate::stencil_select::RegionAbi::Scalar,
+            crate::stencil_select::RegionAbi::ScalarF64Unary,
         )
         .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
         let address = arena.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
@@ -3582,7 +3582,7 @@ impl NativeAddChainPlan {
             let mut slab = shared.borrow_mut();
             let view = crate::stencil_select::select_physical_for_abi(
                 key,
-                crate::stencil_select::RegionAbi::Scalar,
+                crate::stencil_select::RegionAbi::ScalarF64x3,
             )
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
             let address =
@@ -5095,7 +5095,9 @@ impl NativeRegionPlan {
                     return crate::vm::execute_region_fallback(&mut region);
                 }
                 crate::stencil_select::RegionAbi::Bridge => {}
-                crate::stencil_select::RegionAbi::Scalar => {
+                crate::stencil_select::RegionAbi::ScalarF64Binary
+                | crate::stencil_select::RegionAbi::ScalarF64Unary
+                | crate::stencil_select::RegionAbi::ScalarF64x3 => {
                     return Err(NativeDispatchError::Physical(
                         "scalar ABI cannot enter a region context".into(),
                     ));
@@ -7527,7 +7529,7 @@ mod tests {
             entry: 0,
             external_entries: &ENTRIES,
             fallthrough: None,
-            abi: crate::stencil_select::RegionAbi::Scalar,
+            abi: crate::stencil_select::RegionAbi::ScalarF64Binary,
             template_calls_helper: false,
             executable: true,
         };
@@ -7645,7 +7647,7 @@ mod tests {
             entry: 0,
             external_entries: &ENTRIES,
             fallthrough: None,
-            abi: crate::stencil_select::RegionAbi::Scalar,
+            abi: crate::stencil_select::RegionAbi::ScalarF64Binary,
             template_calls_helper: true,
             executable: true,
         };
