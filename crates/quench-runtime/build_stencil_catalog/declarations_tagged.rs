@@ -1,17 +1,5 @@
 const TAGGED_REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
-        name: "truthy_number",
-        operations: &["JumpIfFalse"],
-        abi: DeclAbi::ScalarBool,
-        x86_bytes: &X86_TRUTHY_NUMBER_BYTES,
-        aarch64_bytes: &AARCH64_TRUTHY_NUMBER_BYTES,
-        portable_bytes: &[0xC3],
-        holes: &[],
-        aarch64_holes: &[],
-        entry: 0,
-        external_entries: &[0],
-    },
-    RegionDeclaration {
         name: "load_const",
         operations: &["LoadConst", "Return"],
         abi: DeclAbi::ConstantWord,
@@ -67,20 +55,6 @@ const TAGGED_REGION_DECLARATIONS: &[RegionDeclaration] = &[
         external_entries: &[0],
     },
     RegionDeclaration {
-        name: "increment",
-        // IncI is admitted only for Number values; ToNumeric/BigInt and
-        // overflow-sensitive cases remain on the canonical updater.
-        operations: &["IncI", "Return"],
-        abi: DeclAbi::ScalarF64Binary,
-        x86_bytes: &X86_ADD_CONST_BYTES,
-        aarch64_bytes: &AARCH64_ADD_CONST_BYTES,
-        portable_bytes: &[0xC3],
-        holes: &[(13, 8, "Literal64")],
-        aarch64_holes: &[(16, 8, "Literal64")],
-        entry: 0,
-        external_entries: &[0],
-    },
-    RegionDeclaration {
         name: "nullish_word",
         operations: &["Unary", "Return"],
         abi: DeclAbi::ScalarWordBool,
@@ -125,7 +99,8 @@ const TAGGED_REGION_DECLARATIONS: &[RegionDeclaration] = &[
 ];
 
 const REGION_DECLARATION_GROUPS: &[&[RegionDeclaration]] = &[
-    LEAF_REGION_DECLARATIONS,
+    RUST_LEAF_DECLARATIONS,
+    LEAF_ASSEMBLY_DECLARATIONS,
     COMPOSED_REGION_DECLARATIONS,
     TAGGED_REGION_DECLARATIONS,
 ];

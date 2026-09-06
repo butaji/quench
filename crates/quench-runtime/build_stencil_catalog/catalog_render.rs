@@ -241,6 +241,7 @@ fn emit_catalog_rerun_inputs() {
         "catalog_validate.rs",
         "declarations_composed.rs",
         "declarations_leaf.rs",
+        "declarations_rust_leaf.rs",
         "declarations_tagged.rs",
         "driver.rs",
         "encoding_aarch64.rs",
