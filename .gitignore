@@ -1,6 +1,7 @@
 # Build artifacts
 /target/
 **/target/
+/target-*/
 
 # Cargo lock fragments
 **/*.rs.bk

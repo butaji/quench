@@ -1,1 +1,0 @@
-{"rustc":16366243165657216489,"features":"","declared_features":"","target":0,"profile":0,"path":0,"deps":[[6303520645246440669,"build_script_build",false,2482643667743066842]],"local":[{"RerunIfEnvChanged":{"var":"PROFILE","val":null}}],"rustflags":["-C","link-arg=-mmacosx-version-min=15.0"],"config":0,"compile_kind":0}

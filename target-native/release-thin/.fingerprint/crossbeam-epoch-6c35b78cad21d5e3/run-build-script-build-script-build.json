@@ -1,1 +1,0 @@
-{"rustc":16366243165657216489,"features":"","declared_features":"","target":0,"profile":0,"path":0,"deps":[[13869114390706723416,"build_script_build",false,15606471801506750893]],"local":[{"RerunIfChanged":{"output":"release-thin/build/crossbeam-epoch-6c35b78cad21d5e3/output","paths":["build.rs"]}}],"rustflags":["-C","target-cpu=native"],"config":0,"compile_kind":0}
