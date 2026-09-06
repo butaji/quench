@@ -343,6 +343,38 @@ fn canonical_driver_eliminates_dead_move_in_numeric_window() {
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
+fn canonical_driver_eliminates_bounded_dead_pure_producers() {
+    let function = crate::machine::FunctionCode::from_ops(vec![
+        crate::ops::Op::LoadLocal { dst: 1, slot: 0 },
+        crate::ops::Op::LoadLocal { dst: 2, slot: 1 },
+        crate::ops::Op::LoadLocal { dst: 3, slot: 2 },
+        crate::ops::Op::LoadLocal { dst: 4, slot: 3 },
+        crate::ops::Op::LoadLocal { dst: 5, slot: 4 },
+        crate::ops::Op::Binary {
+            dst: 6,
+            operator: crate::ops::BinaryOp::Multiply,
+            lhs: 2,
+            rhs: 5,
+        },
+        crate::ops::Op::Return { src: 6 },
+    ]);
+    let view = function.code().unwrap();
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let plan = BaselinePlan::compile_for_test(view, policy);
+    let result = execute_case(view, &plan, 0, [Value::Number(6.0), Value::Number(7.0)]);
+    assert_eq!(result, (Completion::Return(Value::Number(42.0)), 1, 2));
+    assert_eq!(
+        plan.native_local_binary_at(0)
+            .unwrap()
+            .borrow()
+            .selection()
+            .span,
+        6
+    );
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
 fn ordinary_source_propagates_left_constant_without_swapping_operands() {
     let program = crate::reduce::reduce_source("function f(x){return 2.5-x} f(1)")
         .expect("ordinary source lowers");

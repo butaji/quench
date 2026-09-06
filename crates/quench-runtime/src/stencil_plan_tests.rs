@@ -67,7 +67,7 @@ fn local_binary_selection_forwards_slots_and_removes_materialization() {
     );
     assert_eq!(selected.output, 1);
     assert_eq!(selected.span, 3);
-    assert_eq!(selected.discarded, [Some(4), Some(7), None]);
+    assert_eq!(&selected.discarded[..3], &[Some(4), Some(7), None]);
     assert!(selected.cost.profitable());
 }
 
@@ -90,7 +90,7 @@ fn local_binary_selection_numbers_repeated_slot_once() {
         selected.inputs,
         LocalNumericInputs::Sources([NumericSource::Local(9), NumericSource::Local(9)])
     );
-    assert_eq!(selected.discarded, [Some(4), Some(7), None]);
+    assert_eq!(&selected.discarded[..3], &[Some(4), Some(7), None]);
 }
 
 #[test]
@@ -122,7 +122,7 @@ fn local_binary_selection_folds_constant_only_work() {
         }
     );
     assert_eq!(selected.span, 3);
-    assert_eq!(selected.discarded, [Some(4), Some(7), None]);
+    assert_eq!(&selected.discarded[..3], &[Some(4), Some(7), None]);
     assert!(selected.cost.profitable());
     assert!(
         select_local_binary(&producers, Instruction::add(1, 4, 7), &BTreeSet::from([4]),).is_none()
@@ -188,7 +188,7 @@ fn local_binary_selection_forwards_alias_and_clears_dead_chain() {
         LocalNumericInputs::Sources([NumericSource::Local(9), NumericSource::Local(3)])
     );
     assert_eq!(selected.span, 4);
-    assert_eq!(selected.discarded, [Some(4), Some(6), Some(7)]);
+    assert_eq!(&selected.discarded[..4], &[Some(4), Some(6), Some(7), None]);
 }
 
 #[test]
@@ -220,7 +220,7 @@ fn local_constant_selection_preserves_bits_and_operand_order() {
         LocalNumericInputs::SlotConstant { slot: 9, bits }
     );
     assert_eq!(selected.span, 2);
-    assert_eq!(selected.discarded, [Some(4), None, None]);
+    assert_eq!(&selected.discarded[..3], &[Some(4), None, None]);
 }
 
 #[test]
@@ -257,4 +257,51 @@ fn source_add_const_folds_constant_producer_and_preserves_order() {
             bits: 0.0_f64.to_bits()
         }
     );
+}
+
+#[test]
+fn block_value_graph_selects_bounded_dead_pure_producers() {
+    let mut graph = BlockValueGraph::new();
+    for (dst, slot) in [(2, 20), (3, 21), (4, 22), (5, 23), (6, 24)] {
+        assert!(graph.push(Instruction::load_local(dst, slot), |_| None));
+    }
+    let selected = graph
+        .select(Instruction::add(9, 3, 6), &BTreeSet::new())
+        .unwrap();
+    assert_eq!(selected.span, 6);
+    assert_eq!(
+        selected.inputs,
+        LocalNumericInputs::Sources([NumericSource::Local(21), NumericSource::Local(24)])
+    );
+    assert_eq!(selected.discarded.iter().flatten().count(), 5);
+}
+
+#[test]
+fn block_value_graph_rejects_effects_mismatched_roles_and_live_values() {
+    let mut graph = BlockValueGraph::new();
+    assert!(!graph.push(Instruction::load_local_checked(2, 20), |_| None));
+    assert!(!graph.push(Instruction::jump(4), |_| None));
+    assert!(!graph.push(Instruction::load_const(2, 7), |_| None));
+    assert!(graph.push(Instruction::load_local(3, 20), |_| None));
+    assert!(graph.push(Instruction::move_(5, 3), |_| None));
+    assert!(graph.push(Instruction::load_local(2, 20), |_| None));
+    assert!(graph.push(Instruction::load_local(4, 21), |_| None));
+    assert!(graph
+        .select(Instruction::add(9, 2, 4), &BTreeSet::from([2]))
+        .is_none());
+}
+
+#[test]
+fn block_value_graph_enforces_fixed_capacity_and_unique_definitions() {
+    let mut graph = BlockValueGraph::new();
+    for index in 0..MAX_BLOCK_VALUES {
+        let register = u16::try_from(index + 1).unwrap();
+        assert!(graph.push(Instruction::load_local(register, register), |_| None));
+    }
+    assert_eq!(graph.len(), MAX_BLOCK_VALUES);
+    assert!(!graph.push(Instruction::load_local(20, 20), |_| None));
+
+    let mut duplicate = BlockValueGraph::new();
+    assert!(duplicate.push(Instruction::load_local(2, 20), |_| None));
+    assert!(!duplicate.push(Instruction::load_local(2, 21), |_| None));
 }
