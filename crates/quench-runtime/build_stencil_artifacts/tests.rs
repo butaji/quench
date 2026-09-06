@@ -179,6 +179,53 @@ mod tests {
     }
 
     #[test]
+    fn local_hole_validation_is_kind_specific_and_fail_closed() {
+        let eq = 0x5400_0000_u32.to_le_bytes();
+        let ne = 0x5400_0001_u32.to_le_bytes();
+        validate_hole_bytes(&eq, 0, "CondBranch19");
+        validate_hole_bytes(&ne, 0, "CondBranch19");
+        assert!(std::panic::catch_unwind(|| {
+            validate_hole_bytes(&0x5400_0020_u32.to_le_bytes(), 0, "CondBranch19")
+        })
+        .is_err());
+        assert!(std::panic::catch_unwind(|| {
+            validate_hole_bytes(&0x1400_0000_u32.to_le_bytes(), 0, "CondBranch19")
+        })
+        .is_err());
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn rust_global_asm_conditional_hole_is_extracted() {
+        let compiler = rustc_path();
+        let target = rustc_host_target(&compiler);
+        let root = unique_directory();
+        let source = "#![no_std]\nuse core::arch::global_asm;\n\
+global_asm!(r#\".text\n.p2align 2\n.globl q_conditional_hole\n\
+q_conditional_hole:\nq_conditional_hole_hole_0:\n  b.eq .\n  ret\n\
+q_conditional_hole_end:\n\"#);\n";
+        let flags = ["--crate-type=lib", "--emit=obj", "-Cpanic=abort", "--edition=2021"];
+        let expected = [ExtractedHole {
+            offset: 0,
+            kind: "CondBranch19",
+        }];
+        let parsed = compile_assembly_fragment(
+            &root.path,
+            &target,
+            &compiler,
+            &flags,
+            &[],
+            "conditional_hole",
+            source,
+            &[],
+            &expected,
+        );
+        assert_eq!(parsed.holes.len(), 1);
+        assert_eq!(parsed.holes[0].kind, "CondBranch19");
+        validate_hole_bytes(&parsed.bytes, 0, "CondBranch19");
+    }
+
+    #[test]
     fn artifact_identity_covers_entries_and_extracted_payload() {
         static ENTRY_ZERO: [u32; 1] = [0];
         static ENTRY_ZERO_FOUR: [u32; 2] = [0, 4];

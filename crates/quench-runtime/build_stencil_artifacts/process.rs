@@ -17,6 +17,7 @@ fn effective_rustflags() -> Vec<String> {
 fn unique_directory() -> OwnedDirectory {
     let base = env::var_os("OUT_DIR")
         .map(PathBuf::from)
+        .or_else(|| cfg!(test).then(env::temp_dir))
         .expect("OUT_DIR for Rust stencil artifacts");
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -32,6 +33,15 @@ fn unique_directory() -> OwnedDirectory {
         }
     }
     panic!("cannot create unique Rust stencil object directory")
+}
+
+#[cfg(test)]
+fn rustc_host_target(compiler: &str) -> String {
+    command_output(Command::new(compiler).arg("-vV"), "read rustc host")
+        .lines()
+        .find_map(|line| line.strip_prefix("host: "))
+        .expect("rustc host target")
+        .to_owned()
 }
 
 fn run(command: &mut Command, description: &str) {
