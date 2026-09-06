@@ -10310,6 +10310,7 @@ fn fork_child_start(
         .copied()
         .collect::<std::collections::HashSet<_>>();
     let previous_argv = execute::get_property(&process, "argv");
+    let previous_exec_argv = execute::get_property(&process, "execArgv");
     let previous_send = execute::get_property(&process, "send");
     let previous_cluster_sender = execute::get_property(&process, "\0clusterProcessSender");
     let previous_disconnect = execute::get_property(&process, "disconnect");
@@ -10346,6 +10347,21 @@ fn fork_child_start(
         }
     }
     execute::set_property_in_place(&process, "argv", host_api::array(child_argv));
+    // Arrays exposed by the parent realm retain realm-owned prototypes.  The
+    // child executes with fresh intrinsics, so materialize execArgv in the
+    // child view just as argv is materialized above; otherwise JSON/string
+    // operations can attempt to call a cross-realm method and throw
+    // "value is not callable" before user code reaches stdout.
+    let exec_argv_values = if let Value::Array(values) = &previous_exec_argv {
+        (0..values.logical_len())
+            .filter_map(|index| {
+                execute::get_property_result(&previous_exec_argv, &index.to_string()).ok()
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    execute::set_property_in_place(&process, "execArgv", host_api::array(exec_argv_values));
     execute::set_property_in_place(&process, "connected", Value::Boolean(true));
     let child_env = execute::get_property(&child_options, "env");
     if matches!(child_env, Value::Object(_) | Value::ObjectAlias(_)) {
@@ -10434,14 +10450,50 @@ fn fork_child_start(
     // `import.meta` lowering as a top-level `.mjs` fixture; wrapping it as
     // CommonJS leaves raw import syntax for the reducer to reject.
     let wrapped = if filename.ends_with(".mjs") {
-        crate::esm_imports::transform_esm_imports(&source)
+        // A forked ESM entry executes in the parent's VM realm, but must
+        // retain module-local lexical bindings.  Lower imports first, then
+        // put the module body in a block so a second fork of the same entry
+        // cannot collide with the parent's `const`/`let` declarations.
+        format!(
+            "{{\n{}\n}}",
+            crate::esm_imports::transform_esm_imports(&source)
+        )
     } else {
         crate::modules::require::wrap_cjs(state, &filename, &source)
     };
     // Forked workers reuse the parent VM realm, but their source is reduced
     // independently from the runner bootstrap. Ensure the canonical fetch
     // global is present before common modules inspect the global surface.
+    let support_surface = crate::polyfills::bootstrap::lookup("support").unwrap_or("");
     let fetch_surface = crate::polyfills::bootstrap::lookup("fetch").unwrap_or("");
+    // The ESM reducer lowers `import.meta` to the canonical Rust-provided
+    // global.  A forked entry is reduced outside the top-level fixture
+    // bootstrap, so install the same per-module metadata from the resolved
+    // child path before evaluating it.  Keep this as one semantic object
+    // rather than teaching the fork path about individual URL fixtures.
+    let import_meta_surface = if filename.ends_with(".mjs") {
+        let meta_url = crate::modules::url_file::path_to_file_url(
+            state,
+            None,
+            &[Value::String(filename.clone())],
+        )
+        .ok()
+        .and_then(|url| execute::get_property_result(&url, "href").ok())
+        .and_then(|value| execute::to_js_string(&value).ok())
+        .unwrap_or_else(|| format!("file://{filename}"));
+        let filename_json = serde_json::to_string(&filename).unwrap_or_else(|_| "\"\"".into());
+        let url_json = serde_json::to_string(&meta_url).unwrap_or_else(|_| "\"\"".into());
+        let dirname = std::path::Path::new(&filename)
+            .parent()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let dirname_json = serde_json::to_string(&dirname).unwrap_or_else(|_| "\"\"".into());
+        format!(
+            "Object.defineProperty(globalThis, 'import_meta', {{ configurable: true, value: {{ url: {url_json}, filename: {filename_json}, dirname: {dirname_json}, resolve: (specifier, parent) => new URL(specifier, parent || {url_json}).href }} }});"
+        )
+    } else {
+        String::new()
+    };
     let dgram_surface = source
         .contains("dgram")
         .then_some(
@@ -10449,7 +10501,7 @@ fn fork_child_start(
         )
         .unwrap_or_default();
     let wrapped = format!(
-        "if (typeof globalThis.fetch !== \"function\") {{\n{fetch_surface}\n}}\n{dgram_surface}\n{wrapped}"
+        "{support_surface}\nif (typeof globalThis.fetch !== \"function\") {{\n{fetch_surface}\n}}\n{import_meta_surface}\n{dgram_surface}\n{wrapped}"
     );
     let program = quench_runtime::reduce::reduce_global_script_source(&wrapped)
         .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
@@ -10458,6 +10510,7 @@ fn fork_child_start(
     let result =
         quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context);
     execute::set_property_in_place(&process, "argv", previous_argv);
+    execute::set_property_in_place(&process, "execArgv", previous_exec_argv);
     execute::set_property_in_place(&process, "env", previous_env);
     execute::set_property_in_place(&process, "execPath", previous_exec_path);
     execute::set_property_in_place(&process, "stdout", previous_stdout);
