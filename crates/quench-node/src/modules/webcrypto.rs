@@ -36,13 +36,18 @@ use quench_runtime::host_api;
 use quench_runtime::ops::Builtin;
 use quench_runtime::value::{ArrayBufferData, PromiseData, PromiseState, Value};
 use rand::RngCore;
-use sha1::Sha1;
-use sha2::{Sha224, Sha256, Sha384, Sha512};
+use sha1::{Digest as Sha1Digest, Sha1};
+use sha2::{Digest as ShaDigest, Sha224, Sha256, Sha384, Sha512};
 use sha3::{
     digest::ExtendableOutput, digest::Update as ShaUpdate, digest::XofReader, Sha3_256, Sha3_384,
     Sha3_512, TurboShake128, TurboShake128Core, TurboShake256, TurboShake256Core,
 };
 use tiny_keccak::{CShake, Hasher as TinyHasher};
+
+use rsa::pkcs1::DecodeRsaPublicKey;
+use rsa::pkcs8::{DecodePrivateKey, DecodePublicKey};
+use rsa::traits::PublicKeyParts;
+use rsa::{BigUint as RsaBigUint, RsaPrivateKey, RsaPublicKey};
 
 use crate::host::HostState;
 
@@ -1031,6 +1036,204 @@ fn rsa_modulus_bits(modulus: &[u8]) -> Option<usize> {
     let first = modulus.iter().position(|byte| *byte != 0)?;
     let significant = &modulus[first..];
     Some((significant.len() - 1) * 8 + (8 - significant[0].leading_zeros() as usize))
+}
+
+// WebCrypto RSA-OAEP is deliberately implemented on top of the RustCrypto
+// RSA primitive rather than the OpenSSL-backed legacy crypto module.  The
+// padding is kept here as data transformations (hash, MGF1, encode/decode),
+// while rsa::hazmat owns only the raw modular exponentiation.  This keeps one
+// key representation and makes the operation usable for imported and
+// generated CryptoKeys alike.
+fn rsa_hash_bytes(name: &str, data: &[u8]) -> Option<Vec<u8>> {
+    match name {
+        "SHA-1" => Some(Sha1::digest(data).to_vec()),
+        "SHA-224" => Some(Sha224::digest(data).to_vec()),
+        "SHA-256" => Some(Sha256::digest(data).to_vec()),
+        "SHA-384" => Some(Sha384::digest(data).to_vec()),
+        "SHA-512" => Some(Sha512::digest(data).to_vec()),
+        "SHA3-256" => Some(Sha3_256::digest(data).to_vec()),
+        "SHA3-384" => Some(Sha3_384::digest(data).to_vec()),
+        "SHA3-512" => Some(Sha3_512::digest(data).to_vec()),
+        _ => None,
+    }
+}
+
+fn rsa_mgf1(hash: &str, seed: &[u8], length: usize) -> Option<Vec<u8>> {
+    let hash_length = rsa_hash_bytes(hash, &[]).map(|value| value.len())?;
+    let mut output = Vec::with_capacity(length);
+    let count = length.saturating_add(hash_length - 1) / hash_length;
+    for counter in 0..count {
+        let counter = u32::try_from(counter).ok()?.to_be_bytes();
+        let mut input = Vec::with_capacity(seed.len() + counter.len());
+        input.extend_from_slice(seed);
+        input.extend_from_slice(&counter);
+        output.extend(rsa_hash_bytes(hash, &input)?);
+    }
+    output.truncate(length);
+    Some(output)
+}
+
+fn rsa_jwk_bytes(key: &Value, field: &str) -> Option<Vec<u8>> {
+    let jwk = execute::get_property(key, KEY_JWK_PROP);
+    let encoded = execute::to_js_string(&execute::get_property(&jwk, field)).ok()?;
+    base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded)
+        .ok()
+}
+
+fn rsa_public_key(key: &Value) -> Option<RsaPublicKey> {
+    if let (Some(modulus), Some(exponent)) = (rsa_jwk_bytes(key, "n"), rsa_jwk_bytes(key, "e")) {
+        return RsaPublicKey::new(
+            RsaBigUint::from_bytes_be(&modulus),
+            RsaBigUint::from_bytes_be(&exponent),
+        )
+        .ok();
+    }
+    let data = bytes(&execute::get_property(key, KEY_DATA_PROP))?;
+    <RsaPublicKey as DecodePublicKey>::from_public_key_der(&data)
+        .ok()
+        .or_else(|| <RsaPublicKey as DecodeRsaPublicKey>::from_pkcs1_der(&data).ok())
+}
+
+fn rsa_private_key(key: &Value) -> Option<RsaPrivateKey> {
+    if let (Some(modulus), Some(exponent), Some(private_exponent)) = (
+        rsa_jwk_bytes(key, "n"),
+        rsa_jwk_bytes(key, "e"),
+        rsa_jwk_bytes(key, "d"),
+    ) {
+        let prime1 = rsa_jwk_bytes(key, "p")?;
+        let prime2 = rsa_jwk_bytes(key, "q")?;
+        return RsaPrivateKey::from_components(
+            RsaBigUint::from_bytes_be(&modulus),
+            RsaBigUint::from_bytes_be(&exponent),
+            RsaBigUint::from_bytes_be(&private_exponent),
+            vec![
+                RsaBigUint::from_bytes_be(&prime1),
+                RsaBigUint::from_bytes_be(&prime2),
+            ],
+        )
+        .ok();
+    }
+    let data = bytes(&execute::get_property(key, KEY_DATA_PROP))?;
+    <RsaPrivateKey as DecodePrivateKey>::from_pkcs8_der(&data)
+        .ok()
+        .or_else(|| <RsaPrivateKey as rsa::pkcs1::DecodeRsaPrivateKey>::from_pkcs1_der(&data).ok())
+}
+
+fn rsa_oaep_label(algorithm: Option<&Value>) -> Option<Vec<u8>> {
+    match algorithm.map(|value| execute::get_property(value, "label")) {
+        Some(value) if !matches!(value, Value::Undefined) => bytes(&value),
+        _ => Some(Vec::new()),
+    }
+}
+
+fn rsa_oaep_padding(
+    hash: &str,
+    label: &[u8],
+    message: &[u8],
+    modulus_size: usize,
+    rng: &mut impl RngCore,
+) -> Result<Vec<u8>, ()> {
+    let label_hash = rsa_hash_bytes(hash, label).ok_or(())?;
+    let hash_length = label_hash.len();
+    if message
+        .len()
+        .saturating_add(hash_length.saturating_mul(2))
+        .saturating_add(2)
+        > modulus_size
+    {
+        return Err(());
+    }
+    let db_length = modulus_size - hash_length - 1;
+    let mut db = vec![0_u8; db_length];
+    db[..hash_length].copy_from_slice(&label_hash);
+    db[db_length - message.len() - 1] = 1;
+    db[db_length - message.len()..].copy_from_slice(message);
+    let mut seed = vec![0_u8; hash_length];
+    rng.fill_bytes(&mut seed);
+    let db_mask = rsa_mgf1(hash, &seed, db_length).ok_or(())?;
+    for (value, mask) in db.iter_mut().zip(db_mask) {
+        *value ^= mask;
+    }
+    let seed_mask = rsa_mgf1(hash, &db, hash_length).ok_or(())?;
+    for (value, mask) in seed.iter_mut().zip(seed_mask) {
+        *value ^= mask;
+    }
+    let mut encoded = Vec::with_capacity(modulus_size);
+    encoded.push(0);
+    encoded.extend(seed);
+    encoded.extend(db);
+    Ok(encoded)
+}
+
+fn rsa_oaep_unpadding(hash: &str, label: &[u8], mut encoded: Vec<u8>) -> Result<Vec<u8>, ()> {
+    let label_hash = rsa_hash_bytes(hash, label).ok_or(())?;
+    let hash_length = label_hash.len();
+    if encoded.len() < hash_length.saturating_mul(2).saturating_add(2)
+        || encoded.first() != Some(&0)
+    {
+        return Err(());
+    }
+    let (_, payload) = encoded.split_at_mut(1);
+    let (seed, db) = payload.split_at_mut(hash_length);
+    let seed_mask = rsa_mgf1(hash, db, hash_length).ok_or(())?;
+    for (value, mask) in seed.iter_mut().zip(seed_mask) {
+        *value ^= mask;
+    }
+    let db_mask = rsa_mgf1(hash, seed, db.len()).ok_or(())?;
+    for (value, mask) in db.iter_mut().zip(db_mask) {
+        *value ^= mask;
+    }
+    if db[..hash_length] != label_hash {
+        return Err(());
+    }
+    let delimiter = db[hash_length..]
+        .iter()
+        .position(|value| *value == 1)
+        .ok_or(())?;
+    if db[hash_length..hash_length + delimiter]
+        .iter()
+        .any(|value| *value != 0)
+    {
+        return Err(());
+    }
+    Ok(db[hash_length + delimiter + 1..].to_vec())
+}
+
+fn rsa_oaep_crypt(
+    algorithm: Option<&Value>,
+    key: &Value,
+    data: &[u8],
+    encrypting: bool,
+) -> Result<Vec<u8>, ()> {
+    let key_algorithm = key_slot(key, "algorithm");
+    let hash = algorithm_hash(algorithm.unwrap_or(&Value::Undefined))
+        .or_else(|| algorithm_hash(&key_algorithm))
+        .ok_or(())?;
+    let label = rsa_oaep_label(algorithm).ok_or(())?;
+    let mut rng = rand::thread_rng();
+    if encrypting {
+        let public = rsa_public_key(key).ok_or(())?;
+        let encoded = rsa_oaep_padding(&hash, &label, data, public.size(), &mut rng)?;
+        let value = rsa::hazmat::rsa_encrypt(&public, &RsaBigUint::from_bytes_be(&encoded))
+            .map_err(|_| ())?;
+        let raw = value.to_bytes_be();
+        let mut result = vec![0_u8; public.size().saturating_sub(raw.len())];
+        result.extend(raw);
+        Ok(result)
+    } else {
+        let private = rsa_private_key(key).ok_or(())?;
+        if data.len() != private.size() {
+            return Err(());
+        }
+        let value =
+            rsa::hazmat::rsa_decrypt(Some(&mut rng), &private, &RsaBigUint::from_bytes_be(data))
+                .map_err(|_| ())?;
+        let raw = value.to_bytes_be();
+        let mut encoded = vec![0_u8; private.size().saturating_sub(raw.len())];
+        encoded.extend(raw);
+        rsa_oaep_unpadding(&hash, &label, encoded)
+    }
 }
 
 fn ec_curve_from_der(data: &[u8]) -> Option<&'static str> {
