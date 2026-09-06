@@ -3036,10 +3036,7 @@ pub fn internal_crypto_key_handle(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let key = args.first().unwrap_or(&Value::Undefined);
-    Ok(execute::get_property(
-        key,
-        crate::modules::webcrypto::KEY_DATA_PROP,
-    ))
+    Ok(crate::modules::webcrypto::crypto_key_handle(key))
 }
 
 pub fn internal_crypto_get_usages_mask(
