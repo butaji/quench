@@ -300,3 +300,42 @@ fn compare_branch_key_rejects_scalar_entry_routing() {
     )
     .is_none());
 }
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn number_comparison_family_executes_declared_native_branch_bodies() {
+    let cases = [
+        ("==", Value::Number(f64::NAN), Value::Number(f64::NAN), false, "compare_equal_branch"),
+        ("!=", Value::Number(f64::NAN), Value::Number(f64::NAN), true, "compare_not_equal_branch"),
+        ("<", Value::Number(-0.0), Value::Number(0.0), false, "compare_less_branch"),
+        ("<=", Value::Number(-0.0), Value::Number(0.0), true, "compare_less_equal_branch"),
+        (">", Value::Number(3.0), Value::Number(2.0), true, "compare_greater_branch"),
+        (">=", Value::Number(f64::NAN), Value::Number(2.0), false, "compare_greater_equal_branch"),
+    ];
+    for (operator, lhs, rhs, expected, identity) in cases {
+        assert_number_comparison(operator, lhs, rhs, expected, identity);
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+fn assert_number_comparison(
+    operator: &str,
+    lhs: Value,
+    rhs: Value,
+    expected: bool,
+    identity: &str,
+) {
+    let source = format!("function f(a,b){{if(a{operator}b)return 11;return 22}} f(1,2)");
+    let program = crate::reduce::reduce_source(&source).expect("comparison source lowers");
+    let mut found = false;
+    crate::stencil_test_support::visit_code_views(program.code(), &mut |view| {
+        let Some(result) = execute_compare_branch(view, lhs.clone(), rhs.clone()) else {
+            return;
+        };
+        assert_eq!(result.comparison, Value::Boolean(expected));
+        assert!(result.artifact_id.is_some_and(|name| name.starts_with(identity)));
+        assert_eq!(result.compare_entries, 1);
+        found = true;
+    });
+    assert!(found, "{operator} must reach its native branch body");
+}

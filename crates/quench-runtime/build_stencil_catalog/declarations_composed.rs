@@ -1,3 +1,20 @@
+macro_rules! compare_branch_declaration {
+    ($name:literal, $bytes:ident) => {
+        RegionDeclaration {
+            name: $name,
+            operations: &["Binary", "JumpIfFalse"],
+            abi: DeclAbi::CompareBranch,
+            x86_bytes: &[0xC3],
+            aarch64_bytes: &$bytes,
+            portable_bytes: &[0xC3],
+            holes: &[],
+            aarch64_holes: &[],
+            entry: 0,
+            external_entries: &[0],
+        }
+    };
+}
+
 const COMPOSED_REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "dispatch",
@@ -344,18 +361,21 @@ const COMPOSED_REGION_DECLARATIONS: &[RegionDeclaration] = &[
         entry: 0,
         external_entries: &[0],
     },
-    RegionDeclaration {
-        name: "compare_less_branch",
-        operations: &["Binary", "JumpIfFalse"],
-        abi: DeclAbi::CompareBranch,
-        x86_bytes: &[0xC3],
-        aarch64_bytes: &AARCH64_COMPARE_LESS_BRANCH_BYTES,
-        portable_bytes: &[0xC3],
-        holes: &[],
-        aarch64_holes: &[],
-        entry: 0,
-        external_entries: &[0],
-    },
+    compare_branch_declaration!("compare_equal_branch", AARCH64_COMPARE_EQUAL_BRANCH_BYTES),
+    compare_branch_declaration!(
+        "compare_not_equal_branch",
+        AARCH64_COMPARE_NOT_EQUAL_BRANCH_BYTES
+    ),
+    compare_branch_declaration!("compare_less_branch", AARCH64_COMPARE_LESS_BRANCH_BYTES),
+    compare_branch_declaration!(
+        "compare_less_equal_branch",
+        AARCH64_COMPARE_LESS_EQUAL_BRANCH_BYTES
+    ),
+    compare_branch_declaration!("compare_greater_branch", AARCH64_COMPARE_GREATER_BRANCH_BYTES),
+    compare_branch_declaration!(
+        "compare_greater_equal_branch",
+        AARCH64_COMPARE_GREATER_EQUAL_BRANCH_BYTES
+    ),
     RegionDeclaration {
         name: "array_numeric_loop",
         operations: &[

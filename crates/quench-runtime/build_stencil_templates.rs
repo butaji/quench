@@ -45,33 +45,12 @@ q_array_numeric_loop_end:
 "#);
 "##;
 
-const AARCH64_COMPARE_LESS_BRANCH: &str = r##"#![no_std]
-use core::arch::global_asm;
-global_asm!(r#"
-.text
-.p2align 2
-.globl q_compare_less_branch
-q_compare_less_branch:
-  ldr d0, [x0]
-  ldr d1, [x0, #8]
-  fcmp d0, d1
-  b.vs 2f
-  b.lt 1f
-2:
-  mov w1, #0
-  ldr x2, [x0, #24]
-  b 3f
-1:
-  mov w1, #1
-  ldr x2, [x0, #16]
-3:
-  str x1, [x0, #32]
-  str x2, [x0, #40]
-  mov w0, #1
-  ret
-q_compare_less_branch_end:
-"#);
-"##;
+fn compare_branch_source(name: &str, condition: &str, unordered_true: bool) -> String {
+    let unordered = if unordered_true { "1f" } else { "2f" };
+    format!(
+        "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_{name}\nq_{name}:\n  ldr d0, [x0]\n  ldr d1, [x0, #8]\n  fcmp d0, d1\n  b.vs {unordered}\n  b.{condition} 1f\n2:\n  mov w1, #0\n  ldr x2, [x0, #24]\n  b 3f\n1:\n  mov w1, #1\n  ldr x2, [x0, #16]\n3:\n  str x1, [x0, #32]\n  str x2, [x0, #40]\n  mov w0, #1\n  ret\nq_{name}_end:\n\"#);\n"
+    )
+}
 
 const AARCH64_PROTOTYPE_PROPERTY: &str = r##"#![no_std]
 use core::arch::global_asm;
@@ -285,7 +264,12 @@ fn nullish_word_source(name: &str) -> String {
 pub(crate) fn assembly_source(recipe: crate::build_stencil_contract::RustAssemblyRecipe) -> String {
     use crate::build_stencil_contract::RustAssemblyRecipe::*;
     match recipe {
-        CompareLessBranch => AARCH64_COMPARE_LESS_BRANCH.to_owned(),
+        CompareEqualBranch => compare_branch_source(recipe.name(), "eq", false),
+        CompareNotEqualBranch => compare_branch_source(recipe.name(), "ne", true),
+        CompareLessBranch => compare_branch_source(recipe.name(), "lt", false),
+        CompareLessEqualBranch => compare_branch_source(recipe.name(), "le", false),
+        CompareGreaterBranch => compare_branch_source(recipe.name(), "gt", false),
+        CompareGreaterEqualBranch => compare_branch_source(recipe.name(), "ge", false),
         ArrayNumericLoop => AARCH64_ARRAY_LOOP.to_owned(),
         Property => AARCH64_PROPERTY_READ.to_owned(),
         PrototypeProperty => AARCH64_PROTOTYPE_PROPERTY.to_owned(),
