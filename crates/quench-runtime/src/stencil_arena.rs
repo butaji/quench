@@ -8,7 +8,7 @@ use crate::stencil_fact::{PatchValues, Stencil};
 use crate::stencil_patch::{apply_holes, PatchError};
 use crate::stencil_select::RenderedRegionCache;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
@@ -199,32 +199,51 @@ struct LeaseState {
     active: Cell<usize>,
     peak: Cell<usize>,
     owners: RefCell<HashMap<u64, usize>>,
+    retired: RefCell<HashSet<u64>>,
 }
 
 impl LeaseState {
-    fn acquire(&self, owner: u64) {
+    fn acquire(&self, owner: u64) -> bool {
+        if self.is_retired(owner) {
+            return false;
+        }
         let active = self.active.get().saturating_add(1);
         self.active.set(active);
         self.peak.set(self.peak.get().max(active));
         let mut owners = self.owners.borrow_mut();
         let count = owners.entry(owner).or_default();
         *count = count.saturating_add(1);
+        true
     }
 
-    fn release(&self, owner: u64) {
+    fn release(&self, owner: u64) -> bool {
         self.active.set(self.active.get().saturating_sub(1));
         let mut owners = self.owners.borrow_mut();
         let Some(count) = owners.get_mut(&owner) else {
-            return;
+            return true;
         };
         *count = count.saturating_sub(1);
         if *count == 0 {
             owners.remove(&owner);
+            return true;
         }
+        false
     }
 
     fn owns_active_lease(&self, owner: u64) -> bool {
         self.owners.borrow().get(&owner).copied().unwrap_or(0) != 0
+    }
+
+    fn retire(&self, owner: u64) {
+        self.retired.borrow_mut().insert(owner);
+    }
+
+    fn is_retired(&self, owner: u64) -> bool {
+        self.retired.borrow().contains(&owner)
+    }
+
+    fn forget(&self, owner: u64) {
+        self.retired.borrow_mut().remove(&owner);
     }
 }
 
@@ -263,7 +282,7 @@ impl AllocationLease {
                 .owner
                 .try_borrow()
                 .map_err(|_| ArenaError::ProtectionFailed)?;
-            pool.validate_address(self.address, self.owner_id, self.abi)?;
+            pool.validate_retained_address(self.address, self.owner_id, self.abi)?;
             pool.dispatch_entry_with_abi(self.address, self.abi)?
         };
         Ok(entry(context))
@@ -271,7 +290,7 @@ impl AllocationLease {
 
     pub(crate) fn invoke<R>(self, invoke: impl FnOnce() -> R) -> Result<R, ArenaError> {
         let valid = self.owner.try_borrow().ok().is_some_and(|pool| {
-            pool.validate_address(self.address, self.owner_id, self.abi)
+            pool.validate_retained_address(self.address, self.owner_id, self.abi)
                 .is_ok()
         });
         if !valid {
@@ -283,8 +302,11 @@ impl AllocationLease {
 
 impl Drop for AllocationLease {
     fn drop(&mut self) {
-        self.state.release(self.owner_id);
-        let _ = &self.owner;
+        if self.state.release(self.owner_id) {
+            self.owner
+                .borrow_mut()
+                .reclaim_retired_owner(self.owner_id);
+        }
     }
 }
 
@@ -307,6 +329,7 @@ macro_rules! typed_owned_entry {
             let owner = self
                 .owner_for(address)
                 .ok_or(ArenaError::ProtectionFailed)?;
+            self.validate_address(address, owner, $abi)?;
             Ok(EntryToken {
                 address,
                 entry_address: entry as usize,
@@ -344,6 +367,7 @@ impl SharedStencilSlab {
                 active: Cell::new(0),
                 peak: Cell::new(0),
                 owners: RefCell::new(HashMap::new()),
+                retired: RefCell::new(HashSet::new()),
             }),
         })
     }
@@ -382,6 +406,42 @@ impl SharedStencilSlab {
 
     pub fn peak_leases(&self) -> usize {
         self.lease_state.peak.get()
+    }
+
+    /// Retire the complete allocation generation containing `address`.
+    /// Existing leases keep its mapping charged and callable, while cache
+    /// lookup and every new lease fail closed. The idle generation is
+    /// reclaimed immediately; an active generation is reclaimed by its final
+    /// lease release.
+    pub(crate) fn retire_allocation(
+        &mut self,
+        address: usize,
+        cache: &mut RenderedRegionCache,
+    ) -> Result<(), ArenaError> {
+        let owner = self
+            .owner_for(address)
+            .ok_or(ArenaError::ProtectionFailed)?;
+        self.lease_state.retire(owner);
+        self.cache.remove_owner(owner);
+        cache.remove_owner(owner);
+        self.reclaim_retired_owner(owner);
+        Ok(())
+    }
+
+    fn reclaim_retired_owner(&mut self, owner: u64) -> bool {
+        if !self.lease_state.is_retired(owner) || self.lease_state.owns_active_lease(owner) {
+            return false;
+        }
+        let Some(index) = self.slabs.iter().position(|slab| slab.id() == owner) else {
+            self.lease_state.forget(owner);
+            return false;
+        };
+        let released = self.slabs[index].capacity();
+        self.slabs.remove(index);
+        self.cache.remove_owner(owner);
+        self.lease_state.forget(owner);
+        release_global_bytes(released);
+        true
     }
 
     /// Drop slabs that have no allocation-retaining lease. Each cache entry
@@ -473,6 +533,9 @@ impl SharedStencilSlab {
             .map(|view| physical_cache_signature(view, values))
             .unwrap_or_else(|| cache_signature(stencil, values));
         for slab in &mut self.slabs {
+            if self.lease_state.is_retired(slab.id()) {
+                continue;
+            }
             match slab.render_or_get(&mut self.cache, key, stencil, values) {
                 Ok(address) => {
                     let owner = slab.id();
@@ -521,6 +584,9 @@ impl SharedStencilSlab {
         }
         let signature = physical_cache_signature(view, values);
         for slab in &mut self.slabs {
+            if self.lease_state.is_retired(slab.id()) {
+                continue;
+            }
             match slab.render_selected_view(&mut self.cache, view, values) {
                 Ok(address) => {
                     let owner = slab.id();
@@ -576,6 +642,18 @@ impl SharedStencilSlab {
         owner: u64,
         abi: crate::stencil_select::RegionAbi,
     ) -> Result<(), ArenaError> {
+        if self.lease_state.is_retired(owner) {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        self.validate_retained_address(address, owner, abi)
+    }
+
+    fn validate_retained_address(
+        &self,
+        address: usize,
+        owner: u64,
+        abi: crate::stencil_select::RegionAbi,
+    ) -> Result<(), ArenaError> {
         if self.owner_for(address) != Some(owner) {
             return Err(ArenaError::ProtectionFailed);
         }
@@ -602,7 +680,9 @@ impl SharedStencilSlab {
             pool.validate_address(address, owner_id, abi)?;
             std::rc::Rc::clone(&pool.lease_state)
         };
-        state.acquire(owner_id);
+        if !state.acquire(owner_id) {
+            return Err(ArenaError::ProtectionFailed);
+        }
         Ok(AllocationLease {
             owner: std::rc::Rc::clone(owner),
             state,
@@ -2611,6 +2691,77 @@ mod tests {
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn retire_live_add() -> (
+        std::rc::Rc<std::cell::RefCell<SharedStencilSlab>>,
+        RenderedRegionCache,
+        OwnedLease<extern "C" fn(f64, f64) -> f64>,
+        EntryToken<extern "C" fn(f64, f64) -> f64>,
+        crate::stencil_select::PhysicalStencilView,
+        usize,
+    ) {
+        let shared = std::rc::Rc::new(std::cell::RefCell::new(
+            SharedStencilSlab::new(4096).expect("slab"),
+        ));
+        let key = crate::stencil_select::numeric_region_key(Opcode::Add).unwrap();
+        let view = crate::stencil_select::select_physical(key).unwrap();
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let values = PatchValues::from_site(&site);
+        let mut cache = RenderedRegionCache::new();
+        let address = shared
+            .borrow_mut()
+            .render_physical_view_or_get(&mut cache, view, &values)
+            .unwrap();
+        shared.borrow_mut().make_executable(address).unwrap();
+        let token = shared.borrow().owned_f64_entry(address).unwrap();
+        let lease = SharedStencilSlab::acquire_owned(&shared, token).unwrap();
+
+        shared
+            .borrow_mut()
+            .retire_allocation(address, &mut cache)
+            .unwrap();
+        (shared, cache, lease, token, view, address)
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn retired_generation_stays_charged_until_final_lease_release() {
+        let (shared, mut cache, lease, token, view, address) = retire_live_add();
+        assert_eq!(cache.len(), 0, "retirement prunes the derived row");
+        assert_eq!(
+            shared.borrow().cache.len(),
+            0,
+            "retirement prunes the canonical row"
+        );
+        assert_eq!(
+            shared.borrow().capacity(),
+            4096,
+            "active retired code stays charged"
+        );
+        assert!(shared.borrow().owned_f64_entry(address).is_err());
+        assert!(SharedStencilSlab::acquire_owned(&shared, token).is_err());
+
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let values = PatchValues::from_site(&site);
+        let replacement = shared
+            .borrow_mut()
+            .render_physical_view_or_get(&mut cache, view, &values)
+            .expect("retired generation must not block fresh admission");
+        shared.borrow_mut().make_executable(replacement).unwrap();
+        assert_ne!(replacement, address);
+        assert_eq!(shared.borrow().capacity(), 8192);
+
+        assert_eq!(lease.invoke(|entry| entry(4.0, 5.0)), Ok(9.0));
+        assert_eq!(
+            shared.borrow().capacity(),
+            4096,
+            "final lease reclaims only the retired generation"
+        );
+        assert_eq!(shared.borrow().slab_count(), 1);
+        assert_eq!(shared.borrow_mut().evict_idle_with_cache(&mut cache, 0), 1);
+        assert_eq!(shared.borrow().capacity(), 0);
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn lease_retains_pool_after_last_external_owner_until_return() {
         let shared = std::rc::Rc::new(std::cell::RefCell::new(
@@ -2846,6 +2997,7 @@ mod tests {
             active: Cell::new(1),
             peak: Cell::new(1),
             owners: RefCell::new(HashMap::from([(owner.wrapping_add(1), 1)])),
+            retired: RefCell::new(HashSet::new()),
         });
         let lease = AllocationLease {
             owner: std::rc::Rc::clone(&shared),
