@@ -5,6 +5,7 @@
 //! partially rendered region.
 
 use crate::stencil_fact::{PatchValues, Stencil};
+use crate::stencil_layout::{compose_fallthrough, FixupKind};
 use crate::stencil_patch::{apply_holes, PatchError};
 use crate::stencil_select::RenderedRegionCache;
 use std::cell::{Cell, RefCell};
@@ -160,6 +161,16 @@ fn generated_chain_relocation_is_declared(
             .relocations
             .iter()
             .all(|relocation| relocation.kind == expected_kind)
+}
+
+#[cfg(target_arch = "x86_64")]
+const fn fallthrough_fixup_kind() -> FixupKind {
+    FixupKind::X86Rel32
+}
+
+#[cfg(target_arch = "aarch64")]
+const fn fallthrough_fixup_kind() -> FixupKind {
+    FixupKind::Aarch64Branch26
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1907,152 +1918,10 @@ impl StencilArena {
         Ok(value)
     }
 
-    /// Install a two-region Number chain. The head falls through by a direct
-    /// `Rel32` jump to the already-installed tail, which returns the value in
-    /// `xmm0`. The caller supplies the build-time displacement offset; this
-    /// method performs no instruction selection or CFG analysis.
-    #[cfg(target_arch = "x86_64")]
-    pub fn render_fallthrough_f64<const N: usize>(
-        &mut self,
-        cache: &mut RenderedRegionCache,
-        key: crate::stencil_fact::RegionKey,
-        head: &Stencil,
-        tail: &Stencil,
-        values: &PatchValues<'_, N>,
-        rel32_offset: u16,
-        lhs: f64,
-        rhs: f64,
-        selected: Option<crate::stencil_select::PhysicalStencilView>,
-        fallback: impl FnOnce() -> Result<f64, ArenaError>,
-    ) -> Result<f64, ArenaError> {
-        if !selected_chain_matches(key, selected, head, tail) {
-            return fallback();
-        }
-        let signature = selected
-            .map(|view| physical_cache_signature(view, values))
-            .unwrap_or_else(|| cache_signature(head, values));
-        if let Some(address) = cache
-            .get_owned(key, signature, self.id)
-            .filter(|address| self.owns_address(*address))
-        {
-            if self.is_executable() {
-                return match self.execute_f64(address, lhs, rhs) {
-                    Ok(value) => Ok(value),
-                    Err(_) => {
-                        cache.remove(key, signature, address);
-                        fallback()
-                    }
-                };
-            }
-            // A prior protection failure must not make this address a
-            // permanent cache hit. Remove it and retry the bounded render.
-            cache.remove(key, signature, address);
-        }
-        if !head.validate() || !tail.validate() {
-            return fallback();
-        }
-        if !head.holes.iter().any(|hole| {
-            hole.offset == rel32_offset && matches!(hole.kind, crate::stencil_fact::HoleKind::Rel32)
-        }) {
-            return fallback();
-        }
-        let checkpoint = self.cursor;
-        let tail_offset = match self.alloc(tail.bytes.len()) {
-            Ok(offset) => offset,
-            Err(_) => return fallback(),
-        };
-        let tail_result = unsafe {
-            std::ptr::copy_nonoverlapping(
-                tail.bytes.as_ptr(),
-                self.ptr.add(tail_offset),
-                tail.bytes.len(),
-            );
-            let dst = std::slice::from_raw_parts_mut(self.ptr.add(tail_offset), tail.bytes.len());
-            apply_holes(dst, tail.holes, values)
-        };
-        if tail_result.is_err() {
-            self.cursor = checkpoint;
-            return fallback();
-        }
-        let tail_address = match self.address(tail_offset) {
-            Some(address) => address,
-            None => {
-                self.cursor = checkpoint;
-                return fallback();
-            }
-        };
-        let head_offset = match self.alloc(head.bytes.len()) {
-            Ok(offset) => offset,
-            Err(_) => {
-                self.cursor = checkpoint;
-                return fallback();
-            }
-        };
-        let next_instruction = self.ptr as usize + head_offset + usize::from(rel32_offset) + 4;
-        let Some(patched_values) = values.with_relative_target(tail_address, next_instruction)
-        else {
-            self.cursor = checkpoint;
-            return fallback();
-        };
-        let head_result = unsafe {
-            std::ptr::copy_nonoverlapping(
-                head.bytes.as_ptr(),
-                self.ptr.add(head_offset),
-                head.bytes.len(),
-            );
-            let dst = std::slice::from_raw_parts_mut(self.ptr.add(head_offset), head.bytes.len());
-            apply_holes(dst, head.holes, &patched_values)
-        };
-        if head_result.is_err() {
-            self.cursor = checkpoint;
-            return fallback();
-        }
-        let address = match self.address(head_offset) {
-            Some(address) => address,
-            None => {
-                self.cursor = checkpoint;
-                return fallback();
-            }
-        };
-        // The displacement is internal to this arena and remains valid while
-        // the cached address is owned by it. Match future calls on the
-        // caller-visible patch facts, not on the newly allocated addresses.
-        self.record_abi(address, crate::stencil_select::RegionAbi::Scalar);
-        cache.insert_owned(key, signature, address, self.id);
-        if self.make_executable().is_err() {
-            cache.remove(key, signature, address);
-            return fallback();
-        }
-        match self.execute_f64(address, lhs, rhs) {
-            Ok(value) => Ok(value),
-            Err(_) => {
-                cache.remove(key, signature, address);
-                fallback()
-            }
-        }
-    }
-
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    pub fn render_fallthrough_f64<const N: usize>(
-        &mut self,
-        _cache: &mut RenderedRegionCache,
-        _key: crate::stencil_fact::RegionKey,
-        _head: &Stencil,
-        _tail: &Stencil,
-        _values: &PatchValues<'_, N>,
-        _rel32_offset: u16,
-        _lhs: f64,
-        _rhs: f64,
-        _selected: Option<crate::stencil_select::PhysicalStencilView>,
-        fallback: impl FnOnce() -> Result<f64, ArenaError>,
-    ) -> Result<f64, ArenaError> {
-        fallback()
-    }
-
-    /// Compose the AArch64 head and tail in one arena. The head carries a
-    /// `B`/imm26 relocation to the tail, so the chain has one entry and one
-    /// return at the boundary; no Rust callback occurs between them.
-    #[cfg(target_arch = "aarch64")]
+    /// Compose a verified head and tail through the target's typed relative
+    /// fixup. Layout is finalized in scratch storage before one allocation is
+    /// published, so no partially patched chain can become callable.
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub fn render_fallthrough_f64<const N: usize>(
         &mut self,
         cache: &mut RenderedRegionCache,
@@ -2072,103 +1941,104 @@ impl StencilArena {
         let signature = selected
             .map(|view| physical_cache_signature(view, values))
             .unwrap_or_else(|| cache_signature(head, values));
-        if let Some(address) = cache
-            .get_owned(key, signature, self.id)
-            .filter(|address| self.owns_address(*address))
-        {
-            if self.is_executable() {
-                return match self.execute_f64(address, lhs, rhs) {
-                    Ok(value) => Ok(value),
-                    Err(_) => {
-                        cache.remove(key, signature, address);
-                        fallback()
-                    }
-                };
-            }
-            cache.remove(key, signature, address);
-        }
-        if !head.validate() || !tail.validate() {
-            return fallback();
-        }
-        if !head.holes.iter().any(|hole| {
-            hole.offset == branch_offset
-                && matches!(hole.kind, crate::stencil_fact::HoleKind::Branch26)
-        }) {
-            return fallback();
-        }
-        let checkpoint = self.cursor;
-        let tail_offset = match self.alloc_aligned(tail.bytes.len(), 4) {
-            Ok(offset) => offset,
+        let kind = fallthrough_fixup_kind();
+        let address = match self.install_fallthrough(
+            cache,
+            key,
+            signature,
+            head,
+            tail,
+            values,
+            branch_offset,
+            kind,
+        ) {
+            Ok(address) => address,
             Err(_) => return fallback(),
         };
-        let tail_result = unsafe {
-            std::ptr::copy_nonoverlapping(
-                tail.bytes.as_ptr(),
-                self.ptr.add(tail_offset),
-                tail.bytes.len(),
-            );
-            let dst = std::slice::from_raw_parts_mut(self.ptr.add(tail_offset), tail.bytes.len());
-            apply_holes(dst, tail.holes, values)
-        };
-        if tail_result.is_err() {
-            self.cursor = checkpoint;
-            return fallback();
-        }
-        let tail_address = match self.address(tail_offset) {
-            Some(address) => address,
-            None => {
-                self.cursor = checkpoint;
-                return fallback();
-            }
-        };
-        let head_offset = match self.alloc_aligned(head.bytes.len(), 4) {
-            Ok(offset) => offset,
-            Err(_) => {
-                self.cursor = checkpoint;
-                return fallback();
-            }
-        };
-        // AArch64 `B` measures its displacement from the branch instruction
-        // itself (unlike x86 rel32, which is relative to the following
-        // instruction).
-        let branch_address = self.ptr as usize + head_offset + usize::from(branch_offset);
-        let Some(patched_values) = values.with_relative_target(tail_address, branch_address) else {
-            self.cursor = checkpoint;
-            return fallback();
-        };
-        let head_result = unsafe {
-            std::ptr::copy_nonoverlapping(
-                head.bytes.as_ptr(),
-                self.ptr.add(head_offset),
-                head.bytes.len(),
-            );
-            let dst = std::slice::from_raw_parts_mut(self.ptr.add(head_offset), head.bytes.len());
-            apply_holes(dst, head.holes, &patched_values)
-        };
-        if head_result.is_err() {
-            self.cursor = checkpoint;
-            return fallback();
-        }
-        let address = match self.address(head_offset) {
-            Some(address) => address,
-            None => {
-                self.cursor = checkpoint;
-                return fallback();
-            }
-        };
-        self.record_abi(address, crate::stencil_select::RegionAbi::Scalar);
-        cache.insert_owned(key, signature, address, self.id);
-        if self.make_executable().is_err() {
+        let result = self.execute_f64(address, lhs, rhs);
+        if result.is_err() {
             cache.remove(key, signature, address);
             return fallback();
         }
-        match self.execute_f64(address, lhs, rhs) {
-            Ok(value) => Ok(value),
-            Err(_) => {
-                cache.remove(key, signature, address);
-                fallback()
-            }
+        result
+    }
+
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    pub fn render_fallthrough_f64<const N: usize>(
+        &mut self,
+        _cache: &mut RenderedRegionCache,
+        _key: crate::stencil_fact::RegionKey,
+        _head: &Stencil,
+        _tail: &Stencil,
+        _values: &PatchValues<'_, N>,
+        _branch_offset: u16,
+        _lhs: f64,
+        _rhs: f64,
+        _selected: Option<crate::stencil_select::PhysicalStencilView>,
+        fallback: impl FnOnce() -> Result<f64, ArenaError>,
+    ) -> Result<f64, ArenaError> {
+        fallback()
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn install_fallthrough<const N: usize>(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        key: crate::stencil_fact::RegionKey,
+        signature: u64,
+        head: &Stencil,
+        tail: &Stencil,
+        values: &PatchValues<'_, N>,
+        branch_offset: u16,
+        kind: FixupKind,
+    ) -> Result<usize, ArenaError> {
+        if let Some(address) = self.cached_executable(cache, key, signature) {
+            return Ok(address);
         }
+        let mut bytes = Vec::new();
+        compose_fallthrough(head, tail, values, branch_offset, kind, &mut bytes)
+            .map_err(|_| ArenaError::ProtectionFailed)?;
+        self.publish_composed(cache, key, signature, &bytes)
+    }
+
+    fn cached_executable(
+        &self,
+        cache: &mut RenderedRegionCache,
+        key: crate::stencil_fact::RegionKey,
+        signature: u64,
+    ) -> Option<usize> {
+        let address = cache
+            .get_owned(key, signature, self.id)
+            .filter(|address| self.owns_address(*address))?;
+        if self.is_executable() {
+            Some(address)
+        } else {
+            cache.remove(key, signature, address);
+            None
+        }
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn publish_composed(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        key: crate::stencil_fact::RegionKey,
+        signature: u64,
+        bytes: &[u8],
+    ) -> Result<usize, ArenaError> {
+        let checkpoint = self.cursor;
+        let offset = self.alloc_aligned(bytes.len(), STENCIL_ALIGNMENT)?;
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.ptr.add(offset), bytes.len()) };
+        let address = self.address(offset).ok_or(ArenaError::Exhausted)?;
+        self.record_abi(address, crate::stencil_select::RegionAbi::Scalar);
+        cache.insert_owned(key, signature, address, self.id);
+        if let Err(error) = self.make_executable() {
+            cache.remove(key, signature, address);
+            self.published_abis.borrow_mut().remove(&address);
+            self.cursor = checkpoint;
+            return Err(error);
+        }
+        Ok(address)
     }
 
     /// Flip the entire arena from writable to executable once all regions have
@@ -3555,6 +3425,79 @@ mod tests {
             Ok(12.75)
         );
         assert_eq!(arena.used(), head.bytes.len() + tail.bytes.len());
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn labeled_three_fragment_region_executes_both_successors() {
+        let bytes = three_fragment_layout();
+        let mut arena = StencilArena::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let address = arena
+            .publish_composed(&mut cache, crate::stencil_fact::RegionKey(45), 0, &bytes)
+            .unwrap();
+        assert_eq!(arena.execute_f64(address, 1.0, 2.0), Ok(5.0));
+        assert_eq!(arena.used(), bytes.len());
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn three_fragment_layout() -> Vec<u8> {
+        use crate::stencil_layout::{Fragment, LabelId, StencilLayout};
+
+        let (first, second, tail, kind, offset) = three_fragment_bytes();
+        let fragments = [
+            Fragment {
+                label: LabelId(0),
+                bytes: &first,
+            },
+            Fragment {
+                label: LabelId(1),
+                bytes: &second,
+            },
+            Fragment {
+                label: LabelId(2),
+                bytes: &tail,
+            },
+        ];
+        let fixups = [
+            successor_fixup(0, 1, offset, kind),
+            successor_fixup(1, 2, offset, kind),
+        ];
+        let mut bytes = Vec::new();
+        StencilLayout::new(&fragments, &fixups)
+            .finalize_into(&mut bytes)
+            .unwrap();
+        bytes
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn successor_fixup(
+        fragment: u8,
+        target: u8,
+        offset: u16,
+        kind: FixupKind,
+    ) -> crate::stencil_layout::Fixup {
+        crate::stencil_layout::Fixup {
+            fragment,
+            offset,
+            target: crate::stencil_layout::LabelId(target),
+            addend: 0,
+            kind,
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn three_fragment_bytes() -> (Vec<u8>, Vec<u8>, Vec<u8>, FixupKind, u16) {
+        let body = vec![0xF2, 0x0F, 0x58, 0xC1, 0xE9, 0, 0, 0, 0];
+        (body.clone(), body, vec![0xC3], FixupKind::X86Rel32, 5)
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    fn three_fragment_bytes() -> (Vec<u8>, Vec<u8>, Vec<u8>, FixupKind, u16) {
+        let mut body = 0x1E61_2800u32.to_le_bytes().to_vec();
+        body.extend_from_slice(&0x1400_0000u32.to_le_bytes());
+        let tail = 0xD65F_03C0u32.to_le_bytes().to_vec();
+        (body.clone(), body, tail, FixupKind::Aarch64Branch26, 4)
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
