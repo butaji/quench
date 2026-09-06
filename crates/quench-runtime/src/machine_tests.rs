@@ -581,6 +581,48 @@ fn region_admission_rejects_external_backedge_into_interior() {
     assert!(!super::region_entry_is_legal(&entries, 0, 3));
 }
 
+fn baseline_entries(instructions: &[crate::ir::Instruction]) -> Vec<super::BaselineEntry> {
+    instructions
+        .iter()
+        .copied()
+        .map(|instruction| super::BaselineEntry {
+            instruction,
+            handler: instruction.opcode.handler(),
+            control: instruction.opcode.control_operands(instruction),
+        })
+        .collect()
+}
+
+#[test]
+fn compare_branch_rejects_live_effectful_and_side_entry_interiors() {
+    let compare = crate::ir::Instruction::binary_operator(
+        2,
+        crate::ops::BinaryOp::LessThan,
+        0,
+        1,
+    );
+    let dead = crate::ir::Instruction::load_const(3, 0);
+    let branch = crate::ir::Instruction::jump_if_false(2, 3);
+    let base = baseline_entries(&[compare, dead, branch, crate::ir::Instruction::ret(2)]);
+    let empty = std::collections::BTreeSet::new();
+    let mut liveness = vec![empty.clone(); base.len()];
+    assert!(super::compare_branch(&base, &liveness, 0, compare).is_some());
+
+    liveness[1].insert(3);
+    assert!(super::compare_branch(&base, &liveness, 0, compare).is_none());
+    liveness[1].clear();
+    let effectful = crate::ir::Instruction::binary(crate::ir::Opcode::AGetI, 3, 4, 5);
+    let entries = baseline_entries(&[compare, effectful, branch, crate::ir::Instruction::ret(2)]);
+    assert!(super::compare_branch(&entries, &liveness, 0, compare).is_none());
+    let side_entry = baseline_entries(&[
+        compare,
+        dead,
+        branch,
+        crate::ir::Instruction::jump(1),
+    ]);
+    assert!(super::compare_branch(&side_entry, &liveness, 0, compare).is_none());
+}
+
 #[test]
 fn generated_scalar_and_array_rows_route_through_declared_abis() {
     let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
