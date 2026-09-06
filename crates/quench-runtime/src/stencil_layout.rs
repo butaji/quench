@@ -374,12 +374,15 @@ const fn hole_kind(kind: FixupKind) -> Option<HoleKind> {
     match kind {
         FixupKind::X86Rel32 => Some(HoleKind::Rel32),
         FixupKind::Aarch64Branch26 => Some(HoleKind::Branch26),
-        FixupKind::Aarch64CondBranch19 => None,
+        FixupKind::Aarch64CondBranch19 => Some(HoleKind::CondBranch19),
     }
 }
 
 const fn is_relative(kind: HoleKind) -> bool {
-    matches!(kind, HoleKind::Rel32 | HoleKind::Branch26)
+    matches!(
+        kind,
+        HoleKind::Rel32 | HoleKind::Branch26 | HoleKind::CondBranch19
+    )
 }
 
 fn validate_disjoint(ranges: &[std::ops::Range<usize>]) -> Result<(), LayoutError> {
