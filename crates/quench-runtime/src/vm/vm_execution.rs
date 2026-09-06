@@ -757,6 +757,16 @@ mod tests {
     use crate::execute::VmError;
     use crate::value::{ObjectData, Value};
 
+    fn run_source(source: &str, message: &str) {
+        let program = crate::reduce::reduce_source(source).expect("source reduces");
+        let result = crate::vm::execute_code_with_context(
+            program.code(),
+            &crate::vm::VmContext::default(),
+        )
+        .expect(message);
+        assert_eq!(result, Value::Undefined);
+    }
+
     /// Bug reproducer: the replacement log is the forwarding table that
     /// keeps heap-resident object references (event-loop callbacks, timers)
     /// pointing at the latest copy-on-write snapshot. Re-entering the VM
@@ -810,6 +820,109 @@ mod tests {
         )
         .expect("prototype source executes");
         assert_eq!(result, Value::Undefined);
+    }
+
+    #[test]
+    fn array_slice_interleaves_gets_and_species_definitions() {
+        let source = r#"
+            var log = [];
+            var source = [1, 2];
+            Object.defineProperty(source, "0", {
+                get: function () { log.push("get0"); return 1; }
+            });
+            Object.defineProperty(source, "1", {
+                get: function () { log.push("get1"); return 2; }
+            });
+            source.constructor = {};
+            source.constructor[Symbol.species] = function () {
+                return new Proxy({}, {
+                    defineProperty: function (_, key) {
+                        log.push("define" + key);
+                        return true;
+                    },
+                    set: function (_, key) {
+                        log.push("set" + key);
+                        return true;
+                    }
+                });
+            };
+            source.slice();
+            if (log.join(",") !== "get0,define0,get1,define1,setlength") {
+                throw "slice reordered observable operations: " + log.join(",");
+            }
+        "#;
+        run_source(source, "ordered slice executes");
+    }
+
+    #[test]
+    fn array_slice_stops_before_later_get_after_species_failure() {
+        let source = r#"
+            var seen = 0;
+            var source = [1, 2];
+            Object.defineProperty(source, "1", {
+                get: function () { seen++; return 2; }
+            });
+            source.constructor = {};
+            source.constructor[Symbol.species] = function () {
+                return new Proxy({}, {
+                    defineProperty: function () { throw new Error("stop"); }
+                });
+            };
+            try { source.slice(); } catch (_) {}
+            if (seen !== 0) throw "slice read past an abrupt target definition";
+        "#;
+        run_source(source, "abrupt slice executes");
+    }
+
+    #[test]
+    fn array_slice_uses_throwing_set_for_species_length() {
+        let source = r#"
+            var source = [1];
+            var lengthSets = 0;
+            source.constructor = {};
+            source.constructor[Symbol.species] = function () {
+                return new Proxy({}, {
+                    defineProperty: function () { return true; },
+                    set: function (_, key) {
+                        if (key === "length") lengthSets++;
+                        return false;
+                    }
+                });
+            };
+            var threw = false;
+            try { source.slice(); } catch (error) {
+                threw = error instanceof TypeError;
+            }
+            if (!threw || lengthSets !== 1) {
+                throw "slice did not perform one throwing length Set";
+            }
+        "#;
+        run_source(source, "throwing length Set executes");
+    }
+
+    #[test]
+    fn array_slice_observes_inherited_holes_and_species_mutation() {
+        let source = r#"
+            var reads = 0;
+            Object.defineProperty(Array.prototype, "0", {
+                get: function () { reads++; return 7; }, configurable: true
+            });
+            var inherited;
+            try { inherited = [, 2].slice(); }
+            finally { delete Array.prototype[0]; }
+            if (reads !== 1 || inherited[0] !== 7 || inherited.length !== 2) {
+                throw "slice did not observe an inherited indexed getter";
+            }
+
+            var mutated = [1];
+            mutated.constructor = {};
+            Object.defineProperty(mutated.constructor, Symbol.species, {
+                get: function () { mutated[0] = 9; return null; }
+            });
+            var copied = mutated.slice();
+            if (copied[0] !== 9) throw "slice read before species mutation";
+        "#;
+        run_source(source, "slice inherited and species effects execute");
     }
 
     #[test]
