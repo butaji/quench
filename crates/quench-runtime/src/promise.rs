@@ -166,6 +166,13 @@ fn process_promise_in_context(promise: &Rc<PromiseData>) {
     }
 }
 
+pub(crate) fn mark_rejection_handled(promise: &Rc<PromiseData>) {
+    promise.rejection_handled.set(true);
+    if promise.unhandled_queued.replace(false) {
+        remove_unhandled_rejection(promise);
+    }
+}
+
 fn with_promise_trigger<T>(trigger: &Rc<PromiseData>, f: impl FnOnce() -> T) -> T {
     let previous = PROMISE_TRIGGER.with(|slot| slot.replace(Some(Rc::clone(trigger))));
     let result = f();
@@ -439,6 +446,7 @@ pub(crate) fn register_async_generator(
     result: Rc<PromiseData>,
     async_function: bool,
 ) {
+    mark_rejection_handled(awaited);
     awaited
         .continuations
         .borrow_mut()
@@ -822,7 +830,7 @@ pub fn promise_then(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
         .get(1)
         .is_some_and(|handler| !matches!(handler, Value::Undefined))
     {
-        promise.rejection_handled.set(true);
+        mark_rejection_handled(promise);
     }
     let promise_key = Rc::as_ptr(promise) as usize;
     THEN_RESULTS.with(|results| {
