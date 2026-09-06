@@ -78,7 +78,7 @@ fn rust_leaf_recipe_requires_name_abi_and_residual_shape() {
 #[test]
 fn rust_assembly_recipe_requires_name_abi_and_residual_shape() {
     use build_stencil_contract::{
-        recipe_composition, rust_assembly_recipe, DeclAbi, RecipeComposition, RustAssemblyRecipe,
+        rust_assembly_recipe, DeclAbi, RecipeComposition, RustAssemblyRecipe,
     };
 
     let exact = declaration("move", DeclAbi::TaggedWord, &["Move"]);
@@ -111,7 +111,12 @@ fn rust_assembly_recipe_requires_name_abi_and_residual_shape() {
         rust_assembly_recipe(&add_chain),
         Some(RustAssemblyRecipe::AddChain)
     );
-    assert_eq!(recipe_composition(&add_chain), RecipeComposition::AddChain);
+    let recipe = rust_assembly_recipe(&add_chain).expect("add-chain recipe");
+    assert_eq!(recipe.composition(), RecipeComposition::AddChain);
+    let continuation = recipe.continuation().expect("add-chain continuation");
+    assert_eq!(continuation.head_name, "add_chain_head");
+    assert_eq!(continuation.tail_name, "add_chain_tail");
+    assert_eq!(continuation.target, "q_add_chain_tail");
     add_chain.aarch64_holes = &[(8, 4, "Branch26")];
     assert!(rust_assembly_recipe(&add_chain).is_none());
 }
