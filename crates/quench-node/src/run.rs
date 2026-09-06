@@ -718,6 +718,35 @@ mod tests {
     }
 
     #[test]
+    fn reachable_sync_generator_keeps_captured_bindings_during_collection() {
+        let output = Arc::new(Mutex::new(String::new()));
+        let sink_output = Arc::clone(&output);
+        let sink: OutputSink = Arc::new(move |chunk| sink_output.lock().unwrap().push_str(chunk));
+        let source = r#"
+          function make() {
+            const captured = function() { return 42; };
+            function deadA() { return captured(); }
+            function deadB() { return captured(); }
+            return (function*() { yield 1; return captured(); })();
+          }
+          const generator = make();
+          console.log(JSON.stringify(generator.next()));
+          for (let i = 0; i < 4096; i++) { const dead = { x: i }; dead.y = i; }
+          console.log(JSON.stringify(generator.next()));
+        "#;
+        let outcome = eval_script(source, sink);
+        assert!(
+            outcome.error.is_none(),
+            "generator failed: {:?}",
+            outcome.error
+        );
+        assert_eq!(
+            output.lock().unwrap().as_str(),
+            "{\"value\":1,\"done\":false}\n{\"value\":42,\"done\":true}\n"
+        );
+    }
+
+    #[test]
     fn polymorphic_method_dispatch_preserves_semantics() {
         let output = Arc::new(Mutex::new(String::new()));
         let sink_output = Arc::clone(&output);

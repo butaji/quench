@@ -49,7 +49,7 @@ pub(crate) fn create(
     if let Some(environment) = environment {
         machine.install_environment(environment);
     }
-    Ok(Value::Generator(Rc::new(GeneratorData {
+    let generator = Rc::new(GeneratorData {
         function: Rc::clone(function),
         machine: crate::value::ExecutionCell::new(machine),
         receiver: receiver.clone(),
@@ -60,7 +60,9 @@ pub(crate) fn create(
         executing: RefCell::new(false),
         running: RefCell::new(false),
         async_next_queue: RefCell::new(VecDeque::new()),
-    })))
+    });
+    crate::cycle_collector::track_generator(&generator);
+    Ok(Value::Generator(generator))
 }
 
 fn initialize_parameters(
@@ -354,9 +356,11 @@ fn update_machine_frame(
     state: &GeneratorState,
     completion: &crate::completion::Completion,
 ) -> Result<(), VmError> {
-    if let Some(point @ (crate::continuation::SuspensionPoint::Nested { .. }
+    if let Some(
+        point @ (crate::continuation::SuspensionPoint::Nested { .. }
         | crate::continuation::SuspensionPoint::Loop { .. }
-        | crate::continuation::SuspensionPoint::Branch { .. })) = state.suspension.clone()
+        | crate::continuation::SuspensionPoint::Branch { .. }),
+    ) = state.suspension.clone()
     {
         push_initial_try_frames(generator)?;
         let resume = parent_resume_range(generator, state);
@@ -844,15 +848,6 @@ fn restore_nested_loop_frames(
     };
     let mut points = Vec::new();
     collect_loop_points(point, &mut points);
-    {
-        let desired = points
-            .iter()
-            .filter_map(loop_point_range)
-            .collect::<Vec<_>>();
-        generator.machine.borrow_mut().frames.frames.retain(|frame| {
-            !matches!(frame, crate::machine::Frame::Loop { body, .. } if !desired.contains(body))
-        });
-    }
     let missing = points
         .into_iter()
         .filter(|point| !has_loop_frame(generator, point))
@@ -865,16 +860,6 @@ fn restore_nested_loop_frames(
         push_loop_suspension_frame(generator, state, point)?;
     }
     Ok(())
-}
-
-fn loop_point_range(
-    point: &crate::continuation::SuspensionPoint,
-) -> Option<crate::machine::CodeRange> {
-    match point {
-        crate::continuation::SuspensionPoint::Loop { body, .. } => Some(*body),
-        crate::continuation::SuspensionPoint::Branch { .. } => None,
-        _ => None,
-    }
 }
 
 fn collect_loop_points(
