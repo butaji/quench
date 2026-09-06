@@ -198,7 +198,7 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
         "--edition=2021",
     ];
     let rustflags = effective_rustflags();
-    let fingerprint = fingerprint(&target, &compiler, &flags, declarations);
+    let build_fingerprint = fingerprint(&target, &compiler, &flags, declarations);
     let root = unique_directory();
     let mut constants = Vec::new();
     let mut rows = Vec::new();
@@ -256,6 +256,12 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
                 relocations: Vec::new(),
             }
         };
+        let fingerprint = artifact_fingerprint(
+            declaration,
+            &target,
+            &build_fingerprint,
+            &extracted,
+        );
         let (constant, row) =
             render_artifact(declaration, &target, &compiler, &fingerprint, &extracted);
         constants.push(constant);
@@ -966,14 +972,17 @@ fn fingerprint(
                 })
                 .unwrap_or_default();
             format!(
-                "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{source}",
-                item.name,
-                item.abi,
-                item.operations,
-                item.x86_bytes,
-                item.aarch64_bytes,
-                item.holes,
-                item.aarch64_holes,
+                "{name}:{abi:?}:{ops:?}:{x86:?}:{arm:?}:{portable:?}:{holes:?}:{arm_holes:?}:{entry}:{external:?}:{source}",
+                name = item.name,
+                abi = item.abi,
+                ops = item.operations,
+                x86 = item.x86_bytes,
+                arm = item.aarch64_bytes,
+                portable = item.portable_bytes,
+                holes = item.holes,
+                arm_holes = item.aarch64_holes,
+                entry = item.entry,
+                external = item.external_entries,
             )
         })
         .collect::<Vec<_>>()
@@ -988,6 +997,40 @@ fn fingerprint(
         hash = hash.wrapping_mul(0x100000001b3);
     }
     format!("fnv64-{hash:016x}")
+}
+
+fn artifact_fingerprint(
+    declaration: &RegionDeclaration,
+    target: &str,
+    build_fingerprint: &str,
+    extracted: &ExtractedObject,
+) -> String {
+    let mut hash = 0xcbf29ce484222325u64;
+    hash_bytes(&mut hash, build_fingerprint.as_bytes());
+    hash_bytes(&mut hash, target.as_bytes());
+    hash_bytes(&mut hash, format!("{:?}", declaration.abi).as_bytes());
+    hash_bytes(&mut hash, &declaration.entry.to_le_bytes());
+    for entry in declaration.external_entries {
+        hash_bytes(&mut hash, &entry.to_le_bytes());
+    }
+    hash_bytes(&mut hash, &[u8::from(super::target_template_calls_helper(declaration))]);
+    hash_bytes(&mut hash, &extracted.bytes);
+    if let Some(fallthrough) = &extracted.fallthrough {
+        hash_bytes(&mut hash, fallthrough);
+    }
+    for relocation in &extracted.relocations {
+        hash_bytes(&mut hash, &relocation.offset.to_le_bytes());
+        hash_bytes(&mut hash, relocation.kind.as_bytes());
+        hash_bytes(&mut hash, relocation.target.as_bytes());
+    }
+    format!("fnv64-{hash:016x}")
+}
+
+fn hash_bytes(hash: &mut u64, bytes: &[u8]) {
+    for byte in bytes {
+        *hash ^= u64::from(*byte);
+        *hash = hash.wrapping_mul(0x100000001b3);
+    }
 }
 
 fn rustc_path() -> String {
@@ -1048,6 +1091,29 @@ fn command_output(command: &mut Command, description: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn declaration(entries: &'static [u32]) -> RegionDeclaration {
+        RegionDeclaration {
+            name: "identity_probe",
+            operations: &["Add", "Return"],
+            abi: super::super::DeclAbi::Scalar,
+            x86_bytes: &[1],
+            aarch64_bytes: &[2],
+            portable_bytes: &[3],
+            holes: &[],
+            aarch64_holes: &[],
+            entry: 0,
+            external_entries: entries,
+        }
+    }
+
+    fn extracted(bytes: &[u8]) -> ExtractedObject {
+        ExtractedObject {
+            bytes: bytes.to_vec(),
+            fallthrough: None,
+            relocations: Vec::new(),
+        }
+    }
 
     fn expected(offset: u16, target: &'static str) -> ExpectedRelocation {
         ExpectedRelocation {
@@ -1126,5 +1192,24 @@ mod tests {
             "tail",
         )
         .is_none());
+    }
+
+    #[test]
+    fn artifact_identity_covers_entries_and_extracted_payload() {
+        static ENTRY_ZERO: [u32; 1] = [0];
+        static ENTRY_ZERO_FOUR: [u32; 2] = [0, 4];
+        let base = declaration(&ENTRY_ZERO);
+        let changed_entries = declaration(&ENTRY_ZERO_FOUR);
+        let identity = artifact_fingerprint(&base, "aarch64-test", "build", &extracted(&[1, 2]));
+        let entry_identity = artifact_fingerprint(
+            &changed_entries,
+            "aarch64-test",
+            "build",
+            &extracted(&[1, 2]),
+        );
+        let byte_identity =
+            artifact_fingerprint(&base, "aarch64-test", "build", &extracted(&[1, 3]));
+        assert_ne!(identity, entry_identity);
+        assert_ne!(identity, byte_identity);
     }
 }
