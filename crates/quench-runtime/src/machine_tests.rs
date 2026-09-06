@@ -906,8 +906,7 @@ fn native_add_const_rejects_constant_left_for_signed_zero_order() {
 #[test]
 fn non_x86_native_execution_rejects_before_mapping() {
     let mut plan = super::NativeBinaryPlan {
-        arena: None,
-        shared_arena: None,
+        storage: super::PhysicalStorage::Local(None),
         physical: super::PhysicalState::new(),
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
         opcode: crate::ir::Opcode::Add,
@@ -922,15 +921,14 @@ fn non_x86_native_execution_rejects_before_mapping() {
         last_native_view: None,
     };
     assert!(plan.execute(1.0, 2.0).is_err());
-    assert!(plan.arena.is_none());
+    assert!(plan.storage.local().is_none());
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
 fn native_numeric_entry_pointer_is_cached_after_first_render() {
     let mut plan = super::NativeBinaryPlan {
-        arena: None,
-        shared_arena: None,
+        storage: super::PhysicalStorage::Local(None),
         physical: super::PhysicalState::new(),
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
         opcode: crate::ir::Opcode::Add,
@@ -945,10 +943,13 @@ fn native_numeric_entry_pointer_is_cached_after_first_render() {
         last_native_view: None,
     };
     assert_eq!(plan.execute(1.5, 2.25), Ok(3.75));
-    assert!(matches!(plan.installed, super::InstalledBinaryEntry::F64Local(_)));
-    let used = plan.arena.as_ref().expect("rendered arena").used();
+    assert!(matches!(
+        plan.installed,
+        super::InstalledBinaryEntry::F64Local(_)
+    ));
+    let used = plan.storage.used();
     assert_eq!(plan.execute(4.0, 5.0), Ok(9.0));
-    assert_eq!(plan.arena.as_ref().expect("cached arena").used(), used);
+    assert_eq!(plan.storage.used(), used);
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
