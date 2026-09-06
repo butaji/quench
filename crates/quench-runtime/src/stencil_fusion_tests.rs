@@ -41,6 +41,7 @@ fn execute_case(
         crate::stencil_plan::LocalNumericInputs::SlotConstant { slot, .. } => {
             environment.set(slot, values[0].clone());
         }
+        crate::stencil_plan::LocalNumericInputs::Folded { .. } => {}
     }
     let mut registers = crate::register_file::RegisterFile::with_undefined(
         usize::from(view.register_count()).max(8),
@@ -208,6 +209,25 @@ fn exercise_constant_left_add_view(view: CodeView<'_>) -> bool {
     true
 }
 
+fn exercise_folded_source_view(view: CodeView<'_>) -> bool {
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let plan = BaselinePlan::compile_for_test(view, policy);
+    let Some(pc) = (0..view.len()).find(|pc| {
+        plan.native_local_binary_at(*pc).is_some_and(|native| {
+            matches!(
+                native.borrow().selection().inputs,
+                crate::stencil_plan::LocalNumericInputs::Folded { .. }
+            )
+        })
+    }) else {
+        return false;
+    };
+    let result = execute_case(view, &plan, pc, [Value::Undefined, Value::Undefined]);
+    assert_eq!(result, (Completion::Return(Value::Number(4.0)), 0, 0));
+    assert_eq!(plan.native_storage_for_test(), (0, 0, 0));
+    true
+}
+
 fn constant_local_admission(
     plan: &BaselinePlan,
     view: CodeView<'_>,
@@ -274,6 +294,21 @@ fn ordinary_source_fuses_constant_left_add_without_changing_coercion_order() {
         executed |= exercise_constant_left_add_view(view);
     });
     assert!(executed, "source must execute the constant-left Add entry");
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn ordinary_source_constant_fold_skips_render_and_native_entry() {
+    let program = crate::reduce::reduce_source("function f(){return 2.5+1.5} f()")
+        .expect("ordinary source lowers");
+    let mut executed = false;
+    visit_views(program.code(), &mut |view| {
+        executed |= exercise_folded_source_view(view);
+    });
+    assert!(
+        executed,
+        "source must execute the folded physical selection"
+    );
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]

@@ -111,13 +111,58 @@ fn local_binary_selection_propagates_constant_and_preserves_order() {
 }
 
 #[test]
-fn local_binary_selection_rejects_constant_only_work() {
-    let selected = select_local_binary(
-        &[constant(4, 2.5), constant(7, 1.5)],
-        Instruction::add(1, 4, 7),
-        &BTreeSet::new(),
+fn local_binary_selection_folds_constant_only_work() {
+    let producers = [constant(4, 2.5), constant(7, 1.5)];
+    let selected =
+        select_local_binary(&producers, Instruction::add(1, 4, 7), &BTreeSet::new()).unwrap();
+    assert_eq!(
+        selected.inputs,
+        LocalNumericInputs::Folded {
+            bits: 4.0_f64.to_bits()
+        }
     );
-    assert!(selected.is_none());
+    assert_eq!(selected.span, 3);
+    assert_eq!(selected.discarded, [Some(4), Some(7), None]);
+    assert!(selected.cost.profitable());
+    assert!(
+        select_local_binary(&producers, Instruction::add(1, 4, 7), &BTreeSet::from([4]),).is_none()
+    );
+}
+
+#[test]
+fn constant_folding_preserves_ieee_edge_results() {
+    let cases = [
+        (crate::ops::BinaryOp::Add, -0.0, -0.0, (-0.0_f64).to_bits()),
+        (
+            crate::ops::BinaryOp::Divide,
+            1.0,
+            -0.0,
+            f64::NEG_INFINITY.to_bits(),
+        ),
+    ];
+    for (operator, lhs, rhs, expected) in cases {
+        let operation = Instruction::binary_operator(1, operator, 4, 7);
+        let selected = select_local_binary(
+            &[constant(4, lhs), constant(7, rhs)],
+            operation,
+            &BTreeSet::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            selected.inputs,
+            LocalNumericInputs::Folded { bits: expected }
+        );
+    }
+    let nan = select_local_binary(
+        &[constant(4, f64::INFINITY), constant(7, f64::INFINITY)],
+        Instruction::binary_operator(1, crate::ops::BinaryOp::Subtract, 4, 7),
+        &BTreeSet::new(),
+    )
+    .unwrap();
+    let LocalNumericInputs::Folded { bits } = nan.inputs else {
+        panic!("constant operation must fold")
+    };
+    assert!(f64::from_bits(bits).is_nan());
 }
 
 #[test]
@@ -163,8 +208,8 @@ fn local_binary_selection_rejects_live_alias_and_cycles() {
 #[test]
 fn local_constant_selection_preserves_bits_and_operand_order() {
     let bits = (-0.0_f64).to_bits();
-    let selected = select_local_add_const(
-        Instruction::load_local(4, 9),
+    let selected = select_source_add_const(
+        local(4, 9),
         Instruction::add_const(1, 4, 7),
         bits,
         &BTreeSet::new(),
@@ -180,19 +225,36 @@ fn local_constant_selection_preserves_bits_and_operand_order() {
 
 #[test]
 fn local_constant_selection_rejects_left_or_live_source() {
-    let load = Instruction::load_local(4, 9);
-    assert!(select_local_add_const(
-        load,
+    let producer = local(4, 9);
+    assert!(select_source_add_const(
+        producer,
         Instruction::add_const_left(1, 4, 7),
         1.0_f64.to_bits(),
         &BTreeSet::new(),
     )
     .is_none());
-    assert!(select_local_add_const(
-        load,
+    assert!(select_source_add_const(
+        producer,
         Instruction::add_const(1, 4, 7),
         1.0_f64.to_bits(),
         &BTreeSet::from([4]),
     )
     .is_none());
+}
+
+#[test]
+fn source_add_const_folds_constant_producer_and_preserves_order() {
+    let selected = select_source_add_const(
+        constant(4, -0.0),
+        Instruction::add_const_left(1, 4, 7),
+        0.0_f64.to_bits(),
+        &BTreeSet::new(),
+    )
+    .unwrap();
+    assert_eq!(
+        selected.inputs,
+        LocalNumericInputs::Folded {
+            bits: 0.0_f64.to_bits()
+        }
+    );
 }
