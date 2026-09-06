@@ -2512,6 +2512,7 @@ fn native_property_uses_rendered_address_without_remapping() {
         opcode: crate::ir::Opcode::GetN,
         installed: super::InstalledPropertyEntry::Unpublished,
         native_entry_count: 0,
+        last_native_view: None,
     };
     let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::GetN);
     let object = crate::value::ObjectData::new(vec![("value".into(), super::Value::Number(42.5))]);
@@ -2574,6 +2575,7 @@ fn native_property_rejects_stale_layout_before_loading_slot() {
         opcode: crate::ir::Opcode::GetN,
         installed: super::InstalledPropertyEntry::Unpublished,
         native_entry_count: 0,
+        last_native_view: None,
     };
     let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::GetN);
     let mut object = crate::value::ObjectData::new(vec![
@@ -2824,6 +2826,19 @@ fn ordinary_residual_prototype_get_executes_guarded_property_stencil() {
         super::InstalledPropertyEntry::ReadShared { key, .. }
             if key == crate::stencil_select::prototype_property_region_key()
     )));
+    #[cfg(quench_generated_stencil_artifacts)]
+    {
+        let expected = crate::stencil_select::select_physical(
+            crate::stencil_select::prototype_property_region_key(),
+        )
+        .expect("generated prototype property view");
+        let witness = plan
+            .native_property_at(0)
+            .and_then(|native| native.borrow().last_native_view())
+            .expect("invoked prototype property view");
+        assert!(expected.generated && witness.generated);
+        assert!(witness.matches(&expected));
+    }
     let mut native_count = plan
         .native_property_at(0)
         .map(|native| native.borrow().native_entry_count)

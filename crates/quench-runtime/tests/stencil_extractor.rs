@@ -14,6 +14,13 @@ mod harness {
         false
     }
 
+    mod build_stencil_templates {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/build_stencil_templates.rs"
+        ));
+    }
+
     mod implementation {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),

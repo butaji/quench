@@ -3839,6 +3839,8 @@ pub(crate) struct NativePropertyPlan {
     installed: InstalledPropertyEntry,
     #[cfg(test)]
     native_entry_count: u64,
+    #[cfg(test)]
+    last_native_view: Option<crate::stencil_select::PhysicalStencilView>,
 }
 
 impl NativePropertyPlan {
@@ -3889,12 +3891,19 @@ impl NativePropertyPlan {
             installed: InstalledPropertyEntry::Unpublished,
             #[cfg(test)]
             native_entry_count: 0,
+            #[cfg(test)]
+            last_native_view: None,
         })
     }
 
     #[cfg(test)]
     pub(crate) fn native_entry_count(&self) -> u64 {
         self.native_entry_count
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_native_view(&self) -> Option<crate::stencil_select::PhysicalStencilView> {
+        self.last_native_view
     }
 
     #[inline]
@@ -3959,7 +3968,7 @@ impl NativePropertyPlan {
                     }
                 }
             }
-            let rendered = (|| -> Result<usize, crate::stencil_arena::ArenaError> {
+            let rendered = (|| {
                 let mut slab = shared.borrow_mut();
                 let view = crate::stencil_select::select_physical_for_abi(
                     key,
@@ -3969,15 +3978,17 @@ impl NativePropertyPlan {
                 let address =
                     slab.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
                 slab.make_executable(address)?;
-                Ok(address)
+                Ok::<_, crate::stencil_arena::ArenaError>((address, view))
             })();
-            let address = match rendered {
+            let (address, view) = match rendered {
                 Ok(rendered) => rendered,
                 Err(error) => {
                     self.physical.clear();
                     return Err(error);
                 }
             };
+            #[cfg(not(test))]
+            let _ = view;
             let owned = shared.borrow().owned_property_guard_entry(address)?;
             let status = match invoke_shared_entry!(shared, owned, |entry| entry(&mut context)) {
                 Ok(status) => status,
@@ -3993,6 +4004,7 @@ impl NativePropertyPlan {
             #[cfg(test)]
             {
                 self.native_entry_count = self.native_entry_count.saturating_add(1);
+                self.last_native_view = Some(view);
             }
             return context
                 .result(status)
@@ -4007,6 +4019,7 @@ impl NativePropertyPlan {
                 }
             }
         }
+        let mut rendered_view = None;
         let result = (|| {
             let arena = self
                 .arena
@@ -4020,6 +4033,7 @@ impl NativePropertyPlan {
             let address =
                 arena.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
             arena.make_executable()?;
+            rendered_view = Some(view);
             let status = arena.execute_dispatch_with_abi(
                 address,
                 (&mut context as *mut crate::native_property::NativePropertyReadContext).cast(),
@@ -4029,11 +4043,14 @@ impl NativePropertyPlan {
                 .result(status as u32)
                 .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)
         })();
+        #[cfg(not(test))]
+        let _ = rendered_view;
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if result.is_ok() {
             #[cfg(test)]
             {
                 self.native_entry_count = self.native_entry_count.saturating_add(1);
+                self.last_native_view = rendered_view;
             }
             if let Some(arena) = self.arena.as_ref() {
                 let signature = crate::stencil_arena::physical_cache_signature(

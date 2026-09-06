@@ -2,6 +2,7 @@ use std::{env, fs, path::PathBuf, process::Command};
 
 mod build_stencil_artifacts;
 mod build_stencil_contract;
+mod build_stencil_templates;
 
 use build_stencil_contract::{rust_leaf_recipe, DeclAbi, RegionDeclaration, RustLeafRecipe};
 
