@@ -12,6 +12,13 @@ pub(crate) struct RegionDeclaration {
     pub(crate) external_entries: &'static [u32],
 }
 
+pub(crate) fn region_key_name(name: &str) -> String {
+    match name {
+        "set_named" => "SET_N".to_owned(),
+        other => other.to_ascii_uppercase(),
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DeclAbi {
     ScalarF64Binary,

@@ -40,7 +40,7 @@ fn render_lookup_arms(declarations: &[RegionDeclaration]) -> String {
         .map(|(index, declaration)| {
             format!(
                 "        CANONICAL_{}_KEY => Some({index}),",
-                key_name(declaration.name)
+                region_key_name(declaration.name)
             )
         })
         .collect::<Vec<_>>()
@@ -52,7 +52,7 @@ fn render_accessors(declarations: &[RegionDeclaration]) -> String {
         .iter()
         .map(|declaration| {
             let accessor = accessor_name(declaration.name);
-            let key = key_name(declaration.name);
+            let key = region_key_name(declaration.name);
             format!(
                 "pub const fn {accessor}_region_id() -> crate::stencil_fact::RegionId {{ CANONICAL_{key}_ID }}\npub const fn {accessor}_region_key() -> crate::stencil_fact::RegionKey {{ CANONICAL_{key}_KEY }}"
             )
@@ -72,7 +72,7 @@ fn render_region_rows(declarations: &[RegionDeclaration]) -> String {
 
 fn render_region_row(index: usize, declaration: &RegionDeclaration) -> String {
     let declaration_name = declaration.name;
-    let name = key_name(declaration.name);
+    let name = region_key_name(declaration.name);
     let fallthrough = render_fallthrough(declaration);
     let executable = executable_expr(declaration);
     let abi = abi_expr(declaration);
@@ -98,7 +98,7 @@ fn render_fallthrough(declaration: &RegionDeclaration) -> String {
     let Some(continuation) = recipe.continuation() else {
         return "None".to_owned();
     };
-    let tail = key_name(continuation.tail_name.trim_end_matches("_tail"));
+    let tail = region_key_name(continuation.tail_name.trim_end_matches("_tail"));
     format!(
         "Some(crate::stencil_select::PhysicalFallthrough {{ stencil: &{tail}_TAIL, target: {:?} }})",
         continuation.target
@@ -126,7 +126,7 @@ fn render_declarations(
         .iter()
         .map(|declaration| {
             render(
-                &format!("CANONICAL_{}", key_name(declaration.name)),
+                &format!("CANONICAL_{}", region_key_name(declaration.name)),
                 declaration,
             )
         })
@@ -138,7 +138,7 @@ fn render_operations(declarations: &[RegionDeclaration]) -> String {
     declarations
         .iter()
         .map(|declaration| {
-            let name = key_name(declaration.name);
+            let name = region_key_name(declaration.name);
             format!(
                 "const CANONICAL_{name}_OPS: &[crate::ir::Opcode] = &[{}];",
                 opcode_expr(declaration.operations)
@@ -152,7 +152,7 @@ fn render_keys(declarations: &[RegionDeclaration]) -> String {
     declarations
         .iter()
         .map(|declaration| {
-            let name = key_name(declaration.name);
+            let name = region_key_name(declaration.name);
             let id = stable_region_id(declaration.name);
             format!(
                 "const CANONICAL_{name}_ID: crate::stencil_fact::RegionId = crate::stencil_fact::RegionId({id});\nconst CANONICAL_{name}_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(CANONICAL_{name}_ID, CANONICAL_{name}_OPS);"
@@ -170,7 +170,7 @@ fn render_numeric_keys(declarations: &[RegionDeclaration]) -> String {
             format!(
                 "    (crate::ir::Opcode::{}, CANONICAL_{}_KEY),",
                 declaration.operations[0],
-                key_name(declaration.name)
+                region_key_name(declaration.name)
             )
         })
         .collect::<Vec<_>>()
@@ -278,13 +278,6 @@ fn accessor_name(name: &str) -> String {
     match name {
         "set_named" => "set_n".to_owned(),
         other => other.to_owned(),
-    }
-}
-
-fn key_name(name: &str) -> String {
-    match name {
-        "set_named" => "SET_N".to_owned(),
-        other => other.to_ascii_uppercase(),
     }
 }
 
