@@ -3,7 +3,8 @@
 //! This module only lays out bytes and resolves internal branch fixups. It
 //! neither selects JavaScript semantics nor publishes executable memory.
 
-use crate::stencil_patch::{write_branch26, write_rel32, PatchError};
+use crate::stencil_fact::{HoleKind, PatchValues, Stencil};
+use crate::stencil_patch::{apply_holes, write_branch26, write_rel32, PatchError};
 
 pub(crate) const MAX_LAYOUT_FRAGMENTS: usize = 8;
 pub(crate) const MAX_LAYOUT_FIXUPS: usize = 16;
@@ -169,6 +170,105 @@ impl<'a> StencilLayout<'a> {
         }
         usize::try_from(target).map_err(|_| LayoutError::TargetOutOfBounds)
     }
+}
+
+pub(crate) fn compose_fallthrough<const N: usize>(
+    head: &Stencil,
+    tail: &Stencil,
+    values: &PatchValues<'_, N>,
+    branch_offset: u16,
+    kind: FixupKind,
+    output: &mut Vec<u8>,
+) -> Result<(), LayoutError> {
+    validate_chain(head, tail, branch_offset, kind)?;
+    let head_bytes = patch_non_branch_holes(head, values, kind)?;
+    let tail_bytes = patch_non_branch_holes(tail, values, kind)?;
+    let fragments = [
+        Fragment {
+            label: LabelId(0),
+            bytes: &head_bytes,
+        },
+        Fragment {
+            label: LabelId(1),
+            bytes: &tail_bytes,
+        },
+    ];
+    let fixups = chain_fixups(head, kind);
+    StencilLayout::new(&fragments, &fixups).finalize_into(output)
+}
+
+fn validate_chain(
+    head: &Stencil,
+    tail: &Stencil,
+    branch_offset: u16,
+    kind: FixupKind,
+) -> Result<(), LayoutError> {
+    if !head.validate() || !tail.validate() || has_relative_hole(tail) {
+        return Err(LayoutError::Patch(PatchError::UnsupportedOffset));
+    }
+    let expected = hole_kind(kind);
+    if !head
+        .holes
+        .iter()
+        .any(|hole| hole.offset == branch_offset && hole.kind == expected)
+    {
+        return Err(LayoutError::Patch(PatchError::UnsupportedOffset));
+    }
+    Ok(())
+}
+
+fn patch_non_branch_holes<const N: usize>(
+    stencil: &Stencil,
+    values: &PatchValues<'_, N>,
+    kind: FixupKind,
+) -> Result<Vec<u8>, LayoutError> {
+    let expected = hole_kind(kind);
+    if stencil
+        .holes
+        .iter()
+        .any(|hole| is_relative(hole.kind) && hole.kind != expected)
+    {
+        return Err(LayoutError::Patch(PatchError::UnsupportedOffset));
+    }
+    let holes = stencil
+        .holes
+        .iter()
+        .copied()
+        .filter(|hole| !is_relative(hole.kind))
+        .collect::<Vec<_>>();
+    let mut bytes = stencil.bytes.to_vec();
+    apply_holes(&mut bytes, &holes, values).map_err(LayoutError::Patch)?;
+    Ok(bytes)
+}
+
+fn chain_fixups(head: &Stencil, kind: FixupKind) -> Vec<Fixup> {
+    let expected = hole_kind(kind);
+    head.holes
+        .iter()
+        .filter(|hole| hole.kind == expected)
+        .map(|hole| Fixup {
+            fragment: 0,
+            offset: hole.offset,
+            target: LabelId(1),
+            addend: 0,
+            kind,
+        })
+        .collect()
+}
+
+const fn hole_kind(kind: FixupKind) -> HoleKind {
+    match kind {
+        FixupKind::X86Rel32 => HoleKind::Rel32,
+        FixupKind::Aarch64Branch26 => HoleKind::Branch26,
+    }
+}
+
+const fn is_relative(kind: HoleKind) -> bool {
+    matches!(kind, HoleKind::Rel32 | HoleKind::Branch26)
+}
+
+fn has_relative_hole(stencil: &Stencil) -> bool {
+    stencil.holes.iter().any(|hole| is_relative(hole.kind))
 }
 
 fn validate_disjoint(ranges: &[std::ops::Range<usize>]) -> Result<(), LayoutError> {
