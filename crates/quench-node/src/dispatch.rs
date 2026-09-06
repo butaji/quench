@@ -1517,6 +1517,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_NET_BLOCK_LIST_IS => crate::modules::net::block_list_is,
         CAP_NET_BLOCK_LIST_INSPECT => crate::modules::net::block_list_inspect,
         CAP_NET_SOCKET_ADDRESS => crate::modules::net::socket_address,
+        CAP_NET_SOCKET_ADDRESS_CONSTRUCT => crate::modules::net::socket_address_call,
         CAP_NET_SOCKET_SET_NO_DELAY => crate::modules::net::socket_set_no_delay,
         CAP_NET_SOCKET_SET_TOS => crate::modules::net::socket_set_type_of_service,
         CAP_NET_SOCKET_GET_TOS => crate::modules::net::socket_get_type_of_service,
