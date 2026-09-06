@@ -2159,6 +2159,60 @@ pub fn export_key(
     Ok(settled(Ok(result)))
 }
 
+/// Derive the public half of an asymmetric CryptoKey without crossing a JS
+/// serialization boundary.  Public-key derivation is a metadata operation at
+/// this layer: the key material remains owned by the Rust key slot and the
+/// returned value gets an independent algorithm/usages view, as required by
+/// the WebCrypto object model.
+pub fn get_public_key(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(result) = invalid_subtle_this(receiver) {
+        return Ok(result);
+    }
+    let key_value = args.first().unwrap_or(&Value::Undefined);
+    if let Some(error) = invalid_key_this(key_value) {
+        return Ok(settled(Err(error)));
+    }
+    let key_type = execute::to_js_string(&key_slot(key_value, "type")).unwrap_or_default();
+    if key_type != "private" {
+        let error = if key_type == "public" {
+            invalid_access_error("key must be a private key")
+        } else {
+            not_supported("key must be a private key")
+        };
+        return Ok(settled(Err(error)));
+    }
+    let algorithm = key_slot(key_value, "algorithm");
+    let name = algorithm_name(&algorithm).to_ascii_uppercase();
+    let requested = args
+        .get(1)
+        .cloned()
+        .unwrap_or_else(|| host_api::array(Vec::new()));
+    if !all_usage_names(&requested).is_empty() {
+        let (private, public) = match asymmetric_usages(&name, &requested) {
+            Ok(usages) => usages,
+            Err(error) => return Ok(settled(Err(error))),
+        };
+        // `asymmetric_usages` partitions the requested values.  Any value
+        // that landed on the private side is not a legal public-key usage.
+        if !usage_names(&private).is_empty() || usage_names(&public).is_empty() {
+            return Ok(settled(Err(usage_error("Unsupported key usage"))));
+        }
+    }
+    let data = bytes(&execute::get_property(key_value, KEY_DATA_PROP));
+    let public = key(
+        &key_prototype(),
+        crate::modules::clone::deep_clone(algorithm),
+        true,
+        normalize_usages(&requested),
+        data,
+    );
+    Ok(settled(Ok(key_metadata(public, "public", "spki"))))
+}
+
 pub fn to_crypto_key(
     _state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -4117,7 +4171,7 @@ pub fn build() -> (Value, Value) {
                 ),
                 (
                     "getPublicKey".into(),
-                    crate::host::capability(crate::registry::SPEC_WEBCRYPTO_DIGEST),
+                    crate::host::capability(crate::registry::SPEC_WEBCRYPTO_GET_PUBLIC_KEY),
                 ),
                 (
                     "unwrapKey".into(),

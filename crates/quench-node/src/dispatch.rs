@@ -1243,6 +1243,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_WEBCRYPTO_SIGN => crate::modules::webcrypto::sign,
         CAP_WEBCRYPTO_VERIFY => crate::modules::webcrypto::verify,
         CAP_WEBCRYPTO_EXPORT_KEY => crate::modules::webcrypto::export_key,
+        CAP_WEBCRYPTO_GET_PUBLIC_KEY => crate::modules::webcrypto::get_public_key,
         CAP_CRYPTO_CREATE_SECRET_KEY => crate::modules::crypto::create_secret_key,
         CAP_CRYPTO_CREATE_HASH => crate::modules::crypto::create_hash,
         CAP_CRYPTO_HASH => crate::modules::crypto::hash_one_shot,
