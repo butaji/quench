@@ -23,6 +23,22 @@ pub(crate) struct FragmentPlacement {
     pub(crate) point: RegionPoint,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct PlannedFragment<'stencil, 'values, const N: usize> {
+    pub(crate) point: RegionPoint,
+    pub(crate) stencil: &'stencil crate::stencil_fact::Stencil,
+    pub(crate) values: PatchValues<'values, N>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PlannedTransfer {
+    pub(crate) source: RegionPoint,
+    pub(crate) offset: u16,
+    pub(crate) target: RegionPoint,
+    pub(crate) addend: i32,
+    pub(crate) kind: FixupKind,
+}
+
 pub(crate) fn validate_selected_control(
     view: PhysicalStencilView,
     control: &crate::stencil_cfg::RegionControlPlan,
@@ -31,22 +47,9 @@ pub(crate) fn validate_selected_control(
         return Err(LayoutError::RelocationContract);
     }
     view.fallthrough.ok_or(LayoutError::MissingSuccessor)?;
-    let placements = [
-        FragmentPlacement {
-            label: ENTRY_LABEL,
-            point: RegionPoint::Operation(0),
-        },
-        FragmentPlacement {
-            label: FALLTHROUGH_LABEL,
-            point: RegionPoint::Operation(1),
-        },
-    ];
-    validate_controlled_fixups(
-        control,
-        view.record.operations,
-        &placements,
-        &selected_fixups(view)?,
-    )
+    let placements = point_placements(selected_points())?;
+    let fixups = planned_fixups(&selected_transfers(view)?, &placements)?;
+    validate_controlled_fixups(control, view.record.operations, &placements, &fixups)
 }
 
 pub(crate) fn validate_controlled_fixups(
@@ -198,34 +201,22 @@ pub(crate) fn compose_selected_controlled_region<const N: usize>(
 ) -> Result<(), LayoutError> {
     let tail = view.fallthrough.ok_or(LayoutError::MissingSuccessor)?;
     let fragments = [
-        crate::stencil_layout::StencilFragment {
-            label: ENTRY_LABEL,
+        PlannedFragment {
+            point: RegionPoint::Operation(0),
             stencil: view.stencil,
             values: *values,
         },
-        crate::stencil_layout::StencilFragment {
-            label: FALLTHROUGH_LABEL,
+        PlannedFragment {
+            point: RegionPoint::Operation(1),
             stencil: tail.stencil,
             values: *values,
         },
     ];
-    let fixups = selected_fixups(view)?;
-    let placements = [
-        FragmentPlacement {
-            label: ENTRY_LABEL,
-            point: RegionPoint::Operation(0),
-        },
-        FragmentPlacement {
-            label: FALLTHROUGH_LABEL,
-            point: RegionPoint::Operation(1),
-        },
-    ];
-    compose_controlled_region(
+    compose_planned_region(
         control,
         view.record.operations,
         &fragments,
-        &placements,
-        &fixups,
+        &selected_transfers(view)?,
         output,
     )
 }
@@ -243,6 +234,119 @@ pub(crate) fn compose_controlled_region<const N: usize>(
     }
     validate_controlled_fixups(control, operations, placements, fixups)?;
     compose_region(fragments, fixups, output)
+}
+
+pub(crate) fn compose_planned_region<const N: usize>(
+    control: &crate::stencil_cfg::RegionControlPlan,
+    operations: &[crate::ir::Opcode],
+    fragments: &[PlannedFragment<'_, '_, N>],
+    transfers: &[PlannedTransfer],
+    output: &mut Vec<u8>,
+) -> Result<(), LayoutError> {
+    let placements = planned_placements(fragments)?;
+    let physical = planned_fragments(fragments, &placements);
+    let fixups = planned_fixups(transfers, &placements)?;
+    compose_controlled_region(control, operations, &physical, &placements, &fixups, output)
+}
+
+fn planned_placements<const N: usize>(
+    fragments: &[PlannedFragment<'_, '_, N>],
+) -> Result<Vec<FragmentPlacement>, LayoutError> {
+    point_placements(fragments.iter().map(|fragment| fragment.point))
+}
+
+fn point_placements(
+    points: impl IntoIterator<Item = RegionPoint>,
+) -> Result<Vec<FragmentPlacement>, LayoutError> {
+    points
+        .into_iter()
+        .enumerate()
+        .map(|(index, point)| {
+            Ok(FragmentPlacement {
+                label: LabelId(u8::try_from(index).map_err(|_| LayoutError::RelocationContract)?),
+                point,
+            })
+        })
+        .collect()
+}
+
+fn planned_fragments<'stencil, 'values, const N: usize>(
+    fragments: &[PlannedFragment<'stencil, 'values, N>],
+    placements: &[FragmentPlacement],
+) -> Vec<crate::stencil_layout::StencilFragment<'stencil, 'values, N>> {
+    fragments
+        .iter()
+        .zip(placements)
+        .map(
+            |(fragment, placement)| crate::stencil_layout::StencilFragment {
+                label: placement.label,
+                stencil: fragment.stencil,
+                values: fragment.values,
+            },
+        )
+        .collect()
+}
+
+fn planned_fixups(
+    transfers: &[PlannedTransfer],
+    placements: &[FragmentPlacement],
+) -> Result<Vec<Fixup>, LayoutError> {
+    transfers
+        .iter()
+        .map(|transfer| planned_fixup(*transfer, placements))
+        .collect()
+}
+
+fn planned_fixup(
+    transfer: PlannedTransfer,
+    placements: &[FragmentPlacement],
+) -> Result<Fixup, LayoutError> {
+    let source = placements
+        .iter()
+        .position(|placement| placement.point == transfer.source)
+        .ok_or(LayoutError::RelocationContract)?;
+    let target = placements
+        .iter()
+        .find(|placement| placement.point == transfer.target)
+        .ok_or(LayoutError::RelocationContract)?;
+    Ok(Fixup {
+        fragment: u8::try_from(source).map_err(|_| LayoutError::RelocationContract)?,
+        offset: transfer.offset,
+        target: target.label,
+        addend: transfer.addend,
+        kind: transfer.kind,
+    })
+}
+
+fn selected_points() -> [RegionPoint; 2] {
+    [RegionPoint::Operation(0), RegionPoint::Operation(1)]
+}
+
+fn selected_transfers(view: PhysicalStencilView) -> Result<Vec<PlannedTransfer>, LayoutError> {
+    selected_fixups(view)?
+        .into_iter()
+        .map(|fixup| selected_transfer(fixup))
+        .collect()
+}
+
+fn selected_transfer(fixup: Fixup) -> Result<PlannedTransfer, LayoutError> {
+    let points = selected_points();
+    let source = points
+        .get(usize::from(fixup.fragment))
+        .copied()
+        .ok_or(LayoutError::RelocationContract)?;
+    let target = match fixup.target {
+        ENTRY_LABEL => points[0],
+        FALLTHROUGH_LABEL => points[1],
+        _ => return Err(LayoutError::RelocationContract),
+    };
+    Ok(PlannedTransfer {
+        source,
+        offset: fixup.offset,
+        target,
+        addend: fixup.addend,
+        kind: fixup.kind,
+    })
 }
 
 fn selected_fixups(view: PhysicalStencilView) -> Result<Vec<Fixup>, LayoutError> {
