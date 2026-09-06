@@ -1766,6 +1766,159 @@ fn validate_ec_jwk(algorithm: &Value, jwk: Option<&Value>, key_type: &str) -> Re
     Ok(())
 }
 
+/// Validate the compact OKP key encodings used by Ed25519/Ed448 and
+/// X25519/X448.  These algorithms share the RFC 8410 AlgorithmIdentifier
+/// shape, but the key length and OID are part of the key's identity; accepting
+/// an arbitrary DER blob here makes an RSA key look like an OKP key and defers
+/// the error until a later operation.
+fn okp_facts(name: &str) -> Option<(&'static [u8], usize)> {
+    match name {
+        "ED25519" => Some((&[0x2b, 0x65, 0x70], 32)),
+        "ED448" => Some((&[0x2b, 0x65, 0x71], 57)),
+        "X25519" => Some((&[0x2b, 0x65, 0x6e], 32)),
+        "X448" => Some((&[0x2b, 0x65, 0x6f], 56)),
+        _ => None,
+    }
+}
+
+fn okp_der_key(data: &[u8], format: &str, name: &str) -> bool {
+    let Some((oid, size)) = okp_facts(name) else {
+        return false;
+    };
+    let mut outer = DerReader::new(data);
+    let Some(sequence) = outer.take(0x30) else {
+        return false;
+    };
+    if outer.offset != data.len() {
+        return false;
+    }
+    let mut body = DerReader::new(sequence);
+    match format {
+        "spki" => {
+            let Some(algorithm) = body.take(0x30) else {
+                return false;
+            };
+            let mut algorithm = DerReader::new(algorithm);
+            let Some(actual_oid) = algorithm.take(0x06) else {
+                return false;
+            };
+            if actual_oid != oid || algorithm.offset != algorithm.bytes.len() {
+                return false;
+            }
+            let Some(bits) = body.take(0x03) else {
+                return false;
+            };
+            bits.first() == Some(&0) && bits.len() == size + 1 && body.offset == body.bytes.len()
+        }
+        "pkcs8" => {
+            let Some(version) = body.take(0x02) else {
+                return false;
+            };
+            // PKCS#8 v1 is the only version accepted by Node for these keys.
+            if version != [0] {
+                return false;
+            }
+            let Some(algorithm) = body.take(0x30) else {
+                return false;
+            };
+            let mut algorithm = DerReader::new(algorithm);
+            if algorithm.take(0x06) != Some(oid) || algorithm.offset != algorithm.bytes.len() {
+                return false;
+            }
+            let Some(private) = body.take(0x04) else {
+                return false;
+            };
+            let mut inner = DerReader::new(private);
+            let Some(seed) = inner.take(0x04) else {
+                return false;
+            };
+            seed.len() == size && inner.offset == inner.bytes.len()
+        }
+        _ => false,
+    }
+}
+
+fn validate_okp_jwk(
+    algorithm: &Value,
+    jwk: Option<&Value>,
+    key_type: &str,
+) -> Result<Vec<u8>, VmError> {
+    let Some(jwk) = jwk else {
+        return Err(named_import_error("DataError", "Invalid keyData"));
+    };
+    let name = algorithm_name(algorithm).to_ascii_uppercase();
+    let Some((_, size)) = okp_facts(&name) else {
+        return Err(named_import_error("DataError", "Invalid key type"));
+    };
+    let kty = execute::to_js_string(&execute::get_property(jwk, "kty")).unwrap_or_default();
+    let crv = match execute::get_property(jwk, "crv") {
+        Value::String(value) if !value.is_empty() => value,
+        _ => return Err(named_import_error("DataError", "Invalid keyData")),
+    };
+    if kty != "OKP" {
+        return Err(named_import_error("DataError", "Invalid key type"));
+    }
+    if !crv.eq_ignore_ascii_case(&name) {
+        return Err(named_import_error(
+            "DataError",
+            "JWK \"crv\" Parameter and algorithm name mismatch",
+        ));
+    }
+    let decode = |field: &str| {
+        let value = execute::to_js_string(&execute::get_property(jwk, field)).ok()?;
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(value).ok()?;
+        (bytes.len() == size).then_some(bytes)
+    };
+    let public = decode("x")
+        .ok_or_else(|| named_import_error("DataError", "Invalid keyData"))?;
+    if key_type == "private" {
+        let private = decode("d")
+            .ok_or_else(|| named_import_error("DataError", "Invalid keyData"))?;
+        if let Value::String(use_value) = execute::get_property(jwk, "use") {
+            let expected = if name.starts_with("ED") { "sig" } else { "enc" };
+            if use_value != expected {
+                return Err(named_import_error(
+                    "DataError",
+                    "Invalid JWK \"use\" Parameter",
+                ));
+            }
+        }
+        if name.starts_with("ED") {
+            let expected_alg = if name == "ED25519" { "Ed25519" } else { "Ed448" };
+            if let Value::String(alg) = execute::get_property(jwk, "alg") {
+                if alg != expected_alg && alg != "EdDSA" {
+                    return Err(named_import_error(
+                        "DataError",
+                        "JWK \"alg\" does not match the requested algorithm",
+                    ));
+                }
+            }
+        }
+        return Ok(private);
+    }
+    if let Value::String(use_value) = execute::get_property(jwk, "use") {
+        let expected = if name.starts_with("ED") { "sig" } else { "enc" };
+        if use_value != expected {
+            return Err(named_import_error(
+                "DataError",
+                "Invalid JWK \"use\" Parameter",
+            ));
+        }
+    }
+    if name.starts_with("ED") {
+        let expected_alg = if name == "ED25519" { "Ed25519" } else { "Ed448" };
+        if let Value::String(alg) = execute::get_property(jwk, "alg") {
+            if alg != expected_alg && alg != "EdDSA" {
+                return Err(named_import_error(
+                    "DataError",
+                    "JWK \"alg\" does not match the requested algorithm",
+                ));
+            }
+        }
+    }
+    Ok(public)
+}
+
 fn symmetric_allowed_usages(name: &str) -> Option<&'static [&'static str]> {
     match name {
         "HMAC" | "KMAC128" | "KMAC256" => Some(&["sign", "verify"]),
@@ -3546,6 +3699,42 @@ pub fn import_key(
     let prototype = key_prototype();
     let jwk = (format == "jwk").then(|| args.get(1).cloned()).flatten();
     let key_type = imported_key_type(&format, &algorithm, jwk.as_ref());
+    if matches!(
+        algorithm_name_upper.as_str(),
+        "ED25519" | "ED448" | "X25519" | "X448"
+    ) {
+        let okp_data = if format == "jwk" {
+            match validate_okp_jwk(&algorithm, jwk.as_ref(), key_type) {
+                Ok(data) => data,
+                Err(error) => return Ok(settled(Err(error))),
+            }
+        } else if matches!(format.as_str(), "spki" | "pkcs8") {
+            if !okp_der_key(data.as_deref().unwrap_or_default(), &format, &algorithm_name_upper) {
+                return Ok(settled(Err(named_import_error(
+                    "DataError",
+                    "Invalid key type",
+                ))));
+            }
+            data.clone().unwrap_or_default()
+        } else if format == "raw" {
+            let Some(raw) = data.as_deref() else {
+                return Ok(settled(Err(named_import_error("DataError", "Invalid keyData"))));
+            };
+            let Some((_, size)) = okp_facts(&algorithm_name_upper) else {
+                unreachable!("algorithm was checked above");
+            };
+            if raw.len() != size {
+                return Ok(settled(Err(named_import_error(
+                    "DataError",
+                    "Invalid keyData",
+                ))));
+            }
+            raw.to_vec()
+        } else {
+            Vec::new()
+        };
+        data = Some(okp_data);
+    }
     if matches!(algorithm_name_upper.as_str(), "ECDSA" | "ECDH") && format == "jwk" {
         if let Err(error) = validate_ec_jwk(&algorithm, jwk.as_ref(), key_type) {
             return Ok(settled(Err(error)));
@@ -3785,6 +3974,35 @@ pub fn export_key(
                     "ext",
                     Value::Boolean(true),
                 ))));
+            }
+            if matches!(existing_jwk, Value::Object(_) | Value::ObjectAlias(_))
+                && execute::to_js_string(&execute::get_property(&existing_jwk, "kty"))
+                    .is_ok_and(|kty| kty == "OKP")
+            {
+                // RFC 8410 keys retain their OKP fields through import.  Do
+                // not turn them into an octet key merely because the generic
+                // symmetric fallback has no encoded `k` member.  Export is a
+                // detached JWK view, so callers cannot mutate the key slot by
+                // changing key_ops or ext on the returned object.
+                let jwk = crate::modules::clone::deep_clone(existing_jwk);
+                let jwk = execute::set_property(
+                    jwk,
+                    "key_ops",
+                    crate::modules::clone::deep_clone(execute::get_property(
+                        &metadata, "usages",
+                    )),
+                );
+                let jwk = execute::set_property(jwk, "ext", Value::Boolean(true));
+                let crv = execute::to_js_string(&execute::get_property(&jwk, "crv"))
+                    .unwrap_or_default();
+                let alg = if crv.eq_ignore_ascii_case("Ed25519")
+                    || crv.eq_ignore_ascii_case("Ed448")
+                {
+                    Value::String(crv)
+                } else {
+                    Value::Undefined
+                };
+                return Ok(settled(Ok(execute::set_property(jwk, "alg", alg))));
             }
             let alg = match name.to_ascii_uppercase().as_str() {
                 "KMAC128" => Value::String("K128".into()),
