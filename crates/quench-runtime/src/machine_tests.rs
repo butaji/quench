@@ -2344,6 +2344,10 @@ fn native_add_chain_executes_two_ops_with_one_entry() {
         arena: None,
         shared_arena: None,
         physical: super::PhysicalState::new(),
+        bindings: crate::stencil_plan::F64x3Bindings {
+            inputs: [0, 1, 2],
+            output: 3,
+        },
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
         installed: super::InstalledF64x3Entry::Unpublished,
         native_entry_count: 0,
@@ -2395,7 +2399,11 @@ fn native_add_chain_shared_entry_reuses_owner_after_eviction() {
         crate::stencil_arena::SharedStencilSlab::new(4096).expect("slab"),
     ));
     let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
-    let mut plan = super::NativeAddChainPlan::new_with_arena(policy, shared.clone())
+    let bindings = crate::stencil_plan::F64x3Bindings {
+        inputs: [0, 1, 2],
+        output: 3,
+    };
+    let mut plan = super::NativeAddChainPlan::new_with_arena(policy, shared.clone(), bindings)
         .expect("shared add chain");
     assert_eq!(plan.execute(1.0, 2.0, 3.0), Ok(6.0));
     let used = shared.borrow().used();
