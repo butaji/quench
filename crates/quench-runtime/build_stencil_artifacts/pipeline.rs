@@ -30,45 +30,49 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
         // it does not need the canonical byte-template holes (AddConst is the
         // first example). Unsupported hole-bearing recipes remain skipped
         // until a declared relocation plan exists.
-        let extracted = if declaration.name == "fallthrough" {
-            if !target.starts_with("aarch64") {
-                continue;
-            }
-            compile_fragment_pair(
-                &root.path,
-                &target,
-                &compiler,
-                &flags,
-                &rustflags,
-                declaration,
-            )
-        } else if let Some(recipe) = super::rust_assembly_recipe(declaration) {
-            if !target.starts_with("aarch64") {
-                continue;
-            }
-            let source = super::build_stencil_templates::assembly_source(recipe);
-            let expected_holes = expected_holes(declaration, &target);
-            let parsed = compile_assembly_fragment(
-                &root.path,
-                &target,
-                &compiler,
-                &flags,
-                &rustflags,
-                declaration.name,
-                &source,
-                &[],
-                &expected_holes,
-            );
-            ExtractedObject {
-                bytes: parsed.bytes,
-                fallthrough: None,
-                relocations: parsed.relocations,
-                holes: parsed.holes,
+        let assembly = target
+            .starts_with("aarch64")
+            .then(|| super::rust_assembly_recipe(declaration))
+            .flatten();
+        let extracted = if let Some(recipe) = assembly {
+            if recipe.composition() != RecipeComposition::Whole {
+                compile_fragment_pair(
+                    &root.path,
+                    &target,
+                    &compiler,
+                    &flags,
+                    &rustflags,
+                    declaration,
+                    recipe,
+                )
+            } else {
+                let source = super::build_stencil_templates::assembly_source(recipe);
+                let expected_holes = expected_holes(declaration, &target);
+                let parsed = compile_assembly_fragment(
+                    &root.path,
+                    &target,
+                    &compiler,
+                    &flags,
+                    &rustflags,
+                    declaration.name,
+                    &source,
+                    &[],
+                    &expected_holes,
+                );
+                ExtractedObject {
+                    bytes: parsed.bytes,
+                    fallthrough: None,
+                    relocations: parsed.relocations,
+                    holes: parsed.holes,
+                }
             }
         } else {
             let Some(recipe) = super::rust_leaf_recipe(declaration) else {
                 continue;
             };
+            if recipe.composition() != RecipeComposition::Whole {
+                continue;
+            }
             ExtractedObject {
                 bytes: compile_one(
                     &root.path,

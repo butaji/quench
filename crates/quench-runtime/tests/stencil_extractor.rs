@@ -3,7 +3,8 @@ mod build_stencil_contract;
 
 mod harness {
     use super::build_stencil_contract::{
-        rust_assembly_recipe, rust_leaf_recipe, DeclAbi, RegionDeclaration, RustLeafRecipe,
+        rust_assembly_recipe, rust_leaf_recipe, DeclAbi, RecipeComposition, RegionDeclaration,
+        RustAssemblyRecipe, RustLeafRecipe,
     };
 
     fn abi_expr(_: &RegionDeclaration) -> String {
@@ -76,16 +77,15 @@ fn rust_leaf_recipe_requires_name_abi_and_residual_shape() {
 
 #[test]
 fn rust_assembly_recipe_requires_name_abi_and_residual_shape() {
-    use build_stencil_contract::{rust_assembly_recipe, DeclAbi, RustAssemblyRecipe};
+    use build_stencil_contract::{
+        recipe_composition, rust_assembly_recipe, DeclAbi, RecipeComposition, RustAssemblyRecipe,
+    };
 
     let exact = declaration("move", DeclAbi::TaggedWord, &["Move"]);
     assert_eq!(rust_assembly_recipe(&exact), Some(RustAssemblyRecipe::Move));
-    assert!(rust_assembly_recipe(&declaration(
-        "move",
-        DeclAbi::ScalarF64Binary,
-        &["Move"]
-    ))
-    .is_none());
+    assert!(
+        rust_assembly_recipe(&declaration("move", DeclAbi::ScalarF64Binary, &["Move"])).is_none()
+    );
     assert!(
         rust_assembly_recipe(&declaration("move", DeclAbi::TaggedWord, &["LoadLocal"])).is_none()
     );
@@ -104,4 +104,14 @@ fn rust_assembly_recipe_requires_name_abi_and_residual_shape() {
         rust_assembly_recipe(&missing_hole),
         Some(RustAssemblyRecipe::LoadConst)
     );
+
+    let mut add_chain = declaration("add_chain", DeclAbi::ScalarF64x3, &["Add", "Add"]);
+    add_chain.aarch64_holes = &[(4, 4, "Branch26")];
+    assert_eq!(
+        rust_assembly_recipe(&add_chain),
+        Some(RustAssemblyRecipe::AddChain)
+    );
+    assert_eq!(recipe_composition(&add_chain), RecipeComposition::AddChain);
+    add_chain.aarch64_holes = &[(8, 4, "Branch26")];
+    assert!(rust_assembly_recipe(&add_chain).is_none());
 }

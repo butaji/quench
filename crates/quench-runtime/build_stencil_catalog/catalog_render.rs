@@ -92,11 +92,14 @@ fn render_region_rows(declarations: &[RegionDeclaration]) -> String {
 fn render_region_row(index: usize, declaration: &RegionDeclaration) -> String {
     let declaration_name = declaration.name;
     let name = key_name(declaration.name);
-    let fallthrough = match declaration.name {
-        "fallthrough" => {
+    let fallthrough = match recipe_composition(declaration) {
+        RecipeComposition::FallthroughReturn => {
             "Some((&FALLTHROUGH_TAIL, if cfg!(target_arch = \"aarch64\") { 4 } else { 5 }))"
         }
-        _ => "None",
+        RecipeComposition::AddChain => {
+            "Some((&ADD_CHAIN_TAIL, if cfg!(target_arch = \"aarch64\") { 4 } else { 5 }))"
+        }
+        RecipeComposition::Whole => "None",
     };
     let executable = executable_expr(declaration);
     let abi = abi_expr(declaration);
@@ -204,6 +207,8 @@ const EXECUTABLE: bool = cfg!(any(target_arch = "x86_64", target_arch = "aarch64
 const DISPATCH_EXECUTABLE: bool = cfg!(target_arch = "x86_64");
 "#,
     );
+    generated.push_str(&composition_tail_declarations());
+    generated.push('\n');
     generated.push_str(&generated_abi_catalog(declarations));
     generated.push('\n');
     generated.push_str(&parts.bytes);
@@ -474,17 +479,26 @@ fn hole_decl(name: &str, declaration: &RegionDeclaration) -> String {
 }
 
 fn byte_decl(name: &str, declaration: &RegionDeclaration) -> String {
-    fn bytes_expr(bytes: &[u8]) -> String {
-        bytes
-            .iter()
-            .map(|byte| format!("0x{byte:02X}"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
     format!(
         "#[cfg(target_arch = \"x86_64\")]\nconst {name}_BYTES: &[u8] = &[{}];\n#[cfg(target_arch = \"aarch64\")]\nconst {name}_BYTES: &[u8] = &[{}];\n#[cfg(not(any(target_arch = \"x86_64\", target_arch = \"aarch64\")))]\nconst {name}_BYTES: &[u8] = &[{}];",
         bytes_expr(declaration.x86_bytes),
         bytes_expr(declaration.aarch64_bytes),
         bytes_expr(declaration.portable_bytes),
     )
+}
+
+fn composition_tail_declarations() -> String {
+    format!(
+        "#[cfg(target_arch = \"x86_64\")]\nconst ADD_CHAIN_TAIL_BYTES: &[u8] = &[{}];\n#[cfg(target_arch = \"aarch64\")]\nconst ADD_CHAIN_TAIL_BYTES: &[u8] = &[{}];\n#[cfg(not(any(target_arch = \"x86_64\", target_arch = \"aarch64\")))]\nconst ADD_CHAIN_TAIL_BYTES: &[u8] = &[];\nconst ADD_CHAIN_TAIL: crate::stencil_fact::Stencil = crate::stencil_fact::Stencil {{ bytes: ADD_CHAIN_TAIL_BYTES, holes: &[] }};",
+        bytes_expr(&X86_ADD_CHAIN_TAIL_BYTES),
+        bytes_expr(&AARCH64_ADD_CHAIN_TAIL_BYTES),
+    )
+}
+
+fn bytes_expr(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("0x{byte:02X}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }

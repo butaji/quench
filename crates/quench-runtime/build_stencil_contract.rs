@@ -32,10 +32,27 @@ pub(crate) enum DeclAbi {
     PropertyWriteGuard,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RecipeComposition {
+    Whole,
+    FallthroughReturn,
+    AddChain,
+}
+
+macro_rules! recipe_composition {
+    () => {
+        RecipeComposition::Whole
+    };
+    ($composition:ident) => {
+        RecipeComposition::$composition
+    };
+}
+
 macro_rules! rust_leaf_catalog {
     ($( $variant:ident {
         name: $name:literal, abi: $abi:ident, ops: [$($op:literal),+],
         params: $params:literal, result: $result:literal, body: $body:literal
+        $(, composition: $composition:ident)?
     } ),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
         pub(crate) enum RustLeafRecipe { $( $variant ),+ }
@@ -51,6 +68,12 @@ macro_rules! rust_leaf_catalog {
 
             pub(crate) const fn result(self) -> &'static str {
                 match self { $( Self::$variant => $result ),+ }
+            }
+
+            pub(crate) const fn composition(self) -> RecipeComposition {
+                match self {
+                    $( Self::$variant => recipe_composition!($($composition)?) ),+
+                }
             }
 
             const fn name(self) -> &'static str {
@@ -82,7 +105,6 @@ rust_leaf_catalog! {
     Mul { name: "multiply", abi: ScalarF64Binary, ops: ["Mul", "Return"], params: "a: f64, b: f64", result: "f64", body: "a * b" },
     Div { name: "divide", abi: ScalarF64Binary, ops: ["Div", "Return"], params: "a: f64, b: f64", result: "f64", body: "a / b" },
     AddConst { name: "add_const", abi: ScalarF64Binary, ops: ["AddConst", "Return"], params: "a: f64, b: f64", result: "f64", body: "a + b" },
-    AddChain { name: "add_chain", abi: ScalarF64x3, ops: ["Add", "Add"], params: "a: f64, b: f64, c: f64", result: "f64", body: "(a + b) + c" },
     Negate { name: "negate", abi: ScalarF64Unary, ops: ["Unary", "Return"], params: "a: f64", result: "f64", body: "-a" },
     Increment { name: "increment", abi: ScalarF64Binary, ops: ["IncI", "Return"], params: "a: f64, _unused: f64", result: "f64", body: "a + 1.0" },
     Equal { name: "compare_equal", abi: ScalarBool, ops: ["Binary", "Return"], params: "a: f64, b: f64", result: "bool", body: "a == b" },
@@ -114,6 +136,7 @@ macro_rules! rust_assembly_catalog {
     ($( $variant:ident {
         name: $name:literal, abi: $abi:ident, ops: [$($op:literal),+],
         holes: [$($hole:expr),*]
+        $(, composition: $composition:ident)?
     } ),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
         pub(crate) enum RustAssemblyRecipe { $( $variant ),+ }
@@ -121,6 +144,12 @@ macro_rules! rust_assembly_catalog {
         impl RustAssemblyRecipe {
             pub(crate) const fn name(self) -> &'static str {
                 match self { $( Self::$variant => $name ),+ }
+            }
+
+            pub(crate) const fn composition(self) -> RecipeComposition {
+                match self {
+                    $( Self::$variant => recipe_composition!($($composition)?) ),+
+                }
             }
 
             fn matches(self, declaration: &RegionDeclaration) -> bool {
@@ -139,6 +168,16 @@ macro_rules! rust_assembly_catalog {
 }
 
 rust_assembly_catalog! {
+    Fallthrough {
+        name: "fallthrough", abi: ScalarF64Binary,
+        ops: ["Add", "Return"], holes: [(4, 4, "Branch26"), (8, 4, "Branch26")],
+        composition: FallthroughReturn
+    },
+    AddChain {
+        name: "add_chain", abi: ScalarF64x3,
+        ops: ["Add", "Add"], holes: [(4, 4, "Branch26")],
+        composition: AddChain
+    },
     CompareEqualBranch {
         name: "compare_equal_branch", abi: CompareBranch,
         ops: ["Binary", "JumpIfFalse"], holes: []
@@ -193,4 +232,11 @@ pub(crate) fn rust_assembly_recipe(declaration: &RegionDeclaration) -> Option<Ru
         .iter()
         .copied()
         .find(|recipe| recipe.matches(declaration))
+}
+
+pub(crate) fn recipe_composition(declaration: &RegionDeclaration) -> RecipeComposition {
+    rust_assembly_recipe(declaration)
+        .map(RustAssemblyRecipe::composition)
+        .or_else(|| rust_leaf_recipe(declaration).map(RustLeafRecipe::composition))
+        .unwrap_or(RecipeComposition::Whole)
 }

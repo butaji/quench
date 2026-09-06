@@ -38,7 +38,7 @@ fn render_artifact(
         super::abi_expr(declaration),
         declaration.entry,
         entries,
-        declaration.name == "fallthrough",
+        extracted.fallthrough.is_some(),
         super::target_template_calls_helper(declaration),
         relocation_expr(extracted),
         holes_expr(extracted),
@@ -106,17 +106,20 @@ fn fingerprint(
     let schema = declarations
         .iter()
         .map(|item| {
-            let source = super::rust_leaf_recipe(item)
-                .map(|recipe| rust_source(item.name, recipe))
-                .or_else(|| {
-                    super::rust_assembly_recipe(item)
-                        .map(super::build_stencil_templates::assembly_source)
-                })
-                .or_else(|| (item.name == "fallthrough").then(|| {
-                    super::build_stencil_templates::aarch64_head().to_owned()
-                        + super::build_stencil_templates::aarch64_tail()
-                }))
-                .unwrap_or_default();
+            let source = if target.starts_with("aarch64") {
+                super::rust_assembly_recipe(item)
+                    .map(super::build_stencil_templates::assembly_source)
+                    .or_else(|| {
+                        super::rust_leaf_recipe(item).map(|recipe| rust_source(item.name, recipe))
+                    })
+            } else {
+                super::rust_leaf_recipe(item)
+                    .filter(|recipe| {
+                        recipe.composition() == RecipeComposition::Whole
+                    })
+                    .map(|recipe| rust_source(item.name, recipe))
+            }
+            .unwrap_or_default();
             format!(
                 "{name}:{abi:?}:{ops:?}:{x86:?}:{arm:?}:{portable:?}:{holes:?}:{arm_holes:?}:{entry}:{external:?}:{source}",
                 name = item.name,
