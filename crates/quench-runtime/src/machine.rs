@@ -5480,19 +5480,11 @@ fn select_local_numeric(
     pc: usize,
 ) -> Option<crate::stencil_plan::LocalBinarySelection> {
     let load = entries.get(pc)?.instruction;
-    if region_entry_is_legal(entries, pc, pc.checked_add(3)?) {
-        let next = entries.get(pc + 1)?.instruction;
-        if let (Some(first), Some(second)) =
-            (numeric_producer(code, load), numeric_producer(code, next))
+    for producer_count in [3, 2] {
+        if let Some(selection) =
+            select_numeric_producers(code, entries, liveness, pc, producer_count)
         {
-            let operation = entries.get(pc + 2)?.instruction;
-            if let Some(selection) = crate::stencil_plan::select_local_binary(
-                [first, second],
-                operation,
-                liveness.get(pc + 2)?,
-            ) {
-                return Some(selection);
-            }
+            return Some(selection);
         }
     }
     let end = pc.checked_add(2)?;
@@ -5505,22 +5497,50 @@ fn select_local_numeric(
     crate::stencil_plan::select_local_add_const(load, operation, bits, liveness.get(pc + 1)?)
 }
 
+fn select_numeric_producers(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    liveness: &[BTreeSet<u16>],
+    pc: usize,
+    count: usize,
+) -> Option<crate::stencil_plan::LocalBinarySelection> {
+    let end = pc.checked_add(count + 1)?;
+    region_entry_is_legal(entries, pc, end).then_some(())?;
+    let producers = entries
+        .get(pc..pc + count)?
+        .iter()
+        .map(|entry| numeric_producer(code, entry.instruction))
+        .collect::<Option<Vec<_>>>()?;
+    crate::stencil_plan::select_local_binary(
+        &producers,
+        entries.get(pc + count)?.instruction,
+        liveness.get(pc + count)?,
+    )
+}
+
 fn numeric_producer(
     code: CodeView<'_>,
     instruction: crate::ir::Instruction,
 ) -> Option<crate::stencil_plan::NumericProducer> {
-    use crate::stencil_plan::{NumericProducer, NumericSource};
-    let source = match instruction.opcode {
-        crate::ir::Opcode::LoadLocal => NumericSource::Local(instruction.b),
+    use crate::stencil_plan::{NumericDefinition, NumericProducer, NumericSource};
+    let definition = match instruction.opcode {
+        crate::ir::Opcode::LoadLocal => {
+            NumericDefinition::Source(NumericSource::Local(instruction.b))
+        }
         crate::ir::Opcode::LoadConst => match code.constant(instruction.b)? {
-            crate::ops::Constant::Number(value) => NumericSource::Constant(value.to_bits()),
+            crate::ops::Constant::Number(value) => {
+                NumericDefinition::Source(NumericSource::Constant(value.to_bits()))
+            }
             _ => return None,
         },
+        crate::ir::Opcode::Move if instruction.flags == 0 => {
+            NumericDefinition::Alias(instruction.b)
+        }
         _ => return None,
     };
     Some(NumericProducer {
         output: instruction.a,
-        source,
+        definition,
     })
 }
 
