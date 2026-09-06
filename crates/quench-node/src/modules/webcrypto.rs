@@ -110,6 +110,9 @@ pub fn illegal_constructor(
 fn bytes(value: &Value) -> Option<Vec<u8>> {
     macro_rules! view {
         ($view:expr) => {{
+            if $view.buffer.shared {
+                return None;
+            }
             let bytes = $view.buffer.bytes.borrow();
             Some(
                 bytes
@@ -119,7 +122,7 @@ fn bytes(value: &Value) -> Option<Vec<u8>> {
         }};
     }
     match value {
-        Value::ArrayBuffer(buffer) => Some(buffer.bytes.borrow().clone()),
+        Value::ArrayBuffer(buffer) if !buffer.shared => Some(buffer.bytes.borrow().clone()),
         Value::DataView(view) => view!(view),
         Value::Float64Array(view) => view!(view),
         Value::Float32Array(view) => view!(view),
