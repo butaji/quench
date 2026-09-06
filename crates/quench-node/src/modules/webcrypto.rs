@@ -25,7 +25,6 @@ use sha3::{
     digest::ExtendableOutput, digest::Update as ShaUpdate, digest::XofReader, TurboShake128,
     TurboShake128Core, TurboShake256, TurboShake256Core,
 };
-use tiny_keccak::{Hasher, IntoXof, KangarooTwelve, Xof};
 
 use crate::host::HostState;
 
@@ -128,6 +127,83 @@ fn array_buffer(data: &[u8]) -> Value {
     let buffer = Rc::new(ArrayBufferData::new(data.len()));
     buffer.bytes.borrow_mut().copy_from_slice(data);
     Value::ArrayBuffer(buffer)
+}
+
+fn turbo_shake(input: &[u8], domain: u8, output_len: usize, is_256: bool) -> Vec<u8> {
+    if is_256 {
+        let mut hasher = TurboShake256::from_core(TurboShake256Core::new(domain));
+        ShaUpdate::update(&mut hasher, input);
+        let mut reader = hasher.finalize_xof();
+        let mut output = vec![0; output_len];
+        reader.read(&mut output);
+        output
+    } else {
+        let mut hasher = TurboShake128::from_core(TurboShake128Core::new(domain));
+        ShaUpdate::update(&mut hasher, input);
+        let mut reader = hasher.finalize_xof();
+        let mut output = vec![0; output_len];
+        reader.read(&mut output);
+        output
+    }
+}
+
+// RFC 9861 section 3.3: the integer is encoded big-endian, followed by the
+// number of bytes used for the integer (with zero represented as one byte).
+fn length_encode(value: usize) -> Vec<u8> {
+    if value == 0 {
+        return vec![0];
+    }
+    let mut encoded = Vec::new();
+    let mut remaining = value;
+    while remaining != 0 {
+        encoded.push((remaining & 0xff) as u8);
+        remaining >>= 8;
+    }
+    encoded.reverse();
+    encoded.push(encoded.len() as u8);
+    encoded
+}
+
+// KangarooTwelve is specified in terms of TurboSHAKE, rather than the
+// KT128-only helper exposed by tiny-keccak.  Keeping the tree construction
+// here gives KT128 and KT256 the same complete RFC 9861 semantics.
+fn kangaroo_twelve(
+    message: &[u8],
+    customization: &[u8],
+    output_len: usize,
+    is_256: bool,
+) -> Vec<u8> {
+    const CHUNK_SIZE: usize = 8192;
+    let customization_length = length_encode(customization.len());
+    let mut input = Vec::with_capacity(
+        message
+            .len()
+            .saturating_add(customization.len())
+            .saturating_add(customization_length.len()),
+    );
+    input.extend_from_slice(message);
+    input.extend_from_slice(customization);
+    input.extend_from_slice(&customization_length);
+
+    if input.len() <= CHUNK_SIZE {
+        return turbo_shake(&input, 0x07, output_len, is_256);
+    }
+
+    let cv_len = if is_256 { 64 } else { 32 };
+    let mut final_node = Vec::with_capacity(input.len() / CHUNK_SIZE * cv_len + CHUNK_SIZE + 32);
+    final_node.extend_from_slice(&input[..CHUNK_SIZE]);
+    final_node.push(0x03);
+    final_node.extend_from_slice(&[0; 7]);
+
+    let mut block_count = 0;
+    for chunk in input[CHUNK_SIZE..].chunks(CHUNK_SIZE) {
+        let cv = turbo_shake(chunk, 0x0b, cv_len, is_256);
+        final_node.extend_from_slice(&cv);
+        block_count += 1;
+    }
+    final_node.extend_from_slice(&length_encode(block_count));
+    final_node.extend_from_slice(&[0xff, 0xff]);
+    turbo_shake(&final_node, 0x06, output_len, is_256)
 }
 
 // X25519 is kept here as a small, self-contained Montgomery ladder so the
@@ -1109,36 +1185,27 @@ pub fn digest(
                     value as u8
                 }
                 _ => {
-                    return Ok(settled(Err(error(
-                        Builtin::TypeError,
-                        Some("ERR_OUT_OF_RANGE"),
+                    return Ok(settled(Err(operation_error(
                         "The domain separation must be between 1 and 127",
                     ))))
                 }
             };
-            if !bits.is_finite() || bits < 0.0 || bits > 2_147_483_647.0 {
-                return Ok(settled(Err(error(
-                    Builtin::TypeError,
-                    Some("ERR_OUT_OF_RANGE"),
-                    "The requested length is outside the supported range",
+            if !bits.is_finite()
+                || bits.fract() != 0.0
+                || bits <= 0.0
+                || bits > 2_147_483_647.0
+                || bits % 8.0 != 0.0
+            {
+                return Ok(settled(Err(operation_error(
+                    "Invalid TurboShakeParams outputLength",
                 ))));
             }
-            let length = (bits / 8.0).ceil() as usize;
-            let output = if algorithm == "TURBOSHAKE128" {
-                let mut hasher = TurboShake128::from_core(TurboShake128Core::new(domain));
-                ShaUpdate::update(&mut hasher, &data);
-                let mut reader = hasher.finalize_xof();
-                let mut output = vec![0; length];
-                reader.read(&mut output);
-                output
-            } else {
-                let mut hasher = TurboShake256::from_core(TurboShake256Core::new(domain));
-                ShaUpdate::update(&mut hasher, &data);
-                let mut reader = hasher.finalize_xof();
-                let mut output = vec![0; length];
-                reader.read(&mut output);
-                output
-            };
+            let output = turbo_shake(
+                &data,
+                domain,
+                (bits / 8.0) as usize,
+                algorithm == "TURBOSHAKE256",
+            );
             Ok(output)
         }
         "KT128" | "KT256" => {
@@ -1146,11 +1213,14 @@ pub fn digest(
             let Value::Number(bits) = bits else {
                 return Ok(settled(Err(not_supported("Unrecognized algorithm name"))));
             };
-            if !bits.is_finite() || bits < 0.0 || bits > 2_147_483_647.0 {
-                return Ok(settled(Err(error(
-                    Builtin::TypeError,
-                    Some("ERR_OUT_OF_RANGE"),
-                    "The requested length is outside the supported range",
+            if !bits.is_finite()
+                || bits.fract() != 0.0
+                || bits <= 0.0
+                || bits > 2_147_483_647.0
+                || bits % 8.0 != 0.0
+            {
+                return Ok(settled(Err(operation_error(
+                    "Invalid KangarooTwelveParams outputLength",
                 ))));
             }
             let customization = execute::get_property(requested, "customization");
@@ -1159,18 +1229,16 @@ pub fn digest(
                 value => bytes(&value).unwrap_or_default(),
             };
             if customization.len() > 512 {
-                return Ok(settled(Err(error(
-                    Builtin::Error,
-                    None,
+                return Ok(settled(Err(operation_error(
                     "KangarooTwelveParams.customization must be at most 512 bytes",
                 ))));
             }
-            let mut hasher = KangarooTwelve::new(customization);
-            hasher.update(&data);
-            let mut reader = hasher.into_xof();
-            let mut output = vec![0; (bits / 8.0).ceil() as usize];
-            reader.squeeze(&mut output);
-            Ok(output)
+            Ok(kangaroo_twelve(
+                &data,
+                &customization,
+                (bits / 8.0) as usize,
+                algorithm == "KT256",
+            ))
         }
         _ => return Ok(settled(Err(not_supported("Unrecognized algorithm name")))),
     };
@@ -1314,14 +1382,12 @@ pub fn export_key(
                 let alg = if is_sha3 {
                     Value::Undefined
                 } else {
-                    Value::String(
-                        match name.to_ascii_uppercase().as_str() {
-                            "RSA-PSS" => format!("PS{hash}"),
-                            "RSASSA-PKCS1-V1_5" => format!("RS{hash}"),
-                            "RSA-OAEP" => format!("RSA-OAEP-{hash}"),
-                            _ => String::new(),
-                        },
-                    )
+                    Value::String(match name.to_ascii_uppercase().as_str() {
+                        "RSA-PSS" => format!("PS{hash}"),
+                        "RSASSA-PKCS1-V1_5" => format!("RS{hash}"),
+                        "RSA-OAEP" => format!("RSA-OAEP-{hash}"),
+                        _ => String::new(),
+                    })
                 };
                 return Ok(settled(Ok(host_api::object(vec![
                     ("kty".into(), Value::String("RSA".into())),
@@ -1329,8 +1395,7 @@ pub fn export_key(
                     (
                         "key_ops".into(),
                         crate::modules::clone::deep_clone(execute::get_property(
-                            &metadata,
-                            "usages",
+                            &metadata, "usages",
                         )),
                     ),
                     ("ext".into(), Value::Boolean(true)),
@@ -1350,10 +1415,7 @@ pub fn export_key(
                 ("alg".into(), alg),
                 (
                     "key_ops".into(),
-                    crate::modules::clone::deep_clone(execute::get_property(
-                        &metadata,
-                        "usages",
-                    )),
+                    crate::modules::clone::deep_clone(execute::get_property(&metadata, "usages")),
                 ),
                 ("ext".into(), Value::Boolean(true)),
             ])
@@ -1450,7 +1512,10 @@ pub fn generate_key(
                 let mut base = [0_u8; 32];
                 base[0] = 9;
                 rand::thread_rng().fill_bytes(&mut private);
-                (Some(private.to_vec()), Some(x25519(&private, &base).to_vec()))
+                (
+                    Some(private.to_vec()),
+                    Some(x25519(&private, &base).to_vec()),
+                )
             }
             "X448" => {
                 let mut private = [0_u8; 56];
@@ -1473,7 +1538,13 @@ pub fn generate_key(
             "pkcs8",
         );
         let public_key = key_metadata(
-            key(&prototype, algorithm, extractable, public_usages, public_data),
+            key(
+                &prototype,
+                algorithm,
+                extractable,
+                public_usages,
+                public_data,
+            ),
             "public",
             "spki",
         );
@@ -1504,13 +1575,11 @@ pub fn generate_key(
             _ => 256,
         };
         let data = vec![0_u8; bits.div_ceil(8)];
-        let algorithm = if matches!(
-            algorithm,
-            Value::Object(_) | Value::ObjectAlias(_)
-        ) && matches!(
-            execute::get_property(&algorithm, "length"),
-            Value::Undefined
-        ) {
+        let algorithm = if matches!(algorithm, Value::Object(_) | Value::ObjectAlias(_))
+            && matches!(
+                execute::get_property(&algorithm, "length"),
+                Value::Undefined
+            ) {
             execute::set_property(algorithm, "length", Value::Number(bits as f64))
         } else {
             algorithm
@@ -1647,8 +1716,12 @@ pub fn derive_bits(
     }
     if matches!(base_name_upper.as_str(), "X25519" | "X448") {
         return Ok(settled(
-            cfrg_derive_bits(algorithm, args.get(1).unwrap_or(&Value::Undefined), args.get(2))
-                .map(|bytes| array_buffer(&bytes)),
+            cfrg_derive_bits(
+                algorithm,
+                args.get(1).unwrap_or(&Value::Undefined),
+                args.get(2),
+            )
+            .map(|bytes| array_buffer(&bytes)),
         ));
     }
     if base_name_upper == "ECDH" {
@@ -1829,7 +1902,9 @@ pub fn derive_key(
             Err(error) => return Ok(settled(Err(error))),
         };
         if length > data.len() * 8 {
-            return Ok(settled(Err(operation_error("derived bit length is too small"))));
+            return Ok(settled(Err(operation_error(
+                "derived bit length is too small",
+            ))));
         }
         let output_length = length.div_ceil(8);
         let mut data = data[..output_length].to_vec();
@@ -2129,8 +2204,7 @@ pub fn encrypt(
         return Ok(settled(Err(error)));
     }
     let requested_name = args.first().map(algorithm_name).unwrap_or_default();
-    if requested_name.eq_ignore_ascii_case("AES-GCM")
-        && !aes_gcm_tag_length_is_valid(args.first())
+    if requested_name.eq_ignore_ascii_case("AES-GCM") && !aes_gcm_tag_length_is_valid(args.first())
     {
         return Ok(settled(Err(operation_error(
             "algorithm.tagLength is not a valid AES-GCM tag length",
@@ -2185,8 +2259,7 @@ pub fn encrypt(
             return Ok(settled(Err(operation_error("Invalid AES-OCB key"))));
         };
         return Ok(settled(
-            aes_ocb_crypt(key, &iv, &aad, &data, tag_bits, true)
-                .map(|bytes| array_buffer(&bytes)),
+            aes_ocb_crypt(key, &iv, &aad, &data, tag_bits, true).map(|bytes| array_buffer(&bytes)),
         ));
     }
     if let Some((name, iv, length)) = args.first().and_then(aes_algorithm) {
@@ -2233,8 +2306,7 @@ pub fn decrypt(
         return Ok(settled(Err(error)));
     }
     let requested_name = args.first().map(algorithm_name).unwrap_or_default();
-    if requested_name.eq_ignore_ascii_case("AES-GCM")
-        && !aes_gcm_tag_length_is_valid(args.first())
+    if requested_name.eq_ignore_ascii_case("AES-GCM") && !aes_gcm_tag_length_is_valid(args.first())
     {
         return Ok(settled(Err(operation_error(
             "algorithm.tagLength is not a valid AES-GCM tag length",
@@ -2459,8 +2531,7 @@ fn aes_gcm_tag_length_is_valid(value: Option<&Value>) -> bool {
     match execute::get_property(value, "tagLength") {
         Value::Undefined => true,
         Value::Number(length) if length.is_finite() && length.fract() == 0.0 => {
-            matches!(length as usize, 32 | 64 | 96 | 104 | 112 | 120 | 128)
-                && length >= 0.0
+            matches!(length as usize, 32 | 64 | 96 | 104 | 112 | 120 | 128) && length >= 0.0
         }
         _ => false,
     }
@@ -2487,8 +2558,9 @@ fn aes_ocb_algorithm(value: &Value) -> Result<(Vec<u8>, Vec<u8>, usize), VmError
     };
     let tag_bits = match execute::get_property(value, "tagLength") {
         Value::Undefined => 128,
-        Value::Number(value)
-            if value.is_finite() && value.fract() == 0.0 && value >= 0.0 => value as usize,
+        Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value >= 0.0 => {
+            value as usize
+        }
         _ => {
             return Err(operation_error(
                 "algorithm.tagLength is not a valid AES-OCB tag length",
@@ -2623,12 +2695,7 @@ fn ocb_initial_offset(key: &[u8], nonce: &[u8], tag_bytes: usize) -> [u8; 16] {
     offset.to_be_bytes()
 }
 
-fn ocb_hash(
-    key: &[u8],
-    l_values: &[[u8; 16]],
-    l_star: &[u8; 16],
-    aad: &[u8],
-) -> [u8; 16] {
+fn ocb_hash(key: &[u8], l_values: &[[u8; 16]], l_star: &[u8; 16], aad: &[u8]) -> [u8; 16] {
     let mut offset = [0_u8; 16];
     let mut sum = [0_u8; 16];
     for (index, chunk) in aad.chunks_exact(16).enumerate() {
@@ -2650,12 +2717,7 @@ fn ocb_hash(
     sum
 }
 
-fn ocb_tag(
-    key: &[u8],
-    hash: &[u8; 16],
-    checksum: &mut [u8; 16],
-    offset: &[u8; 16],
-) -> [u8; 16] {
+fn ocb_tag(key: &[u8], hash: &[u8; 16], checksum: &mut [u8; 16], offset: &[u8; 16]) -> [u8; 16] {
     let l_dollar = ocb_double(ocb_encrypt_zero(key));
     ocb_xor(checksum, offset);
     ocb_xor(checksum, &l_dollar);
@@ -2762,7 +2824,12 @@ fn gcm_ctr(key: &[u8], j0: [u8; 16], input: &[u8]) -> Vec<u8> {
         increment_counter32(&mut counter);
         let mut stream = counter;
         let _ = cipher_block(key, &mut stream, true);
-        output.extend(chunk.iter().zip(stream).map(|(value, stream)| value ^ stream));
+        output.extend(
+            chunk
+                .iter()
+                .zip(stream)
+                .map(|(value, stream)| value ^ stream),
+        );
     }
     output
 }
@@ -3156,37 +3223,15 @@ mod tests {
         for (key, expected) in vectors {
             let key = hex::decode(key).unwrap();
             for (tag_bits, expected) in [64, 96, 128].into_iter().zip(expected) {
-                let encrypted = aes_ocb_crypt(
-                    &key,
-                    &nonce,
-                    &aad,
-                    &plaintext,
-                    tag_bits,
-                    true,
-                )
-                .unwrap();
+                let encrypted =
+                    aes_ocb_crypt(&key, &nonce, &aad, &plaintext, tag_bits, true).unwrap();
                 assert_eq!(hex::encode(&encrypted), expected);
-                let decrypted = aes_ocb_crypt(
-                    &key,
-                    &nonce,
-                    &aad,
-                    &encrypted,
-                    tag_bits,
-                    false,
-                )
-                .unwrap();
+                let decrypted =
+                    aes_ocb_crypt(&key, &nonce, &aad, &encrypted, tag_bits, false).unwrap();
                 assert_eq!(decrypted, plaintext);
                 let mut tampered = encrypted.clone();
                 *tampered.last_mut().unwrap() ^= 1;
-                assert!(aes_ocb_crypt(
-                    &key,
-                    &nonce,
-                    &aad,
-                    &tampered,
-                    tag_bits,
-                    false,
-                )
-                .is_err());
+                assert!(aes_ocb_crypt(&key, &nonce, &aad, &tampered, tag_bits, false,).is_err());
             }
         }
     }
