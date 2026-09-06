@@ -1,6 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use super::{drain_microtasks, new_promise, promise_then, reject_promise, resolve_promise};
+    use super::{
+        drain_microtasks, drain_microtasks_all, has_pending_unhandled_rejections, new_promise,
+        promise_then, reject_promise, resolve_promise, take_unhandled_rejections,
+    };
     use crate::ops::Builtin;
     use crate::value::{PromiseState, Value};
 
@@ -42,6 +45,23 @@ mod tests {
             data.state.borrow().clone(),
             PromiseState::Fulfilled(Value::Boolean(true))
         );
+    }
+
+    #[test]
+    fn rejection_handler_removes_synchronously_queued_unhandled_entry() {
+        take_unhandled_rejections();
+        let promise = new_promise();
+        let data = promise_data(&promise);
+        reject_promise(data, Value::String("boom".into()));
+        assert!(has_pending_unhandled_rejections());
+        promise_then(
+            Some(&promise),
+            &[Value::Undefined, Value::Builtin(Builtin::Boolean)],
+        )
+        .expect("rejection handler installs");
+        assert!(!has_pending_unhandled_rejections());
+        assert!(take_unhandled_rejections().is_empty());
+        drain_microtasks_all();
     }
     #[test]
     fn promise_prototype_is_cached_per_realm() {

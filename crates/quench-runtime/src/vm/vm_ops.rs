@@ -499,7 +499,10 @@ pub fn execute_await(
                     }
                     Ok(())
                 }
-                crate::value::PromiseState::Rejected(reason) => Err(VmError::Thrown(reason)),
+                crate::value::PromiseState::Rejected(reason) => {
+                    crate::promise::mark_rejection_handled(&promise);
+                    Err(VmError::Thrown(reason))
+                }
                 crate::value::PromiseState::Pending => {
                     if crate::module_bindings::fulfilled_await_defers() {
                         crate::module_bindings::mark_await_advanced(false);
@@ -513,6 +516,7 @@ pub fn execute_await(
                             Ok(())
                         }
                         crate::value::PromiseState::Rejected(reason) => {
+                            crate::promise::mark_rejection_handled(&promise);
                             Err(VmError::Thrown(reason))
                         }
                         crate::value::PromiseState::Pending => Err(VmError::Suspended(promise)),
