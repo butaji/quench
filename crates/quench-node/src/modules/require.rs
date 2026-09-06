@@ -552,17 +552,15 @@ pub fn module_api(state: &Rc<RefCell<HostState>>) -> Value {
         ),
         (
             "constants".into(),
-            host_api::object(vec![
-                (
-                    "compileCacheStatus".into(),
-                    host_api::object(vec![
-                        ("FAILED".into(), Value::Number(0.0)),
-                        ("ENABLED".into(), Value::Number(1.0)),
-                        ("ALREADY_ENABLED".into(), Value::Number(2.0)),
-                        ("DISABLED".into(), Value::Number(3.0)),
-                    ]),
-                ),
-            ]),
+            host_api::object(vec![(
+                "compileCacheStatus".into(),
+                host_api::object(vec![
+                    ("FAILED".into(), Value::Number(0.0)),
+                    ("ENABLED".into(), Value::Number(1.0)),
+                    ("ALREADY_ENABLED".into(), Value::Number(2.0)),
+                    ("DISABLED".into(), Value::Number(3.0)),
+                ]),
+            )]),
         ),
     ]);
     // Node exposes the constructor namespace as `module.Module`; preserve
@@ -1015,7 +1013,10 @@ fn require_impl(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
             "__nodeCommon",
         );
         if matches!(common, Value::Object(_) | Value::ObjectAlias(_)) {
-            if matches!(execute::get_property(&common, "skipIfPerfettoEnabled"), Value::Undefined) {
+            if matches!(
+                execute::get_property(&common, "skipIfPerfettoEnabled"),
+                Value::Undefined
+            ) {
                 let _ = execute::set_property_in_place(
                     &common,
                     "skipIfPerfettoEnabled",
@@ -2487,7 +2488,10 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "async_hooks" => Some(crate::modules::async_hooks::build()),
         "internal/timers" => Some(host_api::object(vec![
             ("TIMEOUT_MAX".into(), Value::Number(2_147_483_647.0)),
-            ("kTimeout".into(), Value::String("Symbol(kTimeout)\0quench".into())),
+            (
+                "kTimeout".into(),
+                Value::String("Symbol(kTimeout)\0quench".into()),
+            ),
             (
                 "setUnrefTimeout".into(),
                 crate::host::capability(crate::registry::SPEC_INTERNAL_TIMERS_SET_UNREF_TIMEOUT),
@@ -2845,10 +2849,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                     "generateKeyPairSync".into(),
                     crate::host::capability(crate::registry::SPEC_CRYPTO_GENERATE_KEY_PAIR_SYNC),
                 ),
-                (
-                    "generateKeyPair".into(),
-                    generate_key_pair,
-                ),
+                ("generateKeyPair".into(), generate_key_pair),
                 (
                     "generateKeySync".into(),
                     crate::host::capability(crate::registry::SPEC_CRYPTO_GENERATE_KEY_SYNC),
@@ -3392,6 +3393,37 @@ fn internal_crypto_util_module() -> Value {
         .map(|name| (name.to_string(), Value::Boolean(true)))
         .collect(),
     );
+    // `kSupportedAlgorithms` is operation-indexed in Node's internal crypto
+    // utility.  Keep the export operation's registry complete: callers use
+    // its keys to discover which algorithms participate in exportKey (and,
+    // consequently, getPublicKey/supports checks).  The null values mirror
+    // Node's algorithm-definition entries; only the operation membership is
+    // consumed by the normalization helpers.
+    let export_key = crate::host::namespace_object_from_pairs(
+        [
+            "AES-CBC",
+            "AES-CTR",
+            "AES-GCM",
+            "AES-KW",
+            "AES-OCB",
+            "ChaCha20-Poly1305",
+            "ECDH",
+            "ECDSA",
+            "Ed25519",
+            "Ed448",
+            "HMAC",
+            "KMAC128",
+            "KMAC256",
+            "RSA-OAEP",
+            "RSA-PSS",
+            "RSASSA-PKCS1-v1_5",
+            "X25519",
+            "X448",
+        ]
+        .into_iter()
+        .map(|name| (name.to_string(), Value::Null))
+        .collect(),
+    );
     crate::host::namespace_object_from_pairs(vec![
         (
             "getOpenSSLSecLevel".into(),
@@ -3426,6 +3458,7 @@ fn internal_crypto_util_module() -> Value {
             crate::host::namespace_object_from_pairs(vec![
                 ("digest".into(), digest),
                 ("importKey".into(), import_key),
+                ("exportKey".into(), export_key),
             ]),
         ),
         (

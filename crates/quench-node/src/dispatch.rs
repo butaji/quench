@@ -383,6 +383,7 @@ const CAP_CP_INSTANCE_SPAWN: u16 = crate::registry::SPEC_CP_INSTANCE_SPAWN.cap;
 const CAP_CP_GET_VALID_STDIO: u16 = crate::registry::SPEC_CP_GET_VALID_STDIO.cap;
 const CAP_PROCESS_UMASK: u16 = 0x0A06;
 const CAP_PROCESS_ON: u16 = 0x0A07;
+const CAP_PROCESS_PREPEND: u16 = 0x0A2F;
 const CAP_PROCESS_ONCE: u16 = 0x0A08;
 const CAP_PROCESS_EMIT: u16 = 0x0A0C;
 const CAP_PROCESS_EMIT_WARNING: u16 = 0x0A0D;
@@ -1150,6 +1151,7 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_PROCESS_ACTIVE_RESOURCES => process_active_resources,
         CAP_PROCESS_UMASK => process_umask,
         CAP_PROCESS_ON => process_on,
+        CAP_PROCESS_PREPEND => process_prepend,
         CAP_PROCESS_ONCE => process_once,
         CAP_PROCESS_EMIT => process_emit,
         CAP_PROCESS_REMOVE_LISTENER => process_remove_listener,
@@ -1163,9 +1165,9 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_STDERR_WRITE => {
             |state, _receiver, args| crate::modules::process::stream_write(state, args, true)
         }
-        CAP_STDOUT_END => {
-            |state, receiver, args| crate::modules::process::stream_end(state, receiver, args, false)
-        }
+        CAP_STDOUT_END => |state, receiver, args| {
+            crate::modules::process::stream_end(state, receiver, args, false)
+        },
         CAP_STDERR_END => {
             |state, receiver, args| crate::modules::process::stream_end(state, receiver, args, true)
         }
@@ -1244,6 +1246,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_WEBCRYPTO_VERIFY => crate::modules::webcrypto::verify,
         CAP_WEBCRYPTO_EXPORT_KEY => crate::modules::webcrypto::export_key,
         CAP_WEBCRYPTO_GET_PUBLIC_KEY => crate::modules::webcrypto::get_public_key,
+        CAP_WEBCRYPTO_SUPPORTS => crate::modules::webcrypto::supports,
         CAP_CRYPTO_CREATE_SECRET_KEY => crate::modules::crypto::create_secret_key,
         CAP_CRYPTO_CREATE_HASH => crate::modules::crypto::create_hash,
         CAP_CRYPTO_HASH => crate::modules::crypto::hash_one_shot,
