@@ -22,6 +22,7 @@ include!("generator_loop.rs");
 include!("generator_iterator_binding.rs");
 include!("generator_suspension.rs");
 include!("generator_reduce.rs");
+include!("generator_try_path.rs");
 include!("generator_machine.rs");
 include!("generator_result.rs");
 include!("generator_completion.rs");
@@ -362,7 +363,7 @@ fn update_machine_frame(
         | crate::continuation::SuspensionPoint::Branch { .. }),
     ) = state.suspension.clone()
     {
-        push_initial_try_frames(generator)?;
+        push_try_frames_for_point(generator, &point)?;
         let resume = parent_resume_range(generator, state);
         install_suspension_frames(generator, point, resume)?;
         return Ok(());
