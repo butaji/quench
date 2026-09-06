@@ -1625,8 +1625,7 @@ impl StencilArena {
             view.stencil,
             fallthrough.stencil,
             values,
-            view.fallthrough_fixup_offset()
-                .ok_or(ArenaError::ProtectionFailed)?,
+            fallthrough.fixup_offset,
             fallthrough_fixup_kind(),
             &mut bytes,
         )
@@ -3502,7 +3501,7 @@ mod tests {
             assert!(view
                 .relocations
                 .iter()
-                .any(|relocation| relocation.offset == view.fallthrough_fixup_offset().unwrap()));
+                .any(|relocation| relocation.offset == tail.fixup_offset));
             assert!(view
                 .relocations
                 .iter()
@@ -3613,7 +3612,7 @@ mod tests {
             .iter()
             .all(|relocation| relocation.target == "q_fallthrough_tail"));
         let tail = view.fallthrough.expect("generated tail");
-        assert_eq!(view.fallthrough_fixup_offset(), Some(4));
+        assert_eq!(tail.fixup_offset, 4);
         assert_eq!(tail.stencil.bytes, &[0xc0, 0x03, 0x5f, 0xd6]);
         assert!(tail.stencil.holes.is_empty());
     }
@@ -3762,12 +3761,9 @@ mod tests {
         assert!(view.generated, "chain must use generated artifact");
         assert_eq!(view.abi, crate::stencil_select::RegionAbi::ScalarF64x3);
         let tail = view.fallthrough.expect("generated chain tail");
-        assert_eq!(view.fallthrough_fixup_offset(), Some(4));
+        assert_eq!(tail.fixup_offset, 4);
         assert_eq!(view.relocations.len(), 1);
-        assert_eq!(
-            view.relocations[0].offset,
-            view.fallthrough_fixup_offset().unwrap()
-        );
+        assert_eq!(view.relocations[0].offset, tail.fixup_offset);
         assert_eq!(view.relocations[0].target, "q_add_chain_tail");
         assert_eq!(view.relocations[0].addend, 0);
         assert_eq!(view.entry, 0);
