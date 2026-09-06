@@ -215,6 +215,19 @@ impl EmitterRegistry {
             self.identities.insert(key, id);
         }
     }
+
+    /// Drop listeners owned by a logical process scope when that forked
+    /// process disconnects. Shared VM objects can outlive a fork, but their
+    /// process-local callbacks must not observe a later child execution.
+    pub fn remove_scope(&mut self, process_scope: u64) {
+        for emitter in self.emitters.values() {
+            let mut emitter = emitter.borrow_mut();
+            for (_, listeners) in &mut emitter.events {
+                listeners.retain(|listener| listener.process_scope != process_scope);
+            }
+            emitter.events.retain(|(_, listeners)| !listeners.is_empty());
+        }
+    }
 }
 
 /// Resolve the emitter id stored on a JS receiver object.
