@@ -2163,6 +2163,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             Some(execute::set_property(ctor.clone(), "StreamWrap", ctor))
         }
         "internal/net" => Some(crate::modules::net::internal_module()),
+        "internal/socketaddress" => Some(crate::modules::net::socket_address_module()),
         "internal/assert" => Some(crate::host::capability(crate::registry::SPEC_ASSERT_OK)),
         "internal/assert/myers_diff" => Some(crate::host::namespace_object_from_pairs(vec![(
             "myersDiff".into(),
