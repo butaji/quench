@@ -1115,6 +1115,99 @@ fn validate_rsa_import(
     Ok(())
 }
 
+/// Validate the import-only invariants for ChaCha20-Poly1305.  Generation
+/// already routes through `symmetric_usages` and key-length checks, but the
+/// import path must apply the same facts to raw and JWK material rather than
+/// accepting an empty byte vector or silently normalizing unsupported usage.
+fn validate_chacha_import(
+    algorithm: &Value,
+    format: &str,
+    data: Option<&[u8]>,
+    jwk: Option<&Value>,
+    usages: &Value,
+    extractable: bool,
+) -> Result<(), VmError> {
+    if algorithm_name(algorithm).to_ascii_uppercase() != "CHACHA20-POLY1305" {
+        return Ok(());
+    }
+    let requested = all_usage_names(usages);
+    let allowed = ["encrypt", "decrypt", "wrapKey", "unwrapKey"];
+    if requested.iter().any(|usage| !allowed.contains(&usage.as_str())) {
+        return Err(named_import_error(
+            "SyntaxError",
+            "Unsupported key usage",
+        ));
+    }
+    if requested.is_empty() {
+        return Err(named_import_error(
+            "SyntaxError",
+            "Usages cannot be empty",
+        ));
+    }
+    if matches!(format, "raw" | "raw-secret")
+        && data.is_none_or(|bytes| bytes.len() != 32)
+    {
+        return Err(named_import_error("DataError", "Invalid key length"));
+    }
+    if format != "jwk" {
+        return Ok(());
+    }
+    let Some(jwk) = jwk else {
+        return Err(named_import_error("DataError", "Invalid keyData"));
+    };
+    let kty_value = execute::get_property(jwk, "kty");
+    let kty = execute::to_js_string(&kty_value).unwrap_or_default();
+    if matches!(kty_value, Value::Undefined) {
+        return Err(named_import_error("DataError", "Invalid keyData"));
+    }
+    if kty != "oct" {
+        return Err(named_import_error(
+            "DataError",
+            "Invalid JWK \"kty\" Parameter",
+        ));
+    }
+    if data.is_none_or(|bytes| bytes.len() != 32) {
+        return Err(named_import_error("DataError", "Invalid keyData"));
+    }
+    if let Value::String(use_value) = execute::get_property(jwk, "use") {
+        if use_value != "enc" {
+            return Err(named_import_error(
+                "DataError",
+                "Invalid JWK \"use\" Parameter",
+            ));
+        }
+    }
+    if let Value::Boolean(ext) = execute::get_property(jwk, "ext") {
+        if ext != extractable {
+            return Err(named_import_error(
+                "DataError",
+                "JWK \"ext\" Parameter and extractable mismatch",
+            ));
+        }
+    }
+    if let Value::String(alg) = execute::get_property(jwk, "alg") {
+        if alg != "C20P" {
+            return Err(named_import_error(
+                "DataError",
+                "JWK \"alg\" does not match the requested algorithm",
+            ));
+        }
+    }
+    let key_ops = execute::get_property(jwk, "key_ops");
+    if !matches!(key_ops, Value::Undefined) {
+        let declared = all_usage_names(&key_ops);
+        if declared.len() != requested.len()
+            || requested.iter().any(|usage| !declared.contains(usage))
+        {
+            return Err(named_import_error(
+                "DataError",
+                "Key operations and usage mismatch",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn imported_key_type(format: &str, algorithm: &Value, jwk: Option<&Value>) -> &'static str {
     match format {
         "pkcs8" => "private",
@@ -1285,6 +1378,26 @@ fn usage_names(value: &Value) -> Vec<String> {
     .collect()
 }
 
+/// Return every string usage supplied by the caller, including names that are
+/// unsupported for a particular algorithm.  Validation must see those names
+/// so it can report `Unsupported key usage` instead of silently normalizing
+/// them away as an empty list.
+fn all_usage_names(value: &Value) -> Vec<String> {
+    let length = match execute::get_property(value, "length") {
+        Value::Number(length) if length.is_finite() && length > 0.0 => length as usize,
+        _ => 0,
+    };
+    let mut names = Vec::new();
+    for index in 0..length {
+        if let Ok(name) = execute::to_js_string(&execute::get_property(value, &index.to_string())) {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
+    names
+}
+
 fn usage_array(names: &[String]) -> Value {
     host_api::array(names.iter().cloned().map(Value::String).collect())
 }
@@ -1328,15 +1441,23 @@ fn symmetric_usages(name: &str, requested: &Value) -> Result<Value, VmError> {
     };
     let requested = usage_names(requested);
     if requested.is_empty() {
-        return Err(usage_error("Usages cannot be empty"));
+        return Err(symmetric_usage_error(name, "Usages cannot be empty"));
     }
     if requested
         .iter()
         .any(|usage| !allowed.contains(&usage.as_str()))
     {
-        return Err(usage_error("Unsupported key usage"));
+        return Err(symmetric_usage_error(name, "Unsupported key usage"));
     }
     Ok(usage_array(&requested))
+}
+
+fn symmetric_usage_error(name: &str, message: &str) -> VmError {
+    if name == "CHACHA20-POLY1305" {
+        named_import_error("SyntaxError", message)
+    } else {
+        usage_error(message)
+    }
 }
 
 fn usage_error(message: &str) -> VmError {
@@ -1692,6 +1813,16 @@ pub fn import_key(
     if let Err(error) =
         validate_rsa_import(&algorithm, &format, data.as_deref(), jwk.as_ref(), &usages)
     {
+        return Ok(settled(Err(error)));
+    }
+    if let Err(error) = validate_chacha_import(
+        &algorithm,
+        &format,
+        data.as_deref(),
+        jwk.as_ref(),
+        &usages,
+        extractable,
+    ) {
         return Ok(settled(Err(error)));
     }
     let algorithm = imported_algorithm_metadata(algorithm, &format, data.as_deref());
