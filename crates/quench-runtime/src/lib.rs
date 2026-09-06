@@ -126,6 +126,8 @@ mod special;
 mod statement_control;
 mod statements;
 pub mod stencil_arena;
+mod stencil_admission;
+mod stencil_admission_budget;
 mod stencil_cache;
 pub mod stencil_fact;
 pub mod stencil_lifecycle;
