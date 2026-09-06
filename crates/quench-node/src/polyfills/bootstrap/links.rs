@@ -219,7 +219,7 @@ for (const name of ["isSocket", "isBlockDevice", "isCharacterDevice", "isFIFO"])
 globalThis.__nodeStats.prototype.isSymbolicLink = function () {
   return this._symlink === true;
 };
-globalThis.__nodeFs.Dir = class Dir {
+globalThis.__nodeFs.Dir ||= class Dir {
   constructor(path) {
     if (path === undefined) {
       throw Object.assign(new TypeError('The "path" argument must be specified'), { code: "ERR_MISSING_ARGS" });

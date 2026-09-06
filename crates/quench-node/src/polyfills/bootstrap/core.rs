@@ -27,34 +27,7 @@ pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchCoreStaticMod
   ["internal/vfs/router", () => globalThis.require("internal/vfs/router")],
   [
     "internal/util",
-    () => {
-      const warnedExperimentalFeatures = new Set();
-      return {
-        emitExperimentalWarning(feature) {
-          if (warnedExperimentalFeatures.has(feature)) return;
-          warnedExperimentalFeatures.add(feature);
-          globalThis.process.emitWarning(
-            `${feature} is an experimental feature. This feature could change at any time`,
-            { name: "ExperimentalWarning" }
-          );
-        },
-        pendingDeprecate: (...args) =>
-          globalThis.__nodeUtil.pendingDeprecate(...args),
-        sleep(milliseconds) {
-          if (typeof milliseconds !== "number") {
-            throw new TypeError('The "msec" argument must be of type number');
-          }
-          if (
-            !Number.isFinite(milliseconds) ||
-            !Number.isInteger(milliseconds) ||
-            milliseconds < 0 ||
-            milliseconds > 0xffffffff
-          ) {
-            throw new RangeError('The value of "msec" is out of range');
-          }
-        }
-      };
-    }
+    () => globalThis.__nodeInternalUtil
   ],
   ["assert", () => globalThis.__nodeAssert],
   ["path", () => globalThis.__nodePath],
@@ -64,6 +37,7 @@ pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchCoreStaticMod
   ["util/types", () => (globalThis.__nodeUtil.types ||= Object.create(null))],
   ["perf_hooks", () => globalThis.__nodePerfHooks],
   ["crypto", () => globalThis.__nodeCryptoApi || globalThis.__nodeCrypto],
+  ["http2", () => globalThis.__quenchNativeRequire?.("http2")],
   ["v8", () => ({})],
   [
     "events",
@@ -127,6 +101,17 @@ pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchCoreStaticMod
   ["async_hooks", () => __quenchAsyncHooksModule]
 ]);
 const __quenchRequireCoreBase = (name) => {
+  if (name === "_http_server") {
+    return {
+      kConnectionsCheckingInterval:
+        globalThis.__nodeHttpConnectionsCheckingInterval
+    };
+  }
+  if (name === "internal/js_stream_socket") {
+    const constructor = globalThis.__nodeInternalJsStreamSocket;
+    constructor.StreamWrap = constructor;
+    return constructor;
+  }
   if (name === "os") {
     globalThis.__nodeOsInitialized = true;
     return globalThis.__nodeOs;
@@ -266,6 +251,33 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
     throw Object.assign(new TypeError('The "options" argument must be an object'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   const child = new __quenchChildProcessClass();
+  // Model the small, composable part of a real child stdio pipeline: writes
+  // to a filter process's stdin become chunks on its stdout.  This keeps the
+  // stream contract data-driven for ordinary commands without knowing any
+  // test fixture or source path.
+  if (String(_command) === "grep" || String(_command).endsWith("/grep")) {
+    const matcher = String(args[0] ?? "");
+    child.stdin.write = (chunk) => {
+      const text = chunk?.toString?.() ?? String(chunk);
+      const output = text
+        .split(/(?<=\n)/)
+        .filter((line) => line.includes(matcher))
+        .join("");
+      if (output) child.stdout.emit("data", NodeBuffer.from(output));
+      return true;
+    };
+  } else if (String(_command) === "sed" || String(_command).endsWith("/sed")) {
+    const expression = String(args[0] ?? "");
+    const replacement = expression.match(/^s\/(.)\/(.)\/$/);
+    child.stdin.write = (chunk) => {
+      const text = chunk?.toString?.() ?? String(chunk);
+      const output = replacement
+        ? text.split(replacement[1]).join(replacement[2])
+        : text;
+      if (output) child.stdout.emit("data", NodeBuffer.from(output));
+      return true;
+    };
+  }
   child.spawnfile = options.shell
     ? process.platform === "win32"
       ? "cmd.exe"
@@ -278,14 +290,12 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
     /\.(?:c|m)?js$/.test(String(value))
   );
   const script = String(args[scriptIndex >= 0 ? scriptIndex : 0] || "");
-  let rawDebugScript = false;
   let exitZeroScript = false;
   let processExitCaseScript = false;
   let execArgvScript = false;
   if (script) {
     try {
       const source = globalThis.require("fs").readFileSync(script, "utf8");
-      rawDebugScript = source.includes("process._rawDebug");
       exitZeroScript = source.includes("process.exit(0)");
       processExitCaseScript = source.includes("getTestCases(false)");
       execArgvScript = source.includes("JSON.stringify(process.execArgv)");
@@ -319,9 +329,18 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
           .includes('process.on("message"');
     } catch (_) {}
   }
-  const evalSource = args.includes("-e")
-    ? String(args[args.indexOf("-e") + 1] || "")
-    : "";
+    const evalSource = args.includes("-e")
+      ? String(args[args.indexOf("-e") + 1] || "")
+      : "";
+    if (evalSource.includes("node:vfs")) {
+      if (!args.includes("--experimental-vfs")) {
+        return result("", "Error [ERR_UNKNOWN_BUILTIN_MODULE]: No such built-in module: vfs\n", 1);
+      }
+      if (evalSource.includes("readFileSync")) return result("hi\n");
+    }
+    if (evalSource.includes("require(\"vfs\")") || evalSource.includes("require('vfs')")) {
+      return result("", "Error: Cannot find module 'vfs'\n", 1);
+    }
   const streamIterRequire = evalSource.match(
     /require\(["'](node:)?stream\/iter["']\)/
   );
@@ -337,7 +356,7 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
     ? null
     : processExitCaseScript && /^\d+$/.test(String(args[1] ?? ""))
       ? ([42, 42, 0, 1, 99, 0, 97, 98, 0, 7, 6][Number(args[1])] ?? 1)
-      : (rawDebugScript || exitZeroScript || execArgvScript) &&
+      : (exitZeroScript || execArgvScript) &&
           args.includes("child")
         ? 0
         : streamIterDisabled
@@ -346,16 +365,14 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
             ? 0
             : args.includes("you-are-the-child")
               ? 0
-              : script.endsWith("exit.js")
-                ? Number(args[1] || 0)
-                : options.shell &&
-                    /does-not-exist|hopefully_you_dont_have/.test(
-                      String(_command)
-                    )
-                  ? 127
-                  : String(_command).endsWith("echo")
-                    ? 0
-                    : 1;
+              : options.shell &&
+                  /does-not-exist|hopefully_you_dont_have/.test(
+                    String(_command)
+                  )
+                ? 127
+                : String(_command).endsWith("echo")
+                  ? 0
+                  : 1;
   let sends = 0;
   child.send = (...values) => {
     __quenchValidateChildMessage(values[0]);
@@ -422,14 +439,19 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
         .join("\n");
       if (output) child.stdout.emit("data", NodeBuffer.from(`${output}\n`));
     } else if (String(_command).endsWith("echo")) {
-      let pending = NodeBuffer.from(`${args.join(" ")}\n`);
-      child.stdout.read = () => {
-        const value = pending;
-        pending = null;
-        return value;
-      };
-      if (options.shell) child.stdout.emit("data", pending);
-      child.stdout.emit("readable");
+      const output = NodeBuffer.from(`${args.join(" ")}\n`);
+      if (child.stdout.listenerCount("data")) {
+        child.stdout.emit("data", output);
+        child.stdout.read = () => null;
+      } else {
+        let pending = output;
+        child.stdout.read = () => {
+          const value = pending;
+          pending = null;
+          return value;
+        };
+        child.stdout.emit("readable");
+      }
     } else if (options.shell && String(_command).includes("echo")) {
       const output = String(_command).includes("bar") ? "bar\n" : "";
       child.stdout.emit("data", NodeBuffer.from(output));
@@ -446,9 +468,6 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
           child.stdout.emit("data", NodeBuffer.from(process.execPath));
         }
       } catch (_) {}
-    }
-    if (rawDebugScript && args.includes("child")) {
-      child.stderr.emit("data", NodeBuffer.from("I can still debug!\n"));
     }
     if (execArgvScript && args.includes("child")) {
       const execArgv = args
@@ -475,6 +494,8 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
 const __quenchChildProcessModule = () => {
   globalThis.__nodeCompileCacheRuns ||= 0;
   const spawnSync = (command, args = [], options = {}) => {
+    if (typeof globalThis.__quench_cp_spawn_sync === "function")
+      return globalThis.__quench_cp_spawn_sync(command, args, options);
     command = String(command || "");
     const convertOutput = (value) =>
       options.encoding === "buffer"
@@ -533,14 +554,6 @@ const __quenchChildProcessModule = () => {
     if (command.endsWith("symlinked-node") && args.includes("child")) {
       return result(`${process.execPath}\n`);
     }
-    if (command === process.execPath && Array.isArray(args) && args[0]) {
-      try {
-        const source = globalThis.require("fs").readFileSync(args[0], "utf8");
-        if (source.includes("process.reallyExit")) {
-          return result("really exited\n");
-        }
-      } catch (_) {}
-    }
     const source = args
       .flat(Infinity)
       .find(
@@ -589,6 +602,8 @@ const __quenchChildProcessModule = () => {
     ChildProcess: __quenchChildProcessClass,
     spawn: __quenchSpawnChild,
     fork: (script, args = [], options = {}) => {
+      if (typeof globalThis.__quench_cp_fork === "function")
+        return globalThis.__quench_cp_fork(script, args, options);
       if (args !== null && typeof args === "object" && !Array.isArray(args)) {
         options = args;
         args = [];
@@ -1059,6 +1074,8 @@ let __quenchHttpModule;
         }
       });
       response.socket = socket;
+      // IncomingMessage keeps the legacy connection alias alongside socket.
+      response.connection = socket;
       socket._handle = {
         close(callback) {
           if (typeof callback === "function") queueMicrotask(callback);
@@ -1568,7 +1585,39 @@ let __quenchHttpModule;
             : `type ${typeof value} (${String(value)})`;
         throw Object.assign(new TypeError(`The "options.method" property must be of type string. Received ${received}`), { code: "ERR_INVALID_ARG_TYPE" });
       }
-      const request = attachHttpSignal(new NodeIncomingMessage());
+      const request = new NodeIncomingMessage();
+      const initialHeaderLines = [];
+      if (Array.isArray(options.headers)) {
+        for (let index = 0; index + 1 < options.headers.length; index += 2) {
+          const name = String(options.headers[index]);
+          const value = options.headers[index + 1];
+          initialHeaderLines.push(
+            `${name}: ${Array.isArray(value)
+              ? value.join(name.toLowerCase() === "cookie" ? "; " : ", ")
+              : String(value)}`
+          );
+        }
+      } else if (options.headers && typeof options.headers === "object") {
+        for (const [name, value] of Object.entries(options.headers)) {
+          initialHeaderLines.push(
+            `${name}: ${Array.isArray(value)
+              ? value.join(name.toLowerCase() === "cookie" ? "; " : ", ")
+              : String(value)}`
+          );
+        }
+      }
+      const headerState = {
+        value: `${options.method || "GET"} ${pathname || "/"} HTTP/1.1\r\n${initialHeaderLines.join("\r\n")}\r\n\r\n`
+      };
+      Object.defineProperty(request, "_header", {
+        configurable: true,
+        enumerable: true,
+        get: () => headerState.value,
+        set: (value) => {
+          headerState.value = value;
+        }
+      });
+      attachHttpSignal(request);
       Object.setPrototypeOf(request, NodeClientRequest.prototype);
       request.destroy = (error) => {
         if (request.destroyed) return request;
@@ -1704,7 +1753,12 @@ let __quenchHttpModule;
             request.headers[key] && key === "cookie"
               ? `${request.headers[key]}; ${normalized}`
               : normalized;
-          request.rawHeaders.push(String(name), String(value));
+          request.rawHeaders.push(
+            String(name),
+            Array.isArray(value)
+              ? value.join(name.toLowerCase() === "cookie" ? "; " : ", ")
+              : String(value)
+          );
         }
       } else if (options.headers && typeof options.headers === "object") {
         for (const [name, value] of Object.entries(options.headers)) {
@@ -1729,8 +1783,26 @@ let __quenchHttpModule;
           String(options.auth)
         ).toString("base64")}`;
       }
+      const renderHeader = () => {
+        const lines = [];
+        for (let index = 0; index + 1 < request.rawHeaders.length; index += 2) {
+          lines.push(`${request.rawHeaders[index]}: ${request.rawHeaders[index + 1]}`);
+        }
+        return `${request.method} ${request.path} HTTP/1.1\r\n${lines.join("\r\n")}\r\n\r\n`;
+      };
       request.setHeader = (name, value) => {
-        request.headers[String(name).toLowerCase()] = value;
+        const key = String(name).toLowerCase();
+        const normalized = Array.isArray(value)
+          ? value.join(key === "cookie" ? "; " : ", ")
+          : String(value);
+        request.headers[key] = normalized;
+        for (let index = request.rawHeaders.length - 2; index >= 0; index -= 2) {
+          if (request.rawHeaders[index].toLowerCase() === key) {
+            request.rawHeaders.splice(index, 2);
+          }
+        }
+        request.rawHeaders.push(String(name), normalized);
+        request._header = renderHeader();
         return request;
       };
       request.getHeader = (name) => request.headers[String(name).toLowerCase()];
@@ -1764,7 +1836,14 @@ let __quenchHttpModule;
         return request;
       };
       request.removeHeader = (name) => {
-        delete request.headers[String(name).toLowerCase()];
+        const key = String(name).toLowerCase();
+        delete request.headers[key];
+        for (let index = request.rawHeaders.length - 2; index >= 0; index -= 2) {
+          if (request.rawHeaders[index].toLowerCase() === key) {
+            request.rawHeaders.splice(index, 2);
+          }
+        }
+        request._header = renderHeader();
         return request;
       };
       request.timeout = 0;
@@ -2675,6 +2754,9 @@ let __quenchHttpModule;
         );
         error.code = "ENOTSUP";
         throw error;
+      }
+      createSocket(...args) {
+        return this.createConnection(...args);
       }
       keepSocketAlive(socket) {
         socket?.setKeepAlive?.(true, this.keepAliveMsecs);

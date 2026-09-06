@@ -27,7 +27,7 @@ impl QuenchNodeHost {
             return text_encoder_constructor();
         }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::TextDecoderConstructor) {
-            return text_decoder_constructor();
+            return crate::modules::text_decoder::new_text_decoder(&self.state, arguments);
         }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::WorkerConstructor) {
             return Ok(quench_runtime::host_api::object(vec![

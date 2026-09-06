@@ -754,6 +754,16 @@ fn finish_set_property(
     ordinary_set(registers, object, target, key, value, strict)
 }
 
+pub(crate) fn set_property_from_host(
+    target: crate::value::Value,
+    key: &str,
+    value: crate::value::Value,
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let mut registers = crate::register_file::RegisterFile::from_values(vec![target.clone()]);
+    finish_set_property(&mut registers, 0, &target, key, value, true)?;
+    Ok(registers.read(0).unwrap_or(target))
+}
+
 fn own_data_property(target: &crate::value::Value, key: &str) -> bool {
     if crate::builtins::object::has_own_property(
         Some(target),

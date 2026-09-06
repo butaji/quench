@@ -87,6 +87,9 @@ pub fn parse(
         crate::modules::path::validate_string(args.first().unwrap_or(&Value::Undefined), "url")?
             .trim_matches(|character: char| character <= '\u{20}')
             .to_string();
+    if let Some(error) = invalid_legacy_authority(&raw_url) {
+        return Err(error);
+    }
     let url = if let Some((head, fragment)) = raw_url.split_once('#') {
         format!("{}#{}", normalize_legacy_input(head), fragment)
     } else {
@@ -171,7 +174,9 @@ pub fn parse(
             }
         }
         if let Some(hostname) = parsed.get_mut("hostname") {
-            *hostname = idna::domain_to_ascii(hostname).unwrap_or_else(|_| hostname.clone());
+            let ascii = idna::domain_to_ascii(hostname)
+                .map_err(|_| legacy_url_error("ERR_INVALID_URL", &raw_url))?;
+            *hostname = ascii;
         }
         let hostname_value = parsed.get("hostname").cloned();
         if let (Some(host), Some(hostname)) = (parsed.get_mut("host"), hostname_value) {
@@ -291,6 +296,105 @@ pub fn parse(
         return Ok(execute::set_property(result, "search", Value::Null));
     }
     Ok(result)
+}
+
+fn invalid_legacy_authority(input: &str) -> Option<VmError> {
+    let (_, rest) = input.split_once("://")?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    if authority.contains('\0') {
+        return Some(legacy_url_error("ERR_INVALID_URL", input));
+    }
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    if let Some((auth, _)) = authority.rsplit_once('@') {
+        if has_malformed_percent_encoding(auth) {
+            return Some(uri_malformed_error());
+        }
+    }
+    if host.starts_with('[') {
+        let Some(end) = host.find(']') else {
+            return Some(legacy_url_error("ERR_INVALID_URL", input));
+        };
+        let suffix = &host[end + 1..];
+        if suffix.is_empty() {
+            return None;
+        }
+        if let Some(port) = suffix.strip_prefix(':') {
+            if port.is_empty() || port.chars().all(|character| character.is_ascii_digit()) {
+                return None;
+            }
+            return Some(legacy_url_error("ERR_INVALID_ARG_VALUE", input));
+        }
+        return Some(legacy_url_error("ERR_INVALID_URL", input));
+    }
+    let Some((hostname, port)) = host.rsplit_once(':') else {
+        return None;
+    };
+    if hostname.is_empty() || port.is_empty() {
+        return None;
+    }
+    if !port.chars().all(|character| character.is_ascii_digit()) {
+        return Some(legacy_url_error("ERR_INVALID_ARG_VALUE", input));
+    }
+    if port.parse::<u32>().ok().is_some_and(|value| value > 65_535) {
+        return Some(legacy_url_error("ERR_INVALID_ARG_VALUE", input));
+    }
+    None
+}
+
+fn uri_malformed_error() -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("URIError".into())),
+        ("message".into(), Value::String("URI malformed".into())),
+        (
+            "constructor".into(),
+            Value::Builtin(quench_runtime::ops::Builtin::URIError),
+        ),
+    ]))
+}
+
+fn legacy_url_error(code: &str, input: &str) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("message".into(), Value::String("Invalid URL".into())),
+        ("code".into(), Value::String(code.into())),
+        ("input".into(), Value::String(input.into())),
+    ]))
+}
+
+fn has_malformed_percent_encoding(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            decoded.push(bytes[index]);
+            index += 1;
+            continue;
+        }
+        if index + 2 >= bytes.len() {
+            return true;
+        }
+        let Some(high) = percent_hex(bytes[index + 1]) else {
+            return true;
+        };
+        let Some(low) = percent_hex(bytes[index + 2]) else {
+            return true;
+        };
+        decoded.push((high << 4) | low);
+        index += 3;
+    }
+    std::str::from_utf8(&decoded).is_err()
+}
+
+fn percent_hex(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn legacy_object(entries: Vec<(String, Value)>) -> Value {
@@ -1177,8 +1281,7 @@ pub fn build_root(state: &Rc<RefCell<HostState>>) -> Value {
         if quench_runtime::is_callable(&value) {
             value
         } else {
-            let constructor =
-                crate::host::capability(crate::registry::NodeSpec::new("url:URLPattern", 2281));
+            let constructor = crate::host::capability(crate::registry::SPEC_URL_PATTERN);
             let _ =
                 execute::set_callable_property(&constructor, "prototype", url_pattern_prototype());
             constructor
@@ -1223,37 +1326,143 @@ pub fn url_pattern_construct(
     _state: &Rc<RefCell<HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if let Some(options) = args.first() {
-        if matches!(options, Value::Object(_)) {
-            let _ = execute::get_property_result(options, "protocol")?;
-        }
+    let first = args.first().unwrap_or(&Value::Undefined);
+    if !matches!(
+        first,
+        Value::Undefined
+            | Value::Null
+            | Value::String(_)
+            | Value::StringUnits(_)
+            | Value::Object(_)
+            | Value::ObjectAlias(_)
+    ) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The first argument must be a string or an object".into(),
+        ));
     }
     if let Some(options) = args.get(1) {
-        if matches!(options, Value::Object(_)) {
+        let valid = matches!(
+            options,
+            Value::Undefined
+                | Value::Null
+                | Value::String(_)
+                | Value::StringUnits(_)
+                | Value::Object(_)
+                | Value::ObjectAlias(_)
+        );
+        if !valid {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The second argument must be a string or an object".into(),
+            ));
+        }
+        if matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
             let _ = execute::get_property_result(options, "ignoreCase")?;
         }
+    }
+    if let Some(options) = args.get(2) {
+        if !matches!(
+            options,
+            Value::Undefined | Value::Null | Value::Object(_) | Value::ObjectAlias(_)
+        ) {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The third argument must be an object".into(),
+            ));
+        }
+    }
+    if args.len() >= 3
+        && matches!(first, Value::String(_) | Value::StringUnits(_))
+        && matches!(args.get(1), Some(Value::Null | Value::Undefined))
+    {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            (
+                "code".into(),
+                Value::String("ERR_INVALID_URL_PATTERN".into()),
+            ),
+            (
+                "message".into(),
+                Value::String("Invalid URLPattern base URL".into()),
+            ),
+        ])));
+    }
+    let mut protocol = "*".to_string();
+    let mut hostname = "*".to_string();
+    let mut pathname = "*".to_string();
+    match first {
+        Value::String(value) => {
+            if let Some((scheme, rest)) = value.split_once("://") {
+                protocol = scheme.to_string();
+                hostname = rest
+                    .split(['/', '?', '#'])
+                    .next()
+                    .unwrap_or(rest)
+                    .to_string();
+            }
+        }
+        Value::StringUnits(units) => {
+            let value = String::from_utf16_lossy(units);
+            if let Some((scheme, rest)) = value.split_once("://") {
+                protocol = scheme.to_string();
+                hostname = rest
+                    .split(['/', '?', '#'])
+                    .next()
+                    .unwrap_or(rest)
+                    .to_string();
+            }
+        }
+        Value::Object(_) | Value::ObjectAlias(_) => {
+            for (name, slot) in [
+                ("protocol", &mut protocol),
+                ("hostname", &mut hostname),
+                ("pathname", &mut pathname),
+            ] {
+                let value = execute::get_property_result(first, name)?;
+                if let Value::String(value) = value {
+                    *slot = value;
+                }
+            }
+        }
+        _ => {}
     }
     let prototype = url_pattern_prototype();
     let pattern = host_api::object(vec![
         ("\0quench:urlpattern:instance".into(), Value::Boolean(true)),
-        ("protocol".into(), Value::String("*".into())),
+        ("protocol".into(), Value::String(protocol)),
         ("username".into(), Value::String("*".into())),
         ("password".into(), Value::String("*".into())),
-        ("hostname".into(), Value::String("*".into())),
+        ("hostname".into(), Value::String(hostname)),
         ("port".into(), Value::String("*".into())),
-        ("pathname".into(), Value::String("*".into())),
+        ("pathname".into(), Value::String(pathname)),
         ("search".into(), Value::String("*".into())),
         ("hash".into(), Value::String("*".into())),
         (
             "test".into(),
-            crate::host::capability(crate::registry::NodeSpec::new("url:URLPattern:test", 2284)),
+            crate::host::capability(crate::registry::SPEC_URL_PATTERN_TEST),
         ),
         (
             "exec".into(),
-            crate::host::capability(crate::registry::NodeSpec::new("url:URLPattern:exec", 2285)),
+            crate::host::capability(crate::registry::SPEC_URL_PATTERN_EXEC),
         ),
     ]);
     execute::set_prototype_of(&pattern, &prototype)
+}
+
+pub fn url_pattern_call(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Err(VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        (
+            "message".into(),
+            Value::String("Class constructor URLPattern cannot be invoked without 'new'".into()),
+        ),
+        (
+            "code".into(),
+            Value::String("ERR_CONSTRUCT_CALL_REQUIRED".into()),
+        ),
+    ])))
 }
 
 fn url_pattern_prototype() -> Value {
@@ -1274,7 +1483,7 @@ fn url_pattern_prototype() -> Value {
             name,
             host_api::object(vec![(
                 "get".into(),
-                crate::host::capability(crate::registry::NodeSpec::new("url:URLPattern:get", 2286)),
+                crate::host::capability(crate::registry::SPEC_URL_PATTERN_GET),
             )]),
         ) {
             Ok(next) => next,
@@ -1306,6 +1515,62 @@ pub fn url_pattern_exec(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    if !matches!(
+        receiver.and_then(|value| execute::get_property_result(
+            value,
+            "\0quench:urlpattern:instance"
+        )
+        .ok()),
+        Some(Value::Boolean(true))
+    ) {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("message".into(), Value::String("Illegal invocation".into())),
+        ])));
+    }
+    let input_value = args.first().unwrap_or(&Value::Undefined);
+    if !matches!(
+        input_value,
+        Value::Undefined
+            | Value::Null
+            | Value::String(_)
+            | Value::StringUnits(_)
+            | Value::Object(_)
+            | Value::ObjectAlias(_)
+    ) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The input argument must be a string or an object".into(),
+        ));
+    }
+    if let Some(base) = args.get(1) {
+        if !matches!(
+            base,
+            Value::Undefined | Value::Null | Value::String(_) | Value::StringUnits(_)
+        ) {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The baseURL argument must be a string".into(),
+            ));
+        }
+        if matches!(
+            input_value,
+            Value::Null | Value::Object(_) | Value::ObjectAlias(_)
+        ) && matches!(base, Value::Null)
+        {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_OPERATION_FAILED".into())),
+                (
+                    "message".into(),
+                    Value::String("Invalid URLPattern input".into()),
+                ),
+            ])));
+        }
+        if matches!(input_value, Value::String(_) | Value::StringUnits(_))
+            && matches!(base, Value::Null)
+        {
+            return Ok(Value::Null);
+        }
+    }
     let input = args
         .first()
         .map(quench_runtime::to_string)

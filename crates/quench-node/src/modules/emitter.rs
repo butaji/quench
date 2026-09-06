@@ -22,6 +22,9 @@ pub const EMITTER_ID_PROP: &str = "\0quench:emitter:id";
 pub struct Listener {
     pub callback: Value,
     pub once: bool,
+    /// Logical process that registered this listener. Shared handles (for
+    /// example a transferred net.Server) dispatch only to the active scope.
+    pub process_scope: u64,
     /// EventTarget registration identity includes the capture flag. EventEmitter
     /// listeners always use the default `false` value.
     pub capture: bool,
@@ -68,7 +71,14 @@ impl EventEmitter {
         }
     }
 
-    pub fn add(&mut self, event: &str, callback: Value, once: bool, prepend: bool) -> usize {
+    pub fn add(
+        &mut self,
+        event: &str,
+        callback: Value,
+        once: bool,
+        prepend: bool,
+        process_scope: u64,
+    ) -> usize {
         let list = self.entry(event);
         if prepend {
             list.insert(
@@ -76,6 +86,7 @@ impl EventEmitter {
                 Listener {
                     callback,
                     once,
+                    process_scope,
                     capture: false,
                     node_event: false,
                     weak: false,
@@ -87,6 +98,7 @@ impl EventEmitter {
             list.push(Listener {
                 callback,
                 once,
+                process_scope,
                 capture: false,
                 node_event: false,
                 weak: false,
@@ -105,6 +117,14 @@ impl EventEmitter {
             .unwrap_or(&[])
     }
 
+    pub fn listeners_for_scope(&self, event: &str, process_scope: u64) -> Vec<Listener> {
+        self.listeners_of(event)
+            .iter()
+            .filter(|listener| listener.process_scope == process_scope)
+            .cloned()
+            .collect()
+    }
+
     /// Remove the most recently added listener equal to `callback`.
     pub fn remove(&mut self, event: &str, callback: &Value) -> bool {
         if let Some(index) = self.events.iter().position(|(key, _)| key == event) {
@@ -113,6 +133,23 @@ impl EventEmitter {
                 .iter()
                 .rposition(|listener| execute::same_value(&listener.callback, callback))
             {
+                list.remove(at);
+                if list.is_empty() {
+                    self.events.remove(index);
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn remove_for_scope(&mut self, event: &str, callback: &Value, process_scope: u64) -> bool {
+        if let Some(index) = self.events.iter().position(|(key, _)| key == event) {
+            let list = &mut self.events[index].1;
+            if let Some(at) = list.iter().rposition(|listener| {
+                listener.process_scope == process_scope
+                    && execute::same_value(&listener.callback, callback)
+            }) {
                 list.remove(at);
                 if list.is_empty() {
                     self.events.remove(index);

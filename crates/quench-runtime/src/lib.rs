@@ -26,6 +26,7 @@ pub use host_jobs::install_host_job_pump;
 
 mod arrays;
 mod atomics;
+pub use atomics::expire_async_waiters;
 pub mod benchmark;
 mod bigint;
 mod binding_patterns;
@@ -46,6 +47,15 @@ mod cycle_collector;
 pub use conversion::is_callable;
 pub use conversion::to_number;
 pub use conversion::to_string;
+/// Return the realm associated with a callable value for host wrappers.
+pub fn callable_realm(value: &value::Value) -> ops::RealmId {
+    construct::constructor_realm(value)
+}
+
+/// Consume an iterable through the runtime's canonical iterator protocol.
+pub fn collect_iterable(value: value::Value) -> Result<Vec<value::Value>, execute::VmError> {
+    collections::iterator::collect_iterable(value)
+}
 pub mod date;
 mod disposable_stack;
 mod environment;
@@ -91,8 +101,8 @@ mod private_slots;
 mod promise;
 pub use promise::{
     drain_microtasks_all as drain_promise_jobs, has_pending_jobs as has_pending_promise_jobs,
-    has_pending_unhandled_rejections, promise_then, reject_promise, resolve_promise,
-    take_unhandled_rejections,
+    has_pending_unhandled_rejections, new_promise, promise_resolve, promise_then, reject_promise,
+    resolve_promise, take_unhandled_rejections,
 };
 mod properties;
 mod property_define;

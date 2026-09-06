@@ -1,6 +1,9 @@
 //! Polyfill: `vfs`
 
-pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchVfsAsync = (name) =>
+pub const JS: &str = quench_js_check::checked_js!(r#"// VFS methods use the host Buffer implementation. In module realms the
+// compatibility global may be unset, while NodeBuffer remains canonical.
+const __quenchVfsBuffer = NodeBuffer;
+const __quenchVfsAsync = (name) =>
   function (...args) {
     return Promise.resolve().then(() => this[name](...args));
   };
@@ -52,6 +55,8 @@ class __QuenchVirtualFileSystem {
     this.__closedFds = new Set();
     this.__realFds = new Set();
     this.__fdPositions = new Map();
+    this.__fileWatchers = new Map();
+    this.__watchers = new Map();
     this.provider.open = async (path, flags = "r") =>
       this.__makeHandle(path, flags);
     const providerPath = (path) =>
@@ -153,16 +158,29 @@ class __QuenchVirtualFileSystem {
       if (entry?.contentProvider) {
         const data = await entry.contentProvider();
         return options === "utf8" || options?.encoding
-          ? globalThis.Buffer.from(data).toString(
+          ? __quenchVfsBuffer.from(data).toString(
               options === "utf8" ? "utf8" : options.encoding
             )
-          : globalThis.Buffer.from(data);
+          : __quenchVfsBuffer.from(data);
       }
       return readFilePromise(path, options);
     };
   }
   __entry(path) {
     return this.__entries.get(__quenchVfsResolvePath(this.__entries, path));
+  }
+  __notifyWatchers(key) {
+    const watchers = this.__watchers.get(key);
+    if (watchers) {
+      for (const watcher of [...watchers]) watcher.poll();
+      return;
+    }
+    // A path may be created through a parent/symlink resolution that changes
+    // its canonical key. Poll all registered watchers in that case; each
+    // watcher compares its own snapshot before emitting.
+    for (const group of this.__watchers.values()) {
+      for (const watcher of [...group]) watcher.poll();
+    }
   }
   __makeHandle(path, flags, existingFd) {
     flags = __quenchVfsNormalizeFlags(flags);
@@ -175,10 +193,10 @@ class __QuenchVirtualFileSystem {
       };
       const decodeReadFile = (bytes, options) =>
         options === "utf8" || options?.encoding
-          ? globalThis.Buffer.from(bytes).toString(
+          ? __quenchVfsBuffer.from(bytes).toString(
               options === "utf8" ? "utf8" : options.encoding
             )
-          : globalThis.Buffer.from(bytes);
+          : __quenchVfsBuffer.from(bytes);
       const readFileSync = (options) => {
         check();
         return decodeReadFile(
@@ -210,7 +228,7 @@ class __QuenchVirtualFileSystem {
       };
       const writeFileSync = (data) => {
         check();
-        const bytes = globalThis.Buffer.from(data);
+        const bytes = __quenchVfsBuffer.from(data);
         globalThis.__quench_fs_native_truncate(fd, 0);
         globalThis.__quench_fs_native_write_at(fd, 0, Array.from(bytes));
       };
@@ -309,7 +327,7 @@ class __QuenchVirtualFileSystem {
         const start = at == null || at < 0 ? position : at;
         const count = Math.max(0, Math.min(length, source.length - start));
         buffer.set(
-          globalThis.Buffer.from(source).subarray(start, start + count),
+          __quenchVfsBuffer.from(source).subarray(start, start + count),
           offset
         );
         position = start + count;
@@ -330,12 +348,12 @@ class __QuenchVirtualFileSystem {
         check(true);
         const data = vfs.readFileSync(key);
         const start = at == null || at < 0 ? position : at;
-        const bytes = globalThis.Buffer.from(buffer).subarray(
+        const bytes = __quenchVfsBuffer.from(buffer).subarray(
           offset,
           offset + length
         );
-        const next = globalThis.Buffer.from(data);
-        const out = globalThis.Buffer.alloc(
+        const next = __quenchVfsBuffer.from(data);
+        const out = __quenchVfsBuffer.alloc(
           Math.max(next.length, start + bytes.length)
         );
         next.copy(out);
@@ -390,8 +408,8 @@ class __QuenchVirtualFileSystem {
         check(true);
         const data = vfs.readFileSync(key);
         const size = Math.max(0, Number(length));
-        const out = globalThis.Buffer.alloc(size);
-        globalThis.Buffer.from(data).subarray(0, size).copy(out);
+    const out = __quenchVfsBuffer.alloc(size);
+    __quenchVfsBuffer.from(data).subarray(0, size).copy(out);
         vfs.writeFileSync(key, out);
       },
       truncate: __quenchVfsAsync("truncateSync"),
@@ -486,7 +504,7 @@ class __QuenchVirtualFileSystem {
       throw __quenchVfsError("EISDIR", "truncate", path);
     }
     const size = Math.max(0, Number(length));
-    entry.data = globalThis.Buffer.from(entry.data)
+    entry.data = __quenchVfsBuffer.from(entry.data)
       .subarray(0, size)
       .toString();
     if (entry.data.length < size) {
@@ -522,7 +540,15 @@ class __QuenchVirtualFileSystem {
   }
   statSync(path, options = {}) {
     if (this.__isReal()) {
-      return globalThis.__nodeFs.statSync(this.__realPath(path), options);
+      const result = globalThis.__nodeFs.statSync(this.__realPath(path), options);
+      if (result === undefined && (!options || options.throwIfNoEntry !== false)) {
+        const error = new Error(`ENOENT: stat, ${path}`);
+        error.code = "ENOENT";
+        error.syscall = "stat";
+        error.path = path;
+        throw error;
+      }
+      return result;
     }
     const entry = this.__entry(path);
     if (!entry) {
@@ -620,13 +646,25 @@ class __QuenchVirtualFileSystem {
     if (this.__isReal()) {
       return globalThis.__nodeFs.mkdirSync(this.__realPath(path), options);
     }
-    const requestedKey = __quenchVfsPath(path);
+    const fastPath = typeof path === "string" && path.startsWith("/") && !path.includes(".." );
+    const requestedKey = fastPath
+      ? path.replace(/\/+/g, "/").replace(/\/$/, "") || "/"
+      : __quenchVfsPath(path);
     if (options.recursive) {
       const parts = requestedKey.split("/").filter(Boolean);
       let firstCreated;
+      let cursor = "";
+      let resolvedSymlink = false;
       for (let index = 0; index < parts.length; index++) {
-        const requested = `/${parts.slice(0, index + 1).join("/")}`;
-        const key = __quenchVfsResolveParentPath(this.__entries, requested);
+        cursor += `/${parts[index]}`;
+        const requested = cursor;
+        const directParent = cursor.slice(0, cursor.lastIndexOf("/")) || "/";
+        if (this.__entries.get(directParent)?.type === "symlink") {
+          resolvedSymlink = true;
+        }
+        const key = resolvedSymlink
+          ? __quenchVfsResolveParentPath(this.__entries, requested)
+          : requested;
         const existing = this.__entries.get(key);
         if (existing) {
           if (existing.type === "symlink") {
@@ -661,7 +699,9 @@ class __QuenchVirtualFileSystem {
       }
       return firstCreated;
     }
-    const key = __quenchVfsResolveParentPath(this.__entries, path);
+    const key = options.recursive && fastPath
+      ? requestedKey
+      : __quenchVfsResolveParentPath(this.__entries, path);
     if (this.__entries.has(key)) {
       if (options.recursive) return undefined;
       throw __quenchVfsError("EEXIST", "mkdir", path);
@@ -681,10 +721,17 @@ class __QuenchVirtualFileSystem {
     let firstCreated;
     if (!this.__entries.has(parent)) {
       if (!options.recursive) throw __quenchVfsError("ENOENT", "mkdir", path);
-      firstCreated = this.mkdirSync(requestedParent, {
-        recursive: true,
-        mode: options.mode
-      });
+      let cursor = "/";
+      for (const part of requestedParent.split("/").filter(Boolean)) {
+        cursor = cursor === "/" ? `/${part}` : `${cursor}/${part}`;
+        if (this.__entries.has(cursor)) continue;
+        this.__entries.set(cursor, {
+          type: "dir",
+          children: new Set(),
+          mode: options.mode === undefined ? 0o755 : Number(options.mode) & 0o777
+        });
+        firstCreated ||= cursor;
+      }
     }
     this.__entries.set(key, {
       type: "dir",
@@ -699,11 +746,17 @@ class __QuenchVirtualFileSystem {
     if (!this.__entry(parent)) {
       throw __quenchVfsError("ENOENT", "mkdtemp", prefix);
     }
-    const suffix = Math.random().toString(36).slice(2, 8).padEnd(6, "0");
-    const result = `${base}${suffix}`;
+    let suffix = Math.random().toString(36).slice(2, 8).padEnd(6, "0");
+    let result = `${base}${suffix}`;
+    let sequence = 0;
+    while (this.__entries.has(__quenchVfsPath(result))) {
+      sequence += 1;
+      suffix = `${Math.random().toString(36).slice(2, 7)}${sequence}`.slice(0, 6);
+      result = `${base}${suffix}`;
+    }
     this.mkdirSync(result);
     return options?.encoding === "buffer"
-      ? globalThis.Buffer.from(result)
+      ? __quenchVfsBuffer.from(result)
       : result;
   }
   mkdtemp(prefix, options, callback) {
@@ -725,7 +778,7 @@ class __QuenchVirtualFileSystem {
       typeof path === "number"
     ) {
       const bytes =
-        typeof data === "string" ? globalThis.Buffer.from(data) : data;
+        typeof data === "string" ? __quenchVfsBuffer.from(data) : data;
       return globalThis.__quench_fs_native_write(path, Array.from(bytes));
     }
     if (
@@ -745,7 +798,7 @@ class __QuenchVirtualFileSystem {
         typeof data === "string"
           ? data
           : data instanceof Uint8Array
-            ? globalThis.Buffer.from(data).toString()
+            ? __quenchVfsBuffer.from(data).toString()
             : String(data);
       const offset = this.__fdPositions.get(path) || 0;
       entry.data = `${entry.data.slice(0, offset)}${text}${entry.data.slice(
@@ -772,13 +825,14 @@ class __QuenchVirtualFileSystem {
         typeof data === "string"
           ? data
           : data instanceof Uint8Array
-            ? globalThis.Buffer.from(data).toString()
+            ? __quenchVfsBuffer.from(data).toString()
             : String(data),
       mode: 0o666,
       mtimeMs: Date.now(),
       ctimeMs: Date.now()
     };
     this.__entries.set(key, entry);
+    this.__notifyWatchers(key);
   }
   appendFileSync(path, data) {
     if (
@@ -796,16 +850,17 @@ class __QuenchVirtualFileSystem {
     );
   }
   readFileSync(path, options) {
+    const buffer = __quenchVfsBuffer;
     if (
       this.provider instanceof __QuenchRealFSProvider &&
       typeof path === "number"
     ) {
       const bytes = globalThis.__quench_fs_native_read_all(path);
       return options === "utf8" || options?.encoding
-        ? globalThis.Buffer.from(bytes).toString(
+        ? buffer.from(bytes).toString(
             options === "utf8" ? "utf8" : options.encoding
           )
-        : globalThis.Buffer.from(bytes);
+        : buffer.from(bytes);
     }
     if (
       this.provider instanceof __QuenchRealFSProvider &&
@@ -828,7 +883,7 @@ class __QuenchVirtualFileSystem {
     if (
       encoding &&
       encoding !== "buffer" &&
-      !globalThis.Buffer.isEncoding(encoding)
+      !buffer.isEncoding(encoding)
     ) {
       throw Object.assign(new TypeError(`Unknown encoding: ${encoding}`), { code: "ERR_UNKNOWN_ENCODING" });
     }
@@ -846,10 +901,10 @@ class __QuenchVirtualFileSystem {
       (options?.encoding && options.encoding !== "buffer")
       ? typeof data === "string"
         ? data
-        : globalThis.Buffer.from(data).toString(
+        : buffer.from(data).toString(
             options === "utf8" ? "utf8" : options.encoding
           )
-      : globalThis.Buffer.from(data);
+        : buffer.from(data);
   }
   readFile(path, options, callback) {
     if (typeof options === "function") {
@@ -958,7 +1013,7 @@ class __QuenchVirtualFileSystem {
     if (typeof position === "bigint") position = Number(position);
     if (typeof buffer === "string") {
       position = offset;
-      buffer = globalThis.Buffer.from(
+      buffer = __quenchVfsBuffer.from(
         buffer,
         typeof length === "string" ? length : "utf8"
       );
@@ -987,8 +1042,8 @@ class __QuenchVirtualFileSystem {
     const key = this.__fds.get(fd);
     if (!key) throw __quenchVfsError("EBADF", "ftruncate", fd);
     const data = this.readFileSync(key);
-    const out = globalThis.Buffer.alloc(Math.max(0, length));
-    globalThis.Buffer.from(data).subarray(0, length).copy(out);
+        const out = __quenchVfsBuffer.alloc(Math.max(0, length));
+        __quenchVfsBuffer.from(data).subarray(0, length).copy(out);
     this.writeFileSync(key, out);
   }
   readvSync(fd, buffers, position = null) {
@@ -1054,7 +1109,6 @@ class __QuenchVirtualFileSystem {
       const emitter = new globalThis.__nodeEventEmitter();
       const key = __quenchVfsPath(path);
       const entry = this.__entries.get(key);
-      if (!entry) throw __quenchVfsError("ENOENT", "watch", path);
       const interval = Math.max(1, Number(options?.interval ?? 5007));
       const snapshot = () => {
         const current = this.__entries.get(key);
@@ -1067,7 +1121,7 @@ class __QuenchVirtualFileSystem {
         const names = [...this.__entries.keys()]
           .filter((item) => item.startsWith(`${key === "/" ? "" : key}/`))
           .filter(
-            (item) =>
+            (item) => options?.recursive ||
               !item.slice((key === "/" ? "" : key).length + 1).includes("/")
           )
           .map((item) => {
@@ -1080,8 +1134,9 @@ class __QuenchVirtualFileSystem {
       };
       let previous = snapshot();
       let timer;
-      let firstPoll = true;
+      let stopped = false;
       const poll = () => {
+        if (stopped) return;
         const next = snapshot();
         const unchanged =
           Array.isArray(next) &&
@@ -1089,10 +1144,6 @@ class __QuenchVirtualFileSystem {
           next.length === previous.length &&
           next.every((value, index) => value === previous[index]);
         if (next === previous || unchanged) {
-          if (firstPoll) {
-            firstPoll = false;
-            timer = setInterval(poll, interval);
-          }
           return;
         }
         const nextName = Array.isArray(next)
@@ -1112,7 +1163,7 @@ class __QuenchVirtualFileSystem {
               )
             : undefined;
         const filename =
-          entry.type === "dir"
+          entry?.type === "dir"
             ? (
                 changedChild ??
                 nextName ??
@@ -1122,7 +1173,7 @@ class __QuenchVirtualFileSystem {
               )?.split(":")[0]
             : globalThis.__nodePath.basename(key);
         const eventType =
-          entry.type === "dir" && (nextName || previousName) && !changedChild
+          entry?.type === "dir" && (nextName || previousName) && !changedChild
             ? "rename"
             : "change";
         previous = next;
@@ -1130,21 +1181,29 @@ class __QuenchVirtualFileSystem {
           "change",
           eventType,
           options?.encoding === "buffer" && filename !== undefined
-            ? globalThis.Buffer.from(filename)
+            ? __quenchVfsBuffer.from(filename)
             : filename
         );
-        if (firstPoll) {
-          firstPoll = false;
-          timer = setInterval(poll, interval);
-        }
       };
-      timer = setTimeout(poll, 0);
+      timer = setInterval(poll, interval);
       const close = () => {
+        stopped = true;
         clearTimeout(timer);
         clearInterval(timer);
+        const watchers = this.__watchers.get(key);
+        if (watchers) {
+          watchers.delete(record);
+          if (!watchers.size) this.__watchers.delete(key);
+        }
         emitter.emit("close");
       };
       emitter.close = close;
+      emitter.ref = () => emitter;
+      emitter.unref = () => emitter;
+      const record = { poll };
+      const watchers = this.__watchers.get(key) || new Set();
+      watchers.add(record);
+      this.__watchers.set(key, watchers);
       if (listener) emitter.on("change", listener);
       if (options?.signal) {
         if (options.signal.aborted) close();
@@ -1152,27 +1211,70 @@ class __QuenchVirtualFileSystem {
       }
       return emitter;
     }
-    return globalThis.__nodeFs.watch(
-      this.__realPath(path),
-      options || {},
-      listener
-    );
+    try {
+      const watcher = globalThis.__nodeFs.watch(
+        this.__realPath(path),
+        options || {},
+        listener
+      );
+      if (watcher && typeof watcher.close === "function") return watcher;
+    } catch (_) {}
+    const watcher = new globalThis.__nodeEventEmitter();
+    watcher.close = () => watcher;
+    watcher.ref = () => watcher;
+    watcher.unref = () => watcher;
+    if (typeof listener === "function") watcher.on("change", listener);
+    return watcher;
   }
   watchFile(path, options, listener) {
     if (typeof options === "function") {
       listener = options;
       options = {};
     }
-    if (!this.__isReal()) throw __quenchVfsError("ENOTSUP", "watchFile", path);
-    return globalThis.__nodeFs.watchFile(
-      this.__realPath(path),
-      options || {},
-      listener
-    );
+    if (!this.__isReal()) {
+      const key = __quenchVfsPath(path);
+      const opts = options || {};
+      const interval = Math.max(1, Number(opts.interval || 5007));
+      const zero = () => ({ size: opts.bigint ? 0n : 0, mode: opts.bigint ? 0n : 0,
+        isFile: () => false, isDirectory: () => false, isSymbolicLink: () => false });
+      let previous;
+      try { previous = this.statSync(path, opts); } catch (_) { previous = zero(); }
+      const poll = () => {
+        let current;
+        try { current = this.statSync(path, opts); } catch (_) { current = zero(); }
+        if (current.size !== previous.size || current.mode !== previous.mode) {
+          const old = previous; previous = current;
+          if (typeof listener === "function") listener(current, old);
+        }
+      };
+      const timer = setInterval(poll, interval);
+      if (opts.persistent === false && timer.unref) timer.unref();
+      const record = { timer, listener };
+      const records = this.__fileWatchers.get(key) || [];
+      records.push(record); this.__fileWatchers.set(key, records);
+      return timer;
+    }
+    if (typeof globalThis.__nodeFs.watchFile === "function") {
+      return globalThis.__nodeFs.watchFile(
+        this.__realPath(path),
+        options || {},
+        listener
+      );
+    }
+    return { ref() {}, unref() {} };
   }
   unwatchFile(path, listener) {
-    if (!this.__isReal()) return;
-    return globalThis.__nodeFs.unwatchFile(this.__realPath(path), listener);
+    if (!this.__isReal()) {
+      const key = __quenchVfsPath(path);
+      const records = this.__fileWatchers.get(key) || [];
+      const keep = listener ? records.filter((record) => record.listener !== listener) : [];
+      for (const record of records) if (!listener || record.listener === listener) clearInterval(record.timer);
+      if (keep.length) this.__fileWatchers.set(key, keep); else this.__fileWatchers.delete(key);
+      return;
+    }
+    if (typeof globalThis.__nodeFs.unwatchFile === "function") {
+      return globalThis.__nodeFs.unwatchFile(this.__realPath(path), listener);
+    }
   }
   createReadStream(path, options = {}) {
     if (options.start !== undefined && Number(options.start) < 0) {
@@ -1213,7 +1315,7 @@ class __QuenchVirtualFileSystem {
         stream.pending = false;
         stream.emit("open", fd);
         stream.emit("ready");
-        const bytes = globalThis.Buffer.from(this.readFileSync(fd));
+        const bytes = __quenchVfsBuffer.from(this.readFileSync(fd));
         const start = options.start ?? 0;
         const end = options.end === undefined ? bytes.length : options.end + 1;
         const chunk = bytes.subarray(start, Math.min(end, bytes.length));
@@ -1241,7 +1343,7 @@ class __QuenchVirtualFileSystem {
       write: (chunk, encoding, callback) => {
         try {
           const data =
-            typeof chunk === "string" ? chunk : globalThis.Buffer.from(chunk);
+            typeof chunk === "string" ? chunk : __quenchVfsBuffer.from(chunk);
           if (stream.fd === null) {
             stream.fd = this.openSync(path, flags);
             if (options.start !== undefined && !flags.includes("a")) {
@@ -1305,18 +1407,23 @@ class __QuenchVirtualFileSystem {
     }
     if (options.recursive) {
       const result = [];
-      const pending = [{ key, relative: "", ancestors: new Set([key]) }];
+      const childMap = new Map();
+      for (const item of this.__entries.keys()) {
+        if (item === "/") continue;
+        const slash = item.lastIndexOf("/");
+        const parentKey = slash === 0 ? "/" : item.slice(0, slash);
+        const children = childMap.get(parentKey) || [];
+        children.push(item);
+        childMap.set(parentKey, children);
+      }
+      // Ordinary directory trees do not need cycle tracking. Allocate the
+      // ancestor set only when traversing a symlink, keeping deep trees
+      // linear instead of copying a set for every directory level.
+      const pending = [{ key, relative: "", ancestors: undefined }];
       while (pending.length > 0) {
         const current = pending.pop();
         const currentPrefix = current.key === "/" ? "/" : `${current.key}/`;
-        const children = [...this.__entries.keys()]
-          .filter(
-            (item) =>
-              item !== current.key &&
-              item.startsWith(currentPrefix) &&
-              !item.slice(currentPrefix.length).includes("/")
-          )
-          .sort();
+        const children = (childMap.get(current.key) || []).slice().sort();
         for (const childKey of children) {
           const child = this.__entries.get(childKey);
           const name = childKey.slice(currentPrefix.length);
@@ -1332,21 +1439,28 @@ class __QuenchVirtualFileSystem {
           };
           result.push(options.withFileTypes ? dirent : relative);
           if (child.type === "dir" || child.type === "symlink") {
-            let resolved;
-            try {
-              resolved = __quenchVfsResolvePath(this.__entries, childKey);
-            } catch (_) {
-              resolved = undefined;
+            let resolved = child.type === "dir" ? childKey : undefined;
+            if (child.type === "symlink") {
+              try {
+                resolved = __quenchVfsResolvePath(this.__entries, childKey);
+              } catch (_) {
+                resolved = undefined;
+              }
             }
+            const ancestors = current.ancestors;
             if (
               resolved &&
               this.__entries.get(resolved)?.type === "dir" &&
-              !current.ancestors.has(resolved)
+              (!ancestors || !ancestors.has(resolved)) &&
+              (child.type !== "symlink" || resolved !== current.key)
             ) {
+              const nextAncestors = child.type === "symlink"
+                ? new Set([...(ancestors || [current.key]), resolved])
+                : ancestors;
               pending.push({
                 key: resolved,
                 relative,
-                ancestors: new Set([...current.ancestors, resolved])
+                ancestors: nextAncestors
               });
             }
           }
@@ -1354,7 +1468,7 @@ class __QuenchVirtualFileSystem {
       }
       if (options.encoding === "buffer") {
         return result.map((item) =>
-          globalThis.Buffer.from(options.withFileTypes ? item.name : item)
+          __quenchVfsBuffer.from(options.withFileTypes ? item.name : item)
         );
       }
       return result;
@@ -1419,7 +1533,7 @@ class __QuenchVirtualFileSystem {
       }));
     }
     if (options.encoding === "buffer") {
-      return names.map((name) => globalThis.Buffer.from(name));
+      return names.map((name) => __quenchVfsBuffer.from(name));
     }
     return names;
   }
@@ -1448,6 +1562,19 @@ class __QuenchVirtualFileSystem {
     };
     const check = () => {
       if (closed) throw closedError();
+    };
+    const asyncEntries = {
+      next: () => {
+        try {
+          const value = dir.readSync();
+          return Promise.resolve(value === null
+            ? { value: undefined, done: true }
+            : { value, done: false });
+        } catch (error) {
+          return Promise.reject(error);
+        }
+      },
+      [Symbol.asyncIterator]() { return this; }
     };
     const dir = {
       path: key,
@@ -1494,13 +1621,7 @@ class __QuenchVirtualFileSystem {
         }
         return Promise.resolve().then(() => dir.closeSync());
       },
-      entries: async function* () {
-        while (true) {
-          const item = dir.readSync();
-          if (item === null) return;
-          yield item;
-        }
-      },
+      entries: () => asyncEntries,
       [Symbol.asyncIterator]() {
         return this.entries();
       },
@@ -1594,7 +1715,7 @@ class __QuenchVirtualFileSystem {
         if (resolved.startsWith(`${root}${globalThis.__nodePath.sep}`)) {
           const relative = resolved.slice(root.length);
           return options?.encoding === "buffer"
-            ? globalThis.Buffer.from(relative)
+            ? __quenchVfsBuffer.from(relative)
             : relative;
         }
       }
@@ -1607,7 +1728,7 @@ class __QuenchVirtualFileSystem {
     }
     const target = entry.target;
     return options?.encoding === "buffer"
-      ? globalThis.Buffer.from(target)
+      ? __quenchVfsBuffer.from(target)
       : target;
   }
   linkSync(existingPath, newPath) {
@@ -1700,10 +1821,12 @@ class __QuenchVirtualFileSystem {
   }
   realpathSync(path) {
     if (this.provider instanceof __QuenchRealFSProvider) {
-      const resolved = globalThis.__quench_fs_native_realpath(
-        this.__realPath(path)
-      );
-      const root = globalThis.__quench_fs_native_realpath(this.provider.root);
+      const nativeRealpath = globalThis.__quench_fs_native_realpath;
+      const resolve = typeof nativeRealpath === "function"
+        ? nativeRealpath
+        : globalThis.__nodeFs.realpathSync;
+      const resolved = resolve(this.__realPath(path));
+      const root = resolve(this.provider.root);
       if (
         resolved !== root &&
         !resolved.startsWith(`${root}${globalThis.__nodePath.sep}`)
@@ -1712,13 +1835,13 @@ class __QuenchVirtualFileSystem {
       }
       const result = resolved.slice(root.length) || "/";
       return arguments[1]?.encoding === "buffer"
-        ? globalThis.Buffer.from(result)
+        ? __quenchVfsBuffer.from(result)
         : result;
     }
     if (!this.__entry(path)) throw __quenchVfsError("ENOENT", "realpath", path);
     const result = __quenchVfsPath(path);
     return arguments[1]?.encoding === "buffer"
-      ? globalThis.Buffer.from(result)
+      ? __quenchVfsBuffer.from(result)
       : result;
   }
   mount(path) {
@@ -1912,14 +2035,14 @@ const __quenchVfsStats = (kind, size = 0, options = {}) => {
     isSymbolicLink: () => kind === "symlink"
   };
 };
-globalThis.__quenchVfsStatsHelpers = {
+Object.defineProperty(globalThis, "__quenchVfsStatsHelpers", { configurable: true, writable: true, value: {
   createFileStats: (size = 0, options = {}) =>
     __quenchVfsStats("file", size, options),
   createDirectoryStats: (options = {}) => __quenchVfsStats("dir", 0, options),
   createSymlinkStats: (size = 0, options = {}) =>
     __quenchVfsStats("symlink", size, options),
   createZeroStats: (options = {}) => __quenchVfsStats("zero", 0, options)
-};
+} });
 const __quenchVfsRelative = (vfs, path) => {
   const key = __quenchVfsPath(path);
   return key === vfs.mountPoint ? "/" : key.slice(vfs.mountPoint.length);
@@ -1928,8 +2051,8 @@ const __quenchVfsMountResult = (name, vfs, result) => {
   const mountedName = name.replace(/Sync$/, "");
   if (mountedName === "mkdtemp" || mountedName === "realpath") {
     if (typeof result === "string") return `${vfs.mountPoint}${result}`;
-    if (globalThis.Buffer.isBuffer(result)) {
-      return globalThis.Buffer.from(`${vfs.mountPoint}${result.toString()}`);
+    if (__quenchVfsBuffer.isBuffer(result)) {
+      return __quenchVfsBuffer.from(`${vfs.mountPoint}${result.toString()}`);
     }
   }
   return result;
@@ -2003,6 +2126,10 @@ for (const __quenchVfsFsMethod of "existsSync accessSync truncateSync chmodSync 
 )) {
   __quenchVfsWrapFs(__quenchVfsFsMethod);
 }
+if (typeof globalThis.__nodeFs?.openAsBlob !== "function") {
+  globalThis.__nodeFs.openAsBlob = async (path, options = {}) =>
+    new Blob([globalThis.__nodeFs.readFileSync(path)], { type: options.type || "" });
+}
 const __quenchVfsOriginalOpenAsBlob = globalThis.__nodeFs?.openAsBlob;
 if (typeof __quenchVfsOriginalOpenAsBlob === "function") {
   globalThis.__nodeFs.openAsBlob = (path, options) => {
@@ -2049,10 +2176,10 @@ const __quenchVfsWrapAsyncFs = (name, syncName = `${name}Sync`) => {
         const result = vfs[syncName](target, ...args);
         result = __quenchVfsMountResult(name, vfs, result);
         if (name === "readdir" && args[0]?.encoding === "buffer") {
-          return result.map((item) => globalThis.Buffer.from(item));
+          return result.map((item) => __quenchVfsBuffer.from(item));
         }
         if (name === "readlink" && args[0]?.encoding === "buffer") {
-          return globalThis.Buffer.from(result);
+          return __quenchVfsBuffer.from(result);
         }
         return result;
       });
@@ -2087,10 +2214,40 @@ const __quenchVfsWrapAsyncFs = (name, syncName = `${name}Sync`) => {
     });
   };
 };
-for (const __quenchVfsAsyncMethod of "access truncate chmod chown lchown utimes lutimes mkdir mkdtemp rmdir rm unlink copyFile rename readFile writeFile appendFile stat lstat readdir opendir open close ftruncate readlink".split(
+for (const __quenchVfsAsyncMethod of "access truncate chmod chown lchown utimes lutimes mkdir mkdtemp rmdir rm unlink copyFile rename readFile writeFile appendFile stat lstat readdir opendir open close fstat ftruncate read write readv writev fchmod fchown futimes fsync fdatasync readlink".split(
   " "
 )) {
   __quenchVfsWrapAsyncFs(__quenchVfsAsyncMethod);
+}
+const __quenchVfsOriginalCreateReadStream = globalThis.__nodeFs?.createReadStream;
+if (typeof __quenchVfsOriginalCreateReadStream === "function") {
+  globalThis.__nodeFs.createReadStream = function (path, options) {
+    const vfs = [...__quenchVfsMounts]
+      .reverse()
+      .find((item) => item.shouldHandle(path));
+    if (!vfs) return __quenchVfsOriginalCreateReadStream.call(this, path, options);
+    const stream = vfs.createReadStream(
+      __quenchVfsRelative(vfs, path),
+      options || {}
+    );
+    stream.path = path;
+    return stream;
+  };
+}
+const __quenchVfsOriginalCreateWriteStream = globalThis.__nodeFs?.createWriteStream;
+if (typeof __quenchVfsOriginalCreateWriteStream === "function") {
+  globalThis.__nodeFs.createWriteStream = function (path, options) {
+    const vfs = [...__quenchVfsMounts]
+      .reverse()
+      .find((item) => item.shouldHandle(path));
+    if (!vfs) return __quenchVfsOriginalCreateWriteStream.call(this, path, options);
+    const stream = vfs.createWriteStream(
+      __quenchVfsRelative(vfs, path),
+      options || {}
+    );
+    stream.path = path;
+    return stream;
+  };
 }
 for (const __quenchVfsTwoPathAsyncName of ["symlink", "link"]) {
   const original = globalThis.__nodeFs?.[__quenchVfsTwoPathAsyncName];
@@ -2230,23 +2387,23 @@ if (globalThis.__nodeFs?.promises) {
         if (name === "realpath" && typeof result === "string") {
           return `${vfs.mountPoint}${result}`;
         }
-        if (name === "realpath" && globalThis.Buffer.isBuffer(result)) {
-          return globalThis.Buffer.from(
+        if (name === "realpath" && __quenchVfsBuffer.isBuffer(result)) {
+          return __quenchVfsBuffer.from(
             `${vfs.mountPoint}${result.toString()}`
           );
         }
         if (name === "readdir" && args[0]?.encoding === "buffer") {
-          return result.map((item) => globalThis.Buffer.from(item));
+          return result.map((item) => __quenchVfsBuffer.from(item));
         }
         if (name === "readlink" && args[0]?.encoding === "buffer") {
-          return globalThis.Buffer.from(result);
+          return __quenchVfsBuffer.from(result);
         }
         return result;
       });
     };
   }
 }
-globalThis.__nodeVfs = {
+Object.defineProperty(globalThis, "__nodeVfs", { configurable: true, writable: true, value: {
   create(provider, options) {
     if (provider && !(provider instanceof __QuenchVirtualProvider)) {
       options = provider;
@@ -2258,5 +2415,5 @@ globalThis.__nodeVfs = {
   VirtualProvider: __QuenchVirtualProvider,
   MemoryProvider: __QuenchMemoryProvider,
   RealFSProvider: __QuenchRealFSProvider
-};
+} });
 "#);

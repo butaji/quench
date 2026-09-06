@@ -44,6 +44,21 @@ pub fn set_property(
     crate::builtins::set_property(target, key, value)
 }
 
+pub fn set_property_observable(
+    target: crate::value::Value,
+    key: &str,
+    value: crate::value::Value,
+) -> Result<crate::value::Value, VmError> {
+    crate::properties::set_property_from_host(target, key, value)
+}
+
+pub fn set_dynamic_function_name(
+    value: &crate::value::Value,
+    key: &crate::value::Value,
+) -> Result<(), VmError> {
+    crate::builtins::set_dynamic_function_name(value, key, None)
+}
+
 /// Mutate one existing ordinary-object slot while preserving object identity.
 /// Host state machines use this only where JavaScript observes identity.
 pub fn set_property_in_place(
@@ -102,6 +117,26 @@ pub fn set_array_element_in_place(
     true
 }
 
+pub fn set_array_index_in_place(
+    target: &crate::value::Value,
+    index: usize,
+    value: crate::value::Value,
+) -> bool {
+    set_array_element_in_place(target, index, value)
+}
+
+pub fn current_script_global() -> crate::value::Value {
+    crate::locals::current().get(0)
+}
+
+pub fn replace_global_object(old: &crate::value::Value, new: &crate::value::Value) {
+    crate::vm::replace_global_object(old, new);
+}
+
+pub fn store_global_binding(name: &str, value: crate::value::Value) -> bool {
+    crate::global_environment::store_global_binding(name, value)
+}
+
 pub fn set_array_length_in_place(target: &crate::value::Value, length: usize) -> bool {
     let crate::value::Value::Array(array) = target else {
         return false;
@@ -152,6 +187,10 @@ pub fn set_prototype_of(
     prototype: &crate::value::Value,
 ) -> Result<crate::value::Value, VmError> {
     crate::builtins::object::set_prototype_of(&[target.clone(), prototype.clone()])
+}
+
+pub fn prevent_extensions(target: &crate::value::Value) -> Result<crate::value::Value, VmError> {
+    crate::properties::prevent_extensions(Some(target))
 }
 
 /// Set an own property on a callable value without invoking inherited

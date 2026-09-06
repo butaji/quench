@@ -61,7 +61,10 @@ globalThis.structuredClone = (value, options) => {
     for (const key of Object.keys(value)) clone[key] = value[key];
     return clone;
   }
-  const cryptoKeyClone = globalThis.__quenchCloneWebCryptoKey?.(value);
+  const cryptoKeyClone =
+    value && value[String.fromCharCode(0) + "quench:webcrypto:key"] === true
+      ? undefined
+      : globalThis.__quenchCloneWebCryptoKey?.(value);
   if (cryptoKeyClone) return cryptoKeyClone;
   return __nodeNativeStructuredClone
     ? __nodeNativeStructuredClone(value, options)
@@ -433,6 +436,10 @@ globalThis.process = Object.assign(__quenchProcessHost || {}, {
     return [seconds, nanos];
   }
 });
+if (globalThis.__quench_allowed_node_environment_flags instanceof Set) {
+  globalThis.process.allowedNodeEnvironmentFlags =
+    globalThis.__quench_allowed_node_environment_flags;
+}
 if (!globalThis.process.argv0) globalThis.process.argv0 = globalThis.process.execPath;
 globalThis.console._stdout ||= globalThis.process?.stdout;
 globalThis.console._stderr ||= globalThis.process?.stderr;

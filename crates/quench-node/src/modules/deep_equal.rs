@@ -31,6 +31,9 @@ fn compare_partial(
     if execute::same_value(left, right) {
         return Ok(true);
     }
+    if is_typed_array(left) && is_typed_array(right) {
+        return partial_typed_array(left, right, memo);
+    }
     if is_date_value(left) != is_date_value(right) && (is_date_value(left) || is_date_value(right))
     {
         return Ok(false);
@@ -52,6 +55,22 @@ fn compare_partial(
     }
     if is_url_like(left) || is_url_like(right) {
         return compare_url_like(left, right);
+    }
+    if is_crypto_key(left) || is_crypto_key(right) {
+        return if is_crypto_key(left) && is_crypto_key(right) {
+            compare(
+                &execute::get_property(left, crate::modules::crypto::KEY_DATA_PROP),
+                &execute::get_property(right, crate::modules::crypto::KEY_DATA_PROP),
+                true,
+                false,
+                memo,
+            )
+        } else {
+            Ok(false)
+        };
+    }
+    if is_webcrypto_key(left) || is_webcrypto_key(right) {
+        return compare_webcrypto_keys(left, right, memo);
     }
     match (left, right) {
         (Value::Array(a), Value::Array(b)) => {
@@ -294,10 +313,26 @@ fn partial_typed_array(
     if std::mem::discriminant(left) != std::mem::discriminant(right) {
         return Ok(false);
     }
+    if value_is_float16(left) != value_is_float16(right) {
+        return Ok(false);
+    }
     let left_len = typed_array_length(left).unwrap_or(0);
     let right_len = typed_array_length(right).unwrap_or(0);
     if left_len < right_len || seen(memo, left, right) {
         return Ok(left_len >= right_len);
+    }
+    if left_len == right_len {
+        if let (
+            Some((left_buffer, left_start, left_end)),
+            Some((right_buffer, right_start, right_end)),
+        ) = (typed_array_bytes(left), typed_array_bytes(right))
+        {
+            let left_bytes = left_buffer.bytes.borrow();
+            let right_bytes = right_buffer.bytes.borrow();
+            if left_bytes.get(left_start..left_end) == right_bytes.get(right_start..right_end) {
+                return partial_enumerable_symbols(left, right);
+            }
+        }
     }
     let mut cursor = 0;
     for index in 0..right_len {
@@ -524,6 +559,41 @@ fn is_error_value(value: &Value) -> bool {
     false
 }
 
+fn is_crypto_key(value: &Value) -> bool {
+    matches!(
+        execute::get_property(value, crate::modules::crypto::KEY_MARKER_PROP),
+        Value::Boolean(true)
+    )
+}
+
+fn is_webcrypto_key(value: &Value) -> bool {
+    matches!(
+        execute::get_property(value, crate::modules::webcrypto::KEY_MARKER_PROP),
+        Value::Boolean(true)
+    )
+}
+
+fn compare_webcrypto_keys(
+    left: &Value,
+    right: &Value,
+    memo: &mut Vec<(*const (), *const ())>,
+) -> Result<bool, VmError> {
+    if !is_webcrypto_key(left) || !is_webcrypto_key(right) {
+        return Ok(false);
+    }
+    let left_data = execute::get_property(left, crate::modules::webcrypto::KEY_DATA_PROP);
+    let right_data = execute::get_property(right, crate::modules::webcrypto::KEY_DATA_PROP);
+    if !compare(&left_data, &right_data, true, false, memo)? {
+        return Ok(false);
+    }
+    let left_meta = execute::get_property(left, "\0quench:webcrypto:key-meta");
+    let right_meta = execute::get_property(right, "\0quench:webcrypto:key-meta");
+    if !compare(&left_meta, &right_meta, true, false, memo)? {
+        return Ok(false);
+    }
+    compare_objects(left, right, true, false, memo)
+}
+
 /// `util.isDeepStrictEqual(left, right, options)` — `skip_prototype`
 /// mirrors Node's `skipPrototype` option.
 pub fn deep_equal_opts(
@@ -583,6 +653,13 @@ fn compare(
     if execute::same_value(left, right) {
         return Ok(true);
     }
+    // Typed-array identity and element semantics are self-contained.  Handle
+    // them before the generic object probes below (date/regexp/error/url
+    // markers), whose VM property lookups are disproportionately expensive
+    // for large views and add no information for this value family.
+    if is_typed_array(left) && is_typed_array(right) {
+        return compare_typed_arrays(left, right, strict, skip_prototype, memo);
+    }
     if is_date_value(left) != is_date_value(right) && (is_date_value(left) || is_date_value(right))
     {
         return Ok(false);
@@ -604,6 +681,22 @@ fn compare(
     }
     if is_url_like(left) || is_url_like(right) {
         return compare_url_like(left, right);
+    }
+    if is_crypto_key(left) || is_crypto_key(right) {
+        return if is_crypto_key(left) && is_crypto_key(right) {
+            compare(
+                &execute::get_property(left, crate::modules::crypto::KEY_DATA_PROP),
+                &execute::get_property(right, crate::modules::crypto::KEY_DATA_PROP),
+                true,
+                false,
+                memo,
+            )
+        } else {
+            Ok(false)
+        };
+    }
+    if is_webcrypto_key(left) || is_webcrypto_key(right) {
+        return compare_webcrypto_keys(left, right, memo);
     }
     match (left, right) {
         (Value::Object(_), Value::Object(_)) if is_date_value(left) && is_date_value(right) => {
@@ -628,7 +721,7 @@ fn compare(
             compare_arrays(left, right, strict, skip_prototype, memo)
         }
         (Value::ArrayBuffer(left), Value::ArrayBuffer(right)) => {
-            if strict && left.shared != right.shared {
+            if left.shared != right.shared {
                 return Ok(false);
             }
             Ok(left.bytes.borrow().as_slice() == right.bytes.borrow().as_slice())
@@ -870,13 +963,59 @@ fn compare_typed_arrays(
             return Ok(false);
         }
     }
-    let Some(left_bytes) = typed_array_bytes(left) else {
+    if is_float_typed_array(left) {
+        let length = typed_array_length(left).unwrap_or(0);
+        if typed_array_length(right).unwrap_or(0) != length {
+            return Ok(false);
+        }
+        // Equal floating-point views are overwhelmingly the common case in
+        // deep-comparison workloads.  Compare their backing bytes first so
+        // large typed arrays do not cross the VM property boundary once per
+        // element.  A byte mismatch falls back to element semantics below,
+        // preserving SameValue/SameValueZero handling for signed zero and
+        // NaN payloads.
+        if let (
+            Some((left_buffer, left_start, left_end)),
+            Some((right_buffer, right_start, right_end)),
+        ) = (typed_array_bytes(left), typed_array_bytes(right))
+        {
+            let left_bytes = left_buffer.bytes.borrow();
+            let right_bytes = right_buffer.bytes.borrow();
+            if left_bytes.get(left_start..left_end) == right_bytes.get(right_start..right_end) {
+                return if strict {
+                    same_enumerable_symbols_shallow(left, right)
+                } else {
+                    Ok(true)
+                };
+            }
+        }
+        for index in 0..length {
+            let left_value = execute::get_property(left, &index.to_string());
+            let right_value = execute::get_property(right, &index.to_string());
+            let equal = if strict {
+                execute::same_value(&left_value, &right_value)
+            } else {
+                same_value_zero(&left_value, &right_value)
+            };
+            if !equal {
+                return Ok(false);
+            }
+        }
+        return if strict {
+            same_enumerable_symbols_shallow(left, right)
+        } else {
+            Ok(true)
+        };
+    }
+    let Some((left_buffer, left_start, left_end)) = typed_array_bytes(left) else {
         return Ok(false);
     };
-    let Some(right_bytes) = typed_array_bytes(right) else {
+    let Some((right_buffer, right_start, right_end)) = typed_array_bytes(right) else {
         return Ok(false);
     };
-    if left_bytes != right_bytes {
+    let left_bytes = left_buffer.bytes.borrow();
+    let right_bytes = right_buffer.bytes.borrow();
+    if left_bytes.get(left_start..left_end) != right_bytes.get(right_start..right_end) {
         return Ok(false);
     }
     if strict {
@@ -884,6 +1023,22 @@ fn compare_typed_arrays(
     } else {
         Ok(true)
     }
+}
+
+fn same_value_zero(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Number(left), Value::Number(right)) if *left == 0.0 && *right == 0.0 => true,
+        (Value::Number(left), Value::Number(right)) if left.is_nan() && right.is_nan() => true,
+        _ => execute::same_value(left, right),
+    }
+}
+
+fn is_float_typed_array(value: &Value) -> bool {
+    matches!(value, Value::Float32Array(_) | Value::Float64Array(_)) || value.is_float16_array()
+}
+
+fn value_is_float16(value: &Value) -> bool {
+    value.is_float16_array()
 }
 
 fn same_enumerable_symbols_shallow(left: &Value, right: &Value) -> Result<bool, VmError> {
@@ -920,7 +1075,9 @@ fn partial_enumerable_symbols(left: &Value, right: &Value) -> Result<bool, VmErr
     Ok(true)
 }
 
-fn typed_array_bytes(value: &Value) -> Option<Vec<u8>> {
+fn typed_array_bytes(
+    value: &Value,
+) -> Option<(&quench_runtime::value::ArrayBufferData, usize, usize)> {
     let (buffer, offset, length, element_size) = match value {
         Value::Float64Array(view) => (&view.buffer, view.byte_offset, view.length, 8),
         Value::Float32Array(view) => (&view.buffer, view.byte_offset, view.length, 4),
@@ -936,11 +1093,7 @@ fn typed_array_bytes(value: &Value) -> Option<Vec<u8>> {
         _ => return None,
     };
     let end = offset.checked_add(length.checked_mul(element_size)?)?;
-    buffer
-        .bytes
-        .borrow()
-        .get(offset..end)
-        .map(ToOwned::to_owned)
+    (end <= buffer.bytes.borrow().len()).then_some((buffer.as_ref(), offset, end))
 }
 
 /// Both sides must own the same enumerable symbol keys with equal values.

@@ -188,9 +188,11 @@ const __quenchVfsNormalizeFlags = (flags) => {
   if (typeof flags !== "number") return typeof flags === "string" ? flags : "r";
   const access = flags & 3;
   const append = (flags & 1024) !== 0;
-  const create = (flags & 64) !== 0;
-  const exclusive = (flags & 128) !== 0;
-  const truncate = (flags & 512) !== 0;
+  // Darwin and Linux expose different numeric O_* constants. Accept both
+  // host layouts because callers pass values from fs.constants.
+  const create = (flags & 64) !== 0 || (flags & 0x200) !== 0;
+  const exclusive = (flags & 128) !== 0 || (flags & 0x800) !== 0;
+  const truncate = (flags & 512) !== 0 || (flags & 0x400) !== 0;
   let result = access === 2 ? "r+" : access === 1 ? "w" : "r";
   if (append) result = access === 2 ? "a+" : "a";
   else if (truncate) result = access === 2 ? "w+" : "w";

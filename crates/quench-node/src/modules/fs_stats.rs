@@ -22,6 +22,23 @@ const S_IFDIR: u32 = 0o40000;
 const S_IFCHR: u32 = 0o20000;
 const S_IFIFO: u32 = 0o10000;
 
+/// Convert libuv's compact `UV_DIRENT_*` tag to the POSIX mode bits used by
+/// the shared predicate implementation.  Keep unknown/invalid tags as zero:
+/// a public `new fs.Dirent(name, type)` with an unknown type reports every
+/// predicate as false, while real directory scans pass mode bits directly.
+pub fn mode_from_uv_dirent_type(value: u32) -> u32 {
+    match value {
+        1 => S_IFREG,
+        2 => S_IFDIR,
+        3 => S_IFLNK,
+        4 => S_IFIFO,
+        5 => S_IFSOCK,
+        6 => S_IFCHR,
+        7 => S_IFBLK,
+        _ => 0,
+    }
+}
+
 fn predicates() -> Vec<(&'static str, u16)> {
     use crate::registry::*;
     vec![
@@ -35,23 +52,103 @@ fn predicates() -> Vec<(&'static str, u16)> {
     ]
 }
 
+thread_local! {
+    static PREDICATE_PROTOTYPE: RefCell<Option<Value>> = const { RefCell::new(None) };
+}
+
+fn predicate_prototype() -> Value {
+    PREDICATE_PROTOTYPE.with(|slot| {
+        if let Some(value) = slot.borrow().as_ref() {
+            return value.clone();
+        }
+        let value = host_api::object(
+            predicates()
+                .into_iter()
+                .map(|(name, cap)| {
+                    (
+                        name.to_string(),
+                        quench_runtime::host_api::custom_function(
+                            quench_runtime::ops::RealmId::ROOT,
+                            cap,
+                        ),
+                    )
+                })
+                .collect(),
+        );
+        *slot.borrow_mut() = Some(value.clone());
+        value
+    })
+}
+
 fn with_predicates(mode: u32, mut entries: Vec<(String, Value)>) -> Value {
-    for (name, cap) in predicates() {
-        entries.push((
-            name.to_string(),
-            quench_runtime::host_api::custom_function(quench_runtime::ops::RealmId::ROOT, cap),
-        ));
-    }
+    entries.push(("\0prototype".to_string(), predicate_prototype()));
     entries.push((MODE_KEY.to_string(), Value::Number(mode as f64)));
     host_api::object(entries)
 }
 
 /// A `Dirent` for `readdir` with `withFileTypes`.
 pub fn dirent(name: &str, mode: u32) -> Value {
-    with_predicates(
-        mode,
-        vec![("name".to_string(), Value::String(name.to_string()))],
-    )
+    let global = quench_runtime::vm::current_global_object();
+    let fs_module = quench_runtime::execute::get_property(&global, "__nodeFs");
+    let dirent_constructor = quench_runtime::execute::get_property(&fs_module, "Dirent");
+    let prototype = quench_runtime::execute::get_property(&dirent_constructor, "prototype");
+    let mut entries = vec![("name".to_string(), Value::String(name.to_string()))];
+    if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
+        // Keep the prototype in the canonical object representation while the
+        // value is created; the old host dispatcher cannot retain a COW result
+        // from a later Object.setPrototypeOf call.
+        entries.push(("\0prototype".to_string(), prototype));
+    }
+    with_predicates(mode, entries)
+}
+
+pub fn construct(args: &[Value]) -> Value {
+    // `internal/fs/utils.BigIntStats` reuses the public Stats constructor
+    // shape, but stores every numeric field as a BigInt.  Keep both forms in
+    // one constructor fact so predicates and property ordering stay aligned.
+    if matches!(args.get(1), Some(Value::BigInt(_))) {
+        const NAMES: [&str; 18] = [
+            "dev",
+            "mode",
+            "nlink",
+            "uid",
+            "gid",
+            "rdev",
+            "blksize",
+            "ino",
+            "size",
+            "blocks",
+            "atimeMs",
+            "mtimeMs",
+            "ctimeMs",
+            "birthtimeMs",
+            "atimeNs",
+            "mtimeNs",
+            "ctimeNs",
+            "birthtimeNs",
+        ];
+        let entries = NAMES
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                (
+                    (*name).to_string(),
+                    args.get(index + 1)
+                        .cloned()
+                        .unwrap_or_else(|| Value::BigInt("0".into())),
+                )
+            })
+            .collect();
+        return host_api::object(entries);
+    }
+    let mode = args
+        .get(1)
+        .and_then(|value| match value {
+            Value::Number(value) => Some(*value as u32),
+            _ => None,
+        })
+        .unwrap_or(0);
+    with_predicates(mode, Vec::new())
 }
 
 /// A `Stats` built from real filesystem metadata.

@@ -4,6 +4,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use quench_runtime::execute::VmError;
+use quench_runtime::host_api;
+use quench_runtime::ops::Builtin;
 use quench_runtime::value::Value;
 
 pub fn isatty(
@@ -59,4 +61,25 @@ pub fn build() -> Value {
         crate::host::capability(crate::registry::SPEC_TTY_ISATTY),
     )])
     .unwrap_or_else(|_| Value::Undefined)
+}
+
+/// Construct a real object for `tty.ReadStream`/`tty.WriteStream`.
+/// The object carries the observable stream fields used by util's color gate.
+pub fn stream_construct(
+    _state: &Rc<RefCell<crate::host::HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(host_api::object(vec![
+        (
+            "fd".into(),
+            args.first().cloned().unwrap_or(Value::Undefined),
+        ),
+        ("isTTY".into(), Value::Boolean(false)),
+        ("columns".into(), Value::Undefined),
+        ("rows".into(), Value::Undefined),
+        ("write".into(), Value::Builtin(Builtin::Object)),
+        ("getColorDepth".into(), Value::Builtin(Builtin::Object)),
+        ("hasColors".into(), Value::Builtin(Builtin::Object)),
+        ("getWindowSize".into(), Value::Builtin(Builtin::Object)),
+    ]))
 }

@@ -27,6 +27,20 @@ pub fn capability_function(capability: HostCapabilityRef) -> Value {
     )))
 }
 
+pub fn capability_function_with_properties(
+    capability: HostCapabilityRef,
+    properties: Vec<(String, Value)>,
+) -> Value {
+    let token = Value::HostCapability(Rc::new(HostCapabilityValue::new(capability.clone())));
+    Value::BoundFunction(Rc::new(BoundFunctionValue {
+        realm: capability.realm,
+        target: Value::Builtin(Builtin::HostCapability(capability.kind)),
+        receiver: token,
+        arguments: Vec::new(),
+        properties: std::cell::RefCell::new(properties),
+    }))
+}
+
 /// Construct a host-visible callable/constructable wrapper for an intrinsic.
 /// The wrapper owns its observable properties, so Node-facing modules can
 /// specialize a constructor without mutating the shared intrinsic.
@@ -54,9 +68,17 @@ pub fn bound_capability_with_arguments(
     capability: HostCapabilityRef,
     arguments: Vec<Value>,
 ) -> Value {
+    bound_capability_with_arguments_in_realm(capability.clone(), arguments, capability.realm)
+}
+
+pub fn bound_capability_with_arguments_in_realm(
+    capability: HostCapabilityRef,
+    arguments: Vec<Value>,
+    realm: crate::ops::RealmId,
+) -> Value {
     let token = Value::HostCapability(Rc::new(HostCapabilityValue::new(capability.clone())));
     let mut bound = BoundFunctionValue::new(
-        capability.realm,
+        realm,
         Value::Builtin(Builtin::HostCapability(capability.kind)),
         token,
     );

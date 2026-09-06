@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
-use quench_runtime::value::Value;
+use quench_runtime::value::{PromiseState, Value};
 
 use crate::host::HostState;
 use crate::registry::{
@@ -29,6 +29,7 @@ const BOUNDED: &str = "\0quench:diagnostics_channel:bounded";
 const SCOPE_STORE: &str = "\0quench:diagnostics_channel:scope:store";
 const SCOPE_PREVIOUS: &str = "\0quench:diagnostics_channel:scope:previous";
 const SCOPE_ACTIVE: &str = "\0quench:diagnostics_channel:scope:active";
+const SCOPE_PUBLISHED: &str = "\0quench:diagnostics_channel:scope:published";
 const SCOPE_END: &str = "\0quench:diagnostics_channel:scope:end";
 const SCOPE_CONTEXT: &str = "\0quench:diagnostics_channel:scope:context";
 const TRACE_CHANNELS: [&str; 5] = ["start", "end", "asyncStart", "asyncEnd", "error"];
@@ -36,6 +37,7 @@ const TRACE_CHANNELS: [&str; 5] = ["start", "end", "asyncStart", "asyncEnd", "er
 thread_local! {
     static CHANNEL_PROTO: RefCell<Option<Value>> = const { RefCell::new(None) };
     static BOUNDED_PROTO: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static TEST_ROOT_TRACE_EMITTED: RefCell<bool> = const { RefCell::new(false) };
 }
 
 struct ChannelData {
@@ -56,7 +58,7 @@ impl ChannelData {
 
 pub struct DiagnosticsState {
     next_id: u64,
-    channels: HashMap<String, (u64, Rc<RefCell<ChannelData>>)>,
+    channels: HashMap<String, (u64, Rc<RefCell<ChannelData>>, Value)>,
     by_id: HashMap<u64, Rc<RefCell<ChannelData>>>,
 }
 
@@ -118,16 +120,30 @@ pub fn channel(
 ) -> Result<Value, VmError> {
     let name = args.first().cloned().unwrap_or(Value::Undefined);
     let key = channel_key(&name)?;
-    if let Some((id, _)) = state.borrow().diagnostics.channels.get(&key) {
-        return Ok(channel_object(*id, name));
+    // End the immutable lookup borrow before acquiring the mutable host
+    // borrow below. Cluster workers can request the same channel while an
+    // event callback is still on the stack, so relying on the `if let`
+    // temporary's lifetime here triggers a RefCell re-entrant-borrow panic.
+    let existing = {
+        let host = state.borrow();
+        host.diagnostics
+            .channels
+            .get(&key)
+            .map(|(_, _, object)| object.clone())
+    };
+    if let Some(object) = existing {
+        return Ok(object);
     }
     let mut host = state.borrow_mut();
     let id = host.diagnostics.next_id;
     host.diagnostics.next_id += 1;
     let data = Rc::new(RefCell::new(ChannelData::new(name.clone())));
-    host.diagnostics.channels.insert(key, (id, data.clone()));
+    let object = channel_object(id, name);
+    host.diagnostics
+        .channels
+        .insert(key, (id, data.clone(), object.clone()));
     host.diagnostics.by_id.insert(id, data);
-    Ok(channel_object(id, name))
+    Ok(object)
 }
 
 pub fn new_channel(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
@@ -368,6 +384,161 @@ fn tracing_member(
     Ok(value)
 }
 
+/// Instrument the synchronous CJS loader using the same tracing-channel data
+/// model as user-facing `tracingChannel("module.require")` subscribers.
+pub(crate) fn module_require_start(
+    state: &Rc<RefCell<HostState>>,
+    parent: String,
+    id: String,
+) -> Result<Option<Value>, VmError> {
+    let start = channel(
+        state,
+        None,
+        &[Value::String("tracing:module.require:start".into())],
+    )?;
+    if !channel_has_subscribers(state, &start) {
+        return Ok(None);
+    }
+    let event = host_api::object(vec![
+        ("parentFilename".into(), Value::String(parent)),
+        ("id".into(), Value::String(id)),
+    ]);
+    publish(state, Some(&start), std::slice::from_ref(&event))?;
+    Ok(Some(event))
+}
+
+pub(crate) fn module_require_end(
+    state: &Rc<RefCell<HostState>>,
+    event: Value,
+    result: &Result<Value, VmError>,
+) -> Result<(), VmError> {
+    let channel_name = match result {
+        Ok(value) => {
+            let _ = execute::set_property_in_place(&event, "result", value.clone());
+            None
+        }
+        Err(VmError::Thrown(error)) => {
+            let _ = execute::set_property_in_place(&event, "error", error.clone());
+            Some("tracing:module.require:error")
+        }
+        Err(_) => Some("tracing:module.require:error"),
+    };
+    if let Some(channel_name) = channel_name {
+        let channel = channel(state, None, &[Value::String(channel_name.into())])?;
+        if channel_has_subscribers(state, &channel) {
+            publish(state, Some(&channel), std::slice::from_ref(&event))?;
+        }
+    }
+    let end = channel(
+        state,
+        None,
+        &[Value::String("tracing:module.require:end".into())],
+    )?;
+    if channel_has_subscribers(state, &end) {
+        publish(state, Some(&end), std::slice::from_ref(&event))?;
+    }
+    Ok(())
+}
+
+/// Trace the host's dynamic `import()` boundary.  Dynamic imports are lowered
+/// to a Rust resolver in this runtime, so the loader must publish the same
+/// stable event object that Node publishes around its ESM resolver.  Keep the
+/// event lifecycle here, next to the tracing-channel implementation, rather
+/// than teaching each resolver call site about channel ordering.
+pub fn module_import_begin(
+    state: &Rc<RefCell<HostState>>,
+    parent: String,
+    url: String,
+) -> Result<Option<Value>, VmError> {
+    let channels = TRACE_CHANNELS
+        .iter()
+        .map(|name| {
+            channel(
+                state,
+                None,
+                &[Value::String(format!("tracing:module.import:{name}"))],
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if !channels
+        .iter()
+        .any(|value| channel_has_subscribers(state, value))
+    {
+        return Ok(None);
+    }
+    let event = host_api::object(vec![
+        ("parentURL".into(), Value::String(parent)),
+        ("url".into(), Value::String(url)),
+    ]);
+    if channel_has_subscribers(state, &channels[0]) {
+        publish(state, Some(&channels[0]), std::slice::from_ref(&event))?;
+    }
+    Ok(Some(event))
+}
+
+pub fn module_import_parent_url(state: &Rc<RefCell<HostState>>) -> String {
+    let parent = state
+        .borrow()
+        .module_stack
+        .last()
+        .cloned()
+        .or_else(|| {
+            quench_runtime::vm::current_context()
+                .source_name()
+                .map(str::to_owned)
+        })
+        .unwrap_or_default();
+    if parent.starts_with("file://") {
+        return parent;
+    }
+    crate::modules::url_file::path_to_file_url(state, None, &[Value::String(parent.clone())])
+        .ok()
+        .and_then(|url| execute::to_js_string(&execute::get_property(&url, "href")).ok())
+        .unwrap_or(parent)
+}
+
+pub fn module_import_end(
+    state: &Rc<RefCell<HostState>>,
+    event: Value,
+    result: Result<Value, Value>,
+) -> Result<(), VmError> {
+    let channels = TRACE_CHANNELS
+        .iter()
+        .map(|name| {
+            channel(
+                state,
+                None,
+                &[Value::String(format!("tracing:module.import:{name}"))],
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let (value, error) = match result {
+        Ok(value) => (Some(value), None),
+        Err(error) => (None, Some(error)),
+    };
+    let failed = error.is_some();
+    // Node's import trace closes the synchronous span before publishing the
+    // error (if any), then reports the asynchronous promise transition.
+    if channel_has_subscribers(state, &channels[1]) {
+        publish(state, Some(&channels[1]), std::slice::from_ref(&event))?;
+    }
+    if let Some(error) = error {
+        execute::set_property_in_place(&event, "error", error);
+    } else if let Some(value) = value {
+        execute::set_property_in_place(&event, "result", value);
+    }
+    if failed && channel_has_subscribers(state, &channels[4]) {
+        publish(state, Some(&channels[4]), std::slice::from_ref(&event))?;
+    }
+    if channel_has_subscribers(state, &channels[2]) {
+        publish(state, Some(&channels[2]), std::slice::from_ref(&event))?;
+    }
+    if channel_has_subscribers(state, &channels[3]) {
+        publish(state, Some(&channels[3]), std::slice::from_ref(&event))?;
+    }
+    Ok(())
+}
+
 fn tracing_object(channels: Vec<Value>) -> Value {
     let mut properties = vec![(TRACE.into(), Value::Boolean(true))];
     for (name, channel) in TRACE_CHANNELS.iter().zip(channels) {
@@ -419,11 +590,21 @@ fn tracing_object(channels: Vec<Value>) -> Value {
                   context = context || {};\
                   if (typeof fn !== 'function') throw new TypeError('fn');\
                   if (!this.hasSubscribers) return fn.apply(thisArg, args);\
-                  var startScope = this.start?.withStoreScope(context); this.start?.publish(context); var self = this; var result;\
-                  try { result = fn.apply(thisArg, args); context.result = result; self.end?.publish(context); }\
-                  catch (error) { context.error = error; self.error?.publish(context); self.end?.publish(context); startScope?.dispose?.(); throw error; }\
-                  if (!result || typeof result.then !== 'function') { process.emitWarning(\"tracePromise was called with the function '<anonymous>', which returned a non-thenable.\"); startScope?.dispose?.(); return result; }\
-                  result.then(function(value) { context.result = value; var asyncScope = self.asyncStart?.withStoreScope(context); self.asyncStart?.publish(context); self.asyncEnd?.publish(context); asyncScope?.dispose?.(); startScope?.dispose?.(); }, function(error) { context.error = error; self.error?.publish(context); var asyncScope = self.asyncStart?.withStoreScope(context); self.asyncStart?.publish(context); self.asyncEnd?.publish(context); asyncScope?.dispose?.(); startScope?.dispose?.(); throw error; });\
+                  var self = this; var startScope = this.start?.withStoreScope(context); if (!startScope || startScope[\"\\0quench:diagnostics_channel:scope:published\"] !== true) this.start?.publish(context);\
+                  var settle = function(error, value) {\
+                    Object.defineProperty(context, error ? 'error' : 'result', { value: error || value, configurable: true, writable: true });\
+                    if (error) self.error?.publish(context);\
+                    var asyncScope = self.asyncStart?.withStoreScope(context); if (!asyncScope || asyncScope[\"\\0quench:diagnostics_channel:scope:published\"] !== true) self.asyncStart?.publish(context); self.asyncEnd?.publish(context); asyncScope?.dispose?.();\
+                    self.end?.publish(context); if (startScope) startScope.dispose();\
+                    if (error) throw error; return value;\
+                  };\
+                  var result;\
+                  try { result = fn.apply(thisArg, args); }\
+                  catch (error) { if (startScope) startScope.dispose(); settle(error); throw error; }\
+                  if (!result || typeof result.then !== 'function') { process.emitWarning(\"tracePromise was called with the function '<anonymous>', which returned a non-thenable.\"); Object.defineProperty(context, 'result', { value: result, configurable: true, writable: true }); self.end?.publish(context); if (startScope) startScope.dispose(); return result; }\
+                  if (startScope) startScope.dispose();\
+                  if (result instanceof Promise) { Object.defineProperty(result, \"\\0quench:diagnostics:trace-promise-clear-store\", { value: { channel: self, context: context }, configurable: true }); return result; }\
+                  result.then(function(value) { settle(null, value); }, function(error) { settle(error); throw error; });\
                   return result;\
                 }",
             )
@@ -535,6 +716,57 @@ pub fn trace_sync(
             Err(thrown)
         }
     }
+}
+
+/// Complete a native Promise trace from the engine's promise-resolution edge.
+/// The original Promise is returned unchanged; this host hook supplies the
+/// async/error/end events without attaching a rejection handler that would
+/// alter unhandled-rejection semantics.
+pub(crate) fn tracing_promise_settle(
+    state: &Rc<RefCell<HostState>>,
+    channel: &Value,
+    context: &Value,
+    promise: &quench_runtime::value::PromiseData,
+) -> Result<(), VmError> {
+    let settled = promise.state.borrow().clone();
+    let (error, result) = match settled {
+        PromiseState::Rejected(error) => (Some(error), None),
+        PromiseState::Fulfilled(result) => (None, Some(result)),
+        PromiseState::Pending => return Ok(()),
+    };
+    let key = error.as_ref().map(|_| "error").unwrap_or("result");
+    let value = error
+        .clone()
+        .or_else(|| result.clone())
+        .unwrap_or(Value::Undefined);
+    let descriptor = host_api::object(vec![
+        ("value".into(), value),
+        ("configurable".into(), Value::Boolean(true)),
+        ("enumerable".into(), Value::Boolean(false)),
+        ("writable".into(), Value::Boolean(true)),
+    ]);
+    execute::define_property(context.clone(), key, descriptor)?;
+
+    let error_channel = execute::get_property(channel, "error");
+    if error.is_some() && channel_has_subscribers(state, &error_channel) {
+        publish(state, Some(&error_channel), std::slice::from_ref(context))?;
+    }
+    let async_start = execute::get_property(channel, "asyncStart");
+    let async_end = execute::get_property(channel, "asyncEnd");
+    let stores = channel_stores(state, &async_start);
+    let previous = enter_stores(&stores, context);
+    if channel_has_subscribers(state, &async_start) {
+        publish(state, Some(&async_start), std::slice::from_ref(context))?;
+    }
+    if channel_has_subscribers(state, &async_end) {
+        publish(state, Some(&async_end), std::slice::from_ref(context))?;
+    }
+    restore_stores(Some(&previous));
+    let end = execute::get_property(channel, "end");
+    if channel_has_subscribers(state, &end) {
+        publish(state, Some(&end), std::slice::from_ref(context))?;
+    }
+    Ok(())
 }
 
 fn channel_object(id: u64, name: Value) -> Value {
@@ -735,6 +967,111 @@ pub fn publish(
     Ok(Value::Undefined)
 }
 
+/// Publish a host-owned diagnostic without requiring the caller to retain a
+/// JavaScript Channel object. Native permission and transport checks use the
+/// same channel registry as user code, so subscribers observe identical
+/// ordering and store propagation.
+pub(crate) fn publish_named(
+    state: &Rc<RefCell<HostState>>,
+    name: &str,
+    message: Value,
+) -> Result<(), VmError> {
+    let channel = channel(state, None, &[Value::String(name.to_owned())])?;
+    publish(state, Some(&channel), &[message])?;
+    Ok(())
+}
+
+/// Run a node:test body inside the stores bound to the test start channel and
+/// emit the corresponding start/end/error trace events. Keeping the scope
+/// around the whole body (including promise pumping) makes AsyncLocalStorage
+/// propagation an ordinary channel fact rather than a runner special case.
+pub(crate) fn test_scope(
+    state: &Rc<RefCell<HostState>>,
+    context: &Value,
+    body: impl FnOnce() -> Result<Value, VmError>,
+) -> Result<Value, VmError> {
+    let name = execute::get_property(context, "name");
+    let event = host_api::object(vec![
+        ("name".into(), name),
+        ("type".into(), Value::String("test".into())),
+    ]);
+    let start = channel(
+        state,
+        None,
+        &[Value::String("tracing:node.test:start".into())],
+    )?;
+    let end = channel(
+        state,
+        None,
+        &[Value::String("tracing:node.test:end".into())],
+    )?;
+    let error = channel(
+        state,
+        None,
+        &[Value::String("tracing:node.test:error".into())],
+    )?;
+    let emit_root = TEST_ROOT_TRACE_EMITTED.with(|emitted| {
+        let was_emitted = *emitted.borrow();
+        if !was_emitted {
+            *emitted.borrow_mut() = true;
+        }
+        !was_emitted
+    });
+    if emit_root {
+        let root_event = host_api::object(vec![
+            ("name".into(), Value::String("<root>".into())),
+            ("type".into(), Value::String("suite".into())),
+        ]);
+        let root_stores = channel_stores(state, &start);
+        let (root_previous, root_errors) = enter_stores_with_errors(&root_stores, &root_event);
+        for transform_error in root_errors {
+            schedule_uncaught(state, transform_error)?;
+        }
+        if channel_has_subscribers(state, &start) {
+            publish(state, Some(&start), std::slice::from_ref(&root_event))?;
+        }
+        if channel_has_subscribers(state, &end) {
+            publish(state, Some(&end), std::slice::from_ref(&root_event))?;
+        }
+        restore_stores(Some(&root_previous));
+    }
+    let stores = channel_stores(state, &start);
+    let (previous, transform_errors) = enter_stores_with_errors(&stores, &event);
+    for transform_error in transform_errors {
+        schedule_uncaught(state, transform_error)?;
+    }
+    if channel_has_subscribers(state, &start) {
+        publish(state, Some(&start), std::slice::from_ref(&event))?;
+    }
+    let result = body();
+    match &result {
+        Ok(_) => {
+            if channel_has_subscribers(state, &end) {
+                publish(state, Some(&end), std::slice::from_ref(&event))?;
+            }
+        }
+        Err(VmError::Thrown(thrown)) => {
+            let _ = execute::set_property_in_place(&event, "error", thrown.clone());
+            if channel_has_subscribers(state, &error) {
+                publish(state, Some(&error), std::slice::from_ref(&event))?;
+            }
+            if channel_has_subscribers(state, &end) {
+                publish(state, Some(&end), std::slice::from_ref(&event))?;
+            }
+        }
+        Err(_) => {
+            if channel_has_subscribers(state, &error) {
+                publish(state, Some(&error), std::slice::from_ref(&event))?;
+            }
+            if channel_has_subscribers(state, &end) {
+                publish(state, Some(&end), std::slice::from_ref(&event))?;
+            }
+        }
+    }
+    restore_stores(Some(&previous));
+    result
+}
+
 pub fn bind_store(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -772,6 +1109,7 @@ pub fn with_store_scope(
     let stores = channel_stores(state, receiver);
     if stores.is_empty() {
         return Ok(host_api::object(vec![
+            (SCOPE_PUBLISHED.into(), Value::Boolean(false)),
             (
                 "dispose".into(),
                 crate::host::capability(SPEC_DIAGNOSTICS_SCOPE_DISPOSE),
@@ -799,6 +1137,7 @@ pub fn with_store_scope(
         previous_values.push(previous);
     }
     let scope = host_api::object(vec![
+        (SCOPE_PUBLISHED.into(), Value::Boolean(true)),
         (SCOPE_STORE.into(), host_api::array(store_values)),
         (SCOPE_PREVIOUS.into(), host_api::array(previous_values)),
         (SCOPE_ACTIVE.into(), Value::Boolean(true)),

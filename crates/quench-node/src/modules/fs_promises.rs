@@ -1,6 +1,5 @@
-//! `fs.promises` — promise-returning variants. Each op runs the
-//! sync implementation and returns an already-settled promise;
-//! validation and I/O failures surface as rejections.
+//! `fs.promises` — promise-returning variants. Operations reuse the sync
+//! facts and return settled promises; VM promise jobs preserve ordering.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -21,7 +20,11 @@ fn settle(result: Result<Value, VmError>) -> Value {
 
 fn run(state: &Rc<RefCell<HostState>>, args: &[Value], name: &str) -> Result<Value, VmError> {
     let op = super::fs::sync_op(name).ok_or(VmError::NotCallable)?;
-    Ok(settle(op(state, None, args)))
+    let resource =
+        crate::modules::async_hooks::new_resource(state, &[Value::String("FSREQPROMISE".into())])?;
+    let promise = settle(op(state, None, args));
+    crate::modules::async_hooks::resource_destroy(state, Some(&resource), &[])?;
+    Ok(promise)
 }
 
 macro_rules! promise_op {
@@ -47,10 +50,19 @@ promise_op!(unlink, "unlink");
 promise_op!(rmdir, "rmdir");
 promise_op!(rm, "rm");
 promise_op!(rename, "rename");
+promise_op!(symlink, "symlink");
 promise_op!(copy_file, "copyFile");
+promise_op!(link, "link");
 promise_op!(access, "access");
 promise_op!(mkdtemp, "mkdtemp");
 promise_op!(readlink, "readlink");
 promise_op!(chmod, "chmod");
+promise_op!(lchmod, "lchmod");
 promise_op!(truncate, "truncate");
 promise_op!(realpath, "realpath");
+promise_op!(statfs, "statfs");
+promise_op!(utimes, "utimes");
+promise_op!(lutimes, "lutimes");
+promise_op!(chown, "chown");
+promise_op!(lchown, "lchown");
+promise_op!(opendir, "opendir");

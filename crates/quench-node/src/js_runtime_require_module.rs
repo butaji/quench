@@ -8,6 +8,17 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
     if let Some(value) = require_common_module(name) {
         return Ok(value);
     }
+    if name == "console" || name == "node:console" {
+        let global = quench_runtime::vm::current_global_object();
+        return Ok(quench_runtime::execute::get_property(&global, "console"));
+    }
+    if name == "punycode" || name == "node:punycode" {
+        let global = quench_runtime::vm::current_global_object();
+        let module = quench_runtime::execute::get_property(&global, "__quenchPunycode");
+        if !matches!(module, Value::Undefined) {
+            return Ok(module);
+        }
+    }
     if name == "readline" || name == "node:readline" {
         return Ok(crate::modules::readline::build());
     }
@@ -31,11 +42,34 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             capability_function(HostCapabilityKind::Custom(CapabilityName::InternalBinding)),
         )]));
     }
+    if name == "internal/http2/util" || name == "node:internal/http2/util" {
+        return Ok(crate::modules::http2_util::module());
+    }
+    if name == "http2" || name == "node:http2" {
+        return Ok(crate::modules::require::http2_module_value());
+    }
     if name == "internal/buffer" {
         return Ok(quench_runtime::host_api::object(vec![(
             "utf8Write".into(),
             crate::host::capability(crate::registry::SPEC_INTERNAL_BUFFER_UTF8_WRITE),
         )]));
+    }
+    if name == "_http_server" || name == "node:_http_server" {
+        let global = quench_runtime::vm::current_global_object();
+        let interval =
+            quench_runtime::execute::get_property(&global, "__nodeHttpConnectionsCheckingInterval");
+        return Ok(quench_runtime::host_api::object(vec![(
+            "kConnectionsCheckingInterval".into(),
+            interval,
+        )]));
+    }
+    if name == "internal/js_stream_socket" || name == "node:internal/js_stream_socket" {
+        let ctor = crate::host::capability(crate::registry::SPEC_INTERNAL_JS_STREAM);
+        return Ok(quench_runtime::execute::set_property(
+            ctor.clone(),
+            "StreamWrap",
+            ctor,
+        ));
     }
     if name == "dns" || name == "node:dns" {
         let promises = quench_runtime::host_api::object(vec![(
@@ -43,6 +77,14 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             capability_function(HostCapabilityKind::Custom(CapabilityName::DnsLookupService)),
         )]);
         return Ok(quench_runtime::host_api::object(vec![
+            (
+                "lookup".into(),
+                crate::host::capability(crate::registry::SPEC_DNS_LOOKUP),
+            ),
+            (
+                "resolve4".into(),
+                crate::host::capability(crate::registry::SPEC_DNS_RESOLVE4),
+            ),
             (
                 "setServers".into(),
                 capability_function(HostCapabilityKind::Custom(CapabilityName::DnsSetServers)),
@@ -107,28 +149,10 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         ]));
     }
     if name == "net" || name == "node:net" {
-        return Ok(quench_runtime::host_api::object(vec![
-            (
-                "getDefaultAutoSelectFamily".into(),
-                capability_function(HostCapabilityKind::Custom(
-                    CapabilityName::NetGetDefaultAutoSelectFamily,
-                )),
-            ),
-            (
-                "getDefaultAutoSelectFamilyAttemptTimeout".into(),
-                capability_function(HostCapabilityKind::Custom(
-                    CapabilityName::NetGetDefaultAutoSelectFamilyAttemptTimeout,
-                )),
-            ),
-            (
-                "isIP".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::NetIsIP)),
-            ),
-            (
-                "createServer".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::NetCreateServer)),
-            ),
-        ]));
+        // The Rust net module owns the complete Node host boundary. Keep one
+        // namespace so constructors, stateful methods, and global defaults
+        // all dispatch through the same capability registry.
+        return Ok(crate::modules::net::build());
     }
     if name == "path" || name == "node:path" {
         if let Some(path) = NODE_PATH_MODULE.with(|module| module.borrow().clone()) {
@@ -177,13 +201,27 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             )]));
         }
         if name == "internal/fs/utils" || name == "node:internal/fs/utils" {
-            return Ok(Value::object(vec![(
-                "stringToFlags".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::FsStringToFlags)),
-            )]));
+            return Ok(Value::object(vec![
+                (
+                    "stringToFlags".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::FsStringToFlags,
+                    )),
+                ),
+                (
+                    "BigIntStats".into(),
+                    crate::host::capability(crate::registry::SPEC_FS_STATS),
+                ),
+            ]));
         }
         if name == "internal/util" || name == "node:internal/util" {
+            return Ok(crate::modules::require::internal_util_module());
+            #[allow(unreachable_code)]
             return Ok(Value::object(vec![
+                (
+                    "customInspectSymbol".into(),
+                    Value::String("Symbol.for.nodejs.util.inspect.custom\0".into()),
+                ),
                 (
                     "sleep".into(),
                     capability_function(HostCapabilityKind::Custom(
@@ -199,6 +237,22 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 (
                     "customPromisifyArgs".into(),
                     Value::String(crate::modules::util::PROMISIFY_CUSTOM_ARGS_KEY.into()),
+                ),
+                (
+                    "decorateErrorStack".into(),
+                    crate::host::capability(
+                        crate::registry::SPEC_INTERNAL_UTIL_DECORATE_ERROR_STACK,
+                    ),
+                ),
+                (
+                    "assignFunctionName".into(),
+                    crate::host::capability(
+                        crate::registry::SPEC_INTERNAL_UTIL_ASSIGN_FUNCTION_NAME,
+                    ),
+                ),
+                (
+                    "isError".into(),
+                    crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_IS_ERROR),
                 ),
             ]));
         }
@@ -363,7 +417,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         if let Some(module) = require_fs_module(name) {
             return Ok(module);
         }
-        if let Some(module) = require_stream_http_modules(name) {
+        if let Some(module) = require_stream_http_modules(&self.state, name) {
             return Ok(module);
         }
         if name == "internal/url" || name == "url" || name == "node:url" {
@@ -401,7 +455,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ),
                 (
                     "Script".into(),
-                    capability_function(HostCapabilityKind::Custom(CapabilityName::VmScript)),
+                    crate::host::capability(crate::registry::SPEC_VM_SCRIPT),
                 ),
                 (
                     "compileFunction".into(),
@@ -418,27 +472,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             ]));
         }
         if name == "internal/errors" {
-            return Ok(quench_runtime::host_api::object(vec![
-                (
-                    "codes".into(),
-                    quench_runtime::host_api::object(vec![
-                        (
-                            "ERR_OUT_OF_RANGE".into(),
-                            Value::Builtin(quench_runtime::ops::Builtin::RangeError),
-                        ),
-                        (
-                            "ERR_IPC_CHANNEL_CLOSED".into(),
-                            Value::Builtin(quench_runtime::ops::Builtin::Error),
-                        ),
-                    ]),
-                ),
-                (
-                    "determineSpecificType".into(),
-                    capability_function(HostCapabilityKind::Custom(
-                        CapabilityName::ErrorsDetermineSpecificType,
-                    )),
-                ),
-            ]));
+            return Ok(crate::modules::require::internal_errors_module());
         }
         if name == "internal/test/binding" {
             return Ok(quench_runtime::host_api::object(vec![(

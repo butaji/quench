@@ -18,6 +18,19 @@ impl QuenchNodeHost {
                     Some(Value::String(name)) if name.trim_start_matches("node:") == "stream" => {
                         crate::modules::stream::build(&self.state)
                     }
+                    Some(Value::String(name))
+                        if name.trim_start_matches("node:") == "http" =>
+                    {
+                        Ok(crate::modules::http::build(&self.state))
+                    }
+                    Some(Value::String(name)) if name.trim_start_matches("node:") == "console" => {
+                        Ok(self
+                            .state
+                            .borrow()
+                            .console_module
+                            .clone()
+                            .unwrap_or(Value::Undefined))
+                    }
                     _ => require_module(arguments),
                 },
                 HostCapabilityKind::Custom(CapabilityName::EventEmitter) => {
@@ -35,7 +48,7 @@ impl QuenchNodeHost {
                     self.construct(capability, arguments)
                 }
                 HostCapabilityKind::Custom(CapabilityName::StreamFinished) => {
-                    stream_finished(arguments)
+                    crate::modules::stream::finished(&self.state, receiver, arguments)
                 }
                 HostCapabilityKind::Custom(CapabilityName::StreamIsPaused) => {
                     Ok(Value::Boolean(false))
@@ -60,7 +73,7 @@ impl QuenchNodeHost {
                 HostCapabilityKind::Custom(CapabilityName::FsUnlink) => fs_unlink_async(arguments),
                 HostCapabilityKind::Custom(CapabilityName::FsMkdtemp) => fs_mkdtemp(arguments),
                 HostCapabilityKind::Custom(CapabilityName::FsAccessSync) => {
-                    fs_access_sync(arguments).map_err(invalid_path_error)
+                    crate::modules::fs_sync::access_sync(&self.state, receiver, arguments)
                 }
                 HostCapabilityKind::Custom(CapabilityName::FsWriteFileSync) => {
                     self.fs_write_file(arguments)
@@ -79,7 +92,7 @@ impl QuenchNodeHost {
                 HostCapabilityKind::Custom(CapabilityName::FsFstatSync) => self.fs_fstat(arguments),
                 HostCapabilityKind::Custom(CapabilityName::FsChmodSync) => fs_chmod(arguments),
                 HostCapabilityKind::Custom(CapabilityName::FsAccessAsync) => {
-                    fs_access_async(arguments)
+                    crate::modules::fs_async::access(&self.state, receiver, arguments)
                 }
                 HostCapabilityKind::Custom(CapabilityName::FsExistsSync) => fs_access(arguments),
                 HostCapabilityKind::Custom(CapabilityName::FsExists) => fs_exists(arguments),
@@ -144,6 +157,9 @@ impl QuenchNodeHost {
                         ),
                         ("stderr".into(), quench_runtime::host_api::bytes(&[])),
                     ]))
+                }
+                HostCapabilityKind::Custom(CapabilityName::ChildGetValidStdio) => {
+                    crate::modules::child_process::get_valid_stdio(arguments)
                 }
                 HostCapabilityKind::Custom(CapabilityName::ChildStdoutToString) => {
                     Ok(Value::String(
@@ -236,7 +252,7 @@ impl QuenchNodeHost {
                     fs_rename_promise(arguments)
                 }
                 HostCapabilityKind::Custom(CapabilityName::FsAccessPromise) => {
-                    fs_access_promise(arguments)
+                    crate::modules::fs_promises::access(&self.state, receiver, arguments)
                 }
                 HostCapabilityKind::Custom(CapabilityName::FsChmodPromise) => {
                     fs_chmod_promise(arguments)
@@ -282,6 +298,15 @@ impl QuenchNodeHost {
                 }
                 HostCapabilityKind::Custom(CapabilityName::FsFileHandleStat) => {
                     self.fs_filehandle_stat(receiver, arguments)
+                }
+                HostCapabilityKind::Custom(CapabilityName::InternalFsOpenFileHandle) => {
+                    let path = arguments
+                        .first()
+                        .map(|value| quench_runtime::execute::to_js_string(value))
+                        .transpose()?
+                        .unwrap_or_default();
+                    self.state.borrow_mut().pending_filehandle_gc.push(path);
+                    Ok(Value::Undefined)
                 }
                 HostCapabilityKind::Custom(CapabilityName::FsStatsIsDirectory) => {
                     Ok(Value::Boolean(true))

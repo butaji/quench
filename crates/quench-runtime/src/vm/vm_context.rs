@@ -122,6 +122,9 @@ pub struct VmContext {
     persistent_host_values: Vec<String>,
     can_block: bool,
     source_text: Option<Rc<str>>,
+    compiled_source_text: Option<Rc<str>>,
+    source_name: Option<Rc<str>>,
+    execution_budget: Option<Rc<std::cell::Cell<usize>>>,
     interrupt: Rc<std::sync::atomic::AtomicBool>,
 }
 impl Default for VmContext {
@@ -136,6 +139,9 @@ impl Default for VmContext {
             persistent_host_values: Vec::new(),
             can_block: false,
             source_text: None,
+            compiled_source_text: None,
+            source_name: None,
+            execution_budget: None,
             interrupt: Rc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
@@ -208,6 +214,29 @@ impl VmContext {
         self
     }
 
+    pub fn with_compiled_source_text(mut self, source: impl Into<Rc<str>>) -> Self {
+        self.compiled_source_text = Some(source.into());
+        self
+    }
+
+    pub fn with_source_name(mut self, name: impl Into<Rc<str>>) -> Self {
+        self.source_name = Some(name.into());
+        self
+    }
+
+    pub fn with_execution_budget(mut self, budget: usize) -> Self {
+        self.execution_budget = Some(Rc::new(std::cell::Cell::new(budget)));
+        self
+    }
+
+    pub(crate) fn consume_execution_budget(&self) -> bool {
+        let Some(budget) = &self.execution_budget else { return true };
+        let remaining = budget.get();
+        if remaining == 0 { return false; }
+        budget.set(remaining - 1);
+        true
+    }
+
     pub(crate) fn request_interrupt(&self) {
         self.interrupt
             .store(true, std::sync::atomic::Ordering::Release);
@@ -224,6 +253,14 @@ impl VmContext {
 
     pub fn source_text(&self) -> Option<&str> {
         self.source_text.as_deref()
+    }
+
+    pub fn compiled_source_text(&self) -> Option<&str> {
+        self.compiled_source_text.as_deref()
+    }
+
+    pub fn source_name(&self) -> Option<&str> {
+        self.source_name.as_deref()
     }
 
     pub(crate) fn can_block(&self) -> bool {

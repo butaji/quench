@@ -11,12 +11,18 @@ globalThis.require = (specifier) => {
   const name = rawName.startsWith("node:") ? rawName.slice(5) : rawName;
   if (
     name === "stream/iter" &&
-    !globalThis.__quench_argv?.includes?.("--experimental-stream-iter")
+    !(
+      globalThis.__quench_argv?.includes?.("--experimental-stream-iter") ||
+      globalThis.process?.execArgv?.includes?.("--experimental-stream-iter")
+    )
   ) {
     throw Object.assign(
       new Error("No such built-in module: node:stream/iter"),
       { code: "ERR_UNKNOWN_BUILTIN_MODULE" }
     );
+  }
+  if (name === "stream/iter" && typeof globalThis.__quenchRequireStreamIter === "function") {
+    return globalThis.__quenchRequireStreamIter();
   }
   if (name === "internal/vfs/stats" && globalThis.__quenchVfsStatsHelpers) {
     return globalThis.__quenchVfsStatsHelpers;
@@ -29,7 +35,10 @@ globalThis.require = (specifier) => {
     };
   }
   if (name === "internal/timers") {
+    if (globalThis.__quenchInternalTimers) return globalThis.__quenchInternalTimers;
     return {
+      TIMEOUT_MAX: 0x7fffffff,
+      async_context_frame: "Symbol(async_context_frame)\0quench",
       setUnrefTimeout(callback, delay, ...args) {
         if (typeof callback !== "function") {
           throw Object.assign(
@@ -42,6 +51,17 @@ globalThis.require = (specifier) => {
         return timer;
       }
     };
+  }
+  if (name === "_http_server") {
+    return {
+      kConnectionsCheckingInterval:
+        globalThis.__nodeHttpConnectionsCheckingInterval
+    };
+  }
+  if (name === "internal/js_stream_socket") {
+    const constructor = globalThis.__nodeInternalJsStreamSocket;
+    constructor.StreamWrap = constructor;
+    return constructor;
   }
   if (
     (rawName.startsWith(".") || rawName.startsWith("/")) &&

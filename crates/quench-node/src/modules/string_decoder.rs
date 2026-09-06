@@ -191,7 +191,18 @@ fn decode_chunk(
     streaming: bool,
 ) -> (Value, Vec<u8>) {
     match encoding {
-        "base64" | "base64url" | "hex" => (Value::String(String::new()), bytes.to_vec()),
+        "base64" | "base64url" => {
+            // Streaming base64 emits complete three-byte groups and keeps
+            // the tail for the next write (or end(), where padding is added).
+            let complete = bytes.len() / 3 * 3;
+            let text = crate::modules::buffer_enc::decode_str(&bytes[..complete], encoding);
+            (text, bytes[complete..].to_vec())
+        }
+        "hex" => {
+            let complete = bytes.len() / 2 * 2;
+            let text = crate::modules::buffer_enc::decode_str(&bytes[..complete], encoding);
+            (text, bytes[complete..].to_vec())
+        }
         "latin1" => (
             Value::String(bytes.iter().map(|byte| *byte as char).collect()),
             Vec::new(),
@@ -292,19 +303,10 @@ pub fn end(
                     ])]),
                 )));
             }
-            let keep = high && pending.len() == 2;
-            if !keep {
-                let updated = quench_runtime::execute::set_property(
-                    receiver.clone(),
-                    "\0pending",
-                    host_api::bytes(&[]),
-                );
-                quench_runtime::execute::replace_value(receiver, &updated);
-                state
-                    .borrow_mut()
-                    .string_decoder_pending
-                    .insert(key, Vec::new());
-            }
+            // Keep any incomplete code unit in the decoder state while
+            // decoding the supplied final bytes. `write()` prepends that
+            // state, which is required for an odd UTF-16 byte split (for
+            // example `41 00 42` followed by `00`).
             return write(state, Some(receiver), args);
         }
         let prefix = end(state, Some(receiver), &[])?;
