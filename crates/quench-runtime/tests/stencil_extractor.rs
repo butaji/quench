@@ -1,9 +1,14 @@
 mod harness {
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum DeclAbi {
+        Scalar,
+    }
+
     #[derive(Clone, Copy, Debug)]
     struct RegionDeclaration {
         name: &'static str,
         operations: &'static [&'static str],
-        abi: u8,
+        abi: DeclAbi,
         x86_bytes: &'static [u8],
         aarch64_bytes: &'static [u8],
         portable_bytes: &'static [u8],
