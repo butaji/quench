@@ -5688,14 +5688,17 @@ fn build_admissions(
     entries: &[BaselineEntry],
     policy: crate::stencil_policy::ExecutionPolicy,
 ) -> (Option<Rc<AdmissionStorage<NativeAdmission>>>, SharedStencilPool) {
-    let operand_windows = (0..entries.len())
-        .map(|pc| code.operand_window_at(pc))
-        .collect::<Vec<_>>();
-    let cfg = ControlFlowFacts::new(entries, &operand_windows);
     let arena = Rc::new(RefCell::new(
         crate::stencil_arena::SharedStencilSlab::new(4096)
             .expect("compile-time region slab capacity is valid"),
     ));
+    if !policy.allows_admission() {
+        return (None, arena);
+    }
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = ControlFlowFacts::new(entries, &operand_windows);
     let mut builder = AdmissionBuilder::new(entries.len());
     for pc in 0..entries.len() {
         if builder.exhausted() {
