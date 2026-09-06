@@ -5396,7 +5396,7 @@ fn region_admission_matches(
     if !contract.executable || !contract.has_single_entry() || !contract.legal_external_entry(0) {
         return false;
     }
-    cfg.region_matches(entries, start, contract.operations)
+    cfg.region_plan(entries, start, contract.operations).is_some()
         && record.bindings_match_entries(entries, start)
         && region_outputs_cover_exit(entries, cfg, start, record)
 }
@@ -5521,7 +5521,7 @@ fn compare_branch_at(
     }
     let end = branch_pc.checked_add(1)?;
     let physical_key = comparison_branch_key(comparison.flags);
-    cfg.region_entry_is_legal(start, end)
+    cfg.region_control(start, end).is_some()
         .then_some(CompareBranch {
             false_target: u16::try_from(false_target).ok()?,
             span: u8::try_from(end.checked_sub(start)?).ok()?,
@@ -5608,7 +5608,7 @@ fn add_chain_admission(
     policy: crate::stencil_policy::ExecutionPolicy,
     arena: &SharedStencilPool,
 ) -> Option<NativeAdmission> {
-    if !cfg.region_entry_is_legal(pc, pc.checked_add(2)?) {
+    if cfg.region_control(pc, pc.checked_add(2)?).is_none() {
         return None;
     }
     let entry = entries.get(pc)?;
@@ -5704,7 +5704,7 @@ fn select_value_window<T: crate::stencil_plan::RankedSelection>(
         let Some(live_after) = cfg.live_out().get(operation_pc) else {
             break;
         };
-        if !cfg.region_entry_is_legal(pc, end) {
+        if cfg.region_control(pc, end).is_none() {
             continue;
         }
         let Some(selection) = select(code, graph, operation, live_after) else {

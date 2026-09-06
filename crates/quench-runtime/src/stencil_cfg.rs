@@ -7,6 +7,47 @@
 use crate::machine::BaselineEntry;
 use std::collections::BTreeSet;
 
+pub(crate) const MAX_REGION_BLOCKS: usize = 8;
+pub(crate) const MAX_REGION_EDGES: usize = 16;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RegionEdge {
+    pub from: usize,
+    pub to: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RegionControlPlan {
+    start: usize,
+    end: usize,
+    blocks: [usize; MAX_REGION_BLOCKS],
+    block_len: u8,
+    edges: [RegionEdge; MAX_REGION_EDGES],
+    edge_len: u8,
+}
+
+impl RegionControlPlan {
+    pub(crate) fn blocks(&self) -> &[usize] {
+        &self.blocks[..usize::from(self.block_len)]
+    }
+
+    pub(crate) fn edges(&self) -> &[RegionEdge] {
+        &self.edges[..usize::from(self.edge_len)]
+    }
+
+    pub(crate) const fn start(&self) -> usize {
+        self.start
+    }
+
+    pub(crate) const fn end(&self) -> usize {
+        self.end
+    }
+
+    pub(crate) fn has_backedge(&self) -> bool {
+        self.edges().iter().any(|edge| edge.to <= edge.from)
+    }
+}
+
 /// Immutable, bounded control-flow facts derived from canonical residual code.
 ///
 /// Admission consumers share this value so liveness and predecessor edges are
@@ -16,6 +57,7 @@ pub(crate) struct ControlFlowFacts {
     live_out: Vec<BTreeSet<u16>>,
     predecessors: Vec<Vec<usize>>,
     malformed_edges: BTreeSet<usize>,
+    successors: Vec<Successors>,
 }
 
 #[derive(Clone, Copy)]
@@ -48,6 +90,7 @@ impl ControlFlowFacts {
             live_out,
             predecessors: predecessor_pcs(entries.len(), &successors),
             malformed_edges: malformed_edges(&successors),
+            successors,
         }
     }
 
@@ -78,12 +121,20 @@ impl ControlFlowFacts {
         start: usize,
         operations: &[crate::ir::Opcode],
     ) -> bool {
+        self.region_plan(entries, start, operations).is_some()
+    }
+
+    pub(crate) fn region_plan(
+        &self,
+        entries: &[BaselineEntry],
+        start: usize,
+        operations: &[crate::ir::Opcode],
+    ) -> Option<RegionControlPlan> {
         let Some(end) = start.checked_add(operations.len()) else {
-            return false;
+            return None;
         };
-        !operations.is_empty()
+        (operations.len() > 0
             && end <= entries.len()
-            && self.region_entry_is_legal(start, end)
             && operations.iter().enumerate().all(|(offset, opcode)| {
                 entry_matches_region(
                     &entries[start + offset],
@@ -92,8 +143,86 @@ impl ControlFlowFacts {
                     end,
                     start + offset,
                 )
-            })
+            }))
+        .then_some(())?;
+        self.region_control(start, end)
     }
+
+    pub(crate) fn region_control(&self, start: usize, end: usize) -> Option<RegionControlPlan> {
+        (start < end && self.region_entry_is_legal(start, end)).then_some(())?;
+        bounded_region_control(&self.successors, start, end)
+    }
+}
+
+fn bounded_region_control(
+    successors: &[Successors],
+    start: usize,
+    end: usize,
+) -> Option<RegionControlPlan> {
+    let mut plan = empty_region_control(start, end);
+    push_block(&mut plan, start)?;
+    for pc in start..end {
+        let edges = successors.get(pc)?;
+        if explicit_control_edge(edges, pc) {
+            push_control_edges(&mut plan, pc, edges, start, end)?;
+        }
+    }
+    Some(plan)
+}
+
+fn empty_region_control(start: usize, end: usize) -> RegionControlPlan {
+    const EMPTY_EDGE: RegionEdge = RegionEdge { from: 0, to: 0 };
+    RegionControlPlan {
+        start,
+        end,
+        blocks: [0; MAX_REGION_BLOCKS],
+        block_len: 0,
+        edges: [EMPTY_EDGE; MAX_REGION_EDGES],
+        edge_len: 0,
+    }
+}
+
+fn explicit_control_edge(edges: &Successors, pc: usize) -> bool {
+    edges.len > 1 || (edges.len == 1 && edges.pcs[0] != pc.saturating_add(1))
+}
+
+fn push_control_edges(
+    plan: &mut RegionControlPlan,
+    pc: usize,
+    edges: &Successors,
+    start: usize,
+    end: usize,
+) -> Option<()> {
+    for target in edges.iter() {
+        push_edge(
+            plan,
+            RegionEdge {
+                from: pc,
+                to: target,
+            },
+        )?;
+        if (start..end).contains(&target) {
+            push_block(plan, target)?;
+        }
+    }
+    Some(())
+}
+
+fn push_block(plan: &mut RegionControlPlan, block: usize) -> Option<()> {
+    if plan.blocks().contains(&block) {
+        return Some(());
+    }
+    let slot = plan.blocks.get_mut(usize::from(plan.block_len))?;
+    *slot = block;
+    plan.block_len += 1;
+    Some(())
+}
+
+fn push_edge(plan: &mut RegionControlPlan, edge: RegionEdge) -> Option<()> {
+    let slot = plan.edges.get_mut(usize::from(plan.edge_len))?;
+    *slot = edge;
+    plan.edge_len += 1;
+    Some(())
 }
 
 fn live_inputs(
@@ -314,130 +443,5 @@ fn live_input(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn entries(instructions: &[crate::ir::Instruction]) -> Vec<BaselineEntry> {
-        instructions
-            .iter()
-            .copied()
-            .map(|instruction| BaselineEntry {
-                instruction,
-                handler: instruction.opcode.handler(),
-                control: instruction.opcode.control_operands(instruction),
-            })
-            .collect()
-    }
-
-    #[test]
-    fn branch_liveness_unions_both_successors() {
-        let entries = entries(&[
-            crate::ir::Instruction::jump_if_false(0, 2),
-            crate::ir::Instruction::ret(1),
-            crate::ir::Instruction::ret(2),
-        ]);
-        let successors = successor_table(&entries);
-        let live = register_liveness(&entries, &[None, None, None], &successors);
-        assert_eq!(live[0], BTreeSet::from([1, 2]));
-    }
-
-    #[test]
-    fn live_inputs_distinguish_region_exit_from_internal_definition() {
-        let entries = entries(&[
-            crate::ir::Instruction::move_(2, 1),
-            crate::ir::Instruction::ret(2),
-        ]);
-        let facts = ControlFlowFacts::new(&entries, &[None, None]);
-        assert_eq!(facts.live_in_at(0), Some(&BTreeSet::from([1])));
-        assert_eq!(facts.live_in_at(1), Some(&BTreeSet::from([2])));
-    }
-
-    #[test]
-    fn liveness_budget_exhaustion_is_conservative() {
-        let entries = entries(&[
-            crate::ir::Instruction::move_(2, 1),
-            crate::ir::Instruction::ret(2),
-        ]);
-        let successors = successor_table(&entries);
-        let live = bounded_register_liveness(&entries, &[None, None], &successors, 0);
-        assert_eq!(live, vec![BTreeSet::from([1, 2]); 2]);
-    }
-
-    #[test]
-    fn region_entry_check_accepts_internal_and_rejects_external_edges() {
-        let internal = entries(&[
-            crate::ir::Instruction::move_(0, 1),
-            crate::ir::Instruction::jump(1),
-            crate::ir::Instruction::ret(0),
-        ]);
-        let internal_facts = ControlFlowFacts::new(&internal, &[None, None, None]);
-        assert!(internal_facts.region_entry_is_legal(0, 2));
-        let external = entries(&[
-            crate::ir::Instruction::move_(0, 1),
-            crate::ir::Instruction::ret(0),
-            crate::ir::Instruction::jump(1),
-        ]);
-        let external_facts = ControlFlowFacts::new(&external, &[None, None, None]);
-        assert!(!external_facts.region_entry_is_legal(0, 2));
-    }
-
-    #[test]
-    fn region_shape_uses_canonical_operands_and_cfg_edges() {
-        let valid = entries(&[
-            crate::ir::Instruction::move_(0, 1),
-            crate::ir::Instruction::jump_if_false(0, 2),
-            crate::ir::Instruction::ret(0),
-        ]);
-        let facts = ControlFlowFacts::new(&valid, &[None; 3]);
-        assert!(facts.region_matches(
-            &valid,
-            0,
-            &[crate::ir::Opcode::Move, crate::ir::Opcode::JumpIfFalse]
-        ));
-
-        let mut noncanonical = valid.clone();
-        noncanonical[0].instruction.c = 1;
-        let facts = ControlFlowFacts::new(&noncanonical, &[None; 3]);
-        assert!(!facts.region_matches(
-            &noncanonical,
-            0,
-            &[crate::ir::Opcode::Move, crate::ir::Opcode::JumpIfFalse]
-        ));
-    }
-
-    #[test]
-    fn region_shape_rejects_operation_drift_and_external_entry() {
-        let entries = entries(&[
-            crate::ir::Instruction::move_(0, 1),
-            crate::ir::Instruction::jump(1),
-            crate::ir::Instruction::ret(0),
-            crate::ir::Instruction::jump(1),
-        ]);
-        let facts = ControlFlowFacts::new(&entries, &[None; 4]);
-        assert!(!facts.region_matches(
-            &entries,
-            0,
-            &[crate::ir::Opcode::Move, crate::ir::Opcode::Jump]
-        ));
-        assert!(!facts.region_matches(&entries, 0, &[crate::ir::Opcode::Add]));
-    }
-
-    #[test]
-    fn branch_successors_do_not_duplicate_fallthrough() {
-        let entries = entries(&[
-            crate::ir::Instruction::jump_if_false(0, 1),
-            crate::ir::Instruction::ret(0),
-        ]);
-        assert_eq!(successors(&entries, 0).iter().collect::<Vec<_>>(), [1]);
-    }
-
-    #[test]
-    fn malformed_edge_rejects_its_region() {
-        let entries = entries(&[
-            crate::ir::Instruction::jump(99),
-            crate::ir::Instruction::ret(0),
-        ]);
-        let facts = ControlFlowFacts::new(&entries, &[None, None]);
-        assert!(!facts.region_entry_is_legal(0, 1));
-    }
-}
+#[path = "stencil_cfg_tests.rs"]
+mod tests;
