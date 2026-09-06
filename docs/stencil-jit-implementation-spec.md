@@ -135,6 +135,41 @@ Keep these responsibilities separate and compose them:
   helpers and completion handling. Keep unsafe conversion and effects here or
   inside the code-store boundary, not spread through opcode dispatch.
 
+### Bounded stencil-selection optimizer
+
+Optimize selection from the finite stencil catalog, not arbitrary machine code.
+Before layout, build a disposable basic-block view from canonical PCs, operand
+roles, use/def, effects and `Proven`/`Guarded` facts. It may record value links
+and selected representations, but it MUST NOT own semantics, survive publication
+or become a second SSA/IR. Bound its nodes, edges, iterations and candidate probes;
+budget exhaustion selects ordinary execution.
+
+Apply transformations only when the existing facts prove them, in this order:
+
+1. Specialize known shapes, slots, constants, element layouts and addresses into
+   typed patch bindings or a declared specialized recipe. This is the primary
+   value lever because it removes generic semantic work and repeated guards.
+2. Propagate constants and eliminate pure dead results before copying fragments.
+   Never discard coercions, throws, stores, calls, allocation or invalidations.
+3. Use local value numbering within one effect-safe block to reuse guards,
+   addresses and equivalent pure values. Each relevant effect kills its facts.
+4. Select target addressing/strength-reduced recipes and resolve a small fixed
+   register-role vocabulary. This is bounded placement, not global allocation.
+5. Rank declared fusions by removed dispatch, guards, boxing and transfers minus
+   moves, spills, exits and bytes. A longer match is not automatically better.
+6. Lay out the expected hot successor inline and cold exits out of line. Invert
+   a branch only when its condition and exact continuation remain unchanged.
+7. After relocation, run a target-specific fail-closed peephole allowlist for
+   identity moves, redundant proven loads/stores and jump-to-next. Recompute or
+   reject affected relocation/range metadata transactionally; never rewrite an
+   unrecognized instruction stream.
+
+LLVM optimizes each build-time recipe before extraction, but not across patched
+fragments. Cross-fragment value retention therefore comes only from the declared
+continuation ABI, register roles and verifier. Unit tests MUST compare each
+transformation with independent canonical execution and a fact-breaking fallback,
+and deterministic counters MUST show the intended work was actually removed.
+
 An entry MUST be constructed from a verified published region and a closed ABI
 identity, never an arbitrary address paired with a caller-supplied function
 pointer. Private fields and restricted constructors enforce this. Checking that
