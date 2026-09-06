@@ -92,6 +92,29 @@ pub(crate) enum NumericDefinition {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ValueId {
+    pub register: Register,
+    pub version: u8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ValueDefinition {
+    Source(NumericSource),
+    Alias(ValueId),
+    Binary {
+        operator: crate::ops::BinaryOp,
+        lhs: ValueId,
+        rhs: ValueId,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ValueNode {
+    pub id: ValueId,
+    pub definition: ValueDefinition,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum LocalNumericInputs {
     Sources([NumericSource; 2]),
     SlotConstant { slot: u16, bits: u64 },
@@ -120,22 +143,28 @@ pub(crate) struct LocalPropertySelection {
 
 /// Disposable value/use view for one bounded straight-line residual window.
 ///
-/// Instructions remain the semantic authority. This view only retains the
-/// numeric definitions needed to select an existing physical specialization.
+/// Instructions remain the semantic authority. Nodes are bounded value facts,
+/// not executable operations or a second semantic IR.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct BlockValueGraph {
-    producers: [NumericProducer; MAX_BLOCK_VALUES],
+    nodes: [ValueNode; MAX_BLOCK_VALUES],
     len: u8,
 }
 
 impl BlockValueGraph {
     pub(crate) const fn new() -> Self {
-        const EMPTY: NumericProducer = NumericProducer {
-            output: 0,
-            definition: NumericDefinition::Alias(0),
+        const EMPTY: ValueNode = ValueNode {
+            id: ValueId {
+                register: 0,
+                version: 0,
+            },
+            definition: ValueDefinition::Alias(ValueId {
+                register: 0,
+                version: 0,
+            }),
         };
         Self {
-            producers: [EMPTY; MAX_BLOCK_VALUES],
+            nodes: [EMPTY; MAX_BLOCK_VALUES],
             len: 0,
         }
     }
@@ -145,18 +174,20 @@ impl BlockValueGraph {
         instruction: Instruction,
         constant_bits: impl FnOnce(u16) -> Option<u64>,
     ) -> bool {
-        let Some(producer) = numeric_producer(instruction, constant_bits) else {
-            return false;
-        };
-        if usize::from(self.len) == MAX_BLOCK_VALUES
-            || self
-                .producers()
-                .iter()
-                .any(|item| item.output == producer.output)
-        {
+        if usize::from(self.len) == MAX_BLOCK_VALUES {
             return false;
         }
-        self.producers[usize::from(self.len)] = producer;
+        let Some(mut node) = self.value_node(instruction, constant_bits) else {
+            return false;
+        };
+        if let Some(existing) = self
+            .nodes()
+            .iter()
+            .find(|existing| existing.definition == node.definition)
+        {
+            node.definition = ValueDefinition::Alias(existing.id);
+        }
+        self.nodes[usize::from(self.len)] = node;
         self.len += 1;
         true
     }
@@ -166,7 +197,12 @@ impl BlockValueGraph {
         operation: Instruction,
         live_after: &BTreeSet<Register>,
     ) -> Option<LocalBinarySelection> {
-        select_local_binary(self.producers(), operation, live_after)
+        let operator = numeric_operation(operation)?;
+        let inputs = [
+            self.resolve_register(operation.b)?,
+            self.resolve_register(operation.c)?,
+        ];
+        self.select_resolved(operation, operator, inputs, live_after)
     }
 
     pub(crate) fn select_property(
@@ -174,37 +210,216 @@ impl BlockValueGraph {
         operation: Instruction,
         live_after: &BTreeSet<Register>,
     ) -> Option<LocalPropertySelection> {
-        select_local_property(self.producers(), operation, live_after)
+        select_local_property(self, operation, live_after)
     }
 
     pub(crate) fn first(&self) -> Option<NumericProducer> {
-        (self.len != 0).then_some(self.producers[0])
+        let node = self.nodes().first()?;
+        let definition = match node.definition {
+            ValueDefinition::Source(source) => NumericDefinition::Source(source),
+            ValueDefinition::Alias(id) => NumericDefinition::Alias(id.register),
+            ValueDefinition::Binary { .. } => return None,
+        };
+        Some(NumericProducer {
+            output: node.id.register,
+            definition,
+        })
     }
 
     pub(crate) const fn len(self) -> usize {
         self.len as usize
     }
 
-    fn producers(&self) -> &[NumericProducer] {
-        &self.producers[..usize::from(self.len)]
+    fn nodes(&self) -> &[ValueNode] {
+        &self.nodes[..usize::from(self.len)]
+    }
+
+    fn value_node(
+        &self,
+        instruction: Instruction,
+        constant_bits: impl FnOnce(u16) -> Option<u64>,
+    ) -> Option<ValueNode> {
+        let flow = instruction.register_flow();
+        if !flow.complete {
+            return None;
+        }
+        let id = self.next_id(flow.definition?)?;
+        let definition = match instruction.opcode {
+            Opcode::LoadLocal if pure(instruction.opcode) => {
+                ValueDefinition::Source(NumericSource::Local(instruction.b))
+            }
+            Opcode::LoadConst if pure(instruction.opcode) => {
+                ValueDefinition::Source(NumericSource::Constant(constant_bits(instruction.b)?))
+            }
+            Opcode::Move if instruction.flags == 0 && pure(instruction.opcode) => {
+                ValueDefinition::Alias(self.canonical(self.current(instruction.b)?)?)
+            }
+            opcode if opcode.has_guard(crate::facts::OperationGuard::Number) => {
+                let lhs = self.canonical(self.current(instruction.b)?)?;
+                let rhs = self.canonical(self.current(instruction.c)?)?;
+                if !matches!(self.resolve(lhs)?, NumericSource::Constant(_))
+                    || !matches!(self.resolve(rhs)?, NumericSource::Constant(_))
+                {
+                    return None;
+                }
+                ValueDefinition::Binary {
+                    operator: numeric_operation(instruction)?,
+                    lhs,
+                    rhs,
+                }
+            }
+            _ => return None,
+        };
+        Some(ValueNode { id, definition })
+    }
+
+    fn next_id(&self, register: Register) -> Option<ValueId> {
+        let version = self
+            .nodes()
+            .iter()
+            .filter(|node| node.id.register == register)
+            .count();
+        Some(ValueId {
+            register,
+            version: u8::try_from(version).ok()?,
+        })
+    }
+
+    fn current(&self, register: Register) -> Option<ValueId> {
+        self.nodes()
+            .iter()
+            .rfind(|node| node.id.register == register)
+            .map(|node| node.id)
+    }
+
+    fn node(&self, id: ValueId) -> Option<ValueNode> {
+        self.nodes().iter().copied().find(|node| node.id == id)
+    }
+
+    fn canonical(&self, mut id: ValueId) -> Option<ValueId> {
+        for _ in 0..self.len() {
+            match self.node(id)?.definition {
+                ValueDefinition::Alias(next) => id = next,
+                _ => return Some(id),
+            }
+        }
+        None
+    }
+
+    fn resolve_register(&self, register: Register) -> Option<NumericSource> {
+        self.resolve(self.current(register)?)
+    }
+
+    fn resolve(&self, id: ValueId) -> Option<NumericSource> {
+        match self.node(id)?.definition {
+            ValueDefinition::Source(source) => Some(source),
+            ValueDefinition::Alias(source) => self.resolve(source),
+            ValueDefinition::Binary { operator, lhs, rhs } => {
+                let inputs = [self.resolve(lhs)?, self.resolve(rhs)?];
+                fold_numeric_sources(inputs, operator).map(NumericSource::Constant)
+            }
+        }
+    }
+
+    fn has_unsupported_live_out(&self, output: Register, live: &BTreeSet<Register>) -> bool {
+        self.nodes()
+            .iter()
+            .any(|node| node.id.register != output && live.contains(&node.id.register))
+    }
+
+    fn discarded_registers(&self, output: Register) -> DiscardedRegisters {
+        let mut discarded = [None; MAX_BLOCK_VALUES];
+        let mut length = 0;
+        for register in self.nodes().iter().map(|node| node.id.register) {
+            if register != output && !discarded.contains(&Some(register)) {
+                discarded[length] = Some(register);
+                length += 1;
+            }
+        }
+        discarded
+    }
+
+    fn select_resolved(
+        &self,
+        operation: Instruction,
+        operator: crate::ops::BinaryOp,
+        inputs: [NumericSource; 2],
+        live_after: &BTreeSet<Register>,
+    ) -> Option<LocalBinarySelection> {
+        if self.has_unsupported_live_out(operation.a, live_after) {
+            return None;
+        }
+        let folded = fold_numeric_sources(inputs, operator);
+        let marked = self.marked_len(&[operation.b, operation.c]);
+        let cost = folded.map_or_else(
+            || FusionCost::numeric_producers(marked),
+            |_| FusionCost::constant_fold(marked),
+        );
+        cost.profitable().then_some(LocalBinarySelection {
+            inputs: folded.map_or(LocalNumericInputs::Sources(inputs), |bits| {
+                LocalNumericInputs::Folded { bits }
+            }),
+            output: operation.a,
+            operation,
+            span: u8::try_from(self.len() + 1).ok()?,
+            discarded: self.discarded_registers(operation.a),
+            cost,
+        })
+    }
+
+    #[cfg(test)]
+    fn value(&self, id: ValueId) -> Option<ValueNode> {
+        self.node(id)
+    }
+
+    #[cfg(test)]
+    fn current_value(&self, register: Register) -> Option<ValueId> {
+        self.current(register)
+    }
+
+    fn marked_len(&self, roots: &[Register]) -> usize {
+        let mut marked = [false; MAX_BLOCK_VALUES];
+        for root in roots.iter().filter_map(|register| self.current(*register)) {
+            self.mark(root, &mut marked);
+        }
+        marked.into_iter().filter(|marked| *marked).count()
+    }
+
+    fn mark(&self, id: ValueId, marked: &mut [bool; MAX_BLOCK_VALUES]) {
+        let Some(index) = self.nodes().iter().position(|node| node.id == id) else {
+            return;
+        };
+        if std::mem::replace(&mut marked[index], true) {
+            return;
+        }
+        match self.nodes[index].definition {
+            ValueDefinition::Alias(source) => self.mark(source, marked),
+            ValueDefinition::Binary { lhs, rhs, .. } => {
+                self.mark(lhs, marked);
+                self.mark(rhs, marked);
+            }
+            ValueDefinition::Source(_) => {}
+        }
     }
 }
 
+fn pure(opcode: Opcode) -> bool {
+    opcode.effects() == &[crate::facts::OperationEffect::Pure]
+}
+
 fn select_local_property(
-    producers: &[NumericProducer],
+    graph: &BlockValueGraph,
     operation: Instruction,
     live_after: &BTreeSet<Register>,
 ) -> Option<LocalPropertySelection> {
-    if producers.is_empty() || operation.opcode != Opcode::GetN || operation.flags != 0 {
+    if graph.len() == 0 || operation.opcode != Opcode::GetN || operation.flags != 0 {
         return None;
     }
-    let NumericSource::Local(receiver_slot) = resolve_source(producers, operation.b)? else {
+    let NumericSource::Local(receiver_slot) = graph.resolve_register(operation.b)? else {
         return None;
     };
-    let lost_live = producers
-        .iter()
-        .any(|producer| producer.output != operation.a && live_after.contains(&producer.output));
-    let cost = FusionCost::property_producers(producers.len());
+    let lost_live = graph.has_unsupported_live_out(operation.a, live_after);
+    let cost = FusionCost::property_producers(graph.marked_len(&[operation.b]));
     if lost_live || !cost.profitable() {
         return None;
     }
@@ -212,8 +427,8 @@ fn select_local_property(
         receiver_slot,
         output: operation.a,
         operation,
-        span: u8::try_from(producers.len() + 1).ok()?,
-        discarded: discarded_registers(producers, operation.a),
+        span: u8::try_from(graph.len() + 1).ok()?,
+        discarded: graph.discarded_registers(operation.a),
         cost,
     })
 }
@@ -360,28 +575,6 @@ fn discarded_registers(producers: &[NumericProducer], output: Register) -> Disca
         }
     }
     discarded
-}
-
-fn numeric_producer(
-    instruction: Instruction,
-    constant_bits: impl FnOnce(u16) -> Option<u64>,
-) -> Option<NumericProducer> {
-    let flow = instruction.register_flow();
-    if instruction.opcode.effects() != &[crate::facts::OperationEffect::Pure] || !flow.complete {
-        return None;
-    }
-    let definition = match instruction.opcode {
-        Opcode::LoadLocal => NumericDefinition::Source(NumericSource::Local(instruction.b)),
-        Opcode::LoadConst => {
-            NumericDefinition::Source(NumericSource::Constant(constant_bits(instruction.b)?))
-        }
-        Opcode::Move if instruction.flags == 0 => NumericDefinition::Alias(instruction.b),
-        _ => return None,
-    };
-    Some(NumericProducer {
-        output: flow.definition?,
-        definition,
-    })
 }
 
 fn operation_sources(
