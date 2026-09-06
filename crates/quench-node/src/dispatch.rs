@@ -1225,6 +1225,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_STREAM_PROMISES_FINISHED => stream_promises_finished,
         CAP_STREAM_PROMISES_CALLBACK => stream_promises_callback,
         CAP_STREAM_WRITABLE_WRITE_ADAPTER => crate::modules::stream::writable_write_adapter,
+        CAP_STREAM_READABLE_BUFFER => crate::modules::stream::readable_buffer,
         CAP_DNS_LOOKUP => dns_lookup,
         CAP_DNS_RESOLVE4 => dns_resolve4,
         CAP_HTTP_REQUEST => http_request,
