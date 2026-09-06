@@ -10733,6 +10733,9 @@ pub fn cp_disconnect_emit(
         execute::set_property_in_place(&console, "_stderr", child_stderr);
         execute::set_property_in_place(process, "connected", Value::Boolean(false));
         crate::modules::process::emit(state, &[Value::String("disconnect".into())])?;
+        if let Some(scope) = child_scope {
+            state.borrow_mut().emitters.remove_scope(scope);
+        }
         execute::set_property_in_place(process, "stdout", previous_stdout);
         execute::set_property_in_place(process, "stderr", previous_stderr);
         execute::set_property_in_place(&console, "_stdout", previous_console_stdout);
