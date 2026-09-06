@@ -121,6 +121,16 @@ fn local_binary_selection_rejects_constant_only_work() {
 }
 
 #[test]
+fn producer_graph_never_treats_add_const_pool_id_as_register() {
+    let selected = select_local_binary(
+        &[local(4, 9), alias(7, 4)],
+        Instruction::add_const(1, 7, 4),
+        &BTreeSet::new(),
+    );
+    assert!(selected.is_none());
+}
+
+#[test]
 fn local_binary_selection_forwards_alias_and_clears_dead_chain() {
     let selected = select_local_binary(
         &[local(4, 9), alias(6, 4), local(7, 3)],
