@@ -109,30 +109,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         ]));
     }
     if name == "zlib" || name == "node:zlib" {
-        let gzip = Value::Builtin(quench_runtime::ops::Builtin::Object);
-        return Ok(quench_runtime::host_api::object(vec![
-            (
-                "createGzip".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibCreateGzip)),
-            ),
-            (
-                "createGunzip".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibCreateGunzip)),
-            ),
-            (
-                "createUnzip".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibCreateUnzip)),
-            ),
-            ("Gzip".into(), gzip),
-            (
-                "gzipSync".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibGzipSync)),
-            ),
-            (
-                "deflateSync".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibDeflateSync)),
-            ),
-        ]));
+        return Ok(crate::modules::zlib::build());
     }
     if name == "tls" || name == "node:tls" {
         return Ok(quench_runtime::host_api::object(vec![
