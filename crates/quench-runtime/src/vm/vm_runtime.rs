@@ -3588,7 +3588,13 @@ pub(crate) fn run_compact_call(
 ) -> Result<DispatchTransition, VmError> {
     let argument = [instruction.c];
     let spreads = [false];
-    let (arguments, spreads) = if instruction.flags == 0 {
+    let metadata_window = code.operand_window_at(pc);
+    let (arguments, spreads) = if let Some(arguments) = metadata_window {
+        if arguments.len() != usize::from(instruction.flags) {
+            return Err(VmError::EvalError("invalid compact call window".into()));
+        }
+        (arguments, &[][..])
+    } else if instruction.flags == 0 {
         (&[][..], &[][..])
     } else if instruction.flags == 1 {
         (&argument[..], &spreads[..])
