@@ -2138,6 +2138,18 @@ mod tests {
     use crate::quickening::QuickeningSite;
     use crate::stencil_fact::{Hole, HoleKind, PatchValues, Stencil};
 
+    fn render_selected<const N: usize>(
+        arena: &mut StencilArena,
+        cache: &mut RenderedRegionCache,
+        key: crate::stencil_fact::RegionKey,
+        values: &PatchValues<'_, N>,
+    ) -> usize {
+        let view = crate::stencil_select::select_physical(key).expect("physical stencil view");
+        arena
+            .render_physical_view_or_get(cache, view, values)
+            .expect("render selected physical view")
+    }
+
     #[test]
     fn arena_enforces_a_bounded_mapping() {
         let mut arena = StencilArena::new(4096).unwrap();
@@ -2997,14 +3009,11 @@ mod tests {
     #[test]
     fn typed_entry_rejects_wrong_published_abi() {
         let key = crate::stencil_select::numeric_region_key(Opcode::Add).unwrap();
-        let record = crate::stencil_select::select_region(key).expect("numeric declaration");
         let site = QuickeningSite::<2>::new(Opcode::Add);
         let values = PatchValues::from_site(&site);
         let mut arena = StencilArena::new(4096).unwrap();
         let mut cache = RenderedRegionCache::new();
-        let address = arena
-            .render_or_get(&mut cache, key, &record.stencil, &values)
-            .unwrap();
+        let address = render_selected(&mut arena, &mut cache, key, &values);
         arena.make_executable().unwrap();
         assert!(
             arena.bool_entry(address).is_err(),
@@ -3017,14 +3026,11 @@ mod tests {
     #[test]
     fn executable_numeric_truthiness_matches_number_toboolean() {
         let key = crate::stencil_select::truthy_number_region_key();
-        let record = crate::stencil_select::select_region(key).expect("truthiness declaration");
         let site = QuickeningSite::<2>::new(Opcode::JumpIfFalse);
         let values = PatchValues::from_site(&site);
         let mut arena = StencilArena::new(4096).unwrap();
         let mut cache = RenderedRegionCache::new();
-        let address = arena
-            .render_or_get(&mut cache, key, &record.stencil, &values)
-            .unwrap();
+        let address = render_selected(&mut arena, &mut cache, key, &values);
         arena.make_executable().unwrap();
         let entry = arena.bool_unary_entry(address).unwrap();
         for (value, expected) in [
@@ -3090,14 +3096,11 @@ mod tests {
     #[test]
     fn executable_equality_region_matches_numeric_semantics() {
         let key = crate::stencil_select::compare_equal_region_key();
-        let record = crate::stencil_select::select_region(key).expect("equality declaration");
         let site = QuickeningSite::<2>::new(Opcode::Binary);
         let values = PatchValues::from_site(&site);
         let mut arena = StencilArena::new(4096).unwrap();
         let mut cache = RenderedRegionCache::new();
-        let address = arena
-            .render_or_get(&mut cache, key, &record.stencil, &values)
-            .unwrap();
+        let address = render_selected(&mut arena, &mut cache, key, &values);
         arena.make_executable().unwrap();
         assert!(arena.execute_bool(address, 4.0, 4.0).unwrap());
         assert!(!arena.execute_bool(address, 4.0, 5.0).unwrap());
@@ -3108,14 +3111,11 @@ mod tests {
     #[test]
     fn executable_tagged_identity_equality_matches_non_numeric_values() {
         let key = crate::stencil_select::compare_equal_word_region_key();
-        let record = crate::stencil_select::select_region(key).expect("word equality row");
         let site = QuickeningSite::<2>::new(Opcode::Binary);
         let values = PatchValues::from_site(&site);
         let mut arena = StencilArena::new(4096).unwrap();
         let mut cache = RenderedRegionCache::new();
-        let address = arena
-            .render_or_get(&mut cache, key, &record.stencil, &values)
-            .unwrap();
+        let address = render_selected(&mut arena, &mut cache, key, &values);
         arena.make_executable().unwrap();
         let entry = arena.word_pair_bool_entry(address).unwrap();
         let true_bits = crate::tagged_value::TaggedValue::bool(true).bits();
@@ -3126,18 +3126,14 @@ mod tests {
         assert!(entry(null_bits, null_bits) != 0);
 
         let not_equal_key = crate::stencil_select::compare_not_equal_word_region_key();
-        let not_equal_record =
-            crate::stencil_select::select_region(not_equal_key).expect("word inequality row");
         let mut not_equal_arena = StencilArena::new(4096).unwrap();
         let mut not_equal_cache = RenderedRegionCache::new();
-        let not_equal_address = not_equal_arena
-            .render_or_get(
-                &mut not_equal_cache,
-                not_equal_key,
-                &not_equal_record.stencil,
-                &values,
-            )
-            .unwrap();
+        let not_equal_address = render_selected(
+            &mut not_equal_arena,
+            &mut not_equal_cache,
+            not_equal_key,
+            &values,
+        );
         not_equal_arena.make_executable().unwrap();
         let not_equal = not_equal_arena
             .word_pair_bool_entry(not_equal_address)
@@ -3170,12 +3166,9 @@ mod tests {
             ),
         ];
         for (key, lhs, rhs) in cases {
-            let record = crate::stencil_select::select_region(key).expect("comparison declaration");
             let mut arena = StencilArena::new(4096).unwrap();
             let mut cache = RenderedRegionCache::new();
-            let address = arena
-                .render_or_get(&mut cache, key, &record.stencil, &values)
-                .unwrap();
+            let address = render_selected(&mut arena, &mut cache, key, &values);
             arena.make_executable().unwrap();
             assert!(arena.execute_bool(address, lhs, rhs).unwrap());
             assert!(!arena.execute_bool(address, f64::NAN, rhs).unwrap());
@@ -3205,12 +3198,9 @@ mod tests {
             ),
         ];
         for (key, lhs, rhs) in cases {
-            let record = crate::stencil_select::select_region(key).expect("bitwise declaration");
             let mut arena = StencilArena::new(4096).unwrap();
             let mut cache = RenderedRegionCache::new();
-            let address = arena
-                .render_or_get(&mut cache, key, &record.stencil, &values)
-                .unwrap();
+            let address = render_selected(&mut arena, &mut cache, key, &values);
             arena.make_executable().unwrap();
             let expected = match key {
                 key if key == crate::stencil_select::bitwise_and_region_key() => lhs & rhs,
@@ -3240,22 +3230,16 @@ mod tests {
                 -4_i32,
             ),
         ] {
-            let record = crate::stencil_select::select_region(key).expect("shift declaration");
             let mut arena = StencilArena::new(4096).unwrap();
             let mut cache = RenderedRegionCache::new();
-            let address = arena
-                .render_or_get(&mut cache, key, &record.stencil, &values)
-                .unwrap();
+            let address = render_selected(&mut arena, &mut cache, key, &values);
             arena.make_executable().unwrap();
             assert_eq!(arena.execute_i32(address, lhs, rhs).unwrap(), expected);
         }
         let key = crate::stencil_select::shift_right_zero_region_key();
-        let record = crate::stencil_select::select_region(key).expect("unsigned shift declaration");
         let mut arena = StencilArena::new(4096).unwrap();
         let mut cache = RenderedRegionCache::new();
-        let address = arena
-            .render_or_get(&mut cache, key, &record.stencil, &values)
-            .unwrap();
+        let address = render_selected(&mut arena, &mut cache, key, &values);
         arena.make_executable().unwrap();
         assert_eq!(arena.execute_u32(address, u32::MAX, 1), Ok(2_147_483_647));
     }

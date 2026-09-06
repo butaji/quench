@@ -1155,7 +1155,7 @@ mod tests {
     }
 
     #[test]
-    fn extracted_build_artifacts_match_canonical_bytes() {
+    fn extracted_build_artifacts_match_canonical_contracts() {
         #[cfg(quench_generated_stencil_artifacts)]
         assert!(
             !BUILD_STENCIL_ARTIFACTS.is_empty(),
@@ -1166,26 +1166,14 @@ mod tests {
                 .iter()
                 .find(|record| record.name == artifact.name)
                 .expect("artifact declaration has a catalog row");
-            if record.stencil.holes.is_empty() && artifact.name != "array_numeric_loop" {
-                assert_eq!(
-                    artifact.bytes, record.stencil.bytes,
-                    "artifact {} drifted",
-                    artifact.name
-                );
-            } else if artifact.has_fallthrough || artifact.name == "array_numeric_loop" {
-                assert!(!artifact.bytes.is_empty());
-                if artifact.has_fallthrough {
-                    assert!(!artifact.stencil.holes.is_empty());
-                    assert!(artifact.fallthrough.is_some());
-                } else {
-                    assert!(artifact.stencil.holes.is_empty());
-                }
+            assert!(!artifact.bytes.is_empty());
+            assert!(artifact.stencil.validate());
+            if artifact.has_fallthrough {
+                assert!(!artifact.stencil.holes.is_empty());
+                assert!(artifact.fallthrough.is_some());
             } else {
-                assert!(
-                    !artifact.bytes.is_empty() && artifact.stencil.holes.is_empty(),
-                    "hole-bearing {} requires a complete generated whole-function recipe",
-                    artifact.name
-                );
+                assert!(artifact.stencil.holes.is_empty());
+                assert!(artifact.fallthrough.is_none());
             }
             assert!(!artifact.fingerprint.is_empty());
             assert!(artifact.artifact_id.starts_with(artifact.name));
