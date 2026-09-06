@@ -139,6 +139,15 @@ composition and exit reconstruction; differential tests establish JS behavior.
 
 ## Research basis
 
+[Cranelift](https://cranelift.dev/) informs the bounded local techniques, not a
+dependency or a compiler transplant: value numbering, use-driven elimination,
+costed instruction selection and fixed placement are applied only to Quench's
+finite physical recipe catalog. [DynASM](https://luajit.org/dynasm.html) informs
+the symbolic assembly ergonomics: labels and typed fixups are resolved from data
+before publication instead of hand-counting branch offsets. Quench keeps its
+Rust-only rustc artifact pipeline and its own fail-closed verifier; it imports
+neither project and does not acquire a second semantic IR.
+
 [Maglev](https://v8.dev/blog/maglev) uses a bytecode prepass, liveness, fact tracking,
 deoptimization maps and representation selection. It is evidence that these
 contracts matter, not a proposal to import its SSA compiler into Quench.
