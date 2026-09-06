@@ -32,6 +32,12 @@ impl FusionCost {
         added_transfers: 0,
     };
 
+    const LOCAL_CONSTANT: Self = Self {
+        removed_dispatches: 1,
+        removed_materializations: 1,
+        added_transfers: 0,
+    };
+
     const fn profitable(self) -> bool {
         self.removed_dispatches + self.removed_materializations > self.added_transfers
     }
@@ -44,10 +50,17 @@ pub(crate) struct AddChainSelection {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LocalNumericInputs {
+    Slots([u16; 2]),
+    SlotConstant { slot: u16, bits: u64 },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct LocalBinarySelection {
-    pub slots: [u16; 2],
+    pub inputs: LocalNumericInputs,
     pub output: Register,
     pub operation: Instruction,
+    pub span: u8,
     pub cost: FusionCost,
 }
 
@@ -87,10 +100,38 @@ pub(crate) fn select_local_binary(
         return None;
     }
     Some(LocalBinarySelection {
-        slots,
+        inputs: LocalNumericInputs::Slots(slots),
         output: operation.a,
         operation,
+        span: 3,
         cost: FusionCost::LOCAL_BINARY,
+    })
+}
+
+pub(crate) fn select_local_add_const(
+    load: Instruction,
+    operation: Instruction,
+    constant_bits: u64,
+    live_after: &BTreeSet<Register>,
+) -> Option<LocalBinarySelection> {
+    if load.opcode != Opcode::LoadLocal
+        || operation.opcode != Opcode::AddConst
+        || operation.flags != 0
+        || operation.b != load.a
+        || (load.a != operation.a && live_after.contains(&load.a))
+        || !FusionCost::LOCAL_CONSTANT.profitable()
+    {
+        return None;
+    }
+    Some(LocalBinarySelection {
+        inputs: LocalNumericInputs::SlotConstant {
+            slot: load.b,
+            bits: constant_bits,
+        },
+        output: operation.a,
+        operation,
+        span: 2,
+        cost: FusionCost::LOCAL_CONSTANT,
     })
 }
 
@@ -168,8 +209,9 @@ mod tests {
             &BTreeSet::new(),
         )
         .unwrap();
-        assert_eq!(selected.slots, [3, 9]);
+        assert_eq!(selected.inputs, LocalNumericInputs::Slots([3, 9]));
         assert_eq!(selected.output, 1);
+        assert_eq!(selected.span, 3);
         assert!(selected.cost.profitable());
     }
 
@@ -180,5 +222,41 @@ mod tests {
             select_local_binary(loads, Instruction::add(1, 7, 4), &BTreeSet::from([4])).is_none()
         );
         assert!(select_local_binary(loads, Instruction::add(1, 7, 8), &BTreeSet::new()).is_none());
+    }
+
+    #[test]
+    fn local_constant_selection_preserves_bits_and_operand_order() {
+        let bits = (-0.0_f64).to_bits();
+        let selected = select_local_add_const(
+            Instruction::load_local(4, 9),
+            Instruction::add_const(1, 4, 7),
+            bits,
+            &BTreeSet::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            selected.inputs,
+            LocalNumericInputs::SlotConstant { slot: 9, bits }
+        );
+        assert_eq!(selected.span, 2);
+    }
+
+    #[test]
+    fn local_constant_selection_rejects_left_or_live_source() {
+        let load = Instruction::load_local(4, 9);
+        assert!(select_local_add_const(
+            load,
+            Instruction::add_const_left(1, 4, 7),
+            1.0_f64.to_bits(),
+            &BTreeSet::new(),
+        )
+        .is_none());
+        assert!(select_local_add_const(
+            load,
+            Instruction::add_const(1, 4, 7),
+            1.0_f64.to_bits(),
+            &BTreeSet::from([4]),
+        )
+        .is_none());
     }
 }
