@@ -3,8 +3,10 @@
 //! Selections own operand wiring and cost facts. JavaScript behavior remains
 //! in the canonical instructions and their ordinary fallback handlers.
 
-use crate::machine::NativeBinaryPlan;
-use crate::stencil_plan::{LocalBinarySelection, LocalNumericInputs, NumericSource};
+use crate::machine::{NativeBinaryPlan, NativePropertyPlan};
+use crate::stencil_plan::{
+    LocalBinarySelection, LocalNumericInputs, LocalPropertySelection, NumericSource,
+};
 
 pub(crate) struct LocalNumericExecution {
     pub output: crate::ir::Register,
@@ -28,6 +30,86 @@ pub(crate) struct NativeLocalBinaryPlan {
     binary: Option<NativeBinaryPlan>,
     #[cfg(test)]
     local_read_count: u64,
+}
+
+pub(crate) struct LocalPropertyExecution {
+    pub output: crate::ir::Register,
+    pub bits: u64,
+    pub span: usize,
+    pub discarded: crate::stencil_plan::DiscardedRegisters,
+}
+
+impl LocalPropertyExecution {
+    pub(crate) fn commit(
+        self,
+        registers: &mut crate::register_file::RegisterFile,
+    ) -> Option<usize> {
+        registers.write_tagged_bits(usize::from(self.output), self.bits)?;
+        for register in self.discarded.into_iter().flatten() {
+            registers.clear_word(usize::from(register));
+        }
+        Some(self.span)
+    }
+}
+
+pub(crate) struct NativeLocalPropertyPlan {
+    selection: LocalPropertySelection,
+    property: NativePropertyPlan,
+    #[cfg(test)]
+    local_read_count: u64,
+}
+
+impl NativeLocalPropertyPlan {
+    pub(crate) fn new(
+        selection: LocalPropertySelection,
+        policy: crate::stencil_policy::ExecutionPolicy,
+        arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
+    ) -> Option<Self> {
+        let property = NativePropertyPlan::new_with_arena(selection.operation, policy, arena)?;
+        Some(Self {
+            selection,
+            property,
+            #[cfg(test)]
+            local_read_count: 0,
+        })
+    }
+
+    fn execute(
+        &mut self,
+        environment: &crate::environment::Environment,
+        invoke: impl FnOnce(&mut NativePropertyPlan, &crate::value::Value) -> Option<u64>,
+    ) -> Option<LocalPropertyExecution> {
+        let receiver = environment.get(self.selection.receiver_slot);
+        #[cfg(test)]
+        {
+            self.local_read_count = self.local_read_count.saturating_add(1);
+        }
+        Some(LocalPropertyExecution {
+            output: self.selection.output,
+            bits: invoke(&mut self.property, &receiver)?,
+            span: usize::from(self.selection.span),
+            discarded: self.selection.discarded,
+        })
+    }
+
+    pub(crate) const fn operation_offset(&self) -> usize {
+        self.selection.span as usize - 1
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn selection(&self) -> LocalPropertySelection {
+        self.selection
+    }
+
+    #[cfg(test)]
+    pub(crate) fn native_entry_count(&self) -> u64 {
+        self.property.native_entry_count()
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn local_read_count(&self) -> u64 {
+        self.local_read_count
+    }
 }
 
 impl NativeLocalBinaryPlan {
@@ -155,4 +237,12 @@ pub(crate) fn execute_local_binary(
     environment: &crate::environment::Environment,
 ) -> Option<LocalNumericExecution> {
     plan.borrow_mut().execute_from_environment(environment)
+}
+
+pub(crate) fn execute_local_property(
+    plan: &std::cell::RefCell<NativeLocalPropertyPlan>,
+    environment: &crate::environment::Environment,
+    invoke: impl FnOnce(&mut NativePropertyPlan, &crate::value::Value) -> Option<u64>,
+) -> Option<LocalPropertyExecution> {
+    plan.borrow_mut().execute(environment, invoke)
 }

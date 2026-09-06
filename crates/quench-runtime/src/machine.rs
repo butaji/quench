@@ -3893,7 +3893,7 @@ impl NativePropertyPlan {
         reset_installed!(self, InstalledPropertyEntry::Unpublished);
     }
 
-    fn new_with_arena(
+    pub(crate) fn new_with_arena(
         instruction: crate::ir::Instruction,
         policy: crate::stencil_policy::ExecutionPolicy,
         shared_arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
@@ -5097,6 +5097,7 @@ enum NativeAdmission {
     Unary(Rc<RefCell<NativeUnaryPlan>>),
     AddChain(Rc<RefCell<NativeAddChainPlan>>),
     LocalBinary(Rc<RefCell<crate::stencil_fusion::NativeLocalBinaryPlan>>),
+    LocalProperty(Rc<RefCell<crate::stencil_fusion::NativeLocalPropertyPlan>>),
     Move(Rc<RefCell<NativeMovePlan>>),
     LoadLocal(Rc<RefCell<NativeMovePlan>>),
     StoreLocal(Rc<RefCell<NativeMovePlan>>),
@@ -5116,6 +5117,7 @@ impl std::fmt::Debug for NativeAdmission {
             Self::Unary(_) => "unary",
             Self::AddChain(_) => "add_chain",
             Self::LocalBinary(_) => "local_binary",
+            Self::LocalProperty(_) => "local_property",
             Self::Move(_) => "move",
             Self::LoadLocal(_) => "load_local",
             Self::StoreLocal(_) => "store_local",
@@ -5501,12 +5503,61 @@ fn local_binary_admission(
     Some(NativeAdmission::LocalBinary(Rc::new(RefCell::new(plan))))
 }
 
+fn local_property_admission(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    liveness: &[BTreeSet<u16>],
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    let selection = select_local_property(code, entries, liveness, pc)?;
+    let plan = crate::stencil_fusion::NativeLocalPropertyPlan::new(
+        selection,
+        policy,
+        Rc::clone(arena),
+    )?;
+    Some(NativeAdmission::LocalProperty(Rc::new(RefCell::new(plan))))
+}
+
 fn select_local_numeric(
     code: CodeView<'_>,
     entries: &[BaselineEntry],
     liveness: &[BTreeSet<u16>],
     pc: usize,
 ) -> Option<crate::stencil_plan::LocalBinarySelection> {
+    select_value_window(code, entries, liveness, pc, |code, graph, operation, live| {
+        if graph.len() >= 2 {
+            graph.select(operation, live)
+        } else {
+            select_graph_add_const(code, graph.first()?, operation, live)
+        }
+    })
+}
+
+fn select_local_property(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    liveness: &[BTreeSet<u16>],
+    pc: usize,
+) -> Option<crate::stencil_plan::LocalPropertySelection> {
+    select_value_window(code, entries, liveness, pc, |_, graph, operation, live| {
+        graph.select_property(operation, live)
+    })
+}
+
+fn select_value_window<T>(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    liveness: &[BTreeSet<u16>],
+    pc: usize,
+    mut select: impl FnMut(
+        CodeView<'_>,
+        crate::stencil_plan::BlockValueGraph,
+        crate::ir::Instruction,
+        &BTreeSet<u16>,
+    ) -> Option<T>,
+) -> Option<T> {
     let mut graph = crate::stencil_plan::BlockValueGraph::new();
     for offset in 0..crate::stencil_plan::MAX_BLOCK_VALUES {
         let instruction = entries.get(pc.checked_add(offset)?)?.instruction;
@@ -5518,29 +5569,16 @@ fn select_local_numeric(
         }) {
             return None;
         }
-        if let Some(selection) = select_graph_operation(code, entries, liveness, pc, graph) {
-            return Some(selection);
+        let operation_pc = pc.checked_add(graph.len())?;
+        let operation = entries.get(operation_pc)?.instruction;
+        let end = operation_pc.checked_add(1)?;
+        if region_entry_is_legal(entries, pc, end) {
+            if let Some(selection) = select(code, graph, operation, liveness.get(operation_pc)?) {
+                return Some(selection);
+            }
         }
     }
     None
-}
-
-fn select_graph_operation(
-    code: CodeView<'_>,
-    entries: &[BaselineEntry],
-    liveness: &[BTreeSet<u16>],
-    pc: usize,
-    graph: crate::stencil_plan::BlockValueGraph,
-) -> Option<crate::stencil_plan::LocalBinarySelection> {
-    let operation_pc = pc.checked_add(graph.len())?;
-    let operation = entries.get(operation_pc)?.instruction;
-    let end = operation_pc.checked_add(1)?;
-    region_entry_is_legal(entries, pc, end).then_some(())?;
-    let live_after = liveness.get(operation_pc)?;
-    if graph.len() >= 2 {
-        return graph.select(operation, live_after);
-    }
-    select_graph_add_const(code, graph.first()?, operation, live_after)
 }
 
 fn select_graph_add_const(
@@ -5629,6 +5667,10 @@ fn build_admissions(
             pc,
             local_binary_admission(code, entries, &liveness, pc, policy, &arena),
         );
+        builder.push_optional(
+            pc,
+            local_property_admission(code, entries, &liveness, pc, policy, &arena),
+        );
         collect_memory_admissions(&mut builder, pc, entry.instruction, policy, &arena);
         builder.push_optional(pc, region_admission(entries, pc, policy, &arena));
     }
@@ -5707,6 +5749,12 @@ impl BaselinePlan {
         native_local_binary_at,
         LocalBinary,
         crate::stencil_fusion::NativeLocalBinaryPlan
+    );
+    typed_admission_accessors!(
+        local_property_handle_at,
+        native_local_property_at,
+        LocalProperty,
+        crate::stencil_fusion::NativeLocalPropertyPlan
     );
     typed_admission_accessors!(
         truthiness_handle_at,
@@ -5808,6 +5856,11 @@ impl OptimizingEntry {
         native_local_binary,
         LocalBinary,
         crate::stencil_fusion::NativeLocalBinaryPlan
+    );
+    optimizing_admission_accessors!(
+        native_local_property,
+        LocalProperty,
+        crate::stencil_fusion::NativeLocalPropertyPlan
     );
     optimizing_admission_accessors!(native_move, Move, NativeMovePlan);
     optimizing_admission_accessors!(native_load_local, LoadLocal, NativeMovePlan);

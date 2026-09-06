@@ -53,6 +53,15 @@ impl FusionCost {
         }
     }
 
+    fn property_producers(count: usize) -> Self {
+        let count = u8::try_from(count).unwrap_or(u8::MAX);
+        Self {
+            removed_dispatches: count,
+            removed_materializations: count,
+            added_transfers: 1,
+        }
+    }
+
     const fn profitable(self) -> bool {
         self.removed_dispatches + self.removed_materializations > self.added_transfers
     }
@@ -92,6 +101,16 @@ pub(crate) enum LocalNumericInputs {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct LocalBinarySelection {
     pub inputs: LocalNumericInputs,
+    pub output: Register,
+    pub operation: Instruction,
+    pub span: u8,
+    pub discarded: DiscardedRegisters,
+    pub cost: FusionCost,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LocalPropertySelection {
+    pub receiver_slot: u16,
     pub output: Register,
     pub operation: Instruction,
     pub span: u8,
@@ -150,6 +169,14 @@ impl BlockValueGraph {
         select_local_binary(self.producers(), operation, live_after)
     }
 
+    pub(crate) fn select_property(
+        &self,
+        operation: Instruction,
+        live_after: &BTreeSet<Register>,
+    ) -> Option<LocalPropertySelection> {
+        select_local_property(self.producers(), operation, live_after)
+    }
+
     pub(crate) fn first(&self) -> Option<NumericProducer> {
         (self.len != 0).then_some(self.producers[0])
     }
@@ -161,6 +188,34 @@ impl BlockValueGraph {
     fn producers(&self) -> &[NumericProducer] {
         &self.producers[..usize::from(self.len)]
     }
+}
+
+fn select_local_property(
+    producers: &[NumericProducer],
+    operation: Instruction,
+    live_after: &BTreeSet<Register>,
+) -> Option<LocalPropertySelection> {
+    if producers.is_empty() || operation.opcode != Opcode::GetN || operation.flags != 0 {
+        return None;
+    }
+    let NumericSource::Local(receiver_slot) = resolve_source(producers, operation.b)? else {
+        return None;
+    };
+    let lost_live = producers
+        .iter()
+        .any(|producer| producer.output != operation.a && live_after.contains(&producer.output));
+    let cost = FusionCost::property_producers(producers.len());
+    if lost_live || !cost.profitable() {
+        return None;
+    }
+    Some(LocalPropertySelection {
+        receiver_slot,
+        output: operation.a,
+        operation,
+        span: u8::try_from(producers.len() + 1).ok()?,
+        discarded: discarded_registers(producers, operation.a),
+        cost,
+    })
 }
 
 pub(crate) fn select_add_chain(
