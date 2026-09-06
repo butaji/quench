@@ -1294,6 +1294,8 @@ pub const SPEC_WEBCRYPTO_EXPORT_KEY: NodeSpec = NodeSpec::new("webcrypto:exportK
 pub const SPEC_WEBCRYPTO_GET_PUBLIC_KEY: NodeSpec =
     NodeSpec::new("webcrypto:getPublicKey", 0x1c3c);
 pub const SPEC_WEBCRYPTO_SUPPORTS: NodeSpec = NodeSpec::new("webcrypto:supports", 0x1c3d);
+pub const SPEC_WEBCRYPTO_WRAP_KEY: NodeSpec = NodeSpec::new("webcrypto:wrapKey", 0x1c3e);
+pub const SPEC_WEBCRYPTO_UNWRAP_KEY: NodeSpec = NodeSpec::new("webcrypto:unwrapKey", 0x1c3f);
 pub const SPEC_CRYPTO_CREATE_SECRET_KEY: NodeSpec = NodeSpec::new("crypto:createSecretKey", 0x1d50);
 pub const SPEC_CRYPTO_CREATE_HASH: NodeSpec = NodeSpec::new("crypto:createHash", 0x1d51);
 pub const SPEC_CRYPTO_HASH: NodeSpec = NodeSpec::new("crypto:hash", 0x1d52);
@@ -1846,6 +1848,8 @@ pub const CAP_WEBCRYPTO_VERIFY: CapId = SPEC_WEBCRYPTO_VERIFY.cap;
 pub const CAP_WEBCRYPTO_EXPORT_KEY: CapId = SPEC_WEBCRYPTO_EXPORT_KEY.cap;
 pub const CAP_WEBCRYPTO_GET_PUBLIC_KEY: CapId = SPEC_WEBCRYPTO_GET_PUBLIC_KEY.cap;
 pub const CAP_WEBCRYPTO_SUPPORTS: CapId = SPEC_WEBCRYPTO_SUPPORTS.cap;
+pub const CAP_WEBCRYPTO_WRAP_KEY: CapId = SPEC_WEBCRYPTO_WRAP_KEY.cap;
+pub const CAP_WEBCRYPTO_UNWRAP_KEY: CapId = SPEC_WEBCRYPTO_UNWRAP_KEY.cap;
 pub const CAP_CRYPTO_CREATE_SECRET_KEY: CapId = SPEC_CRYPTO_CREATE_SECRET_KEY.cap;
 pub const CAP_CRYPTO_CREATE_HASH: CapId = SPEC_CRYPTO_CREATE_HASH.cap;
 pub const CAP_CRYPTO_HASH: CapId = SPEC_CRYPTO_HASH.cap;

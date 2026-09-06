@@ -2450,6 +2450,159 @@ pub fn export_key(
     Ok(settled(Ok(result)))
 }
 
+fn settled_value(value: Value) -> Result<Value, VmError> {
+    let Value::Promise(promise) = value else {
+        return Ok(value);
+    };
+    let state = promise.state.borrow().clone();
+    match state {
+        PromiseState::Fulfilled(value) => Ok(value.clone()),
+        PromiseState::Rejected(reason) => Err(VmError::Thrown(reason.clone())),
+        PromiseState::Pending => Err(operation_error("The operation is still pending")),
+    }
+}
+
+/// Wrap a CryptoKey using the requested export format and wrapping algorithm.
+/// The operation stays on the Rust promise edge: export and encryption are
+/// synchronous host jobs today, so their settled values can be composed
+/// without invoking user-controlled Promise methods.
+pub fn wrap_key(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(result) = invalid_subtle_this(receiver) {
+        return Ok(result);
+    }
+    let wrapping_key = args.get(2).unwrap_or(&Value::Undefined);
+    if let Some(error) = validate_key_use(args.get(3), Some(wrapping_key), "wrapKey") {
+        return Ok(settled(Err(error)));
+    }
+    let format = execute::to_js_string(args.first().unwrap_or(&Value::Undefined))
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let key_to_wrap = args.get(1).unwrap_or(&Value::Undefined);
+    let exported = match export_key(
+        state,
+        receiver,
+        &[Value::String(format.clone()), key_to_wrap.clone()],
+    )
+    .and_then(settled_value)
+    {
+        Ok(value) => value,
+        Err(error) => return Ok(settled(Err(error))),
+    };
+    let plaintext = if format == "jwk" {
+        match execute::json_stringify(&exported) {
+            Ok(Value::String(value)) => array_buffer(value.as_bytes()),
+            Ok(_) => return Ok(settled(Err(operation_error("Unable to serialize key")))),
+            Err(error) => return Ok(settled(Err(error))),
+        }
+    } else {
+        exported
+    };
+    let encrypt_key = key(
+        &key_prototype(),
+        key_slot(wrapping_key, "algorithm"),
+        false,
+        usage_array(&["encrypt".to_string()]),
+        bytes(&execute::get_property(wrapping_key, KEY_DATA_PROP)),
+    );
+    let encrypted = encrypt(
+        state,
+        receiver,
+        &[
+            args.get(3).cloned().unwrap_or(Value::Undefined),
+            encrypt_key,
+            plaintext,
+        ],
+    )?;
+    Ok(encrypted)
+}
+
+/// Decrypt and import a wrapped CryptoKey.  JWK input is parsed into a fresh
+/// Rust-owned object, so inherited `kty`/field accessors cannot satisfy the
+/// required own-member checks.
+pub fn unwrap_key(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(result) = invalid_subtle_this(receiver) {
+        return Ok(result);
+    }
+    let unwrapping_key = args.get(2).unwrap_or(&Value::Undefined);
+    if let Some(error) = validate_key_use(args.get(3), Some(unwrapping_key), "unwrapKey") {
+        return Ok(settled(Err(error)));
+    }
+    // The decrypt primitive validates the concrete `decrypt` usage, whereas
+    // WebCrypto's wrapping operation authorizes the same cipher through
+    // `unwrapKey`.  Reuse the key material with an internal decrypt-only
+    // handle so no user-visible usage metadata is mutated.
+    let decrypt_key = key(
+        &key_prototype(),
+        key_slot(unwrapping_key, "algorithm"),
+        false,
+        usage_array(&["decrypt".to_string()]),
+        bytes(&execute::get_property(unwrapping_key, KEY_DATA_PROP)),
+    );
+    let decrypted = decrypt(
+        state,
+        receiver,
+        &[
+            args.get(3).cloned().unwrap_or(Value::Undefined),
+            decrypt_key,
+            args.get(1).cloned().unwrap_or(Value::Undefined),
+        ],
+    )?;
+    let decrypted = match settled_value(decrypted) {
+        Ok(value) => value,
+        Err(error) => return Ok(settled(Err(error))),
+    };
+    let format = execute::to_js_string(args.first().unwrap_or(&Value::Undefined))
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let key_data = if format == "jwk" {
+        let Some(bytes) = bytes(&decrypted) else {
+            return Ok(settled(Err(named_import_error("DataError", "Invalid keyData"))));
+        };
+        let text = String::from_utf8(bytes)
+            .map_err(|_| named_import_error("DataError", "Invalid keyData"));
+        let text = match text {
+            Ok(text) => text,
+            Err(error) => return Ok(settled(Err(error))),
+        };
+        match quench_runtime::parse_json(&text) {
+            Ok(value) => {
+                if !matches!(value, Value::Object(_) | Value::ObjectAlias(_))
+                    || !execute::has_own_property(&value, "kty")
+                {
+                    return Ok(settled(Err(named_import_error(
+                        "DataError",
+                        "Invalid keyData",
+                    ))));
+                }
+                value
+            }
+            Err(_) => return Ok(settled(Err(named_import_error("DataError", "Invalid keyData")))),
+        }
+    } else {
+        decrypted
+    };
+    let imported = import_key(
+        state,
+        receiver,
+        &[
+            Value::String(format),
+            key_data,
+            args.get(4).cloned().unwrap_or(Value::Undefined),
+            args.get(5).cloned().unwrap_or(Value::Boolean(false)),
+            args.get(6).cloned().unwrap_or_else(|| host_api::array(Vec::new())),
+        ],
+    )?;
+    Ok(imported)
+}
+
 /// Derive the public half of an asymmetric CryptoKey without crossing a JS
 /// serialization boundary.  Public-key derivation is a metadata operation at
 /// this layer: the key material remains owned by the Rust key slot and the
@@ -4801,11 +4954,11 @@ pub fn build() -> (Value, Value) {
                 ),
                 (
                     "unwrapKey".into(),
-                    crate::host::capability(crate::registry::SPEC_WEBCRYPTO_DIGEST),
+                    crate::host::capability(crate::registry::SPEC_WEBCRYPTO_UNWRAP_KEY),
                 ),
                 (
                     "wrapKey".into(),
-                    crate::host::capability(crate::registry::SPEC_WEBCRYPTO_DIGEST),
+                    crate::host::capability(crate::registry::SPEC_WEBCRYPTO_WRAP_KEY),
                 ),
             ]),
         ),
@@ -4865,6 +5018,8 @@ pub fn subtle_crypto_constructor() -> Value {
         ("deriveKey", crate::registry::SPEC_WEBCRYPTO_DERIVE_KEY),
         ("sign", crate::registry::SPEC_WEBCRYPTO_SIGN),
         ("verify", crate::registry::SPEC_WEBCRYPTO_VERIFY),
+        ("wrapKey", crate::registry::SPEC_WEBCRYPTO_WRAP_KEY),
+        ("unwrapKey", crate::registry::SPEC_WEBCRYPTO_UNWRAP_KEY),
         ("getPublicKey", crate::registry::SPEC_WEBCRYPTO_GET_PUBLIC_KEY),
     ];
     for (name, spec) in methods {

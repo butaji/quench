@@ -1257,6 +1257,8 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_WEBCRYPTO_EXPORT_KEY => crate::modules::webcrypto::export_key,
         CAP_WEBCRYPTO_GET_PUBLIC_KEY => crate::modules::webcrypto::get_public_key,
         CAP_WEBCRYPTO_SUPPORTS => crate::modules::webcrypto::supports,
+        CAP_WEBCRYPTO_WRAP_KEY => crate::modules::webcrypto::wrap_key,
+        CAP_WEBCRYPTO_UNWRAP_KEY => crate::modules::webcrypto::unwrap_key,
         CAP_CRYPTO_CREATE_SECRET_KEY => crate::modules::crypto::create_secret_key,
         CAP_CRYPTO_CREATE_HASH => crate::modules::crypto::create_hash,
         CAP_CRYPTO_HASH => crate::modules::crypto::hash_one_shot,
