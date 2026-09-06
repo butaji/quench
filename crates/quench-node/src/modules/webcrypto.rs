@@ -1115,87 +1115,210 @@ fn validate_rsa_import(
     Ok(())
 }
 
-/// Validate the import-only invariants for ChaCha20-Poly1305.  Generation
-/// already routes through `symmetric_usages` and key-length checks, but the
-/// import path must apply the same facts to raw and JWK material rather than
-/// accepting an empty byte vector or silently normalizing unsupported usage.
-fn validate_chacha_import(
+fn symmetric_allowed_usages(name: &str) -> Option<&'static [&'static str]> {
+    match name {
+        "HMAC" | "KMAC128" | "KMAC256" => Some(&["sign", "verify"]),
+        "AES-CTR" | "AES-CBC" | "AES-GCM" | "AES-KW" | "AES-OCB" | "CHACHA20-POLY1305" => {
+            Some(&["encrypt", "decrypt", "wrapKey", "unwrapKey"])
+        }
+        _ => None,
+    }
+}
+
+fn symmetric_import_error(name: &str, empty_usages: bool) -> VmError {
+    let message = if empty_usages {
+        "Usages cannot be empty when importing a secret key.".to_string()
+    } else if name == "CHACHA20-POLY1305" {
+        "Unsupported key usage".to_string()
+    } else {
+        format!("Unsupported key usage for {name} key")
+    };
+    named_import_error("SyntaxError", &message)
+}
+
+fn symmetric_length(algorithm: &Value, data: &[u8], name: &str) -> Result<Vec<u8>, VmError> {
+    let requested = match algorithm {
+        Value::Object(_) | Value::ObjectAlias(_) => execute::get_property(algorithm, "length"),
+        _ => Value::Undefined,
+    };
+    let bits = match name {
+        "CHACHA20-POLY1305" => {
+            if data.len() != 32 {
+                return Err(named_import_error("DataError", "Invalid key length"));
+            }
+            256
+        }
+        name if name.starts_with("AES-") => {
+            let inferred = match data.len() {
+                16 => 128,
+                24 => 192,
+                32 => 256,
+                _ => return Err(named_import_error("DataError", "Invalid key length")),
+            };
+            match requested {
+                Value::Undefined => inferred,
+                Value::Number(value)
+                    if value.is_finite() && value.fract() == 0.0 && value >= 0.0 =>
+                {
+                    let value = value as usize;
+                    if value != inferred {
+                        return Err(named_import_error("DataError", "Invalid key length"));
+                    }
+                    value
+                }
+                _ => return Err(named_import_error("DataError", "Invalid key length")),
+            }
+        }
+        "HMAC" => {
+            let inferred = data.len().saturating_mul(8);
+            match requested {
+                Value::Undefined => inferred,
+                Value::Number(value)
+                    if value.is_finite() && value.fract() == 0.0 && value >= 8.0 =>
+                {
+                    let value = value as usize;
+                    if value.div_ceil(8) != data.len() {
+                        return Err(named_import_error("DataError", "Invalid key length"));
+                    }
+                    value
+                }
+                Value::Number(value) if value == 0.0 => {
+                    return Err(named_import_error(
+                        "DataError",
+                        "HmacImportParams.length cannot be 0",
+                    ));
+                }
+                _ => return Err(named_import_error("DataError", "Invalid key length")),
+            }
+        }
+        "KMAC128" | "KMAC256" => match requested {
+            Value::Undefined => data.len().saturating_mul(8),
+            Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value >= 0.0 => {
+                let value = value as usize;
+                if value.div_ceil(8) != data.len() {
+                    return Err(named_import_error("DataError", "Invalid key length"));
+                }
+                value
+            }
+            _ => return Err(named_import_error("DataError", "Invalid key length")),
+        },
+        _ => return Ok(data.to_vec()),
+    };
+    let mut normalized = data.to_vec();
+    if let Some(remainder) = bits.checked_rem(8).filter(|value| *value != 0) {
+        if let Some(last) = normalized.last_mut() {
+            *last &= 0xff_u8 << (8 - remainder);
+        }
+    }
+    Ok(normalized)
+}
+
+fn symmetric_jwk_algorithm(name: &str, algorithm: &Value, data: &[u8]) -> Option<String> {
+    match name {
+        "CHACHA20-POLY1305" => Some("C20P".into()),
+        "KMAC128" => Some("K128".into()),
+        "KMAC256" => Some("K256".into()),
+        name if name.starts_with("AES-") => {
+            let bits = data.len().checked_mul(8)?;
+            let suffix = name.strip_prefix("AES-")?;
+            Some(format!("A{bits}{suffix}"))
+        }
+        "HMAC" => {
+            let hash = algorithm_hash(algorithm)?;
+            let suffix = match hash.as_str() {
+                "SHA-1" => "1",
+                "SHA-224" => "224",
+                "SHA-256" => "256",
+                "SHA-384" => "384",
+                "SHA-512" => "512",
+                "SHA3-256" => return None,
+                "SHA3-384" => return None,
+                "SHA3-512" => return None,
+                _ => return None,
+            };
+            Some(format!("HS{suffix}"))
+        }
+        _ => None,
+    }
+}
+
+fn validate_symmetric_jwk(
+    name: &str,
     algorithm: &Value,
-    format: &str,
-    data: Option<&[u8]>,
     jwk: Option<&Value>,
+    data: Option<&[u8]>,
     usages: &Value,
     extractable: bool,
 ) -> Result<(), VmError> {
-    if algorithm_name(algorithm).to_ascii_uppercase() != "CHACHA20-POLY1305" {
-        return Ok(());
-    }
-    let requested = all_usage_names(usages);
-    let allowed = ["encrypt", "decrypt", "wrapKey", "unwrapKey"];
-    if requested.iter().any(|usage| !allowed.contains(&usage.as_str())) {
-        return Err(named_import_error(
-            "SyntaxError",
-            "Unsupported key usage",
-        ));
-    }
-    if requested.is_empty() {
-        return Err(named_import_error(
-            "SyntaxError",
-            "Usages cannot be empty",
-        ));
-    }
-    if matches!(format, "raw" | "raw-secret")
-        && data.is_none_or(|bytes| bytes.len() != 32)
-    {
-        return Err(named_import_error("DataError", "Invalid key length"));
-    }
-    if format != "jwk" {
-        return Ok(());
-    }
     let Some(jwk) = jwk else {
         return Err(named_import_error("DataError", "Invalid keyData"));
     };
-    let kty_value = execute::get_property(jwk, "kty");
-    let kty = execute::to_js_string(&kty_value).unwrap_or_default();
-    if matches!(kty_value, Value::Undefined) {
+    let (Value::Object(_) | Value::ObjectAlias(_)) = jwk else {
+        return Err(named_import_error("DataError", "Invalid keyData"));
+    };
+    let kty = execute::get_property(jwk, "kty");
+    if matches!(kty, Value::Undefined) {
         return Err(named_import_error("DataError", "Invalid keyData"));
     }
-    if kty != "oct" {
+    if !matches!(kty, Value::String(ref value) if value == "oct") {
         return Err(named_import_error(
             "DataError",
             "Invalid JWK \"kty\" Parameter",
         ));
     }
-    if data.is_none_or(|bytes| bytes.len() != 32) {
+    if !matches!(execute::get_property(jwk, "k"), Value::String(_)) {
         return Err(named_import_error("DataError", "Invalid keyData"));
     }
-    if let Value::String(use_value) = execute::get_property(jwk, "use") {
-        if use_value != "enc" {
+    let Some(data) = data else {
+        return Err(named_import_error("DataError", "Invalid keyData"));
+    };
+    let expected_use = if name == "HMAC" { "sig" } else { "enc" };
+    match execute::get_property(jwk, "use") {
+        Value::Undefined => {}
+        Value::String(value) if value == expected_use => {}
+        _ => {
             return Err(named_import_error(
                 "DataError",
                 "Invalid JWK \"use\" Parameter",
-            ));
+            ))
         }
     }
-    if let Value::Boolean(ext) = execute::get_property(jwk, "ext") {
-        if ext != extractable {
+    match execute::get_property(jwk, "ext") {
+        Value::Undefined => {}
+        Value::Boolean(value) if value == extractable => {}
+        _ => {
             return Err(named_import_error(
                 "DataError",
                 "JWK \"ext\" Parameter and extractable mismatch",
-            ));
+            ))
         }
     }
-    if let Value::String(alg) = execute::get_property(jwk, "alg") {
-        if alg != "C20P" {
+    match execute::get_property(jwk, "alg") {
+        Value::Undefined => {}
+        Value::String(value)
+            if symmetric_jwk_algorithm(name, algorithm, data).as_deref()
+                == Some(value.as_str()) => {}
+        _ => {
             return Err(named_import_error(
                 "DataError",
                 "JWK \"alg\" does not match the requested algorithm",
-            ));
+            ))
         }
     }
     let key_ops = execute::get_property(jwk, "key_ops");
     if !matches!(key_ops, Value::Undefined) {
-        let declared = all_usage_names(&key_ops);
+        let Value::Array(_) = key_ops else {
+            return Err(named_import_error("DataError", "Invalid keyData"));
+        };
+        let declared = jwk_usage_names(&key_ops)?;
+        let allowed = symmetric_allowed_usages(name).unwrap_or_default();
+        if declared
+            .iter()
+            .any(|usage| !allowed.contains(&usage.as_str()))
+        {
+            return Err(named_import_error("DataError", "Unsupported key usage"));
+        }
+        let requested = all_usage_names(usages);
         if declared.len() != requested.len()
             || requested.iter().any(|usage| !declared.contains(usage))
         {
@@ -1206,6 +1329,80 @@ fn validate_chacha_import(
         }
     }
     Ok(())
+}
+
+fn jwk_usage_names(value: &Value) -> Result<Vec<String>, VmError> {
+    let Value::Array(_) = value else {
+        return Err(named_import_error("DataError", "Invalid keyData"));
+    };
+    let length = match execute::get_property(value, "length") {
+        Value::Number(length) if length.is_finite() && length >= 0.0 => length as usize,
+        _ => return Err(named_import_error("DataError", "Invalid keyData")),
+    };
+    let mut names = Vec::new();
+    for index in 0..length {
+        let Value::String(name) = execute::get_property(value, &index.to_string()) else {
+            return Err(named_import_error("DataError", "Invalid keyData"));
+        };
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    Ok(names)
+}
+
+/// Apply the same usage, format, JWK, and key-length facts to every
+/// symmetric import.  The returned bytes are a canonical copy for bit-sized
+/// HMAC/KMAC keys, so metadata and exported material cannot disagree.
+fn validate_symmetric_import(
+    algorithm: &Value,
+    format: &str,
+    data: Option<&[u8]>,
+    jwk: Option<&Value>,
+    usages: &Value,
+    extractable: bool,
+) -> Result<Option<Vec<u8>>, VmError> {
+    let name = algorithm_name(algorithm).to_ascii_uppercase();
+    let Some(allowed) = symmetric_allowed_usages(&name) else {
+        return Ok(data.map(ToOwned::to_owned));
+    };
+    let requested = all_usage_names(usages);
+    if requested
+        .iter()
+        .any(|usage| !allowed.contains(&usage.as_str()))
+    {
+        return Err(symmetric_import_error(&name, false));
+    }
+    if requested.is_empty() {
+        return Err(symmetric_import_error(&name, true));
+    }
+    if name == "HMAC" && algorithm_hash(algorithm).is_none() {
+        return Err(error(
+            Builtin::TypeError,
+            Some("ERR_MISSING_OPTION"),
+            "The \"hash\" option is required",
+        ));
+    }
+    if name.starts_with("KMAC") && format == "raw" {
+        return Err(not_supported(&format!(
+            "Unable to import {name} using raw format"
+        )));
+    }
+    let Some(data) = data else {
+        if format == "jwk" {
+            return Err(named_import_error("DataError", "Invalid keyData"));
+        }
+        return Err(error(
+            Builtin::TypeError,
+            Some("ERR_INVALID_ARG_TYPE"),
+            "The keyData argument must be an ArrayBuffer or a view",
+        ));
+    };
+    let data = symmetric_length(algorithm, data, &name)?;
+    if format == "jwk" {
+        validate_symmetric_jwk(&name, algorithm, jwk, Some(&data), usages, extractable)?;
+    }
+    Ok(Some(data))
 }
 
 fn imported_key_type(format: &str, algorithm: &Value, jwk: Option<&Value>) -> &'static str {
@@ -1252,7 +1449,7 @@ fn imported_algorithm_metadata(algorithm: Value, format: &str, data: Option<&[u8
         return algorithm;
     }
     let name = algorithm_name(&algorithm).to_ascii_uppercase();
-    if !(name.starts_with("AES-") || matches!(name.as_str(), "KMAC128" | "KMAC256"))
+    if !(name.starts_with("AES-") || matches!(name.as_str(), "HMAC" | "KMAC128" | "KMAC256"))
         || data.is_none()
     {
         return algorithm;
@@ -1432,12 +1629,8 @@ fn asymmetric_usages(name: &str, requested: &Value) -> Result<(Value, Value), Vm
 }
 
 fn symmetric_usages(name: &str, requested: &Value) -> Result<Value, VmError> {
-    let allowed: &[&str] = match name {
-        "HMAC" | "KMAC128" | "KMAC256" => &["sign", "verify"],
-        "AES-CTR" | "AES-CBC" | "AES-GCM" | "AES-KW" | "AES-OCB" | "CHACHA20-POLY1305" => {
-            &["encrypt", "decrypt", "wrapKey", "unwrapKey"]
-        }
-        _ => return Err(not_supported("Unrecognized algorithm name")),
+    let Some(allowed) = symmetric_allowed_usages(name) else {
+        return Err(not_supported("Unrecognized algorithm name"));
     };
     let requested = usage_names(requested);
     if requested.is_empty() {
@@ -1795,7 +1988,7 @@ pub fn import_key(
         .get(4)
         .cloned()
         .unwrap_or_else(|| host_api::array(Vec::new()));
-    let data = if format == "jwk" {
+    let mut data = if format == "jwk" {
         let encoded = execute::to_js_string(&execute::get_property(
             args.get(1).unwrap_or(&Value::Undefined),
             "k",
@@ -1815,7 +2008,7 @@ pub fn import_key(
     {
         return Ok(settled(Err(error)));
     }
-    if let Err(error) = validate_chacha_import(
+    let symmetric_data = match validate_symmetric_import(
         &algorithm,
         &format,
         data.as_deref(),
@@ -1823,7 +2016,11 @@ pub fn import_key(
         &usages,
         extractable,
     ) {
-        return Ok(settled(Err(error)));
+        Ok(data) => data,
+        Err(error) => return Ok(settled(Err(error))),
+    };
+    if symmetric_data.is_some() {
+        data = symmetric_data;
     }
     let algorithm = imported_algorithm_metadata(algorithm, &format, data.as_deref());
     let algorithm = rsa_algorithm_metadata(algorithm, &format, data.as_deref(), jwk.as_ref());
