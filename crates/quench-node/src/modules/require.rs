@@ -2487,6 +2487,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "async_hooks" => Some(crate::modules::async_hooks::build()),
         "internal/timers" => Some(host_api::object(vec![
             ("TIMEOUT_MAX".into(), Value::Number(2_147_483_647.0)),
+            ("kTimeout".into(), Value::String("Symbol(kTimeout)\0quench".into())),
             (
                 "setUnrefTimeout".into(),
                 crate::host::capability(crate::registry::SPEC_INTERNAL_TIMERS_SET_UNREF_TIMEOUT),

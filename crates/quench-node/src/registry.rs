@@ -719,6 +719,7 @@ pub const SPEC_PROCESS_ACTIVE_RESOURCES: NodeSpec =
     NodeSpec::new("process:getActiveResourcesInfo", 0x0A1A);
 pub const SPEC_PROCESS_UMASK: NodeSpec = NodeSpec::new("process:umask", 0x0A06);
 pub const SPEC_PROCESS_ON: NodeSpec = NodeSpec::new("process:on", 0x0A07);
+pub const SPEC_PROCESS_PREPEND: NodeSpec = NodeSpec::new("process:prependListener", 0x0A2F);
 pub const SPEC_PROCESS_ONCE: NodeSpec = NodeSpec::new("process:once", 0x0A08);
 pub const SPEC_PROCESS_REMOVE_LISTENER: NodeSpec = NodeSpec::new("process:removeListener", 0x0A0E);
 pub const SPEC_PROCESS_REMOVE_ALL_LISTENERS: NodeSpec =
@@ -840,6 +841,10 @@ pub const SPEC_HTTP_OUTGOING_WRITE: NodeSpec = NodeSpec::new("http:OutgoingMessa
 pub const SPEC_HTTP_OUTGOING_END: NodeSpec = NodeSpec::new("http:OutgoingMessage:end", 0x0F28);
 pub const SPEC_HTTP_OUTGOING_DESTROY: NodeSpec =
     NodeSpec::new("http:OutgoingMessage:destroy", 0x0F29);
+pub const SPEC_HTTP_OUTGOING_ASSIGN_SOCKET: NodeSpec =
+    NodeSpec::new("http:OutgoingMessage:assignSocket", 0x0F5A);
+pub const SPEC_HTTP_OUTGOING_DETACH_SOCKET: NodeSpec =
+    NodeSpec::new("http:OutgoingMessage:detachSocket", 0x0F5B);
 pub const SPEC_HTTP_AGENT_ADD_REQUEST: NodeSpec = NodeSpec::new("http:Agent:addRequest", 0x0F2A);
 pub const SPEC_HTTP_AGENT_KEEP_SOCKET_ALIVE: NodeSpec =
     NodeSpec::new("http:Agent:keepSocketAlive", 0x0F2B);
@@ -2002,6 +2007,8 @@ pub const CAP_HTTP_OUTGOING: CapId = SPEC_HTTP_OUTGOING.cap;
 pub const CAP_HTTP_OUTGOING_WRITE: CapId = SPEC_HTTP_OUTGOING_WRITE.cap;
 pub const CAP_HTTP_OUTGOING_END: CapId = SPEC_HTTP_OUTGOING_END.cap;
 pub const CAP_HTTP_OUTGOING_DESTROY: CapId = SPEC_HTTP_OUTGOING_DESTROY.cap;
+pub const CAP_HTTP_OUTGOING_ASSIGN_SOCKET: CapId = SPEC_HTTP_OUTGOING_ASSIGN_SOCKET.cap;
+pub const CAP_HTTP_OUTGOING_DETACH_SOCKET: CapId = SPEC_HTTP_OUTGOING_DETACH_SOCKET.cap;
 pub const CAP_INSPECTOR_CLOSE: CapId = SPEC_INSPECTOR_CLOSE.cap;
 pub const CAP_INSPECTOR_CONNECT: CapId = SPEC_INSPECTOR_CONNECT.cap;
 pub const CAP_INSPECTOR_CONNECT_MAIN: CapId = SPEC_INSPECTOR_CONNECT_MAIN.cap;
@@ -2128,6 +2135,7 @@ pub const CAP_PROCESS_HAS_UNCAUGHT_EXCEPTION_CAPTURE_CALLBACK: CapId =
 pub const CAP_PROCESS_MEMORY_USAGE: CapId = SPEC_PROCESS_MEMORY_USAGE.cap;
 pub const CAP_PROCESS_NEXT_TICK: CapId = SPEC_PROCESS_NEXT_TICK.cap;
 pub const CAP_PROCESS_ON: CapId = SPEC_PROCESS_ON.cap;
+pub const CAP_PROCESS_PREPEND: CapId = SPEC_PROCESS_PREPEND.cap;
 pub const CAP_PROCESS_ONCE: CapId = SPEC_PROCESS_ONCE.cap;
 pub const CAP_PROCESS_REMOVE_ALL_LISTENERS: CapId = SPEC_PROCESS_REMOVE_ALL_LISTENERS.cap;
 pub const CAP_PROCESS_REMOVE_LISTENER: CapId = SPEC_PROCESS_REMOVE_LISTENER.cap;

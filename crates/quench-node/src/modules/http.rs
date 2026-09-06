@@ -1755,6 +1755,14 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
         ("write", crate::registry::SPEC_HTTP_OUTGOING_WRITE),
         ("end", crate::registry::SPEC_HTTP_OUTGOING_END),
         ("destroy", crate::registry::SPEC_HTTP_OUTGOING_DESTROY),
+        (
+            "assignSocket",
+            crate::registry::SPEC_HTTP_OUTGOING_ASSIGN_SOCKET,
+        ),
+        (
+            "detachSocket",
+            crate::registry::SPEC_HTTP_OUTGOING_DETACH_SOCKET,
+        ),
     ] {
         outgoing_prototype = execute::set_property(
             outgoing_prototype,

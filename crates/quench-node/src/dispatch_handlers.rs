@@ -7131,6 +7131,56 @@ pub fn http_outgoing_construct(
     Ok(object)
 }
 
+/// Attach a transferred net.Socket to an OutgoingMessage/ServerResponse.
+pub fn http_outgoing_assign_socket(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    let socket = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(socket, Value::Object(_) | Value::ObjectAlias(_)) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"socket\" argument must be an instance of Socket".into(),
+        ));
+    }
+    let current = execute::get_property(&socket, "_httpMessage");
+    if execute::same_value(&current, receiver) {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("Error".into())),
+            ("code".into(), Value::String("ERR_HTTP_SOCKET_ASSIGNED".into())),
+        ])));
+    }
+    execute::set_property_in_place(&socket, "_httpMessage", receiver.clone());
+    execute::set_property_in_place(receiver, "socket", socket.clone());
+    crate::modules::events::method_emit(
+        state,
+        Some(receiver),
+        &[Value::String("socket".into()), socket],
+    )?;
+    Ok(Value::Undefined)
+}
+
+pub fn http_outgoing_detach_socket(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    let socket = args
+        .first()
+        .cloned()
+        .filter(|value| !matches!(value, Value::Undefined | Value::Null))
+        .unwrap_or_else(|| execute::get_property(receiver, "socket"));
+    if matches!(socket, Value::Object(_) | Value::ObjectAlias(_))
+        && execute::same_value(&execute::get_property(&socket, "_httpMessage"), receiver)
+    {
+        execute::set_property_in_place(&socket, "_httpMessage", Value::Null);
+    }
+    execute::set_property_in_place(receiver, "socket", Value::Null);
+    Ok(Value::Undefined)
+}
+
 pub fn http_outgoing_write(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -7154,7 +7204,7 @@ pub fn http_outgoing_write(
 }
 
 pub fn http_outgoing_end(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
@@ -7162,6 +7212,17 @@ pub fn http_outgoing_end(
     execute::set_property_in_place(&receiver, "finished", Value::Boolean(true));
     execute::set_property_in_place(&receiver, "writableEnded", Value::Boolean(true));
     execute::set_property_in_place(&receiver, "writableLength", Value::Number(0.0));
+    let socket = execute::get_property(&receiver, "socket");
+    if matches!(socket, Value::Object(_) | Value::ObjectAlias(_)) {
+        let _ = crate::modules::net::socket_write(
+            state,
+            Some(&socket),
+            &[Value::String("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n\r\n".into())],
+        );
+        let _ = crate::modules::net::socket_end(state, Some(&socket), &[]);
+        execute::set_property_in_place(&socket, "_httpMessage", Value::Null);
+        execute::set_property_in_place(&receiver, "socket", Value::Null);
+    }
     Ok(receiver)
 }
 
