@@ -148,6 +148,7 @@ mod stencil_compare_branch_tests;
 mod stencil_property_integration_tests;
 mod stencil_plan;
 mod stencil_policy;
+mod stencil_value_graph;
 #[cfg(test)]
 mod stencil_test_support;
 pub mod stencil_select;
