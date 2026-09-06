@@ -152,6 +152,12 @@ if (!globalThis.navigator) {
       writable: false,
     });
   }
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    enumerable: true,
+    value: globalThis.__quenchNavigatorLocks,
+    writable: false,
+  });
   globalThis.navigator = Object.freeze(navigator);
 }
 if (typeof globalThis.Blob !== "function" ||
