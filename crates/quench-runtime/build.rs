@@ -373,6 +373,16 @@ const X86_PROPERTY_BYTES: [u8; 48] = [
     0x31, 0xC0, // rejected: xor eax,eax
     0xC3, // ret
 ];
+const X86_PROPERTY_WRITE_BYTES: [u8; 48] = [
+    0x48, 0x8B, 0x07, 0x8B, 0x00, 0x3B, 0x47, 0x08, 0x75, 0x23,
+    0x48, 0x8B, 0x47, 0x10, 0x80, 0x38, 0x01, 0x75, 0x1A,
+    0x48, 0x8B, 0x47, 0x18, 0x80, 0x38, 0x01, 0x75, 0x11,
+    0x48, 0x8B, 0x47, 0x20, // mov rax,[rdi+32] (slot)
+    0x48, 0x8B, 0x57, 0x28, // mov rdx,[rdi+40] (value)
+    0x48, 0x89, 0x10, // mov [rax],rdx (commit)
+    0xB8, 0x01, 0, 0, 0, 0xC3, // status=1; ret
+    0x31, 0xC0, 0xC3, // rejected: status=0; ret
+];
 const X86_MOVE_BYTES: [u8; 4] = x86_word_load_ret();
 const fn x86_fallthrough_bytes() -> [u8; 9] {
     let add = x86_sse2_binary(0x58, 0, 1);
@@ -518,6 +528,12 @@ const AARCH64_PROPERTY_GUARD_BYTES: [u8; 80] = {
     put32(&mut out, 68, aarch64_ret());
     put32(&mut out, 72, 0x5280_0000); // rejected: mov w0, #0
     put32(&mut out, 76, aarch64_ret());
+    out
+};
+const AARCH64_PROPERTY_WRITE_GUARD_BYTES: [u8; 80] = {
+    let mut out = AARCH64_PROPERTY_GUARD_BYTES;
+    put32(&mut out, 56, 0xF940_1402); // ldr x2, [x0, #40] (value)
+    put32(&mut out, 60, 0xF900_0022); // str x2, [x1] (commit)
     out
 };
 const AARCH64_MOVE_BYTES: [u8; 8] = AARCH64_PROPERTY_BYTES;
@@ -1415,12 +1431,12 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     },
     RegionDeclaration {
         name: "store_property",
-        // Physical tagged-word transfer; canonical writable-slot proof and
-        // ownership-aware commit stay at the VM boundary.
+        // All potentially failing semantic checks precede the single native
+        // word store. Admission restricts both words to non-owning tags.
         operations: &["SetN"],
-        abi: DeclAbi::TaggedWord,
-        x86_bytes: &X86_MOVE_BYTES,
-        aarch64_bytes: &AARCH64_MOVE_BYTES,
+        abi: DeclAbi::PropertyWriteGuard,
+        x86_bytes: &X86_PROPERTY_WRITE_BYTES,
+        aarch64_bytes: &AARCH64_PROPERTY_WRITE_GUARD_BYTES,
         portable_bytes: &[0xC3],
         holes: &[],
         aarch64_holes: &[],
@@ -1737,7 +1753,10 @@ fn generate_stencil_catalog() {
             };
             let executable = if declaration.name == "dispatch" {
                 "DISPATCH_EXECUTABLE"
-            } else if matches!(declaration.abi, DeclAbi::PropertyGuard) {
+            } else if matches!(
+                declaration.abi,
+                DeclAbi::PropertyGuard | DeclAbi::PropertyWriteGuard
+            ) {
                 "cfg!(any(target_arch = \"x86_64\", target_arch = \"aarch64\"))"
             } else if matches!(declaration.abi, DeclAbi::ArrayKernel) {
                 // Raw element contexts have a real body only on ARM64.  The
@@ -1922,6 +1941,9 @@ fn abi_expr(declaration: &RegionDeclaration) -> &'static str {
         DeclAbi::ScalarI32 => "crate::stencil_select::RegionAbi::ScalarI32",
         DeclAbi::ScalarU32 => "crate::stencil_select::RegionAbi::ScalarU32",
         DeclAbi::PropertyGuard => "crate::stencil_select::RegionAbi::PropertyGuard",
+        DeclAbi::PropertyWriteGuard => {
+            "crate::stencil_select::RegionAbi::PropertyWriteGuard"
+        }
         DeclAbi::Bridge => "crate::stencil_select::RegionAbi::Bridge",
         DeclAbi::ArrayKernel if target_is_aarch64 => {
             "crate::stencil_select::RegionAbi::ArrayKernel"
@@ -1997,6 +2019,12 @@ fn abi_contract_fields(abi: DeclAbi) -> (&'static str, bool, u8, &'static str) {
             2,
             "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0x000f, live_out_mask: 1, root_materialization_required: false",
         ),
+        DeclAbi::PropertyWriteGuard => (
+            "PropertyWriteGuard",
+            true,
+            2,
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0x000f, live_out_mask: 0, root_materialization_required: false",
+        ),
     }
 }
 
@@ -2014,6 +2042,7 @@ fn abi_variant_name(abi: DeclAbi) -> &'static str {
         DeclAbi::ArrayKernel => "ArrayKernel",
         DeclAbi::ArrayNumericLoop => "ArrayNumericLoop",
         DeclAbi::PropertyGuard => "PropertyGuard",
+        DeclAbi::PropertyWriteGuard => "PropertyWriteGuard",
     }
 }
 

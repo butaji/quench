@@ -2542,12 +2542,12 @@ fn native_property_shared_entry_reuses_live_owner_and_recovers_after_eviction() 
         .expect("plain guarded slot");
     assert!(plan.execute(access, &site).is_ok());
     let used = shared.borrow().used();
-    assert!(matches!(plan.installed, super::InstalledPropertyEntry::Shared(_)));
+    assert!(matches!(plan.installed, super::InstalledPropertyEntry::ReadShared(_)));
     assert!(plan.execute(access, &site).is_ok());
     assert_eq!(shared.borrow().used(), used);
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert!(plan.execute(access, &site).is_ok());
-    assert!(matches!(plan.installed, super::InstalledPropertyEntry::Shared(_)), "eviction must rebuild the entry");
+    assert!(matches!(plan.installed, super::InstalledPropertyEntry::ReadShared(_)), "eviction must rebuild the entry");
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -2585,6 +2585,84 @@ fn guarded_property_slot_rejects_descriptor_metadata() {
     assert!(object
         .guarded_plain_slot(object.semantic_layout_id(), 0, "value")
         .is_none());
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn native_property_write_commits_only_after_live_guards() {
+    let instruction = crate::ir::Instruction {
+        opcode: crate::ir::Opcode::SetN,
+        flags: 0,
+        a: 0,
+        b: 1,
+        c: 0,
+    };
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut plan = super::NativePropertyPlan::new(instruction, policy).expect("write plan");
+    let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::SetN);
+    let mut object = crate::value::ObjectData::new(vec![
+        ("value".into(), crate::value::Value::Number(1.0)),
+    ]);
+    let access = object
+        .guarded_plain_slot(object.semantic_layout_id(), 0, "value")
+        .expect("guarded write slot");
+    assert!(access.accepts_non_owning_store());
+    plan.execute_write(
+        access,
+        crate::tagged_value::TaggedValue::number(5.0).bits(),
+        &site,
+    )
+    .expect("native write");
+    assert_eq!(object.hot_properties().slot_word(0).unwrap().load(), crate::value::Value::Number(5.0));
+
+    let stale = object
+        .guarded_plain_slot(object.semantic_layout_id(), 0, "value")
+        .expect("stale candidate");
+    object.set_property_in_place("other", crate::value::Value::Number(2.0));
+    assert!(plan
+        .execute_write(
+            stale,
+            crate::tagged_value::TaggedValue::number(9.0).bits(),
+            &site,
+        )
+        .is_err());
+    assert_eq!(object.hot_properties().slot_word(0).unwrap().load(), crate::value::Value::Number(5.0));
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn native_property_entries_reject_crossed_read_write_abis() {
+    let read_instruction = crate::ir::Instruction {
+        opcode: crate::ir::Opcode::GetN,
+        flags: 0,
+        a: 0,
+        b: 1,
+        c: 0,
+    };
+    let write_instruction = crate::ir::Instruction {
+        opcode: crate::ir::Opcode::SetN,
+        ..read_instruction
+    };
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut read = super::NativePropertyPlan::new(read_instruction, policy).unwrap();
+    let mut write = super::NativePropertyPlan::new(write_instruction, policy).unwrap();
+    let read_site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::GetN);
+    let write_site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::SetN);
+    let object = crate::value::ObjectData::new(vec![(
+        "value".into(),
+        crate::value::Value::Number(1.0),
+    )]);
+    let access = object
+        .guarded_plain_slot(object.semantic_layout_id(), 0, "value")
+        .unwrap();
+    let bits = crate::tagged_value::TaggedValue::number(2.0).bits();
+
+    assert!(read.execute_write(access, bits, &write_site).is_err());
+    assert!(write.execute(access, &read_site).is_err());
+    assert_eq!(
+        object.hot_properties().slot_word(0).unwrap().load(),
+        crate::value::Value::Number(1.0)
+    );
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
