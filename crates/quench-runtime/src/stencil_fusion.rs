@@ -4,7 +4,7 @@
 //! in the canonical instructions and their ordinary fallback handlers.
 
 use crate::machine::NativeBinaryPlan;
-use crate::stencil_plan::LocalBinarySelection;
+use crate::stencil_plan::{LocalBinarySelection, LocalNumericInputs};
 
 pub(crate) struct NativeLocalBinaryPlan {
     selection: LocalBinarySelection,
@@ -43,18 +43,23 @@ pub(crate) fn local_binary_operands(
     environment: &crate::environment::Environment,
     selection: LocalBinarySelection,
 ) -> Option<(f64, f64)> {
-    Some((
-        environment.get_number(selection.slots[0])?,
-        environment.get_number(selection.slots[1])?,
-    ))
+    match selection.inputs {
+        LocalNumericInputs::Slots(slots) => Some((
+            environment.get_number(slots[0])?,
+            environment.get_number(slots[1])?,
+        )),
+        LocalNumericInputs::SlotConstant { slot, bits } => {
+            Some((environment.get_number(slot)?, f64::from_bits(bits)))
+        }
+    }
 }
 
 pub(crate) fn execute_local_binary(
     plan: &std::cell::RefCell<NativeLocalBinaryPlan>,
     environment: &crate::environment::Environment,
-) -> Option<(crate::ir::Register, f64)> {
+) -> Option<(crate::ir::Register, f64, usize)> {
     let selection = plan.borrow().selection();
     let (lhs, rhs) = local_binary_operands(environment, selection)?;
     let result = plan.borrow_mut().execute(lhs, rhs).ok()?;
-    Some((selection.output, result))
+    Some((selection.output, result, usize::from(selection.span)))
 }
