@@ -153,6 +153,7 @@ fn generated_chain_relocation_is_declared(
                 hole.offset == relocation.offset
                     && hole.kind == relocation.kind
                     && relocation.target == "q_fallthrough_tail"
+                    && relocation.addend == 0
             })
         })
         && view
