@@ -3181,6 +3181,25 @@ pub fn supports(
 ) -> Result<Value, VmError> {
     let operation = execute::to_js_string(args.first().unwrap_or(&Value::Undefined))
         .unwrap_or_default();
+    if matches!(operation.as_str(), "deriveBits" | "deriveKey") {
+        if let Some(length) = args.get(2) {
+            let valid = matches!(
+                length,
+                Value::Number(value)
+                    if value.is_finite()
+                        && value.fract() == 0.0
+                        && *value >= 0.0
+                        && *value <= 2_147_483_647.0
+            );
+            if !valid {
+                return Err(error(
+                    Builtin::TypeError,
+                    Some("ERR_OUT_OF_RANGE"),
+                    "The requested length is outside the supported range",
+                ));
+            }
+        }
+    }
     let name = algorithm_name(args.get(1).unwrap_or(&Value::Undefined));
     let upper = name.to_ascii_uppercase();
     let supported = match operation.as_str() {
