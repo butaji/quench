@@ -27,7 +27,7 @@ tiny-keccak = { version = "2", features = ["k12", "kmac"] }
 rand = "0.8"
 libc = "0.2"
 hostname = "0.4"
-flate2 = "1"
+flate2 = { version = "1", features = ["zlib-rs"] }
 brotli = "7"
 zstd = "0.13"
 url = "2"
