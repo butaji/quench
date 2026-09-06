@@ -313,6 +313,75 @@ fn ordinary_source_constant_fold_skips_render_and_native_entry() {
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
+fn ordinary_source_folds_a_bounded_numeric_value_tree() {
+    let source = "function f(){return (2.5+1.5)+4} f()";
+    let program = crate::reduce::reduce_source(source).expect("ordinary source lowers");
+    let mut executed = false;
+    visit_views(program.code(), &mut |view| {
+        let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+        let plan = BaselinePlan::compile_for_test(view, policy);
+        let Some(pc) = (0..view.len()).find(|pc| {
+            plan.native_local_binary_at(*pc).is_some_and(|native| {
+                let selection = native.borrow().selection();
+                selection.span >= 3
+                    && matches!(
+                        selection.inputs,
+                        crate::stencil_plan::LocalNumericInputs::Folded { .. }
+                    )
+            })
+        }) else {
+            return;
+        };
+        assert_eq!(
+            execute_case(view, &plan, pc, [Value::Undefined, Value::Undefined]),
+            (Completion::Return(Value::Number(8.0)), 0, 0)
+        );
+        executed = true;
+    });
+    assert!(executed, "source must select the folded value tree");
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn fused_numeric_local_rejects_deleted_binding_before_native_entry() {
+    let function = crate::machine::FunctionCode::from_ops(vec![
+        crate::ops::Op::LoadLocal { dst: 1, slot: 5 },
+        crate::ops::Op::LoadLocal { dst: 2, slot: 6 },
+        crate::ops::Op::Binary {
+            dst: 3,
+            operator: crate::ops::BinaryOp::Add,
+            lhs: 1,
+            rhs: 2,
+        },
+        crate::ops::Op::Return { src: 3 },
+    ]);
+    let view = function.code().expect("compact code");
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let plan = BaselinePlan::compile_for_test(view, policy);
+    let native = plan.native_local_binary_at(0).expect("fused numeric plan");
+    let environment = crate::environment::Environment::new();
+    environment.set(5, Value::Number(1.0));
+    environment.set(6, Value::Number(2.0));
+    let _shared = environment.slot_cell(5);
+    environment.mark_deleted_slot(5);
+    let mut registers = crate::register_file::RegisterFile::with_undefined(4);
+    let result = crate::vm::execute_baseline_code_from(
+        view,
+        &plan,
+        0,
+        &mut registers,
+        &crate::vm::current_context_or_default(),
+        environment,
+    );
+    assert!(
+        matches!(result, Err(crate::execute::VmError::Thrown(_))),
+        "deleted binding must throw, got {result:?}"
+    );
+    assert_eq!(native.borrow().native_entry_count(), 0);
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
 fn canonical_driver_eliminates_dead_move_in_numeric_window() {
     let function = crate::machine::FunctionCode::from_ops(vec![
         crate::ops::Op::LoadLocal { dst: 1, slot: 0 },

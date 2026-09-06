@@ -5512,10 +5512,17 @@ fn select_local_numeric(
     pc: usize,
 ) -> Option<crate::stencil_plan::LocalBinarySelection> {
     select_value_window(code, entries, liveness, pc, |code, graph, operation, live| {
-        if graph.len() >= 2 {
-            graph.select(operation, live)
+        if operation.opcode == crate::ir::Opcode::AddConst {
+            let crate::ops::Constant::Number(value) = code.constant(operation.c)? else {
+                return None;
+            };
+            if graph.len() == 1 {
+                select_graph_add_const(code, graph.first()?, operation, live)
+            } else {
+                graph.select_add_const(operation, value.to_bits(), live)
+            }
         } else {
-            select_graph_add_const(code, graph.first()?, operation, live)
+            graph.select(operation, live)
         }
     })
 }
@@ -5531,7 +5538,7 @@ fn select_local_property(
     })
 }
 
-fn select_value_window<T>(
+fn select_value_window<T: crate::stencil_plan::RankedSelection>(
     code: CodeView<'_>,
     entries: &[BaselineEntry],
     liveness: &[BTreeSet<u16>],
@@ -5544,6 +5551,7 @@ fn select_value_window<T>(
     ) -> Option<T>,
 ) -> Option<T> {
     let mut graph = crate::stencil_plan::BlockValueGraph::new();
+    let mut best: Option<T> = None;
     for offset in 0..crate::stencil_plan::MAX_BLOCK_VALUES {
         let instruction = entries.get(pc.checked_add(offset)?)?.instruction;
         if !graph.push(instruction, |constant| {
@@ -5552,18 +5560,23 @@ fn select_value_window<T>(
             };
             Some(value.to_bits())
         }) {
-            return None;
+            break;
         }
         let operation_pc = pc.checked_add(graph.len())?;
         let operation = entries.get(operation_pc)?.instruction;
         let end = operation_pc.checked_add(1)?;
         if region_entry_is_legal(entries, pc, end) {
             if let Some(selection) = select(code, graph, operation, liveness.get(operation_pc)?) {
-                return Some(selection);
+                let replace = best
+                    .as_ref()
+                    .is_none_or(|current| selection.rank() > current.rank());
+                if replace {
+                    best = Some(selection);
+                }
             }
         }
     }
-    None
+    best
 }
 
 fn select_graph_add_const(
