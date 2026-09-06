@@ -48,6 +48,7 @@ struct ExtractedRelocation {
     offset: u16,
     kind: &'static str,
     target: &'static str,
+    addend: i64,
 }
 
 #[derive(Clone, Copy)]
@@ -256,12 +257,8 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
                 relocations: Vec::new(),
             }
         };
-        let fingerprint = artifact_fingerprint(
-            declaration,
-            &target,
-            &build_fingerprint,
-            &extracted,
-        );
+        let fingerprint =
+            artifact_fingerprint(declaration, &target, &build_fingerprint, &extracted);
         let (constant, row) =
             render_artifact(declaration, &target, &compiler, &fingerprint, &extracted);
         constants.push(constant);
@@ -651,6 +648,7 @@ fn validate_fragment_relocations(
                     offset: item.offset,
                     kind: item.kind,
                     target: item.target,
+                    addend: item.addend,
                 });
                 relocation_count += 1;
             }
@@ -715,6 +713,7 @@ fn validate_fragment_relocations(
             offset: item.offset,
             kind: item.kind,
             target: item.target,
+            addend: item.addend,
         });
     }
     let relocation_count = file
@@ -909,8 +908,8 @@ fn relocation_expr(extracted: &ExtractedObject) -> String {
         .iter()
         .map(|relocation| {
             format!(
-                "crate::stencil_select::PhysicalRelocation {{ offset: {}, kind: crate::stencil_fact::HoleKind::{}, target: {:?} }}",
-                relocation.offset, relocation.kind, relocation.target
+                "crate::stencil_select::PhysicalRelocation {{ offset: {}, kind: crate::stencil_fact::HoleKind::{}, target: {:?}, addend: {} }}",
+                relocation.offset, relocation.kind, relocation.target, relocation.addend
             )
         })
         .collect::<Vec<_>>()
@@ -1013,7 +1012,10 @@ fn artifact_fingerprint(
     for entry in declaration.external_entries {
         hash_bytes(&mut hash, &entry.to_le_bytes());
     }
-    hash_bytes(&mut hash, &[u8::from(super::target_template_calls_helper(declaration))]);
+    hash_bytes(
+        &mut hash,
+        &[u8::from(super::target_template_calls_helper(declaration))],
+    );
     hash_bytes(&mut hash, &extracted.bytes);
     if let Some(fallthrough) = &extracted.fallthrough {
         hash_bytes(&mut hash, fallthrough);
@@ -1022,6 +1024,7 @@ fn artifact_fingerprint(
         hash_bytes(&mut hash, &relocation.offset.to_le_bytes());
         hash_bytes(&mut hash, relocation.kind.as_bytes());
         hash_bytes(&mut hash, relocation.target.as_bytes());
+        hash_bytes(&mut hash, &relocation.addend.to_le_bytes());
     }
     format!("fnv64-{hash:016x}")
 }
