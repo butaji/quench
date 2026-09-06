@@ -384,9 +384,19 @@ fn typed_array_elements(value: &Value) -> Option<Vec<u8>> {
 }
 
 pub fn binding() -> Value {
+    let session = host_api::bound_builtin(
+        quench_runtime::ops::Builtin::Object,
+        Value::Undefined,
+    );
+    let error_string = host_api::bound_capability_with_arguments(
+        crate::host::capability_ref(crate::registry::SPEC_INTERNAL_HTTP2_UTIL),
+        vec![Value::String("errorString".into())],
+    );
     host_api::object(vec![
         ("constants".into(), header_constants()),
         ("optionsBuffer".into(), options_buffer()),
+        ("Http2Session".into(), session),
+        ("nghttp2ErrorString".into(), error_string),
     ])
 }
 
@@ -426,6 +436,7 @@ pub fn dispatch(
     match kind.as_str() {
         "nghttpError" => nghttp_error(values),
         "nghttpToString" => nghttp_to_string(_receiver),
+        "errorString" => nghttp_error_string(values),
         "defaultSettings" => Ok(default_settings()),
         "packedSettings" => packed_settings(values),
         "unpackedSettings" => unpacked_settings(values),
@@ -728,6 +739,24 @@ fn nghttp_to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
     let code = execute::to_js_string(&code).unwrap_or_default();
     let message = execute::to_js_string(&message).unwrap_or_default();
     Ok(Value::String(format!("Error [{code}]: {message}")))
+}
+
+fn nghttp_error_string(values: &[Value]) -> Result<Value, VmError> {
+    let errno = match values.first() {
+        Some(Value::Number(value)) => *value as i32,
+        _ => 0,
+    };
+    let message = match errno {
+        -501 => "Invalid argument",
+        -508 => "Operation would block",
+        -509 => "Stream ID not available",
+        -510 => "Stream closed",
+        -517 => "GOAWAY has already been sent",
+        -522 => "Frame size error",
+        -901 => "Out of memory",
+        _ => "Unknown error code",
+    };
+    Ok(Value::String(message.into()))
 }
 
 #[cfg(test)]
