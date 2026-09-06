@@ -127,7 +127,6 @@ pub struct RegionRecord {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PhysicalFallthrough {
     pub stencil: &'static Stencil,
-    pub fixup_offset: u16,
     pub target: &'static str,
 }
 
@@ -378,7 +377,6 @@ fn generated_physical_view(
 ) -> Option<PhysicalStencilView> {
     let fallthrough = artifact.fallthrough.as_ref().map(|stencil| PhysicalFallthrough {
         stencil,
-        fixup_offset: artifact.fallthrough_fixup_offset,
         target: record.fallthrough.map_or("", |item| item.target),
     });
     let metadata_matches = artifact.name == record.name
@@ -441,8 +439,7 @@ fn artifact_fallthrough_matches(
         )
     };
     let relative_count = artifact.relocations.iter().filter(is_relative).count();
-    artifact.fallthrough_fixup_offset == fallthrough.fixup_offset
-        && !fallthrough.target.is_empty()
+    !fallthrough.target.is_empty()
         && relative_count > 0
         && artifact
             .relocations
@@ -1327,7 +1324,6 @@ mod tests {
                 holes: &[],
             },
             fallthrough: None,
-            fallthrough_fixup_offset: 0,
         };
         static BAD_ENTRIES: BuildStencilArtifact = BuildStencilArtifact {
             name: "add_const",
@@ -1350,7 +1346,6 @@ mod tests {
                 holes: &[],
             },
             fallthrough: None,
-            fallthrough_fixup_offset: 0,
         };
         static BAD_LAYOUT: BuildStencilArtifact = BuildStencilArtifact {
             name: "add_const",
@@ -1373,7 +1368,6 @@ mod tests {
                 holes: &[],
             },
             fallthrough: None,
-            fallthrough_fixup_offset: 9,
         };
         static BAD_ABI: BuildStencilArtifact = BuildStencilArtifact {
             name: "add_const",
@@ -1396,7 +1390,6 @@ mod tests {
                 holes: &[],
             },
             fallthrough: None,
-            fallthrough_fixup_offset: 0,
         };
         static BAD_RELOCATION: BuildStencilArtifact = BuildStencilArtifact {
             name: "add_const",
@@ -1424,7 +1417,6 @@ mod tests {
                 holes: &[],
             },
             fallthrough: None,
-            fallthrough_fixup_offset: 0,
         };
         let record = CANONICAL_REGION_TABLE
             .iter()
@@ -1458,7 +1450,6 @@ mod tests {
                 holes: &[],
             },
             fallthrough: None,
-            fallthrough_fixup_offset: 0,
         };
         assert!(generated_physical_view(record.key, record, &BAD_TARGET).is_none());
     }

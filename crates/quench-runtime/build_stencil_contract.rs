@@ -39,6 +39,26 @@ pub(crate) enum RecipeComposition {
     AddChain,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct AssemblyContinuation {
+    pub(crate) head_name: &'static str,
+    pub(crate) tail_name: &'static str,
+    pub(crate) target: &'static str,
+}
+
+macro_rules! assembly_continuation {
+    () => {
+        None
+    };
+    (($head:literal, $tail:literal, $target:literal)) => {
+        Some(AssemblyContinuation {
+            head_name: $head,
+            tail_name: $tail,
+            target: $target,
+        })
+    };
+}
+
 macro_rules! recipe_composition {
     () => {
         RecipeComposition::Whole
@@ -136,6 +156,7 @@ macro_rules! rust_assembly_catalog {
     ($( $variant:ident {
         name: $name:literal, abi: $abi:ident, ops: [$($op:literal),+],
         holes: [$($hole:expr),*]
+        $(, continuation: { head: $head:literal, tail: $tail:literal, target: $target:literal })?
         $(, composition: $composition:ident)?
     } ),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -149,6 +170,12 @@ macro_rules! rust_assembly_catalog {
             pub(crate) const fn composition(self) -> RecipeComposition {
                 match self {
                     $( Self::$variant => recipe_composition!($($composition)?) ),+
+                }
+            }
+
+            pub(crate) const fn continuation(self) -> Option<AssemblyContinuation> {
+                match self {
+                    $( Self::$variant => assembly_continuation!($(($head, $tail, $target))?) ),+
                 }
             }
 
@@ -171,11 +198,13 @@ rust_assembly_catalog! {
     Fallthrough {
         name: "fallthrough", abi: ScalarF64Binary,
         ops: ["Add", "Return"], holes: [(4, 4, "Branch26"), (8, 4, "Branch26")],
+        continuation: { head: "fallthrough_head", tail: "fallthrough_tail", target: "q_fallthrough_tail" },
         composition: FallthroughReturn
     },
     AddChain {
         name: "add_chain", abi: ScalarF64x3,
         ops: ["Add", "Add"], holes: [(4, 4, "Branch26")],
+        continuation: { head: "add_chain_head", tail: "add_chain_tail", target: "q_add_chain_tail" },
         composition: AddChain
     },
     CompareEqualBranch {
@@ -232,11 +261,4 @@ pub(crate) fn rust_assembly_recipe(declaration: &RegionDeclaration) -> Option<Ru
         .iter()
         .copied()
         .find(|recipe| recipe.matches(declaration))
-}
-
-pub(crate) fn recipe_composition(declaration: &RegionDeclaration) -> RecipeComposition {
-    rust_assembly_recipe(declaration)
-        .map(RustAssemblyRecipe::composition)
-        .or_else(|| rust_leaf_recipe(declaration).map(RustLeafRecipe::composition))
-        .unwrap_or(RecipeComposition::Whole)
 }
