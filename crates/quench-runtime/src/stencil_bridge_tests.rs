@@ -53,7 +53,7 @@ fn install_nested_add(
 ) -> Result<crate::stencil_arena::OwnedLease<extern "C" fn(f64, f64) -> f64>, VmError> {
     let key = crate::stencil_select::numeric_region_key(crate::ir::Opcode::Add)
         .ok_or_else(|| VmError::EvalError("missing add region".into()))?;
-    let view = crate::stencil_select::select_physical_for_abi(key, RegionAbi::Scalar)
+    let view = crate::stencil_select::select_physical_for_abi(key, RegionAbi::ScalarF64Binary)
         .ok_or_else(|| VmError::EvalError("missing add view".into()))?;
     let site = crate::quickening::QuickeningSite::<2>::new(crate::ir::Opcode::Add);
     let address = {

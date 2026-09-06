@@ -14,7 +14,9 @@ pub(crate) struct RegionDeclaration {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DeclAbi {
-    Scalar,
+    ScalarF64Binary,
+    ScalarF64Unary,
+    ScalarF64x3,
     TaggedWord,
     ConstantWord,
     ScalarBool,
@@ -75,14 +77,14 @@ macro_rules! rust_leaf_catalog {
 }
 
 rust_leaf_catalog! {
-    Add { name: "loop", abi: Scalar, ops: ["Add", "Return"], params: "a: f64, b: f64", result: "f64", body: "a + b" },
-    Sub { name: "subtract", abi: Scalar, ops: ["Sub", "Return"], params: "a: f64, b: f64", result: "f64", body: "a - b" },
-    Mul { name: "multiply", abi: Scalar, ops: ["Mul", "Return"], params: "a: f64, b: f64", result: "f64", body: "a * b" },
-    Div { name: "divide", abi: Scalar, ops: ["Div", "Return"], params: "a: f64, b: f64", result: "f64", body: "a / b" },
-    AddConst { name: "add_const", abi: Scalar, ops: ["AddConst", "Return"], params: "a: f64, b: f64", result: "f64", body: "a + b" },
-    AddChain { name: "add_chain", abi: Scalar, ops: ["Add", "Add"], params: "a: f64, b: f64, c: f64", result: "f64", body: "(a + b) + c" },
-    Negate { name: "negate", abi: Scalar, ops: ["Unary", "Return"], params: "a: f64", result: "f64", body: "-a" },
-    Increment { name: "increment", abi: Scalar, ops: ["IncI", "Return"], params: "a: f64", result: "f64", body: "a + 1.0" },
+    Add { name: "loop", abi: ScalarF64Binary, ops: ["Add", "Return"], params: "a: f64, b: f64", result: "f64", body: "a + b" },
+    Sub { name: "subtract", abi: ScalarF64Binary, ops: ["Sub", "Return"], params: "a: f64, b: f64", result: "f64", body: "a - b" },
+    Mul { name: "multiply", abi: ScalarF64Binary, ops: ["Mul", "Return"], params: "a: f64, b: f64", result: "f64", body: "a * b" },
+    Div { name: "divide", abi: ScalarF64Binary, ops: ["Div", "Return"], params: "a: f64, b: f64", result: "f64", body: "a / b" },
+    AddConst { name: "add_const", abi: ScalarF64Binary, ops: ["AddConst", "Return"], params: "a: f64, b: f64", result: "f64", body: "a + b" },
+    AddChain { name: "add_chain", abi: ScalarF64x3, ops: ["Add", "Add"], params: "a: f64, b: f64, c: f64", result: "f64", body: "(a + b) + c" },
+    Negate { name: "negate", abi: ScalarF64Unary, ops: ["Unary", "Return"], params: "a: f64", result: "f64", body: "-a" },
+    Increment { name: "increment", abi: ScalarF64Binary, ops: ["IncI", "Return"], params: "a: f64, _unused: f64", result: "f64", body: "a + 1.0" },
     Equal { name: "compare_equal", abi: ScalarBool, ops: ["Binary", "Return"], params: "a: f64, b: f64", result: "bool", body: "a == b" },
     NotEqual { name: "compare_not_equal", abi: ScalarBool, ops: ["Binary", "Return"], params: "a: f64, b: f64", result: "bool", body: "a != b" },
     Less { name: "compare_less", abi: ScalarBool, ops: ["Binary", "Return"], params: "a: f64, b: f64", result: "bool", body: "a < b" },
