@@ -260,7 +260,14 @@ mod tests {
         compose_planned_region(&control, &operations, &fragments, &transfers, &mut output)
             .expect("compose point-bound region");
         assert_eq!(output.len(), 16);
-        assert_ne!(&output[..8], CONDITIONAL_BYTES);
+        assert_eq!(
+            u32::from_le_bytes(output[0..4].try_into().unwrap()),
+            0x5400_0040
+        );
+        assert_eq!(
+            u32::from_le_bytes(output[4..8].try_into().unwrap()),
+            0x1400_0002
+        );
     }
 
     #[test]
