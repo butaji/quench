@@ -292,7 +292,7 @@ fn block_value_graph_rejects_effects_mismatched_roles_and_live_values() {
 }
 
 #[test]
-fn block_value_graph_enforces_fixed_capacity_and_unique_definitions() {
+fn block_value_graph_enforces_fixed_capacity_and_versions_definitions() {
     let mut graph = BlockValueGraph::new();
     for index in 0..MAX_BLOCK_VALUES {
         let register = u16::try_from(index + 1).unwrap();
@@ -303,7 +303,110 @@ fn block_value_graph_enforces_fixed_capacity_and_unique_definitions() {
 
     let mut duplicate = BlockValueGraph::new();
     assert!(duplicate.push(Instruction::load_local(2, 20), |_| None));
-    assert!(!duplicate.push(Instruction::load_local(2, 21), |_| None));
+    assert!(duplicate.push(Instruction::load_local(2, 21), |_| None));
+    assert_eq!(duplicate.current_value(2).unwrap().version, 1);
+}
+
+#[test]
+fn block_values_version_redefinitions_without_retargeting_aliases() {
+    let mut graph = BlockValueGraph::new();
+    assert!(graph.push(Instruction::load_local(2, 20), |_| None));
+    assert!(graph.push(Instruction::move_(3, 2), |_| None));
+    assert!(graph.push(Instruction::load_local(2, 21), |_| None));
+    let old = ValueId {
+        register: 2,
+        version: 0,
+    };
+    let alias = graph
+        .value(ValueId {
+            register: 3,
+            version: 0,
+        })
+        .unwrap();
+    assert_eq!(alias.definition, ValueDefinition::Alias(old));
+    assert_eq!(
+        graph.current_value(2).unwrap(),
+        ValueId {
+            register: 2,
+            version: 1
+        }
+    );
+}
+
+#[test]
+fn local_value_numbering_is_deterministic_for_sources_and_binary_nodes() {
+    let mut graph = BlockValueGraph::new();
+    assert!(graph.push(Instruction::load_const(2, 0), |_| Some(3.0_f64.to_bits())));
+    assert!(graph.push(Instruction::load_const(3, 1), |_| Some(3.0_f64.to_bits())));
+    assert!(graph.push(Instruction::add(4, 2, 3), |_| None));
+    assert!(graph.push(Instruction::add(5, 2, 3), |_| None));
+    assert_eq!(
+        graph
+            .value(ValueId {
+                register: 3,
+                version: 0
+            })
+            .unwrap()
+            .definition,
+        ValueDefinition::Alias(ValueId {
+            register: 2,
+            version: 0
+        })
+    );
+    assert_eq!(
+        graph
+            .value(ValueId {
+                register: 5,
+                version: 0
+            })
+            .unwrap()
+            .definition,
+        ValueDefinition::Alias(ValueId {
+            register: 4,
+            version: 0
+        })
+    );
+}
+
+#[test]
+fn proven_numeric_nodes_fold_exact_tree_and_omit_dead_nodes() {
+    let mut graph = BlockValueGraph::new();
+    assert!(graph.push(Instruction::load_const(2, 0), |_| Some(
+        (-0.0_f64).to_bits()
+    )));
+    assert!(graph.push(Instruction::load_const(9, 1), |_| Some(99.0_f64.to_bits())));
+    assert!(graph.push(Instruction::load_const(3, 2), |_| Some(
+        (-0.0_f64).to_bits()
+    )));
+    assert!(graph.push(Instruction::add(4, 2, 3), |_| None));
+    assert_eq!(
+        graph.marked_len(&[4]),
+        2,
+        "dead node is omitted and equal constants share one numbered value"
+    );
+    let selected = graph
+        .select(Instruction::add(6, 4, 2), &BTreeSet::new())
+        .unwrap();
+    let LocalNumericInputs::Folded { bits } = selected.inputs else {
+        panic!("constant tree must fold")
+    };
+    assert_eq!(bits, (-0.0_f64 + -0.0 + -0.0).to_bits());
+    assert_eq!(selected.span, 5, "residual span remains authoritative");
+}
+
+#[test]
+fn value_slice_rejects_coercion_effects_control_and_computed_live_outs() {
+    let mut graph = BlockValueGraph::new();
+    assert!(graph.push(Instruction::load_const(2, 0), |_| Some(1.0_f64.to_bits())));
+    assert!(graph.push(Instruction::load_const(3, 1), |_| Some(2.0_f64.to_bits())));
+    let coercive = Instruction::binary_operator(4, crate::ops::BinaryOp::Add, 2, 3);
+    assert!(!graph.push(coercive, |_| None));
+    assert!(!graph.push(Instruction::jump(0), |_| None));
+    assert!(!graph.push(Instruction::load_local_checked(4, 0), |_| None));
+    assert!(graph.push(Instruction::add(4, 2, 3), |_| None));
+    assert!(graph
+        .select(Instruction::add(5, 4, 2), &BTreeSet::from([4]))
+        .is_none());
 }
 
 #[test]
