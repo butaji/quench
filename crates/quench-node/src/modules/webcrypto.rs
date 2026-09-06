@@ -1625,8 +1625,35 @@ pub fn generate_key(
                 }
                 _ => return Ok(settled(Err(operation_error("Invalid key length")))),
             }
+        } else if matches!(name.as_str(), "KMAC128" | "KMAC256") {
+            match execute::get_property(&algorithm, "length") {
+                Value::Undefined => {
+                    if name == "KMAC128" {
+                        128
+                    } else {
+                        256
+                    }
+                }
+                Value::Number(value)
+                    if value.is_finite() && value.fract() == 0.0 && value >= 0.0 =>
+                {
+                    value as usize
+                }
+                _ => return Ok(settled(Err(operation_error("Invalid key length")))),
+            }
         } else {
             256
+        };
+        let algorithm = if matches!(name.as_str(), "KMAC128" | "KMAC256")
+            && matches!(
+                execute::get_property(&algorithm, "length"),
+                Value::Undefined
+            )
+            && matches!(algorithm, Value::Object(_) | Value::ObjectAlias(_))
+        {
+            execute::set_property(algorithm, "length", Value::Number(length as f64))
+        } else {
+            algorithm
         };
         let data = vec![0_u8; length / 8];
         let key = key(&prototype, algorithm, extractable, usages, Some(data));
