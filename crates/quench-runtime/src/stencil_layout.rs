@@ -482,3 +482,6 @@ fn displacement_pair(displacement: i128) -> Result<(usize, usize), LayoutError> 
 
 #[cfg(test)]
 include!("stencil_layout_tests.rs");
+
+#[cfg(test)]
+include!("stencil_composition_tests.rs");
