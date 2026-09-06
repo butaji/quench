@@ -81,6 +81,37 @@ impl RegionControlPlan {
             None
         }
     }
+
+    pub(crate) fn matches_operations(&self, operations: &[crate::ir::Opcode]) -> bool {
+        self.span_len() == operations.len()
+            && operations.iter().enumerate().all(|(offset, opcode)| {
+                self.operation_edges_match(self.start + offset, opcode.control_flow())
+            })
+            && self.blocks_match_edges()
+    }
+
+    fn operation_edges_match(&self, pc: usize, control: crate::facts::ControlFlow) -> bool {
+        let edges: Vec<_> = self.edges().iter().filter(|edge| edge.from == pc).collect();
+        match control {
+            crate::facts::ControlFlow::Next | crate::facts::ControlFlow::Return => edges.is_empty(),
+            crate::facts::ControlFlow::Branch => {
+                edges.len() == 2 && edges.iter().any(|edge| edge.to == pc.saturating_add(1))
+            }
+            crate::facts::ControlFlow::Jump => edges.len() == 1,
+            crate::facts::ControlFlow::Loop => false,
+        }
+    }
+
+    fn blocks_match_edges(&self) -> bool {
+        self.blocks().first() == Some(&self.start)
+            && self.blocks()[1..].iter().all(|block| {
+                (self.start..self.end).contains(block)
+                    && self.edges().iter().any(|edge| edge.to == *block)
+            })
+            && self.edges().iter().all(|edge| {
+                !(self.start..self.end).contains(&edge.to) || self.blocks().contains(&edge.to)
+            })
+    }
 }
 
 /// Immutable, bounded control-flow facts derived from canonical residual code.
