@@ -51,7 +51,6 @@ pub struct AbiContract {
 macro_rules! region_abi_catalog {
     ($( $name:ident => {
         context: $region_context:expr,
-        priority: $priority:expr,
         context_words: $context_words:expr,
         preserves_vm_registers: $preserves_vm_registers:expr,
         may_call_helper: $may_call_helper:expr,
@@ -67,10 +66,6 @@ macro_rules! region_abi_catalog {
         impl RegionAbi {
             pub const fn accepts_region_context(self) -> bool {
                 match self { $(Self::$name => $region_context),+ }
-            }
-
-            pub const fn priority(self) -> u8 {
-                match self { $(Self::$name => $priority),+ }
             }
 
             pub const fn contract(self) -> AbiContract {
@@ -89,6 +84,20 @@ macro_rules! region_abi_catalog {
             }
         }
     };
+}
+
+/// Rank two structurally compatible region candidates without a parallel ABI
+/// preference table. The tuple contains only facts carried by the selected
+/// physical view: semantic helper boundary, dispatches removed, and code size.
+pub(crate) fn admission_rank(record: &RegionRecord) -> (bool, usize, std::cmp::Reverse<usize>) {
+    let bytes = select_physical(record.key)
+        .map(|view| view.stencil.bytes.len())
+        .unwrap_or(usize::MAX);
+    (
+        !record.template_calls_helper,
+        record.operations.len().saturating_sub(1),
+        std::cmp::Reverse(bytes),
+    )
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -837,6 +846,22 @@ pub fn choose_promotion(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn admission_rank_prefers_native_work_removed_over_bridge_and_size() {
+        let record = |name| {
+            region_records()
+                .iter()
+                .find(|record| record.name == name)
+                .expect("canonical region")
+        };
+        let bridge = record("get_index");
+        let native_get = record("array_get_number");
+        let native_update = record("array_numeric_update");
+        assert!(admission_rank(native_get) > admission_rank(bridge));
+        assert!(admission_rank(native_update) > admission_rank(native_get));
+    }
 
     #[test]
     fn selection_is_canonical_and_misses_fall_back() {
