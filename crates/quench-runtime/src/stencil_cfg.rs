@@ -96,17 +96,26 @@ impl RegionControlPlan {
         from_offset: usize,
         to_offset: usize,
     ) -> bool {
+        let Some(to) = self.start.checked_add(to_offset) else {
+            return false;
+        };
+        self.permits_transfer(operations, from_offset, to)
+    }
+
+    pub(crate) fn permits_transfer(
+        &self,
+        operations: &[crate::ir::Opcode],
+        from_offset: usize,
+        to: usize,
+    ) -> bool {
         let Some(opcode) = operations.get(from_offset) else {
             return false;
         };
         let Some(from) = self.start.checked_add(from_offset) else {
             return false;
         };
-        let Some(to) = self.start.checked_add(to_offset) else {
-            return false;
-        };
         match opcode.control_flow() {
-            crate::facts::ControlFlow::Next => to_offset == from_offset.saturating_add(1),
+            crate::facts::ControlFlow::Next => to == from.saturating_add(1),
             crate::facts::ControlFlow::Branch | crate::facts::ControlFlow::Jump => {
                 self.edges().contains(&RegionEdge { from, to })
             }
