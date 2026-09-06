@@ -29,7 +29,7 @@ mod tests {
     fn expected(offset: u16, target: &'static str) -> ExpectedRelocation {
         ExpectedRelocation {
             section: SectionKind::Text,
-            offset,
+            offset: u64::from(offset),
             width: 4,
             kind: "Branch26",
             target,
@@ -37,72 +37,85 @@ mod tests {
         }
     }
 
-    #[test]
-    fn relocation_identity_matching_is_order_independent() {
-        let records = [expected(12, "tail"), expected(4, "helper")];
-        let mut consumed = [false; 2];
-        let second = expected_relocation_index(
-            &records,
-            &consumed,
-            SectionKind::Text,
-            4,
-            "Branch26",
-            "helper",
-        )
-        .expect("second record");
-        consumed[second] = true;
-        let first = expected_relocation_index(
-            &records,
-            &consumed,
-            SectionKind::Text,
-            12,
-            "Branch26",
-            "tail",
-        )
-        .expect("first record");
-        assert_eq!(first, 0);
-        assert!(expected_relocation_index(
-            &records,
-            &consumed,
-            SectionKind::Text,
-            4,
-            "Branch26",
-            "helper",
-        )
-        .is_none());
+    fn observed(offset: u64, target: &str) -> ObservedRelocation {
+        ObservedRelocation {
+            section: SectionKind::Text,
+            offset,
+            width: 4,
+            kind: "Branch26",
+            target: target.to_owned(),
+            addend: 0,
+        }
     }
 
     #[test]
-    fn relocation_identity_matching_rejects_wrong_target_or_kind() {
-        let records = [expected(8, "tail")];
-        let consumed = [false];
-        assert!(expected_relocation_index(
-            &records,
-            &consumed,
-            SectionKind::Text,
-            8,
-            "Branch26",
-            "other",
-        )
-        .is_none());
-        assert!(expected_relocation_index(
-            &records,
-            &consumed,
-            SectionKind::Text,
-            8,
-            "Page21",
-            "tail",
-        )
-        .is_none());
-        assert!(expected_relocation_index(
-            &records,
-            &consumed,
-            SectionKind::Data,
-            8,
-            "Branch26",
-            "tail",
-        )
-        .is_none());
+    fn relocation_transaction_accepts_reordered_two_hole_input() {
+        let expected = [expected(4, "first"), expected(12, "second")];
+        let observed = [observed(12, "second"), observed(4, "first")];
+        let records = match_relocation_observations(&expected, &observed).expect("match");
+        assert_eq!(
+            records.iter().map(|item| item.offset).collect::<Vec<_>>(),
+            [4, 12]
+        );
+    }
+
+    #[test]
+    fn relocation_transaction_rejects_missing_hole() {
+        let expected = [expected(4, "first"), expected(12, "second")];
+        assert_eq!(
+            match_relocation_observations(&expected, &[observed(4, "first")]),
+            Err(RelocationContractError::Missing { offset: 12 })
+        );
+    }
+
+    #[test]
+    fn relocation_transaction_rejects_duplicate_hole() {
+        let expected = [expected(4, "first"), expected(12, "second")];
+        let duplicate = [observed(4, "first"), observed(4, "first")];
+        assert_eq!(
+            match_relocation_observations(&expected, &duplicate),
+            Err(RelocationContractError::Duplicate { offset: 4 })
+        );
+    }
+
+    #[test]
+    fn relocation_transaction_rejects_unknown_target() {
+        let expected = [expected(4, "first"), expected(12, "second")];
+        let unknown = [observed(4, "first"), observed(12, "other")];
+        assert_eq!(
+            match_relocation_observations(&expected, &unknown),
+            Err(RelocationContractError::Unknown { offset: 12 })
+        );
+    }
+
+    #[test]
+    fn relocation_transaction_rejects_addend_width_and_overlap_drift() {
+        let contract = [expected(4, "first")];
+        let mut drift = observed(4, "first");
+        drift.addend = 4;
+        assert_eq!(
+            match_relocation_observations(&contract, &[drift]),
+            Err(RelocationContractError::Addend {
+                offset: 4,
+                expected: 0,
+                actual: 4
+            })
+        );
+        let mut wide = observed(4, "first");
+        wide.width = 8;
+        assert_eq!(
+            match_relocation_observations(&contract, &[wide]),
+            Err(RelocationContractError::Width {
+                offset: 4,
+                expected: 4,
+                actual: 8
+            })
+        );
+        let overlap = [expected(4, "first"), expected(6, "second")];
+        assert_eq!(
+            match_relocation_observations(&overlap, &[]),
+            Err(RelocationContractError::Overlap)
+        );
     }
 
     #[test]

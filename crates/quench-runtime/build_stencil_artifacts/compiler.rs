@@ -64,7 +64,7 @@ fn compile_fragment_pair(
         .iter()
         .map(|(offset, width, kind)| ExpectedRelocation {
             section: SectionKind::Text,
-            offset: *offset,
+            offset: u64::from(*offset),
             width: *width,
             kind,
             target: "q_fallthrough_tail",

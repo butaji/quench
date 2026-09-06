@@ -5,7 +5,7 @@ struct OwnedDirectory {
 struct ExtractedObject {
     bytes: Vec<u8>,
     fallthrough: Option<Vec<u8>>,
-    relocations: Vec<ExtractedRelocation>,
+    relocations: Vec<DeclaredRelocation>,
     holes: Vec<ExtractedHole>,
 }
 
@@ -15,45 +15,48 @@ struct ExtractedHole {
     kind: &'static str,
 }
 
-#[derive(Clone, Copy)]
-struct ExtractedRelocation {
-    offset: u16,
-    kind: &'static str,
-    target: &'static str,
-    addend: i64,
-}
-
-#[derive(Clone, Copy)]
-struct ExpectedRelocation {
-    section: SectionKind,
-    offset: u16,
-    width: usize,
-    kind: &'static str,
-    target: &'static str,
-    addend: i64,
-}
-
-fn expected_relocation_index(
-    expected: &[ExpectedRelocation],
-    consumed: &[bool],
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RelocationRecord<T> {
     section: SectionKind,
     offset: u64,
-    kind: &str,
-    target: &str,
-) -> Option<usize> {
-    expected.iter().enumerate().find_map(|(index, item)| {
-        (!consumed[index]
-            && item.section == section
-            && u64::from(item.offset) == offset
-            && item.kind == kind
-            && item.target == target)
-            .then_some(index)
-    })
+    width: usize,
+    kind: &'static str,
+    target: T,
+    addend: i64,
+}
+
+type DeclaredRelocation = RelocationRecord<&'static str>;
+type ExpectedRelocation = DeclaredRelocation;
+type ObservedRelocation = RelocationRecord<String>;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RelocationContractError {
+    Unknown {
+        offset: u64,
+    },
+    Duplicate {
+        offset: u64,
+    },
+    Missing {
+        offset: u64,
+    },
+    Width {
+        offset: u64,
+        expected: usize,
+        actual: usize,
+    },
+    Addend {
+        offset: u64,
+        expected: i64,
+        actual: i64,
+    },
+    RangeOverflow,
+    Overlap,
 }
 
 struct ParsedFragment {
     bytes: Vec<u8>,
-    relocations: Vec<ExtractedRelocation>,
+    relocations: Vec<DeclaredRelocation>,
     holes: Vec<ExtractedHole>,
 }
 
