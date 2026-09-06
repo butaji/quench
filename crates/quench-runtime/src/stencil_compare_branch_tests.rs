@@ -94,6 +94,26 @@ fn compare_branch_rejects_live_effectful_and_side_entry_interiors() {
 }
 
 #[test]
+fn compare_branch_rejects_malformed_or_out_of_range_control() {
+    let compare = crate::ir::Instruction::binary_operator(
+        2,
+        crate::ops::BinaryOp::LessThan,
+        0,
+        1,
+    );
+    let malformed = crate::ir::Instruction {
+        c: 1,
+        ..crate::ir::Instruction::jump_if_false(2, 2)
+    };
+    let invalid = crate::ir::Instruction::jump_if_false(2, 99);
+    for branch in [malformed, invalid] {
+        let entries = baseline_entries(&[compare, branch, crate::ir::Instruction::ret(2)]);
+        let liveness = vec![std::collections::BTreeSet::new(); entries.len()];
+        assert!(crate::machine::compare_branch(&entries, &liveness, 0, compare).is_none());
+    }
+}
+
+#[test]
 fn ordinary_source_compare_branch_fuses_dispatch_and_preserves_live_boolean() {
     let source = "function f(a,b){if(a<b)return 11;return 22} f(1,2)";
     let program = crate::reduce::reduce_source(source).expect("ordinary source lowers");
