@@ -137,8 +137,28 @@ macro_rules! rust_assembly_catalog {
 }
 
 rust_assembly_catalog! {
+    CompareEqualBranch {
+        name: "compare_equal_branch", abi: CompareBranch,
+        ops: ["Binary", "JumpIfFalse"], holes: []
+    },
+    CompareNotEqualBranch {
+        name: "compare_not_equal_branch", abi: CompareBranch,
+        ops: ["Binary", "JumpIfFalse"], holes: []
+    },
     CompareLessBranch {
         name: "compare_less_branch", abi: CompareBranch,
+        ops: ["Binary", "JumpIfFalse"], holes: []
+    },
+    CompareLessEqualBranch {
+        name: "compare_less_equal_branch", abi: CompareBranch,
+        ops: ["Binary", "JumpIfFalse"], holes: []
+    },
+    CompareGreaterBranch {
+        name: "compare_greater_branch", abi: CompareBranch,
+        ops: ["Binary", "JumpIfFalse"], holes: []
+    },
+    CompareGreaterEqualBranch {
+        name: "compare_greater_equal_branch", abi: CompareBranch,
         ops: ["Binary", "JumpIfFalse"], holes: []
     },
     ArrayNumericLoop {
