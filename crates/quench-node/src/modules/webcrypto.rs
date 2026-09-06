@@ -1149,6 +1149,36 @@ fn imported_key_type(format: &str, algorithm: &Value, jwk: Option<&Value>) -> &'
     }
 }
 
+fn imported_algorithm_metadata(
+    algorithm: Value,
+    format: &str,
+    data: Option<&[u8]>,
+) -> Value {
+    if !matches!(format, "raw" | "raw-secret") {
+        return algorithm;
+    }
+    let name = algorithm_name(&algorithm).to_ascii_uppercase();
+    if !name.starts_with("AES-") || data.is_none() {
+        return algorithm;
+    }
+    let length = data.map_or(0, |bytes| bytes.len().saturating_mul(8));
+    if length == 0 {
+        return algorithm;
+    }
+    match algorithm {
+        Value::String(name) => host_api::object(vec![
+            ("name".into(), Value::String(name)),
+            ("length".into(), Value::Number(length as f64)),
+        ]),
+        value if matches!(value, Value::Object(_) | Value::ObjectAlias(_))
+            && matches!(execute::get_property(&value, "length"), Value::Undefined) =>
+        {
+            execute::set_property(value, "length", Value::Number(length as f64))
+        }
+        value => value,
+    }
+}
+
 fn normalize_key_algorithm(algorithm: Value) -> Value {
     let algorithm = crate::modules::clone::deep_clone(algorithm);
     let hash = execute::get_property(&algorithm, "hash");
@@ -1653,6 +1683,7 @@ pub fn import_key(
     ) {
         return Ok(settled(Err(error)));
     }
+    let algorithm = imported_algorithm_metadata(algorithm, &format, data.as_deref());
     let algorithm = rsa_algorithm_metadata(algorithm, &format, data.as_deref(), jwk.as_ref());
     Ok(settled(Ok(key_metadata(
         key_with_jwk(
