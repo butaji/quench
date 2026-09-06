@@ -559,7 +559,9 @@ fn region_admission_rejects_noncanonical_operands_before_publication() {
         })
         .collect::<Vec<_>>();
     entries[0].instruction.c = 1;
-    assert!(!super::region_admission_matches(&entries, 0, record));
+    let windows = vec![None; entries.len()];
+    let cfg = crate::stencil_cfg::ControlFlowFacts::new(&entries, &windows);
+    assert!(!super::region_admission_matches(&entries, &cfg, 0, record));
 }
 
 #[test]
@@ -578,7 +580,8 @@ fn region_admission_rejects_external_backedge_into_interior() {
             control: instruction.opcode.control_operands(instruction),
         })
         .collect::<Vec<_>>();
-    assert!(!super::region_entry_is_legal(&entries, 0, 3));
+    let cfg = crate::stencil_cfg::ControlFlowFacts::new(&entries, &[None; 4]);
+    assert!(!cfg.region_entry_is_legal(0, 3));
 }
 
 #[test]
