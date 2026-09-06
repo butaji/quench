@@ -2165,6 +2165,23 @@ pub fn encrypt(
             |bytes| Ok(array_buffer(&bytes)),
         )));
     }
+    if requested_name.eq_ignore_ascii_case("AES-OCB") {
+        let params = args
+            .first()
+            .map(aes_ocb_algorithm)
+            .unwrap_or_else(|| Err(operation_error("Invalid AES-OCB parameters")));
+        let (iv, aad, tag_bits) = match params {
+            Ok(params) => params,
+            Err(error) => return Ok(settled(Err(error))),
+        };
+        let Some(key) = key.as_deref() else {
+            return Ok(settled(Err(operation_error("Invalid AES-OCB key"))));
+        };
+        return Ok(settled(
+            aes_ocb_crypt(key, &iv, &aad, &data, tag_bits, true)
+                .map(|bytes| array_buffer(&bytes)),
+        ));
+    }
     if let Some((name, iv, length)) = args.first().and_then(aes_algorithm) {
         let key = args
             .get(1)
@@ -2253,6 +2270,24 @@ pub fn decrypt(
             },
             |bytes| Ok(array_buffer(&bytes)),
         )));
+    }
+    if requested_name.eq_ignore_ascii_case("AES-OCB") {
+        let params = args
+            .first()
+            .map(aes_ocb_algorithm)
+            .unwrap_or_else(|| Err(operation_error("Invalid AES-OCB parameters")));
+        let (iv, aad, tag_bits) = match params {
+            Ok(params) => params,
+            Err(error) => return Ok(settled(Err(error))),
+        };
+        let key = args
+            .get(1)
+            .map(|value| bytes(&execute::get_property(value, KEY_DATA_PROP)).unwrap_or_default())
+            .unwrap_or_default();
+        return Ok(settled(
+            aes_ocb_crypt(&key, &iv, &aad, &data, tag_bits, false)
+                .map(|bytes| array_buffer(&bytes)),
+        ));
     }
     if let Some((name, iv, length)) = args.first().and_then(aes_algorithm) {
         let key = args
@@ -2403,6 +2438,239 @@ fn aes_gcm_algorithm(value: &Value) -> Option<(Vec<u8>, Vec<u8>, usize)> {
         _ => return None,
     };
     (matches!(tag_length, 32 | 64 | 96 | 104 | 112 | 120 | 128)).then_some((iv, aad, tag_length))
+}
+
+fn aes_ocb_algorithm(value: &Value) -> Result<(Vec<u8>, Vec<u8>, usize), VmError> {
+    let name = execute::to_js_string(&execute::get_property(value, "name"))
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    if name != "AES-OCB" {
+        return Err(operation_error("Invalid AES-OCB parameters"));
+    }
+    let iv = bytes(&execute::get_property(value, "iv"))
+        .ok_or_else(|| operation_error("algorithm.iv must be a BufferSource"))?;
+    if !(1..=15).contains(&iv.len()) {
+        return Err(operation_error(
+            "algorithm.iv must contain between 1 and 15 bytes",
+        ));
+    }
+    let aad = match execute::get_property(value, "additionalData") {
+        Value::Undefined => Vec::new(),
+        value => bytes(&value)
+            .ok_or_else(|| operation_error("algorithm.additionalData must be a BufferSource"))?,
+    };
+    let tag_bits = match execute::get_property(value, "tagLength") {
+        Value::Undefined => 128,
+        Value::Number(value)
+            if value.is_finite() && value.fract() == 0.0 && value >= 0.0 => value as usize,
+        _ => {
+            return Err(operation_error(
+                "algorithm.tagLength is not a valid AES-OCB tag length",
+            ))
+        }
+    };
+    if !matches!(tag_bits, 64 | 96 | 128) {
+        return Err(operation_error(
+            "algorithm.tagLength is not a valid AES-OCB tag length",
+        ));
+    }
+    Ok((iv, aad, tag_bits))
+}
+
+fn aes_ocb_crypt(
+    key: &[u8],
+    nonce: &[u8],
+    aad: &[u8],
+    data: &[u8],
+    tag_bits: usize,
+    encrypt: bool,
+) -> Result<Vec<u8>, VmError> {
+    if !matches!(key.len(), 16 | 32) {
+        return Err(operation_error("Invalid AES-OCB key length"));
+    }
+    let tag_bytes = tag_bits / 8;
+    let (message, supplied_tag) = if encrypt {
+        (data, &[][..])
+    } else {
+        if data.len() < tag_bytes {
+            return Err(operation_error(
+                "The operation failed for an operation-specific reason",
+            ));
+        }
+        data.split_at(data.len() - tag_bytes)
+    };
+    let l_star = ocb_encrypt_zero(key);
+    let l_values = ocb_l_values(key);
+    let hash = ocb_hash(key, &l_values, &l_star, aad);
+    let mut offset = ocb_initial_offset(key, nonce, tag_bytes);
+    let mut checksum = [0_u8; 16];
+    let mut output = Vec::with_capacity(message.len() + tag_bytes);
+    let mut index = 1;
+    for chunk in message.chunks_exact(16) {
+        ocb_xor(&mut offset, &l_values[ocb_ntz(index)]);
+        let mut block = [0_u8; 16];
+        block.copy_from_slice(chunk);
+        if encrypt {
+            ocb_xor(&mut checksum, &block);
+            ocb_xor(&mut block, &offset);
+            cipher_block(key, &mut block, true);
+            ocb_xor(&mut block, &offset);
+        } else {
+            ocb_xor(&mut block, &offset);
+            cipher_block(key, &mut block, false);
+            ocb_xor(&mut block, &offset);
+            ocb_xor(&mut checksum, &block);
+        }
+        output.extend_from_slice(&block);
+        index += 1;
+    }
+    let remainder = message.chunks_exact(16).remainder();
+    if !remainder.is_empty() {
+        ocb_xor(&mut offset, &l_star);
+        let mut pad = offset;
+        cipher_block(key, &mut pad, true);
+        let mut block = [0_u8; 16];
+        if encrypt {
+            block[..remainder.len()].copy_from_slice(remainder);
+            ocb_xor(&mut checksum, &ocb_padded(remainder));
+            for (value, pad) in block[..remainder.len()].iter_mut().zip(pad) {
+                *value ^= pad;
+            }
+            output.extend_from_slice(&block[..remainder.len()]);
+        } else {
+            block[..remainder.len()].copy_from_slice(remainder);
+            for (value, pad) in block[..remainder.len()].iter_mut().zip(pad) {
+                *value ^= pad;
+            }
+            ocb_xor(&mut checksum, &ocb_padded(&block[..remainder.len()]));
+            output.extend_from_slice(&block[..remainder.len()]);
+        }
+    }
+    let tag = ocb_tag(key, &hash, &mut checksum, &offset);
+    if encrypt {
+        output.extend_from_slice(&tag[..tag_bytes]);
+        return Ok(output);
+    }
+    if supplied_tag != &tag[..tag_bytes] {
+        return Err(operation_error(
+            "The operation failed for an operation-specific reason",
+        ));
+    }
+    Ok(output)
+}
+
+fn ocb_l_values(key: &[u8]) -> Vec<[u8; 16]> {
+    let mut zero = [0_u8; 16];
+    cipher_block(key, &mut zero, true);
+    let l_dollar = ocb_double(zero);
+    let mut value = ocb_double(l_dollar);
+    let mut values = Vec::with_capacity(64);
+    for _ in 0..64 {
+        values.push(value);
+        value = ocb_double(value);
+    }
+    values
+}
+
+fn ocb_initial_offset(key: &[u8], nonce: &[u8], tag_bytes: usize) -> [u8; 16] {
+    let mut encoded = [0_u8; 16];
+    encoded[0] = (((tag_bytes * 8) % 128) << 1) as u8;
+    let start = 16 - nonce.len();
+    encoded[start..].copy_from_slice(nonce);
+    encoded[start - 1] |= 1;
+    let bottom = encoded[15] & 0x3f;
+    encoded[15] &= !0x3f;
+    let mut ktop = encoded;
+    cipher_block(key, &mut ktop, true);
+    let mut stretch = [0_u8; 24];
+    stretch[..16].copy_from_slice(&ktop);
+    for index in 0..8 {
+        stretch[16 + index] = ktop[index] ^ ktop[index + 1];
+    }
+    let low = u128::from_be_bytes(stretch[..16].try_into().unwrap());
+    let high = u64::from_be_bytes(stretch[16..].try_into().unwrap());
+    let offset = if bottom == 0 {
+        low
+    } else {
+        (low << bottom) | (u128::from(high) >> (64 - bottom))
+    };
+    offset.to_be_bytes()
+}
+
+fn ocb_hash(
+    key: &[u8],
+    l_values: &[[u8; 16]],
+    l_star: &[u8; 16],
+    aad: &[u8],
+) -> [u8; 16] {
+    let mut offset = [0_u8; 16];
+    let mut sum = [0_u8; 16];
+    for (index, chunk) in aad.chunks_exact(16).enumerate() {
+        ocb_xor(&mut offset, &l_values[ocb_ntz(index + 1)]);
+        let mut block = [0_u8; 16];
+        block.copy_from_slice(chunk);
+        ocb_xor(&mut block, &offset);
+        cipher_block(key, &mut block, true);
+        ocb_xor(&mut sum, &block);
+    }
+    let remainder = aad.chunks_exact(16).remainder();
+    if !remainder.is_empty() {
+        ocb_xor(&mut offset, l_star);
+        let mut block = ocb_padded(remainder);
+        ocb_xor(&mut block, &offset);
+        cipher_block(key, &mut block, true);
+        ocb_xor(&mut sum, &block);
+    }
+    sum
+}
+
+fn ocb_tag(
+    key: &[u8],
+    hash: &[u8; 16],
+    checksum: &mut [u8; 16],
+    offset: &[u8; 16],
+) -> [u8; 16] {
+    let l_dollar = ocb_double(ocb_encrypt_zero(key));
+    ocb_xor(checksum, offset);
+    ocb_xor(checksum, &l_dollar);
+    cipher_block(key, checksum, true);
+    ocb_xor(checksum, hash);
+    *checksum
+}
+
+fn ocb_encrypt_zero(key: &[u8]) -> [u8; 16] {
+    let mut zero = [0_u8; 16];
+    cipher_block(key, &mut zero, true);
+    zero
+}
+
+fn ocb_padded(input: &[u8]) -> [u8; 16] {
+    let mut block = [0_u8; 16];
+    block[..input.len()].copy_from_slice(input);
+    block[input.len()] = 0x80;
+    block
+}
+
+fn ocb_double(mut block: [u8; 16]) -> [u8; 16] {
+    let carry = block[0] >> 7;
+    for index in 0..15 {
+        block[index] = (block[index] << 1) | (block[index + 1] >> 7);
+    }
+    block[15] <<= 1;
+    if carry != 0 {
+        block[15] ^= 0x87;
+    }
+    block
+}
+
+fn ocb_xor(left: &mut [u8; 16], right: &[u8; 16]) {
+    for (left, right) in left.iter_mut().zip(right) {
+        *left ^= right;
+    }
+}
+
+fn ocb_ntz(value: usize) -> usize {
+    value.trailing_zeros() as usize
 }
 
 fn aes_gcm_crypt(
@@ -2825,4 +3093,70 @@ pub fn build() -> (Value, Value) {
     }
     KEY_PROTOTYPE.with(|stored| *stored.borrow_mut() = Some(instance_prototype));
     (crypto, constructor)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::aes_ocb_crypt;
+
+    #[test]
+    fn aes_ocb_matches_node_vectors_and_rejects_bad_tags() {
+        let nonce = hex::decode("bbaa9988776655443322110f").unwrap();
+        let aad = hex::decode("0001020304050607").unwrap();
+        let plaintext = hex::decode("48656c6c6f204f4342").unwrap();
+        let vectors = [
+            (
+                "000102030405060708090a0b0c0d0e0f",
+                [
+                    "99f1e221b0502e7a5edb60a5c066d8abec",
+                    "e444cfce5e598b5142d978d82125a204c0510ce050",
+                    "ac97838c7909b5ca263772c7f36d355cf2fa558b1138760d64",
+                ],
+            ),
+            (
+                "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+                [
+                    "a4195211223044e219bb0ba8539a589314",
+                    "5ca1d8a719d77d9698bb9ae9e379986077e29680a1",
+                    "2afaa7e273ac3adb2105591255fdc79a2bf416b9d9df80ad5d",
+                ],
+            ),
+        ];
+        for (key, expected) in vectors {
+            let key = hex::decode(key).unwrap();
+            for (tag_bits, expected) in [64, 96, 128].into_iter().zip(expected) {
+                let encrypted = aes_ocb_crypt(
+                    &key,
+                    &nonce,
+                    &aad,
+                    &plaintext,
+                    tag_bits,
+                    true,
+                )
+                .unwrap();
+                assert_eq!(hex::encode(&encrypted), expected);
+                let decrypted = aes_ocb_crypt(
+                    &key,
+                    &nonce,
+                    &aad,
+                    &encrypted,
+                    tag_bits,
+                    false,
+                )
+                .unwrap();
+                assert_eq!(decrypted, plaintext);
+                let mut tampered = encrypted.clone();
+                *tampered.last_mut().unwrap() ^= 1;
+                assert!(aes_ocb_crypt(
+                    &key,
+                    &nonce,
+                    &aad,
+                    &tampered,
+                    tag_bits,
+                    false,
+                )
+                .is_err());
+            }
+        }
+    }
 }
