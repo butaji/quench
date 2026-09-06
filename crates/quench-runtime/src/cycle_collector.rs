@@ -520,8 +520,31 @@ fn append_edges(value: &Value, ids: &HashMap<usize, usize>, output: &mut Vec<usi
                 append_edges(value, ids, output);
             }
         }
+        Value::Generator(generator) => append_generator_edges(generator, ids, output),
         _ => {}
     }
+}
+
+fn append_generator_edges(
+    generator: &Rc<crate::value::GeneratorData>,
+    ids: &HashMap<usize, usize>,
+    output: &mut Vec<usize>,
+) {
+    append_edges(&Value::Function(Rc::clone(&generator.function)), ids, output);
+    append_edges(&generator.receiver, ids, output);
+    for value in &generator.arguments {
+        append_edges(value, ids, output);
+    }
+    let machine = generator.machine.borrow();
+    if let Some(environment) = machine.environment() {
+        for value in environment.cycle_values() {
+            append_edges(&value, ids, output);
+        }
+    }
+    machine
+        .registers
+        .values
+        .visit_values(|value| append_edges(&value, ids, output));
 }
 
 fn mark_direct_root_value(value: &Value, ids: &HashMap<usize, usize>, external: &mut [bool]) {
@@ -553,6 +576,32 @@ fn mark_direct_root_value(value: &Value, ids: &HashMap<usize, usize>, external: 
                 }
                 // As above, the graph walk handles the function's edges.
             }
+            Value::Generator(generator) => {
+                let key = Rc::as_ptr(generator) as usize;
+                if !seen.insert(key) {
+                    return;
+                }
+                visit(
+                    &Value::Function(Rc::clone(&generator.function)),
+                    ids,
+                    external,
+                    seen,
+                );
+                visit(&generator.receiver, ids, external, seen);
+                for value in &generator.arguments {
+                    visit(value, ids, external, seen);
+                }
+                let machine = generator.machine.borrow();
+                if let Some(environment) = machine.environment() {
+                    for value in environment.cycle_values() {
+                        visit(&value, ids, external, seen);
+                    }
+                }
+                machine
+                    .registers
+                    .values
+                    .visit_values(|value| visit(&value, ids, external, seen));
+            }
             Value::BindingCell(_)
             | Value::ObjectAlias(_)
             | Value::Proxy(_)
@@ -581,7 +630,6 @@ fn mark_direct_root_value(value: &Value, ids: &HashMap<usize, usize>, external: 
             | Value::Map(_)
             | Value::Set(_)
             | Value::Iterator(_)
-            | Value::Generator(_)
             | Value::Number(_)
             | Value::Boolean(_)
             | Value::Null
@@ -822,5 +870,61 @@ mod tests {
         drop(environment);
         collect_cycles();
         assert!(weak.upgrade().is_none(), "released continuation retained a cycle");
+    }
+
+    #[test]
+    fn generator_edges_keep_captured_function_live_then_reclaim() {
+        let environment = Environment::new();
+        let code = crate::machine::FunctionCode::from_ops(Vec::new());
+        let function = Rc::new(FunctionValue {
+            code: code.clone(),
+            params: 0,
+            captures: Rc::clone(&environment),
+            with_captures: Vec::new(),
+            properties: Rc::new(RefCell::new(Vec::new())),
+            private_slots: Rc::new(RefCell::new(Vec::new())),
+            private_environment: Default::default(),
+            instance_fields: Rc::new(RefCell::new(Vec::new())),
+            kind: crate::ops::FunctionKind::Ordinary,
+            strictness: crate::ops::FunctionStrictness::Sloppy,
+            is_async: false,
+            mapped_arguments: false,
+        });
+        track_function(&function);
+        environment.set(0, Value::Function(Rc::clone(&function)));
+        let machine = crate::machine::Machine::with_function(
+            &code,
+            crate::machine::EnvironmentRef(0),
+            1,
+        );
+        let generator = Rc::new(crate::value::GeneratorData {
+            function: Rc::clone(&function),
+            machine: crate::value::ExecutionCell::new(machine),
+            receiver: Value::Undefined,
+            arguments: Vec::new(),
+            done: RefCell::new(false),
+            state: RefCell::new(None),
+            pending_yield: RefCell::new(false),
+            executing: RefCell::new(false),
+            running: RefCell::new(false),
+            async_next_queue: RefCell::new(std::collections::VecDeque::new()),
+        });
+        let holder = Rc::new(ObjectData::new(vec![
+            ("generator".into(), Value::Generator(Rc::clone(&generator))),
+        ]));
+        track_object(&holder);
+        let holder_root = Rc::clone(&holder);
+        let weak_function = Rc::downgrade(&function);
+        let weak_generator = Rc::downgrade(&generator);
+        drop(function);
+        drop(generator);
+        collect_cycles();
+        assert!(weak_function.upgrade().is_some(), "live generator lost its function");
+        drop(holder_root);
+        drop(holder);
+        drop(environment);
+        collect_cycles();
+        assert!(weak_generator.upgrade().is_none(), "abandoned generator stayed registered");
+        assert!(weak_function.upgrade().is_none(), "abandoned generator retained its function");
     }
 }
