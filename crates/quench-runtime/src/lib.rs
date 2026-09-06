@@ -41,6 +41,8 @@ mod classes;
 mod collections;
 pub mod completion;
 mod conditional;
+#[cfg(test)]
+mod continuation_contract_tests;
 mod construct;
 mod continuation;
 mod control_flow;
