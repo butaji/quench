@@ -4810,6 +4810,11 @@ fn validate_admitted_region_control(
             "native region control contract changed before entry".into(),
         ));
     }
+    if !control.matches_operations(record.operations) {
+        return Err(NativeDispatchError::Physical(
+            "native region control shape disagrees with its operation facts".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -5453,6 +5458,7 @@ fn region_admission_control(
     }
     let control = cfg.region_plan(entries, start, contract.operations)?;
     (record.bindings_match_entries(entries, start)
+        && control.matches_operations(contract.operations)
         && region_outputs_cover_exit(entries, cfg, start, record))
     .then_some(control)
 }
