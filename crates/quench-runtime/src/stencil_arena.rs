@@ -116,25 +116,12 @@ pub(crate) fn physical_cache_signature<const N: usize>(
     }
 }
 
-fn selected_chain_matches(
-    key: crate::stencil_fact::RegionKey,
-    selected: Option<crate::stencil_select::PhysicalStencilView>,
-    head: &Stencil,
-    tail: &Stencil,
-    abi: crate::stencil_select::RegionAbi,
-) -> bool {
-    let Some(view) = selected.or_else(|| crate::stencil_select::select_physical(key)) else {
-        return true;
-    };
-    let Some((expected_tail, _)) = view.fallthrough else {
+fn selected_chain_matches(view: crate::stencil_select::PhysicalStencilView) -> bool {
+    let Some(selected) = crate::stencil_select::select_physical_for_abi(view.key, view.abi) else {
         return false;
     };
-    view.key == key
-        && view.abi == abi
-        && view.stencil.bytes == head.bytes
-        && view.stencil.holes == head.holes
-        && expected_tail.bytes == tail.bytes
-        && expected_tail.holes == tail.holes
+    view.matches(&selected)
+        && view.fallthrough.is_some()
         && (!view.generated || generated_chain_relocation_is_declared(&view))
 }
 
@@ -1630,20 +1617,24 @@ impl StencilArena {
         let Some((tail, branch_offset)) = view.fallthrough else {
             return self.render_selected_view(cache, view, values);
         };
-        if !selected_chain_matches(view.key, Some(view), view.stencil, tail, view.abi) {
+        if !selected_chain_matches(view) {
             return Err(ArenaError::ProtectionFailed);
         }
-        self.install_fallthrough(
-            cache,
-            view.key,
-            physical_cache_signature(view, values),
+        let signature = physical_cache_signature(view, values);
+        if let Some(address) = self.cached_executable(cache, view.key, signature) {
+            return Ok(address);
+        }
+        let mut bytes = Vec::new();
+        compose_fallthrough(
             view.stencil,
             tail,
             values,
             branch_offset,
             fallthrough_fixup_kind(),
-            view.abi,
+            &mut bytes,
         )
+        .map_err(|_| ArenaError::ProtectionFailed)?;
+        self.publish_composed(cache, view.key, signature, &bytes, view.abi)
     }
 
     pub fn render_physical_view_or_get<const N: usize>(
@@ -1791,25 +1782,6 @@ impl StencilArena {
         };
         if !view.contract().executable {
             return fallback();
-        }
-        let stencil = view.stencil;
-        if let Some((tail, rel32_offset)) = view.fallthrough {
-            let result = self.render_fallthrough_f64(
-                cache,
-                key,
-                stencil,
-                tail,
-                values,
-                rel32_offset,
-                lhs,
-                rhs,
-                Some(view),
-                fallback,
-            );
-            if result.is_ok() {
-                self.mark_physical_execution(view);
-            }
-            return result;
         }
         let address = match self.render_physical_view_or_get(cache, view, values) {
             Ok(address) => address,
@@ -1984,97 +1956,6 @@ impl StencilArena {
         let value = entry(lhs, rhs, third);
         self.mark_physical_execution(view);
         Ok(value)
-    }
-
-    /// Compose a verified head and tail through the target's typed relative
-    /// fixup. Layout is finalized in scratch storage before one allocation is
-    /// published, so no partially patched chain can become callable.
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    pub fn render_fallthrough_f64<const N: usize>(
-        &mut self,
-        cache: &mut RenderedRegionCache,
-        key: crate::stencil_fact::RegionKey,
-        head: &Stencil,
-        tail: &Stencil,
-        values: &PatchValues<'_, N>,
-        branch_offset: u16,
-        lhs: f64,
-        rhs: f64,
-        selected: Option<crate::stencil_select::PhysicalStencilView>,
-        fallback: impl FnOnce() -> Result<f64, ArenaError>,
-    ) -> Result<f64, ArenaError> {
-        if !selected_chain_matches(
-            key,
-            selected,
-            head,
-            tail,
-            crate::stencil_select::RegionAbi::ScalarF64Binary,
-        ) {
-            return fallback();
-        }
-        let signature = selected
-            .map(|view| physical_cache_signature(view, values))
-            .unwrap_or_else(|| cache_signature(head, values));
-        let kind = fallthrough_fixup_kind();
-        let address = match self.install_fallthrough(
-            cache,
-            key,
-            signature,
-            head,
-            tail,
-            values,
-            branch_offset,
-            kind,
-            crate::stencil_select::RegionAbi::ScalarF64Binary,
-        ) {
-            Ok(address) => address,
-            Err(_) => return fallback(),
-        };
-        let result = self.execute_f64(address, lhs, rhs);
-        if result.is_err() {
-            cache.remove(key, signature, address);
-            return fallback();
-        }
-        result
-    }
-
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    pub fn render_fallthrough_f64<const N: usize>(
-        &mut self,
-        _cache: &mut RenderedRegionCache,
-        _key: crate::stencil_fact::RegionKey,
-        _head: &Stencil,
-        _tail: &Stencil,
-        _values: &PatchValues<'_, N>,
-        _branch_offset: u16,
-        _lhs: f64,
-        _rhs: f64,
-        _selected: Option<crate::stencil_select::PhysicalStencilView>,
-        fallback: impl FnOnce() -> Result<f64, ArenaError>,
-    ) -> Result<f64, ArenaError> {
-        fallback()
-    }
-
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    fn install_fallthrough<const N: usize>(
-        &mut self,
-        cache: &mut RenderedRegionCache,
-        key: crate::stencil_fact::RegionKey,
-        signature: u64,
-        head: &Stencil,
-        tail: &Stencil,
-        values: &PatchValues<'_, N>,
-        branch_offset: u16,
-        kind: FixupKind,
-        abi: crate::stencil_select::RegionAbi,
-    ) -> Result<usize, ArenaError> {
-        if let Some(address) = self.cached_executable(cache, key, signature) {
-            return Ok(address);
-        }
-        let mut bytes = Vec::new();
-        compose_fallthrough(head, tail, values, branch_offset, kind, &mut bytes)
-            .map_err(|_| ArenaError::ProtectionFailed)?;
-        self.publish_composed(cache, key, signature, &bytes, abi)
     }
 
     fn cached_executable(
@@ -3505,33 +3386,14 @@ mod tests {
         let mut cache = RenderedRegionCache::new();
         let site = QuickeningSite::<2>::new(Opcode::Add);
         let values = PatchValues::from_site(&site);
-        let head = Stencil {
-            bytes: &[0xF2, 0x0F, 0x58, 0xC1, 0xE9, 0, 0, 0, 0],
-            holes: &[Hole {
-                offset: 5,
-                kind: HoleKind::Rel32,
-            }],
-        };
-        let tail = Stencil {
-            bytes: &[0xC3],
-            holes: &[],
-        };
+        let key = crate::stencil_select::fallthrough_region_key();
+        let view = crate::stencil_select::select_physical(key).expect("fallthrough view");
         assert_eq!(
-            arena.render_fallthrough_f64(
-                &mut cache,
-                crate::stencil_fact::RegionKey(44),
-                &head,
-                &tail,
-                &values,
-                5,
-                10.25,
-                2.5,
-                None,
-                || Ok(0.0),
-            ),
+            arena.render_selected_f64(&mut cache, key, &values, 10.25, 2.5, || Ok(0.0)),
             Ok(12.75)
         );
-        assert_eq!(arena.used(), head.bytes.len() + tail.bytes.len());
+        let (tail, _) = view.fallthrough.expect("fallthrough tail");
+        assert_eq!(arena.used(), view.stencil.bytes.len() + tail.bytes.len());
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -3670,33 +3532,46 @@ mod tests {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn selected_chain_rejects_substituted_tail_before_publication() {
+        static BAD_TAIL_BYTES: &[u8] = &[0xC3, 0xC3];
+        static BAD_TAIL: Stencil = Stencil {
+            bytes: BAD_TAIL_BYTES,
+            holes: &[],
+        };
         let key = crate::stencil_select::fallthrough_region_key();
         let view = crate::stencil_select::select_physical(key).expect("fallthrough view");
         let (tail, branch_offset) = view.fallthrough.expect("declared successor");
-        let bad_tail = Stencil {
-            bytes: &[0xC3, 0xC3],
-            holes: &[],
+        let bad_view = crate::stencil_select::PhysicalStencilView {
+            fallthrough: Some((&BAD_TAIL, branch_offset)),
+            ..view
         };
         let mut arena = StencilArena::new(4096).expect("arena");
         let mut cache = RenderedRegionCache::new();
         let site = QuickeningSite::<2>::new(Opcode::Add);
         let values = PatchValues::from_site(&site);
-        let result = arena.render_fallthrough_f64(
-            &mut cache,
-            key,
-            view.stencil,
-            &bad_tail,
-            &values,
-            branch_offset,
-            1.0,
-            2.0,
-            None,
-            || Ok(-1.0),
-        );
-        assert_eq!(result, Ok(-1.0));
+        let result = arena.render_physical_view_or_get(&mut cache, bad_view, &values);
+        assert_eq!(result, Err(ArenaError::ProtectionFailed));
         assert_eq!(arena.used(), 0);
         assert_eq!(cache.len(), 0);
         assert_eq!(tail.bytes, view.fallthrough.unwrap().0.bytes);
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn selected_chain_rejects_unknown_identity_before_publication() {
+        let key = crate::stencil_select::fallthrough_region_key();
+        let view = crate::stencil_select::select_physical(key).expect("fallthrough view");
+        let unknown = crate::stencil_select::PhysicalStencilView {
+            key: crate::stencil_fact::RegionKey(u64::MAX),
+            ..view
+        };
+        let mut arena = StencilArena::new(4096).expect("arena");
+        let mut cache = RenderedRegionCache::new();
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let values = PatchValues::from_site(&site);
+        let result = arena.render_physical_view_or_get(&mut cache, unknown, &values);
+        assert_eq!(result, Err(ArenaError::ProtectionFailed));
+        assert_eq!(arena.used(), 0);
+        assert_eq!(cache.len(), 0);
     }
 
     #[cfg(all(quench_generated_stencil_artifacts, target_arch = "aarch64"))]
