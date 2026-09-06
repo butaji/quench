@@ -2031,12 +2031,18 @@ fn ordinary_source_lowering_executes_fused_indexed_numeric_update() {
             crate::stencil_select::array_numeric_update_const_region_key()
         };
         assert_eq!(region.borrow().key_for_test(), expected_key);
+        let control = region
+            .borrow()
+            .admitted_control_for_test()
+            .expect("normal admission retains CFG control");
+        assert_eq!((control.start(), control.end()), (pc, pc + 3));
         let mut registers = crate::register_file::RegisterFile::with_undefined(
             usize::from(view.register_count()).max(8),
         );
-        let array = crate::value::Value::Array(std::rc::Rc::new(
-            crate::value::ArrayData::new(vec![crate::value::Value::Number(3.0)]),
-        ));
+        let array =
+            crate::value::Value::Array(std::rc::Rc::new(crate::value::ArrayData::new(vec![
+                crate::value::Value::Number(3.0),
+            ])));
         registers.write(usize::from(load.b), array);
         registers.write(usize::from(load.c), crate::value::Value::Number(0.0));
         let array_word = registers.read(usize::from(load.b)).unwrap();
