@@ -15,6 +15,17 @@ pub(crate) struct NativePropertyReadContext {
     result: u64,
 }
 
+#[repr(C)]
+pub(crate) struct NativePropertyWriteContext {
+    layout: *const u32,
+    expected_layout: u32,
+    _padding: u32,
+    descriptor_state: *const u8,
+    deleted_state: *const u8,
+    slot: *const crate::register_file::SlotWord,
+    value: u64,
+}
+
 impl NativePropertyReadContext {
     pub(crate) fn new(access: GuardedPropertySlot) -> Self {
         Self {
@@ -30,6 +41,20 @@ impl NativePropertyReadContext {
 
     pub(crate) fn result(&self, status: u32) -> Option<u64> {
         (status == 1).then_some(self.result)
+    }
+}
+
+impl NativePropertyWriteContext {
+    pub(crate) fn new(access: GuardedPropertySlot, value: u64) -> Self {
+        Self {
+            layout: access.layout,
+            expected_layout: access.expected_layout,
+            _padding: 0,
+            descriptor_state: access.descriptor_state,
+            deleted_state: access.deleted_state,
+            slot: access.slot,
+            value,
+        }
     }
 }
 
@@ -63,6 +88,12 @@ impl GuardedPropertySlot {
             slot,
         }
     }
+
+    pub(crate) fn accepts_non_owning_store(self) -> bool {
+        unsafe { self.slot.as_ref() }
+            .and_then(crate::register_file::SlotWord::plain_non_owning_bits)
+            .is_some()
+    }
 }
 
 const _: () = {
@@ -74,4 +105,12 @@ const _: () = {
     assert!(std::mem::offset_of!(NativePropertyReadContext, deleted_state) == 24);
     assert!(std::mem::offset_of!(NativePropertyReadContext, slot) == 32);
     assert!(std::mem::offset_of!(NativePropertyReadContext, result) == 40);
+    assert!(std::mem::size_of::<NativePropertyWriteContext>() == 48);
+    assert!(std::mem::align_of::<NativePropertyWriteContext>() == 8);
+    assert!(std::mem::offset_of!(NativePropertyWriteContext, layout) == 0);
+    assert!(std::mem::offset_of!(NativePropertyWriteContext, expected_layout) == 8);
+    assert!(std::mem::offset_of!(NativePropertyWriteContext, descriptor_state) == 16);
+    assert!(std::mem::offset_of!(NativePropertyWriteContext, deleted_state) == 24);
+    assert!(std::mem::offset_of!(NativePropertyWriteContext, slot) == 32);
+    assert!(std::mem::offset_of!(NativePropertyWriteContext, value) == 40);
 };

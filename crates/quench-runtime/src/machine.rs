@@ -3757,6 +3757,7 @@ impl NativeMovePlan {
         }
         result
     }
+
 }
 
 impl std::fmt::Debug for NativeMovePlan {
@@ -3784,10 +3785,16 @@ impl std::fmt::Debug for NativeMovePlan {
 #[derive(Clone, Copy)]
 enum InstalledPropertyEntry {
     Unpublished,
-    Local(usize),
-    Shared(
+    ReadLocal(usize),
+    ReadShared(
         crate::stencil_arena::EntryToken<
             extern "C" fn(*mut crate::native_property::NativePropertyReadContext) -> u32,
+        >,
+    ),
+    WriteLocal(usize),
+    WriteShared(
+        crate::stencil_arena::EntryToken<
+            extern "C" fn(*mut crate::native_property::NativePropertyWriteContext) -> u32,
         >,
     ),
 }
@@ -3826,11 +3833,20 @@ impl NativePropertyPlan {
             return None;
         }
         let opcode = instruction.opcode;
-        (opcode == crate::ir::Opcode::GetN).then_some(())?;
-        let key = crate::stencil_select::property_region_key();
+        let (key, abi) = match opcode {
+            crate::ir::Opcode::GetN => (
+                crate::stencil_select::property_region_key(),
+                crate::stencil_select::RegionAbi::PropertyGuard,
+            ),
+            crate::ir::Opcode::SetN => (
+                crate::stencil_select::store_property_region_key(),
+                crate::stencil_select::RegionAbi::PropertyWriteGuard,
+            ),
+            _ => return None,
+        };
         crate::stencil_select::select_region(key).filter(|record| {
             record.executable
-                && record.abi == crate::stencil_select::RegionAbi::PropertyGuard
+                && record.abi == abi
                 && validate_physical_template(record).is_ok()
         })?;
         Some(Self {
@@ -3855,10 +3871,13 @@ impl NativePropertyPlan {
         access: crate::native_property::GuardedPropertySlot,
         site: &crate::quickening::QuickeningSite<4>,
     ) -> Result<u64, crate::stencil_arena::ArenaError> {
+        if self.opcode != crate::ir::Opcode::GetN {
+            return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
+        }
         let mut context = crate::native_property::NativePropertyReadContext::new(access);
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.shared_arena.is_none() {
-            if let InstalledPropertyEntry::Local(address) = self.installed {
+            if let InstalledPropertyEntry::ReadLocal(address) = self.installed {
                 if let Some(arena) = self.arena.as_ref() {
                     if let Ok(entry) = arena.property_guard_entry(address) {
                         #[cfg(test)]
@@ -3884,7 +3903,7 @@ impl NativePropertyPlan {
         }
         if let Some(shared) = self.shared_arena.clone() {
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            if let InstalledPropertyEntry::Shared(owned) = self.installed {
+            if let InstalledPropertyEntry::ReadShared(owned) = self.installed {
                 match invoke_shared_entry!(shared, owned, |entry| entry(&mut context)) {
                     Ok(status) => {
                         #[cfg(test)]
@@ -3927,7 +3946,7 @@ impl NativePropertyPlan {
             };
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             {
-                self.installed = InstalledPropertyEntry::Shared(owned);
+                self.installed = InstalledPropertyEntry::ReadShared(owned);
             }
             #[cfg(test)]
             {
@@ -3983,7 +4002,7 @@ impl NativePropertyPlan {
                     self.installed = arena
                         .property_guard_entry(address)
                         .ok()
-                        .map(|_| InstalledPropertyEntry::Local(address))
+                        .map(|_| InstalledPropertyEntry::ReadLocal(address))
                         .unwrap_or(InstalledPropertyEntry::Unpublished);
                 }
             }
@@ -3997,6 +4016,126 @@ impl NativePropertyPlan {
             }
         }
         result
+    }
+    pub(crate) fn execute_write(
+        &mut self,
+        access: crate::native_property::GuardedPropertySlot,
+        value: u64,
+        site: &crate::quickening::QuickeningSite<4>,
+    ) -> Result<(), crate::stencil_arena::ArenaError> {
+        if self.opcode != crate::ir::Opcode::SetN
+            || !access.accepts_non_owning_store()
+            || crate::tagged_value::TaggedValue::from_bits(value).owns_rc()
+        {
+            return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
+        }
+        let mut context = crate::native_property::NativePropertyWriteContext::new(access, value);
+        if let Some(result) = self.execute_installed_write(&mut context) {
+            return result;
+        }
+        let key = crate::stencil_select::store_property_region_key();
+        let values = crate::stencil_fact::PatchValues::from_site(site);
+        if self.physical.lifecycle.observe_site(site, key, true)
+            == crate::stencil_lifecycle::StencilState::Retired
+        {
+            return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
+        }
+        if self.shared_arena.is_some() {
+            return self.render_shared_write(key, &values, &mut context);
+        }
+        self.render_local_write(key, &values, &mut context)
+    }
+
+    fn execute_installed_write(
+        &mut self,
+        context: &mut crate::native_property::NativePropertyWriteContext,
+    ) -> Option<Result<(), crate::stencil_arena::ArenaError>> {
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        if let Some(shared) = self.shared_arena.clone() {
+            if let InstalledPropertyEntry::WriteShared(owned) = self.installed {
+                let result = invoke_shared_entry!(shared, owned, |entry| entry(context));
+                return Some(self.finish_property_write(result));
+            }
+        } else if let InstalledPropertyEntry::WriteLocal(address) = self.installed {
+            let result = self.arena.as_ref().and_then(|arena| {
+                arena
+                    .property_write_guard_entry(address)
+                    .ok()
+                    .map(|entry| entry(context))
+            });
+            return Some(self.finish_property_write(
+                result.ok_or(crate::stencil_arena::ArenaError::ProtectionFailed),
+            ));
+        }
+        None
+    }
+
+    fn finish_property_write(
+        &mut self,
+        result: Result<u32, crate::stencil_arena::ArenaError>,
+    ) -> Result<(), crate::stencil_arena::ArenaError> {
+        match result {
+            Ok(1) => {
+                #[cfg(test)]
+                {
+                    self.native_entry_count = self.native_entry_count.saturating_add(1);
+                }
+                Ok(())
+            }
+            Ok(_) => Err(crate::stencil_arena::ArenaError::ProtectionFailed),
+            Err(error) => {
+                self.clear_shared_capabilities();
+                Err(error)
+            }
+        }
+    }
+
+    fn render_shared_write(
+        &mut self,
+        key: crate::stencil_fact::RegionKey,
+        values: &crate::stencil_fact::PatchValues<'_>,
+        context: &mut crate::native_property::NativePropertyWriteContext,
+    ) -> Result<(), crate::stencil_arena::ArenaError> {
+        let shared = self
+            .shared_arena
+            .clone()
+            .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
+        let address = {
+            let mut slab = shared.borrow_mut();
+            let view = crate::stencil_select::select_physical_for_abi(
+                key,
+                crate::stencil_select::RegionAbi::PropertyWriteGuard,
+            )
+            .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+            let address = slab.render_physical_view_or_get(&mut self.physical.cache, view, values)?;
+            slab.make_executable(address)?;
+            address
+        };
+        let owned = shared.borrow().owned_property_write_guard_entry(address)?;
+        let result = invoke_shared_entry!(shared, owned, |entry| entry(context));
+        self.installed = InstalledPropertyEntry::WriteShared(owned);
+        self.finish_property_write(result)
+    }
+
+    fn render_local_write(
+        &mut self,
+        key: crate::stencil_fact::RegionKey,
+        values: &crate::stencil_fact::PatchValues<'_>,
+        context: &mut crate::native_property::NativePropertyWriteContext,
+    ) -> Result<(), crate::stencil_arena::ArenaError> {
+        let arena = self
+            .arena
+            .get_or_insert(crate::stencil_arena::StencilArena::new(4096)?);
+        let view = crate::stencil_select::select_physical_for_abi(
+            key,
+            crate::stencil_select::RegionAbi::PropertyWriteGuard,
+        )
+        .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+        let address = arena.render_physical_view_or_get(&mut self.physical.cache, view, values)?;
+        arena.make_executable()?;
+        let entry = arena.property_write_guard_entry(address)?;
+        self.installed = InstalledPropertyEntry::WriteLocal(address);
+        self.finish_property_write(Ok(entry(context)))
     }
 }
 
@@ -4690,6 +4829,11 @@ impl NativeRegionPlan {
                         "property-guard ABI cannot enter a region context".into(),
                     ));
                 }
+                crate::stencil_select::RegionAbi::PropertyWriteGuard => {
+                    return Err(NativeDispatchError::Physical(
+                        "property-write ABI cannot enter a region context".into(),
+                    ));
+                }
                 crate::stencil_select::RegionAbi::ConstantWord => {
                     return Err(NativeDispatchError::Physical(
                         "constant-word ABI cannot enter a region context".into(),
@@ -4833,7 +4977,7 @@ enum NativeAdmission {
     Move(Rc<RefCell<NativeMovePlan>>),
     LoadLocal(Rc<RefCell<NativeMovePlan>>),
     StoreLocal(Rc<RefCell<NativeMovePlan>>),
-    StoreProperty(Rc<RefCell<NativeMovePlan>>),
+    StoreProperty(Rc<RefCell<NativePropertyPlan>>),
     Property(Rc<RefCell<NativePropertyPlan>>),
     Dispatch(Rc<RefCell<NativeDispatchPlan>>),
     Region(Rc<RefCell<NativeRegionPlan>>),
@@ -5128,6 +5272,19 @@ fn move_admission(
         crate::ir::Opcode::Move => Some(NativeAdmission::Move(plan)),
         crate::ir::Opcode::LoadLocal => Some(NativeAdmission::LoadLocal(plan)),
         crate::ir::Opcode::StoreLocal => Some(NativeAdmission::StoreLocal(plan)),
+        _ => None,
+    }
+}
+
+fn property_admission(
+    instruction: crate::ir::Instruction,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    let plan = NativePropertyPlan::new_with_arena(instruction, policy, Rc::clone(arena))?;
+    let plan = Rc::new(RefCell::new(plan));
+    match instruction.opcode {
+        crate::ir::Opcode::GetN => Some(NativeAdmission::Property(plan)),
         crate::ir::Opcode::SetN => Some(NativeAdmission::StoreProperty(plan)),
         _ => None,
     }
@@ -5141,13 +5298,7 @@ fn collect_memory_admissions(
     arena: &SharedStencilPool,
 ) {
     builder.push_optional(pc, move_admission(instruction, policy, arena));
-    builder.push_optional(
-        pc,
-        native_admission!(
-            Property,
-            NativePropertyPlan::new_with_arena(instruction, policy, Rc::clone(arena))
-        ),
-    );
+    builder.push_optional(pc, property_admission(instruction, policy, arena));
     builder.push_optional(
         pc,
         native_admission!(
@@ -5338,7 +5489,7 @@ impl BaselinePlan {
         store_property_handle_at,
         native_store_property_at,
         StoreProperty,
-        NativeMovePlan
+        NativePropertyPlan
     );
     typed_admission_accessors!(
         property_handle_at,
@@ -5401,7 +5552,7 @@ impl OptimizingEntry {
     optimizing_admission_accessors!(native_move, Move, NativeMovePlan);
     optimizing_admission_accessors!(native_load_local, LoadLocal, NativeMovePlan);
     optimizing_admission_accessors!(native_store_local, StoreLocal, NativeMovePlan);
-    optimizing_admission_accessors!(native_store_property, StoreProperty, NativeMovePlan);
+    optimizing_admission_accessors!(native_store_property, StoreProperty, NativePropertyPlan);
     optimizing_admission_accessors!(native_property, Property, NativePropertyPlan);
     optimizing_admission_accessors!(native_dispatch, Dispatch, NativeDispatchPlan);
     optimizing_admission_accessors!(native_region, Region, NativeRegionPlan);
