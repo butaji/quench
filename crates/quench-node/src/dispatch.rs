@@ -1094,6 +1094,8 @@ fn timers_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_DIAGNOSTICS_CHANNEL_SCOPE => crate::modules::diagnostics_channel::with_store_scope,
         CAP_DIAGNOSTICS_CHANNEL_RUN_STORES => crate::modules::diagnostics_channel::run_stores,
         CAP_DIAGNOSTICS_SCOPE_DISPOSE => crate::modules::diagnostics_channel::dispose_store_scope,
+        CAP_WEB_LOCKS_REQUEST => crate::modules::web_locks::request,
+        CAP_WEB_LOCKS_SETTLE => crate::modules::web_locks::settle,
         _ => return os_buffer_dispatch(cap),
     })
 }

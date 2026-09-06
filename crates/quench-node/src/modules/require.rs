@@ -2804,6 +2804,14 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 "exportChallenge",
                 crate::host::capability(crate::registry::SPEC_CRYPTO_CERTIFICATE_EXPORT_CHALLENGE),
             );
+            let generate_key_pair = execute::set_property(
+                crate::host::capability(crate::registry::SPEC_CRYPTO_GENERATE_KEY_PAIR),
+                crate::modules::util::PROMISIFY_CUSTOM_ARGS_KEY,
+                host_api::array(vec![
+                    Value::String("publicKey".into()),
+                    Value::String("privateKey".into()),
+                ]),
+            );
             let namespace = crate::host::namespace_object_from_pairs(vec![
                 (
                     "createSecretKey".into(),
@@ -2839,7 +2847,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 ),
                 (
                     "generateKeyPair".into(),
-                    crate::host::capability(crate::registry::SPEC_CRYPTO_GENERATE_KEY_PAIR),
+                    generate_key_pair,
                 ),
                 (
                     "generateKeySync".into(),

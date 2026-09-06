@@ -4601,6 +4601,15 @@ pub fn key_export(
                 }
             }
         }
+        if requested_type_name == "pkcs1"
+            && matches!(key_type(), Value::String(ref value) if value == "private")
+        {
+            if let Ok(rsa) = PKey::private_key_from_pem(&data).and_then(|pkey| pkey.rsa()) {
+                if let Ok(pem) = rsa.private_key_to_pem() {
+                    return Ok(Value::String(String::from_utf8_lossy(&pem).into_owned()));
+                }
+            }
+        }
         if requested_type_name == "sec1"
             && matches!(key_type(), Value::String(ref value) if value == "private")
         {
