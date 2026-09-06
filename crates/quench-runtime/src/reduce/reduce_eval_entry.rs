@@ -115,7 +115,7 @@ fn reduce_eval_program(
             statements,
         ));
     let local_slots = locals.clone();
-    let ops = reduce_eval_body(
+    let reduced = reduce_eval_body(
         statements,
         &mut facts,
         locals,
@@ -123,18 +123,24 @@ fn reduce_eval_program(
         behavior,
         directive_completion,
     )?;
-    Ok(finish_eval_reduction(facts, prefix, ops, local_slots))
+    Ok(finish_eval_reduction(facts, prefix, reduced, local_slots))
 }
 
 fn finish_eval_reduction(
     mut facts: ProgramDb,
     mut prefix: Vec<crate::ops::Op>,
-    mut ops: Vec<crate::ops::Op>,
+    mut reduced: ReducedStatementOps,
     local_slots: HashMap<String, u16>,
 ) -> ResidualProgram {
-    prefix.append(&mut ops);
+    prefix.append(&mut reduced.ops);
     facts.finish_reduction();
-    ResidualProgram::new(facts, prefix, None, local_slots)
+    ResidualProgram::with_frame_register_count(
+        facts,
+        prefix,
+        reduced.frame_register_count,
+        None,
+        local_slots,
+    )
 }
 
 fn reduce_eval_body(
@@ -144,7 +150,7 @@ fn reduce_eval_body(
     next_slot: u16,
     behavior: crate::reduce_support::EvalBehavior,
     directive_completion: Option<String>,
-) -> Result<Vec<crate::ops::Op>, Vec<String>> {
+) -> Result<ReducedStatementOps, Vec<String>> {
     reduce_statements_opt(
         statements,
         facts,
@@ -156,7 +162,6 @@ fn reduce_eval_body(
             directive_completion,
         },
     )
-    .map(|(ops, _)| ops)
 }
 
 fn eval_facts(analysis: &crate::semantic::Analysis, strict: bool) -> ProgramDb {
@@ -187,5 +192,24 @@ mod tests {
             &[],
         );
         assert!(program.is_ok(), "{program:?}");
+    }
+
+    #[test]
+    fn eval_freezes_reducer_owned_frame_width() {
+        let body = (0..96)
+            .map(|index| format!("var value{index} = {index};"))
+            .collect::<String>();
+        let source = format!("function wide(){{{body}}} external + 1");
+        let program = super::reduce_eval_source(
+            &source,
+            false,
+            true,
+            true,
+            &[("external".to_string(), 80)],
+            &[],
+        )
+        .expect("eval reduction");
+        let width = program.code().frame_register_count();
+        assert!((81..128).contains(&width), "unexpected eval width {width}");
     }
 }
