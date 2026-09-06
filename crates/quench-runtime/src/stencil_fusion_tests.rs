@@ -18,7 +18,7 @@ fn execute_case(
     plan: &BaselinePlan,
     pc: usize,
     values: [Value; 2],
-) -> (Completion, u64) {
+) -> (Completion, u64, u64) {
     let native = plan.native_local_binary_at(pc).expect("local binary plan");
     let selection = native.borrow().selection();
     let environment = crate::environment::Environment::new();
@@ -46,7 +46,12 @@ fn execute_case(
         environment,
     )
     .expect("local binary execution");
-    (completion, native.borrow().native_entry_count())
+    let native = native.borrow();
+    (
+        completion,
+        native.native_entry_count(),
+        native.local_read_count(),
+    )
 }
 
 fn exercise_constant_source_view(view: CodeView<'_>) -> bool {
@@ -63,7 +68,7 @@ fn exercise_constant_source_view(view: CodeView<'_>) -> bool {
         return false;
     };
     let numeric = execute_case(view, &plan, pc, [Value::Number(1.25), Value::Undefined]);
-    assert_eq!(numeric, (Completion::Return(Value::Number(3.75)), 1));
+    assert_eq!(numeric, (Completion::Return(Value::Number(3.75)), 1, 1));
     let hostile = execute_case(
         view,
         &plan,
@@ -72,7 +77,7 @@ fn exercise_constant_source_view(view: CodeView<'_>) -> bool {
     );
     assert_eq!(
         hostile,
-        (Completion::Return(Value::String("x2.5".into())), 1)
+        (Completion::Return(Value::String("x2.5".into())), 1, 2)
     );
     true
 }
@@ -84,10 +89,10 @@ fn exercise_source_view(view: CodeView<'_>) -> bool {
         return false;
     };
     let numeric = execute_case(view, &plan, pc, [Value::Number(1.25), Value::Number(2.5)]);
-    assert_eq!(numeric, (Completion::Return(Value::Number(3.75)), 1));
+    assert_eq!(numeric, (Completion::Return(Value::Number(3.75)), 1, 2));
     let storage = plan.native_storage_for_test();
     let warm = execute_case(view, &plan, pc, [Value::Number(-4.0), Value::Number(1.5)]);
-    assert_eq!(warm, (Completion::Return(Value::Number(-2.5)), 2));
+    assert_eq!(warm, (Completion::Return(Value::Number(-2.5)), 2, 4));
     assert_eq!(plan.native_storage_for_test(), storage);
     let hostile = execute_case(
         view,
@@ -95,7 +100,10 @@ fn exercise_source_view(view: CodeView<'_>) -> bool {
         pc,
         [Value::String("x".into()), Value::Number(2.0)],
     );
-    assert_eq!(hostile, (Completion::Return(Value::String("x2".into())), 2));
+    assert_eq!(
+        hostile,
+        (Completion::Return(Value::String("x2".into())), 2, 5)
+    );
     true
 }
 
@@ -113,14 +121,17 @@ fn exercise_repeated_source_view(view: CodeView<'_>) -> bool {
         return false;
     };
     let numeric = execute_case(view, &plan, pc, [Value::Number(2.25), Value::Undefined]);
-    assert_eq!(numeric, (Completion::Return(Value::Number(4.5)), 1));
+    assert_eq!(numeric, (Completion::Return(Value::Number(4.5)), 1, 1));
     let hostile = execute_case(
         view,
         &plan,
         pc,
         [Value::String("x".into()), Value::Undefined],
     );
-    assert_eq!(hostile, (Completion::Return(Value::String("xx".into())), 1));
+    assert_eq!(
+        hostile,
+        (Completion::Return(Value::String("xx".into())), 1, 2)
+    );
     true
 }
 
