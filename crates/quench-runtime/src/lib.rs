@@ -131,6 +131,7 @@ mod stencil_admission_budget;
 #[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
 mod stencil_add_tree_tests;
 mod stencil_cache;
+mod stencil_cfg;
 pub mod stencil_fact;
 pub mod stencil_lifecycle;
 mod stencil_layout;
