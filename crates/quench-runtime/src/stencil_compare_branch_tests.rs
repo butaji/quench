@@ -123,6 +123,32 @@ fn ordinary_source_compare_branch_fuses_dispatch_and_preserves_live_boolean() {
 }
 
 #[test]
+fn ordinary_source_identity_branch_uses_numeric_and_tagged_bodies() {
+    let source = "function f(a,b){if(a===b)return 11;return 22} f(1,1)";
+    let program = crate::reduce::reduce_source(source).expect("ordinary source lowers");
+    let mut checked = false;
+    crate::stencil_test_support::visit_code_views(program.code(), &mut |view| {
+        let Some(numeric) = execute_compare_branch(view, Value::Number(2.0), Value::Number(2.0))
+        else {
+            return;
+        };
+        assert_branch(numeric, 11.0, true, 1, 0);
+        let tagged = execute_compare_branch(view, Value::Boolean(true), Value::Boolean(true))
+            .expect("tagged identity body");
+        assert_branch(tagged, 11.0, true, 1, 0);
+        let string = execute_compare_branch(
+            view,
+            Value::String("same".into()),
+            Value::String("same".into()),
+        )
+        .expect("string identity fallback");
+        assert_branch(string, 11.0, true, 0, 1);
+        checked = true;
+    });
+    assert!(checked, "strict equality must admit compare then branch");
+}
+
+#[test]
 fn warm_compare_branch_reuses_code_and_removes_truthiness_dispatch() {
     let source = "function f(a,b){if(a<b)return 11;return 22} f(1,2)";
     let program = crate::reduce::reduce_source(source).expect("ordinary source lowers");
