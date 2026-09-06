@@ -359,15 +359,15 @@ fn generated_abi_catalog(declarations: &[RegionDeclaration]) -> String {
     let rows = variants
         .into_iter()
         .map(|abi| {
-            let (name, context, priority, fields) = abi_contract_fields(abi);
-            format!("    {name} => {{ context: {context}, priority: {priority}, {fields} }}")
+            let (name, context, fields) = abi_contract_fields(abi);
+            format!("    {name} => {{ context: {context}, {fields} }}")
         })
         .collect::<Vec<_>>()
         .join(",\n");
     format!("region_abi_catalog! {{\n{rows},\n}}")
 }
 
-fn abi_contract_fields(abi: DeclAbi) -> (&'static str, bool, u8, &'static str) {
+fn abi_contract_fields(abi: DeclAbi) -> (&'static str, bool, &'static str) {
     match abi {
         DeclAbi::Scalar
         | DeclAbi::TaggedWord
@@ -379,43 +379,36 @@ fn abi_contract_fields(abi: DeclAbi) -> (&'static str, bool, u8, &'static str) {
         | DeclAbi::ScalarU32 => (
             abi_variant_name(abi),
             false,
-            0,
             "context_words: 0, preserves_vm_registers: true, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, root_materialization_required: false",
         ),
         DeclAbi::Bridge => (
             "Bridge",
             true,
-            1,
             "context_words: 1, preserves_vm_registers: false, may_call_helper: true, interruptible_backedge: false, hardware_clobber_mask: 0xffff, hardware_gpr_clobber_mask: 0xffff, live_out_mask: 0xffff, root_materialization_required: true",
         ),
         DeclAbi::ArrayKernel => (
             "ArrayKernel",
             true,
-            2,
             "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0x0003, hardware_gpr_clobber_mask: 0x001f, live_out_mask: 1, root_materialization_required: false",
         ),
         DeclAbi::ArrayNumericLoop => (
             "ArrayNumericLoop",
             true,
-            3,
             "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x0007, hardware_gpr_clobber_mask: 0x007f, live_out_mask: 0x0003, root_materialization_required: false",
         ),
         DeclAbi::CompareBranch => (
             "CompareBranch",
             true,
-            3,
             "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0x0003, hardware_gpr_clobber_mask: 0x0007, live_out_mask: 0x0003, root_materialization_required: false",
         ),
         DeclAbi::PropertyGuard => (
             "PropertyGuard",
             true,
-            2,
             "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0x000f, live_out_mask: 1, root_materialization_required: false",
         ),
         DeclAbi::PropertyWriteGuard => (
             "PropertyWriteGuard",
             true,
-            2,
             "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0x000f, live_out_mask: 0, root_materialization_required: false",
         ),
     }
