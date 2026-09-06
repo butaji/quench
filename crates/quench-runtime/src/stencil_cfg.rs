@@ -17,15 +17,37 @@ pub(crate) struct ControlFlowFacts {
     malformed_edges: BTreeSet<usize>,
 }
 
+#[derive(Clone, Copy)]
+struct Successors {
+    pcs: [usize; 2],
+    len: u8,
+    malformed: bool,
+}
+
+impl Successors {
+    const fn none() -> Self {
+        Self {
+            pcs: [0; 2],
+            len: 0,
+            malformed: false,
+        }
+    }
+
+    fn iter(&self) -> impl Iterator<Item = usize> + '_ {
+        self.pcs[..usize::from(self.len)].iter().copied()
+    }
+}
+
 impl ControlFlowFacts {
     pub(crate) fn new(
         entries: &[BaselineEntry],
         operand_windows: &[Option<&[u16]>],
     ) -> Self {
+        let successors = successor_table(entries);
         Self {
-            live_out: register_liveness(entries, operand_windows),
-            predecessors: predecessor_pcs(entries),
-            malformed_edges: malformed_edges(entries),
+            live_out: register_liveness(entries, operand_windows, &successors),
+            predecessors: predecessor_pcs(entries.len(), &successors),
+            malformed_edges: malformed_edges(&successors),
         }
     }
 
@@ -47,24 +69,33 @@ impl ControlFlowFacts {
     }
 }
 
-pub(crate) fn successor_pcs(entries: &[BaselineEntry], pc: usize) -> Vec<usize> {
+fn successors(entries: &[BaselineEntry], pc: usize) -> Successors {
     let Some(entry) = entries.get(pc) else {
-        return Vec::new();
+        return Successors::none();
     };
-    match entry.control {
-        crate::ir::ControlOperands::Next if pc + 1 < entries.len() => vec![pc + 1],
+    let pcs = match entry.control {
+        crate::ir::ControlOperands::Next if pc + 1 < entries.len() => [pc + 1, 0],
         crate::ir::ControlOperands::Branch { target, .. } => {
-            branch_successors(entries.len(), pc, usize::from(target))
+            return branch_successors(entries.len(), pc, usize::from(target));
         }
-        crate::ir::ControlOperands::Jump { target } => vec![usize::from(target)],
-        _ => Vec::new(),
+        crate::ir::ControlOperands::Jump { target } => [usize::from(target), 0],
+        _ => return Successors::none(),
+    };
+    Successors {
+        pcs,
+        len: 1,
+        malformed: pcs[0] >= entries.len(),
     }
 }
 
-fn predecessor_pcs(entries: &[BaselineEntry]) -> Vec<Vec<usize>> {
-    let mut predecessors = vec![Vec::new(); entries.len()];
-    for pc in 0..entries.len() {
-        for successor in successor_pcs(entries, pc) {
+fn successor_table(entries: &[BaselineEntry]) -> Vec<Successors> {
+    (0..entries.len()).map(|pc| successors(entries, pc)).collect()
+}
+
+fn predecessor_pcs(len: usize, successors: &[Successors]) -> Vec<Vec<usize>> {
+    let mut predecessors = vec![Vec::new(); len];
+    for (pc, edges) in successors.iter().enumerate() {
+        for successor in edges.iter() {
             if let Some(incoming) = predecessors.get_mut(successor) {
                 incoming.push(pc);
             }
@@ -73,31 +104,33 @@ fn predecessor_pcs(entries: &[BaselineEntry]) -> Vec<Vec<usize>> {
     predecessors
 }
 
-fn malformed_edges(entries: &[BaselineEntry]) -> BTreeSet<usize> {
-    (0..entries.len())
-        .filter(|pc| {
-            successor_pcs(entries, *pc)
-                .iter()
-                .any(|successor| *successor >= entries.len())
-        })
+fn malformed_edges(successors: &[Successors]) -> BTreeSet<usize> {
+    successors
+        .iter()
+        .enumerate()
+        .filter_map(|(pc, edges)| edges.malformed.then_some(pc))
         .collect()
 }
 
-fn branch_successors(len: usize, pc: usize, target: usize) -> Vec<usize> {
-    let mut successors = vec![target];
-    if pc + 1 < len && target != pc + 1 {
-        successors.push(pc + 1);
+fn branch_successors(len: usize, pc: usize, target: usize) -> Successors {
+    let fallthrough = pc.saturating_add(1);
+    let has_fallthrough = fallthrough < len && target != fallthrough;
+    Successors {
+        pcs: [target, fallthrough],
+        len: if has_fallthrough { 2 } else { 1 },
+        malformed: target >= len,
     }
-    successors
 }
 
-pub(crate) fn register_liveness(
+fn register_liveness(
     entries: &[BaselineEntry],
     operand_windows: &[Option<&[u16]>],
+    successors: &[Successors],
 ) -> Vec<BTreeSet<u16>> {
     bounded_register_liveness(
         entries,
         operand_windows,
+        successors,
         entries.len().saturating_mul(2).saturating_add(1),
     )
 }
@@ -105,13 +138,21 @@ pub(crate) fn register_liveness(
 fn bounded_register_liveness(
     entries: &[BaselineEntry],
     operand_windows: &[Option<&[u16]>],
+    successors: &[Successors],
     round_limit: usize,
 ) -> Vec<BTreeSet<u16>> {
     let conservative = all_register_uses(entries, operand_windows);
     let mut live_in = vec![BTreeSet::new(); entries.len()];
     let mut live_out = live_in.clone();
     for _ in 0..round_limit {
-        if !liveness_round(entries, operand_windows, &conservative, &mut live_in, &mut live_out) {
+        if !liveness_round(
+            entries,
+            operand_windows,
+            successors,
+            &conservative,
+            &mut live_in,
+            &mut live_out,
+        ) {
             return live_out;
         }
     }
@@ -121,13 +162,14 @@ fn bounded_register_liveness(
 fn liveness_round(
     entries: &[BaselineEntry],
     windows: &[Option<&[u16]>],
+    successors: &[Successors],
     conservative: &BTreeSet<u16>,
     live_in: &mut [BTreeSet<u16>],
     live_out: &mut [BTreeSet<u16>],
 ) -> bool {
     let mut changed = false;
     for pc in (0..entries.len()).rev() {
-        let output = successor_input_union(entries, pc, live_in);
+        let output = successor_input_union(&successors[pc], live_in);
         let flow = entries[pc].instruction.register_flow();
         let input = live_input(&output, flow, windows.get(pc).copied().flatten(), conservative);
         changed |= live_out[pc] != output || live_in[pc] != input;
@@ -138,12 +180,11 @@ fn liveness_round(
 }
 
 fn successor_input_union(
-    entries: &[BaselineEntry],
-    pc: usize,
+    successors: &Successors,
     live_in: &[BTreeSet<u16>],
 ) -> BTreeSet<u16> {
     let mut output = BTreeSet::new();
-    for successor in successor_pcs(entries, pc) {
+    for successor in successors.iter() {
         if let Some(input) = live_in.get(successor) {
             output.extend(input.iter().copied());
         }
@@ -211,7 +252,8 @@ mod tests {
             crate::ir::Instruction::ret(1),
             crate::ir::Instruction::ret(2),
         ]);
-        let live = register_liveness(&entries, &[None, None, None]);
+        let successors = successor_table(&entries);
+        let live = register_liveness(&entries, &[None, None, None], &successors);
         assert_eq!(live[0], BTreeSet::from([1, 2]));
     }
 
@@ -221,7 +263,8 @@ mod tests {
             crate::ir::Instruction::move_(2, 1),
             crate::ir::Instruction::ret(2),
         ]);
-        let live = bounded_register_liveness(&entries, &[None, None], 0);
+        let successors = successor_table(&entries);
+        let live = bounded_register_liveness(&entries, &[None, None], &successors, 0);
         assert_eq!(live, vec![BTreeSet::from([1, 2]); 2]);
     }
 
@@ -249,7 +292,7 @@ mod tests {
             crate::ir::Instruction::jump_if_false(0, 1),
             crate::ir::Instruction::ret(0),
         ]);
-        assert_eq!(successor_pcs(&entries, 0), [1]);
+        assert_eq!(successors(&entries, 0).iter().collect::<Vec<_>>(), [1]);
     }
 
     #[test]
