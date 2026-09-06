@@ -5,11 +5,11 @@
 //! partially rendered region.
 
 use crate::stencil_fact::{PatchValues, Stencil};
-use crate::stencil_patch::{apply_holes, PatchError};
-use crate::stencil_region_layout::compose_selected_region;
-use crate::stencil_select::RenderedRegionCache;
 #[cfg(test)]
 use crate::stencil_layout::FixupKind;
+use crate::stencil_patch::{apply_holes, PatchError};
+use crate::stencil_region_layout::{compose_selected_controlled_region, compose_selected_region};
+use crate::stencil_select::RenderedRegionCache;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -533,26 +533,71 @@ impl SharedStencilSlab {
         view: crate::stencil_select::PhysicalStencilView,
         values: &PatchValues<'_, N>,
     ) -> Result<usize, ArenaError> {
+        self.render_physical_view_with_control(cache, view, values, None)
+    }
+
+    pub(crate) fn render_controlled_physical_view_or_get<const N: usize>(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        view: crate::stencil_select::PhysicalStencilView,
+        values: &PatchValues<'_, N>,
+        control: &crate::stencil_cfg::RegionControlPlan,
+    ) -> Result<usize, ArenaError> {
+        self.render_physical_view_with_control(cache, view, values, Some(control))
+    }
+
+    fn render_physical_view_with_control<const N: usize>(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        view: crate::stencil_select::PhysicalStencilView,
+        values: &PatchValues<'_, N>,
+        control: Option<&crate::stencil_cfg::RegionControlPlan>,
+    ) -> Result<usize, ArenaError> {
         let selected = crate::stencil_select::select_physical_for_abi(view.key, view.abi)
             .ok_or(ArenaError::ProtectionFailed)?;
         if !view.contract().abi_is_well_formed() || !view.matches(&selected) {
             return Err(ArenaError::ProtectionFailed);
         }
         let signature = physical_cache_signature(view, values);
+        if let Some(address) = self.render_existing_physical(cache, view, values, control)? {
+            return Ok(address);
+        }
+        self.allocate_physical(cache, view, values, control, signature)
+    }
+
+    fn render_existing_physical<const N: usize>(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        view: crate::stencil_select::PhysicalStencilView,
+        values: &PatchValues<'_, N>,
+        control: Option<&crate::stencil_cfg::RegionControlPlan>,
+    ) -> Result<Option<usize>, ArenaError> {
+        let signature = physical_cache_signature(view, values);
         for slab in &mut self.slabs {
             if self.lease_state.is_retired(slab.id()) {
                 continue;
             }
-            match slab.render_selected_physical_view(&mut self.cache, view, values) {
+            match render_arena_physical(slab, &mut self.cache, view, values, control) {
                 Ok(address) => {
                     let owner = slab.id();
                     cache.insert_owned(view.key, signature, address, owner);
-                    return Ok(address);
+                    return Ok(Some(address));
                 }
                 Err(ArenaError::ProtectionFailed | ArenaError::Exhausted) => continue,
                 Err(error) => return Err(error),
             }
         }
+        Ok(None)
+    }
+
+    fn allocate_physical<const N: usize>(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        view: crate::stencil_select::PhysicalStencilView,
+        values: &PatchValues<'_, N>,
+        control: Option<&crate::stencil_cfg::RegionControlPlan>,
+        signature: u64,
+    ) -> Result<usize, ArenaError> {
         if !self.reclaim_for(self.slab_capacity, cache) {
             return Err(ArenaError::Exhausted);
         }
@@ -566,7 +611,8 @@ impl SharedStencilSlab {
                 return Err(error);
             }
         };
-        let address = match slab.render_selected_physical_view(&mut self.cache, view, values) {
+        let address = match render_arena_physical(&mut slab, &mut self.cache, view, values, control)
+        {
             Ok(address) => address,
             Err(error) => {
                 release_global_bytes(self.slab_capacity);
@@ -1011,6 +1057,19 @@ impl std::fmt::Debug for SharedStencilSlab {
 impl Drop for SharedStencilSlab {
     fn drop(&mut self) {
         release_global_bytes(self.total_capacity());
+    }
+}
+
+fn render_arena_physical<const N: usize>(
+    arena: &mut StencilArena,
+    cache: &mut RenderedRegionCache,
+    view: crate::stencil_select::PhysicalStencilView,
+    values: &PatchValues<'_, N>,
+    control: Option<&crate::stencil_cfg::RegionControlPlan>,
+) -> Result<usize, ArenaError> {
+    match control {
+        Some(control) => arena.render_selected_controlled_view(cache, view, values, control),
+        None => arena.render_selected_physical_view(cache, view, values),
     }
 }
 
@@ -1567,6 +1626,26 @@ impl StencilArena {
         view: crate::stencil_select::PhysicalStencilView,
         values: &PatchValues<'_, N>,
     ) -> Result<usize, ArenaError> {
+        self.render_selected_physical_view_with_control(cache, view, values, None)
+    }
+
+    fn render_selected_controlled_view<const N: usize>(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        view: crate::stencil_select::PhysicalStencilView,
+        values: &PatchValues<'_, N>,
+        control: &crate::stencil_cfg::RegionControlPlan,
+    ) -> Result<usize, ArenaError> {
+        self.render_selected_physical_view_with_control(cache, view, values, Some(control))
+    }
+
+    fn render_selected_physical_view_with_control<const N: usize>(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        view: crate::stencil_select::PhysicalStencilView,
+        values: &PatchValues<'_, N>,
+        control: Option<&crate::stencil_cfg::RegionControlPlan>,
+    ) -> Result<usize, ArenaError> {
         if view.fallthrough.is_none() {
             return self.render_selected_view(cache, view, values);
         }
@@ -1575,8 +1654,11 @@ impl StencilArena {
             return Ok(address);
         }
         let mut bytes = Vec::new();
-        compose_selected_region(view, values, &mut bytes)
-            .map_err(|_| ArenaError::ProtectionFailed)?;
+        match control {
+            Some(control) => compose_selected_controlled_region(view, control, values, &mut bytes),
+            None => compose_selected_region(view, values, &mut bytes),
+        }
+        .map_err(|_| ArenaError::ProtectionFailed)?;
         self.publish_composed(cache, view.key, signature, &bytes, view.abi)
     }
 
@@ -1592,6 +1674,21 @@ impl StencilArena {
             return Err(ArenaError::ProtectionFailed);
         }
         self.render_selected_physical_view(cache, view, values)
+    }
+
+    pub(crate) fn render_controlled_physical_view_or_get<const N: usize>(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        view: crate::stencil_select::PhysicalStencilView,
+        values: &PatchValues<'_, N>,
+        control: &crate::stencil_cfg::RegionControlPlan,
+    ) -> Result<usize, ArenaError> {
+        let selected = crate::stencil_select::select_physical_for_abi(view.key, view.abi)
+            .ok_or(ArenaError::ProtectionFailed)?;
+        if !view.contract().abi_is_well_formed() || !view.matches(&selected) {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        self.render_selected_controlled_view(cache, view, values, control)
     }
 
     fn record_abi(&self, address: usize, abi: crate::stencil_select::RegionAbi) {
