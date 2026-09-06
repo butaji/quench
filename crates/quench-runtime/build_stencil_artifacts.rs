@@ -41,6 +41,13 @@ struct ExtractedObject {
     bytes: Vec<u8>,
     fallthrough: Option<Vec<u8>>,
     relocations: Vec<ExtractedRelocation>,
+    holes: Vec<ExtractedHole>,
+}
+
+#[derive(Clone, Copy)]
+struct ExtractedHole {
+    offset: u16,
+    kind: &'static str,
 }
 
 #[derive(Clone, Copy)]
@@ -82,6 +89,7 @@ fn expected_relocation_index(
 struct ParsedFragment {
     bytes: Vec<u8>,
     relocations: Vec<ExtractedRelocation>,
+    holes: Vec<ExtractedHole>,
 }
 
 impl Drop for OwnedDirectory {
@@ -225,20 +233,23 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
                 continue;
             }
             let source = super::build_stencil_templates::assembly_source(recipe);
+            let expected_holes = expected_holes(declaration, &target);
+            let parsed = compile_assembly_fragment(
+                &root.path,
+                &target,
+                &compiler,
+                &flags,
+                &rustflags,
+                declaration.name,
+                &source,
+                &[],
+                &expected_holes,
+            );
             ExtractedObject {
-                bytes: compile_assembly_fragment(
-                    &root.path,
-                    &target,
-                    &compiler,
-                    &flags,
-                    &rustflags,
-                    declaration.name,
-                    &source,
-                    &[],
-                )
-                .bytes,
+                bytes: parsed.bytes,
                 fallthrough: None,
-                relocations: Vec::new(),
+                relocations: parsed.relocations,
+                holes: parsed.holes,
             }
         } else {
             let Some(recipe) = super::rust_leaf_recipe(declaration) else {
@@ -256,6 +267,7 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
                 ),
                 fallthrough: None,
                 relocations: Vec::new(),
+                holes: Vec::new(),
             }
         };
         let fingerprint =
@@ -333,6 +345,7 @@ fn compile_fragment_pair(
             bytes: Vec::new(),
             fallthrough: None,
             relocations: Vec::new(),
+            holes: Vec::new(),
         };
     }
     let expected = declaration
@@ -356,6 +369,7 @@ fn compile_fragment_pair(
         "fallthrough_head",
         super::build_stencil_templates::aarch64_head(),
         &expected,
+        &[],
     );
     let tail = compile_assembly_fragment(
         root,
@@ -366,11 +380,13 @@ fn compile_fragment_pair(
         "fallthrough_tail",
         super::build_stencil_templates::aarch64_tail(),
         &[],
+        &[],
     );
     ExtractedObject {
         bytes: head.bytes,
         fallthrough: Some(tail.bytes),
         relocations: head.relocations,
+        holes: head.holes,
     }
 }
 
@@ -383,6 +399,7 @@ fn compile_assembly_fragment(
     name: &str,
     source_text: &str,
     expected_relocations: &[ExpectedRelocation],
+    expected_holes: &[ExtractedHole],
 ) -> ParsedFragment {
     let source = root.join(format!("{name}.rs"));
     let object = root.join(format!("{name}.o"));
@@ -399,6 +416,7 @@ fn compile_assembly_fragment(
         &format!("q_{name}"),
         &format!("q_{name}_end"),
         expected_relocations,
+        expected_holes,
     )
 }
 
@@ -489,6 +507,7 @@ fn parse_object_range(
     name: &str,
     end_name: &str,
     expected_relocations: &[ExpectedRelocation],
+    expected_holes: &[ExtractedHole],
 ) -> ParsedFragment {
     let data = fs::read(path).expect("read Rust fragment object");
     let file = object::File::parse(&*data).expect("parse Rust fragment object");
@@ -528,9 +547,71 @@ fn parse_object_range(
         assert_eq!(output.len() % 4, 0, "AArch64 fragment bounds are invalid");
     }
     assert_no_other_global_text_symbols(&file, section_index, name);
+    validate_fragment_holes(
+        &file,
+        section_index,
+        start_address,
+        name,
+        &output,
+        expected_holes,
+    );
+    let mut holes = expected_holes.to_vec();
+    holes.extend(relocations.iter().map(|relocation| ExtractedHole {
+        offset: relocation.offset,
+        kind: relocation.kind,
+    }));
+    holes.sort_by_key(|hole| hole.offset);
     ParsedFragment {
         bytes: output,
         relocations,
+        holes,
+    }
+}
+
+fn expected_holes(declaration: &RegionDeclaration, target: &str) -> Vec<ExtractedHole> {
+    let holes = if target.starts_with("aarch64") {
+        declaration.aarch64_holes
+    } else {
+        declaration.holes
+    };
+    holes
+        .iter()
+        .map(|(offset, width, kind)| {
+            assert_eq!(
+                (*width, *kind),
+                (8, "Literal64"),
+                "unsupported assembly hole"
+            );
+            ExtractedHole {
+                offset: *offset,
+                kind: *kind,
+            }
+        })
+        .collect()
+}
+
+fn validate_fragment_holes(
+    file: &object::File<'_>,
+    section: object::SectionIndex,
+    start: u64,
+    entry_name: &str,
+    bytes: &[u8],
+    holes: &[ExtractedHole],
+) {
+    for (index, hole) in holes.iter().enumerate() {
+        let symbol = format!("{}_hole_{index}", entry_name.trim_start_matches('_'));
+        let (hole_section, address) = find_text_symbol(file, &symbol);
+        assert_eq!(hole_section, Some(section), "literal hole crosses sections");
+        assert_eq!(
+            address.checked_sub(start),
+            Some(u64::from(hole.offset)),
+            "literal hole offset drift"
+        );
+        let offset = usize::from(hole.offset);
+        let slot = bytes
+            .get(offset..offset + 8)
+            .expect("literal hole exceeds fragment bounds");
+        assert_eq!(slot, &[0; 8], "literal hole is not zeroed");
     }
 }
 
@@ -615,6 +696,7 @@ fn validate_fragment_relocations(
             consumed.into_iter().all(|matched| matched),
             "{context} missing relocation"
         );
+        records.sort_by_key(|relocation| relocation.offset);
         return records;
     }
     let text_index = file
@@ -682,6 +764,7 @@ fn validate_fragment_relocations(
         consumed.into_iter().all(|matched| matched),
         "{context} missing relocation"
     );
+    records.sort_by_key(|relocation| relocation.offset);
     records
 }
 
@@ -845,7 +928,7 @@ fn render_artifact(
         declaration.name == "fallthrough",
         super::target_template_calls_helper(declaration),
         relocation_expr(extracted),
-        holes_expr(declaration, target, extracted.fallthrough.is_some()),
+        holes_expr(extracted),
         extracted.fallthrough.as_ref().map_or("None".to_owned(), |_| {
             format!("Some(crate::stencil_fact::Stencil {{ bytes: FALLTHROUGH_{identifier}, holes: &[] }})")
         }),
@@ -882,18 +965,13 @@ fn fallthrough_offset(declaration: &RegionDeclaration, target: &str) -> u16 {
         .map_or(0, |(offset, _, _)| *offset)
 }
 
-fn holes_expr(declaration: &RegionDeclaration, target: &str, composable: bool) -> String {
-    if !composable {
-        return "&[]".to_owned();
-    }
-    let holes = if target.starts_with("aarch64") {
-        declaration.aarch64_holes
-    } else {
-        declaration.holes
-    };
-    let values = holes
+fn holes_expr(extracted: &ExtractedObject) -> String {
+    let values = extracted
+        .holes
         .iter()
-        .map(|(offset, _width, kind)| {
+        .map(|hole| {
+            let offset = hole.offset;
+            let kind = hole.kind;
             format!(
                 "crate::stencil_fact::Hole {{ offset: {offset}, kind: crate::stencil_fact::HoleKind::{kind} }}"
             )
@@ -981,6 +1059,10 @@ fn artifact_fingerprint(
         hash_bytes(&mut hash, relocation.kind.as_bytes());
         hash_bytes(&mut hash, relocation.target.as_bytes());
         hash_bytes(&mut hash, &relocation.addend.to_le_bytes());
+    }
+    for hole in &extracted.holes {
+        hash_bytes(&mut hash, &hole.offset.to_le_bytes());
+        hash_bytes(&mut hash, hole.kind.as_bytes());
     }
     format!("fnv64-{hash:016x}")
 }
@@ -1071,6 +1153,7 @@ mod tests {
             bytes: bytes.to_vec(),
             fallthrough: None,
             relocations: Vec::new(),
+            holes: Vec::new(),
         }
     }
 
@@ -1170,5 +1253,23 @@ mod tests {
             artifact_fingerprint(&base, "aarch64-test", "build", &extracted(&[1, 3]));
         assert_ne!(identity, entry_identity);
         assert_ne!(identity, byte_identity);
+    }
+
+    #[test]
+    fn artifact_identity_and_rendering_cover_verified_holes() {
+        static ENTRY_ZERO: [u32; 1] = [0];
+        let declaration = declaration(&ENTRY_ZERO);
+        let plain = extracted(&[1, 2, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let mut patched = extracted(&plain.bytes);
+        patched.holes.push(ExtractedHole {
+            offset: 2,
+            kind: "Literal64",
+        });
+        let plain_id = artifact_fingerprint(&declaration, "aarch64-test", "build", &plain);
+        let patched_id = artifact_fingerprint(&declaration, "aarch64-test", "build", &patched);
+        assert_ne!(plain_id, patched_id);
+        assert_eq!(holes_expr(&plain), "&[]");
+        assert!(holes_expr(&patched).contains("offset: 2"));
+        assert!(holes_expr(&patched).contains("HoleKind::Literal64"));
     }
 }
