@@ -62,6 +62,24 @@ impl RegisterFlow {
     pub const fn store(source: Register) -> Self {
         Self { uses: [Some(source), None, None], definition: None, complete: true }
     }
+
+    /// Highest VM register referenced by this canonical operand view.
+    /// Structured residuals keep `complete == false`; their physical handler
+    /// remains conservative and may use compact operand words directly.
+    pub const fn highest_register(self) -> Option<Register> {
+        let mut highest = self.definition;
+        let mut index = 0;
+        while index < self.uses.len() {
+            if let Some(register) = self.uses[index] {
+                highest = match highest {
+                    Some(current) if current >= register => Some(current),
+                    _ => Some(register),
+                };
+            }
+            index += 1;
+        }
+        highest
+    }
 }
 
 /// Uniform signature for generated compact dispatch handlers.
