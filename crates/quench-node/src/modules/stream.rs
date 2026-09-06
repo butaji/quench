@@ -16,8 +16,8 @@ use crate::registry::{
     SPEC_STREAM_FINISHED_CLEANUP, SPEC_STREAM_FINISHED_EVENT, SPEC_STREAM_IS_DISTURBED,
     SPEC_STREAM_IS_ERRORED, SPEC_STREAM_IS_READABLE, SPEC_STREAM_IS_WRITABLE, SPEC_STREAM_PIPELINE,
     SPEC_STREAM_PROMISES_CALLBACK, SPEC_STREAM_PROMISES_FINISHED, SPEC_STREAM_PROMISES_PIPELINE,
-    SPEC_STREAM_READABLE, SPEC_STREAM_TRANSFORM, SPEC_STREAM_WEB_PIPELINE_COMPLETE,
-    SPEC_STREAM_WEB_PIPELINE_ERROR, SPEC_STREAM_WRITABLE,
+    SPEC_STREAM_READABLE, SPEC_STREAM_READABLE_BUFFER, SPEC_STREAM_TRANSFORM,
+    SPEC_STREAM_WEB_PIPELINE_COMPLETE, SPEC_STREAM_WEB_PIPELINE_ERROR, SPEC_STREAM_WRITABLE,
     SPEC_STREAM_WRITABLE_WRITE_ADAPTER,
 };
 
@@ -1444,11 +1444,30 @@ pub fn writable_write_adapter(
     if byte_view && matches!(write_args.get(1), Some(Value::String(_))) {
         write_args[1] = Value::Undefined;
     }
-    execute::call(
-        original,
-        receiver.unwrap_or(&Value::Undefined),
-        &write_args,
-    )
+    execute::call(original, receiver.unwrap_or(&Value::Undefined), &write_args)
+}
+
+/// Derive Node's non-enumerable `readableBuffer` inspection view from the
+/// stream prelude's canonical unread chunk sequence. Returning a snapshot
+/// keeps inspection from mutating the stream state or creating a second
+/// buffering representation.
+pub fn readable_buffer(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Ok(Value::Undefined);
+    };
+    let state = execute::get_property(receiver, "_readableState");
+    let buffer = execute::get_property(&state, "buffer");
+    let Value::Array(ref array) = buffer else {
+        return Ok(host_api::array(Vec::new()));
+    };
+    let values = (0..array.logical_len())
+        .map(|index| execute::get_property(&buffer, &index.to_string()))
+        .collect();
+    Ok(host_api::array(values))
 }
 
 pub fn build(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
@@ -1528,6 +1547,21 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
             )
         });
         let _ = execute::set_property_in_place(&prototype, "write", adapter);
+    }
+    let readable = execute::get_property(&module, "Readable");
+    let readable_prototype = execute::get_property(&readable, "prototype");
+    let readable_buffer = host_api::object(vec![
+        (
+            "get".into(),
+            crate::host::capability(SPEC_STREAM_READABLE_BUFFER),
+        ),
+        ("enumerable".into(), Value::Boolean(false)),
+        ("configurable".into(), Value::Boolean(false)),
+    ]);
+    if let Ok(updated_prototype) =
+        execute::define_property(readable_prototype, "readableBuffer", readable_buffer)
+    {
+        let _ = execute::set_property_in_place(&readable, "prototype", updated_prototype);
     }
     if let Ok(compose) = quench_runtime::execute::get_property_result(&module, "compose") {
         state.borrow_mut().stream_compose_impl = Some(compose);
