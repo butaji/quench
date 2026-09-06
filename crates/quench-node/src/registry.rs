@@ -602,6 +602,7 @@ node_api! {
     (SPEC_INTERNAL_CRYPTO_EC_KEY_PAIR_GEN_JOB_RUN, CAP_INTERNAL_CRYPTO_EC_KEY_PAIR_GEN_JOB_RUN, "internalBinding(crypto):EcKeyPairGenJob.run", 0x2238),
     (SPEC_INTERNAL_CRYPTO_AES_CIPHER_JOB_CONSTRUCT, CAP_INTERNAL_CRYPTO_AES_CIPHER_JOB_CONSTRUCT, "internalBinding(crypto):AESCipherJob", 0x2239),
     (SPEC_INTERNAL_CRYPTO_AES_CIPHER_JOB_RUN, CAP_INTERNAL_CRYPTO_AES_CIPHER_JOB_RUN, "internalBinding(crypto):AESCipherJob.run", 0x223A),
+    (SPEC_INTERNAL_CRYPTO_JOB_COMPLETE, CAP_INTERNAL_CRYPTO_JOB_COMPLETE, "internalBinding(crypto):CryptoJob.complete", 0x223B),
 }
 pub const SPEC_OS_GET_PRIORITY: NodeSpec = NodeSpec::new("os:getPriority", 0x0736);
 pub const SPEC_OS_SET_PRIORITY: NodeSpec = NodeSpec::new("os:setPriority", 0x0737);
