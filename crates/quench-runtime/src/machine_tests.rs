@@ -2450,8 +2450,8 @@ fn native_add_chain_executes_two_ops_with_one_entry() {
     let used = plan.arena.as_ref().expect("rendered chain").used();
     let view = crate::stencil_select::select_physical(crate::stencil_select::add_chain_region_key())
         .expect("selected chain");
-    let (tail, _) = view.fallthrough.expect("declared native successor");
-    assert_eq!(used, view.stencil.bytes.len() + tail.bytes.len());
+    let tail = view.fallthrough.expect("declared native successor");
+    assert_eq!(used, view.stencil.bytes.len() + tail.stencil.bytes.len());
     assert_eq!(plan.execute(-2.0, 3.0, 5.0), Ok(6.0));
     assert_eq!(plan.arena.as_ref().expect("cached chain").used(), used);
 }
