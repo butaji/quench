@@ -134,7 +134,9 @@ fn artifact_fallthrough_matches(
     let is_relative = |relocation: &&PhysicalRelocation| {
         matches!(
             relocation.kind,
-            crate::stencil_fact::HoleKind::Branch26 | crate::stencil_fact::HoleKind::Rel32
+            crate::stencil_fact::HoleKind::Branch26
+                | crate::stencil_fact::HoleKind::CondBranch19
+                | crate::stencil_fact::HoleKind::Rel32
         )
     };
     let relative_count = artifact.relocations.iter().filter(is_relative).count();
