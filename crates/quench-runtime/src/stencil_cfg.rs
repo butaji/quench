@@ -90,6 +90,30 @@ impl RegionControlPlan {
             && self.blocks_match_edges()
     }
 
+    pub(crate) fn permits_operation_transfer(
+        &self,
+        operations: &[crate::ir::Opcode],
+        from_offset: usize,
+        to_offset: usize,
+    ) -> bool {
+        let Some(opcode) = operations.get(from_offset) else {
+            return false;
+        };
+        let Some(from) = self.start.checked_add(from_offset) else {
+            return false;
+        };
+        let Some(to) = self.start.checked_add(to_offset) else {
+            return false;
+        };
+        match opcode.control_flow() {
+            crate::facts::ControlFlow::Next => to_offset == from_offset.saturating_add(1),
+            crate::facts::ControlFlow::Branch | crate::facts::ControlFlow::Jump => {
+                self.edges().contains(&RegionEdge { from, to })
+            }
+            crate::facts::ControlFlow::Return | crate::facts::ControlFlow::Loop => false,
+        }
+    }
+
     fn operation_edges_match(&self, pc: usize, control: crate::facts::ControlFlow) -> bool {
         let edges: Vec<_> = self.edges().iter().filter(|edge| edge.from == pc).collect();
         match control {
