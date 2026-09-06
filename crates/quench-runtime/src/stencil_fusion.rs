@@ -6,6 +6,23 @@
 use crate::machine::NativeBinaryPlan;
 use crate::stencil_plan::{LocalBinarySelection, LocalNumericInputs};
 
+pub(crate) struct LocalNumericExecution {
+    pub output: crate::ir::Register,
+    pub value: f64,
+    pub span: usize,
+    pub discarded: [Option<crate::ir::Register>; 2],
+}
+
+impl LocalNumericExecution {
+    pub(crate) fn commit(self, registers: &mut crate::register_file::RegisterFile) -> usize {
+        for register in self.discarded.into_iter().flatten() {
+            registers.clear_word(usize::from(register));
+        }
+        registers.write_number(usize::from(self.output), self.value);
+        self.span
+    }
+}
+
 pub(crate) struct NativeLocalBinaryPlan {
     selection: LocalBinarySelection,
     binary: NativeBinaryPlan,
@@ -55,14 +72,15 @@ impl NativeLocalBinaryPlan {
     fn execute_from_environment(
         &mut self,
         environment: &crate::environment::Environment,
-    ) -> Option<(crate::ir::Register, f64, usize)> {
+    ) -> Option<LocalNumericExecution> {
         let (lhs, rhs) = self.operands(environment)?;
         let result = self.execute(lhs, rhs).ok()?;
-        Some((
-            self.selection.output,
-            result,
-            usize::from(self.selection.span),
-        ))
+        Some(LocalNumericExecution {
+            output: self.selection.output,
+            value: result,
+            span: usize::from(self.selection.span),
+            discarded: self.selection.discarded,
+        })
     }
 
     fn operands(&mut self, environment: &crate::environment::Environment) -> Option<(f64, f64)> {
@@ -95,6 +113,6 @@ impl NativeLocalBinaryPlan {
 pub(crate) fn execute_local_binary(
     plan: &std::cell::RefCell<NativeLocalBinaryPlan>,
     environment: &crate::environment::Environment,
-) -> Option<(crate::ir::Register, f64, usize)> {
+) -> Option<LocalNumericExecution> {
     plan.borrow_mut().execute_from_environment(environment)
 }
