@@ -10,7 +10,7 @@ pub(crate) struct LocalNumericExecution {
     pub output: crate::ir::Register,
     pub value: f64,
     pub span: usize,
-    pub discarded: [Option<crate::ir::Register>; 2],
+    pub discarded: [Option<crate::ir::Register>; 3],
 }
 
 impl LocalNumericExecution {

@@ -278,6 +278,36 @@ fn ordinary_source_fuses_constant_left_add_without_changing_coercion_order() {
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
+fn canonical_driver_eliminates_dead_move_in_numeric_window() {
+    let function = crate::machine::FunctionCode::from_ops(vec![
+        crate::ops::Op::LoadLocal { dst: 1, slot: 0 },
+        crate::ops::Op::Move { dst: 2, src: 1 },
+        crate::ops::Op::LoadLocal { dst: 3, slot: 1 },
+        crate::ops::Op::Binary {
+            dst: 4,
+            operator: crate::ops::BinaryOp::Multiply,
+            lhs: 2,
+            rhs: 3,
+        },
+        crate::ops::Op::Return { src: 4 },
+    ]);
+    let view = function.code().unwrap();
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let plan = BaselinePlan::compile_for_test(view, policy);
+    let result = execute_case(view, &plan, 0, [Value::Number(6.0), Value::Number(7.0)]);
+    assert_eq!(result, (Completion::Return(Value::Number(42.0)), 1, 2));
+    assert_eq!(
+        plan.native_local_binary_at(0)
+            .unwrap()
+            .borrow()
+            .selection()
+            .span,
+        4
+    );
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
 fn ordinary_source_propagates_left_constant_without_swapping_operands() {
     let program = crate::reduce::reduce_source("function f(x){return 2.5-x} f(1)")
         .expect("ordinary source lowers");
