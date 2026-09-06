@@ -149,6 +149,52 @@ fn ordinary_source_identity_branch_uses_numeric_and_tagged_bodies() {
 }
 
 #[test]
+fn ordinary_source_body_enters_comparison_fusion_from_first_pc() {
+    let source = "function f(a,b){if(a<b)return 11;return 22} f(1,2)";
+    let program = crate::reduce::reduce_source(source).expect("ordinary source lowers");
+    let mut checked = false;
+    crate::stencil_test_support::visit_code_views(program.code(), &mut |view| {
+        let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+        let plan = BaselinePlan::compile_for_test(view, policy);
+        let Some(pc) = (0..view.len()).find(|pc| has_compare_branch(&plan, *pc)) else {
+            return;
+        };
+        let environment = crate::environment::Environment::new();
+        install_comparison_inputs(view, pc, &environment);
+        let mut registers = crate::register_file::RegisterFile::with_undefined(
+            usize::from(view.frame_register_count()).max(8),
+        );
+        let result = crate::vm::execute_baseline_code_from(
+            view,
+            &plan,
+            0,
+            &mut registers,
+            &crate::vm::current_context_or_default(),
+            environment,
+        );
+        assert_eq!(result.unwrap().0, Completion::Return(Value::Number(11.0)));
+        assert_eq!(plan.native_binary_at(pc).unwrap().borrow().native_entry_count(), 1);
+        checked = true;
+    });
+    assert!(checked, "ordinary source body must enter fused comparison");
+}
+
+fn install_comparison_inputs(
+    view: CodeView<'_>,
+    comparison_pc: usize,
+    environment: &crate::environment::Environment,
+) {
+    let mut values = [1.0, 2.0].into_iter();
+    for pc in 0..comparison_pc {
+        let instruction = view.instruction(pc).expect("lowered producer");
+        if instruction.opcode == crate::ir::Opcode::LoadLocal {
+            environment.set(instruction.b, Value::Number(values.next().unwrap()));
+        }
+    }
+    assert!(values.next().is_none(), "comparison must have two local producers");
+}
+
+#[test]
 fn warm_compare_branch_reuses_code_and_removes_truthiness_dispatch() {
     let source = "function f(a,b){if(a<b)return 11;return 22} f(1,2)";
     let program = crate::reduce::reduce_source(source).expect("ordinary source lowers");
