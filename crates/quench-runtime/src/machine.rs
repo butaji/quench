@@ -1114,6 +1114,12 @@ impl CodeArena {
     }
 
     pub fn freeze(self) -> Rc<CodeStore> {
+        let frame_register_counts = derive_frame_register_counts(
+            &self.instructions,
+            &self.cold,
+            &self.ranges,
+            &self.register_counts,
+        );
         let mut store = Rc::new(CodeStore {
             instructions: self.instructions.into_boxed_slice().into(),
             cold: self.cold.into_boxed_slice().into(),
@@ -1122,6 +1128,7 @@ impl CodeArena {
             constants: self.constants.into_boxed_slice().into(),
             metadata: self.metadata.into_boxed_slice().into(),
             register_counts: self.register_counts.into_boxed_slice().into(),
+            frame_register_counts: frame_register_counts.into_boxed_slice().into(),
             quickening_sites: self
                 .quickening_sites
                 .into_iter()
@@ -1360,6 +1367,35 @@ fn register_count_for(instructions: &[crate::ir::Instruction]) -> u16 {
     u16::try_from(count).unwrap_or(u16::MAX)
 }
 
+fn derive_frame_register_counts(
+    instructions: &[crate::ir::Instruction],
+    cold: &[Op],
+    ranges: &[(u32, u32)],
+    register_counts: &[u16],
+) -> Vec<u16> {
+    let mut widths = register_counts.to_vec();
+    for _ in 0..ranges.len() {
+        let previous = widths.clone();
+        for (code, &(start, end)) in ranges.iter().enumerate() {
+            let mut width = previous.get(code).copied().unwrap_or(0);
+            for instruction in &instructions[start as usize..end as usize] {
+                let Some(op) = instruction.cold_index().and_then(|index| cold.get(index as usize))
+                else { continue };
+                op.visit_frame_fragments(&mut |body| {
+                    width = width.max(
+                        previous.get(body.code_id().0 as usize).copied().unwrap_or(0),
+                    );
+                });
+            }
+            widths[code] = width;
+        }
+        if widths == previous {
+            break;
+        }
+    }
+    widths
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CodeStore {
     instructions: Rc<[crate::ir::Instruction]>,
@@ -1369,6 +1405,7 @@ pub struct CodeStore {
     constants: Rc<[ConstantPool]>,
     metadata: Rc<[Vec<InstructionMeta>]>,
     register_counts: Rc<[u16]>,
+    frame_register_counts: Rc<[u16]>,
     quickening_sites: Rc<[Box<[std::cell::RefCell<crate::quickening::QuickeningSite<4>>]>]>,
     operand_windows: Rc<[Vec<Rc<[u16]>>]>,
     catch_ranges: Rc<[Vec<CatchRange>]>,
@@ -1398,6 +1435,10 @@ impl CodeStore {
 
     pub fn register_count(&self, code: CodeId) -> Option<u16> {
         self.register_counts.get(code.0 as usize).copied()
+    }
+
+    pub fn frame_register_count(&self, code: CodeId) -> Option<u16> {
+        self.frame_register_counts.get(code.0 as usize).copied()
     }
 }
 
@@ -5398,6 +5439,14 @@ impl<'a> CodeView<'a> {
         self.store.register_count(self.range.code).unwrap_or(0)
     }
 
+    /// Register width of the logical activation, including structured
+    /// fragments that execute in this frame but excluding nested functions.
+    pub fn frame_register_count(self) -> u16 {
+        self.store
+            .frame_register_count(self.range.code)
+            .unwrap_or_else(|| self.register_count())
+    }
+
     pub fn is_empty(self) -> bool {
         self.range.start == self.range.end
     }
@@ -5967,22 +6016,10 @@ impl FunctionCode {
         self.range.end.saturating_sub(self.range.start) as usize
     }
 
-    /// Return the frame width required by this residual function and all of
-    /// its nested residual fragments.  Register counts are derived while the
-    /// immutable code store is frozen; walking nested bodies here keeps call
-    /// entry sizing tied to the canonical residual representation rather than
-    /// to source instruction counts or a second frame-layout table.
+    /// Return the immutable width of this logical activation. Structured
+    /// fragments share it; nested function literals own independent frames.
     pub(crate) fn required_register_count(&self) -> u16 {
-        let Some(code) = self.code() else {
-            return 0;
-        };
-        let mut count = code.register_count();
-        for (_, op) in code.cold_ops() {
-            op.visit_frame_fragments(&mut |body| {
-                count = count.max(body.required_register_count());
-            });
-        }
-        count
+        self.code().map(CodeView::frame_register_count).unwrap_or(0)
     }
 
     pub(crate) fn code(&self) -> Option<CodeView<'_>> {

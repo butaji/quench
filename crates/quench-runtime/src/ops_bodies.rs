@@ -197,7 +197,10 @@ impl Op {
         visitor: &mut impl FnMut(&crate::machine::FunctionCode),
     ) {
         match self {
-            Self::MakeFunction { .. } | Self::MakeFunctionWithKind { .. } => {}
+            Self::MakeFunction { .. }
+            | Self::MakeFunctionWithKind { .. }
+            | Self::AppendInstanceField(_)
+            | Self::StaticBlock { .. } => {}
             _ => self.visit_bodies(visitor),
         }
     }
