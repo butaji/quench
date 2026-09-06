@@ -131,6 +131,7 @@ mod stencil_admission_budget;
 mod stencil_cache;
 pub mod stencil_fact;
 pub mod stencil_lifecycle;
+mod stencil_layout;
 pub mod stencil_patch;
 mod stencil_physical;
 mod stencil_fusion;
