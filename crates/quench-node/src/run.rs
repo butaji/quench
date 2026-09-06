@@ -155,7 +155,7 @@ pub fn run_script_with_exec_argv(
         Err(error) => return RunOutcome::fail(1, format!("reduce: {error}")),
     };
     let result = quench_runtime::vm::with_current_context(&context, || {
-        normalize_script_completion(execute_code_with_context(ops.code(), &context))
+        execute_code_with_context(ops.code(), &context)
             .and_then(|_| drive(&context, "__quench_run_loop__();"))
     });
     let result = route_uncaught(&host, &context, result);
@@ -301,7 +301,7 @@ pub fn eval_script_with_exec_argv(
                 }
             })
         });
-        normalize_script_completion(execute_code_with_context(ops.code(), &context))
+        execute_code_with_context(ops.code(), &context)
             .and_then(|_| drive(&context, "__quench_run_loop__();"))
     });
     let result = route_uncaught(&host, &context, result);
@@ -425,21 +425,7 @@ fn uncaught_render(error: &VmError) -> String {
 /// the run context so the pump runs inside an active execution frame.
 fn drive(context: &VmContext, source: &str) -> Result<quench_runtime::value::Value, VmError> {
     let ops = reduce(source).map_err(VmError::EvalError)?;
-    match execute_code_with_context(ops.code(), context) {
-        // Driver snippets are statements.  A normal statement completion has
-        // no value, but the VM exposes that completion as MissingReturn.
-        Err(VmError::MissingReturn) => Ok(quench_runtime::value::Value::Undefined),
-        result => result,
-    }
-}
-
-fn normalize_script_completion(
-    result: Result<quench_runtime::value::Value, VmError>,
-) -> Result<quench_runtime::value::Value, VmError> {
-    match result {
-        Err(VmError::MissingReturn) => Ok(quench_runtime::value::Value::Undefined),
-        result => result,
-    }
+    execute_code_with_context(ops.code(), context)
 }
 
 fn reduce(source: &str) -> Result<quench_runtime::reduce::ResidualProgram, String> {

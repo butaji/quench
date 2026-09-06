@@ -4357,7 +4357,10 @@ fn completion_step_after_transition(
 pub(crate) fn completion_result(
     completion: crate::completion::Completion,
 ) -> Result<Value, VmError> {
-    completion.into_vm_error()
+    match completion {
+        crate::completion::Completion::Normal => Ok(Value::Undefined),
+        completion => completion.into_vm_error(),
+    }
 }
 
 struct GlobalObjectGuard {
@@ -4610,6 +4613,18 @@ mod compact_handler_tests {
     use crate::ops::Op;
     use crate::value::{ObjectData, Value};
     use std::rc::Rc;
+
+    #[test]
+    fn script_boundary_maps_only_normal_completion_to_undefined() {
+        assert_eq!(
+            super::completion_result(crate::completion::Completion::Normal),
+            Ok(Value::Undefined)
+        );
+        assert_eq!(
+            super::completion_result(crate::completion::Completion::Return(Value::Number(3.0))),
+            Ok(Value::Number(3.0))
+        );
+    }
 
     #[test]
     fn raw_array_context_layout_matches_emitted_offsets() {
