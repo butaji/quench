@@ -5472,12 +5472,18 @@ fn compare_branch_at(
     comparison: crate::ir::Instruction,
     branch: crate::ir::Instruction,
 ) -> Option<CompareBranch> {
-    if branch.a != comparison.a {
+    let false_target = usize::from(branch.b);
+    if branch.a != comparison.a
+        || !branch
+            .opcode
+            .operands_are_canonical([branch.a, branch.b, branch.c])
+        || false_target >= entries.len()
+    {
         return None;
     }
     let end = branch_pc.checked_add(1)?;
     region_entry_is_legal(entries, start, end).then_some(CompareBranch {
-        false_target: branch.b,
+        false_target: u16::try_from(false_target).ok()?,
         span: u8::try_from(end.checked_sub(start)?).ok()?,
     })
 }
