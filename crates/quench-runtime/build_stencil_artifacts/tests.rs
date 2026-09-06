@@ -214,4 +214,52 @@ mod tests {
         assert!(holes_expr(&patched).contains("offset: 2"));
         assert!(holes_expr(&patched).contains("HoleKind::Literal64"));
     }
+
+    #[test]
+    fn artifact_identity_covers_declared_physical_bindings() {
+        static OPERATIONS: [&str; 19] = [
+            "LoadLocal",
+            "LoadConst",
+            "Binary",
+            "JumpIfFalse",
+            "LoadLocal",
+            "Move",
+            "LoadLocal",
+            "Move",
+            "LoadLocal",
+            "Slow",
+            "LoadLocal",
+            "AGetI",
+            "AddConst",
+            "ASetI",
+            "Move",
+            "LoadLocal",
+            "AddConst",
+            "StoreLocal",
+            "Jump",
+        ];
+        let unbound = RegionDeclaration {
+            name: "identity_probe",
+            operations: &OPERATIONS,
+            abi: super::super::DeclAbi::ArrayNumericLoop,
+            x86_bytes: &[],
+            aarch64_bytes: &[],
+            portable_bytes: &[],
+            holes: &[],
+            aarch64_holes: &[],
+            entry: 0,
+            external_entries: &[0],
+        };
+        let bound = RegionDeclaration {
+            name: "array_numeric_loop",
+            ..unbound
+        };
+        assert!(super::super::rust_assembly_recipe(&bound)
+            .is_some_and(|recipe| !recipe.bindings().is_empty()));
+        let payload = extracted(&[1, 2, 3, 4]);
+        assert_ne!(
+            artifact_fingerprint(&bound, "aarch64-test", "build", &payload),
+            artifact_fingerprint(&unbound, "aarch64-test", "build", &payload)
+        );
+    }
 }

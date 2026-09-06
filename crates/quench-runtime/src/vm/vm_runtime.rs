@@ -1129,6 +1129,16 @@ fn region_matches_generated_array_decl(
     })
 }
 
+#[cfg(target_arch = "aarch64")]
+fn array_loop_binding_contract_matches(
+    key: crate::stencil_fact::RegionKey,
+    instructions: &[crate::ir::Instruction],
+    start: usize,
+) -> bool {
+    crate::stencil_select::select_region(key)
+        .is_some_and(|record| record.bindings_match(instructions, start))
+}
+
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) fn execute_composed_array_kernel(
     region: &mut NativeRegionContext<'_>,
@@ -1333,32 +1343,14 @@ pub(crate) fn execute_composed_array_numeric_loop(
     {
         return Ok(None);
     }
-    let [load_index, load_end, compare, branch, load_array, move_array, load_index_body,
-        move_index, load_array_body, require_object, load_index_get, get, add_value, set,
-        move_result, load_index_update, add_index, store_index, jump] = instructions.as_slice()
+    let [load_index, load_end, _, _, load_array, _, _, _, load_array_body, _, _, _, add_value, set,
+        move_result, _, _, store_index, _] = instructions.as_slice()
     else { return Ok(None) };
-    if !array_loop_roles_are_disjoint(&instructions) {
-        return Ok(None);
-    }
-    if compare.a != branch.a
-        || compare.b != load_index.a
-        || compare.c != load_end.a
-        || usize::from(branch.b) != pc + 19
-        || usize::from(jump.a) != pc
-        || load_array.b != load_array_body.b
-        || load_array_body.a != get.b
-        || load_index_body.b != load_index_update.b
-        || load_index_body.b != load_index_get.b
-        || load_index.a != store_index.a
-        || add_index.b != load_index_update.a
-        || store_index.b != add_index.a
-        || move_index.a != set.a
-        || get.a != add_value.b
-        || add_value.a != set.c
-        || move_result.b != add_value.a
-        || move_array.b != load_array.a
-        || move_index.b != move_array.a
-    {
+    if !array_loop_binding_contract_matches(
+        crate::stencil_select::array_numeric_loop_region_key(),
+        &instructions,
+        pc,
+    ) {
         return Ok(None);
     }
     let Some(crate::ops::Op::RequireObjectCoercible { src }) = code.cold_at(pc + 9) else {
@@ -1534,28 +1526,6 @@ pub(crate) fn execute_baseline_code_from(
         Some(environment.as_ref()),
     )?;
     Ok((step.completion, step.next))
-}
-
-#[cfg(target_arch = "aarch64")]
-fn array_loop_roles_are_disjoint(instructions: &[crate::ir::Instruction]) -> bool {
-    // These are independent live values in the canonical loop lowering. The
-    // remaining equalities (for example set.a == move_index.a) are explicit
-    // forwarding edges checked by the caller and are intentionally omitted.
-    let roles = [
-        instructions[0].a,
-        instructions[1].a,
-        instructions[4].a,
-        instructions[6].a,
-        instructions[8].a,
-        instructions[10].a,
-        instructions[11].a,
-        instructions[12].a,
-        instructions[15].a,
-        instructions[16].a,
-    ];
-    roles.iter().enumerate().all(|(index, role)| {
-        roles[index + 1..].iter().all(|other| other != role)
-    })
 }
 
 fn run_ops_completion_step(
@@ -4753,13 +4723,59 @@ mod compact_handler_tests {
 
     #[cfg(target_arch = "aarch64")]
     #[test]
-    fn numeric_loop_alias_roles_fail_closed() {
-        let mut aliased = vec![crate::ir::Instruction::load_local_checked(0, 0); 19];
-        assert!(!super::array_loop_roles_are_disjoint(&aliased));
-        for (index, instruction) in aliased.iter_mut().enumerate() {
-            instruction.a = index as u16;
-        }
-        assert!(super::array_loop_roles_are_disjoint(&aliased));
+    fn physical_binding_contract_checks_forwarding_and_aliases() {
+        use crate::stencil_select::{
+            PhysicalBinding, PhysicalBindingValue, PhysicalOperand, PhysicalOperandField,
+        };
+        static OPERANDS: [PhysicalOperand; 2] = [
+            PhysicalOperand { operation: 0, field: PhysicalOperandField::A },
+            PhysicalOperand { operation: 1, field: PhysicalOperandField::A },
+        ];
+        static BINDINGS: [PhysicalBinding; 2] = [
+            PhysicalBinding::Equal(
+                PhysicalBindingValue::Operand(OPERANDS[0]),
+                PhysicalBindingValue::Operand(PhysicalOperand {
+                    operation: 1,
+                    field: PhysicalOperandField::B,
+                }),
+            ),
+            PhysicalBinding::AllDistinct(&OPERANDS),
+        ];
+        let record = crate::stencil_select::RegionRecord {
+            name: "binding_test",
+            key: crate::stencil_fact::RegionKey(17),
+            stencil: crate::stencil_fact::Stencil { bytes: &[], holes: &[] },
+            operations: &[crate::ir::Opcode::Move, crate::ir::Opcode::Move],
+            bindings: &BINDINGS,
+            entry: 0,
+            external_entries: &[0],
+            fallthrough: None,
+            abi: crate::stencil_select::RegionAbi::Bridge,
+            template_calls_helper: false,
+            executable: false,
+        };
+        let mut instructions = [
+            crate::ir::Instruction::move_(2, 0),
+            crate::ir::Instruction::move_(3, 2),
+        ];
+        assert!(record.bindings_match(&instructions, 0));
+        instructions[1].a = 2;
+        assert!(!record.bindings_match(&instructions, 0));
+        static INVALID: [PhysicalBinding; 1] = [PhysicalBinding::Equal(
+            PhysicalBindingValue::Operand(PhysicalOperand {
+                operation: 8,
+                field: PhysicalOperandField::A,
+            }),
+            PhysicalBindingValue::Operand(PhysicalOperand {
+                operation: 9,
+                field: PhysicalOperandField::A,
+            }),
+        )];
+        let malformed = crate::stencil_select::RegionRecord {
+            bindings: &INVALID,
+            ..record
+        };
+        assert!(!malformed.bindings_match(&instructions, 0));
     }
 
     #[test]
