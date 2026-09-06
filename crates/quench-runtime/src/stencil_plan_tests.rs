@@ -65,7 +65,7 @@ fn local_binary_selection_forwards_slots_and_removes_materialization() {
         selected.inputs,
         LocalNumericInputs::Sources([NumericSource::Local(3), NumericSource::Local(9)])
     );
-    assert_eq!(selected.output, 1);
+    assert_eq!(selected.result.register, 1);
     assert_eq!(selected.span, 3);
     assert_eq!(&selected.discarded[..3], &[Some(4), Some(7), None]);
     assert!(selected.cost.profitable());
@@ -472,7 +472,7 @@ fn block_value_graph_selects_local_property_through_aliases() {
     };
     let selected = graph.select_property(get, &BTreeSet::new()).unwrap();
     assert_eq!(selected.receiver_slot, 20);
-    assert_eq!(selected.output, 5);
+    assert_eq!(selected.result.register, 5);
     assert_eq!(selected.span, 4);
     assert_eq!(selected.discarded.iter().flatten().count(), 3);
 }
