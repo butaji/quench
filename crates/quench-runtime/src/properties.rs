@@ -627,7 +627,7 @@ pub(crate) fn proven_named_writable_slot(
     object: u16,
     key: &str,
     cache: &std::cell::Cell<u64>,
-) -> Option<*const crate::register_file::SlotWord> {
+) -> Option<crate::native_property::GuardedPropertySlot> {
     if cache.get() & WRITE_TRANSITION_TAG != 0 {
         return None;
     }
@@ -641,8 +641,9 @@ pub(crate) fn proven_named_writable_slot(
         return None;
     }
     let (layout, slot) = crate::machine::unpack_named_cache(cache.get())?;
-    cached_plain_writable_slot(&data, key, layout, slot)
-        .map(|word| word as *const crate::register_file::SlotWord)
+    cached_plain_writable_slot(&data, key, layout, slot)?;
+    let access = data.guarded_plain_slot(layout, slot, key)?;
+    access.accepts_non_owning_store().then_some(access)
 }
 
 fn finish_set_property(

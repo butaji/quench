@@ -3798,7 +3798,7 @@ fn run_compact_get_named_fallback(
 }
 
 fn try_native_property_store(
-    native: &std::cell::RefCell<crate::machine::NativeMovePlan>,
+    native: &std::cell::RefCell<crate::machine::NativePropertyPlan>,
     code: crate::machine::CodeView<'_>,
     pc: usize,
     registers: &mut crate::register_file::RegisterFile,
@@ -3819,21 +3819,13 @@ fn try_native_property_store(
     ) else {
         return false;
     };
-    if !crate::properties::assignment_source_is_direct(registers, source) {
-        return false;
-    }
-    let Some(source_ptr) = registers.word_ptr(usize::from(source)) else {
+    let Some(bits) = registers.non_owning_word_bits(usize::from(source)) else {
         return false;
     };
-    let Ok(bits) = native.borrow_mut().execute(source_ptr) else {
+    let Some(site) = code.quickening_site(pc) else {
         return false;
     };
-    if registers.word_bits(usize::from(source)) != Some(bits) {
-        return false;
-    }
-    // SAFETY: the slot came from the cache's descriptor/layout proof and the
-    // native transfer cannot allocate, call JS, or resize the object.
-    unsafe { &*slot }.store_from_register(registers, usize::from(source)).is_some()
+    native.borrow_mut().execute_write(slot, bits, &site.borrow()).is_ok()
 }
 
 #[inline(always)]
@@ -4933,7 +4925,7 @@ mod compact_handler_tests {
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
-    fn baseline_named_store_uses_tagged_word_body_after_cache_warmup() {
+    fn baseline_named_store_executes_guarded_native_commit_after_cache_warmup() {
         let object = Rc::new(ObjectData::new(vec![
             ("value".into(), Value::Number(1.0)),
         ]));
@@ -5040,6 +5032,78 @@ mod compact_handler_tests {
         );
         assert_eq!(
             source_plan
+                .native_store_property_at(0)
+                .unwrap()
+                .borrow()
+                .native_entry_count(),
+            0
+        );
+
+        let string_object = Rc::new(ObjectData::new(vec![(
+            "value".into(),
+            Value::Number(2.0),
+        )]));
+        let string_plan = crate::machine::BaselinePlan::compile_for_test(
+            code,
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        );
+        let mut string_registers = crate::register_file::RegisterFile::from_values(vec![
+            Value::Object(Rc::clone(&string_object)),
+            Value::String("owned".into()),
+        ]);
+        crate::vm::execute_baseline_code_from(
+            code,
+            &string_plan,
+            0,
+            &mut string_registers,
+            &context,
+            crate::environment::Environment::new(),
+        )
+        .expect("owning-word fallback");
+        assert_eq!(
+            crate::vm::get_property_result(&Value::Object(string_object), "value").unwrap(),
+            Value::String("owned".into())
+        );
+        assert_eq!(
+            string_plan
+                .native_store_property_at(0)
+                .unwrap()
+                .borrow()
+                .native_entry_count(),
+            0
+        );
+
+        let owning_slot_object = Rc::new(ObjectData::new(vec![(
+            "value".into(),
+            Value::String("old".into()),
+        )]));
+        let owning_slot_plan = crate::machine::BaselinePlan::compile_for_test(
+            code,
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        );
+        let mut owning_slot_registers = crate::register_file::RegisterFile::from_values(vec![
+            Value::Object(Rc::clone(&owning_slot_object)),
+            Value::Number(13.0),
+        ]);
+        crate::vm::execute_baseline_code_from(
+            code,
+            &owning_slot_plan,
+            0,
+            &mut owning_slot_registers,
+            &context,
+            crate::environment::Environment::new(),
+        )
+        .expect("owning destination fallback");
+        assert_eq!(
+            crate::vm::get_property_result(
+                &Value::Object(owning_slot_object),
+                "value",
+            )
+            .unwrap(),
+            Value::Number(13.0)
+        );
+        assert_eq!(
+            owning_slot_plan
                 .native_store_property_at(0)
                 .unwrap()
                 .borrow()

@@ -667,6 +667,12 @@ impl SharedStencilSlab {
         extern "C" fn(*mut crate::native_property::NativePropertyReadContext) -> u32,
         crate::stencil_select::RegionAbi::PropertyGuard
     );
+    typed_owned_entry!(
+        owned_property_write_guard_entry,
+        property_write_guard_entry,
+        extern "C" fn(*mut crate::native_property::NativePropertyWriteContext) -> u32,
+        crate::stencil_select::RegionAbi::PropertyWriteGuard
+    );
 
     pub(crate) fn with_owned<F: Copy, R>(
         &self,
@@ -822,6 +828,19 @@ impl SharedStencilSlab {
         self.slab_for(address)
             .ok_or(ArenaError::ProtectionFailed)?
             .property_guard_entry(address)
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn property_write_guard_entry(
+        &self,
+        address: usize,
+    ) -> Result<
+        extern "C" fn(*mut crate::native_property::NativePropertyWriteContext) -> u32,
+        ArenaError,
+    > {
+        self.slab_for(address)
+            .ok_or(ArenaError::ProtectionFailed)?
+            .property_write_guard_entry(address)
     }
 
     pub fn execute_dispatch(
@@ -1009,6 +1028,23 @@ impl StencilArena {
         address: usize,
     ) -> Result<extern "C" fn(f64, f64) -> f64, ArenaError> {
         self.require_abi(address, crate::stencil_select::RegionAbi::Scalar)?;
+        let base = self.ptr as usize;
+        let end = base.saturating_add(self.cursor);
+        if !self.executable || address < base || address >= end {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        Ok(unsafe { std::mem::transmute(address) })
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn property_write_guard_entry(
+        &self,
+        address: usize,
+    ) -> Result<
+        extern "C" fn(*mut crate::native_property::NativePropertyWriteContext) -> u32,
+        ArenaError,
+    > {
+        self.require_abi(address, crate::stencil_select::RegionAbi::PropertyWriteGuard)?;
         let base = self.ptr as usize;
         let end = base.saturating_add(self.cursor);
         if !self.executable || address < base || address >= end {
@@ -3104,6 +3140,43 @@ mod tests {
         assert_eq!(
             context.result(status),
             Some(crate::tagged_value::TaggedValue::number(42.5).bits())
+        );
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn executable_property_write_has_distinct_abi_and_commits_word() {
+        let mut arena = StencilArena::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let site = QuickeningSite::<2>::new(Opcode::SetN);
+        let values = PatchValues::from_site(&site);
+        let key = crate::stencil_select::store_property_region_key();
+        let view = crate::stencil_select::select_physical_for_abi(
+            key,
+            crate::stencil_select::RegionAbi::PropertyWriteGuard,
+        )
+        .expect("property-write view");
+        let address = arena
+            .render_physical_view_or_get(&mut cache, view, &values)
+            .unwrap();
+        arena.make_executable().unwrap();
+        assert!(arena.property_guard_entry(address).is_err());
+        let object = crate::value::ObjectData::new(vec![(
+            "value".into(),
+            crate::value::Value::Number(1.0),
+        )]);
+        let access = object
+            .guarded_plain_slot(object.semantic_layout_id(), 0, "value")
+            .expect("plain slot");
+        let bits = crate::tagged_value::TaggedValue::number(7.5).bits();
+        let mut context = crate::native_property::NativePropertyWriteContext::new(access, bits);
+        let entry = arena
+            .property_write_guard_entry(address)
+            .expect("typed write entry");
+        assert_eq!(entry(&mut context), 1);
+        assert_eq!(
+            object.hot_properties().slot_word(0).unwrap().load(),
+            crate::value::Value::Number(7.5)
         );
     }
 

@@ -673,6 +673,10 @@ mod generated_region_admission_tests {
                     assert!(matches!(record.stencil.bytes.len(), 48 | 80));
                     assert_eq!(record.operations, [crate::ir::Opcode::GetN]);
                 }
+                RegionAbi::PropertyWriteGuard => {
+                    assert!(matches!(record.stencil.bytes.len(), 48 | 80));
+                    assert_eq!(record.operations, [crate::ir::Opcode::SetN]);
+                }
                 RegionAbi::ConstantWord => {
                     assert!(matches!(record.stencil.bytes.len(), 11 | 16));
                     assert!(matches!(
@@ -790,6 +794,8 @@ mod generated_region_admission_tests {
         assert!(RegionAbi::TaggedWord.contract().preserves_vm_registers);
         assert_eq!(RegionAbi::PropertyGuard.contract().context_arg_words, 1);
         assert!(!RegionAbi::PropertyGuard.contract().may_call_helper);
+        assert_eq!(RegionAbi::PropertyWriteGuard.contract().context_arg_words, 1);
+        assert!(!RegionAbi::PropertyWriteGuard.contract().may_call_helper);
         assert_eq!(RegionAbi::ScalarI32.contract().context_arg_words, 0);
         assert!(RegionAbi::ScalarI32.contract().preserves_vm_registers);
         assert_eq!(RegionAbi::ScalarU32.contract().context_arg_words, 0);

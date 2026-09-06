@@ -268,6 +268,12 @@ impl SlotWord {
     }
 
     #[inline(always)]
+    pub(crate) fn plain_non_owning_bits(&self) -> Option<u64> {
+        let bits = self.plain_tagged_bits()?;
+        (!TaggedValue::from_bits(bits).owns_rc()).then_some(bits)
+    }
+
+    #[inline(always)]
     pub(crate) fn is_null(&self) -> bool {
         self.with_word(|word| matches!(word.tagged().decode(), DecodedValue::Null))
     }
@@ -903,6 +909,12 @@ impl RegisterFile {
     #[inline(always)]
     pub(crate) fn word_bits(&self, index: usize) -> Option<u64> {
         self.words.get(index).copied().map(TaggedValue::bits)
+    }
+
+    #[inline(always)]
+    pub(crate) fn non_owning_word_bits(&self, index: usize) -> Option<u64> {
+        let word = *self.words.get(index)?;
+        (!word.owns_rc()).then_some(word.bits())
     }
 
     /// Decide ToBoolean directly when the execute word contains the complete
