@@ -263,7 +263,10 @@ pub(crate) fn fold_numeric_sources(
 }
 
 pub(crate) fn numeric_operation(instruction: Instruction) -> Option<crate::ops::BinaryOp> {
-    use crate::ops::BinaryOp::{Add, Divide, Multiply, Subtract};
+    use crate::ops::BinaryOp::{
+        Add, BitwiseAnd, BitwiseOr, BitwiseXor, Divide, Multiply, ShiftLeft, ShiftRight,
+        ShiftRightZeroFill, Subtract,
+    };
     let operator = match instruction.opcode {
         Opcode::Add | Opcode::Sub | Opcode::Mul | Opcode::Div if instruction.flags == 0 => {
             instruction.opcode.numeric_operator()?
@@ -271,7 +274,19 @@ pub(crate) fn numeric_operation(instruction: Instruction) -> Option<crate::ops::
         Opcode::Binary => crate::ir::compact_binary_operator(instruction.flags)?,
         _ => return None,
     };
-    matches!(operator, Add | Subtract | Multiply | Divide).then_some(operator)
+    matches!(
+        operator,
+        Add | Subtract
+            | Multiply
+            | Divide
+            | BitwiseAnd
+            | BitwiseOr
+            | BitwiseXor
+            | ShiftLeft
+            | ShiftRight
+            | ShiftRightZeroFill
+    )
+    .then_some(operator)
 }
 
 pub(crate) fn select_source_add_const(
