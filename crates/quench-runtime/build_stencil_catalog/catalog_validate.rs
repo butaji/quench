@@ -16,6 +16,16 @@ fn validate_catalog_declaration(declaration: &RegionDeclaration) {
         "stencil {} has an external edge into its interior",
         declaration.name
     );
+    if let Some(recipe) = rust_assembly_recipe(declaration) {
+        assert!(
+            recipe
+                .bindings()
+                .iter()
+                .all(|binding| binding.valid_for(declaration.operations.len())),
+            "stencil {} has an invalid physical operand binding",
+            declaration.name
+        );
+    }
 }
 
 fn validate_holes(

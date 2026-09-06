@@ -127,6 +127,7 @@ mod special;
 mod statement_control;
 mod statements;
 pub mod stencil_arena;
+mod stencil_binding;
 mod stencil_admission;
 mod stencil_admission_budget;
 #[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]

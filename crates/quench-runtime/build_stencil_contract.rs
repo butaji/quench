@@ -40,6 +40,76 @@ pub(crate) enum RecipeComposition {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PhysicalOperandField {
+    A,
+    B,
+    C,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PhysicalOperand {
+    pub(crate) operation: u8,
+    pub(crate) field: PhysicalOperandField,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PhysicalBindingValue {
+    Operand(PhysicalOperand),
+    RegionStart,
+    RegionEnd,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PhysicalBinding {
+    Equal(PhysicalBindingValue, PhysicalBindingValue),
+    AllDistinct(&'static [PhysicalOperand]),
+}
+
+impl PhysicalBinding {
+    pub(crate) const fn valid_for(self, operation_count: usize) -> bool {
+        match self {
+            Self::Equal(left, right) => {
+                left.valid_for(operation_count) && right.valid_for(operation_count)
+            }
+            Self::AllDistinct(operands) => {
+                if operands.len() < 2 {
+                    return false;
+                }
+                let mut index = 0;
+                while index < operands.len() {
+                    if operands[index].operation as usize >= operation_count {
+                        return false;
+                    }
+                    index += 1;
+                }
+                true
+            }
+        }
+    }
+}
+
+impl PhysicalBindingValue {
+    const fn valid_for(self, operation_count: usize) -> bool {
+        match self {
+            Self::Operand(operand) => (operand.operation as usize) < operation_count,
+            Self::RegionStart | Self::RegionEnd => true,
+        }
+    }
+}
+
+const fn operand(operation: u8, field: PhysicalOperandField) -> PhysicalOperand {
+    PhysicalOperand { operation, field }
+}
+
+const fn value(operation: u8, field: PhysicalOperandField) -> PhysicalBindingValue {
+    PhysicalBindingValue::Operand(operand(operation, field))
+}
+
+const fn equal(left: PhysicalBindingValue, right: PhysicalBindingValue) -> PhysicalBinding {
+    PhysicalBinding::Equal(left, right)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct AssemblyContinuation {
     pub(crate) head_name: &'static str,
     pub(crate) tail_name: &'static str,
@@ -156,6 +226,7 @@ macro_rules! rust_assembly_catalog {
     ($( $variant:ident {
         name: $name:literal, abi: $abi:ident, ops: [$($op:literal),+],
         holes: [$($hole:expr),*]
+        $(, bindings: $bindings:expr)?
         $(, continuation: { head: $head:literal, tail: $tail:literal, target: $target:literal })?
         $(, composition: $composition:ident)?
     } ),+ $(,)?) => {
@@ -179,6 +250,12 @@ macro_rules! rust_assembly_catalog {
                 }
             }
 
+            pub(crate) const fn bindings(self) -> &'static [PhysicalBinding] {
+                match self {
+                    $( Self::$variant => rust_assembly_bindings!($($bindings)?), )+
+                }
+            }
+
             fn matches(self, declaration: &RegionDeclaration) -> bool {
                 match self {
                     $( Self::$variant => declaration.name == $name
@@ -191,6 +268,15 @@ macro_rules! rust_assembly_catalog {
 
         const RUST_ASSEMBLY_RECIPES: &[RustAssemblyRecipe] =
             &[$(RustAssemblyRecipe::$variant),+];
+    };
+}
+
+macro_rules! rust_assembly_bindings {
+    () => {
+        &[]
+    };
+    ($bindings:expr) => {
+        $bindings
     };
 }
 
@@ -236,7 +322,8 @@ rust_assembly_catalog! {
         ops: ["LoadLocal", "LoadConst", "Binary", "JumpIfFalse", "LoadLocal",
             "Move", "LoadLocal", "Move", "LoadLocal", "Slow", "LoadLocal",
             "AGetI", "AddConst", "ASetI", "Move", "LoadLocal", "AddConst",
-            "StoreLocal", "Jump"], holes: []
+            "StoreLocal", "Jump"], holes: [],
+        bindings: &ARRAY_NUMERIC_LOOP_BINDINGS
     },
     Property { name: "property", abi: PropertyGuard, ops: ["GetN"], holes: [] },
     PrototypeProperty { name: "prototype_property", abi: PropertyGuard, ops: ["GetN"], holes: [] },
@@ -255,6 +342,44 @@ rust_assembly_catalog! {
     NullishWord { name: "nullish_word", abi: ScalarWordBool, ops: ["Unary", "Return"], holes: [(24, 8, "Literal64")] },
     TruthyWord { name: "truthy_word", abi: ScalarWordBool, ops: ["JumpIfFalse"], holes: [(16, 8, "Literal64")] },
 }
+
+use PhysicalBindingValue::{RegionEnd, RegionStart};
+use PhysicalOperandField::{A, B, C};
+
+const ARRAY_NUMERIC_LOOP_DISTINCT: &[PhysicalOperand] = &[
+    operand(0, A),
+    operand(1, A),
+    operand(4, A),
+    operand(6, A),
+    operand(8, A),
+    operand(10, A),
+    operand(11, A),
+    operand(12, A),
+    operand(15, A),
+    operand(16, A),
+];
+
+const ARRAY_NUMERIC_LOOP_BINDINGS: &[PhysicalBinding] = &[
+    equal(value(2, A), value(3, A)),
+    equal(value(2, B), value(0, A)),
+    equal(value(2, C), value(1, A)),
+    equal(value(3, B), RegionEnd),
+    equal(value(18, A), RegionStart),
+    equal(value(4, B), value(8, B)),
+    equal(value(8, A), value(11, B)),
+    equal(value(6, B), value(15, B)),
+    equal(value(6, B), value(10, B)),
+    equal(value(0, A), value(17, A)),
+    equal(value(16, B), value(15, A)),
+    equal(value(17, B), value(16, A)),
+    equal(value(7, A), value(13, A)),
+    equal(value(11, A), value(12, B)),
+    equal(value(12, A), value(13, C)),
+    equal(value(14, B), value(12, A)),
+    equal(value(5, B), value(4, A)),
+    equal(value(7, B), value(5, A)),
+    PhysicalBinding::AllDistinct(ARRAY_NUMERIC_LOOP_DISTINCT),
+];
 
 pub(crate) fn rust_assembly_recipe(declaration: &RegionDeclaration) -> Option<RustAssemblyRecipe> {
     RUST_ASSEMBLY_RECIPES

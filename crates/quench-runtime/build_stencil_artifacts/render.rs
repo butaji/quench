@@ -107,8 +107,11 @@ fn fingerprint(
                     .map(|recipe| rust_source(item.name, recipe))
             }
             .unwrap_or_default();
+            let bindings = super::rust_assembly_recipe(item)
+                .map(|recipe| format!("{:?}", recipe.bindings()))
+                .unwrap_or_default();
             format!(
-                "{name}:{abi:?}:{ops:?}:{x86:?}:{arm:?}:{portable:?}:{holes:?}:{arm_holes:?}:{entry}:{external:?}:{source}",
+                "{name}:{abi:?}:{ops:?}:{x86:?}:{arm:?}:{portable:?}:{holes:?}:{arm_holes:?}:{entry}:{external:?}:{bindings}:{source}",
                 name = item.name,
                 abi = item.abi,
                 ops = item.operations,
@@ -145,6 +148,9 @@ fn artifact_fingerprint(
     hash_bytes(&mut hash, build_fingerprint.as_bytes());
     hash_bytes(&mut hash, target.as_bytes());
     hash_bytes(&mut hash, format!("{:?}", declaration.abi).as_bytes());
+    if let Some(recipe) = super::rust_assembly_recipe(declaration) {
+        hash_bytes(&mut hash, format!("{:?}", recipe.bindings()).as_bytes());
+    }
     hash_bytes(&mut hash, &declaration.entry.to_le_bytes());
     for entry in declaration.external_entries {
         hash_bytes(&mut hash, &entry.to_le_bytes());
