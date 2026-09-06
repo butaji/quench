@@ -659,6 +659,30 @@ impl NativeArrayElementContext {
     }
 }
 
+fn unique_region_opcode_pc(
+    region: &NativeRegionContext<'_>,
+    opcode: crate::ir::Opcode,
+) -> Option<usize> {
+    let mut offsets = region
+        .operations
+        .iter()
+        .enumerate()
+        .filter_map(|(offset, candidate)| (*candidate == opcode).then_some(offset));
+    let offset = offsets.next()?;
+    if offsets.next().is_some() {
+        return None;
+    }
+    region.pc.checked_add(offset)
+}
+
+fn region_exit_pc(region: &NativeRegionContext<'_>) -> Option<usize> {
+    region
+        .operations
+        .len()
+        .checked_sub(1)
+        .and_then(|offset| region.pc.checked_add(offset))
+}
+
 #[cfg(target_arch = "aarch64")]
 fn execute_composed_array_get(
     region: &mut NativeRegionContext<'_>,
@@ -885,6 +909,9 @@ fn execute_composed_array_update(
     if region.registers.is_null() || region.operations.len() != 3 {
         return Ok(None);
     }
+    let Some(committed_pc) = unique_region_opcode_pc(region, crate::ir::Opcode::ASetI) else {
+        return Ok(None);
+    };
     let registers = unsafe { &mut *region.registers };
     let Some(load) = code.instruction(pc) else { return Ok(None) };
     let Some(add) = code.instruction(pc + 1) else { return Ok(None) };
@@ -969,7 +996,7 @@ fn execute_composed_array_update(
     region.native_entered = true;
     let status = invoke((&mut kernel as *mut NativeArrayKernelContext).cast())
         .map_err(|error| {
-            crate::machine::NativeDispatchError::committed(pc + 2, format!(
+            crate::machine::NativeDispatchError::committed(committed_pc, format!(
                 "array update execution failed after entry: {error:?}"
             ))
         })?;
@@ -977,7 +1004,7 @@ fn execute_composed_array_update(
     drop(words);
     if status != NATIVE_DISPATCH_OK || written.to_bits() != kernel.result.to_bits() {
         return Err(crate::machine::NativeDispatchError::committed(
-            pc + 2,
+            committed_pc,
             "array update returned invalid committed state",
         ));
     }
@@ -1121,6 +1148,9 @@ pub(crate) fn execute_composed_array_kernel(
     }
     let code = region.code;
     let pc = region.pc;
+    let Some(committed_pc) = unique_region_opcode_pc(region, crate::ir::Opcode::ASetI) else {
+        return Ok(None);
+    };
     // The typed region ABI carries a borrowed register window.  A malformed
     // bridge must reject before touching it; otherwise a null C-ABI pointer
     // would turn an entry miss into undefined behavior rather than an
@@ -1215,13 +1245,13 @@ pub(crate) fn execute_composed_array_kernel(
     let status = invoke((&mut kernel as *mut NativeArrayKernelContext).cast());
     drop(words);
     let status = status.map_err(|error| {
-        crate::machine::NativeDispatchError::committed(pc + 3, format!(
+        crate::machine::NativeDispatchError::committed(committed_pc, format!(
             "array kernel execution failed after entry: {error:?}"
         ))
     })?;
     if status != NATIVE_DISPATCH_OK {
         return Err(crate::machine::NativeDispatchError::committed(
-            pc + 3,
+            committed_pc,
             "array kernel returned invalid status",
         ));
     }
@@ -1230,7 +1260,7 @@ pub(crate) fn execute_composed_array_kernel(
     // fact and performs the same guarded numeric write for non-Cell payloads.
     if !crate::value::ArrayData::set_kernel_existing_f64(&array, index, kernel.result) {
         return Err(crate::machine::NativeDispatchError::committed(
-            pc + 3,
+            committed_pc,
             "array kernel commit lost its proven slot",
         ));
     }
@@ -1263,6 +1293,9 @@ pub(crate) fn execute_composed_array_numeric_loop(
     if region.registers.is_null() || region.context.is_null() {
         return Ok(None);
     }
+    let Some(committed_pc) = region_exit_pc(region) else {
+        return Ok(None);
+    };
     let registers = unsafe { &mut *region.registers };
     let key = crate::stencil_select::array_numeric_loop_region_key();
     let Some(record) = crate::stencil_select::select_region(key) else {
@@ -1361,7 +1394,7 @@ pub(crate) fn execute_composed_array_numeric_loop(
     let status = invoke((&mut kernel as *mut NativeArrayLoopContext).cast());
     drop(words);
     let status = status.map_err(|error| {
-        crate::machine::NativeDispatchError::committed(pc + 18, format!(
+        crate::machine::NativeDispatchError::committed(committed_pc, format!(
             "array loop kernel failed after entry: {error:?}"
         ))
     })?;
@@ -1387,7 +1420,7 @@ pub(crate) fn execute_composed_array_numeric_loop(
         status == NATIVE_DISPATCH_INTERRUPT && kernel.index == end;
     if (status != NATIVE_DISPATCH_OK && !completed_after_interrupt) || kernel.index != end {
         return Err(crate::machine::NativeDispatchError::committed(
-            pc + 18,
+            committed_pc,
             "array loop kernel returned incomplete progress",
         ));
     }
@@ -5962,7 +5995,7 @@ mod compact_handler_tests {
         });
         assert!(matches!(
             result,
-            Err(crate::machine::NativeDispatchError::Committed { .. })
+            Err(crate::machine::NativeDispatchError::Committed { pc: 3, .. })
         ));
         assert!(region.native_entered);
         assert_eq!(crate::vm::get_property_result(&array, "0").unwrap(), Value::Number(4.0));
@@ -6368,6 +6401,23 @@ mod compact_handler_tests {
             Err(crate::machine::NativeDispatchError::Committed { pc: 9, message })
                 if message == "exact internal fault"
         ));
+    }
+
+    #[test]
+    fn region_failure_locations_derive_from_the_operation_contract() {
+        const OPERATIONS: &[crate::ir::Opcode] = &[
+            crate::ir::Opcode::LoadConst,
+            crate::ir::Opcode::ASetI,
+            crate::ir::Opcode::Return,
+        ];
+        let code = crate::machine::ExecutableCode::from_ops(vec![Op::Return { src: 0 }]);
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![Value::Undefined]);
+        let context = crate::vm::current_context_or_default();
+        let region = super::NativeRegionContext::new(
+            code.code(), 7, OPERATIONS, &mut registers, &context,
+        );
+        assert_eq!(super::unique_region_opcode_pc(&region, crate::ir::Opcode::ASetI), Some(8));
+        assert_eq!(super::region_exit_pc(&region), Some(9));
     }
 
     #[test]
