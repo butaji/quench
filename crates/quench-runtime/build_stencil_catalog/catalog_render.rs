@@ -92,15 +92,7 @@ fn render_region_rows(declarations: &[RegionDeclaration]) -> String {
 fn render_region_row(index: usize, declaration: &RegionDeclaration) -> String {
     let declaration_name = declaration.name;
     let name = key_name(declaration.name);
-    let fallthrough = match recipe_composition(declaration) {
-        RecipeComposition::FallthroughReturn => {
-            "Some(crate::stencil_select::PhysicalFallthrough { stencil: &FALLTHROUGH_TAIL, fixup_offset: if cfg!(target_arch = \"aarch64\") { 4 } else { 5 }, target: \"q_fallthrough_tail\" })"
-        }
-        RecipeComposition::AddChain => {
-            "Some(crate::stencil_select::PhysicalFallthrough { stencil: &ADD_CHAIN_TAIL, fixup_offset: if cfg!(target_arch = \"aarch64\") { 4 } else { 5 }, target: \"q_add_chain_tail\" })"
-        }
-        RecipeComposition::Whole => "None",
-    };
+    let fallthrough = render_fallthrough(declaration);
     let executable = executable_expr(declaration);
     let abi = abi_expr(declaration);
     let external_entries = declaration
@@ -113,6 +105,20 @@ fn render_region_row(index: usize, declaration: &RegionDeclaration) -> String {
         "    crate::stencil_select::RegionRecord {{ name: {declaration_name:?}, key: CANONICAL_{name}_KEY, stencil: crate::stencil_fact::Stencil {{ bytes: CANONICAL_{name}_BYTES, holes: CANONICAL_{name}_HOLES }}, operations: CANONICAL_{name}_OPS, entry: {entry}, external_entries: &[{external_entries}], fallthrough: {fallthrough}, abi: {abi}, template_calls_helper: {template_calls_helper}, executable: {executable} }}, // declaration {index}",
         entry = declaration.entry,
         template_calls_helper = target_template_calls_helper(declaration),
+    )
+}
+
+fn render_fallthrough(declaration: &RegionDeclaration) -> String {
+    let Some(recipe) = rust_assembly_recipe(declaration) else {
+        return "None".to_owned();
+    };
+    let Some(continuation) = recipe.continuation() else {
+        return "None".to_owned();
+    };
+    let tail = key_name(continuation.tail_name.trim_end_matches("_tail"));
+    format!(
+        "Some(crate::stencil_select::PhysicalFallthrough {{ stencil: &{tail}_TAIL, target: {:?} }})",
+        continuation.target
     )
 }
 
