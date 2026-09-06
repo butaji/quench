@@ -135,6 +135,7 @@ pub struct StencilArena {
     id: u64,
     published_abis: RefCell<HashMap<usize, crate::stencil_select::RegionAbi>>,
     last_physical_execution: Cell<Option<PhysicalExecutionWitness>>,
+    global_charge: usize,
 }
 
 /// Bounded collection of immutable-after-publication executable slabs.  Region
@@ -508,7 +509,7 @@ impl SharedStencilSlab {
         if !reserve_global_bytes(self.slab_capacity) {
             return Err(ArenaError::Exhausted);
         }
-        let mut slab = match StencilArena::new(self.slab_capacity) {
+        let mut slab = match StencilArena::new_unaccounted(self.slab_capacity) {
             Ok(slab) => slab,
             Err(error) => {
                 release_global_bytes(self.slab_capacity);
@@ -604,7 +605,7 @@ impl SharedStencilSlab {
         if !reserve_global_bytes(self.slab_capacity) {
             return Err(ArenaError::Exhausted);
         }
-        let mut slab = match StencilArena::new(self.slab_capacity) {
+        let mut slab = match StencilArena::new_unaccounted(self.slab_capacity) {
             Ok(slab) => slab,
             Err(error) => {
                 release_global_bytes(self.slab_capacity);
@@ -1075,6 +1076,14 @@ fn render_arena_physical<const N: usize>(
 
 impl StencilArena {
     pub fn new(capacity: usize) -> Result<Self, ArenaError> {
+        Self::new_with_accounting(capacity, true)
+    }
+
+    fn new_unaccounted(capacity: usize) -> Result<Self, ArenaError> {
+        Self::new_with_accounting(capacity, false)
+    }
+
+    fn new_with_accounting(capacity: usize, account_globally: bool) -> Result<Self, ArenaError> {
         if capacity == 0 || capacity > MAX_ARENA_BYTES {
             return Err(ArenaError::InvalidCapacity);
         }
@@ -1082,6 +1091,9 @@ impl StencilArena {
             .checked_add(PAGE - 1)
             .ok_or(ArenaError::InvalidCapacity)?
             & !(PAGE - 1);
+        if account_globally && !reserve_global_bytes(capacity) {
+            return Err(ArenaError::Exhausted);
+        }
         let ptr = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
@@ -1093,6 +1105,9 @@ impl StencilArena {
             )
         };
         if ptr == libc::MAP_FAILED {
+            if account_globally {
+                release_global_bytes(capacity);
+            }
             return Err(ArenaError::MappingFailed);
         }
         Ok(Self {
@@ -1103,6 +1118,7 @@ impl StencilArena {
             id: NEXT_ARENA_ID.fetch_add(1, Ordering::Relaxed),
             published_abis: RefCell::new(HashMap::new()),
             last_physical_execution: Cell::new(None),
+            global_charge: account_globally.then_some(capacity).unwrap_or(0),
         })
     }
 
@@ -2076,8 +2092,13 @@ impl Drop for StencilArena {
         unsafe {
             libc::munmap(self.ptr.cast(), self.capacity);
         }
+        release_global_bytes(self.global_charge);
     }
 }
+
+#[cfg(test)]
+#[path = "stencil_arena_accounting_tests.rs"]
+mod accounting_tests;
 
 #[cfg(test)]
 mod tests {
