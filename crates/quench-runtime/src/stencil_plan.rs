@@ -139,7 +139,9 @@ pub(crate) fn select_local_binary(
 
 fn numeric_operation(instruction: Instruction) -> Option<crate::ops::BinaryOp> {
     use crate::ops::BinaryOp::{Add, Divide, Multiply, Subtract};
-    if instruction.opcode != Opcode::Binary && instruction.flags != 0 {
+    if instruction.opcode == Opcode::AddConst
+        || (instruction.opcode != Opcode::Binary && instruction.flags != 0)
+    {
         return None;
     }
     let operator = instruction
