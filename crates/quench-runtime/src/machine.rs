@@ -3813,12 +3813,16 @@ impl std::fmt::Debug for NativeMovePlan {
 #[derive(Clone, Copy)]
 enum InstalledPropertyEntry {
     Unpublished,
-    ReadLocal(usize),
-    ReadShared(
-        crate::stencil_arena::EntryToken<
+    ReadLocal {
+        key: crate::stencil_fact::RegionKey,
+        address: usize,
+    },
+    ReadShared {
+        key: crate::stencil_fact::RegionKey,
+        entry: crate::stencil_arena::EntryToken<
             extern "C" fn(*mut crate::native_property::NativePropertyReadContext) -> u32,
         >,
-    ),
+    },
     WriteLocal(usize),
     WriteShared(
         crate::stencil_arena::EntryToken<
@@ -3902,26 +3906,31 @@ impl NativePropertyPlan {
         if self.opcode != crate::ir::Opcode::GetN {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
         }
+        let key = access.region_key();
         let mut context = crate::native_property::NativePropertyReadContext::new(access);
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.shared_arena.is_none() {
-            if let InstalledPropertyEntry::ReadLocal(address) = self.installed {
-                if let Some(arena) = self.arena.as_ref() {
-                    if let Ok(entry) = arena.property_guard_entry(address) {
-                        #[cfg(test)]
-                        {
-                            self.native_entry_count = self.native_entry_count.saturating_add(1);
+            if let InstalledPropertyEntry::ReadLocal {
+                key: installed_key,
+                address,
+            } = self.installed {
+                if installed_key == key {
+                    if let Some(arena) = self.arena.as_ref() {
+                        if let Ok(entry) = arena.property_guard_entry(address) {
+                            #[cfg(test)]
+                            {
+                                self.native_entry_count = self.native_entry_count.saturating_add(1);
+                            }
+                            let status = entry(&mut context);
+                            return context
+                                .result(status)
+                                .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed);
                         }
-                        let status = entry(&mut context);
-                        return context
-                            .result(status)
-                            .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed);
                     }
                 }
                 self.installed = InstalledPropertyEntry::Unpublished;
             }
         }
-        let key = crate::stencil_select::property_region_key();
         let values = crate::stencil_fact::PatchValues::from_site(site);
         if !crate::stencil_select::select_region(key).is_some_and(|record| record.executable)
             || self.physical.lifecycle.observe_site(site, key, true)
@@ -3931,18 +3940,23 @@ impl NativePropertyPlan {
         }
         if let Some(shared) = self.shared_arena.clone() {
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            if let InstalledPropertyEntry::ReadShared(owned) = self.installed {
-                match invoke_shared_entry!(shared, owned, |entry| entry(&mut context)) {
-                    Ok(status) => {
-                        #[cfg(test)]
-                        {
-                            self.native_entry_count = self.native_entry_count.saturating_add(1);
+            if let InstalledPropertyEntry::ReadShared {
+                key: installed_key,
+                entry: owned,
+            } = self.installed {
+                if installed_key == key {
+                    match invoke_shared_entry!(shared, owned, |entry| entry(&mut context)) {
+                        Ok(status) => {
+                            #[cfg(test)]
+                            {
+                                self.native_entry_count = self.native_entry_count.saturating_add(1);
+                            }
+                            return context
+                                .result(status)
+                                .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed);
                         }
-                        return context
-                            .result(status)
-                            .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed);
+                        Err(_) => self.clear_shared_capabilities(),
                     }
-                    Err(_) => self.clear_shared_capabilities(),
                 }
             }
             let rendered = (|| -> Result<usize, crate::stencil_arena::ArenaError> {
@@ -3974,7 +3988,7 @@ impl NativePropertyPlan {
             };
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             {
-                self.installed = InstalledPropertyEntry::ReadShared(owned);
+                self.installed = InstalledPropertyEntry::ReadShared { key, entry: owned };
             }
             #[cfg(test)]
             {
@@ -4030,7 +4044,7 @@ impl NativePropertyPlan {
                     self.installed = arena
                         .property_guard_entry(address)
                         .ok()
-                        .map(|_| InstalledPropertyEntry::ReadLocal(address))
+                        .map(|_| InstalledPropertyEntry::ReadLocal { key, address })
                         .unwrap_or(InstalledPropertyEntry::Unpublished);
                 }
             }

@@ -87,6 +87,17 @@ const fn aarch64_ldr_x(rt: u8, rn: u8, byte_offset: u16) -> u32 {
         | (rt as u32 & 0x1F)
 }
 
+const fn aarch64_ldr_w(rt: u8, rn: u8, byte_offset: u16) -> u32 {
+    0xB940_0000
+        | (((byte_offset as u32 / 4) & 0xFFF) << 10)
+        | (((rn as u32) & 0x1F) << 5)
+        | (rt as u32 & 0x1F)
+}
+
+const fn aarch64_cmp_w_imm(rn: u8, immediate: u16) -> u32 {
+    0x7100_001F | (((immediate as u32) & 0xFFF) << 10) | (((rn as u32) & 0x1F) << 5)
+}
+
 const fn aarch64_ldr_d(rt: u8, rn: u8, byte_offset: u16) -> u32 {
     0xFD40_0000
         | (((byte_offset as u32 / 8) & 0xFFF) << 10)
@@ -536,6 +547,64 @@ const AARCH64_PROPERTY_WRITE_GUARD_BYTES: [u8; 80] = {
     put32(&mut out, 60, 0xF900_0022); // str x2, [x1] (commit)
     out
 };
+
+const fn emit_aarch64_prototype_link(out: &mut [u8; 292], index: usize) {
+    let at = 40 + index * 48;
+    let link = 56 + index * 32;
+    put32(out, at, aarch64_ldr_x(1, 0, link as u16));
+    put32(out, at + 4, aarch64_ldr_x(2, 1, 0));
+    put32(out, at + 8, aarch64_ldr_x(3, 0, (link + 8) as u16));
+    put32(out, at + 12, 0xEB03_005F); // cmp x2,x3
+    put32(out, at + 16, aarch64_b_cond((284 - at as i32 - 16) / 4, 1));
+    put32(out, at + 20, aarch64_ldr_x(1, 0, (link + 16) as u16));
+    put32(out, at + 24, aarch64_ldr_w(2, 1, 0));
+    put32(out, at + 28, aarch64_ldr_w(3, 0, (link + 24) as u16));
+    put32(out, at + 32, 0x6B03_005F); // cmp w2,w3
+    put32(out, at + 36, aarch64_b_cond((284 - at as i32 - 36) / 4, 1));
+    put32(out, at + 40, aarch64_cmp_w_imm(4, (index + 1) as u16));
+    put32(out, at + 44, aarch64_b_cond((232 - at as i32 - 44) / 4, 0));
+}
+
+const fn emit_aarch64_property_result(out: &mut [u8; 292]) {
+    let words = [
+        aarch64_ldr_x(1, 0, 16), 0x3940_0022, aarch64_cmp_w_imm(2, 1),
+        aarch64_b_cond(10, 1), aarch64_ldr_x(1, 0, 24), 0x3940_0022,
+        aarch64_cmp_w_imm(2, 1), aarch64_b_cond(6, 1),
+        aarch64_ldr_x(1, 0, 32), aarch64_ldr_x(2, 1, 0),
+        aarch64_str_x(2, 0, 40), aarch64_mov_w_imm0(1), aarch64_ret(),
+        aarch64_mov_w_imm0(0), aarch64_ret(),
+    ];
+    let mut index = 0;
+    while index < words.len() {
+        put32(out, 232 + index * 4, words[index]);
+        index += 1;
+    }
+}
+
+const fn aarch64_prototype_property_guard_bytes() -> [u8; 292] {
+    let mut out = [0; 292];
+    let header = [
+        aarch64_ldr_x(1, 0, 0), aarch64_ldr_w(2, 1, 0),
+        aarch64_ldr_w(3, 0, 8), 0x6B03_005F, aarch64_b_cond(67, 1),
+        aarch64_ldr_w(4, 0, 48), aarch64_cmp_w_imm(4, 1),
+        aarch64_b_cond(64, 3), aarch64_cmp_w_imm(4, 4), aarch64_b_cond(62, 8),
+    ];
+    let mut index = 0;
+    while index < header.len() {
+        put32(&mut out, index * 4, header[index]);
+        index += 1;
+    }
+    index = 0;
+    while index < 4 {
+        emit_aarch64_prototype_link(&mut out, index);
+        index += 1;
+    }
+    emit_aarch64_property_result(&mut out);
+    out
+}
+
+const AARCH64_PROTOTYPE_PROPERTY_GUARD_BYTES: [u8; 292] =
+    aarch64_prototype_property_guard_bytes();
 const AARCH64_MOVE_BYTES: [u8; 8] = AARCH64_PROPERTY_BYTES;
 const AARCH64_ARRAY_GET_NUMBER_BYTES: [u8; 20] = aarch64_array_get_number_bytes();
 const AARCH64_ARRAY_SET_NUMBER_BYTES: [u8; 20] = aarch64_array_set_number_bytes();
@@ -718,6 +787,18 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         // the admitted slot without repeating semantic key/descriptor scans.
         x86_bytes: &X86_PROPERTY_BYTES,
         aarch64_bytes: &AARCH64_PROPERTY_GUARD_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
+        name: "prototype_property",
+        operations: &["GetN"],
+        abi: DeclAbi::PropertyGuard,
+        x86_bytes: &[0xC3],
+        aarch64_bytes: &AARCH64_PROTOTYPE_PROPERTY_GUARD_BYTES,
         portable_bytes: &[0xC3],
         holes: &[],
         aarch64_holes: &[],
@@ -1694,6 +1775,7 @@ fn run_tool(command: &mut Command, description: &str) {
 }
 
 fn generate_stencil_catalog() {
+    assert_unique_region_ids(REGION_DECLARATIONS);
     // The catalog is intentionally small and declarative here; these checks
     // make an invalid closed-hole relocation fail the build, rather than
     // reaching the runtime patcher.
@@ -1732,10 +1814,10 @@ fn generate_stencil_catalog() {
     let accessors = REGION_DECLARATIONS
         .iter()
         .map(|declaration| {
+            let accessor = accessor_name(declaration.name);
+            let key = key_name(declaration.name);
             format!(
-                "pub const fn {}_region_key() -> crate::stencil_fact::RegionKey {{ CANONICAL_{}_KEY }}",
-                accessor_name(declaration.name),
-                key_name(declaration.name)
+                "pub const fn {accessor}_region_id() -> crate::stencil_fact::RegionId {{ CANONICAL_{key}_ID }}\npub const fn {accessor}_region_key() -> crate::stencil_fact::RegionKey {{ CANONICAL_{key}_KEY }}"
             )
         })
         .collect::<Vec<_>>()
@@ -1753,6 +1835,8 @@ fn generate_stencil_catalog() {
             };
             let executable = if declaration.name == "dispatch" {
                 "DISPATCH_EXECUTABLE"
+            } else if declaration.name == "prototype_property" {
+                "cfg!(target_arch = \"aarch64\")"
             } else if matches!(
                 declaration.abi,
                 DeclAbi::PropertyGuard | DeclAbi::PropertyWriteGuard
@@ -1815,12 +1899,11 @@ fn generate_stencil_catalog() {
         .join("\n");
     let canonical_keys = REGION_DECLARATIONS
         .iter()
-        .enumerate()
-        .map(|(index, declaration)| {
+        .map(|declaration| {
             let name = key_name(declaration.name);
+            let id = stable_region_id(declaration.name);
             format!(
-                "const CANONICAL_{name}_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(crate::stencil_fact::RegionId({}), CANONICAL_{name}_OPS);",
-                index + 1
+                "const CANONICAL_{name}_ID: crate::stencil_fact::RegionId = crate::stencil_fact::RegionId({id});\nconst CANONICAL_{name}_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(CANONICAL_{name}_ID, CANONICAL_{name}_OPS);"
             )
         })
         .collect::<Vec<_>>()
@@ -1886,6 +1969,22 @@ fn canonical_region_lookup(key: crate::stencil_fact::RegionKey) -> Option<&'stat
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=build_stencil_artifacts.rs");
     println!("cargo:rerun-if-changed=src/ir.rs");
+}
+
+fn stable_region_id(name: &str) -> u32 {
+    name.bytes().fold(0x811c_9dc5, |hash, byte| {
+        (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
+    })
+}
+
+fn assert_unique_region_ids(declarations: &[RegionDeclaration]) {
+    let mut ids = std::collections::BTreeMap::new();
+    for declaration in declarations {
+        let id = stable_region_id(declaration.name);
+        if let Some(previous) = ids.insert(id, declaration.name) {
+            panic!("region ID collision: {previous} and {}", declaration.name);
+        }
+    }
 }
 
 fn is_numeric_scalar_leaf(declaration: &RegionDeclaration) -> bool {
