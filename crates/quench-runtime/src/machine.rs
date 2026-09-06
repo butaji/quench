@@ -4615,7 +4615,7 @@ impl std::fmt::Debug for NativeDispatchPlan {
 /// region owns alternate JavaScript semantics, and any mismatch takes the
 /// ordinary per-instruction path.
 pub(crate) struct NativeRegionPlan {
-    arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
+    arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
     physical: PhysicalState,
     site: crate::quickening::QuickeningSite<4>,
     key: crate::stencil_fact::RegionKey,
@@ -4879,7 +4879,7 @@ impl NativeRegionPlan {
             return None;
         }
         Some(Self {
-            arena: Some(arena),
+            arena,
             physical: PhysicalState::new(),
             site: crate::quickening::QuickeningSite::new(record.operations[0]),
             key,
@@ -4978,9 +4978,7 @@ impl NativeRegionPlan {
         }
         let mut published_address = None;
         let result = (|| {
-            let arena = self.arena.as_ref().ok_or_else(|| {
-                NativeDispatchError::Physical("native fused region arena missing".into())
-            })?;
+            let arena = &self.arena;
             let record = view.record;
             let contract = record.contract();
             if !contract.legal_external_entry(0) {
@@ -5168,10 +5166,7 @@ impl NativeRegionPlan {
             }
             region.finish(status)
         })();
-        let published = self
-            .arena
-            .as_ref()
-            .and_then(|arena| published_address.map(|address| (arena, address)));
+        let published = published_address.map(|address| (&self.arena, address));
         self.physical.apply_dispatch_outcome(&result, published);
         result
     }
@@ -5185,7 +5180,7 @@ impl std::fmt::Debug for NativeRegionPlan {
             .field("operations", &self.operations)
             .field(
                 "used_bytes",
-                &self.arena.as_ref().map_or(0, |arena| arena.borrow().used()),
+                &self.arena.borrow().used(),
             )
             .finish()
     }
