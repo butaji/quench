@@ -2092,7 +2092,13 @@ pub(crate) fn execute_optimized_code_step_from(
                             .hot_properties()
                             .position_rev(key)
                             .is_none()
-                            .then(|| quickened_prototype_slot_data(&object, key))
+                            .then(|| {
+                                crate::vm::get_named_cached_prototype_guard(
+                                    &object,
+                                    key,
+                                    &code.metadata_at(start)?.named_cache,
+                                )
+                            })
                             .flatten()
                     })
                 });
@@ -2565,7 +2571,13 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                                 .hot_properties()
                                 .position_rev(key)
                                 .is_none()
-                                .then(|| quickened_prototype_slot_data(&object, key))
+                                .then(|| {
+                                    crate::vm::get_named_cached_prototype_guard(
+                                        &object,
+                                        key,
+                                        &code.metadata_at(pc)?.named_cache,
+                                    )
+                                })
                                 .flatten()
                         })
                     });
@@ -4134,39 +4146,6 @@ fn quickened_native_own_slot(
         code.dequicken_instruction(pc);
         None
     })
-}
-
-/// Return a plain data slot from an immediate prototype chain. Every owner is
-/// checked before advancing, so shadowing accessors and unstable objects fall
-/// back to canonical property semantics.
-fn quickened_prototype_slot_data(
-    receiver: &crate::value::ObjectData,
-    key: &str,
-) -> Option<crate::native_property::GuardedPropertySlot> {
-    let mut owner = receiver as *const crate::value::ObjectData;
-    for _ in 0..4 {
-        let owner_ref = unsafe { owner.as_ref()? };
-        if owner_ref.has_replacement()
-            || owner_ref.is_dictionary()
-            || owner_ref.is_realm_global()
-            || owner_ref.is_script_global_view()
-            || owner_ref.has_regexp_internal_slot()
-        {
-            return None;
-        }
-        if let Some(slot) = owner_ref.hot_properties().position_rev(key) {
-            let layout = owner_ref.semantic_layout_id();
-            let slot = u32::try_from(slot).ok()?;
-            crate::vm::cached_plain_own_word(owner_ref, key, layout, slot)?;
-            return owner_ref.guarded_plain_slot(layout, slot, key);
-        }
-        let proto_slot = owner_ref.hot_properties().position_rev("\0prototype")?;
-        owner = owner_ref
-            .hot_properties()
-            .slot_word(proto_slot)?
-            .object_or_null_ptr()??;
-    }
-    None
 }
 
 #[inline(always)]

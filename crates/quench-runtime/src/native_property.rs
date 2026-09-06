@@ -13,6 +13,47 @@ pub(crate) struct NativePropertyReadContext {
     deleted_state: *const u8,
     slot: *const crate::register_file::SlotWord,
     result: u64,
+    prototype_depth: u32,
+    _prototype_padding: u32,
+    prototype_links: [PrototypeGuardLink; 4],
+}
+
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub(crate) struct PrototypeGuardLink {
+    /// Slot in the preceding owner. It is checked before either pointer below
+    /// is dereferenced, so a broken chain cannot expose a stale descendant.
+    slot: *const crate::register_file::SlotWord,
+    expected_word: u64,
+    /// Layout cell owned by the exact object encoded in `expected_word`.
+    layout: *const u32,
+    expected_layout: u32,
+    _padding: u32,
+}
+
+impl PrototypeGuardLink {
+    pub(crate) fn new(
+        slot: *const crate::register_file::SlotWord,
+        expected_word: u64,
+        layout: *const u32,
+        expected_layout: u32,
+    ) -> Self {
+        Self {
+            slot,
+            expected_word,
+            layout,
+            expected_layout,
+            _padding: 0,
+        }
+    }
+
+    pub(crate) const EMPTY: Self = Self {
+        slot: std::ptr::null(),
+        expected_word: 0,
+        layout: std::ptr::null(),
+        expected_layout: 0,
+        _padding: 0,
+    };
 }
 
 #[repr(C)]
@@ -36,6 +77,9 @@ impl NativePropertyReadContext {
             deleted_state: access.deleted_state,
             slot: access.slot,
             result: 0,
+            prototype_depth: access.prototype_depth,
+            _prototype_padding: 0,
+            prototype_links: access.prototype_links,
         }
     }
 
@@ -70,6 +114,8 @@ pub(crate) struct GuardedPropertySlot {
     descriptor_state: *const u8,
     deleted_state: *const u8,
     slot: *const crate::register_file::SlotWord,
+    prototype_depth: u32,
+    prototype_links: [PrototypeGuardLink; 4],
 }
 
 impl GuardedPropertySlot {
@@ -86,6 +132,35 @@ impl GuardedPropertySlot {
             descriptor_state,
             deleted_state,
             slot,
+            prototype_depth: 0,
+            prototype_links: [PrototypeGuardLink::EMPTY; 4],
+        }
+    }
+
+    pub(crate) fn with_prototype_chain(
+        self,
+        receiver_layout: (*const u32, u32),
+        links: &[PrototypeGuardLink],
+    ) -> Option<Self> {
+        if links.is_empty() || links.len() > 4 {
+            return None;
+        }
+        let mut prototype_links = [PrototypeGuardLink::EMPTY; 4];
+        prototype_links[..links.len()].copy_from_slice(links);
+        Some(Self {
+            layout: receiver_layout.0,
+            expected_layout: receiver_layout.1,
+            prototype_depth: u32::try_from(links.len()).ok()?,
+            prototype_links,
+            ..self
+        })
+    }
+
+    pub(crate) fn region_key(self) -> crate::stencil_fact::RegionKey {
+        if self.prototype_depth == 0 {
+            crate::stencil_select::property_region_key()
+        } else {
+            crate::stencil_select::prototype_property_region_key()
         }
     }
 
@@ -97,7 +172,6 @@ impl GuardedPropertySlot {
 }
 
 const _: () = {
-    assert!(std::mem::size_of::<NativePropertyReadContext>() == 48);
     assert!(std::mem::align_of::<NativePropertyReadContext>() == 8);
     assert!(std::mem::offset_of!(NativePropertyReadContext, layout) == 0);
     assert!(std::mem::offset_of!(NativePropertyReadContext, expected_layout) == 8);
@@ -105,6 +179,10 @@ const _: () = {
     assert!(std::mem::offset_of!(NativePropertyReadContext, deleted_state) == 24);
     assert!(std::mem::offset_of!(NativePropertyReadContext, slot) == 32);
     assert!(std::mem::offset_of!(NativePropertyReadContext, result) == 40);
+    assert!(std::mem::offset_of!(NativePropertyReadContext, prototype_depth) == 48);
+    assert!(std::mem::offset_of!(NativePropertyReadContext, prototype_links) == 56);
+    assert!(std::mem::size_of::<PrototypeGuardLink>() == 32);
+    assert!(std::mem::size_of::<NativePropertyReadContext>() == 184);
     assert!(std::mem::size_of::<NativePropertyWriteContext>() == 48);
     assert!(std::mem::align_of::<NativePropertyWriteContext>() == 8);
     assert!(std::mem::offset_of!(NativePropertyWriteContext, layout) == 0);

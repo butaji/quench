@@ -1283,6 +1283,12 @@ impl ObjectData {
         id
     }
 
+    #[inline]
+    pub(crate) fn layout_guard(&self) -> (*const u32, u32) {
+        let layout = self.semantic_layout_id();
+        (self.layout_id.as_ptr(), layout)
+    }
+
     /// Resolve a physical property slot from the immutable derived layout.
     /// The canonical name/value vectors remain the only semantic storage;
     /// this index is discarded whenever mutation invalidates `layout_id`.

@@ -549,7 +549,11 @@ mod generated_region_admission_tests {
                     ));
                 }
                 RegionAbi::PropertyGuard => {
-                    assert!(matches!(record.stencil.bytes.len(), 48 | 80));
+                    assert!(
+                        matches!(record.stencil.bytes.len(), 48 | 80)
+                            || (record.name == "prototype_property"
+                                && matches!(record.stencil.bytes.len(), 1 | 292))
+                    );
                     assert_eq!(record.operations, [crate::ir::Opcode::GetN]);
                 }
                 RegionAbi::PropertyWriteGuard => {
@@ -629,6 +633,9 @@ mod generated_region_admission_tests {
                     cfg!(target_arch = "aarch64"),
                     "raw array ABI must not route trampoline bytes as a kernel"
                 );
+            }
+            if record.name == "prototype_property" {
+                assert_eq!(record.executable, cfg!(target_arch = "aarch64"));
             }
         }
     }
@@ -834,7 +841,7 @@ mod tests {
         assert_eq!(
             loop_region_key(),
             RegionKey::from_opcodes(
-                RegionId(1),
+                loop_region_id(),
                 &[crate::ir::Opcode::Add, crate::ir::Opcode::Return]
             )
         );
@@ -960,7 +967,7 @@ mod tests {
         // Explicit before/after migration check: the former hand-written
         // construction and the generated declaration are identical.
         let legacy = RegionKey::from_opcodes(
-            RegionId(4),
+            fallthrough_region_id(),
             &[crate::ir::Opcode::Add, crate::ir::Opcode::Return],
         );
         assert_eq!(fallthrough_region_key(), legacy);

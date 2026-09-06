@@ -299,6 +299,81 @@ fn prototype_entry_hit(
     Some(NamedCachedPayload::Word(word))
 }
 
+pub(crate) fn get_named_cached_prototype_guard(
+    receiver: &crate::value::ObjectData,
+    key: &str,
+    cache: &std::cell::Cell<u64>,
+) -> Option<crate::native_property::GuardedPropertySlot> {
+    let cached = cache.get();
+    let index = prototype_cache_index(cached)?;
+    let site = cache as *const _ as usize;
+    PROTOTYPE_NAMED_CACHES.with(|caches| {
+        let caches = caches.borrow();
+        let set = caches.get(index)?.as_ref()?;
+        (set.site == site).then_some(())?;
+        let layout = receiver.semantic_layout_id();
+        let entry = set
+            .entries
+            .iter()
+            .flatten()
+            .find(|entry| entry.receiver_layout == layout)?;
+        prototype_entry_guard(receiver, key, entry)
+    })
+}
+
+fn prototype_entry_guard(
+    receiver: &crate::value::ObjectData,
+    key: &str,
+    entry: &PrototypeNamedCache,
+) -> Option<crate::native_property::GuardedPropertySlot> {
+    let mut retained = std::array::from_fn::<_, 4, _>(|_| None);
+    let mut guards = [crate::native_property::PrototypeGuardLink::EMPTY; 4];
+    for depth in 0..usize::from(entry.depth) {
+        let link = entry.links[depth].as_ref()?;
+        let owner = if depth == 0 {
+            receiver
+        } else {
+            retained[depth - 1].as_deref()?
+        };
+        prototype_owner_is_plain(owner).then_some(())?;
+        let slot = owner.hot_properties().slot_word(link.prototype_slot as usize)?;
+        let prototype = link.prototype.upgrade()?;
+        prototype_owner_is_plain(&prototype).then_some(())?;
+        let expected_word = crate::tagged_value::TaggedValue::object_ptr(
+            std::rc::Rc::as_ptr(&prototype) as usize,
+        )?
+        .bits();
+        let layout = prototype.layout_guard().0;
+        guards[depth] = crate::native_property::PrototypeGuardLink::new(
+            slot,
+            expected_word,
+            layout,
+            link.prototype_layout,
+        );
+        retained[depth] = Some(prototype);
+    }
+    finish_prototype_guard(receiver, key, entry, &retained, &guards)
+}
+
+fn finish_prototype_guard(
+    receiver: &crate::value::ObjectData,
+    key: &str,
+    entry: &PrototypeNamedCache,
+    retained: &[Option<std::rc::Rc<crate::value::ObjectData>>; 4],
+    guards: &[crate::native_property::PrototypeGuardLink; 4],
+) -> Option<crate::native_property::GuardedPropertySlot> {
+    let depth = usize::from(entry.depth);
+    let owner = retained[depth.checked_sub(1)?].as_deref()?;
+    let owner_layout = entry.links[usize::from(entry.depth).checked_sub(1)?]
+        .as_ref()?
+        .prototype_layout;
+    let slot = owner.guarded_plain_slot(owner_layout, entry.value_slot, key)?;
+    slot.with_prototype_chain(
+        (receiver.layout_guard().0, entry.receiver_layout),
+        &guards[..depth],
+    )
+}
+
 fn cacheable_immediate_prototype(
     receiver: &crate::value::ObjectData,
     key: &str,
@@ -311,6 +386,7 @@ fn cacheable_immediate_prototype(
         } else {
             retained[depth - 1].as_deref()?
         };
+        prototype_owner_is_plain(owner).then_some(())?;
         if shadows_named_property(owner, key) {
             return None;
         }
@@ -336,6 +412,14 @@ fn cacheable_immediate_prototype(
         retained[depth] = Some(prototype);
     }
     None
+}
+
+fn prototype_owner_is_plain(object: &crate::value::ObjectData) -> bool {
+    !object.has_replacement()
+        && !object.is_dictionary()
+        && !object.is_realm_global()
+        && !object.is_script_global_view()
+        && !object.has_regexp_internal_slot()
 }
 
 fn shadows_named_property(object: &crate::value::ObjectData, key: &str) -> bool {

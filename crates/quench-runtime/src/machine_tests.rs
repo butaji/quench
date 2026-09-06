@@ -2550,12 +2550,18 @@ fn native_property_shared_entry_reuses_live_owner_and_recovers_after_eviction() 
         .expect("plain guarded slot");
     assert!(plan.execute(access, &site).is_ok());
     let used = shared.borrow().used();
-    assert!(matches!(plan.installed, super::InstalledPropertyEntry::ReadShared(_)));
+    assert!(matches!(
+        plan.installed,
+        super::InstalledPropertyEntry::ReadShared { .. }
+    ));
     assert!(plan.execute(access, &site).is_ok());
     assert_eq!(shared.borrow().used(), used);
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert!(plan.execute(access, &site).is_ok());
-    assert!(matches!(plan.installed, super::InstalledPropertyEntry::ReadShared(_)), "eviction must rebuild the entry");
+    assert!(
+        matches!(plan.installed, super::InstalledPropertyEntry::ReadShared { .. }),
+        "eviction must rebuild the entry"
+    );
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -2745,7 +2751,7 @@ fn ordinary_residual_named_get_executes_guarded_property_stencil() {
     );
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(target_arch = "aarch64")]
 #[test]
 fn ordinary_residual_prototype_get_executes_guarded_property_stencil() {
     let function = crate::machine::FunctionCode::from_ops(vec![
@@ -2759,11 +2765,18 @@ fn ordinary_residual_prototype_get_executes_guarded_property_stencil() {
     let code = function.code().expect("lowered prototype get");
     let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
     let plan = super::BaselinePlan::compile_for_test(code, policy);
-    let prototype = std::rc::Rc::new(crate::value::ObjectData::new(vec![
+    let owner = std::rc::Rc::new(crate::value::ObjectData::new(vec![
         ("value".into(), crate::value::Value::Number(11.0)),
     ]));
+    let prototype = std::rc::Rc::new(crate::value::ObjectData::new(vec![(
+        "\0prototype".into(),
+        crate::value::Value::Object(std::rc::Rc::clone(&owner)),
+    )]));
     let receiver = std::rc::Rc::new(crate::value::ObjectData::new(vec![
-        ("\0prototype".into(), crate::value::Value::Object(prototype)),
+        (
+            "\0prototype".into(),
+            crate::value::Value::Object(std::rc::Rc::clone(&prototype)),
+        ),
     ]));
     let mut registers = crate::register_file::RegisterFile::from_values(vec![
         crate::value::Value::Undefined,
@@ -2783,19 +2796,76 @@ fn ordinary_residual_prototype_get_executes_guarded_property_stencil() {
         completion,
         crate::completion::Completion::Return(crate::value::Value::Number(11.0))
     );
+    assert_eq!(
+        plan.native_property_at(0)
+            .map(|native| native.borrow().native_entry_count),
+        Some(0),
+        "cold prototype lookup installs the canonical IC before native entry"
+    );
+    registers.write(0, crate::value::Value::Undefined);
+    let (completion, _) = crate::vm::execute_baseline_code_from(
+        code,
+        &plan,
+        0,
+        &mut registers,
+        &context,
+        crate::environment::Environment::new(),
+    )
+    .expect("warm prototype get execution");
+    assert_eq!(
+        completion,
+        crate::completion::Completion::Return(crate::value::Value::Number(11.0))
+    );
     assert!(plan
         .native_property_at(0)
         .is_some_and(|native| native.borrow().native_entry_count > 0));
-    let native_count = plan
+    assert!(plan.native_property_at(0).is_some_and(|native| matches!(
+        native.borrow().installed,
+        super::InstalledPropertyEntry::ReadShared { key, .. }
+            if key == crate::stencil_select::prototype_property_region_key()
+    )));
+    let mut native_count = plan
         .native_property_at(0)
         .map(|native| native.borrow().native_entry_count)
         .unwrap_or(0);
-    let replacement = std::rc::Rc::new(crate::value::ObjectData::new(Vec::new()));
-    assert!(crate::execute::set_prototype_of(
-        &crate::value::Value::Object(receiver),
-        &crate::value::Value::Object(replacement),
+    let replacement_owner = std::rc::Rc::new(crate::value::ObjectData::new(vec![(
+        "value".into(),
+        crate::value::Value::Number(13.0),
+    )]));
+    let prototype_slot = prototype
+        .hot_properties()
+        .position_rev("\0prototype")
+        .and_then(|slot| prototype.hot_properties().slot_word(slot))
+        .expect("intermediate prototype slot");
+    prototype_slot.store_object_or_null(Some(&replacement_owner));
+    registers.write(0, crate::value::Value::Undefined);
+    let (completion, _) = crate::vm::execute_baseline_code_from(
+        code,
+        &plan,
+        0,
+        &mut registers,
+        &context,
+        crate::environment::Environment::new(),
     )
-    .is_ok());
+    .expect("intermediate prototype mutation fallback");
+    assert_eq!(
+        completion,
+        crate::completion::Completion::Return(crate::value::Value::Number(13.0))
+    );
+    assert_eq!(
+        plan.native_property_at(0)
+            .map(|native| native.borrow().native_entry_count),
+        Some(native_count + 1),
+        "native chain guard must observe and reject the changed identity"
+    );
+    native_count += 1;
+    let replacement = std::rc::Rc::new(crate::value::ObjectData::new(Vec::new()));
+    let receiver_slot = receiver
+        .hot_properties()
+        .position_rev("\0prototype")
+        .and_then(|slot| receiver.hot_properties().slot_word(slot))
+        .expect("receiver prototype slot");
+    receiver_slot.store_object_or_null(Some(&replacement));
     registers.write(0, crate::value::Value::Undefined);
     let (completion, _) = crate::vm::execute_baseline_code_from(
         code,
@@ -2813,8 +2883,8 @@ fn ordinary_residual_prototype_get_executes_guarded_property_stencil() {
     assert_eq!(
         plan.native_property_at(0)
             .map(|native| native.borrow().native_entry_count),
-        Some(native_count),
-        "prototype replacement must not reuse stale native slot"
+        Some(native_count + 1),
+        "receiver-chain guard must reject the stale cached identity"
     );
 }
 
