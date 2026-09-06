@@ -1,7 +1,112 @@
-/// One-time developer check for the const encoders. This is intentionally
-/// opt-in: ordinary builds remain pure Rust and do not require object tools.
-/// Set `QUENCH_VERIFY_STENCIL_ENCODINGS=1` to compare Rust global_asm output
-/// with the generated words.
+const AARCH64_VERIFY_SOURCE: &str = r####"#![no_std]
+core::arch::global_asm!(r#"
+.text
+.globl _verify
+_verify:
+  fadd d0, d0, d1
+  fsub d0, d0, d1
+  fmul d0, d0, d1
+  fdiv d0, d0, d1
+  ldr x1, [x0]
+  ldr x2, [x0, #8]
+  ldr x3, [x0, #16]
+  add x4, x1, x3, lsl #3
+  ldr d0, [x4]
+  ldr d1, [x0, #24]
+  str d0, [x4]
+  str d0, [x0, #32]
+  mov w0, #1
+  ldr x1, [x0, #16]
+  ldr x2, [x0, #24]
+  ldr d0, [x0, #40]
+  cmp x1, x2
+  b.hs 2f
+1:
+  ldr x3, [x0]
+  add x4, x3, x1, lsl #3
+  ldr d1, [x4]
+  ldr d2, [x0, #32]
+  fadd d1, d1, d2
+  str d1, [x4]
+  add x1, x1, #1
+  str x1, [x0, #16]
+  b 1b
+2:
+  str d1, [x0, #40]
+  mov w0, #1
+  ldr x0, [x0]
+  br x16
+  ret
+_literal:
+  ldr d1, 16f
+  .space 12
+16:
+  .quad 0
+.globl _numeric_loop
+_numeric_loop:
+  ldr x1, [x0, #16]
+  ldr x2, [x0, #24]
+  ldr d0, [x0, #40]
+  fmov d1, d0
+  b 3f
+3:
+  cmp x1, x2
+  b.hs 4f
+  ldr x3, [x0]
+  add x4, x3, x1, lsl #3
+  ldr d1, [x4]
+  ldr d2, [x0, #32]
+  fadd d1, d1, d2
+  str d1, [x4]
+  add x1, x1, #1
+  str x1, [x0, #16]
+  b 3b
+4:
+  str d1, [x0, #40]
+  mov w0, #1
+  ret
+"#);
+"####;
+
+const AARCH64_VERIFY_WORDS: &[u32] = &[
+    aarch64_fadd_d(0, 0, 1),
+    aarch64_fsub_d(0, 0, 1),
+    aarch64_fmul_d(0, 0, 1),
+    aarch64_fdiv_d(0, 0, 1),
+    0xF940_0001,
+    0xF940_0402,
+    0xF940_0803,
+    0x8B03_0C24,
+    0xFD40_0080,
+    0xFD40_0C01,
+    0xFD00_0080,
+    0xFD00_1000,
+    0x5280_0020,
+    0xF940_0801,
+    0xF940_0C02,
+    0xFD40_1400,
+    0x1E60_4001,
+    0x1400_0001,
+    0xEB02_003F,
+    aarch64_b_cond(10, 2),
+    0xF940_0003,
+    0x8B01_0C64,
+    0xFD40_0081,
+    0xFD40_1002,
+    0x1E62_2821,
+    0xFD00_0081,
+    0x9100_0421,
+    0xF900_0801,
+    aarch64_b_imm26(-8),
+    aarch64_b_imm26(-10),
+    0xFD00_1401,
+    aarch64_ldr_d_literal(1, 16),
+    aarch64_ldr_x0_x0(),
+    aarch64_br_x16(),
+    aarch64_ret(),
+];
+
+/// Opt-in comparison between Rust const encoders and rustc assembler output.
 fn verify_stencil_encodings() {
     let target = env::var("TARGET").unwrap_or_default();
     if !target.starts_with("aarch64") {
@@ -9,115 +114,51 @@ fn verify_stencil_encodings() {
         return;
     }
     let root = unique_verification_directory();
-    let arm_source = root.join("arm.rs");
-    let arm_object = root.join("arm.o");
-    fs::write(
-        &arm_source,
-        "#![no_std]\ncore::arch::global_asm!(r#\"\n.text\n.globl _verify\n_verify:\n  fadd d0, d0, d1\n  fsub d0, d0, d1\n  fmul d0, d0, d1\n  fdiv d0, d0, d1\n  ldr x1, [x0]\n  ldr x2, [x0, #8]\n  ldr x3, [x0, #16]\n  add x4, x1, x3, lsl #3\n  ldr d0, [x4]\n  ldr d1, [x0, #24]\n  str d0, [x4]\n  str d0, [x0, #32]\n  mov w0, #1\n  ldr x1, [x0, #16]\n  ldr x2, [x0, #24]\n  ldr d0, [x0, #40]\n  cmp x1, x2\n  b.hs 2f\n1:\n  ldr x3, [x0]\n  add x4, x3, x1, lsl #3\n  ldr d1, [x4]\n  ldr d2, [x0, #32]\n  fadd d1, d1, d2\n  str d1, [x4]\n  add x1, x1, #1\n  str x1, [x0, #16]\n  b 1b\n2:\n  str d1, [x0, #40]\n  mov w0, #1\n  ldr x0, [x0]\n  br x16\n  ret\n_literal:\n  ldr d1, 16f\n  .space 12\n16:\n  .quad 0\n\"#);\n",
-    )
-    .expect("write ARM stencil verification source");
-    strip_global_asm_terminator(&arm_source);
-    // Keep the loop encoder covered by real assembler output as well as the
-    // scalar templates above. Labels let rustc's assembler calculate branch
-    // displacements; the generated raw bytes are checked against these
-    // resulting words below, avoiding hand-counted offsets in the verifier.
-    {
-        use std::io::Write;
-        let mut source = fs::OpenOptions::new()
-            .append(true)
-            .open(&arm_source)
-            .expect("open ARM stencil verification source");
-        source
-            .write_all(
-                b"\n.globl _numeric_loop\n_numeric_loop:\n  ldr x1, [x0, #16]\n  ldr x2, [x0, #24]\n  ldr d0, [x0, #40]\n  fmov d1, d0\n  b 3f\n3:\n  cmp x1, x2\n  b.hs 4f\n  ldr x3, [x0]\n  add x4, x3, x1, lsl #3\n  ldr d1, [x4]\n  ldr d2, [x0, #32]\n  fadd d1, d1, d2\n  str d1, [x4]\n  add x1, x1, #1\n  str x1, [x0, #16]\n  b 3b\n4:\n  str d1, [x0, #40]\n  mov w0, #1\n  ret\n",
-            )
-            .expect("append ARM numeric-loop verification source");
-        source
-            .write_all(b"\n\"#);\n")
-            .expect("close global_asm source");
-    }
+    let source = root.join("arm.rs");
+    let object = root.join("arm.o");
+    fs::write(&source, AARCH64_VERIFY_SOURCE).expect("write ARM verification source");
+    compile_verification_object(&target, &source, &object);
+    verify_assembled_object(&object);
+    verify_loop_branch_words();
+    remove_verification_directory(&root, [&source, &object]);
+}
+
+fn compile_verification_object(target: &str, source: &std::path::Path, object: &std::path::Path) {
+    let rustc = env::var_os("QUENCH_RUSTC")
+        .or_else(|| env::var_os("RUSTC"))
+        .unwrap_or_else(|| "rustc".into());
     run_tool(
-        Command::new(
-            env::var_os("QUENCH_RUSTC")
-                .or_else(|| env::var_os("RUSTC"))
-                .unwrap_or_else(|| "rustc".into()),
-        )
-        .args([
+        Command::new(rustc).args([
             "--target",
-            target.as_str(),
+            target,
             "--crate-type=lib",
             "--emit=obj",
             "-Cpanic=abort",
-            arm_source.to_str().expect("ARM source path"),
+            source.to_str().expect("ARM source path"),
             "-o",
-            arm_object.to_str().expect("ARM object path"),
+            object.to_str().expect("ARM object path"),
         ]),
         "assemble Rust AArch64 stencil verification source",
     );
-    build_stencil_artifacts::verify_words(
-        &arm_object,
-        &[
-            aarch64_fadd_d(0, 0, 1),
-            aarch64_fsub_d(0, 0, 1),
-            aarch64_fmul_d(0, 0, 1),
-            aarch64_fdiv_d(0, 0, 1),
-            0xF940_0001,
-            0xF940_0402,
-            0xF940_0803,
-            0x8B03_0C24,
-            0xFD40_0080,
-            0xFD40_0C01,
-            0xFD00_0080,
-            0xFD00_1000,
-            0x5280_0020,
-            0xF940_0801,
-            0xF940_0C02,
-            0xFD40_1400,
-            0x1E60_4001,
-            0x1400_0001,
-            0xEB02_003F,
-            aarch64_b_cond(10, 2),
-            0xF940_0003,
-            0x8B01_0C64,
-            0xFD40_0081,
-            0xFD40_1002,
-            0x1E62_2821,
-            0xFD00_0081,
-            0x9100_0421,
-            0xF900_0801,
-            aarch64_b_imm26(-8),
-            aarch64_b_imm26(-10),
-            0xFD00_1401,
-            aarch64_ldr_d_literal(1, 16),
-            aarch64_ldr_x0_x0(),
-            aarch64_br_x16(),
-            aarch64_ret(),
-        ],
+}
+
+fn verify_assembled_object(object: &std::path::Path) {
+    build_stencil_artifacts::verify_words(object, AARCH64_VERIFY_WORDS);
+    build_stencil_artifacts::verify_symbols(object, &["verify", "numeric_loop"]);
+}
+
+fn verify_loop_branch_words() {
+    assert_loop_branch(16, aarch64_b_imm26(1), "entry must skip initialization");
+    assert_loop_branch(72, aarch64_b_imm26(-13), "backedge must target condition");
+}
+
+fn assert_loop_branch(offset: usize, expected: u32, message: &str) {
+    let word = u32::from_le_bytes(
+        AARCH64_ARRAY_LOOP_BYTES[offset..offset + 4]
+            .try_into()
+            .expect("complete branch word"),
     );
-    build_stencil_artifacts::verify_symbols(&arm_object, &["verify", "numeric_loop"]);
-    const LOOP_ENTRY_BRANCH_OFFSET: usize = 16;
-    const LOOP_BACKEDGE_OFFSET: usize = 72;
-    assert_eq!(
-        u32::from_le_bytes(
-            AARCH64_ARRAY_LOOP_BYTES[LOOP_ENTRY_BRANCH_OFFSET..LOOP_ENTRY_BRANCH_OFFSET + 4]
-                .try_into()
-                .unwrap(),
-        ),
-        aarch64_b_imm26(1),
-        "numeric loop entry branch must skip one-time initialization"
-    );
-    assert_eq!(
-        u32::from_le_bytes(
-            AARCH64_ARRAY_LOOP_BYTES[LOOP_BACKEDGE_OFFSET..LOOP_BACKEDGE_OFFSET + 4]
-                .try_into()
-                .unwrap(),
-        ),
-        aarch64_b_imm26(-13),
-        "numeric loop backedge must target the condition header"
-    );
-    fs::remove_file(&arm_source).ok();
-    fs::remove_file(&arm_object).ok();
-    fs::remove_dir(&root).ok();
+    assert_eq!(word, expected, "numeric loop {message}");
 }
 
 fn unique_verification_directory() -> PathBuf {
@@ -138,13 +179,14 @@ fn unique_verification_directory() -> PathBuf {
     panic!("cannot create unique stencil verification directory");
 }
 
-fn strip_global_asm_terminator(path: &std::path::Path) {
-    let mut source = fs::read(path).expect("read global_asm source");
-    let trailer = b"\"#);\n";
-    if source.ends_with(trailer) {
-        source.truncate(source.len() - trailer.len());
-        fs::write(path, source).expect("rewrite global_asm source");
+fn remove_verification_directory<const N: usize>(
+    root: &std::path::Path,
+    files: [&std::path::Path; N],
+) {
+    for file in files {
+        fs::remove_file(file).ok();
     }
+    fs::remove_dir(root).ok();
 }
 
 fn run_tool(command: &mut Command, description: &str) {
