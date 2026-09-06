@@ -1567,8 +1567,7 @@ enum BinarySemantic {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CompareBranch {
-    false_target: u16,
-    span: u8,
+    control: crate::stencil_cfg::RegionControlPlan,
     physical_key: Option<crate::stencil_fact::RegionKey>,
 }
 
@@ -2359,10 +2358,14 @@ impl NativeBinaryPlan {
         let key = branch
             .physical_key
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-        let true_pc = pc
-            .checked_add(usize::from(branch.span))
+        (pc == branch.control.start())
+            .then_some(())
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-        self.execute_compare_branch_with_key(key, lhs, rhs, true_pc, branch.false_target.into())
+        let (false_pc, true_pc) = branch
+            .control
+            .terminal_conditional_exits()
+            .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+        self.execute_compare_branch_with_key(key, lhs, rhs, true_pc, false_pc)
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -2410,6 +2413,14 @@ impl NativeBinaryPlan {
                 crate::stencil_select::RegionAbi::CompareBranch,
             )
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+            crate::stencil_region_layout::validate_compare_branch_control(
+                view,
+                &self
+                    .compare_branch
+                    .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?
+                    .control,
+            )
+            .map_err(|_| crate::stencil_arena::ArenaError::ProtectionFailed)?;
             let address =
                 slab.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
             slab.make_executable(address)?;
@@ -2420,11 +2431,9 @@ impl NativeBinaryPlan {
 
     pub(crate) fn compare_branch_next(&self, pc: usize, value: bool) -> Option<usize> {
         let branch = self.compare_branch?;
-        Some(if value {
-            pc.checked_add(usize::from(branch.span))?
-        } else {
-            usize::from(branch.false_target)
-        })
+        (pc == branch.control.start()).then_some(())?;
+        let (false_pc, true_pc) = branch.control.terminal_conditional_exits()?;
+        Some(if value { true_pc } else { false_pc })
     }
 
     #[cfg(test)]
@@ -2434,7 +2443,7 @@ impl NativeBinaryPlan {
 
     #[cfg(test)]
     pub(crate) fn compare_branch_span(&self) -> Option<usize> {
-        self.compare_branch.map(|branch| usize::from(branch.span))
+        self.compare_branch.map(|branch| branch.control.span_len())
     }
 }
 
@@ -5546,12 +5555,12 @@ fn compare_branch_at(
     }
     let end = branch_pc.checked_add(1)?;
     let physical_key = comparison_branch_key(comparison.flags);
-    cfg.region_control(start, end).is_some()
-        .then_some(CompareBranch {
-            false_target: u16::try_from(false_target).ok()?,
-            span: u8::try_from(end.checked_sub(start)?).ok()?,
-            physical_key,
-        })
+    let control = cfg.region_control(start, end)?;
+    let (planned_false, planned_true) = control.terminal_conditional_exits()?;
+    (planned_false == false_target && planned_true == end).then_some(CompareBranch {
+        control,
+        physical_key,
+    })
 }
 
 fn comparison_branch_key(flags: u8) -> Option<crate::stencil_fact::RegionKey> {

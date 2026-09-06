@@ -64,6 +64,23 @@ impl RegionControlPlan {
     pub(crate) fn has_backedge(&self) -> bool {
         self.edges().iter().any(|edge| edge.to <= edge.from)
     }
+
+    pub(crate) fn terminal_conditional_exits(&self) -> Option<(usize, usize)> {
+        let branch = self.end.checked_sub(1)?;
+        let mut exits = self.edges().iter().filter(|edge| edge.from == branch);
+        let first = exits.next()?.to;
+        let second = exits.next()?.to;
+        (exits.next().is_none() && self.edges().len() == 2).then_some(())?;
+        if first == self.end && second == self.end {
+            Some((self.end, self.end))
+        } else if first == self.end {
+            Some((second, first))
+        } else if second == self.end {
+            Some((first, second))
+        } else {
+            None
+        }
+    }
 }
 
 /// Immutable, bounded control-flow facts derived from canonical residual code.
@@ -82,6 +99,7 @@ pub(crate) struct ControlFlowFacts {
 struct Successors {
     pcs: [usize; 2],
     len: u8,
+    control_len: u8,
     malformed: bool,
 }
 
@@ -90,12 +108,17 @@ impl Successors {
         Self {
             pcs: [0; 2],
             len: 0,
+            control_len: 0,
             malformed: false,
         }
     }
 
     fn iter(&self) -> impl Iterator<Item = usize> + '_ {
         self.pcs[..usize::from(self.len)].iter().copied()
+    }
+
+    fn control_iter(&self) -> impl Iterator<Item = usize> + '_ {
+        self.pcs[..usize::from(self.control_len)].iter().copied()
     }
 }
 
@@ -201,7 +224,7 @@ fn empty_region_control(start: usize, end: usize) -> RegionControlPlan {
 }
 
 fn explicit_control_edge(edges: &Successors, pc: usize) -> bool {
-    edges.len > 1 || (edges.len == 1 && edges.pcs[0] != pc.saturating_add(1))
+    edges.control_len > 1 || (edges.control_len == 1 && edges.pcs[0] != pc.saturating_add(1))
 }
 
 fn push_control_edges(
@@ -211,7 +234,7 @@ fn push_control_edges(
     start: usize,
     end: usize,
 ) -> Option<()> {
-    for target in edges.iter() {
+    for target in edges.control_iter() {
         push_edge(
             plan,
             RegionEdge {
@@ -311,6 +334,7 @@ fn successors(entries: &[BaselineEntry], pc: usize) -> Successors {
     Successors {
         pcs,
         len: 1,
+        control_len: 1,
         malformed: pcs[0] >= entries.len(),
     }
 }
@@ -343,10 +367,15 @@ fn malformed_edges(successors: &[Successors]) -> BTreeSet<usize> {
 
 fn branch_successors(len: usize, pc: usize, target: usize) -> Successors {
     let fallthrough = pc.saturating_add(1);
-    let has_fallthrough = fallthrough < len && target != fallthrough;
+    let has_fallthrough = fallthrough < len;
     Successors {
         pcs: [target, fallthrough],
-        len: if has_fallthrough { 2 } else { 1 },
+        len: if has_fallthrough && target != fallthrough {
+            2
+        } else {
+            1
+        },
+        control_len: if has_fallthrough { 2 } else { 1 },
         malformed: target >= len,
     }
 }
