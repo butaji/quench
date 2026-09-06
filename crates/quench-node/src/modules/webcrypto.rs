@@ -2188,6 +2188,177 @@ pub(crate) fn clone_key(value: &Value) -> Option<Value> {
     ))
 }
 
+/// Encode a host-owned WebCrypto `CryptoKey` for the worker subprocess wire.
+/// CryptoKey's observable slots are deliberately non-enumerable, so the
+/// generic JSON walk would reduce it to `{}`.  Keep the portable key facts in
+/// one tagged record and rebuild the ordinary host representation on receipt.
+pub(crate) fn key_to_wire(value: &Value) -> Option<serde_json::Value> {
+    if !matches!(
+        execute::get_property(value, KEY_MARKER_PROP),
+        Value::Boolean(true)
+    ) {
+        return None;
+    }
+    let metadata = execute::get_property(value, KEY_META_PROP);
+    let data = crate::modules::crypto::bytes_from_value(&execute::get_property(value, KEY_DATA_PROP))?;
+    let mut wire = serde_json::Map::new();
+    wire.insert("__quench_webcrypto_key".into(), serde_json::Value::Bool(true));
+    wire.insert("metadata".into(), value_to_wire_json(&metadata));
+    wire.insert(
+        "data".into(),
+        serde_json::Value::Array(
+            data.into_iter()
+                .map(|byte| serde_json::Value::Number(byte.into()))
+                .collect(),
+        ),
+    );
+    if let Value::String(format) = execute::get_property(value, KEY_FORMAT_PROP) {
+        wire.insert("format".into(), serde_json::Value::String(format));
+    }
+    let jwk = execute::get_property(value, KEY_JWK_PROP);
+    if !matches!(jwk, Value::Undefined) {
+        wire.insert("jwk".into(), value_to_wire_json(&jwk));
+    }
+    Some(serde_json::Value::Object(wire))
+}
+
+/// Rebuild a CryptoKey received through the worker JSON boundary.
+pub(crate) fn key_from_wire(
+    wire: &serde_json::Map<String, serde_json::Value>,
+) -> Option<Value> {
+    if wire
+        .get("__quench_webcrypto_key")
+        .and_then(serde_json::Value::as_bool)
+        != Some(true)
+    {
+        return None;
+    }
+    let metadata = wire.get("metadata").map(wire_json_to_value)?;
+    let key_type = execute::to_js_string(&execute::get_property(&metadata, "type")).ok()?;
+    let extractable = matches!(
+        execute::get_property(&metadata, "extractable"),
+        Value::Boolean(true)
+    );
+    let algorithm = execute::get_property(&metadata, "algorithm");
+    let usages = execute::get_property(&metadata, "usages");
+    let data = wire
+        .get("data")
+        .and_then(serde_json::Value::as_array)?
+        .iter()
+        .map(|value| value.as_u64().and_then(|byte| u8::try_from(byte).ok()))
+        .collect::<Option<Vec<_>>>()?;
+    let jwk = wire.get("jwk").map(wire_json_to_value);
+    let jwk = jwk.as_ref();
+    let value = key_with_jwk(
+        &key_prototype(),
+        algorithm,
+        extractable,
+        usages,
+        Some(data),
+        jwk,
+    );
+    let format = wire
+        .get("format")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("raw");
+    Some(key_metadata(value, &key_type, format))
+}
+
+fn value_to_wire_json(value: &Value) -> serde_json::Value {
+    match value {
+        Value::Undefined | Value::Null => serde_json::Value::Null,
+        Value::Boolean(value) => serde_json::Value::Bool(*value),
+        Value::Number(value) => serde_json::Number::from_f64(*value)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        Value::String(value) | Value::BigInt(value) => serde_json::Value::String(value.clone()),
+        Value::Uint8Array(array) => serde_json::json!({
+            "__quench_typed_array": "Uint8Array",
+            "data": (0..array.logical_len()).filter_map(|index| array.get(index)).collect::<Vec<_>>(),
+        }),
+        Value::ArrayBuffer(buffer) => serde_json::json!({
+            "__quench_array_buffer": true,
+            "data": buffer.bytes.borrow().clone(),
+        }),
+        Value::Array(_) => {
+            let length = match execute::get_property(value, "length") {
+                Value::Number(length) if length.is_finite() && length >= 0.0 => length as usize,
+                _ => 0,
+            };
+            serde_json::Value::Array(
+                (0..length)
+                    .map(|index| value_to_wire_json(&execute::get_property(value, &index.to_string())))
+                    .collect(),
+            )
+        }
+        Value::Object(_) | Value::ObjectAlias(_) => serde_json::Value::Object(
+            execute::own_enumerable_keys(value)
+                .into_iter()
+                .map(|key| (key.clone(), value_to_wire_json(&execute::get_property(value, &key))))
+                .collect(),
+        ),
+        _ => serde_json::Value::Null,
+    }
+}
+
+fn wire_json_to_value(value: &serde_json::Value) -> Value {
+    match value {
+        serde_json::Value::Null => Value::Null,
+        serde_json::Value::Bool(value) => Value::Boolean(*value),
+        serde_json::Value::Number(value) => Value::Number(value.as_f64().unwrap_or(0.0)),
+        serde_json::Value::String(value) => Value::String(value.clone()),
+        serde_json::Value::Array(values) => {
+            host_api::array(values.iter().map(wire_json_to_value).collect())
+        }
+        serde_json::Value::Object(values) => {
+            if values
+                .get("__quench_typed_array")
+                .and_then(serde_json::Value::as_str)
+                == Some("Uint8Array")
+            {
+                let bytes = values
+                    .get("data")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(serde_json::Value::as_u64)
+                            .map(|value| value as u8)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                return crate::modules::buffer_proto::make_buffer(&bytes);
+            }
+            if values
+                .get("__quench_array_buffer")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+            {
+                let bytes = values
+                    .get("data")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(serde_json::Value::as_u64)
+                            .map(|value| value as u8)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let buffer = ArrayBufferData::new(bytes.len());
+                buffer.bytes.borrow_mut().copy_from_slice(&bytes);
+                return Value::ArrayBuffer(Rc::new(buffer));
+            }
+            host_api::object(
+                values
+                    .iter()
+                    .map(|(key, value)| (key.clone(), wire_json_to_value(value)))
+                    .collect(),
+            )
+        }
+    }
+}
+
 pub fn crypto_key_handle(value: &Value) -> Value {
     let data = bytes(&execute::get_property(value, KEY_DATA_PROP)).unwrap_or_default();
     let source = "(size, data) => ({ getSymmetricKeySize: () => size, export: () => data })";
