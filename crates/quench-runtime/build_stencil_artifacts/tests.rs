@@ -204,7 +204,12 @@ mod tests {
 global_asm!(r#\".text\n.p2align 2\n.globl q_conditional_hole\n\
 q_conditional_hole:\nq_conditional_hole_hole_0:\n  b.eq .\n  ret\n\
 q_conditional_hole_end:\n\"#);\n";
-        let flags = ["--crate-type=lib", "--emit=obj", "-Cpanic=abort", "--edition=2021"];
+        let flags = [
+            "--crate-type=lib",
+            "--emit=obj",
+            "-Cpanic=abort",
+            "--edition=2021",
+        ];
         let expected = [ExtractedHole {
             offset: 0,
             kind: "CondBranch19",
@@ -264,42 +269,12 @@ q_conditional_hole_end:\n\"#);\n";
 
     #[test]
     fn artifact_identity_covers_declared_physical_contract() {
-        static OPERATIONS: [&str; 19] = [
-            "LoadLocal",
-            "LoadConst",
-            "Binary",
-            "JumpIfFalse",
-            "LoadLocal",
-            "Move",
-            "LoadLocal",
-            "Move",
-            "LoadLocal",
-            "Slow",
-            "LoadLocal",
-            "AGetI",
-            "AddConst",
-            "ASetI",
-            "Move",
-            "LoadLocal",
-            "AddConst",
-            "StoreLocal",
-            "Jump",
-        ];
+        let bound = *super::super::rust_assembly_declaration(
+            super::super::RustAssemblyRecipe::ArrayNumericLoop,
+        );
         let unbound = RegionDeclaration {
             name: "identity_probe",
-            operations: &OPERATIONS,
-            abi: super::super::DeclAbi::ArrayNumericLoop,
-            x86_bytes: &[],
-            aarch64_bytes: &[],
-            portable_bytes: &[],
-            holes: &[],
-            aarch64_holes: &[],
-            entry: 0,
-            external_entries: &[0],
-        };
-        let bound = RegionDeclaration {
-            name: "array_numeric_loop",
-            ..unbound
+            ..bound
         };
         assert!(super::super::rust_assembly_recipe(&bound)
             .is_some_and(|recipe| !recipe.bindings().is_empty() && !recipe.outputs().is_empty()));

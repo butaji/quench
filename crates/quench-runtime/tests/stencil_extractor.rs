@@ -23,10 +23,37 @@ mod leaf_catalog {
     ));
 }
 
-mod harness {
+mod assembly_catalog {
     use super::build_stencil_contract::{
-        region_key_name, rust_assembly_recipe, DeclAbi, RecipeComposition, RegionDeclaration,
-        RustAssemblyRecipe,
+        equal, operand, value, AssemblyContinuation, DeclAbi, PhysicalBinding,
+        PhysicalBindingValue, PhysicalOperand, PhysicalOperandField, PhysicalOutput,
+        PhysicalOutputDestination, PhysicalOutputValue, RecipeComposition, RegionDeclaration,
+    };
+
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/build_stencil_catalog/encoding_common.rs"
+    ));
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/build_stencil_catalog/encoding_x86.rs"
+    ));
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/build_stencil_catalog/encoding_aarch64.rs"
+    ));
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/build_stencil_catalog/declarations_rust_assembly.rs"
+    ));
+}
+
+mod harness {
+    use super::assembly_catalog::{
+        rust_assembly_declaration, rust_assembly_recipe, RustAssemblyRecipe,
+    };
+    use super::build_stencil_contract::{
+        region_key_name, DeclAbi, RecipeComposition, RegionDeclaration,
     };
     use super::leaf_catalog::{rust_leaf_recipe, RustLeafRecipe};
 
@@ -121,36 +148,31 @@ fn rust_leaf_recipe_rejects_layout_drift() {
 
 #[test]
 fn rust_assembly_recipe_requires_name_abi_and_residual_shape() {
-    use build_stencil_contract::{
-        rust_assembly_recipe, DeclAbi, RecipeComposition, RustAssemblyRecipe,
-    };
+    use assembly_catalog::{rust_assembly_declaration, rust_assembly_recipe, RustAssemblyRecipe};
+    use build_stencil_contract::{DeclAbi, RecipeComposition};
 
-    let exact = declaration("move", DeclAbi::TaggedWord, &["Move"]);
+    let exact = *rust_assembly_declaration(RustAssemblyRecipe::Move);
     assert_eq!(rust_assembly_recipe(&exact), Some(RustAssemblyRecipe::Move));
-    assert!(
-        rust_assembly_recipe(&declaration("move", DeclAbi::ScalarF64Binary, &["Move"])).is_none()
-    );
-    assert!(
-        rust_assembly_recipe(&declaration("move", DeclAbi::TaggedWord, &["LoadLocal"])).is_none()
-    );
-    assert!(
-        rust_assembly_recipe(&declaration("load_local", DeclAbi::TaggedWord, &["Move"])).is_none()
-    );
+    let mut wrong_abi = exact;
+    wrong_abi.abi = DeclAbi::ScalarF64Binary;
+    let mut wrong_ops = exact;
+    wrong_ops.operations = &["LoadLocal"];
+    let mut wrong_name = exact;
+    wrong_name.name = "load_local";
+    assert!([wrong_abi, wrong_ops, wrong_name]
+        .iter()
+        .all(|item| rust_assembly_recipe(item).is_none()));
 
-    let mut missing_hole = declaration(
-        "load_const",
-        DeclAbi::ConstantWord,
-        &["LoadConst", "Return"],
-    );
+    let mut missing_hole = *rust_assembly_declaration(RustAssemblyRecipe::LoadConst);
+    missing_hole.aarch64_holes = &[];
     assert!(rust_assembly_recipe(&missing_hole).is_none());
-    missing_hole.aarch64_holes = &[(8, 8, "Literal64")];
+    missing_hole = *rust_assembly_declaration(RustAssemblyRecipe::LoadConst);
     assert_eq!(
         rust_assembly_recipe(&missing_hole),
         Some(RustAssemblyRecipe::LoadConst)
     );
 
-    let mut add_chain = declaration("add_chain", DeclAbi::ScalarF64x3, &["Add", "Add"]);
-    add_chain.aarch64_holes = &[(4, 4, "Branch26")];
+    let mut add_chain = *rust_assembly_declaration(RustAssemblyRecipe::AddChain);
     assert_eq!(
         rust_assembly_recipe(&add_chain),
         Some(RustAssemblyRecipe::AddChain)
