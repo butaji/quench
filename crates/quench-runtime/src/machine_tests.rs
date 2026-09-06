@@ -2650,8 +2650,7 @@ fn native_store_local_uses_declared_tagged_word_entry() {
 #[test]
 fn native_property_uses_rendered_address_without_remapping() {
     let mut plan = super::NativePropertyPlan {
-        arena: None,
-        shared_arena: None,
+        storage: super::PhysicalStorage::Local(None),
         physical: super::PhysicalState::new(),
         opcode: crate::ir::Opcode::GetN,
         installed: super::InstalledPropertyEntry::Unpublished,
@@ -2665,11 +2664,11 @@ fn native_property_uses_rendered_address_without_remapping() {
         .expect("plain guarded slot");
     assert_eq!(plan.execute(access, &site), Ok(crate::tagged_value::TaggedValue::number(42.5).bits()));
     assert_eq!(plan.native_entry_count, 1);
-    let used = plan.arena.as_ref().expect("rendered arena").used();
+    let used = plan.storage.used();
     assert!(used > 0);
     assert_eq!(plan.execute(access, &site), Ok(crate::tagged_value::TaggedValue::number(42.5).bits()));
     assert_eq!(plan.native_entry_count, 2);
-    assert_eq!(plan.arena.as_ref().expect("cached arena").used(), used);
+    assert_eq!(plan.storage.used(), used);
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -2713,8 +2712,7 @@ fn native_property_shared_entry_reuses_live_owner_and_recovers_after_eviction() 
 #[test]
 fn native_property_rejects_stale_layout_before_loading_slot() {
     let mut plan = super::NativePropertyPlan {
-        arena: None,
-        shared_arena: None,
+        storage: super::PhysicalStorage::Local(None),
         physical: super::PhysicalState::new(),
         opcode: crate::ir::Opcode::GetN,
         installed: super::InstalledPropertyEntry::Unpublished,
