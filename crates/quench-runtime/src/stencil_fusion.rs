@@ -160,6 +160,9 @@ impl NativeLocalBinaryPlan {
         environment: &crate::environment::Environment,
         slot: u16,
     ) -> Option<f64> {
+        if environment.is_deleted_slot(slot) {
+            return None;
+        }
         #[cfg(test)]
         {
             self.local_read_count = self.local_read_count.saturating_add(1);
