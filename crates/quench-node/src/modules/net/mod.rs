@@ -477,6 +477,7 @@ fn socket_props() -> Vec<(&'static str, Value)> {
         ("_handle", Value::Null),
         // HTTP Agent exposes parser=null while a keep-alive socket is idle.
         ("parser", Value::Null),
+        ("Symbol(kTimeout)\0quench", Value::Null),
         ("readable", Value::Boolean(true)),
         ("writable", Value::Boolean(true)),
         ("writableCorked", Value::Number(0.0)),
