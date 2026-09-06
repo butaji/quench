@@ -1,8 +1,27 @@
 # Execution contracts for JavaScript fixtures
 
-Status: proposed design. Examples describe desired APIs and budgets, not current
-capabilities or passing measurements. Implementation status belongs in the
-[task register](../tasks/index.json).
+Status: partial implementation. The reusable contract DSL below remains proposed;
+the bounded planner and physical-layout contracts already have executable unit and
+normal-driver coverage. Gate status belongs in the [task register](../tasks/index.json).
+
+## Current bounded optimizer contract
+
+Quench adopts the useful local ideas from general compilers and assemblers without
+embedding Cranelift or DynASM. `stencil_value_graph.rs` builds one disposable,
+eight-value graph over canonical residual instructions. It performs exact constant
+propagation/folding, local value numbering, dead-pure-node marking and costed fusion;
+effectful, coercive, live-out or unknown inputs reject to ordinary execution.
+`stencil_region_layout.rs` keeps operation/exit points symbolic until it derives
+fragment labels and checked fixups, then publishes transactionally through the
+existing arena. The selected runtime composition path uses this representation.
+
+Current deterministic evidence at `4c7851cda7` is planner 26/26, fused normal-driver
+11/11, property integration 5/5, and region layout 11/11. These tests cover folded
+constants, eliminated dead loads/moves, repeated-value reuse, ordered add trees,
+guard-breaking fallback, semantic CFG edges and failed composition without partial
+output. They do not establish a general SSA optimizer, global register allocator,
+arbitrary block composition, or a runtime assembler. Those larger mechanisms remain
+deliberately out of scope or open under task 075.
 
 ## Purpose and boundaries
 
