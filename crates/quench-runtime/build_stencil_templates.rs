@@ -236,6 +236,24 @@ fn array_update_source(name: &str) -> String {
     )
 }
 
+fn load_const_source(name: &str) -> String {
+    format!(
+        "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_{name}\nq_{name}:\n  ldr x0, 1f\n  ret\n.p2align 3\nq_{name}_hole_0:\n1:\n  .quad 0\nq_{name}_end:\n\"#);\n"
+    )
+}
+
+fn truthy_word_source(name: &str) -> String {
+    format!(
+        "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_{name}\nq_{name}:\n  ldr x1, 1f\n  cmp x0, x1\n  cset w0, eq\n  ret\n.p2align 3\nq_{name}_hole_0:\n1:\n  .quad 0\nq_{name}_end:\n\"#);\n"
+    )
+}
+
+fn nullish_word_source(name: &str) -> String {
+    format!(
+        "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_{name}\nq_{name}:\n  ldr x1, 1f\n  orr x0, x0, #1\n  cmp x0, x1\n  cset w0, eq\n  ret\n.p2align 3\nq_{name}_hole_0:\n1:\n  .quad 0\nq_{name}_end:\n\"#);\n"
+    )
+}
+
 pub(crate) fn assembly_source(recipe: crate::build_stencil_contract::RustAssemblyRecipe) -> String {
     use crate::build_stencil_contract::RustAssemblyRecipe::*;
     match recipe {
@@ -251,5 +269,8 @@ pub(crate) fn assembly_source(recipe: crate::build_stencil_contract::RustAssembl
         }
         Move | LoadLocal | StoreLocal => tagged_word_source(recipe.name()),
         TruthyPointer => truthy_pointer_source(recipe.name()),
+        LoadConst => load_const_source(recipe.name()),
+        NullishWord => nullish_word_source(recipe.name()),
+        TruthyWord => truthy_word_source(recipe.name()),
     }
 }

@@ -2988,14 +2988,14 @@ mod tests {
     #[test]
     fn executable_primitive_constant_returns_patched_tagged_word() {
         let key = crate::stencil_select::load_const_region_key();
-        let record = crate::stencil_select::select_region(key).expect("constant declaration");
+        let view = crate::stencil_select::select_physical(key).expect("constant declaration");
         let site = QuickeningSite::<2>::new(Opcode::LoadConst);
         let values = PatchValues::from_site(&site)
             .with_constant_bits(crate::tagged_value::TaggedValue::number(42.5).bits());
         let mut arena = StencilArena::new(4096).unwrap();
         let mut cache = RenderedRegionCache::new();
         let address = arena
-            .render_or_get(&mut cache, key, &record.stencil, &values)
+            .render_physical_view_or_get(&mut cache, view, &values)
             .unwrap();
         arena.make_executable().unwrap();
         let entry = arena.constant_word_entry(address).unwrap();
@@ -3003,6 +3003,11 @@ mod tests {
             entry(),
             crate::tagged_value::TaggedValue::number(42.5).bits()
         );
+        #[cfg(quench_generated_stencil_artifacts)]
+        {
+            assert!(view.generated);
+            assert_eq!(view.stencil.holes, &[Hole { offset: 8, kind: HoleKind::Literal64 }]);
+        }
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -3048,6 +3053,7 @@ mod tests {
     #[test]
     fn executable_tagged_truthiness_matches_primitive_tags() {
         let key = crate::stencil_select::truthy_word_region_key();
+        let view = crate::stencil_select::select_physical(key).expect("word truthiness row");
         let site = QuickeningSite::<2>::new(Opcode::JumpIfFalse);
         let values = PatchValues::from_site(&site)
             .with_constant_bits(crate::tagged_value::TaggedValue::bool(true).bits());
@@ -3069,6 +3075,34 @@ mod tests {
             entry(crate::tagged_value::TaggedValue::undefined().bits()) != 0,
             false
         );
+        #[cfg(quench_generated_stencil_artifacts)]
+        {
+            assert!(view.generated);
+            assert_eq!(view.stencil.holes, &[Hole { offset: 16, kind: HoleKind::Literal64 }]);
+        }
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn executable_nullish_word_uses_verified_literal_hole() {
+        let key = crate::stencil_select::nullish_word_region_key();
+        let view = crate::stencil_select::select_physical(key).expect("nullish word row");
+        let site = QuickeningSite::<2>::new(Opcode::Unary);
+        let values = PatchValues::from_site(&site)
+            .with_constant_bits(crate::tagged_value::TaggedValue::undefined().bits());
+        let mut arena = StencilArena::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let address = render_selected(&mut arena, &mut cache, key, &values);
+        arena.make_executable().unwrap();
+        let entry = arena.word_bool_entry(address).unwrap();
+        assert_ne!(entry(crate::tagged_value::TaggedValue::null().bits()), 0);
+        assert_ne!(entry(crate::tagged_value::TaggedValue::undefined().bits()), 0);
+        assert_eq!(entry(crate::tagged_value::TaggedValue::bool(false).bits()), 0);
+        #[cfg(quench_generated_stencil_artifacts)]
+        {
+            assert!(view.generated);
+            assert_eq!(view.stencil.holes, &[Hole { offset: 24, kind: HoleKind::Literal64 }]);
+        }
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]

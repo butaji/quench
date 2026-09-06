@@ -109,7 +109,8 @@ pub(crate) fn rust_leaf_recipe(declaration: &RegionDeclaration) -> Option<RustLe
 
 macro_rules! rust_assembly_catalog {
     ($( $variant:ident {
-        name: $name:literal, abi: $abi:ident, ops: [$($op:literal),+]
+        name: $name:literal, abi: $abi:ident, ops: [$($op:literal),+],
+        holes: [$($hole:expr),*]
     } ),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
         pub(crate) enum RustAssemblyRecipe { $( $variant ),+ }
@@ -123,7 +124,8 @@ macro_rules! rust_assembly_catalog {
                 match self {
                     $( Self::$variant => declaration.name == $name
                         && declaration.abi == DeclAbi::$abi
-                        && declaration.operations == &[$($op),+], )+
+                        && declaration.operations == &[$($op),+]
+                        && declaration.aarch64_holes == &[$($hole),*], )+
                 }
             }
         }
@@ -139,21 +141,24 @@ rust_assembly_catalog! {
         ops: ["LoadLocal", "LoadConst", "Binary", "JumpIfFalse", "LoadLocal",
             "Move", "LoadLocal", "Move", "LoadLocal", "Slow", "LoadLocal",
             "AGetI", "AddConst", "ASetI", "Move", "LoadLocal", "AddConst",
-            "StoreLocal", "Jump"]
+            "StoreLocal", "Jump"], holes: []
     },
-    Property { name: "property", abi: PropertyGuard, ops: ["GetN"] },
-    PrototypeProperty { name: "prototype_property", abi: PropertyGuard, ops: ["GetN"] },
-    StoreProperty { name: "store_property", abi: PropertyWriteGuard, ops: ["SetN"] },
-    ArrayGetNumber { name: "array_get_number", abi: ArrayKernel, ops: ["AGetI"] },
-    ArraySetNumber { name: "array_set_number", abi: ArrayKernel, ops: ["ASetI"] },
-    ArrayGetIncNumber { name: "array_get_inc_number", abi: ArrayKernel, ops: ["AGetIInc"] },
-    ArrayNumericUpdate { name: "array_numeric_update", abi: ArrayKernel, ops: ["AGetI", "Add", "ASetI"] },
-    ArrayNumericUpdateConst { name: "array_numeric_update_const", abi: ArrayKernel, ops: ["AGetI", "AddConst", "ASetI"] },
-    ArrayLoopBody { name: "array_loop_body", abi: ArrayKernel, ops: ["LoadLocalChecked", "AGetI", "Add", "ASetI", "Return"] },
-    Move { name: "move", abi: TaggedWord, ops: ["Move"] },
-    LoadLocal { name: "load_local", abi: TaggedWord, ops: ["LoadLocal"] },
-    StoreLocal { name: "store_local", abi: TaggedWord, ops: ["StoreLocal"] },
-    TruthyPointer { name: "truthy_pointer_word", abi: ScalarWordBool, ops: ["JumpIfFalse"] },
+    Property { name: "property", abi: PropertyGuard, ops: ["GetN"], holes: [] },
+    PrototypeProperty { name: "prototype_property", abi: PropertyGuard, ops: ["GetN"], holes: [] },
+    StoreProperty { name: "store_property", abi: PropertyWriteGuard, ops: ["SetN"], holes: [] },
+    ArrayGetNumber { name: "array_get_number", abi: ArrayKernel, ops: ["AGetI"], holes: [] },
+    ArraySetNumber { name: "array_set_number", abi: ArrayKernel, ops: ["ASetI"], holes: [] },
+    ArrayGetIncNumber { name: "array_get_inc_number", abi: ArrayKernel, ops: ["AGetIInc"], holes: [] },
+    ArrayNumericUpdate { name: "array_numeric_update", abi: ArrayKernel, ops: ["AGetI", "Add", "ASetI"], holes: [] },
+    ArrayNumericUpdateConst { name: "array_numeric_update_const", abi: ArrayKernel, ops: ["AGetI", "AddConst", "ASetI"], holes: [] },
+    ArrayLoopBody { name: "array_loop_body", abi: ArrayKernel, ops: ["LoadLocalChecked", "AGetI", "Add", "ASetI", "Return"], holes: [] },
+    Move { name: "move", abi: TaggedWord, ops: ["Move"], holes: [] },
+    LoadLocal { name: "load_local", abi: TaggedWord, ops: ["LoadLocal"], holes: [] },
+    StoreLocal { name: "store_local", abi: TaggedWord, ops: ["StoreLocal"], holes: [] },
+    TruthyPointer { name: "truthy_pointer_word", abi: ScalarWordBool, ops: ["JumpIfFalse"], holes: [] },
+    LoadConst { name: "load_const", abi: ConstantWord, ops: ["LoadConst", "Return"], holes: [(8, 8, "Literal64")] },
+    NullishWord { name: "nullish_word", abi: ScalarWordBool, ops: ["Unary", "Return"], holes: [(24, 8, "Literal64")] },
+    TruthyWord { name: "truthy_word", abi: ScalarWordBool, ops: ["JumpIfFalse"], holes: [(16, 8, "Literal64")] },
 }
 
 pub(crate) fn rust_assembly_recipe(declaration: &RegionDeclaration) -> Option<RustAssemblyRecipe> {
