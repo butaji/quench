@@ -335,9 +335,6 @@ fn with_new_target_prototype(
     target: &Value,
     new_target: &Value,
 ) -> Result<Value, crate::execute::VmError> {
-    if crate::builtins::same_value(Some(target), Some(new_target)) {
-        return Ok(value);
-    }
     let prototype = crate::execute::get_property_result(new_target, "prototype")?;
     apply_new_target_prototype(value, target, new_target, prototype)
 }
