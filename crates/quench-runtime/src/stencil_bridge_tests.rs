@@ -15,6 +15,30 @@ struct ReentrantHost {
     fail: Cell<bool>,
 }
 
+struct ArgumentRootHost {
+    roots: [Weak<FunctionValue>; 2],
+    effects: Cell<u32>,
+}
+
+impl Host for ArgumentRootHost {
+    fn call(
+        &self,
+        capability: HostCapabilityRef,
+        receiver: Option<&Value>,
+        arguments: &[Value],
+    ) -> Result<Value, VmError> {
+        assert_eq!(capability.kind, REENTER);
+        assert!(matches!(receiver, Some(Value::Function(_))));
+        assert!(matches!(arguments, [Value::Function(_)]));
+        self.effects.set(self.effects.get() + 1);
+        crate::cycle_collector::collect_cycles();
+        for root in &self.roots {
+            assert_root_survives(root)?;
+        }
+        Ok(Value::Number(9.0))
+    }
+}
+
 impl Host for ReentrantHost {
     fn call(
         &self,
@@ -144,6 +168,42 @@ fn bridge_fixture(
     (executable, plan, host, registers)
 }
 
+fn argument_boundary_fixture() -> (
+    crate::machine::ExecutableCode,
+    crate::machine::BaselinePlan,
+    Rc<ArgumentRootHost>,
+    crate::register_file::RegisterFile,
+) {
+    let executable = crate::machine::ExecutableCode::from_ops(vec![
+        Op::Call {
+            dst: 0,
+            callee: 1,
+            receiver: Some(2),
+            args: vec![3],
+            spreads: vec![false],
+        },
+        Op::Return { src: 0 },
+    ]);
+    let plan = crate::machine::BaselinePlan::compile_for_test(
+        executable.code(),
+        crate::stencil_policy::ExecutionPolicy::bridge_opt_in_for_test(),
+    );
+    let (receiver, receiver_root) = cyclic_function_root();
+    let (argument, argument_root) = cyclic_function_root();
+    let host = Rc::new(ArgumentRootHost {
+        roots: [receiver_root, argument_root],
+        effects: Cell::new(0),
+    });
+    let callable = crate::host_api::custom_function(RealmId::ROOT, 0x751);
+    let registers = crate::register_file::RegisterFile::from_values(vec![
+        Value::Undefined,
+        callable,
+        receiver,
+        argument,
+    ]);
+    (executable, plan, host, registers)
+}
+
 fn execute_bridge_call(
     executable: &crate::machine::ExecutableCode,
     plan: &crate::machine::BaselinePlan,
@@ -238,4 +298,18 @@ fn baseline_bridge_semantic_throw_is_not_replayed_or_retired() {
             .abi,
         RegionAbi::Bridge
     );
+}
+
+#[test]
+fn unsupported_native_call_shape_roots_receiver_and_argument_at_boundary() {
+    let (executable, plan, host, mut registers) = argument_boundary_fixture();
+    assert!(plan.native_region_at(0).is_none());
+    let context = VmContext::default().with_host(host.clone());
+    let result = execute_bridge_call(&executable, &plan, &mut registers, &context)
+        .expect("ordinary call boundary completes");
+    assert_eq!(
+        result.0,
+        crate::completion::Completion::Return(Value::Number(9.0))
+    );
+    assert_eq!(host.effects.get(), 1);
 }
