@@ -13,10 +13,11 @@ const GLOBAL_THIS: &str = "globalThis";
 const SCRIPT_THIS_SLOT: &str = "\0script_this";
 pub(super) const MODULE_THIS_SLOT: &str = "\0module_this";
 pub(super) const IMPORT_META_SLOT: &str = "\0import_meta";
-type ReducedStatements = (Vec<Op>, HashMap<String, u16>);
+type ReducedStatements = (Vec<Op>, HashMap<String, u16>, u16);
 type ReducedProgram = (
     ProgramDb,
     Vec<Op>,
+    u16,
     usize,
     usize,
     Option<crate::reduce::ModuleMetadata>,
@@ -42,6 +43,24 @@ impl ResidualProgram {
         Self {
             facts,
             code: crate::machine::ExecutableCode::from_ops(ops),
+            module_metadata,
+            local_slots,
+        }
+    }
+
+    fn with_frame_register_count(
+        facts: ProgramDb,
+        ops: Vec<Op>,
+        frame_register_count: u16,
+        module_metadata: Option<crate::reduce::ModuleMetadata>,
+        local_slots: HashMap<String, u16>,
+    ) -> Self {
+        Self {
+            facts,
+            code: crate::machine::ExecutableCode::from_ops_with_frame_register_count(
+                ops,
+                frame_register_count,
+            ),
             module_metadata,
             local_slots,
         }
@@ -90,13 +109,14 @@ fn reduce_source_with_type_and_global(
         let wrapped = crate::reduce_support::prepare_source(&wrapped);
         let parsed = Parser::new(&allocator, wrapped.as_ref(), source_type).parse();
         crate::reduce_support::validate_parse(&parsed)?;
-        let (mut facts, ops, scope_count, symbol_count, module_metadata, local_slots) =
+        let (mut facts, ops, frame_width, scope_count, symbol_count, module_metadata, local_slots) =
             reduce_program(&parsed.program, &wrapped, source_type, global)?;
         facts.scope_count = scope_count;
         facts.symbol_count = symbol_count;
-        return Ok(ResidualProgram::new(
+        return Ok(ResidualProgram::with_frame_register_count(
             facts,
             ops,
+            frame_width,
             module_metadata,
             local_slots,
         ));
@@ -104,13 +124,14 @@ fn reduce_source_with_type_and_global(
     let source = crate::reduce_support::prepare_source(source);
     let parsed = Parser::new(&allocator, source.as_ref(), source_type).parse();
     crate::reduce_support::validate_parse(&parsed)?;
-    let (mut facts, ops, scope_count, symbol_count, module_metadata, local_slots) =
+    let (mut facts, ops, frame_width, scope_count, symbol_count, module_metadata, local_slots) =
         reduce_program(&parsed.program, source.as_ref(), source_type, global)?;
     facts.scope_count = scope_count;
     facts.symbol_count = symbol_count;
-    Ok(ResidualProgram::new(
+    Ok(ResidualProgram::with_frame_register_count(
         facts,
         ops,
+        frame_width,
         module_metadata,
         local_slots,
     ))
@@ -147,11 +168,13 @@ fn reduce_program(
     };
     facts.install_reduction_source(source);
     facts.install_fact_sites(analysis.fact_sites);
-    let (ops, local_slots) = reduce_statements(&program.body, source_type, global, &mut facts)?;
+    let (ops, local_slots, frame_width) =
+        reduce_statements(&program.body, source_type, global, &mut facts)?;
     facts.finish_reduction();
     Ok((
         facts,
         ops,
+        frame_width,
         analysis.scope_count,
         analysis.symbol_count,
         module_metadata(source_type, &program.body),
@@ -179,6 +202,7 @@ fn reduce_statements(
     Ok((
         crate::reduce_support::finish_program(state.ops, last)?,
         state.locals,
+        state.next_register,
     ))
 }
 pub(super) struct StatementReducer {
@@ -506,7 +530,7 @@ pub fn reduce_function_declaration(
         return Err(vec!["Function without body".to_string()]);
     };
     let slot = declaration_slot(identifier.name.as_str(), next_slot, locals, facts);
-    let (body_ops, parameter_count, captures, metadata) =
+    let (reduced, parameter_count, metadata) =
         reduce_function_body(function, body, facts, locals)?;
     let reserve = *next_register;
     *next_register = next_register.saturating_add(1);
@@ -519,9 +543,10 @@ pub fn reduce_function_declaration(
     *next_register = next_register.saturating_add(1);
     ops.push(function_declaration_op(
         register,
-        body_ops,
+        reduced.body,
+        reduced.frame_register_count,
         parameter_count,
-        captures,
+        reduced.captures,
         metadata,
     ));
     name_function_declaration(ops, register, next_register, identifier.name.as_str());

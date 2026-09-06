@@ -46,7 +46,7 @@ pub(crate) fn prefix(
     locals: &HashMap<String, u16>,
     captures: u16,
     implicit_arguments: bool,
-) -> Option<Vec<Op>> {
+) -> Option<(Vec<Op>, u16)> {
     let barrier = eval_var_barrier(formal, implicit_arguments);
     let inherited = std::mem::replace(&mut facts.eval_var_barrier, barrier);
     let result = reduce_prefix(formal, facts, locals, captures);
@@ -59,7 +59,7 @@ fn reduce_prefix(
     facts: &mut ProgramDb,
     locals: &HashMap<String, u16>,
     captures: u16,
-) -> Option<Vec<Op>> {
+) -> Option<(Vec<Op>, u16)> {
     let mut ops = Vec::new();
     let mut next = crate::reduce_support::register_base(locals);
     for (index, parameter) in formal.items.iter().enumerate() {
@@ -88,7 +88,7 @@ fn reduce_prefix(
     }
     initialize_direct_parameters(formal, captures, &mut ops);
     bind_rest_pattern(formal, &mut ops, facts, &mut next, locals)?;
-    Some(ops)
+    Some((ops, next))
 }
 
 fn mark_later_parameters(

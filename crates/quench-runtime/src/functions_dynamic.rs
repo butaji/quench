@@ -142,9 +142,17 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
         None,
     );
     facts.in_function = inherited;
-    let (ops, _) = reduced.ok_or_else(|| invalid("Unsupported function source"))?;
+    let reduced = reduced.ok_or_else(|| invalid("Unsupported function source"))?;
     let length = crate::function_parameters::expected_argument_count(&function.params);
-    let value = dynamic_value(ops, count, length, strictness, kind, is_async);
+    let value = dynamic_value(
+        reduced.body,
+        reduced.frame_register_count,
+        count,
+        length,
+        strictness,
+        kind,
+        is_async,
+    );
     crate::builtins::set_function_name(&value, "anonymous")?;
     mark_dynamic(&value, source);
     Ok(value)
@@ -274,6 +282,7 @@ fn has_yield_expression(parameters: &oxc::ast::ast::FormalParameters<'_>) -> boo
 
 fn dynamic_value(
     ops: Vec<crate::ops::Op>,
+    frame_register_count: u16,
     count: u16,
     length: u16,
     strictness: crate::ops::FunctionStrictness,
@@ -286,7 +295,7 @@ fn dynamic_value(
         crate::vm::realm_global_value(realm).unwrap_or_else(|| crate::locals::current().get(0));
     captures.set(0, global);
     let value = crate::functions::make(
-        crate::machine::FunctionCode::from_ops(ops),
+        crate::machine::FunctionCode::from_ops_with_declared_frame(ops, frame_register_count),
         count,
         length,
         captures,
