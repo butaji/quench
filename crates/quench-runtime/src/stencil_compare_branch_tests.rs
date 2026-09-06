@@ -75,22 +75,24 @@ fn compare_branch_rejects_live_effectful_and_side_entry_interiors() {
     let dead = crate::ir::Instruction::load_const(3, 0);
     let branch = crate::ir::Instruction::jump_if_false(2, 3);
     let base = baseline_entries(&[compare, dead, branch, crate::ir::Instruction::ret(2)]);
-    let mut liveness = vec![std::collections::BTreeSet::new(); base.len()];
-    assert!(crate::machine::compare_branch(&base, &liveness, 0, compare).is_some());
-    liveness[1].insert(3);
-    assert!(crate::machine::compare_branch(&base, &liveness, 0, compare).is_none());
+    let cfg = crate::stencil_cfg::ControlFlowFacts::new(&base, &[None; 4]);
+    assert!(crate::machine::compare_branch(&base, &cfg, 0, compare).is_some());
+    let live = baseline_entries(&[compare, dead, branch, crate::ir::Instruction::ret(3)]);
+    let cfg = crate::stencil_cfg::ControlFlowFacts::new(&live, &[None; 4]);
+    assert!(crate::machine::compare_branch(&live, &cfg, 0, compare).is_none());
 
-    liveness[1].clear();
     let effectful = crate::ir::Instruction::binary(crate::ir::Opcode::AGetI, 3, 4, 5);
     let entries = baseline_entries(&[compare, effectful, branch, crate::ir::Instruction::ret(2)]);
-    assert!(crate::machine::compare_branch(&entries, &liveness, 0, compare).is_none());
+    let cfg = crate::stencil_cfg::ControlFlowFacts::new(&entries, &[None; 4]);
+    assert!(crate::machine::compare_branch(&entries, &cfg, 0, compare).is_none());
     let side_entry = baseline_entries(&[
         compare,
         dead,
         branch,
         crate::ir::Instruction::jump(1),
     ]);
-    assert!(crate::machine::compare_branch(&side_entry, &liveness, 0, compare).is_none());
+    let cfg = crate::stencil_cfg::ControlFlowFacts::new(&side_entry, &[None; 4]);
+    assert!(crate::machine::compare_branch(&side_entry, &cfg, 0, compare).is_none());
 }
 
 #[test]
@@ -108,8 +110,8 @@ fn compare_branch_rejects_malformed_or_out_of_range_control() {
     let invalid = crate::ir::Instruction::jump_if_false(2, 99);
     for branch in [malformed, invalid] {
         let entries = baseline_entries(&[compare, branch, crate::ir::Instruction::ret(2)]);
-        let liveness = vec![std::collections::BTreeSet::new(); entries.len()];
-        assert!(crate::machine::compare_branch(&entries, &liveness, 0, compare).is_none());
+        let cfg = crate::stencil_cfg::ControlFlowFacts::new(&entries, &[None; 3]);
+        assert!(crate::machine::compare_branch(&entries, &cfg, 0, compare).is_none());
     }
 }
 

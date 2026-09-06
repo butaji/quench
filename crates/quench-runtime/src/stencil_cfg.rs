@@ -7,6 +7,46 @@
 use crate::machine::BaselineEntry;
 use std::collections::BTreeSet;
 
+/// Immutable, bounded control-flow facts derived from canonical residual code.
+///
+/// Admission consumers share this value so liveness and predecessor edges are
+/// computed once per baseline plan rather than rediscovered per candidate.
+pub(crate) struct ControlFlowFacts {
+    live_out: Vec<BTreeSet<u16>>,
+    predecessors: Vec<Vec<usize>>,
+    malformed_edges: BTreeSet<usize>,
+}
+
+impl ControlFlowFacts {
+    pub(crate) fn new(
+        entries: &[BaselineEntry],
+        operand_windows: &[Option<&[u16]>],
+    ) -> Self {
+        Self {
+            live_out: register_liveness(entries, operand_windows),
+            predecessors: predecessor_pcs(entries),
+            malformed_edges: malformed_edges(entries),
+        }
+    }
+
+    pub(crate) fn live_out(&self) -> &[BTreeSet<u16>] {
+        &self.live_out
+    }
+
+    pub(crate) fn region_entry_is_legal(&self, start: usize, end: usize) -> bool {
+        let Some(interior_start) = start.checked_add(1) else {
+            return false;
+        };
+        end <= self.predecessors.len()
+            && self.malformed_edges.range(start..end).next().is_none()
+            && (interior_start..end).all(|target| {
+                self.predecessors[target]
+                    .iter()
+                    .all(|predecessor| (start..end).contains(predecessor))
+            })
+    }
+}
+
 pub(crate) fn successor_pcs(entries: &[BaselineEntry], pc: usize) -> Vec<usize> {
     let Some(entry) = entries.get(pc) else {
         return Vec::new();
@@ -19,6 +59,28 @@ pub(crate) fn successor_pcs(entries: &[BaselineEntry], pc: usize) -> Vec<usize> 
         crate::ir::ControlOperands::Jump { target } => vec![usize::from(target)],
         _ => Vec::new(),
     }
+}
+
+fn predecessor_pcs(entries: &[BaselineEntry]) -> Vec<Vec<usize>> {
+    let mut predecessors = vec![Vec::new(); entries.len()];
+    for pc in 0..entries.len() {
+        for successor in successor_pcs(entries, pc) {
+            if let Some(incoming) = predecessors.get_mut(successor) {
+                incoming.push(pc);
+            }
+        }
+    }
+    predecessors
+}
+
+fn malformed_edges(entries: &[BaselineEntry]) -> BTreeSet<usize> {
+    (0..entries.len())
+        .filter(|pc| {
+            successor_pcs(entries, *pc)
+                .iter()
+                .any(|successor| *successor >= entries.len())
+        })
+        .collect()
 }
 
 fn branch_successors(len: usize, pc: usize, target: usize) -> Vec<usize> {
@@ -126,22 +188,6 @@ fn live_input(
     input
 }
 
-pub(crate) fn region_entry_is_legal(
-    entries: &[BaselineEntry],
-    start: usize,
-    end: usize,
-) -> bool {
-    let Some(interior_start) = start.checked_add(1) else {
-        return false;
-    };
-    (interior_start..end).all(|target| {
-        (0..entries.len()).all(|predecessor| {
-            !successor_pcs(entries, predecessor).contains(&target)
-                || (start..end).contains(&predecessor)
-        })
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,13 +232,15 @@ mod tests {
             crate::ir::Instruction::jump(1),
             crate::ir::Instruction::ret(0),
         ]);
-        assert!(region_entry_is_legal(&internal, 0, 2));
+        let internal_facts = ControlFlowFacts::new(&internal, &[None, None, None]);
+        assert!(internal_facts.region_entry_is_legal(0, 2));
         let external = entries(&[
             crate::ir::Instruction::move_(0, 1),
             crate::ir::Instruction::ret(0),
             crate::ir::Instruction::jump(1),
         ]);
-        assert!(!region_entry_is_legal(&external, 0, 2));
+        let external_facts = ControlFlowFacts::new(&external, &[None, None, None]);
+        assert!(!external_facts.region_entry_is_legal(0, 2));
     }
 
     #[test]
@@ -202,5 +250,15 @@ mod tests {
             crate::ir::Instruction::ret(0),
         ]);
         assert_eq!(successor_pcs(&entries, 0), [1]);
+    }
+
+    #[test]
+    fn malformed_edge_rejects_its_region() {
+        let entries = entries(&[
+            crate::ir::Instruction::jump(99),
+            crate::ir::Instruction::ret(0),
+        ]);
+        let facts = ControlFlowFacts::new(&entries, &[None, None]);
+        assert!(!facts.region_entry_is_legal(0, 1));
     }
 }
