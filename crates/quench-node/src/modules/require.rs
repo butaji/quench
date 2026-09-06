@@ -3328,8 +3328,24 @@ pub(crate) fn http2_module_value() -> Value {
         Value::Undefined,
     );
     let connect = execute::set_property(connect, "name", Value::String("connect".into()));
+    // The request/response constructors are part of the public HTTP/2
+    // namespace even when the transport is unavailable.  Keep their
+    // prototype identities real so compatibility consumers can perform the
+    // ordinary `instanceof` checks without manufacturing a JS fallback.
+    let constructor = |name: &str| {
+        let constructor = quench_runtime::host_api::bound_builtin(
+            quench_runtime::ops::Builtin::Object,
+            Value::Undefined,
+        );
+        let prototype = quench_runtime::host_api::object(Vec::new());
+        let constructor = execute::set_property(constructor, "name", Value::String(name.into()));
+        execute::set_callable_property(&constructor, "prototype", prototype);
+        constructor
+    };
     crate::host::namespace_object_from_pairs(vec![
         ("connect".into(), connect),
+        ("Http2ServerRequest".into(), constructor("Http2ServerRequest")),
+        ("Http2ServerResponse".into(), constructor("Http2ServerResponse")),
         (
             "sensitiveHeaders".into(),
             crate::modules::http2_util::sensitive_headers(),
