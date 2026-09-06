@@ -6426,7 +6426,12 @@ pub fn process_permission_has(
             crate::modules::process::permission_allows(state, scope_name),
         _ => false,
     };
-    if !allowed && crate::modules::process::permission_audit(state) {
+    // `permission.has()` publishes denied probes whenever the permission
+    // model is enabled.  Audit mode additionally changes denied host
+    // operations from throwing to warning-only; it is not a prerequisite for
+    // the permission diagnostics channel (Node's native `is_granted()` path
+    // publishes in both modes).
+    if !allowed && crate::modules::process::permission_enabled(state) {
         let message = host_api::object(vec![
             ("permission".into(), Value::String(permission.to_owned())),
             ("resource".into(), resource),
