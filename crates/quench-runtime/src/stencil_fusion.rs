@@ -9,10 +9,9 @@ use crate::stencil_plan::{
 };
 
 pub(crate) struct LocalNumericExecution {
-    pub output: crate::ir::Register,
+    pub result: crate::stencil_plan::LocalResultBinding,
     pub value: f64,
     pub span: usize,
-    pub store_slot: Option<u16>,
     pub discarded: crate::stencil_plan::DiscardedRegisters,
 }
 
@@ -22,8 +21,8 @@ impl LocalNumericExecution {
         registers: &mut crate::register_file::RegisterFile,
         environment: &crate::environment::Environment,
     ) -> Option<usize> {
-        registers.word_ptr(usize::from(self.output))?;
-        if let Some(slot) = self.store_slot {
+        registers.word_ptr(usize::from(self.result.register))?;
+        if let Some(slot) = self.result.store_slot {
             let bits = crate::tagged_value::TaggedValue::number(self.value).bits();
             environment
                 .store_proven_tagged_bits(slot, bits)
@@ -32,7 +31,7 @@ impl LocalNumericExecution {
         for register in self.discarded.into_iter().flatten() {
             registers.clear_word(usize::from(register));
         }
-        registers.write_number(usize::from(self.output), self.value);
+        registers.write_number(usize::from(self.result.register), self.value);
         Some(self.span)
     }
 }
@@ -51,7 +50,7 @@ enum LocalNumericPhysical {
 }
 
 pub(crate) struct LocalPropertyExecution {
-    pub output: crate::ir::Register,
+    pub result: crate::stencil_plan::LocalResultBinding,
     pub bits: u64,
     pub span: usize,
     pub discarded: crate::stencil_plan::DiscardedRegisters,
@@ -61,8 +60,15 @@ impl LocalPropertyExecution {
     pub(crate) fn commit(
         self,
         registers: &mut crate::register_file::RegisterFile,
+        environment: &crate::environment::Environment,
     ) -> Option<usize> {
-        registers.write_tagged_bits(usize::from(self.output), self.bits)?;
+        registers.word_ptr(usize::from(self.result.register))?;
+        if let Some(slot) = self.result.store_slot {
+            environment
+                .store_proven_tagged_bits(slot, self.bits)
+                .then_some(())?;
+        }
+        registers.write_tagged_bits(usize::from(self.result.register), self.bits)?;
         for register in self.discarded.into_iter().flatten() {
             registers.clear_word(usize::from(register));
         }
@@ -97,7 +103,13 @@ impl NativeLocalPropertyPlan {
         environment: &crate::environment::Environment,
         invoke: impl FnOnce(&mut NativePropertyPlan, &crate::value::Value) -> Option<u64>,
     ) -> Option<LocalPropertyExecution> {
-        if environment.is_deleted_slot(self.selection.receiver_slot) {
+        if environment.is_deleted_slot(self.selection.receiver_slot)
+            || self
+                .selection
+                .result
+                .store_slot
+                .is_some_and(|slot| !environment.can_store_proven_tagged_bits(slot))
+        {
             return None;
         }
         let receiver = environment.get(self.selection.receiver_slot);
@@ -106,7 +118,7 @@ impl NativeLocalPropertyPlan {
             self.local_read_count = self.local_read_count.saturating_add(1);
         }
         Some(LocalPropertyExecution {
-            output: self.selection.output,
+            result: self.selection.result,
             bits: invoke(&mut self.property, &receiver)?,
             span: usize::from(self.selection.span),
             discarded: self.selection.discarded,
@@ -114,7 +126,7 @@ impl NativeLocalPropertyPlan {
     }
 
     pub(crate) const fn operation_offset(&self) -> usize {
-        self.selection.span as usize - 1
+        self.selection.span as usize - 1 - self.selection.result.store_slot.is_some() as usize
     }
 
     #[cfg(test)]
@@ -199,6 +211,7 @@ impl NativeLocalBinaryPlan {
     ) -> Option<LocalNumericExecution> {
         if self
             .selection
+            .result
             .store_slot
             .is_some_and(|slot| !environment.can_store_proven_tagged_bits(slot))
         {
@@ -219,10 +232,9 @@ impl NativeLocalBinaryPlan {
             }
         };
         Some(LocalNumericExecution {
-            output: self.selection.output,
+            result: self.selection.result,
             value: result,
             span: usize::from(self.selection.span),
-            store_slot: self.selection.store_slot,
             discarded: self.selection.discarded,
         })
     }

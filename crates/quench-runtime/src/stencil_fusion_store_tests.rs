@@ -40,7 +40,7 @@ fn stored_selection(
 ) -> Option<(usize, crate::stencil_plan::LocalBinarySelection)> {
     (0..view.len()).find_map(|pc| {
         let selection = plan.native_local_binary_at(pc)?.borrow().selection();
-        selection.store_slot.map(|_| (pc, selection))
+        selection.result.store_slot.map(|_| (pc, selection))
     })
 }
 
@@ -52,7 +52,7 @@ fn execute_stored_selection(
 ) {
     let environment = crate::environment::Environment::new();
     install_inputs(&environment, selection.inputs, [-0.0, 2.0]);
-    let slot = selection.store_slot.expect("selected store");
+    let slot = selection.result.store_slot.expect("selected store");
     environment.set(slot, Value::Undefined);
     let store_pc = pc + usize::from(selection.span) - 1;
     let store = plan

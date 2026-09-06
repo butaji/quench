@@ -1780,19 +1780,19 @@ pub(crate) fn execute_optimized_code_step_from(
     crate::execution_trace::operands(instruction);
     if let Some(native) = entry.native_local_property() {
         let property_pc = start + native.borrow().operation_offset();
-        let result = crate::locals::with_current_ref(|environment| {
-            environment.and_then(|environment| {
-                crate::stencil_fusion::execute_local_property(
-                    native,
-                    environment,
-                    |property, receiver| {
-                        let object = native_property_object(receiver)?;
-                        native_property_bits_plan(property, code, property_pc, object)
-                    },
-                )
-            })
+        let span = crate::locals::with_current_ref(|environment| {
+            let environment = environment?;
+            crate::stencil_fusion::execute_local_property(
+                native,
+                environment,
+                |property, receiver| {
+                    let object = native_property_object(receiver)?;
+                    native_property_bits_plan(property, code, property_pc, object)
+                },
+            )?
+            .commit(registers, environment)
         });
-        if let Some(span) = result.and_then(|result| result.commit(registers)) {
+        if let Some(span) = span {
             crate::execution_trace::stencil_observation(code, start, "local_property", true);
             crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
             return Ok((crate::completion::Completion::Normal, start + span));
@@ -2344,7 +2344,7 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                     native_property_bits_plan(property, code, property_pc, object)
                 },
             );
-            if let Some(span) = result.and_then(|result| result.commit(registers)) {
+            if let Some(span) = result.and_then(|result| result.commit(registers, environment)) {
                 crate::execution_trace::stencil_observation(code, pc, "local_property", true);
                 crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
                 pc += span;

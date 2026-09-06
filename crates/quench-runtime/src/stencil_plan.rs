@@ -102,47 +102,84 @@ pub(crate) enum NumericDefinition {
     Alias(Register),
 }
 
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum LocalNumericInputs {
     Sources([NumericSource; 2]),
-    SlotConstant { slot: u16, bits: u64 },
+    SlotConstant {
+        slot: u16,
+        bits: u64,
+    },
     AddChain {
         sources: [NumericSource; 3],
         bindings: F64x3Bindings,
     },
-    Folded { bits: u64 },
+    Folded {
+        bits: u64,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LocalResultBinding {
+    pub register: Register,
+    pub store_slot: Option<u16>,
+}
+
+impl LocalResultBinding {
+    pub(crate) const fn register(register: Register) -> Self {
+        Self {
+            register,
+            store_slot: None,
+        }
+    }
+}
+
+pub(crate) trait LocalStoreSelection: Copy {
+    fn span(self) -> u8;
+    fn output(self) -> Register;
+    fn with_store(self, slot: u16) -> Option<Self>;
+}
+
+macro_rules! impl_local_store_selection {
+    ($selection:ty) => {
+        impl LocalStoreSelection for $selection {
+            fn span(self) -> u8 {
+                self.span
+            }
+            fn output(self) -> Register {
+                self.result.register
+            }
+            fn with_store(mut self, slot: u16) -> Option<Self> {
+                self.span = self.span.checked_add(1)?;
+                self.result.store_slot = Some(slot);
+                self.cost.removed_dispatches = self.cost.removed_dispatches.saturating_add(1);
+                Some(self)
+            }
+        }
+    };
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct LocalBinarySelection {
     pub inputs: LocalNumericInputs,
-    pub output: Register,
+    pub result: LocalResultBinding,
     pub operation: Instruction,
     pub span: u8,
-    pub store_slot: Option<u16>,
     pub discarded: DiscardedRegisters,
     pub cost: FusionCost,
-}
-
-impl LocalBinarySelection {
-    pub(crate) fn with_store(mut self, slot: u16) -> Option<Self> {
-        self.span = self.span.checked_add(1)?;
-        self.store_slot = Some(slot);
-        self.cost.removed_dispatches = self.cost.removed_dispatches.saturating_add(1);
-        Some(self)
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct LocalPropertySelection {
     pub receiver_slot: u16,
-    pub output: Register,
+    pub result: LocalResultBinding,
     pub operation: Instruction,
     pub span: u8,
     pub discarded: DiscardedRegisters,
     pub cost: FusionCost,
 }
+
+impl_local_store_selection!(LocalBinarySelection);
+impl_local_store_selection!(LocalPropertySelection);
 
 impl RankedSelection for LocalBinarySelection {
     fn rank(&self) -> (u8, u8) {
@@ -197,10 +234,9 @@ pub(crate) fn select_local_binary(
         inputs: folded.map_or(LocalNumericInputs::Sources(inputs), |bits| {
             LocalNumericInputs::Folded { bits }
         }),
-        output: operation.a,
+        result: LocalResultBinding::register(operation.a),
         operation,
         span: u8::try_from(producers.len() + 1).ok()?,
-        store_slot: None,
         discarded: discarded_registers(producers, operation.a),
         cost,
     })
@@ -254,10 +290,9 @@ pub(crate) fn select_source_add_const(
     let inputs = add_const_inputs(producer.definition, operation, constant_bits)?;
     Some(LocalBinarySelection {
         inputs,
-        output: operation.a,
+        result: LocalResultBinding::register(operation.a),
         operation,
         span: 2,
-        store_slot: None,
         discarded: discarded_registers(&[producer], operation.a),
         cost: FusionCost::LOCAL_CONSTANT,
     })
