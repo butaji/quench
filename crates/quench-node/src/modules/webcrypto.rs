@@ -15,6 +15,12 @@ use base64::Engine;
 use chacha20poly1305::ChaCha20Poly1305;
 use cipher::{generic_array::GenericArray, BlockDecrypt, BlockEncrypt};
 use hmac::{Hmac, Mac};
+use openssl::{pkey::PKey, rsa::Rsa};
+use p256::elliptic_curve::sec1::ToEncodedPoint as P256ToEncodedPoint;
+use p256::{
+    ecdh::diffie_hellman as p256_diffie_hellman, PublicKey as P256PublicKey,
+    SecretKey as P256SecretKey,
+};
 use p384::elliptic_curve::sec1::ToEncodedPoint as P384ToEncodedPoint;
 use p384::{
     ecdh::diffie_hellman as p384_diffie_hellman, PublicKey as P384PublicKey,
@@ -782,6 +788,7 @@ fn ecdh_derive_bits(
         return Err(operation_error("Named curve mismatch"));
     }
     let size = match curve.as_str() {
+        "P-256" => 32,
         "P-384" => 48,
         "P-521" => 66,
         _ => return Err(not_supported("Unrecognized named curve")),
@@ -816,6 +823,15 @@ fn ecdh_derive_bits(
     let public = ec_key_bytes(&public, false, size)
         .ok_or_else(|| operation_error("Invalid public key data"))?;
     let secret = match curve.as_str() {
+        "P-256" => {
+            let private = P256SecretKey::from_slice(&private)
+                .map_err(|_| operation_error("Invalid private key data"))?;
+            let public = P256PublicKey::from_sec1_bytes(&public)
+                .map_err(|_| operation_error("Invalid public key data"))?;
+            p256_diffie_hellman(private.to_nonzero_scalar(), public.as_affine())
+                .raw_secret_bytes()
+                .to_vec()
+        }
         "P-384" => {
             let private = P384SecretKey::from_slice(&private)
                 .map_err(|_| operation_error("Invalid private key data"))?;
@@ -960,6 +976,41 @@ fn rsa_der_components(data: &[u8], format: &str) -> Option<(Vec<u8>, Vec<u8>)> {
     let modulus = rsa.take(0x02)?.to_vec();
     let exponent = rsa.take(0x02)?.to_vec();
     Some((modulus, exponent))
+}
+
+fn pem_to_der(pem: Vec<u8>) -> Option<Vec<u8>> {
+    let text = String::from_utf8(pem).ok()?;
+    let body = text
+        .lines()
+        .filter(|line| !line.starts_with('-'))
+        .collect::<String>();
+    base64::engine::general_purpose::STANDARD.decode(body).ok()
+}
+
+fn rsa_b64(value: &openssl::bn::BigNumRef) -> Value {
+    Value::String(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(value.to_vec()))
+}
+
+fn rsa_jwks(private_data: &[u8]) -> Option<(Value, Value)> {
+    let pkey = PKey::private_key_from_der(private_data).ok()?;
+    let rsa = pkey.rsa().ok()?;
+    let public = host_api::object(vec![
+        ("kty".into(), Value::String("RSA".into())),
+        ("n".into(), rsa_b64(rsa.n())),
+        ("e".into(), rsa_b64(rsa.e())),
+    ]);
+    let private = host_api::object(vec![
+        ("kty".into(), Value::String("RSA".into())),
+        ("n".into(), rsa_b64(rsa.n())),
+        ("e".into(), rsa_b64(rsa.e())),
+        ("d".into(), rsa_b64(rsa.d())),
+        ("p".into(), rsa_b64(rsa.p()?)),
+        ("q".into(), rsa_b64(rsa.q()?)),
+        ("dp".into(), rsa_b64(rsa.dmp1()?)),
+        ("dq".into(), rsa_b64(rsa.dmq1()?)),
+        ("qi".into(), rsa_b64(rsa.iqmp()?)),
+    ]);
+    Some((private, public))
 }
 
 fn rsa_modulus_bits(modulus: &[u8]) -> Option<usize> {
@@ -2103,19 +2154,6 @@ pub fn import_key(
         ))));
     }
     let algorithm = args.get(2).cloned().unwrap_or(Value::Undefined);
-    let algorithm_name_upper = algorithm_name(&algorithm).to_ascii_uppercase();
-    let raw_alias_unsupported = format == "raw-public"
-        || (format == "raw-secret"
-            && matches!(
-                algorithm_name_upper.as_str(),
-                "ECDSA" | "ECDH" | "ED25519" | "ED448" | "X25519" | "X448"
-            ));
-    if raw_alias_unsupported {
-        let name = algorithm_name(&algorithm);
-        return Ok(settled(Err(not_supported(&format!(
-            "Unable to import {name} using {format} format"
-        )))));
-    }
     let extractable = matches!(args.get(3), Some(Value::Boolean(true)));
     let usages = args
         .get(4)
@@ -2188,7 +2226,7 @@ pub fn export_key(
     }
     if !matches!(
         format.as_str(),
-        "raw" | "raw-secret" | "jwk" | "spki" | "pkcs8"
+        "raw" | "raw-secret" | "raw-public" | "raw-seed" | "jwk" | "spki" | "pkcs8"
     ) {
         return Ok(settled(Err(error(
             Builtin::TypeError,
@@ -2211,7 +2249,9 @@ pub fn export_key(
     }
     let data = bytes(&execute::get_property(key, KEY_DATA_PROP)).unwrap_or_default();
     let result = match format.as_str() {
-        "raw" | "raw-secret" | "spki" | "pkcs8" => array_buffer(&data),
+        "raw" | "raw-secret" | "raw-public" | "raw-seed" | "spki" | "pkcs8" => {
+            array_buffer(&data)
+        }
         "jwk" => {
             let algorithm = execute::get_property(&metadata, "algorithm");
             let hash_value = execute::get_property(&algorithm, "hash");
@@ -2229,7 +2269,9 @@ pub fn export_key(
             let is_sha3 = hash_name.to_ascii_uppercase().starts_with("SHA3");
             let name = execute::to_js_string(&execute::get_property(&algorithm, "name"))
                 .unwrap_or_default();
-            if name.to_ascii_uppercase().starts_with("RSA-") {
+            if name.to_ascii_uppercase().starts_with("RSA-")
+                || name.eq_ignore_ascii_case("RSASSA-PKCS1-V1_5")
+            {
                 let alg = if is_sha3 {
                     Value::Undefined
                 } else {
@@ -2445,10 +2487,41 @@ pub fn generate_key(
                 rand::thread_rng().fill_bytes(&mut private);
                 (Some(private.to_vec()), Some(x448(&private, &base).to_vec()))
             }
+            "RSA-OAEP" | "RSA-PSS" | "RSASSA-PKCS1-V1_5" => {
+                let rsa = Rsa::generate(2048).ok();
+                let Some(rsa) = rsa else {
+                    return Ok(settled(Err(error(
+                        Builtin::Error,
+                        Some("ERR_OSSL_KEYGEN_FAILURE"),
+                        "key generation failed",
+                    ))));
+                };
+                let Ok(pkey) = PKey::from_rsa(rsa) else {
+                    return Ok(settled(Err(error(
+                        Builtin::Error,
+                        Some("ERR_OSSL_KEYGEN_FAILURE"),
+                        "key generation failed",
+                    ))));
+                };
+                let private = pkey
+                    .private_key_to_pem_pkcs8()
+                    .ok()
+                    .and_then(pem_to_der);
+                let public = pkey.public_key_to_der().ok();
+                (private, public)
+            }
             "ECDH" => match algorithm_name(&execute::get_property(&algorithm, "namedCurve"))
                 .to_ascii_uppercase()
                 .as_str()
             {
+                "P-256" => {
+                    let secret = P256SecretKey::random(&mut rand::thread_rng());
+                    let public = secret.public_key();
+                    (
+                        Some(secret.to_bytes().to_vec()),
+                        Some(public.to_encoded_point(false).as_bytes().to_vec()),
+                    )
+                }
                 "P-384" => {
                     let secret = P384SecretKey::random(&mut rand::thread_rng());
                     let public = secret.public_key();
@@ -2476,25 +2549,57 @@ pub fn generate_key(
             },
             _ => (None, None),
         };
-        let private_key = key_metadata(
-            key(
+        let rsa_jwk = if matches!(
+            name.as_str(),
+            "RSA-OAEP" | "RSA-PSS" | "RSASSA-PKCS1-V1_5"
+        ) {
+            private_data
+                .as_deref()
+                .and_then(rsa_jwks)
+        } else {
+            None
+        };
+        let private_value = match (&private_data, &rsa_jwk) {
+            (Some(data), Some((private, _))) => key_with_jwk(
+                &prototype,
+                algorithm.clone(),
+                extractable,
+                private_usages,
+                Some(data.clone()),
+                Some(private),
+            ),
+            _ => key(
                 &prototype,
                 algorithm.clone(),
                 extractable,
                 private_usages,
                 private_data,
             ),
+        };
+        let private_key = key_metadata(
+            private_value,
             "private",
             "pkcs8",
         );
-        let public_key = key_metadata(
-            key(
+        let public_value = match (&public_data, &rsa_jwk) {
+            (Some(data), Some((_, public))) => key_with_jwk(
                 &prototype,
-                algorithm,
+                algorithm.clone(),
+                extractable,
+                public_usages,
+                Some(data.clone()),
+                Some(public),
+            ),
+            _ => key(
+                &prototype,
+                algorithm.clone(),
                 extractable,
                 public_usages,
                 public_data,
             ),
+        };
+        let public_key = key_metadata(
+            public_value,
             "public",
             "spki",
         );
