@@ -22,8 +22,15 @@ fn execute_case(
     let native = plan.native_local_binary_at(pc).expect("local binary plan");
     let selection = native.borrow().selection();
     let environment = crate::environment::Environment::new();
-    environment.set(selection.slots[0], values[0].clone());
-    environment.set(selection.slots[1], values[1].clone());
+    match selection.inputs {
+        crate::stencil_plan::LocalNumericInputs::Slots(slots) => {
+            environment.set(slots[0], values[0].clone());
+            environment.set(slots[1], values[1].clone());
+        }
+        crate::stencil_plan::LocalNumericInputs::SlotConstant { slot, .. } => {
+            environment.set(slot, values[0].clone());
+        }
+    }
     let mut registers = crate::register_file::RegisterFile::with_undefined(
         usize::from(view.register_count()).max(8),
     );
@@ -37,6 +44,34 @@ fn execute_case(
     )
     .expect("local binary execution");
     (completion, native.borrow().native_entry_count())
+}
+
+fn exercise_constant_source_view(view: CodeView<'_>) -> bool {
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let plan = BaselinePlan::compile_for_test(view, policy);
+    let Some(pc) = (0..view.len()).find(|pc| {
+        plan.native_local_binary_at(*pc).is_some_and(|native| {
+            matches!(
+                native.borrow().selection().inputs,
+                crate::stencil_plan::LocalNumericInputs::SlotConstant { .. }
+            )
+        })
+    }) else {
+        return false;
+    };
+    let numeric = execute_case(view, &plan, pc, [Value::Number(1.25), Value::Undefined]);
+    assert_eq!(numeric, (Completion::Return(Value::Number(3.75)), 1));
+    let hostile = execute_case(
+        view,
+        &plan,
+        pc,
+        [Value::String("x".into()), Value::Undefined],
+    );
+    assert_eq!(
+        hostile,
+        (Completion::Return(Value::String("x2.5".into())), 1)
+    );
+    true
 }
 
 fn exercise_source_view(view: CodeView<'_>) -> bool {
@@ -71,6 +106,18 @@ fn ordinary_source_fuses_two_local_loads_with_numeric_operation() {
         executed |= exercise_source_view(view);
     });
     assert!(executed, "source must execute the fused physical entry");
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn ordinary_source_fuses_local_load_with_numeric_constant() {
+    let program = crate::reduce::reduce_source("function f(x){return x+2.5} f(1)")
+        .expect("ordinary source lowers");
+    let mut executed = false;
+    visit_views(program.code(), &mut |view| {
+        executed |= exercise_constant_source_view(view);
+    });
+    assert!(executed, "source must execute the constant physical entry");
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]

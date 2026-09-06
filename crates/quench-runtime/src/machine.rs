@@ -5343,29 +5343,48 @@ fn add_chain_admission(
 }
 
 fn local_binary_admission(
+    code: CodeView<'_>,
     entries: &[BaselineEntry],
     liveness: &[BTreeSet<u16>],
     pc: usize,
     policy: crate::stencil_policy::ExecutionPolicy,
     arena: &SharedStencilPool,
 ) -> Option<NativeAdmission> {
-    let end = pc.checked_add(3)?;
-    if !region_entry_is_legal(entries, pc, end) {
-        return None;
-    }
-    let loads = [entries.get(pc)?.instruction, entries.get(pc + 1)?.instruction];
-    let operation = entries.get(pc + 2)?.instruction;
-    let selection = crate::stencil_plan::select_local_binary(
-        loads,
-        operation,
-        liveness.get(pc + 2)?,
-    )?;
+    let selection = select_local_numeric(code, entries, liveness, pc)?;
     let plan = crate::stencil_fusion::NativeLocalBinaryPlan::new(
         selection,
         policy,
         Rc::clone(arena),
     )?;
     Some(NativeAdmission::LocalBinary(Rc::new(RefCell::new(plan))))
+}
+
+fn select_local_numeric(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    liveness: &[BTreeSet<u16>],
+    pc: usize,
+) -> Option<crate::stencil_plan::LocalBinarySelection> {
+    let load = entries.get(pc)?.instruction;
+    if region_entry_is_legal(entries, pc, pc.checked_add(3)?) {
+        let loads = [load, entries.get(pc + 1)?.instruction];
+        let operation = entries.get(pc + 2)?.instruction;
+        if let Some(selection) = crate::stencil_plan::select_local_binary(
+            loads,
+            operation,
+            liveness.get(pc + 2)?,
+        ) {
+            return Some(selection);
+        }
+    }
+    let end = pc.checked_add(2)?;
+    let operation = entries.get(pc + 1)?.instruction;
+    let bits = match code.constant(operation.c)? {
+        crate::ops::Constant::Number(value) => value.to_bits(),
+        _ => return None,
+    };
+    region_entry_is_legal(entries, pc, end).then_some(())?;
+    crate::stencil_plan::select_local_add_const(load, operation, bits, liveness.get(pc + 1)?)
 }
 
 fn region_admission(
@@ -5433,7 +5452,7 @@ fn build_admissions(
         );
         builder.push_optional(
             pc,
-            local_binary_admission(entries, &liveness, pc, policy, &arena),
+            local_binary_admission(code, entries, &liveness, pc, policy, &arena),
         );
         collect_memory_admissions(&mut builder, pc, entry.instruction, policy, &arena);
         builder.push_optional(pc, region_admission(entries, pc, policy, &arena));
