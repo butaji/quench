@@ -216,7 +216,7 @@ mod tests {
     }
 
     #[test]
-    fn artifact_identity_covers_declared_physical_bindings() {
+    fn artifact_identity_covers_declared_physical_contract() {
         static OPERATIONS: [&str; 19] = [
             "LoadLocal",
             "LoadConst",
@@ -255,7 +255,7 @@ mod tests {
             ..unbound
         };
         assert!(super::super::rust_assembly_recipe(&bound)
-            .is_some_and(|recipe| !recipe.bindings().is_empty()));
+            .is_some_and(|recipe| !recipe.bindings().is_empty() && !recipe.outputs().is_empty()));
         let payload = extracted(&[1, 2, 3, 4]);
         assert_ne!(
             artifact_fingerprint(&bound, "aarch64-test", "build", &payload),

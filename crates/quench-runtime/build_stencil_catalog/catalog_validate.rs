@@ -25,6 +25,14 @@ fn validate_catalog_declaration(declaration: &RegionDeclaration) {
             "stencil {} has an invalid physical operand binding",
             declaration.name
         );
+        assert!(
+            recipe
+                .outputs()
+                .iter()
+                .all(|output| output.valid_for(declaration.operations.len())),
+            "stencil {} has an invalid physical output destination",
+            declaration.name
+        );
     }
 }
 
