@@ -188,6 +188,7 @@ pub struct StencilArena {
 /// dangle during replacement.
 pub struct SharedStencilSlab {
     slabs: Vec<StencilArena>,
+    cache: RenderedRegionCache,
     slab_capacity: usize,
     active_dispatches: Cell<usize>,
     peak_dispatches: Cell<usize>,
@@ -335,6 +336,7 @@ impl SharedStencilSlab {
             & !(PAGE - 1);
         Ok(Self {
             slabs: Vec::new(),
+            cache: RenderedRegionCache::new(),
             slab_capacity,
             active_dispatches: Cell::new(0),
             peak_dispatches: Cell::new(0),
@@ -391,6 +393,9 @@ impl SharedStencilSlab {
         }
         let (owners, released) = self.remove_idle_owners(retain);
         release_global_bytes(released);
+        for owner in &owners {
+            self.cache.remove_owner(*owner);
+        }
         owners.len()
     }
 
@@ -409,6 +414,7 @@ impl SharedStencilSlab {
         let (owners, released) = self.remove_idle_owners(retain);
         release_global_bytes(released);
         for owner in &owners {
+            self.cache.remove_owner(*owner);
             cache.remove_owner(*owner);
         }
         owners.len()
@@ -450,6 +456,7 @@ impl SharedStencilSlab {
             let released = self.slabs[index].capacity();
             self.slabs.remove(index);
             release_global_bytes(released);
+            self.cache.remove_owner(owner);
             cache.remove_owner(owner);
         }
         self.total_capacity().saturating_add(additional) <= MAX_SHARED_SLAB_BYTES
@@ -462,9 +469,16 @@ impl SharedStencilSlab {
         stencil: &Stencil,
         values: &PatchValues<'_, N>,
     ) -> Result<usize, ArenaError> {
+        let signature = crate::stencil_select::select_physical(key)
+            .map(|view| physical_cache_signature(view, values))
+            .unwrap_or_else(|| cache_signature(stencil, values));
         for slab in &mut self.slabs {
-            match slab.render_or_get(cache, key, stencil, values) {
-                Ok(address) => return Ok(address),
+            match slab.render_or_get(&mut self.cache, key, stencil, values) {
+                Ok(address) => {
+                    let owner = slab.id();
+                    cache.insert_owned(key, signature, address, owner);
+                    return Ok(address);
+                }
                 Err(ArenaError::ProtectionFailed | ArenaError::Exhausted) => continue,
                 Err(error) => return Err(error),
             }
@@ -482,13 +496,14 @@ impl SharedStencilSlab {
                 return Err(error);
             }
         };
-        let address = match slab.render_or_get(cache, key, stencil, values) {
+        let address = match slab.render_or_get(&mut self.cache, key, stencil, values) {
             Ok(address) => address,
             Err(error) => {
                 release_global_bytes(self.slab_capacity);
                 return Err(error);
             }
         };
+        cache.insert_owned(key, signature, address, slab.id());
         self.slabs.push(slab);
         Ok(address)
     }
@@ -504,9 +519,14 @@ impl SharedStencilSlab {
         if !view.contract().abi_is_well_formed() || !view.matches(&selected) {
             return Err(ArenaError::ProtectionFailed);
         }
+        let signature = physical_cache_signature(view, values);
         for slab in &mut self.slabs {
-            match slab.render_selected_view(cache, view, values) {
-                Ok(address) => return Ok(address),
+            match slab.render_selected_view(&mut self.cache, view, values) {
+                Ok(address) => {
+                    let owner = slab.id();
+                    cache.insert_owned(view.key, signature, address, owner);
+                    return Ok(address);
+                }
                 Err(ArenaError::ProtectionFailed | ArenaError::Exhausted) => continue,
                 Err(error) => return Err(error),
             }
@@ -524,13 +544,14 @@ impl SharedStencilSlab {
                 return Err(error);
             }
         };
-        let address = match slab.render_selected_view(cache, view, values) {
+        let address = match slab.render_selected_view(&mut self.cache, view, values) {
             Ok(address) => address,
             Err(error) => {
                 release_global_bytes(self.slab_capacity);
                 return Err(error);
             }
         };
+        cache.insert_owned(view.key, signature, address, slab.id());
         self.slabs.push(slab);
         Ok(address)
     }
@@ -2315,6 +2336,58 @@ mod tests {
         assert_eq!(pool.slab_count(), 2);
         assert_eq!(pool.capacity(), 8192);
         assert!(pool.capacity() <= MAX_SHARED_SLAB_BYTES);
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn shared_slab_reuses_equivalent_views_across_plan_caches() {
+        let mut pool = SharedStencilSlab::new(4096).unwrap();
+        let mut first_cache = RenderedRegionCache::new();
+        let mut second_cache = RenderedRegionCache::new();
+        let key = crate::stencil_select::numeric_region_key(Opcode::Add).unwrap();
+        let view = crate::stencil_select::select_physical(key).unwrap();
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let values = PatchValues::from_site(&site);
+        let first = pool
+            .render_physical_view_or_get(&mut first_cache, view, &values)
+            .unwrap();
+        let used = pool.used();
+        let second = pool
+            .render_physical_view_or_get(&mut second_cache, view, &values)
+            .unwrap();
+        assert_eq!(second, first);
+        assert_eq!(pool.used(), used);
+        let owner = pool.owner_for(first).unwrap();
+        let signature = physical_cache_signature(view, &values);
+        assert_eq!(second_cache.get_owned(key, signature, owner), Some(first));
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn shared_slab_separates_distinct_patch_signatures() {
+        let mut pool = SharedStencilSlab::new(4096).unwrap();
+        let mut first_cache = RenderedRegionCache::new();
+        let mut second_cache = RenderedRegionCache::new();
+        let key = crate::stencil_fact::RegionKey(u64::MAX - 7);
+        static BYTES: [u8; 8] = [0; 8];
+        static HOLES: [crate::stencil_fact::Hole; 1] = [crate::stencil_fact::Hole {
+            offset: 0,
+            kind: crate::stencil_fact::HoleKind::Literal64,
+        }];
+        let stencil = Stencil {
+            bytes: &BYTES,
+            holes: &HOLES,
+        };
+        let site = QuickeningSite::<2>::new(Opcode::AddConst);
+        let first_values = PatchValues::from_site(&site).with_constant_bits(1.0_f64.to_bits());
+        let second_values = PatchValues::from_site(&site).with_constant_bits(2.0_f64.to_bits());
+        let first = pool
+            .render_or_get(&mut first_cache, key, &stencil, &first_values)
+            .unwrap();
+        let second = pool
+            .render_or_get(&mut second_cache, key, &stencil, &second_values)
+            .unwrap();
+        assert_ne!(second, first);
     }
 
     #[test]
