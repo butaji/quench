@@ -3209,8 +3209,7 @@ enum InstalledUnaryEntry {
 }
 
 pub(crate) struct NativeUnaryPlan {
-    arena: Option<crate::stencil_arena::StencilArena>,
-    shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
+    storage: PhysicalStorage,
     physical: PhysicalState,
     site: crate::quickening::QuickeningSite<4>,
     key: crate::stencil_fact::RegionKey,
@@ -3242,7 +3241,7 @@ impl NativeUnaryPlan {
         shared: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
     ) -> Option<Self> {
         let mut plan = Self::new(instruction, policy)?;
-        plan.shared_arena = Some(shared);
+        plan.storage = PhysicalStorage::Shared(shared);
         Some(plan)
     }
 
@@ -3269,8 +3268,7 @@ impl NativeUnaryPlan {
                 record.executable && record.abi == abi && validate_physical_template(record).is_ok()
             }))
         .then_some(Self {
-            arena: None,
-            shared_arena: None,
+            storage: PhysicalStorage::Local(None),
             physical: PhysicalState::new(),
             site: crate::quickening::QuickeningSite::new(instruction.opcode),
             key,
@@ -3339,7 +3337,7 @@ impl NativeUnaryPlan {
         let values = crate::stencil_fact::PatchValues::from_site(&self.site)
             .with_constant_bits(0x8000_0000_0000_0000);
         if let InstalledUnaryEntry::NumberLocal(address) = self.installed {
-            if let Some(arena) = self.arena.as_ref() {
+            if let Some(arena) = self.storage.local() {
                 if let Ok(entry) = arena.f64_unary_entry(address) {
                     self.note_entry();
                     return Ok(entry(value));
@@ -3347,13 +3345,7 @@ impl NativeUnaryPlan {
             }
             self.installed = InstalledUnaryEntry::Unpublished;
         }
-        if self.arena.is_none() {
-            self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
-        }
-        let arena = self
-            .arena
-            .as_mut()
-            .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
+        let arena = self.storage.local_mut()?;
         let view = crate::stencil_select::select_physical_for_abi(
             self.key,
             crate::stencil_select::RegionAbi::ScalarF64Unary,
@@ -3369,7 +3361,7 @@ impl NativeUnaryPlan {
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn execute_number(&mut self, value: f64) -> Result<f64, crate::stencil_arena::ArenaError> {
-        if let Some(shared) = self.shared_arena.clone() {
+        if let Some(shared) = self.storage.shared() {
             return self.execute_number_shared(shared, value);
         }
         self.execute_number_local(value)
@@ -3383,7 +3375,7 @@ impl NativeUnaryPlan {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
         }
         let operand = number_to_int32(value);
-        if let Some(shared) = self.shared_arena.clone() {
+        if let Some(shared) = self.storage.shared() {
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             if let InstalledUnaryEntry::IntegerShared(owned) = self.installed {
                 match invoke_shared_entry!(shared, owned, |entry| entry(operand)) {
@@ -3426,14 +3418,8 @@ impl NativeUnaryPlan {
             self.note_entry();
             return Ok(f64::from(result));
         }
-        if self.arena.is_none() {
-            self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
-        }
         let values = crate::stencil_fact::PatchValues::from_site(&self.site);
-        let arena = self
-            .arena
-            .as_mut()
-            .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
+        let arena = self.storage.local_mut()?;
         let view = crate::stencil_select::select_physical_for_abi(
             self.key,
             crate::stencil_select::RegionAbi::ScalarI32,
