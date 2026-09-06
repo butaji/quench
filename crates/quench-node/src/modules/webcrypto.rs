@@ -957,14 +957,20 @@ fn rsa_der_components(data: &[u8], format: &str) -> Option<(Vec<u8>, Vec<u8>)> {
     let rsa_der = match format {
         "spki" => {
             let mut spki = DerReader::new(sequence);
-            spki.take(0x30)?;
+            let algorithm = spki.take(0x30)?;
+            if !rsa_algorithm_identifier(algorithm) {
+                return None;
+            }
             let bit_string = spki.take(0x03)?;
             bit_string.get(1..)?
         }
         "pkcs8" => {
             let mut pkcs8 = DerReader::new(sequence);
             pkcs8.take(0x02)?;
-            pkcs8.take(0x30)?;
+            let algorithm = pkcs8.take(0x30)?;
+            if !rsa_algorithm_identifier(algorithm) {
+                return None;
+            }
             pkcs8.take(0x04)?
         }
         _ => return None,
@@ -978,6 +984,12 @@ fn rsa_der_components(data: &[u8], format: &str) -> Option<(Vec<u8>, Vec<u8>)> {
     let modulus = rsa.take(0x02)?.to_vec();
     let exponent = rsa.take(0x02)?.to_vec();
     Some((modulus, exponent))
+}
+
+fn rsa_algorithm_identifier(data: &[u8]) -> bool {
+    const RSA_ENCRYPTION_OID: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01];
+    let mut algorithm = DerReader::new(data);
+    algorithm.take(0x06) == Some(RSA_ENCRYPTION_OID)
 }
 
 fn pem_to_der(pem: Vec<u8>) -> Option<Vec<u8>> {
@@ -2287,7 +2299,7 @@ fn subtle_value() -> Value {
     execute::get_property(&execute::get_property(&global, "crypto"), "subtle")
 }
 
-pub fn hash_job_construct(
+pub fn hash_job_construct_legacy(
     _state: &Rc<RefCell<HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
@@ -2307,7 +2319,7 @@ pub fn hash_job_construct(
     ]))
 }
 
-pub fn hash_job_run(
+pub fn hash_job_run_legacy(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     _args: &[Value],
@@ -2322,7 +2334,7 @@ pub fn hash_job_run(
     })))
 }
 
-pub fn secret_key_gen_job_construct(
+pub fn secret_key_gen_job_construct_legacy(
     _state: &Rc<RefCell<HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
@@ -2348,7 +2360,7 @@ pub fn secret_key_gen_job_construct(
     ]))
 }
 
-pub fn secret_key_gen_job_run(
+pub fn secret_key_gen_job_run_legacy(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     _args: &[Value],
@@ -2368,7 +2380,7 @@ pub fn secret_key_gen_job_run(
     })))
 }
 
-pub fn ec_key_pair_gen_job_construct(
+pub fn ec_key_pair_gen_job_construct_legacy(
     _state: &Rc<RefCell<HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
@@ -2408,7 +2420,7 @@ pub fn ec_key_pair_gen_job_construct(
     ]))
 }
 
-pub fn ec_key_pair_gen_job_run(
+pub fn ec_key_pair_gen_job_run_legacy(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     _args: &[Value],
@@ -2428,7 +2440,7 @@ pub fn ec_key_pair_gen_job_run(
     })))
 }
 
-pub fn aes_cipher_job_construct(
+pub fn aes_cipher_job_construct_legacy(
     _state: &Rc<RefCell<HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
@@ -2465,7 +2477,7 @@ pub fn aes_cipher_job_construct(
     ]))
 }
 
-pub fn aes_cipher_job_run(
+pub fn aes_cipher_job_run_legacy(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     _args: &[Value],
@@ -2521,6 +2533,340 @@ fn not_supported(message: &str) -> VmError {
         "code",
         Value::String("ERR_OSSL_EVP_UNSUPPORTED".into()),
     ))
+}
+
+// Internal crypto jobs share one host-side record.  The JavaScript internal
+// modules only construct the record and call `run`; the actual operation is
+// dispatched from one event-loop completion edge.  Keeping the inputs as
+// data makes the constructor/run split explicit without a second JS runtime.
+const JOB_KIND_HASH: &str = "hash";
+const JOB_KIND_SECRET_KEY: &str = "secret-key";
+const JOB_KIND_EC_KEY_PAIR: &str = "ec-key-pair";
+const JOB_KIND_AES: &str = "aes";
+const JOB_KIND_PROP: &str = "\0quench:crypto-job:kind";
+const JOB_RESULT_PROP: &str = "\0quench:crypto-job:result";
+
+fn crypto_job_run_capability() -> Value {
+    crate::host::capability(crate::registry::SPEC_INTERNAL_CRYPTO_HASH_JOB_RUN)
+}
+
+fn crypto_job_completion_capability() -> Value {
+    crate::host::capability(crate::registry::SPEC_INTERNAL_CRYPTO_JOB_COMPLETE)
+}
+
+fn job_result(promise: &Rc<PromiseData>, result: Result<Value, VmError>) {
+    match result {
+        Ok(Value::Promise(inner)) => match inner.state.borrow().clone() {
+            PromiseState::Fulfilled(value) => quench_runtime::resolve_promise(promise, value),
+            PromiseState::Rejected(reason) => quench_runtime::reject_promise(promise, reason),
+            PromiseState::Pending => quench_runtime::reject_promise(
+                promise,
+                Value::String("Operation did not settle".into()),
+            ),
+        },
+        Ok(value) => quench_runtime::resolve_promise(promise, value),
+        Err(VmError::Thrown(reason)) => quench_runtime::reject_promise(promise, reason),
+        Err(_) => quench_runtime::reject_promise(
+            promise,
+            Value::String("Operation failed".into()),
+        ),
+    }
+}
+
+fn usage_mask(mask: &Value) -> Value {
+    let mask = match mask {
+        Value::Number(value) if value.is_finite() && *value >= 0.0 => *value as u32,
+        _ => 0,
+    };
+    usage_array(
+        &[
+            (1_u32, "encrypt"),
+            (2, "decrypt"),
+            (4, "sign"),
+            (8, "verify"),
+            (16, "deriveKey"),
+            (32, "deriveBits"),
+            (64, "wrapKey"),
+            (128, "unwrapKey"),
+            (256, "encapsulateKey"),
+            (512, "encapsulateBits"),
+            (1024, "decapsulateKey"),
+            (2048, "decapsulateBits"),
+        ]
+        .into_iter()
+        .filter_map(|(bit, name)| (mask & bit != 0).then_some(name.to_string()))
+        .collect::<Vec<_>>()
+        .as_slice(),
+    )
+}
+
+fn job_object(kind: &str, fields: Vec<(String, Value)>) -> Value {
+    let mut properties = vec![
+        ("run".into(), crypto_job_run_capability()),
+        (JOB_KIND_PROP.into(), Value::String(kind.into())),
+    ];
+    properties.extend(fields);
+    host_api::object(properties)
+}
+
+fn queue_crypto_job(
+    state: &Rc<RefCell<HostState>>,
+    job: Value,
+) -> Result<Value, VmError> {
+    let promise = Rc::new(PromiseData::new(PromiseState::Pending));
+    execute::set_property_in_place(&job, JOB_RESULT_PROP, Value::Promise(promise.clone()));
+    state.borrow().event_loop.queue_immediate(
+        crypto_job_completion_capability(),
+        vec![job],
+    );
+    Ok(Value::Promise(promise))
+}
+
+pub fn hash_job_construct(
+    _state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(job_object(
+        JOB_KIND_HASH,
+        vec![
+            ("algorithm".into(), args.get(1).cloned().unwrap_or(Value::Undefined)),
+            ("data".into(), args.get(2).cloned().unwrap_or(Value::Undefined)),
+            ("length".into(), args.get(3).cloned().unwrap_or(Value::Undefined)),
+        ],
+    ))
+}
+
+pub fn secret_key_gen_job_construct(
+    _state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(job_object(
+        JOB_KIND_SECRET_KEY,
+        vec![
+            ("length".into(), args.get(1).cloned().unwrap_or(Value::Undefined)),
+            ("algorithm".into(), args.get(2).cloned().unwrap_or(Value::Undefined)),
+            ("usages".into(), usage_mask(args.get(3).unwrap_or(&Value::Undefined))),
+            ("extractable".into(), args.get(4).cloned().unwrap_or(Value::Boolean(false))),
+        ],
+    ))
+}
+
+pub fn ec_key_pair_gen_job_construct(
+    _state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let algorithm = args.get(3).cloned().unwrap_or(Value::Undefined);
+    let public = usage_mask(args.get(4).unwrap_or(&Value::Undefined));
+    let private = usage_mask(args.get(5).unwrap_or(&Value::Undefined));
+    let usages = host_api::array(
+        usage_names(&public)
+            .into_iter()
+            .chain(usage_names(&private))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(Value::String)
+            .collect(),
+    );
+    Ok(job_object(
+        JOB_KIND_EC_KEY_PAIR,
+        vec![
+            ("namedCurve".into(), args.get(1).cloned().unwrap_or(Value::Undefined)),
+            ("algorithm".into(), algorithm),
+            ("usages".into(), usages),
+            ("publicUsages".into(), public),
+            ("privateUsages".into(), private),
+            ("extractable".into(), args.get(6).cloned().unwrap_or(Value::Boolean(false))),
+        ],
+    ))
+}
+
+fn aes_variant_algorithm(variant: u32, iv: Value, tag: Value, aad: Value) -> Value {
+    let (name, length) = match variant {
+        0 => ("AES-CTR", 128),
+        1 => ("AES-CTR", 192),
+        2 => ("AES-CTR", 256),
+        3 => ("AES-CBC", 128),
+        4 => ("AES-CBC", 192),
+        5 => ("AES-CBC", 256),
+        6 => ("AES-GCM", 128),
+        7 => ("AES-GCM", 192),
+        8 => ("AES-GCM", 256),
+        9 => ("AES-KW", 128),
+        10 => ("AES-KW", 192),
+        11 => ("AES-KW", 256),
+        12 => ("AES-OCB", 128),
+        13 => ("AES-OCB", 192),
+        _ => ("AES-OCB", 256),
+    };
+    let mut fields = vec![
+        ("name".into(), Value::String(name.into())),
+        ("length".into(), Value::Number(length as f64)),
+    ];
+    if name == "AES-CTR" {
+        fields.push(("counter".into(), iv));
+        fields.push(("length".into(), tag));
+    } else if name != "AES-KW" {
+        fields.push(("iv".into(), iv));
+        if matches!(name, "AES-GCM" | "AES-OCB") {
+            fields.push(("tagLength".into(), tag));
+            fields.push(("additionalData".into(), aad));
+        }
+    }
+    host_api::object(fields)
+}
+
+pub fn aes_cipher_job_construct(
+    _state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let variant = args.get(4).and_then(|value| match value {
+        Value::Number(value) if value.is_finite() && *value >= 0.0 => Some(*value as u32),
+        _ => None,
+    }).unwrap_or(3);
+    let iv = args.get(5).cloned().unwrap_or(Value::Undefined);
+    if matches!(variant, 0..=5 | 6..=8 | 12..=14) {
+        let iv_len = bytes(&iv).map_or(0, |value| value.len());
+        if matches!(variant, 0..=5) && iv_len != 16 {
+            return Err(VmError::Thrown(quench_runtime::builtins::error(
+                Builtin::Error,
+                &[Value::String("Invalid initialization vector".into())],
+            )));
+        }
+    }
+    Ok(job_object(
+        JOB_KIND_AES,
+        vec![
+            ("cipherMode".into(), args.get(1).cloned().unwrap_or(Value::Number(0.0))),
+            ("key".into(), args.get(2).cloned().unwrap_or(Value::Undefined)),
+            ("data".into(), args.get(3).cloned().unwrap_or(Value::Undefined)),
+            ("variant".into(), Value::Number(variant as f64)),
+            ("iv".into(), iv),
+            ("tagLength".into(), args.get(6).cloned().unwrap_or(Value::Number(128.0))),
+            ("additionalData".into(), args.get(7).cloned().unwrap_or(Value::Undefined)),
+        ],
+    ))
+}
+
+fn key_from_handle(handle: &Value, algorithm: Value, usages: Value) -> Result<Value, VmError> {
+    let export = execute::get_property(handle, "export");
+    let data = execute::call(&export, handle, &[])
+        .ok()
+        .and_then(|value| bytes(&value))
+        .ok_or_else(|| operation_error("Invalid key data"))?;
+    Ok(key(&key_prototype(), algorithm, false, usages, Some(data)))
+}
+
+fn complete_crypto_job(
+    state: &Rc<RefCell<HostState>>,
+    job: &Value,
+) -> Result<Value, VmError> {
+    let result = execute::get_property(job, JOB_RESULT_PROP);
+    let Value::Promise(promise) = result else {
+        return Ok(Value::Undefined);
+    };
+    let kind = execute::to_js_string(&execute::get_property(job, JOB_KIND_PROP)).unwrap_or_default();
+    let global = quench_runtime::vm::current_global_object();
+    let crypto = execute::get_property(&global, "crypto");
+    let subtle = execute::get_property(&crypto, "subtle");
+    let operation = match kind.as_str() {
+        JOB_KIND_HASH => {
+            let algorithm = execute::get_property(job, "algorithm");
+            let data = execute::get_property(job, "data");
+            digest(state, Some(&subtle), &[algorithm, data])
+        }
+        JOB_KIND_SECRET_KEY => {
+            let algorithm = execute::get_property(job, "algorithm");
+            let extractable = execute::get_property(job, "extractable");
+            let usages = execute::get_property(job, "usages");
+            generate_key(state, Some(&subtle), &[algorithm, extractable, usages])
+        }
+        JOB_KIND_EC_KEY_PAIR => {
+            let algorithm = execute::get_property(job, "algorithm");
+            let extractable = execute::get_property(job, "extractable");
+            let usages = execute::get_property(job, "usages");
+            generate_key(state, Some(&subtle), &[algorithm, extractable, usages])
+        }
+        JOB_KIND_AES => {
+            let mode = execute::get_property(job, "cipherMode");
+            let handle = execute::get_property(job, "key");
+            let data = execute::get_property(job, "data");
+            let variant = execute::get_property(job, "variant");
+            let variant = match variant { Value::Number(value) => value as u32, _ => 3 };
+            let iv = execute::get_property(job, "iv");
+            let tag = execute::get_property(job, "tagLength");
+            let aad = execute::get_property(job, "additionalData");
+            let algorithm = aes_variant_algorithm(variant, iv, tag, aad);
+            let key = key_from_handle(
+                &handle,
+                algorithm.clone(),
+                host_api::array(vec![
+                    Value::String("encrypt".into()),
+                    Value::String("decrypt".into()),
+                    Value::String("wrapKey".into()),
+                    Value::String("unwrapKey".into()),
+                ]),
+            );
+            match key {
+                Ok(key) if matches!(mode, Value::Number(value) if value == 0.0) => {
+                    encrypt(state, Some(&subtle), &[algorithm, key, data])
+                }
+                Ok(key) => decrypt(state, Some(&subtle), &[algorithm, key, data]),
+                Err(error) => Err(error),
+            }
+        }
+        _ => Err(operation_error("Unknown crypto job")),
+    };
+    job_result(&promise, operation);
+    Ok(Value::Undefined)
+}
+
+pub fn crypto_job_run(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or(VmError::NotCallable)?.clone();
+    queue_crypto_job(state, receiver)
+}
+
+pub fn hash_job_run(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crypto_job_run(state, receiver, args)
+}
+
+pub fn secret_key_gen_job_run(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crypto_job_run(state, receiver, args)
+}
+
+pub fn ec_key_pair_gen_job_run(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crypto_job_run(state, receiver, args)
+}
+
+pub fn aes_cipher_job_run(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crypto_job_run(state, receiver, args)
+}
+
+pub fn crypto_job_complete(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    complete_crypto_job(state, args.first().unwrap_or(&Value::Undefined))
 }
 
 pub fn import_key(
