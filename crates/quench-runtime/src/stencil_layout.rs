@@ -152,6 +152,7 @@ impl<'a> StencilLayout<'a> {
                 FixupKind::Aarch64Branch26 | FixupKind::Aarch64CondBranch19 => range.start,
             };
             patch_relative(bytes, range.start, target, base, fixup.kind)?;
+            eliminate_fallthrough_branch(bytes, range, target, fixup.kind);
         }
         Ok(())
     }
@@ -172,6 +173,18 @@ impl<'a> StencilLayout<'a> {
             return Err(LayoutError::TargetOutOfBounds);
         }
         usize::try_from(target).map_err(|_| LayoutError::TargetOutOfBounds)
+    }
+}
+
+fn eliminate_fallthrough_branch(
+    bytes: &mut [u8],
+    range: std::ops::Range<usize>,
+    target: usize,
+    kind: FixupKind,
+) {
+    const AARCH64_NOP: [u8; 4] = 0xD503_201Fu32.to_le_bytes();
+    if kind == FixupKind::Aarch64Branch26 && target == range.end {
+        bytes[range].copy_from_slice(&AARCH64_NOP);
     }
 }
 
@@ -298,8 +311,8 @@ fn patch_relative(
 ) -> Result<(), LayoutError> {
     let displacement = target as i128 - base as i128;
     if kind == FixupKind::Aarch64CondBranch19 {
-        let displacement = i64::try_from(displacement)
-            .map_err(|_| LayoutError::TargetOutOfBounds)?;
+        let displacement =
+            i64::try_from(displacement).map_err(|_| LayoutError::TargetOutOfBounds)?;
         return write_cond_branch19(bytes, offset, displacement).map_err(LayoutError::Patch);
     }
     let (encoded_target, encoded_base) = displacement_pair(displacement)?;

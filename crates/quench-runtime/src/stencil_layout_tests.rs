@@ -160,7 +160,7 @@ mod tests {
     }
 
     #[test]
-    fn aarch64_branch26_uses_instruction_pc_and_preserves_opcode() {
+    fn aarch64_branch26_to_next_fragment_becomes_fallthrough() {
         let branch = 0x1400_0000u32.to_le_bytes();
         let fragments = [
             Fragment {
@@ -185,7 +185,42 @@ mod tests {
             .unwrap();
         assert_eq!(
             u32::from_le_bytes(output[..4].try_into().unwrap()),
-            0x1400_0001
+            0xD503_201F
+        );
+        assert_eq!(&output[4..], &0xD65F_03C0u32.to_le_bytes());
+    }
+
+    #[test]
+    fn aarch64_branch26_keeps_non_fallthrough_edge() {
+        let branch = 0x1400_0000u32.to_le_bytes();
+        let fragments = [
+            Fragment {
+                label: START,
+                bytes: &branch,
+            },
+            Fragment {
+                label: MIDDLE,
+                bytes: &0xD503_201Fu32.to_le_bytes(),
+            },
+            Fragment {
+                label: END,
+                bytes: &0xD65F_03C0u32.to_le_bytes(),
+            },
+        ];
+        let fixup = Fixup {
+            fragment: 0,
+            offset: 0,
+            target: END,
+            addend: 0,
+            kind: FixupKind::Aarch64Branch26,
+        };
+        let mut output = Vec::new();
+        StencilLayout::new(&fragments, &[fixup])
+            .finalize_into(&mut output)
+            .unwrap();
+        assert_eq!(
+            u32::from_le_bytes(output[..4].try_into().unwrap()),
+            0x1400_0002
         );
     }
 
@@ -217,7 +252,10 @@ mod tests {
         StencilLayout::new(&fragments, &[fixup])
             .finalize_into(&mut output)
             .unwrap();
-        assert_eq!(u32::from_le_bytes(output[..4].try_into().unwrap()), 0x5400_0041);
+        assert_eq!(
+            u32::from_le_bytes(output[..4].try_into().unwrap()),
+            0x5400_0041
+        );
     }
 
     #[test]
