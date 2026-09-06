@@ -160,6 +160,16 @@ fn region_plan_records_native_backedge_without_unbounded_graph() {
     assert_eq!(plan.end(), 3);
     assert!(plan.has_backedge());
     assert!(plan.edges().contains(&RegionEdge { from: 2, to: 0 }));
+    assert!(plan.matches_operations(&[
+        crate::ir::Opcode::Move,
+        crate::ir::Opcode::JumpIfFalse,
+        crate::ir::Opcode::Jump,
+    ]));
+    assert!(!plan.matches_operations(&[
+        crate::ir::Opcode::Move,
+        crate::ir::Opcode::Add,
+        crate::ir::Opcode::Jump,
+    ]));
 }
 
 #[test]
