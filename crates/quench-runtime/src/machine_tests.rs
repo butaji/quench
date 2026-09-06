@@ -477,6 +477,25 @@ fn region_admission_rejects_noncanonical_operands_before_publication() {
 }
 
 #[test]
+fn region_admission_rejects_external_backedge_into_interior() {
+    let instructions = [
+        crate::ir::Instruction::move_(0, 1),
+        crate::ir::Instruction::move_(1, 2),
+        crate::ir::Instruction::ret(1),
+        crate::ir::Instruction::jump(1),
+    ];
+    let entries = instructions
+        .into_iter()
+        .map(|instruction| super::BaselineEntry {
+            instruction,
+            handler: instruction.opcode.handler(),
+            control: instruction.opcode.control_operands(instruction),
+        })
+        .collect::<Vec<_>>();
+    assert!(!super::region_entry_is_legal(&entries, 0, 3));
+}
+
+#[test]
 fn generated_scalar_and_array_rows_route_through_declared_abis() {
     let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
     let scalar_add = super::FunctionCode::from_ops(vec![

@@ -5028,7 +5028,9 @@ fn register_liveness(entries: &[BaselineEntry]) -> Vec<BTreeSet<u16>> {
 fn region_entry_is_legal(entries: &[BaselineEntry], start: usize, end: usize) -> bool {
     for predecessor in 0..entries.len() {
         for successor in successor_pcs(entries, predecessor) {
-            if successor > start && successor < end && predecessor < start {
+            let enters_interior = successor > start && successor < end;
+            let predecessor_is_outside = predecessor < start || predecessor >= end;
+            if enters_interior && predecessor_is_outside {
                 return false;
             }
         }
