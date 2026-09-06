@@ -232,7 +232,26 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
                     &flags,
                     &rustflags,
                     "array_numeric_loop",
-                    aarch64_array_loop_source(),
+                    super::build_stencil_templates::aarch64_array_loop(),
+                    &[],
+                )
+                .bytes,
+                fallthrough: None,
+                relocations: Vec::new(),
+            }
+        } else if declaration.name == "prototype_property" {
+            if !target.starts_with("aarch64") {
+                continue;
+            }
+            ExtractedObject {
+                bytes: compile_assembly_fragment(
+                    &root.path,
+                    &target,
+                    &compiler,
+                    &flags,
+                    &rustflags,
+                    "prototype_property",
+                    super::build_stencil_templates::aarch64_prototype_property(),
                     &[],
                 )
                 .bytes,
@@ -352,7 +371,7 @@ fn compile_fragment_pair(
         flags,
         rustflags,
         "fallthrough_head",
-        aarch64_head_source(),
+        super::build_stencil_templates::aarch64_head(),
         &expected,
     );
     let tail = compile_assembly_fragment(
@@ -362,7 +381,7 @@ fn compile_fragment_pair(
         flags,
         rustflags,
         "fallthrough_tail",
-        aarch64_tail_source(),
+        super::build_stencil_templates::aarch64_tail(),
         &[],
     );
     ExtractedObject {
@@ -398,55 +417,6 @@ fn compile_assembly_fragment(
         &format!("q_{name}_end"),
         expected_relocations,
     )
-}
-
-fn aarch64_head_source() -> &'static str {
-    "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_fallthrough_head\nq_fallthrough_head:\n  fadd d0, d0, d1\n  b q_fallthrough_tail\n  b q_fallthrough_tail\nq_fallthrough_head_end:\n\"#);\n"
-}
-
-fn aarch64_tail_source() -> &'static str {
-    "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_fallthrough_tail\nq_fallthrough_tail:\n  ret\nq_fallthrough_tail_end:\n\"#);\n"
-}
-
-fn aarch64_array_loop_source() -> &'static str {
-    r##"#![no_std]
-use core::arch::global_asm;
-global_asm!(r#"
-.text
-.p2align 2
-.globl q_array_numeric_loop
-q_array_numeric_loop:
-  ldr x1, [x0, #16]
-  ldr x2, [x0, #24]
-  ldr d0, [x0, #40]
-  fmov d1, d0
-  b 1f
-1:
-  cmp x1, x2
-  b.hs 2f
-  ldr x3, [x0]
-  add x4, x3, x1, lsl #3
-  ldr d1, [x4]
-  ldr d2, [x0, #32]
-  fadd d1, d1, d2
-  str d1, [x4]
-  add x1, x1, #1
-  str x1, [x0, #16]
-  ldr x5, [x0, #48]
-  ldrb w6, [x5]
-  cbnz w6, 3f
-  b 1b
-2:
-  str d1, [x0, #40]
-  mov w0, #1
-  ret
-3:
-  str d1, [x0, #40]
-  mov w0, #4
-  ret
-q_array_numeric_loop_end:
-"#);
-"##
 }
 
 fn parse_object(path: &Path, name: &str) -> Vec<u8> {
@@ -965,8 +935,16 @@ fn fingerprint(
             let source = super::rust_leaf_recipe(item)
                 .map(|recipe| rust_source(item.name, recipe))
                 .or_else(|| match item.name {
-                    "fallthrough" => Some(aarch64_head_source().to_owned() + aarch64_tail_source()),
-                    "array_numeric_loop" => Some(aarch64_array_loop_source().to_owned()),
+                    "fallthrough" => Some(
+                        super::build_stencil_templates::aarch64_head().to_owned()
+                            + super::build_stencil_templates::aarch64_tail(),
+                    ),
+                    "array_numeric_loop" => {
+                        Some(super::build_stencil_templates::aarch64_array_loop().to_owned())
+                    }
+                    "prototype_property" => Some(
+                        super::build_stencil_templates::aarch64_prototype_property().to_owned(),
+                    ),
                     _ => None,
                 })
                 .unwrap_or_default();
