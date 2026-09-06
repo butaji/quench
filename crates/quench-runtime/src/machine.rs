@@ -1341,48 +1341,20 @@ fn lower_proven_local_update(ops: &[Op]) -> Option<crate::ir::Instruction> {
 fn register_count_for(instructions: &[crate::ir::Instruction]) -> u16 {
     let mut count = 0usize;
     for instruction in instructions {
-        let candidate = match instruction.opcode {
-            crate::ir::Opcode::LoadConst
-            | crate::ir::Opcode::JumpIfFalse
-            | crate::ir::Opcode::Return
-            | crate::ir::Opcode::LoadLocal
-            | crate::ir::Opcode::LoadLocalChecked => usize::from(instruction.a),
-            crate::ir::Opcode::StoreLocalChecked
-            | crate::ir::Opcode::InitLocal
-            | crate::ir::Opcode::StoreLocal => usize::from(instruction.b),
-            crate::ir::Opcode::UpdateLocal => usize::from(instruction.a.max(instruction.b)),
-            crate::ir::Opcode::AddConst | crate::ir::Opcode::GetN | crate::ir::Opcode::SetN => {
-                usize::from(instruction.a.max(instruction.b))
-            }
-            crate::ir::Opcode::Move
-            | crate::ir::Opcode::Unary
-            | crate::ir::Opcode::Add
-            | crate::ir::Opcode::Sub
-            | crate::ir::Opcode::Mul
-            | crate::ir::Opcode::Div
-            | crate::ir::Opcode::Binary
-            | crate::ir::Opcode::GetProperty
-            | crate::ir::Opcode::Call
-            | crate::ir::Opcode::IncI
-            | crate::ir::Opcode::ForI
-            | crate::ir::Opcode::AGetI
-            | crate::ir::Opcode::ASetI
-            | crate::ir::Opcode::AGetIInc
-            | crate::ir::Opcode::GetPropertyQuickened
-            | crate::ir::Opcode::GetNQuickened
-            | crate::ir::Opcode::AGetIQuickened => {
-                usize::from(instruction.a.max(instruction.b).max(instruction.c))
-            }
-            crate::ir::Opcode::CallN => {
-                // c is a sentinel for a zero-argument named call, not a
-                // register. It must not widen the callee frame to 65,536
-                // words.
-                usize::from(instruction.a.max(instruction.b).max(
-                    (instruction.flags != 0).then_some(instruction.c).unwrap_or(0),
-                ))
-            }
-            crate::ir::Opcode::Jump | crate::ir::Opcode::Slow => 0,
-        };
+        let flow = instruction.register_flow();
+        let candidate = flow.highest_register().map_or_else(
+            || {
+                // Structured residuals are not yet physically composed;
+                // retain their compact words until their handler contract is
+                // available.
+                if flow.complete {
+                    0
+                } else {
+                    usize::from(instruction.a.max(instruction.b).max(instruction.c))
+                }
+            },
+            usize::from,
+        );
         count = count.max(candidate.saturating_add(1));
     }
     u16::try_from(count).unwrap_or(u16::MAX)
@@ -6776,6 +6748,18 @@ mod tests {
         let one = crate::ir::Instruction::call_named(1, 2, Some(9));
         assert_eq!(super::register_count_for(&[zero]), 3);
         assert_eq!(super::register_count_for(&[one]), 10);
+        assert_eq!(zero.register_flow().highest_register(), Some(2));
+        assert_eq!(one.register_flow().highest_register(), Some(9));
+    }
+
+    #[test]
+    fn frame_width_uses_operand_roles_not_constant_pool_words() {
+        let add_const = crate::ir::Instruction::add_const(4, 1, u16::MAX);
+        let load = crate::ir::Instruction::load_const(3, u16::MAX);
+        let call = crate::ir::Instruction::call_registered_window(12, 2, 7, 4);
+        assert_eq!(super::register_count_for(&[add_const]), 5);
+        assert_eq!(super::register_count_for(&[load]), 4);
+        assert_eq!(super::register_count_for(&[call]), 13);
     }
 
     #[test]
