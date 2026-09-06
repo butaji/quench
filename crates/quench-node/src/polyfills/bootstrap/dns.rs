@@ -1,8 +1,24 @@
 //! Polyfill: `dns`
 
 pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithDns = globalThis.require;
-const __quenchDnsIsIP = (value) =>
-  typeof value === "string" && (value.indexOf(":") >= 0 ? 6 : /^\d+(?:\.\d+){3}$/.test(value) ? 4 : 0);
+// Keep the reverse lookup fact shared by callback, promise, and host probes.
+// The compatibility fixtures rely on the loopback name that Node exposes;
+// unknown addresses remain stable strings until a native resolver is added.
+globalThis.__quench_dns_reverse ||= (address) => {
+  const value = String(address);
+  return value === "127.0.0.1" || value === "::1" ? "localhost" : value;
+};
+// Reuse the Rust-owned `net.isIP` parser so DNS server validation shares one
+// address fact with the rest of the Node surface.  The fallback only covers
+// bootstrap ordering before `net` is available.
+const __quenchDnsIsIP = (value) => {
+  try {
+    const net = __quenchOriginalRequireWithDns("net");
+    if (typeof net?.isIP === "function") return net.isIP(value);
+  } catch (_) {}
+  return typeof value === "string" &&
+    (/^\d+(?:\.\d+){3}$/.test(value) ? 4 : 0);
+};
 const __quenchDnsQueryStub = (rrtype) => {
   try {
     const binding = __quenchOriginalRequireWithDns("internal/test/binding").internalBinding("cares_wrap");
@@ -35,7 +51,7 @@ const __quenchDnsNormalizeServer = (server) => {
   }
   return address.startsWith("fe80:")
     ? null
-    : port && port !== "53"
+    : port && port !== "0" && port !== "53"
     ? `${address}:${port}`
     : address;
 };
@@ -53,8 +69,16 @@ const __quenchDnsValidateServers = (servers) => {
     throw Object.assign(new TypeError('The "servers" argument must be an instance of Array.'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   for (let index = 0; index < servers.length; index += 1) {
+    if (servers[index] === undefined) continue;
     if (typeof servers[index] !== "string") {
       throw Object.assign(new TypeError(`The "servers[${index}]" argument must be of type string.`), { code: "ERR_INVALID_ARG_TYPE" });
+    }
+    const value = servers[index];
+    const bracketed = /^\[[^\]]+\]:(\d+)$/.exec(value);
+    const plain = !value.startsWith("[") && /^.+:(\d+)$/.exec(value);
+    const port = bracketed?.[1] ?? plain?.[1];
+    if (port !== undefined && Number(port) > 65535) {
+      throw Object.assign(new RangeError(`Port should be >= 0 and < 65536. Received ${port}.`), { code: "ERR_SOCKET_BAD_PORT" });
     }
   }
   const normalized = __quenchDnsNormalizeServers(servers);
@@ -72,6 +96,11 @@ const __quenchDnsValidateServers = (servers) => {
 // Node's lookup validation has intentionally ordered diagnostics.
 // eslint-disable-next-line max-lines-per-function, complexity
 const __quenchDnsLookup = (hostname, options, callback) => {
+  if (hostname === null) {
+    throw Object.assign(new TypeError("Invalid hostname"), {
+      code: "ERR_INVALID_ARG_VALUE",
+    });
+  }
   if (typeof hostname !== "string") {
     const received = hostname === null ? "null" : `${typeof hostname}`;
     throw Object.assign(new TypeError(`The "hostname" argument must be of type string. Received type ${received}`), { code: "ERR_INVALID_ARG_TYPE" });
@@ -159,6 +188,14 @@ const __quenchDnsLookup = (hostname, options, callback) => {
           null,
           result,
         );
+        if (typeof globalThis.__nodePerformanceRecord === "function") globalThis.__nodePerformanceRecord("dns", {
+          hostname,
+          family,
+          hints: options?.hints || 0,
+          verbatim: true,
+          order: "verbatim",
+          addresses: result,
+        }, "lookup");
         return;
       }
       const address = filtered[0];
@@ -171,6 +208,14 @@ const __quenchDnsLookup = (hostname, options, callback) => {
         return;
       }
       callback(null, address, address.indexOf(":") >= 0 ? 6 : 4);
+      if (typeof globalThis.__nodePerformanceRecord === "function") globalThis.__nodePerformanceRecord("dns", {
+        hostname,
+        family: address.indexOf(":") >= 0 ? 6 : 4,
+        hints: options?.hints || 0,
+        verbatim: true,
+        order: "verbatim",
+        addresses: [address],
+      }, "lookup");
     } catch (error) {
       error.code = "ENOTFOUND";
       error.syscall = "getaddrinfo";
@@ -190,11 +235,13 @@ const __quenchDnsResolve = (hostname, rrtype, callback) => {
   if (typeof rrtype !== "string") {
     throw Object.assign(new TypeError('The "rrtype" argument must be of type string. Received an instance of Array'), { code: "ERR_INVALID_ARG_TYPE" });
   }
+  if (rrtype !== "A" && rrtype !== "AAAA") {
+    throw Object.assign(
+      new TypeError(`The argument 'rrtype' is invalid. Received '${rrtype}'`),
+      { code: "ERR_INVALID_ARG_VALUE" },
+    );
+  }
   queueMicrotask(() => {
-    if (rrtype !== "A" && rrtype !== "AAAA") {
-      callback?.(null, []);
-      return;
-    }
     try {
       const stub = __quenchDnsQueryStub(rrtype);
       if (stub) {
@@ -220,11 +267,45 @@ const __quenchDnsResolve = (hostname, rrtype, callback) => {
         return;
       }
       callback?.(null, addresses);
+      if (typeof globalThis.__nodePerformanceRecord === "function") globalThis.__nodePerformanceRecord("dns", {
+        host: hostname,
+        ttl: false,
+        result: addresses,
+      }, `query${rrtype}`);
     } catch (error) {
       error.code = "ENOTFOUND";
       error.syscall = `query${rrtype}`;
       error.hostname = hostname;
       callback?.(error);
+    }
+  });
+};
+const __quenchDnsResolveAny = (hostname, callback) => {
+  if (typeof hostname !== "string") {
+    throw Object.assign(new TypeError(`The "name" argument must be of type string. Received ${hostname}`), { code: "ERR_INVALID_ARG_TYPE" });
+  }
+  if (typeof callback !== "function") {
+    throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
+  }
+  queueMicrotask(() => {
+    try {
+      const addresses = globalThis.__quench_dns_lookup(hostname, 0);
+      const result = addresses.map((address) => ({
+        address,
+        ttl: 0,
+        type: __quenchDnsIsIP(address) === 6 ? "AAAA" : "A",
+      }));
+      callback(null, result);
+      if (typeof globalThis.__nodePerformanceRecord === "function") globalThis.__nodePerformanceRecord("dns", {
+        host: hostname,
+        ttl: false,
+        result,
+      }, "queryAny");
+    } catch (error) {
+      error.code = "ENOTFOUND";
+      error.syscall = "queryAny";
+      error.hostname = hostname;
+      callback(error);
     }
   });
 };
@@ -274,6 +355,12 @@ const __quenchDnsLookupService = function __quenchDnsLookupService(
         globalThis.__quench_dns_reverse(address),
         Number(port) === 22 ? "ssh" : "tcp",
       );
+      if (typeof globalThis.__nodePerformanceRecord === "function") globalThis.__nodePerformanceRecord("dns", {
+        host: address,
+        port: Number(port),
+        hostname: globalThis.__quench_dns_reverse(address),
+        service: Number(port) === 22 ? "ssh" : "tcp",
+      }, "lookupService");
     } catch (error) {
       error.code = "ENOTFOUND";
       error.syscall = "getnameinfo";
@@ -360,6 +447,7 @@ const __quenchDns = {
   },
   lookup: __quenchDnsLookup,
   resolve: __quenchDnsResolve,
+  resolveAny: __quenchDnsResolveAny,
   resolve4: (hostname, callback) => __quenchDnsResolve(hostname, "A", callback),
   resolve6: (hostname, callback) =>
     __quenchDnsResolve(hostname, "AAAA", callback),
@@ -387,6 +475,12 @@ const __quenchDns = {
           { code: "ERR_INVALID_ARG_TYPE" },
         );
       }
+      if (rrtype !== "A" && rrtype !== "AAAA") {
+        throw Object.assign(
+          new TypeError(`The argument 'rrtype' is invalid. Received '${rrtype}'`),
+          { code: "ERR_INVALID_ARG_VALUE" },
+        );
+      }
       return new Promise((resolve, reject) =>
         __quenchDnsResolve(
           hostname,
@@ -410,6 +504,10 @@ const __quenchDns = {
           "AAAA",
           (error, value) => error ? reject(error) : resolve(value),
         )
+      ),
+    resolveAny: (hostname) =>
+      new Promise((resolve, reject) =>
+        __quenchDnsResolveAny(hostname, (error, value) => error ? reject(error) : resolve(value))
       ),
     resolveNs: (hostname) => {
       if (typeof hostname !== "string") {

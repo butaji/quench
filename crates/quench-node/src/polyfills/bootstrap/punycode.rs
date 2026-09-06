@@ -112,6 +112,10 @@ const __quenchPunycode = {
   encode: __pcEncode,
   decode: __pcDecode,
 };
+Object.defineProperty(globalThis, "__quenchPunycode", {
+  configurable: true,
+  value: __quenchPunycode,
+});
 globalThis.require = (specifier) =>
   String(specifier).replace(/^node:/, "") === "punycode"
     ? __quenchPunycode

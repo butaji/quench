@@ -240,7 +240,20 @@ impl QuenchNodeHost {
                 ]),
             ),
             HostCapabilityKind::Custom(CapabilityName::FsGlob) => {
-                Ok(quench_runtime::host_api::array(Vec::new()))
+                let matches = quench_runtime::host_api::array(Vec::new());
+                if let Some(callback) = arguments.last().filter(|value| {
+                    quench_runtime::is_callable(value)
+                }) {
+                    // `fs.glob` is callback-based even when the current
+                    // provider has no matches; defer the callback so a
+                    // user exception follows Node's uncaught-exception path.
+                    crate::modules::fs::defer(
+                        &self.state,
+                        callback,
+                        vec![Value::Null, matches.clone()],
+                    );
+                }
+                Ok(matches)
             }
             HostCapabilityKind::Custom(CapabilityName::FsGlobSync) => {
                 Ok(quench_runtime::host_api::array(Vec::new()))
@@ -522,7 +535,19 @@ impl QuenchNodeHost {
                         "signal must be an AbortSignal",
                     )));
                 }
-                Ok(arguments.get(1).cloned().unwrap_or(Value::Undefined))
+                let stream = arguments.first().cloned().unwrap_or(Value::Undefined);
+                let error = crate::modules::stream::abort_error_for_host();
+                let error_stream = quench_runtime::execute::get_property(&stream, "_errorStream");
+                let cancel = quench_runtime::execute::get_property(&stream, "cancel");
+                let destroy = quench_runtime::execute::get_property(&stream, "destroy");
+                if quench_runtime::is_callable(&error_stream) {
+                    let _ = quench_runtime::execute::call(&error_stream, &stream, &[error.clone()]);
+                } else if quench_runtime::is_callable(&cancel) {
+                    let _ = quench_runtime::execute::call(&cancel, &stream, &[error.clone()]);
+                } else if quench_runtime::is_callable(&destroy) {
+                    let _ = quench_runtime::execute::call(&destroy, &stream, &[error]);
+                }
+                Ok(stream)
             }
             HostCapabilityKind::Custom(
                 CapabilityName::WorkerOn

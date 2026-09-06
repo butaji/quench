@@ -21,7 +21,14 @@ fn require_early_module(name: &str) -> Result<Option<Value>, VmError> {
                 "stringToFlags".into(),
                 capability_function(HostCapabilityKind::Custom(CapabilityName::FsStringToFlags)),
             ),
+            (
+                "BigIntStats".into(),
+                crate::host::capability(crate::registry::SPEC_FS_STATS),
+            ),
         ]),
+        "internal/fs/promises" | "node:internal/fs/promises" => {
+            crate::modules::fs::internal_file_handle_module()
+        }
         "internal/test/binding" => quench_runtime::host_api::object(vec![(
             "internalBinding".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::InternalBinding)),
@@ -42,6 +49,15 @@ fn require_early_module(name: &str) -> Result<Option<Value>, VmError> {
             "kStateSymbol".into(),
             Value::String("__dgramState".into()),
         )]),
+        "internal/webstreams/util" | "node:internal/webstreams/util" => {
+            let global = quench_runtime::vm::current_global_object();
+            quench_runtime::host_api::object(vec![
+                (
+                    "kState".into(),
+                    quench_runtime::execute::get_property(&global, "__quenchWebStreamsState"),
+                ),
+            ])
+        }
         _ => return Ok(None),
     };
     Ok(Some(value))

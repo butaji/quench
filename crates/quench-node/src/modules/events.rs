@@ -182,6 +182,26 @@ fn add_listener(
     let Some(id) = ensure_emitter(state, receiver) else {
         return Err(execute::type_error("receiver is not an EventEmitter"));
     };
+    if let Some(receiver) = receiver {
+        if let Some(id) = crate::modules::net::net_id(receiver) {
+            if let Some(socket) = state.borrow().net.sockets.get(&id).cloned() {
+                // Listener registration can re-enter while a socket callback
+                // owns the mutable socket state (for example, a transferred
+                // IPC handle writing and ending in the same turn).  ALPN is
+                // derived metadata, so defer this probe instead of panicking
+                // on an overlapping RefCell borrow.
+                if let Ok(socket) = socket.try_borrow() {
+                    let alpn = execute::get_property(
+                        &socket.js,
+                        crate::modules::tls::TLS_NEGOTIATED_ALPN_PROP,
+                    );
+                    if !matches!(alpn, Value::Undefined) {
+                        execute::set_property_in_place(receiver, "alpnProtocol", alpn);
+                    }
+                }
+            }
+        }
+    }
     let Some(emitter) = state.borrow().emitters.get(id) else {
         return Err(execute::type_error("receiver is not an EventEmitter"));
     };
@@ -197,16 +217,17 @@ fn add_listener(
         )?;
     }
     let already_warned = receiver.is_some_and(|value| event_is_warned(value, &event));
+    let process_scope = state.borrow().cluster.process_scope();
     let (count, max) = {
         let mut guard = emitter.borrow_mut();
-        let count = guard.add(&event, callback.clone(), once, prepend);
+        let count = guard.add(&event, callback.clone(), once, prepend, process_scope);
         (count, guard.max)
     };
     if let Some(receiver) = receiver {
         if let Ok(events) = execute::get_property_result(receiver, "_events") {
             let callbacks = emitter
                 .borrow()
-                .listeners_of(&event)
+                .listeners_for_scope(&event, process_scope)
                 .iter()
                 .map(|listener| listener.callback.clone())
                 .collect::<Vec<_>>();
@@ -217,6 +238,35 @@ fn add_listener(
             };
             let updated = execute::set_property(events.clone(), &event, value);
             execute::replace_value(&events, &updated);
+        }
+        if event == "message"
+            && matches!(
+                execute::get_property(receiver, "\0childForkIpc"),
+                Value::Boolean(true)
+            )
+        {
+            let pending = execute::get_property(receiver, "\0childPendingMessages");
+            execute::set_property_in_place(
+                receiver,
+                "\0childPendingMessages",
+                host_api::array(Vec::new()),
+            );
+            if let Value::Array(ref values) = pending {
+                for index in 0..values.logical_len() {
+                    let entry = execute::get_property(&pending, &index.to_string());
+                    let args = match entry {
+                        Value::Array(ref array) => (0..array.logical_len())
+                            .map(|arg| execute::get_property(&entry, &arg.to_string()))
+                            .collect(),
+                        value => vec![value],
+                    };
+                    state.borrow().event_loop.queue_microtask_with_receiver(
+                        callback.clone(),
+                        args,
+                        receiver.clone(),
+                    );
+                }
+            }
         }
     }
     let limit = max.unwrap_or(state.borrow().emitters.default_max);
@@ -231,7 +281,13 @@ fn add_listener(
             limit,
         );
     }
-    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+    // Listener registration may publish a copy-on-write representative while
+    // initializing the emitter. Return that live identity so fluent calls
+    // (`socket.on(...).on(...)`) retain host-owned connection metadata.
+    let result = receiver
+        .map(execute::canonical_value)
+        .unwrap_or(Value::Undefined);
+    Ok(result)
 }
 
 fn mark_event_warned(receiver: &Value, event: &str) {
@@ -329,7 +385,24 @@ pub fn method_on(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    add_listener(state, receiver, args, false, false)
+    let result = add_listener(state, receiver, args, false, false)?;
+    if matches!(args.first(), Some(Value::String(event)) if event == "keylog")
+        && receiver.is_some_and(|value| {
+            matches!(
+                execute::get_property(value, "\0quench:http:agent"),
+                Value::Boolean(true)
+            )
+        })
+    {
+        if let Some(listener) = args.get(1) {
+            crate::modules::http_client::agent_keylog_attach(
+                state,
+                receiver.expect("validated agent"),
+                listener,
+            )?;
+        }
+    }
+    Ok(result)
 }
 
 pub fn method_once(
@@ -371,14 +444,19 @@ pub fn method_emit(
         Ok(name) => name,
         Err(_) => return Ok(Value::Boolean(false)),
     };
-    let Some(emitter) = state.borrow().emitters.get(id) else {
+    // Clone the emitter handle while the host is immutably borrowed, then
+    // release that borrow before invoking user listeners. Listener callbacks
+    // may re-enter host APIs (including diagnostics channels), and retaining
+    // the map lookup's RefCell borrow across those calls would panic.
+    let emitter = { state.borrow().emitters.get(id) };
+    let Some(emitter) = emitter else {
         return Ok(Value::Boolean(false));
     };
+    let process_scope = state.borrow().cluster.process_scope();
     if event == "error" {
         let monitor = emitter
             .borrow()
-            .listeners_of("Symbol.for.events.errorMonitor\0")
-            .to_vec();
+            .listeners_for_scope("Symbol.for.events.errorMonitor\0", process_scope);
         for listener in monitor {
             execute::call(&listener.callback, receiver, args.get(1..).unwrap_or(&[]))?;
         }
@@ -389,7 +467,7 @@ pub fn method_emit(
             Value::Boolean(true)
         );
     let capture_rejections = emitter.borrow().capture_rejections && !capture_suppressed;
-    let snapshot: Vec<Listener> = emitter.borrow().listeners_of(&event).to_vec();
+    let snapshot = emitter.borrow().listeners_for_scope(&event, process_scope);
     if snapshot.is_empty() {
         if event == "error" {
             if CAPTURE_SUPPRESSION_DEPTH.with(|depth| depth.get() > 0)
@@ -417,7 +495,48 @@ pub fn method_emit(
         }
         return Ok(Value::Boolean(false));
     }
+    if event == "error"
+        && snapshot.iter().all(|listener| {
+            matches!(
+                execute::get_property_result(&listener.callback, "__quenchInternal"),
+                Ok(Value::Boolean(true))
+            )
+        })
+    {
+        // Internal lifecycle listeners (for example stream auto-destroy) run
+        // before deciding whether the error remains observable.  An error
+        // arriving on a live stream is consumed by auto-destroy; one emitted
+        // after explicit destruction still follows Node's unhandled path.
+        let owner = execute::get_property(receiver, "__quenchOwner");
+        let initially_destroyed = matches!(
+            execute::get_property(receiver, "destroyed"),
+            Value::Boolean(true)
+        ) || matches!(
+            execute::get_property(&owner, "destroyed"),
+            Value::Boolean(true)
+        );
+        for listener in &snapshot {
+            let _ = execute::call(&listener.callback, receiver, args.get(1..).unwrap_or(&[]));
+        }
+        if initially_destroyed {
+            return Err(unhandled_error(args.get(1)));
+        }
+        return Ok(Value::Boolean(true));
+    }
     let rest: Vec<Value> = args.get(1..).unwrap_or(&[]).to_vec();
+    for value in &rest {
+        if let Some(id) = crate::modules::net::net_id(value) {
+            if let Some(socket) = state.borrow().net.sockets.get(&id).cloned() {
+                let alpn = execute::get_property(
+                    &socket.borrow().js,
+                    crate::modules::tls::TLS_NEGOTIATED_ALPN_PROP,
+                );
+                if !matches!(alpn, Value::Undefined) {
+                    execute::set_property_in_place(value, "alpnProtocol", alpn);
+                }
+            }
+        }
+    }
     for listener in &snapshot {
         if listener.once
             && !emitter
@@ -429,7 +548,10 @@ pub fn method_emit(
             continue;
         }
         if listener.once {
-            let removed = emitter.borrow_mut().remove(&event, &listener.callback);
+            let removed =
+                emitter
+                    .borrow_mut()
+                    .remove_for_scope(&event, &listener.callback, process_scope);
             if removed && event != "removeListener" {
                 let _ = method_emit(
                     state,
@@ -454,6 +576,19 @@ pub fn method_emit(
                     ],
                 )?;
                 continue;
+            }
+            Err(VmError::Thrown(reason)) => {
+                // Legacy domains own exceptions raised by callbacks attached
+                // to a domain member (for example a response's `end`
+                // listener). EventEmitter must route that throw through the
+                // member's domain before allowing it to reach the process;
+                // otherwise a JSON parse or user callback escapes as an
+                // uncaught VM error instead of a domain `error` event.
+                if let Some(result) = route_domain_error(state, receiver, Some(&reason))? {
+                    result
+                } else {
+                    return Err(VmError::Thrown(reason));
+                }
             }
             Err(error) => return Err(error),
         };
@@ -487,6 +622,10 @@ fn attach_rejection_handler(
 ) -> Result<(), VmError> {
     let handler = eval_function(
         r#"(emitter, event, arguments, error) => {
+          // Stream capture rejections share one emitter with lifecycle
+          // listeners. Once the first rejection destroys its owner, later
+          // drain/data rejections are no longer observable in Node.
+          if (emitter.__quenchOwner?.destroyed === true) return;
           const rejection = emitter[Symbol.for('nodejs.rejection')];
           if (typeof rejection === 'function') {
             try {
@@ -600,7 +739,7 @@ fn attach_unhandled_rejection(promise: &Value) -> Result<(), VmError> {
 
 /// Domain membership is an edge concern: EventEmitter owns the emission, and
 /// the attached domain owns unhandled-error policy.
-fn route_domain_error(
+pub(crate) fn route_domain_error(
     state: &Rc<RefCell<HostState>>,
     receiver: &Value,
     argument: Option<&Value>,
@@ -905,6 +1044,27 @@ pub fn method_listener_count(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let event = event_name(args.first())?;
+    // The HTTP parser is an internal socket consumer.  Once it reports a
+    // parse error Node detaches that consumer before invoking user handlers,
+    // while the socket's ordinary lifecycle listeners remain observable.
+    // Keep that transition as state rather than mutating the emitter during
+    // error delivery (which could drop the socket's end/close progression).
+    if event == "data" {
+        let parser_failed = receiver
+            .and_then(crate::modules::net::net_id)
+            .and_then(|socket_id| {
+                let guard = state.borrow();
+                if guard.http.idle_sockets.contains(&socket_id) {
+                    return Some(true);
+                }
+                let client_id = guard.http.clients.get(&socket_id)?;
+                Some(guard.http.clientreqs.get(client_id)?.parse_error)
+            })
+            .unwrap_or(false);
+        if parser_failed {
+            return Ok(Value::Number(0.0));
+        }
+    }
     let count = expect_emitter(state, receiver)
         .and_then(|id| state.borrow().emitters.get(id))
         .map(|emitter| {
@@ -996,7 +1156,10 @@ pub fn new_emitter_object(state: &Rc<RefCell<HostState>>) -> Result<Value, VmErr
     new_emitter(state, &[])
 }
 
-fn install_emitter_props(mut object: Value, include_constructor: bool) -> Result<Value, VmError> {
+pub(crate) fn install_emitter_props(
+    mut object: Value,
+    include_constructor: bool,
+) -> Result<Value, VmError> {
     for (key, value) in emitter_props()
         .into_iter()
         .filter(|(key, _)| include_constructor || *key != "constructor")
@@ -1344,7 +1507,10 @@ pub fn build() -> Value {
             cleanup();
             if (error) {
               const waiter = takeWaiter();
-              if (waiter) waiter.reject(error);
+              // Promise rejection is delivered at the microtask boundary;
+              // callers commonly attach Promise.allSettled/then handlers in
+              // the same turn as emitter.emit('error').
+              if (waiter) queueMicrotask(() => waiter.reject(error));
             }
             while (waiterCount) {
               const waiter = takeWaiter();
@@ -1360,26 +1526,51 @@ pub fn build() -> Value {
           const onEvent = (...args) => push(args);
           const onError = (error) => finish(error);
           const onAbort = () => finish(Object.assign(new Error("The operation was aborted"), { name: "AbortError", code: "ABORT_ERR" }));
+          const updateSignalEvents = () => {
+            if (!options.signal) return;
+            let events = options.signal.__quenchAbortEvents;
+            if (!events || typeof events.get !== "function") {
+              events = new Map([["abort", { size: 0 }]]);
+              options.signal.__quenchAbortEvents = events;
+            }
+            options.signal["Symbol.for.quench.event_target.events\0"] = events;
+            const abort = events.get("abort");
+            if (abort) abort.size = options.signal.__quenchAbortEventCount || 0;
+          };
           const cleanup = () => {
             if (target) {
               emitter.removeListener?.(event, onEvent);
               emitter.removeListener?.("error", onError);
             } else emitter.removeEventListener?.(event, onEvent);
             options.signal?.removeEventListener?.("abort", onAbort);
+            if (options.signal && options.signal.__quenchAbortEventCount) {
+              options.signal.__quenchAbortEventCount--;
+            }
+            updateSignalEvents();
           };
           if (target) { emitter.on(event, onEvent); if (event !== "error") emitter.on("error", onError); }
           else emitter.addEventListener(event, onEvent);
           if (options.signal?.aborted) onAbort();
-          else options.signal?.addEventListener?.("abort", onAbort, { once: true });
+          else if (options.signal) {
+            options.signal.__quenchAbortEventCount =
+              (options.signal.__quenchAbortEventCount || 0) + 1;
+            updateSignalEvents();
+            options.signal.addEventListener?.("abort", onAbort, { once: true });
+          }
           const iterator = {
             next() {
               if (queue.length) return Promise.resolve({ value: queue.shift(), done: false });
               if (failure) return Promise.reject(failure);
               if (done) return Promise.resolve({ value: undefined, done: true });
-              return new Promise((resolve, reject) => {
+              const promise = new Promise((resolve, reject) => {
                 waiters[nextWaiter++] = { resolve, reject };
                 waiterCount++;
               });
+              // The iterator owns the rejection edge; consumers may attach
+              // Promise combinators later in the same turn. Mark this source
+              // promise handled without changing the value returned to them.
+              promise.catch(() => {});
+              return promise;
             },
             return() { finish(); return Promise.resolve({ value: undefined, done: true }); },
             throw(reason) {
@@ -1388,7 +1579,7 @@ pub fn build() -> Value {
                 throw error;
               }
               finish(reason);
-              return undefined;
+              return Promise.reject(reason);
             },
             [Symbol.asyncIterator]() { return this; }
           };

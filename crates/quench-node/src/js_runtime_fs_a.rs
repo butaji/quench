@@ -260,16 +260,16 @@ fn string_to_flags(arguments: &[Value]) -> Result<Value, VmError> {
     let value = match flags.as_str() {
         "r" => 0,
         "r+" => 2,
-        "rs" | "rs+" => 1_052_674,
+        "rs" | "rs+" | "sr" | "sr+" => 1_052_674,
         "w" => 577,
-        "wx" => 705,
+        "wx" | "xw" => 705,
         "w+" => 578,
-        "wx+" => 706,
+        "wx+" | "xw+" => 706,
         "a" => 1_089,
-        "ax" => 1_217,
+        "ax" | "xa" => 1_217,
         "a+" => 1_090,
-        "ax+" => 1_218,
-        "as" => 1_053_761,
+        "ax+" | "xa+" => 1_218,
+        "as" | "sa" => 1_053_761,
         "as+" | "sa+" => 1_053_762,
         _ => {
             return Err(VmError::Thrown(fs_error(
@@ -324,16 +324,6 @@ fn array_values(value: &Value) -> Result<Vec<Value>, VmError> {
     (0..length)
         .map(|index| quench_runtime::execute::get_property_result(value, &index.to_string()))
         .collect()
-}
-
-fn stream_finished(arguments: &[Value]) -> Result<Value, VmError> {
-    let callback = arguments.get(1).ok_or(VmError::NotCallable)?;
-    let error = Value::object(vec![(
-        "code".into(),
-        Value::String("ERR_STREAM_PREMATURE_CLOSE".into()),
-    )]);
-    quench_runtime::execute::call(callback, &Value::Undefined, &[error])?;
-    Ok(Value::Undefined)
 }
 
 fn fs_access(arguments: &[Value]) -> Result<Value, VmError> {

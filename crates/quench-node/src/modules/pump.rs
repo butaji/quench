@@ -23,6 +23,9 @@ fn call_timer(
     receiver: &Value,
     args: &[Value],
 ) -> Result<(), VmError> {
+    if !quench_runtime::is_callable(callback) {
+        return Ok(());
+    }
     if let Some(domain) = domain {
         let mut call_args = Vec::with_capacity(args.len() + 1);
         call_args.push(callback.clone());
@@ -61,11 +64,17 @@ fn call_guarded_report(
     let VmError::Thrown(thrown) = error else {
         return Err(error);
     };
+    let has_capture = state
+        .borrow()
+        .process
+        .uncaught_exception_capture_callback
+        .is_some();
     if state
         .borrow()
         .process
         .uncaught_exception_handlers
         .is_empty()
+        && !has_capture
     {
         return Err(VmError::Thrown(thrown));
     }
@@ -76,6 +85,14 @@ fn call_guarded_report(
 /// Run the registered `uncaughtException` handlers for one thrown
 /// value; `once` handlers fire a single time.
 fn run_uncaught_handlers(state: &Rc<RefCell<HostState>>, thrown: &Value) -> Result<(), VmError> {
+    if let Some(callback) = state
+        .borrow()
+        .process
+        .uncaught_exception_capture_callback
+        .clone()
+    {
+        return call_callback(&callback, &Value::Undefined, std::slice::from_ref(thrown));
+    }
     let handlers = crate::modules::timers::take_once_handlers(
         state,
         crate::modules::timers::HandlerKind::UncaughtException,
@@ -102,11 +119,17 @@ pub fn handle_uncaught(state: &Rc<RefCell<HostState>>, error: VmError) -> Result
     let VmError::Thrown(thrown) = error else {
         return Err(error);
     };
+    let has_capture = state
+        .borrow()
+        .process
+        .uncaught_exception_capture_callback
+        .is_some();
     if state
         .borrow()
         .process
         .uncaught_exception_handlers
         .is_empty()
+        && !has_capture
     {
         return Err(VmError::Thrown(thrown));
     }
@@ -122,15 +145,23 @@ pub fn await_promise(state: &Rc<RefCell<HostState>>, promise: &Value) -> Result<
         return Ok(());
     };
     loop {
+        if let Some(error) = crate::modules::async_hooks::take_fatal_error(state) {
+            return Err(VmError::Thrown(error));
+        }
         if let Some(result) = settled(&data.state.borrow()) {
             return result;
         }
         crate::modules::net::poll(state)?;
+        quench_runtime::expire_async_waiters();
         drain_ticks(state)?;
         quench_runtime::drain_promise_jobs();
+        if let Some(error) = crate::modules::async_hooks::take_fatal_error(state) {
+            return Err(VmError::Thrown(error));
+        }
         drain_unhandled_rejections(state)?;
         fire_due_timers(state)?;
         drain_immediates(state)?;
+        cleanup_retired_timers(state);
         // Timer/immediate callbacks can queue promise jobs; drain them
         // before deciding whether any work remains.
         drain_ticks(state)?;
@@ -157,6 +188,9 @@ pub fn await_promise_with_timeout(
     let deadline =
         std::time::Instant::now() + std::time::Duration::from_secs_f64(timeout_ms / 1000.0);
     loop {
+        if let Some(error) = crate::modules::async_hooks::take_fatal_error(state) {
+            return Err(VmError::Thrown(error));
+        }
         if std::time::Instant::now() >= deadline {
             return Ok(true);
         }
@@ -165,8 +199,12 @@ pub fn await_promise_with_timeout(
             return Ok(false);
         }
         crate::modules::net::poll(state)?;
+        quench_runtime::expire_async_waiters();
         drain_ticks(state)?;
         quench_runtime::drain_promise_jobs();
+        if let Some(error) = crate::modules::async_hooks::take_fatal_error(state) {
+            return Err(VmError::Thrown(error));
+        }
         drain_unhandled_rejections(state)?;
         fire_due_timers(state)?;
         drain_immediates(state)?;
@@ -200,10 +238,17 @@ pub fn run_uncaught(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
 /// mirroring Node's uncaught-exception exit.
 pub fn run_event_loop(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     loop {
+        if let Some(error) = crate::modules::async_hooks::take_fatal_error(state) {
+            return Err(VmError::Thrown(error));
+        }
         crate::modules::net::poll(state)?;
+        quench_runtime::expire_async_waiters();
         drain_ticks(state)?;
         quench_runtime::drain_promise_jobs();
         drain_unhandled_rejections(state)?;
+        if let Some(error) = crate::modules::async_hooks::take_fatal_error(state) {
+            return Err(VmError::Thrown(error));
+        }
         fire_due_timers(state)?;
         drain_immediates(state)?;
         // Work created by a timer/immediate belongs to this turn.  Drain its
@@ -221,7 +266,24 @@ pub fn run_event_loop(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         }
         sleep_until_next(state);
     }
+    hide_runtime_globals();
     run_exit_handlers(state)
+}
+
+fn hide_runtime_globals() {
+    let global = quench_runtime::vm::current_global_object();
+    for key in ["__nodeCurrentAsyncResource", "__nodeCallChecks"] {
+        let descriptor = quench_runtime::host_api::object(vec![
+            (
+                "value".into(),
+                quench_runtime::execute::get_property(&global, key),
+            ),
+            ("writable".into(), Value::Boolean(true)),
+            ("configurable".into(), Value::Boolean(true)),
+            ("enumerable".into(), Value::Boolean(false)),
+        ]);
+        let _ = quench_runtime::execute::define_property(global.clone(), key, descriptor);
+    }
 }
 
 /// Run `process.on('exit')` handlers once with the exit code.
@@ -278,15 +340,22 @@ fn drain_ticks(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         };
         if !drained {
             quench_runtime::drain_promise_jobs();
+            crate::modules::async_hooks::drain_queued_destroy_ids(state);
             return Ok(());
         }
-        quench_runtime::drain_promise_jobs();
     }
 }
 
 fn drain_unhandled_rejections(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     for (promise, reason) in quench_runtime::take_unhandled_rejections() {
         if promise.rejection_handled() {
+            continue;
+        }
+        let promise_value = Value::Promise(promise.clone());
+        if let Some((domain, handler)) =
+            crate::modules::domain::promise_domain(state, &promise_value)
+        {
+            crate::modules::domain::call_error_handler(state, &domain, &handler, &reason)?;
             continue;
         }
         let mode = state.borrow().process.unhandled_rejection_mode;
@@ -296,6 +365,12 @@ fn drain_unhandled_rejections(state: &Rc<RefCell<HostState>>) -> Result<(), VmEr
             .unhandled_rejection_handlers
             .is_empty();
         if matches!(mode, crate::modules::process::UnhandledRejectionMode::None) {
+            if matches!(
+                quench_runtime::execute::get_property(&reason, "\0quench:async_stack_overflow"),
+                Value::Boolean(true)
+            ) {
+                emit_async_stack_overflow(state, &reason)?;
+            }
             if has_handlers {
                 emit_unhandled_event(state, &promise, &reason)?;
             }
@@ -315,9 +390,27 @@ fn drain_unhandled_rejections(state: &Rc<RefCell<HostState>>) -> Result<(), VmEr
             .is_empty()
         {
             emit_uncaught_rejection(state, &reason)?;
+        } else if matches!(mode, crate::modules::process::UnhandledRejectionMode::Throw) {
+            // With no lifecycle handler Node terminates the process for an
+            // unhandled rejection and reports the rejection reason as the
+            // uncaught error. Preserve both edges: the exit status and the
+            // thrown value must cross the host boundary independently.
+            state.borrow_mut().process.exit_code = Some(1);
+            return Err(VmError::Thrown(reason.clone()));
         }
     }
     Ok(())
+}
+
+fn emit_async_stack_overflow(
+    state: &Rc<RefCell<HostState>>,
+    reason: &Value,
+) -> Result<(), VmError> {
+    let stack = match quench_runtime::execute::get_property(reason, "stack") {
+        Value::String(stack) => format!("{stack}\n"),
+        _ => "RangeError: Maximum call stack size exceeded\n".to_string(),
+    };
+    crate::modules::process::stream_write(state, &[Value::String(stack)], true).map(|_| ())
 }
 
 fn emit_unhandled_event(
@@ -401,8 +494,33 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
     let Some(task) = item else {
         return Ok(false);
     };
+    let previous_scope = state.borrow().cluster.process_scope();
+    let previous_event_scope = state.borrow().event_loop.process_scope();
+    let global = quench_runtime::vm::current_global_object();
+    let process = quench_runtime::execute::get_property(&global, "process");
+    let previous_fork_child = quench_runtime::execute::get_property(&process, "\0forkChild");
+    let previous_resource =
+        quench_runtime::execute::get_property(&global, "__nodeCurrentAsyncResource");
+    if task.process_scope != 0 {
+        state
+            .borrow_mut()
+            .cluster
+            .set_process_scope(task.process_scope);
+        if let Some(child) = state.borrow().cluster.fork_process(task.process_scope) {
+            quench_runtime::execute::set_property_in_place(&process, "\0forkChild", child);
+        }
+    }
+    state
+        .borrow()
+        .event_loop
+        .set_process_scope(task.process_scope);
     if let Some(resource) = &task.resource {
         crate::modules::async_hooks::resource_before(state, Some(resource), &[])?;
+        quench_runtime::execute::set_property_in_place(
+            &global,
+            "__nodeCurrentAsyncResource",
+            resource.clone(),
+        );
     }
     let previous_stack = task.domain_stack.as_ref().map(|stack| {
         let previous = crate::modules::domain::stack_values(state);
@@ -428,7 +546,37 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
     }
     if task.resource.is_some() {
         crate::modules::async_hooks::resource_after(state, None, &[])?;
+        quench_runtime::execute::set_property_in_place(
+            &global,
+            "__nodeCurrentAsyncResource",
+            previous_resource,
+        );
     }
+    let result = match result {
+        Err(error) if task.process_scope != 0 => {
+            let handled = crate::modules::pump::handle_uncaught(state, error)
+                .and_then(|_| crate::modules::pump::run_uncaught(state));
+            let code = if let Err(error) = &handled {
+                quench_runtime::execute::set_property_in_place(
+                    &process,
+                    "\0forkStderr",
+                    Value::String(format!("{}\n", error.render())),
+                );
+                7
+            } else {
+                1
+            };
+            let _ = crate::modules::cluster::fail_fork_process(state, task.process_scope, code)?;
+            Ok(())
+        }
+        result => result,
+    };
+    quench_runtime::execute::set_property_in_place(&process, "\0forkChild", previous_fork_child);
+    state.borrow_mut().cluster.set_process_scope(previous_scope);
+    state
+        .borrow()
+        .event_loop
+        .set_process_scope(previous_event_scope);
     result.map(|()| true)
 }
 
@@ -436,8 +584,11 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
 /// explicit host event-loop turn, so it also runs unref'd timers that would
 /// not keep a real process alive on their own.
 pub(crate) fn drain_mock_timers(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
-    fire_due_timers(state)?;
+    // Mock-clock turns follow Node's check phase: immediates scheduled for the
+    // turn run before zero-delay timeouts, even when both are due at the same
+    // virtual timestamp.
     drain_immediates(state)?;
+    fire_due_timers(state)?;
     drain_ticks(state)?;
     quench_runtime::drain_promise_jobs();
     Ok(())
@@ -445,24 +596,39 @@ pub(crate) fn drain_mock_timers(state: &Rc<RefCell<HostState>>) -> Result<(), Vm
 
 fn fire_due_timers(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     let now = super::timers::monotonic_ms();
-    let mut due: Vec<(u64, u64)> = state
+    let mut due: Vec<(u64, u64, u64)> = state
         .borrow()
         .timers
         .timers
         .iter()
         .filter(|(_, t)| !matches!(t.kind, TimerKind::Immediate) && t.active && t.fire_at <= now)
-        .map(|(id, t)| (t.fire_at, *id))
+        .map(|(id, t)| (t.fire_at, t.order, *id))
         .collect();
     due.sort();
-    for (_, id) in due {
+    for (_, _, id) in due {
         fire_one_timer(state, id, now)?;
         drain_ticks(state)?;
     }
     Ok(())
 }
 
+fn cleanup_retired_timers(state: &Rc<RefCell<HostState>>) {
+    let retired = state
+        .borrow()
+        .timers
+        .timers
+        .iter()
+        .filter_map(|(id, timer)| timer.retired.then_some(*id))
+        .collect::<Vec<_>>();
+    for id in retired {
+        if let Some(timer) = state.borrow_mut().timers.timers.remove(&id) {
+            super::timers::clear_timer_metadata(&timer.object);
+        }
+    }
+}
+
 fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(), VmError> {
-    let (cb, receiver, args, resource, destroy, domain) = {
+    let (cb, receiver, args, resource, destroy, domain, process_scope) = {
         let mut guard = state.borrow_mut();
         let registry = &mut guard.timers;
         let Some(timer) = registry.timers.get_mut(&id) else {
@@ -470,7 +636,6 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
         };
         match timer.kind {
             TimerKind::Timeout => {
-                timer.active = false;
                 super::timers::mark_destroyed(timer);
                 (
                     timer.callback.clone(),
@@ -479,6 +644,7 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
                     timer.async_resource.clone(),
                     true,
                     timer.domain.clone(),
+                    timer.process_scope,
                 )
             }
             _ => {
@@ -490,13 +656,53 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
                     timer.async_resource.clone(),
                     false,
                     timer.domain.clone(),
+                    timer.process_scope,
                 )
             }
         }
     };
+    let previous_scope = state.borrow().cluster.process_scope();
+    let previous_event_scope = state.borrow().event_loop.process_scope();
+    let global = quench_runtime::vm::current_global_object();
+    let process = quench_runtime::execute::get_property(&global, "process");
+    let previous_fork_child = quench_runtime::execute::get_property(&process, "\0forkChild");
+    if process_scope != 0 {
+        state.borrow_mut().cluster.set_process_scope(process_scope);
+        state.borrow().event_loop.set_process_scope(process_scope);
+        if let Some(child) = state.borrow().cluster.fork_process(process_scope) {
+            quench_runtime::execute::set_property_in_place(&process, "\0forkChild", child);
+        }
+    }
     crate::modules::async_hooks::resource_before(state, Some(&resource), &[])?;
     let result = call_timer(state, domain.as_ref(), &cb, &receiver, &args);
     crate::modules::async_hooks::resource_after(state, None, &[])?;
+    let result = match result {
+        Err(error) if process_scope != 0 => {
+            let handled = crate::modules::pump::handle_uncaught(state, error)
+                .and_then(|_| crate::modules::pump::run_uncaught(state));
+            let code = if let Err(error) = &handled {
+                quench_runtime::execute::set_property_in_place(
+                    &process,
+                    "\0forkStderr",
+                    Value::String(format!("{}\n", error.render())),
+                );
+                7
+            } else {
+                1
+            };
+            let _ = crate::modules::cluster::fail_fork_process(state, process_scope, code)?;
+            Ok(())
+        }
+        result => result,
+    };
+    if process_scope != 0 {
+        state.borrow_mut().cluster.set_process_scope(previous_scope);
+        state
+            .borrow()
+            .event_loop
+            .set_process_scope(previous_event_scope);
+    }
+    quench_runtime::execute::set_property_in_place(&process, "\0forkChild", previous_fork_child);
     let converted = destroy
         && result.is_ok()
         && quench_runtime::execute::is_truthy(&quench_runtime::execute::get_property(
@@ -506,9 +712,10 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
         if let Some(timer) = state.borrow_mut().timers.timers.get_mut(&id) {
             timer.kind = TimerKind::Interval;
             timer.active = true;
+            timer.retired = false;
             timer.referenced = true;
             timer.fire_at = now.saturating_add(timer.period.max(1));
-            *timer.destroyed.borrow_mut() = Value::Boolean(false);
+            super::timers::mark_reactivated(timer);
         }
     }
     if !destroy && result.is_ok() {
@@ -525,7 +732,20 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
             }
         }
     }
-    if destroy && !converted {
+    // A one-shot timeout normally disappears after its callback.  `refresh()`
+    // is the observable exception: it reactivates the same registry entry
+    // while the callback is running, so retain it with its updated deadline.
+    let refreshed = destroy
+        && !converted
+        && state.borrow().timers.timers.get(&id).is_some_and(|timer| {
+            timer.active && matches!(*timer.destroyed.borrow(), Value::Boolean(false))
+        });
+    if destroy && !converted && !refreshed {
+        if let Some(timer) = state.borrow_mut().timers.timers.get_mut(&id) {
+            timer.active = false;
+            timer.retired = true;
+            super::timers::mark_destroyed(timer);
+        }
         crate::modules::async_hooks::resource_destroy(state, Some(&resource), &[])?;
     }
     result
@@ -533,15 +753,33 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
 
 fn drain_immediates(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     let mut defer_ticks = false;
-    let queued: Vec<(Value, Vec<Value>)> = state
+    let queued: Vec<crate::modules::event_loop::Immediate> = state
         .borrow()
         .event_loop
         .immediates
         .borrow_mut()
         .drain(..)
         .collect();
-    for (cb, args) in queued {
-        defer_ticks |= call_guarded_report(state, &cb, &Value::Undefined, &args)?;
+    for task in queued {
+        if let Some(resource) = task.resource.as_ref() {
+            crate::modules::async_hooks::resource_before(state, Some(resource), &[])?;
+        }
+        let result = call_guarded_report(state, &task.callback, &Value::Undefined, &task.args);
+        if task.resource.is_some() {
+            crate::modules::async_hooks::resource_after(state, None, &[])?;
+        }
+        defer_ticks |= result?;
+        if let Some(resource) = task.resource.as_ref() {
+            crate::modules::async_hooks::resource_destroy(state, Some(resource), &[])?;
+        }
+        // Node reaches a microtask checkpoint after each ordinary check-phase
+        // callback. Keep the immediate snapshot intact, but let nextTick and
+        // promise work from this callback run before the next immediate. A
+        // handled throw deliberately defers that checkpoint until the
+        // snapshot completes, preserving the uncaught-exception phase rule.
+        if !defer_ticks {
+            drain_ticks(state)?;
+        }
     }
     let mut ids: Vec<u64> = state
         .borrow()
@@ -561,6 +799,7 @@ fn drain_immediates(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         // resource keeps the loop alive. With no such resource Node exits
         // without invoking it.
         if !timer.referenced && !has_referenced_work(state) {
+            super::timers::clear_timer_metadata(&timer.object);
             continue;
         }
         crate::modules::async_hooks::resource_before(state, Some(&timer.async_resource), &[])?;
@@ -577,6 +816,7 @@ fn drain_immediates(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         };
         crate::modules::async_hooks::resource_after(state, None, &[])?;
         crate::modules::async_hooks::resource_destroy(state, Some(&timer.async_resource), &[])?;
+        super::timers::clear_timer_metadata(&timer.object);
         defer_ticks |= result?;
         if !defer_ticks {
             drain_ticks(state)?;
@@ -602,6 +842,7 @@ fn has_pending(state: &Rc<RefCell<HostState>>) -> bool {
     let guard = state.borrow();
     quench_runtime::has_pending_promise_jobs()
         || quench_runtime::has_pending_unhandled_rejections()
+        || !guard.event_loop.microtasks.borrow().is_empty()
         || !guard.event_loop.immediates.borrow().is_empty()
         || guard
             .timers
@@ -612,6 +853,13 @@ fn has_pending(state: &Rc<RefCell<HostState>>) -> bool {
 }
 
 fn sleep_until_next(state: &Rc<RefCell<HostState>>) {
+    // Network handles are externally driven.  A future timer must not make
+    // the pump sleep past readable/closed socket state: polling at a short
+    // cadence lets FINs and close transitions settle before the next timer.
+    if crate::modules::net::has_work(state) {
+        std::thread::sleep(std::time::Duration::from_millis(4));
+        return;
+    }
     let guard = state.borrow();
     let next = guard
         .timers
@@ -626,10 +874,5 @@ fn sleep_until_next(state: &Rc<RefCell<HostState>>) {
             std::thread::sleep(std::time::Duration::from_millis(next - now));
         }
         return;
-    }
-    // No timers, but net I/O may keep the loop alive: poll at a small
-    // fixed cadence instead of busy-spinning.
-    if crate::modules::net::has_work(state) {
-        std::thread::sleep(std::time::Duration::from_millis(4));
     }
 }

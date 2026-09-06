@@ -124,6 +124,11 @@ impl Host for QuenchNodeHost {
                 "The \"buffer\" argument must be an instance of Buffer, TypedArray, or DataView. Received an instance of {method}"
             )));
         }
+        if let HostCapabilityKind::Custom(id) = capability.kind {
+            if crate::modules::v8::is(id) {
+                return crate::modules::v8::construct(id, arguments);
+            }
+        }
         if let Some(result) = self.construct_stream(capability, arguments) {
             return result;
         }

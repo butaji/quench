@@ -117,6 +117,11 @@ fn search_offset(arg: Option<&Value>, len: usize, last: bool) -> i64 {
     if last && matches!(arg, None | Some(Value::Undefined) | Some(Value::Object(_))) {
         return len as i64 - 1;
     }
+    if last
+        && matches!(arg, Some(Value::String(encoding)) if enc::canonical_encoding(encoding).is_some())
+    {
+        return len as i64 - 1;
+    }
     if last && matches!(arg, Some(Value::Number(value)) if value.is_nan()) {
         return len as i64 - 1;
     }
@@ -237,6 +242,17 @@ fn kmp_search(
     if scan_start >= scan_end || needle.len() > scan_end.saturating_sub(scan_start) {
         return -1;
     }
+    if needle.len() > 4096 {
+        return rolling_search(
+            haystack,
+            needle,
+            scan_start,
+            scan_end,
+            reverse_limit,
+            utf16,
+            reverse,
+        );
+    }
     let mut prefix = vec![0usize; needle.len()];
     for index in 1..needle.len() {
         let mut matched = prefix[index - 1];
@@ -269,4 +285,70 @@ fn kmp_search(
         }
     }
     last.unwrap_or(-1)
+}
+
+fn rolling_search(
+    haystack: &[u8],
+    needle: &[u8],
+    scan_start: usize,
+    scan_end: usize,
+    reverse_limit: usize,
+    utf16: bool,
+    reverse: bool,
+) -> i64 {
+    let length = needle.len();
+    let last_start = scan_end - length;
+    let base = 257u64;
+    let mut high = 1u64;
+    for _ in 1..length {
+        high = high.wrapping_mul(base);
+    }
+    let hash = |bytes: &[u8]| {
+        bytes.iter().fold(0u64, |hash, byte| {
+            hash.wrapping_mul(base).wrapping_add(*byte as u64)
+        })
+    };
+    let reverse_hash = |bytes: &[u8]| {
+        bytes.iter().rev().fold(0u64, |hash, byte| {
+            hash.wrapping_mul(base).wrapping_add(*byte as u64)
+        })
+    };
+    let needle_hash = hash(needle);
+    if reverse {
+        let start_limit = last_start.min(reverse_limit);
+        let needle_hash = reverse_hash(needle);
+        let mut window_hash = reverse_hash(&haystack[start_limit..start_limit + length]);
+        for start in (0..=start_limit).rev() {
+            if window_hash == needle_hash
+                && (!utf16 || start % 2 == 0)
+                && haystack[start..start + length] == *needle
+            {
+                return start as i64;
+            }
+            if start > 0 {
+                window_hash = window_hash
+                    .wrapping_sub((haystack[start + length - 1] as u64).wrapping_mul(high))
+                    .wrapping_mul(base)
+                    .wrapping_add(haystack[start - 1] as u64);
+            }
+        }
+        -1
+    } else {
+        let mut window_hash = hash(&haystack[scan_start..scan_start + length]);
+        for start in scan_start..=last_start {
+            if window_hash == needle_hash
+                && (!utf16 || start % 2 == 0)
+                && haystack[start..start + length] == *needle
+            {
+                return start as i64;
+            }
+            if start < last_start {
+                window_hash = window_hash
+                    .wrapping_sub((haystack[start] as u64).wrapping_mul(high))
+                    .wrapping_mul(base)
+                    .wrapping_add(haystack[start + length] as u64);
+            }
+        }
+        -1
+    }
 }

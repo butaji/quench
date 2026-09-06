@@ -46,6 +46,9 @@ const __quenchFetchSend = (http, options, request, signal, cleanup, reject) => {
 Object.defineProperty(globalThis, "fetch", {
   value: (input, init = {}) => {
     const request = new globalThis.Request(input, init);
+    if (request.url.startsWith("blob:") && typeof globalThis.__quenchHostFetch === "function") {
+      return globalThis.__quenchHostFetch(request.url, init);
+    }
     const signal = init.signal || request.signal;
     if (signal?.aborted) {
       return Promise.reject(__quenchFetchAbortError(signal.reason));

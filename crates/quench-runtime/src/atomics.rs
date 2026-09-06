@@ -109,6 +109,26 @@ pub(crate) fn expire_agent_waiters(reports: &mut Vec<Value>) {
     });
 }
 
+pub fn expire_async_waiters() {
+    let now = Instant::now();
+    let mut promises = Vec::new();
+    AGENT_WAITERS.with(|waiters| {
+        waiters.borrow_mut().retain(|waiter| {
+            let expired = waiter.deadline.is_some_and(|deadline| deadline <= now);
+            if expired {
+                if let Some(promise) = &waiter.async_promise {
+                    promises.push(Rc::clone(promise));
+                    return false;
+                }
+            }
+            true
+        });
+    });
+    for promise in promises {
+        crate::promise::resolve_promise(&promise, Value::String("timed-out".to_string()));
+    }
+}
+
 pub(crate) fn end_agent_callback() {
     IN_AGENT_CALLBACK.with(|active| active.set(false));
 }
