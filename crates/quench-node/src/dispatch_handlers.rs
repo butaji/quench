@@ -8944,16 +8944,25 @@ pub fn cp_spawn_output_emit(
     if let Ok(signal) = execute::get_property_result(&child_options, "signal") {
         if execute::is_truthy(&execute::get_property(&signal, "aborted")) {
             execute::set_property_in_place(child, "killed", Value::Boolean(true));
-            let kill_signal = execute::get_property(&child_options, "killSignal");
-            execute::set_property_in_place(
-                child,
-                "signalCode",
-                if matches!(kill_signal, Value::Undefined) {
-                    Value::String("SIGTERM".into())
-                } else {
-                    kill_signal
-                },
-            );
+            // An already-aborted signal is handled synchronously by
+            // `cp_abort`, which records the selected kill signal before this
+            // queued spawn phase runs. Preserve that terminal fact instead of
+            // overwriting it with the normalized (possibly null) option.
+            if matches!(
+                execute::get_property(child, "signalCode"),
+                Value::Null | Value::Undefined
+            ) {
+                let kill_signal = execute::get_property(&child_options, "killSignal");
+                execute::set_property_in_place(
+                    child,
+                    "signalCode",
+                    if matches!(kill_signal, Value::Undefined | Value::Null) {
+                        Value::String("SIGTERM".into())
+                    } else {
+                        kill_signal
+                    },
+                );
+            }
         }
     }
     let abort_signal = execute::get_property(child, "\0childAbortSignal");
@@ -9979,7 +9988,10 @@ pub fn cp_abort(
                 crate::registry::SPEC_CP_ABORT_EMIT.cap,
             ),
         },
-        vec![child.clone(), error],
+        // Carry the selected signal across the queued error/exit transition.
+        // The shared child lifecycle may restore process-scoped state before
+        // this microtask runs, so rereading `child.signalCode` is not stable.
+        vec![child.clone(), error, signal],
     );
     state.borrow_mut().event_loop.queue_microtask(emit, vec![]);
     Ok(Value::Undefined)
@@ -10022,7 +10034,11 @@ pub fn cp_abort_emit(
             execute::get_property(child, "\0childForkIpc"),
             Value::Boolean(true)
         ) {
-            let signal = execute::get_property(child, "signalCode");
+            let signal = args
+                .get(2)
+                .filter(|value| !matches!(value, Value::Undefined | Value::Null))
+                .cloned()
+                .unwrap_or_else(|| execute::get_property(child, "signalCode"));
             for event in ["exit", "close"] {
                 crate::modules::events::method_emit(
                     state,
