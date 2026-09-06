@@ -63,6 +63,7 @@ pub(crate) const HANDLE_NO_DELAY_PROP: &str = "\0quench:net:handle-no-delay";
 const ASYNC_ITER_TARGET_PROP: &str = "\0quench:net:async-iter-target";
 const SOCKET_ADDRESS_MARKER: &str = "\0quench:socket-address:marker";
 const SOCKET_ADDRESS_CONSTRUCTOR_MARKER: &str = "\0quench:socket-address:constructor";
+const SOCKET_ADDRESS_CONSTRUCTOR_GLOBAL_PROP: &str = "\0quench:net:socket-address-constructor";
 const READ_CHUNK: usize = 16 * 1024;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1307,7 +1308,7 @@ pub fn build_with_state(state: Option<&Rc<RefCell<HostState>>>) -> Value {
     );
     let existing_socket_address = execute::get_property(
         &global,
-        "__quenchNetSocketAddressConstructor",
+        SOCKET_ADDRESS_CONSTRUCTOR_GLOBAL_PROP,
     );
     let socket_address_ctor = if quench_runtime::is_callable(&existing_socket_address) {
         existing_socket_address
@@ -1334,7 +1335,7 @@ pub fn build_with_state(state: Option<&Rc<RefCell<HostState>>>) -> Value {
     };
     execute::set_property_in_place(
         &global,
-        "__quenchNetSocketAddressConstructor",
+        SOCKET_ADDRESS_CONSTRUCTOR_GLOBAL_PROP,
         socket_address_ctor.clone(),
     );
     let block_list = crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST);
