@@ -27,6 +27,9 @@ fn execute_case(
             environment.set(slots[0], values[0].clone());
             environment.set(slots[1], values[1].clone());
         }
+        crate::stencil_plan::LocalNumericInputs::RepeatedSlot(slot) => {
+            environment.set(slot, values[0].clone());
+        }
         crate::stencil_plan::LocalNumericInputs::SlotConstant { slot, .. } => {
             environment.set(slot, values[0].clone());
         }
@@ -96,6 +99,31 @@ fn exercise_source_view(view: CodeView<'_>) -> bool {
     true
 }
 
+fn exercise_repeated_source_view(view: CodeView<'_>) -> bool {
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let plan = BaselinePlan::compile_for_test(view, policy);
+    let Some(pc) = (0..view.len()).find(|pc| {
+        plan.native_local_binary_at(*pc).is_some_and(|native| {
+            matches!(
+                native.borrow().selection().inputs,
+                crate::stencil_plan::LocalNumericInputs::RepeatedSlot(_)
+            )
+        })
+    }) else {
+        return false;
+    };
+    let numeric = execute_case(view, &plan, pc, [Value::Number(2.25), Value::Undefined]);
+    assert_eq!(numeric, (Completion::Return(Value::Number(4.5)), 1));
+    let hostile = execute_case(
+        view,
+        &plan,
+        pc,
+        [Value::String("x".into()), Value::Undefined],
+    );
+    assert_eq!(hostile, (Completion::Return(Value::String("xx".into())), 1));
+    true
+}
+
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
 fn ordinary_source_fuses_two_local_loads_with_numeric_operation() {
@@ -106,6 +134,18 @@ fn ordinary_source_fuses_two_local_loads_with_numeric_operation() {
         executed |= exercise_source_view(view);
     });
     assert!(executed, "source must execute the fused physical entry");
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn ordinary_source_reuses_repeated_local_value() {
+    let program = crate::reduce::reduce_source("function f(x){return x+x} f(1)")
+        .expect("ordinary source lowers");
+    let mut executed = false;
+    visit_views(program.code(), &mut |view| {
+        executed |= exercise_repeated_source_view(view);
+    });
+    assert!(executed, "source must execute the repeated-slot entry");
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
