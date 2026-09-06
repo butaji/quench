@@ -5155,6 +5155,8 @@ mod compact_handler_tests {
             .execute(code, 0, &mut registers, &context)
             .expect("native dense array get");
         assert!(region.last_native_execution());
+        #[cfg(quench_generated_stencil_artifacts)]
+        assert!(region.last_native_view_for_test().expect("array-get view").generated);
         assert_eq!(transition.next_pc, 1);
         assert_eq!(registers.read(0), Some(Value::Number(-0.0)));
     }
@@ -5198,6 +5200,12 @@ mod compact_handler_tests {
         .expect("baseline typed array region");
         assert_eq!(registers.read(0), Some(Value::Number(8.25)));
         assert!(region.borrow().last_native_execution());
+        #[cfg(quench_generated_stencil_artifacts)]
+        assert!(region
+            .borrow()
+            .last_native_view_for_test()
+            .expect("array-get driver view")
+            .generated);
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -5244,6 +5252,12 @@ mod compact_handler_tests {
             .expect("stored dense number");
         assert_eq!(stored, f64::NEG_INFINITY);
         assert!(region.borrow().last_native_execution());
+        #[cfg(quench_generated_stencil_artifacts)]
+        assert!(region
+            .borrow()
+            .last_native_view_for_test()
+            .expect("array-store driver view")
+            .generated);
 
         // An out-of-bounds index is outside the proven dense-slot contract;
         // the ordinary setter may grow the array, but the raw bytes must not
@@ -5305,6 +5319,12 @@ mod compact_handler_tests {
         assert_eq!(registers.read(0), Some(Value::Number(7.0)));
         assert_eq!(registers.read(2), Some(Value::Number(1.0)));
         assert!(region.borrow().last_native_execution());
+        #[cfg(quench_generated_stencil_artifacts)]
+        assert!(region
+            .borrow()
+            .last_native_view_for_test()
+            .expect("array-increment driver view")
+            .generated);
 
         let mut hostile = crate::register_file::RegisterFile::from_values(vec![
             registers.read(0).expect("array result register"),
@@ -5926,11 +5946,11 @@ mod compact_handler_tests {
     #[cfg(target_arch = "aarch64")]
     #[test]
     fn rendered_array_kernel_executes_machine_bytes() {
-        let record = crate::stencil_select::select_region(
-            crate::stencil_select::array_loop_body_region_key(),
-        )
-        .expect("array kernel declaration");
-        assert!(record.executable);
+        let key = crate::stencil_select::array_loop_body_region_key();
+        let view = crate::stencil_select::select_physical(key).expect("array kernel view");
+        assert!(view.executable);
+        #[cfg(quench_generated_stencil_artifacts)]
+        assert!(view.generated);
         let site = crate::quickening::QuickeningSite::<4>::new(
             crate::ir::Opcode::LoadLocalChecked,
         );
@@ -5938,12 +5958,7 @@ mod compact_handler_tests {
         let mut arena = crate::stencil_arena::StencilArena::new(4096).expect("arena");
         let mut cache = crate::stencil_select::RenderedRegionCache::new();
         let address = arena
-            .render_or_get(
-                &mut cache,
-                crate::stencil_select::array_loop_body_region_key(),
-                &record.stencil,
-                &values,
-            )
+            .render_physical_view_or_get(&mut cache, view, &values)
             .expect("render");
         arena.make_executable().expect("RX transition");
         let mut data = vec![4.0f64];
@@ -5979,7 +5994,7 @@ mod compact_handler_tests {
         let mut arena = crate::stencil_arena::StencilArena::new(4096).expect("arena");
         let mut cache = crate::stencil_select::RenderedRegionCache::new();
         let address = arena
-            .render_or_get(&mut cache, key, view.stencil, &values)
+            .render_physical_view_or_get(&mut cache, view, &values)
             .expect("render numeric loop");
         arena.make_executable().expect("protect numeric loop");
         for (mut data, initial_result, expected_result, expected_data) in [
@@ -6026,7 +6041,7 @@ mod compact_handler_tests {
         let mut arena = crate::stencil_arena::StencilArena::new(4096).expect("arena");
         let mut cache = crate::stencil_select::RenderedRegionCache::new();
         let address = arena
-            .render_or_get(&mut cache, key, view.stencil, &values)
+            .render_physical_view_or_get(&mut cache, view, &values)
             .expect("render numeric loop");
         arena.make_executable().expect("protect numeric loop");
         let interrupt = std::sync::atomic::AtomicBool::new(true);
@@ -6543,6 +6558,13 @@ mod compact_handler_tests {
                 .native_entry_count(),
             1
         );
+        #[cfg(quench_generated_stencil_artifacts)]
+        {
+            let native = plan.native_load_local_at(0).expect("load-local plan");
+            let view = native.borrow().last_native_view().expect("invoked physical view");
+            assert!(view.generated);
+            assert_eq!(view.key, crate::stencil_select::load_local_region_key());
+        }
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -6578,6 +6600,13 @@ mod compact_handler_tests {
         assert_eq!(completion, crate::completion::Completion::Return(Value::Number(9.25)));
         assert_eq!(environment.get(1), Value::Number(9.25));
         assert_eq!(plan.native_store_local_at(1).unwrap().borrow().native_entry_count(), 1);
+        #[cfg(quench_generated_stencil_artifacts)]
+        {
+            let native = plan.native_store_local_at(1).expect("store-local plan");
+            let view = native.borrow().last_native_view().expect("invoked physical view");
+            assert!(view.generated);
+            assert_eq!(view.key, crate::stencil_select::store_local_region_key());
+        }
 
         environment.mark_immutable_slot(1);
         registers.write_number(0, 10.5);
