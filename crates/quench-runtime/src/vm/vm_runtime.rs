@@ -1563,12 +1563,23 @@ fn run_code_completion_step_from(
     registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
 ) -> Result<CompletionStep, VmError> {
+    run_code_completion_step_from_with_owner(code, start, registers, context, None)
+}
+
+#[inline]
+pub(crate) fn run_code_completion_step_from_with_owner(
+    code: crate::machine::CodeView<'_>,
+    start: usize,
+    registers: &mut crate::register_file::RegisterFile,
+    context: &VmContext,
+    tier_owner: Option<&crate::machine::FunctionCode>,
+) -> Result<CompletionStep, VmError> {
     let mut dispatch = DispatchState {
         code,
         registers,
         context,
         environment: None,
-        tier_owner: None,
+        tier_owner,
     };
     // The stable-Rust backend cannot promise a machine tail call. Enter the
     // stack-safe callee-directed loop directly so ordinary interpreter work

@@ -506,6 +506,10 @@ fn resume_machine_frame(
     // next settlement must install the continuation that actually executed,
     // not the point that caused the previous await.
     state.suspension = completion.suspension_point().cloned();
+    // Promise settlement can invoke the next continuation synchronously.  Make
+    // the newly captured point visible before exposing the suspended result so
+    // re-entry cannot observe the previous loop's state.
+    generator.state.replace(Some(state.clone()));
     generator
         .machine
         .borrow_mut()

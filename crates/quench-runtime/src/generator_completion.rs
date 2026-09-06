@@ -6,6 +6,7 @@ fn complete_step(
     use crate::completion::Completion;
     match completion {
         Completion::Yield(value) => yielded_result(generator, state, value),
+        Completion::YieldAt(value, _) => yielded_result(generator, state, value),
         Completion::Return(value) => finish(generator, value),
         Completion::Normal => finish(generator, Value::Undefined),
         Completion::Throw(value) => throw_and_finish(generator, value),

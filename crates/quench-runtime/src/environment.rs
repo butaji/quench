@@ -987,7 +987,10 @@ impl Environment {
     /// canonical loader because their indirection/throw semantics are part of
     /// the ordinary environment machinery.
     #[inline(always)]
-    pub(crate) fn proven_word_ptr(&self, slot: u16) -> Option<*const crate::tagged_value::TaggedValue> {
+    pub(crate) fn proven_word_ptr(
+        &self,
+        slot: u16,
+    ) -> Option<*const crate::tagged_value::TaggedValue> {
         if self.is_deleted_slot(slot) || self.is_uninitialized(slot) {
             return None;
         }
@@ -1003,9 +1006,7 @@ impl Environment {
     /// bindings return false so callers use the complete store path.
     #[inline(always)]
     pub(crate) fn store_proven_tagged_bits(&self, slot: u16, bits: u64) -> bool {
-        if self.is_deleted_slot(slot)
-            || self.is_immutable_slot(slot)
-            || self.is_uninitialized(slot)
+        if self.is_deleted_slot(slot) || self.is_immutable_slot(slot) || self.is_uninitialized(slot)
         {
             return false;
         }

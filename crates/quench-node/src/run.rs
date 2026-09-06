@@ -338,6 +338,61 @@ mod tests {
     }
 
     #[test]
+    fn sequential_async_loops_keep_each_loop_continuation() {
+        let output = Arc::new(Mutex::new(String::new()));
+        let sink_output = Arc::clone(&output);
+        let sink: OutputSink = Arc::new(move |chunk| sink_output.lock().unwrap().push_str(chunk));
+        let source = r#"
+          async function run() {
+            const first = [], second = [];
+            for (let i = 0; i < 2; i++) first.push(await 1);
+            for (let i = 0; i < 2; i++) second.push(await 2);
+            return JSON.stringify([first, second]);
+          }
+          run().then(console.log);
+        "#;
+        let outcome = run_script_with_sink(
+            Path::new("/tmp/quench-sequential-async-loops.js"),
+            &[],
+            source,
+            sink,
+        );
+        assert!(outcome.error.is_none(), "sequential async loops failed: {:?}", outcome.error);
+        assert_eq!(output.lock().unwrap().trim(), "[[1,1],[2,2]]");
+    }
+
+    #[test]
+    fn nested_generator_progress_and_source_return_are_exact() {
+        let output = Arc::new(Mutex::new(String::new()));
+        let sink_output = Arc::clone(&output);
+        let sink: OutputSink = Arc::new(move |chunk| sink_output.lock().unwrap().push_str(chunk));
+        let source = r#"
+          function* nested() {
+            for (let i = 0; i < 2; i++)
+              for (let j = 0; j < 2; j++) yield i * 10 + j;
+          }
+          const a = nested(), values = [];
+          for (let i = 0; i < 6; i++) { const r = a.next(); values.push([r.value, r.done]); }
+          function* returned() {
+            for (let i = 0; i < 3; i++) { yield i; if (i === 1) return 99; }
+          }
+          const b = returned();
+          console.log(JSON.stringify(values));
+          console.log(JSON.stringify([b.next().value, b.next().value, b.next().value, b.next().value]));
+        "#;
+        let outcome = run_script_with_sink(
+            Path::new("/tmp/quench-nested-generators.js"),
+            &[],
+            source,
+            sink,
+        );
+        assert!(outcome.error.is_none(), "nested generator failed: {:?}", outcome.error);
+        let lines = output.lock().unwrap().lines().map(str::to_owned).collect::<Vec<_>>();
+        assert_eq!(lines.first().map(String::as_str), Some("[[0,false],[1,false],[10,false],[11,false],[null,true],[null,true]]"));
+        assert_eq!(lines.get(1).map(String::as_str), Some("[0,1,99,null]"));
+    }
+
+    #[test]
     fn suspended_shared_bindings_survive_collection_with_dead_siblings() {
         let output = Arc::new(Mutex::new(String::new()));
         let sink_output = Arc::clone(&output);

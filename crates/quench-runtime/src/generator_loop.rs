@@ -7,6 +7,7 @@ struct LoopFrameResume {
     resume: crate::machine::CodeRange,
     dst: u16,
     yield_dst: u16,
+    post_test: bool,
 }
 
 fn loop_frame_resume(generator: &GeneratorData) -> Option<LoopFrameResume> {
@@ -24,7 +25,7 @@ fn loop_frame_resume(generator: &GeneratorData) -> Option<LoopFrameResume> {
         resume,
         dst,
         yield_dst,
-        post_test: _,
+        post_test,
     } = frame
     else {
         return None;
@@ -38,6 +39,7 @@ fn loop_frame_resume(generator: &GeneratorData) -> Option<LoopFrameResume> {
         resume,
         dst,
         yield_dst,
+        post_test,
     })
 }
 
@@ -56,11 +58,30 @@ fn resume_loop_frame(
         generator.machine.borrow_mut().pop_await_frame();
     }
     if !matches!(input, crate::completion::Completion::Normal) {
+        if matches!(
+            input,
+            crate::completion::Completion::Throw(_) | crate::completion::Completion::Return(_)
+        ) && generator
+            .machine
+            .borrow()
+            .frames
+            .frames
+            .iter()
+            .rev()
+            .nth(1)
+            .is_some_and(|frame| matches!(frame, crate::machine::Frame::Try { .. }))
+        {
+            generator.machine.borrow_mut().pop_frame();
+            return crate::generator::resume_try_frame(generator, state, input);
+        }
         // A throw/return injected at a yield inside a structured try must
         // enter that try's handler before the loop is unwound. Materialize
         // the nested continuation frame on demand; ordinary next() resumes
         // continue through the compact loop path below.
-        if matches!(input, crate::completion::Completion::Throw(_))
+        if matches!(
+            input,
+            crate::completion::Completion::Throw(_) | crate::completion::Completion::Return(_)
+        )
             && crate::generator::suspended_try(generator, state).is_some()
         {
             crate::generator::push_try_frame(generator, state)?;
@@ -82,18 +103,23 @@ fn resume_loop_frame(
             crate::completion::Completion::Suspend(_)
                 | crate::completion::Completion::SuspendAt(_, _)
         ) {
+            let destination = completion
+                .suspension_point()
+                .and_then(resume_destination)
+                .unwrap_or(frame.yield_dst);
             try_push_frame(
                 &mut generator.machine.borrow_mut(),
                 crate::machine::Frame::Await {
                     phase: 0,
                     resume: generator.function.code.range,
-                    destination: frame.yield_dst,
+                    destination,
                 },
             )?;
         }
         return Ok(Some(completion));
     }
     generator.machine.borrow_mut().pop_frame();
+    state.suspension = None;
     // A nested loop owns the next continuation.  Resume the enclosing loop
     // from its already-recorded post-inner-loop body range before returning
     // to the parent function; otherwise the inner loop's completion skips the
@@ -129,14 +155,20 @@ fn run_loop_after_yield(
                 update_loop_body_resume(generator, body, step.pc, src)?;
                 return Ok(step.completion);
             }
-            // Nested structured operations carry their own exact point and
-            // leave this frame's post-operation resume range unchanged.
-            // Never recover a continuation by scanning syntax for an await.
-            return Ok(step.completion);
+            let destination = step
+                .suspension
+                .as_ref()
+                .and_then(resume_destination)
+                .unwrap_or(frame.yield_dst);
+            update_loop_body_resume(generator, body, step.pc, destination)?;
+            let point = loop_point(body, step.pc, destination, frame);
+            return Ok(wrap_loop_suspension(step.completion, point));
         }
         match step.completion {
-            crate::completion::Completion::Normal
-            | crate::completion::Completion::Return(_) => {}
+            crate::completion::Completion::Normal => {}
+            crate::completion::Completion::Return(value) => {
+                return Ok(crate::completion::Completion::Return(value));
+            }
             completion => match completion.into_loop_transition(&frame.label) {
                 crate::completion::LoopTransition::Continue(_) => {}
                 crate::completion::LoopTransition::Break(value) => {
@@ -153,6 +185,61 @@ fn run_loop_after_yield(
             return Ok(crate::completion::Completion::Normal);
         }
         resume = frame.body;
+    }
+}
+
+fn resume_destination(
+    point: &crate::continuation::SuspensionPoint,
+) -> Option<u16> {
+    match point {
+        crate::continuation::SuspensionPoint::Yield { src, .. }
+        | crate::continuation::SuspensionPoint::Loop { yield_dst: src, .. } => Some(*src),
+        crate::continuation::SuspensionPoint::YieldStar { dst, .. } => Some(*dst),
+        crate::continuation::SuspensionPoint::Nested { inner, .. } => resume_destination(inner),
+    }
+}
+
+fn loop_point(
+    body: crate::machine::CodeRange,
+    next: usize,
+    destination: u16,
+    frame: &LoopFrameResume,
+) -> crate::continuation::SuspensionPoint {
+    crate::continuation::SuspensionPoint::Loop {
+        pc: 0,
+        label: frame.label.clone(),
+        body,
+        test: frame.test,
+        update: frame.update,
+        body_resume: crate::machine::CodeRange {
+            code: body.code,
+            start: body.start.saturating_add(next as u32),
+            end: body.end,
+        },
+        dst: frame.dst,
+        yield_dst: destination,
+        post_test: frame.post_test,
+    }
+}
+
+fn wrap_loop_suspension(
+    completion: crate::completion::Completion,
+    point: crate::continuation::SuspensionPoint,
+) -> crate::completion::Completion {
+    match completion {
+        crate::completion::Completion::Suspend(promise) => {
+            crate::completion::Completion::SuspendAt(promise, point)
+        }
+        crate::completion::Completion::SuspendAt(promise, inner) => {
+            crate::completion::Completion::SuspendAt(
+                promise,
+                crate::continuation::SuspensionPoint::Nested {
+                    inner: Box::new(inner),
+                    outer: Box::new(point),
+                },
+            )
+        }
+        other => other,
     }
 }
 

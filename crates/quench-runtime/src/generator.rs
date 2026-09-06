@@ -317,7 +317,11 @@ fn resume_inner(generator: &GeneratorData, resume: Resume) -> Result<Value, VmEr
         )
     );
     if let Resume::Next(input) = resume {
+        let point = state.suspension.clone();
         install_resume_input(generator, &mut state, input);
+        if !direct_suspension {
+            state.suspension = point;
+        }
     }
     if !direct_suspension {
         if let Some(result) = resume_suspended_contexts(generator, &mut state, &completion)? {
@@ -490,69 +494,112 @@ fn push_initial_loop_frame(
     else {
         return Ok(false);
     };
-    let Some((body_resume, yield_dst)) = find_yield_in_function(body) else {
+    let Some((body_resume, yield_dst, nested)) = find_loop_resume_path(body) else {
         return Ok(false);
     };
-    try_push_frame(
-        &mut generator.machine.borrow_mut(),
-        crate::machine::Frame::Loop {
-            label: label.clone(),
-            body: body.range,
-            test: test.range,
-            update: update.range,
-            body_resume,
-            resume: parent_resume_range(generator, state),
-            dst: *dst,
-            yield_dst,
-            post_test: *post_test,
-        },
-    )?;
+    let spec = LoopResumeSpec {
+        label: label.clone(),
+        body: body.range,
+        test: test.range,
+        update: update.range,
+        body_resume,
+        dst: *dst,
+        yield_dst,
+        post_test: *post_test,
+        nested,
+    };
+    push_loop_resume_specs(generator, spec, parent_resume_range(generator, state))?;
     Ok(true)
 }
 
-fn find_yield_in_function(
+struct LoopResumeSpec {
+    label: Option<String>,
+    body: crate::machine::CodeRange,
+    test: crate::machine::CodeRange,
+    update: crate::machine::CodeRange,
+    body_resume: crate::machine::CodeRange,
+    dst: u16,
+    yield_dst: u16,
+    post_test: bool,
+    nested: Option<Box<Self>>,
+}
+
+fn push_loop_resume_specs(
+    generator: &GeneratorData,
+    spec: LoopResumeSpec,
+    resume: crate::machine::CodeRange,
+) -> Result<(), VmError> {
+    let child_resume = spec.body_resume;
+    let nested = spec.nested;
+    try_push_frame(&mut generator.machine.borrow_mut(), crate::machine::Frame::Loop {
+        label: spec.label,
+        body: spec.body,
+        test: spec.test,
+        update: spec.update,
+        body_resume: spec.body_resume,
+        resume,
+        dst: spec.dst,
+        yield_dst: spec.yield_dst,
+        post_test: spec.post_test,
+    })?;
+    if let Some(nested) = nested {
+        push_loop_resume_specs(generator, *nested, child_resume)?;
+    }
+    Ok(())
+}
+
+fn find_loop_resume_path(
     function: &crate::machine::FunctionCode,
-) -> Option<(crate::machine::CodeRange, u16)> {
+) -> Option<(crate::machine::CodeRange, u16, Option<Box<LoopResumeSpec>>)> {
     let range = function.range;
-    function.code().and_then(|code| {
-        for (index, op) in code.cold_ops() {
-            let src = match op {
-                Op::Yield { src } | Op::Await { dst: src, .. } => *src,
-                _ => {
-                    let nested = match op {
-                        Op::Try { body, .. }
-                        | Op::Loop { body, .. }
-                        | Op::ForOf { body, .. }
-                        | Op::ForIn { body, .. } => Some(body),
-                        Op::Conditional {
-                            consequent,
-                            alternate,
-                            ..
-                        } => {
-                            if let Some(found) = find_yield_in_function(consequent) {
-                                return Some(found);
-                            }
-                            Some(alternate)
-                        }
-                        _ => None,
-                    };
-                    if let Some(found) = nested.and_then(find_yield_in_function) {
-                        return Some(found);
-                    }
-                    continue;
-                }
-            };
-            return Some((
-                crate::machine::CodeRange {
-                    code: range.code,
-                    start: range.start.saturating_add(index as u32 + 1),
-                    end: range.end,
-                },
-                src,
-            ));
+    let code = function.code()?;
+    for (index, op) in code.cold_ops() {
+        match op {
+            Op::Yield { src } | Op::Await { dst: src, .. } => {
+                return Some((resume_after_emitted_op(code, range, index), *src, None));
+            }
+            Op::Loop {
+                label,
+                body,
+                test,
+                update,
+                post_test,
+                dst,
+                ..
+            } => {
+                let (body_resume, yield_dst, nested) = find_loop_resume_path(body)?;
+                let child = LoopResumeSpec {
+                    label: label.clone(),
+                    body: body.range,
+                    test: test.range,
+                    update: update.range,
+                    body_resume,
+                    dst: *dst,
+                    yield_dst,
+                    post_test: *post_test,
+                    nested,
+                };
+                return Some((resume_after_emitted_op(code, range, index), yield_dst, Some(Box::new(child))));
+            }
+            _ => {}
         }
-        None
-    })
+    }
+    None
+}
+
+fn resume_after_emitted_op(
+    code: crate::machine::CodeView<'_>,
+    range: crate::machine::CodeRange,
+    index: usize,
+) -> crate::machine::CodeRange {
+    let next = (index + 1..code.len())
+        .find(|candidate| code.cold_at(*candidate).is_some())
+        .unwrap_or_else(|| code.len().saturating_sub(1));
+    crate::machine::CodeRange {
+        code: range.code,
+        start: range.start.saturating_add(next as u32),
+        end: range.end,
+    }
 }
 
 fn push_nested_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<bool, VmError> {
@@ -709,6 +756,7 @@ fn resume_suspended_contexts(
         }
         return resume_machine_frame(generator, state, completion).map(Some);
     }
+    restore_nested_loop_frames(generator, state)?;
     if let Some(completion) = resume_loop_frame(generator, state, completion.clone())? {
         return resume_machine_frame(generator, state, completion).map(Some);
     }
@@ -746,6 +794,56 @@ fn resume_suspended_contexts(
     resumed
         .map(|completion| complete_step(generator, state, completion))
         .transpose()
+}
+
+fn restore_nested_loop_frames(
+    generator: &GeneratorData,
+    state: &GeneratorState,
+) -> Result<(), VmError> {
+    let Some(point) = state.suspension.as_ref() else {
+        return Ok(());
+    };
+    let mut points = Vec::new();
+    collect_loop_points(point, &mut points);
+    {
+        let desired = points
+            .iter()
+            .filter_map(loop_point_range)
+            .collect::<Vec<_>>();
+        generator.machine.borrow_mut().frames.frames.retain(|frame| {
+            !matches!(frame, crate::machine::Frame::Loop { body, .. } if !desired.contains(body))
+        });
+    }
+    let missing = points.into_iter().filter(|point| !has_loop_frame(generator, point)).collect::<Vec<_>>();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    generator.machine.borrow_mut().pop_await_frame();
+    for point in missing.into_iter().rev() {
+        push_loop_suspension_frame(generator, state, point)?;
+    }
+    Ok(())
+}
+
+fn loop_point_range(point: &crate::continuation::SuspensionPoint) -> Option<crate::machine::CodeRange> {
+    match point {
+        crate::continuation::SuspensionPoint::Loop { body, .. } => Some(*body),
+        _ => None,
+    }
+}
+
+fn collect_loop_points(
+    point: &crate::continuation::SuspensionPoint,
+    output: &mut Vec<crate::continuation::SuspensionPoint>,
+) {
+    match point {
+        crate::continuation::SuspensionPoint::Loop { .. } => output.push(point.clone()),
+        crate::continuation::SuspensionPoint::Nested { inner, outer } => {
+            collect_loop_points(inner, output);
+            collect_loop_points(outer, output);
+        }
+        _ => {}
+    }
 }
 
 impl Resume {
