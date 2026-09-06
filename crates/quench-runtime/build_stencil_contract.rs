@@ -42,8 +42,7 @@ pub(crate) enum DeclAbi {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RecipeComposition {
     Whole,
-    FallthroughReturn,
-    AddChain,
+    LinkedFragments,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -338,13 +337,13 @@ rust_assembly_catalog! {
         name: "fallthrough", abi: ScalarF64Binary,
         ops: ["Add", "Return"], holes: [(4, 4, "Branch26"), (8, 4, "Branch26")],
         continuation: { head: "fallthrough_head", tail: "fallthrough_tail", target: "q_fallthrough_tail" },
-        composition: FallthroughReturn
+        composition: LinkedFragments
     },
     AddChain {
         name: "add_chain", abi: ScalarF64x3,
         ops: ["Add", "Add"], holes: [(4, 4, "Branch26")],
         continuation: { head: "add_chain_head", tail: "add_chain_tail", target: "q_add_chain_tail" },
-        composition: AddChain
+        composition: LinkedFragments
     },
     CompareEqualBranch {
         name: "compare_equal_branch", abi: CompareBranch,
