@@ -656,8 +656,37 @@ pub(crate) fn value_points_to_doomed(
         // `Undefined`, and they never own the target in the first place.
         Value::WeakFunction(_) => false,
         Value::BindingCell(cell) => value_points_to_doomed(&cell.load(), doomed, ids),
+        Value::Generator(generator) => generator_points_to_doomed(generator, doomed, ids),
         _ => false,
     }
+}
+
+fn generator_points_to_doomed(
+    generator: &Rc<crate::value::GeneratorData>,
+    doomed: &HashSet<usize>,
+    ids: &HashMap<usize, usize>,
+) -> bool {
+    let function = Value::Function(Rc::clone(&generator.function));
+    if value_points_to_doomed(&function, doomed, ids)
+        || generator
+            .arguments
+            .iter()
+            .any(|value| value_points_to_doomed(value, doomed, ids))
+    {
+        return true;
+    }
+    let machine = generator.machine.borrow();
+    let mut doomed_register = false;
+    machine
+        .registers
+        .values
+        .visit_values(|value| doomed_register |= value_points_to_doomed(&value, doomed, ids));
+    machine.environment().is_some_and(|environment| {
+        environment
+            .cycle_values()
+            .iter()
+            .any(|value| value_points_to_doomed(value, doomed, ids))
+    }) || doomed_register
 }
 
 fn clear_object_edges(
