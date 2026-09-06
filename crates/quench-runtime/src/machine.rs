@@ -5104,17 +5104,7 @@ impl NativeRegionPlan {
                 })?;
             published_address = Some(address);
             let storage_kind = record.name;
-            let (used_bytes, capacity_bytes) = {
-                let slab = arena.borrow();
-                (slab.used(), slab.capacity())
-            };
-            crate::execution_trace::stencil_storage(
-                code,
-                pc,
-                storage_kind,
-                used_bytes,
-                capacity_bytes,
-            );
+            crate::execution_trace::stencil_storage(code, pc, storage_kind, &arena.borrow());
             let mut region = crate::vm::NativeRegionContext::new_with_abi(
                 code, pc, operations, view.abi, registers, context,
             );
