@@ -1,4 +1,4 @@
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct RegionDeclaration {
     pub(crate) name: &'static str,
     pub(crate) operations: &'static [&'static str],
@@ -177,7 +177,9 @@ macro_rules! recipe_composition {
 macro_rules! rust_leaf_catalog {
     ($( $variant:ident {
         name: $name:literal, abi: $abi:ident, ops: [$($op:literal),+],
-        params: $params:literal, result: $result:literal, body: $body:literal
+        params: $params:literal, result: $result:literal, body: $body:literal,
+        x86: $x86:expr, aarch64: $aarch64:expr,
+        holes: $holes:expr, aarch64_holes: $aarch64_holes:expr
         $(, composition: $composition:ident)?
     } ),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -202,60 +204,24 @@ macro_rules! rust_leaf_catalog {
                 }
             }
 
-            const fn name(self) -> &'static str {
-                match self { $( Self::$variant => $name ),+ }
-            }
-
-            const fn abi(self) -> DeclAbi {
-                match self { $( Self::$variant => DeclAbi::$abi ),+ }
-            }
-
-            const fn operations(self) -> &'static [&'static str] {
-                match self { $( Self::$variant => &[$($op),+]),+ }
-            }
-
-            fn matches(self, declaration: &RegionDeclaration) -> bool {
-                self.name() == declaration.name
-                    && self.abi() == declaration.abi
-                    && self.operations() == declaration.operations
-            }
         }
 
         const RUST_LEAF_RECIPES: &[RustLeafRecipe] = &[$(RustLeafRecipe::$variant),+];
+        const RUST_LEAF_DECLARATIONS: &[RegionDeclaration] = &[$(
+            RegionDeclaration {
+                name: $name,
+                operations: &[$($op),+],
+                abi: DeclAbi::$abi,
+                x86_bytes: $x86,
+                aarch64_bytes: $aarch64,
+                portable_bytes: &[0xC3],
+                holes: $holes,
+                aarch64_holes: $aarch64_holes,
+                entry: 0,
+                external_entries: &[0],
+            }
+        ),+];
     };
-}
-
-rust_leaf_catalog! {
-    Add { name: "loop", abi: ScalarF64Binary, ops: ["Add", "Return"], params: "a: f64, b: f64", result: "f64", body: "a + b" },
-    Sub { name: "subtract", abi: ScalarF64Binary, ops: ["Sub", "Return"], params: "a: f64, b: f64", result: "f64", body: "a - b" },
-    Mul { name: "multiply", abi: ScalarF64Binary, ops: ["Mul", "Return"], params: "a: f64, b: f64", result: "f64", body: "a * b" },
-    Div { name: "divide", abi: ScalarF64Binary, ops: ["Div", "Return"], params: "a: f64, b: f64", result: "f64", body: "a / b" },
-    AddConst { name: "add_const", abi: ScalarF64Binary, ops: ["AddConst", "Return"], params: "a: f64, b: f64", result: "f64", body: "a + b" },
-    Negate { name: "negate", abi: ScalarF64Unary, ops: ["Unary", "Return"], params: "a: f64", result: "f64", body: "-a" },
-    Increment { name: "increment", abi: ScalarF64Binary, ops: ["IncI", "Return"], params: "a: f64, _unused: f64", result: "f64", body: "a + 1.0" },
-    Equal { name: "compare_equal", abi: ScalarBool, ops: ["Binary", "Return"], params: "a: f64, b: f64", result: "bool", body: "a == b" },
-    NotEqual { name: "compare_not_equal", abi: ScalarBool, ops: ["Binary", "Return"], params: "a: f64, b: f64", result: "bool", body: "a != b" },
-    Less { name: "compare_less", abi: ScalarBool, ops: ["Binary", "Return"], params: "a: f64, b: f64", result: "bool", body: "a < b" },
-    LessEqual { name: "compare_less_equal", abi: ScalarBool, ops: ["Binary", "Return"], params: "a: f64, b: f64", result: "bool", body: "a <= b" },
-    Greater { name: "compare_greater", abi: ScalarBool, ops: ["Binary", "Return"], params: "a: f64, b: f64", result: "bool", body: "a > b" },
-    GreaterEqual { name: "compare_greater_equal", abi: ScalarBool, ops: ["Binary", "Return"], params: "a: f64, b: f64", result: "bool", body: "a >= b" },
-    WordEqual { name: "compare_equal_word", abi: ScalarWordPairBool, ops: ["Binary", "Return"], params: "a: u64, b: u64", result: "bool", body: "a == b" },
-    WordNotEqual { name: "compare_not_equal_word", abi: ScalarWordPairBool, ops: ["Binary", "Return"], params: "a: u64, b: u64", result: "bool", body: "a != b" },
-    BitAnd { name: "bitwise_and", abi: ScalarI32, ops: ["Binary", "Return"], params: "a: i32, b: i32", result: "i32", body: "a & b" },
-    BitOr { name: "bitwise_or", abi: ScalarI32, ops: ["Binary", "Return"], params: "a: i32, b: i32", result: "i32", body: "a | b" },
-    BitXor { name: "bitwise_xor", abi: ScalarI32, ops: ["Binary", "Return"], params: "a: i32, b: i32", result: "i32", body: "a ^ b" },
-    ShiftLeft { name: "shift_left", abi: ScalarI32, ops: ["Binary", "Return"], params: "a: i32, b: i32", result: "i32", body: "a.wrapping_shl((b as u32) & 31)" },
-    ShiftRight { name: "shift_right", abi: ScalarI32, ops: ["Binary", "Return"], params: "a: i32, b: i32", result: "i32", body: "a >> ((b as u32) & 31)" },
-    ShiftRightZero { name: "shift_right_zero", abi: ScalarU32, ops: ["Binary", "Return"], params: "a: i32, b: i32", result: "u32", body: "(a as u32) >> ((b as u32) & 31)" },
-    BitNot { name: "bitwise_not", abi: ScalarI32, ops: ["Unary", "Return"], params: "a: i32", result: "i32", body: "!a" },
-    TruthyNumber { name: "truthy_number", abi: ScalarBool, ops: ["JumpIfFalse"], params: "a: f64", result: "bool", body: "a != 0.0 && !a.is_nan()" },
-}
-
-pub(crate) fn rust_leaf_recipe(declaration: &RegionDeclaration) -> Option<RustLeafRecipe> {
-    RUST_LEAF_RECIPES
-        .iter()
-        .copied()
-        .find(|recipe| recipe.matches(declaration))
 }
 
 macro_rules! rust_assembly_catalog {
