@@ -132,7 +132,7 @@ pub fn event_error(
 }
 
 fn start(state: &Rc<RefCell<HostState>>, source: Value, mode: u16) -> Result<Value, VmError> {
-    let promise = Rc::new(PromiseData::new(PromiseState::Pending));
+    let promise = PromiseData::allocate(PromiseState::Pending);
     let result = Value::Promise(promise);
     let context = host_api::object(vec![
         ("\0consumer-promise".into(), result.clone()),

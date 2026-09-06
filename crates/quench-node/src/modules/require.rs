@@ -83,9 +83,8 @@ pub fn dynamic_namespace(value: Value) -> Value {
 }
 
 pub fn dynamic_rejection(reason: Value) -> Value {
-    let promise = Rc::new(quench_runtime::value::PromiseData::new(
-        quench_runtime::value::PromiseState::Pending,
-    ));
+    let promise =
+        quench_runtime::value::PromiseData::allocate(quench_runtime::value::PromiseState::Pending);
     let target = Rc::clone(&promise);
     quench_runtime::module_bindings::enqueue_job(Rc::new(move || {
         quench_runtime::module_bindings::reject_promise(&target, reason.clone());

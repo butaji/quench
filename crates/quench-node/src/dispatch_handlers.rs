@@ -812,9 +812,9 @@ pub fn util_aborted(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let rejected = |message: &str| {
-        let promise = Rc::new(quench_runtime::value::PromiseData::new(
+        let promise = quench_runtime::value::PromiseData::allocate(
             quench_runtime::value::PromiseState::Pending,
-        ));
+        );
         let error = host_api::object(vec![
             ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
             ("name".into(), Value::String("TypeError".into())),
@@ -838,9 +838,8 @@ pub fn util_aborted(
     ) {
         return Ok(rejected("The signal argument must be an AbortSignal"));
     }
-    let promise = Rc::new(quench_runtime::value::PromiseData::new(
-        quench_runtime::value::PromiseState::Pending,
-    ));
+    let promise =
+        quench_runtime::value::PromiseData::allocate(quench_runtime::value::PromiseState::Pending);
     if execute::is_truthy(&execute::get_property(signal, "aborted")) {
         quench_runtime::resolve_promise(&promise, Value::Undefined);
         return Ok(Value::Promise(promise));
@@ -2012,9 +2011,8 @@ pub fn util_promisified_call(
     let Some(original) = args.first() else {
         return Err(VmError::NotCallable);
     };
-    let promise = Rc::new(quench_runtime::value::PromiseData::new(
-        quench_runtime::value::PromiseState::Pending,
-    ));
+    let promise =
+        quench_runtime::value::PromiseData::allocate(quench_runtime::value::PromiseState::Pending);
     let mut custom_args = quench_runtime::execute::get_property_result(
         original,
         crate::modules::util::PROMISIFY_CUSTOM_ARGS_KEY,
@@ -3108,13 +3106,13 @@ pub fn internal_crypto_aes_cipher(
         );
         let error = execute::set_property(error, "name", Value::String("OperationError".into()));
         let error = execute::set_property(error, "cause", cause);
-        Value::Promise(Rc::new(quench_runtime::value::PromiseData::new(
+        Value::Promise(quench_runtime::value::PromiseData::allocate(
             quench_runtime::value::PromiseState::Rejected(error),
-        )))
+        ))
     } else {
-        Value::Promise(Rc::new(quench_runtime::value::PromiseData::new(
+        Value::Promise(quench_runtime::value::PromiseData::allocate(
             quench_runtime::value::PromiseState::Fulfilled(Value::Undefined),
-        )))
+        ))
     };
     Ok(promise)
 }
@@ -5002,9 +5000,8 @@ pub fn vm_module_link(
     if let Some(module) = receiver {
         execute::set_property_in_place(module, "status", Value::String("linked".into()));
     }
-    let promise = Rc::new(quench_runtime::value::PromiseData::new(
-        quench_runtime::value::PromiseState::Pending,
-    ));
+    let promise =
+        quench_runtime::value::PromiseData::allocate(quench_runtime::value::PromiseState::Pending);
     quench_runtime::resolve_promise(&promise, Value::Undefined);
     Ok(Value::Promise(promise))
 }
@@ -5584,9 +5581,9 @@ pub fn vm_module_evaluate(
     if let Some(module) = receiver {
         let source = execute::get_property(module, "\0module_source");
         if module_source_has_top_level_await(&source) {
-            let promise = Rc::new(quench_runtime::value::PromiseData::new(
+            let promise = quench_runtime::value::PromiseData::allocate(
                 quench_runtime::value::PromiseState::Pending,
-            ));
+            );
             let pending = execute::get_property(module, "namespace");
             let uninitialized = execute::get_property(&pending, "\0module_uninitialized");
             for name in execute::own_enumerable_keys(&uninitialized) {
@@ -5643,9 +5640,8 @@ pub fn vm_module_evaluate(
             execute::set_property_in_place(module, "status", Value::String("evaluated".into()));
         }
     }
-    let promise = Rc::new(quench_runtime::value::PromiseData::new(
-        quench_runtime::value::PromiseState::Pending,
-    ));
+    let promise =
+        quench_runtime::value::PromiseData::allocate(quench_runtime::value::PromiseState::Pending);
     quench_runtime::resolve_promise(&promise, Value::Undefined);
     Ok(Value::Promise(promise))
 }
@@ -6006,17 +6002,15 @@ pub fn vm_synthetic_link(
 }
 
 fn fulfilled_promise(value: Value) -> Result<Value, VmError> {
-    let promise = Rc::new(quench_runtime::value::PromiseData::new(
-        quench_runtime::value::PromiseState::Pending,
-    ));
+    let promise =
+        quench_runtime::value::PromiseData::allocate(quench_runtime::value::PromiseState::Pending);
     quench_runtime::resolve_promise(&promise, value);
     Ok(Value::Promise(promise))
 }
 
 fn rejected_promise(value: Value) -> Result<Value, VmError> {
-    let promise = Rc::new(quench_runtime::value::PromiseData::new(
-        quench_runtime::value::PromiseState::Pending,
-    ));
+    let promise =
+        quench_runtime::value::PromiseData::allocate(quench_runtime::value::PromiseState::Pending);
     quench_runtime::reject_promise(&promise, value);
     Ok(Value::Promise(promise))
 }
@@ -14113,11 +14107,11 @@ pub fn test_shorthand(
         crate::modules::test::run(state, &normalized)?
     };
     match result {
-        Value::Object(_) | Value::ObjectAlias(_) => Ok(Value::Promise(Rc::new(
-            quench_runtime::value::PromiseData::new(
+        Value::Object(_) | Value::ObjectAlias(_) => Ok(Value::Promise(
+            quench_runtime::value::PromiseData::allocate(
                 quench_runtime::value::PromiseState::Fulfilled(Value::Undefined),
             ),
-        ))),
+        )),
         value => Ok(value),
     }
 }
@@ -14209,9 +14203,9 @@ fn test_wait_options(options: Option<&Value>) -> Result<(u64, u64), VmError> {
 }
 
 fn test_wait_fulfilled(value: Value) -> Value {
-    Value::Promise(Rc::new(quench_runtime::value::PromiseData::new(
+    Value::Promise(quench_runtime::value::PromiseData::allocate(
         quench_runtime::value::PromiseState::Fulfilled(value),
-    )))
+    ))
 }
 
 fn test_wait_rejected(cause: Option<Value>) -> Value {
@@ -14222,9 +14216,9 @@ fn test_wait_rejected(cause: Option<Value>) -> Value {
     if let Some(cause) = cause {
         let _ = execute::set_property_in_place(&error, "cause", cause);
     }
-    Value::Promise(Rc::new(quench_runtime::value::PromiseData::new(
+    Value::Promise(quench_runtime::value::PromiseData::allocate(
         quench_runtime::value::PromiseState::Rejected(error),
-    )))
+    ))
 }
 
 fn test_wait_error_value(error: VmError) -> Value {

@@ -882,11 +882,11 @@ fn worker_terminate(
     // Node's terminate() is asynchronous and always returns a Promise whose
     // fulfillment value is the worker exit code.  Keep the host transition
     // synchronous, but preserve the observable promise-shaped boundary.
-    Ok(Value::Promise(Rc::new(
-        quench_runtime::value::PromiseData::new(quench_runtime::value::PromiseState::Fulfilled(
-            Value::Number(0.0),
-        )),
-    )))
+    Ok(Value::Promise(
+        quench_runtime::value::PromiseData::allocate(
+            quench_runtime::value::PromiseState::Fulfilled(Value::Number(0.0)),
+        ),
+    ))
 }
 
 fn worker_id(value: &Value) -> Option<u64> {

@@ -288,9 +288,9 @@ fn invoke(
 }
 
 fn fulfilled_test_promise() -> Value {
-    Value::Promise(Rc::new(quench_runtime::value::PromiseData::new(
+    Value::Promise(quench_runtime::value::PromiseData::allocate(
         quench_runtime::value::PromiseState::Fulfilled(Value::Undefined),
-    )))
+    ))
 }
 
 fn context() -> Value {
@@ -550,9 +550,8 @@ pub fn nested(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, V
         quench_runtime::execute::get_property(&callback, "length"),
         Value::Number(length) if length >= 2.0
     );
-    let completion = Rc::new(quench_runtime::value::PromiseData::new(
-        quench_runtime::value::PromiseState::Pending,
-    ));
+    let completion =
+        quench_runtime::value::PromiseData::allocate(quench_runtime::value::PromiseState::Pending);
     let done = quench_runtime::host_api::bound_capability_with_arguments(
         quench_runtime::ops::HostCapabilityRef {
             realm: quench_runtime::ops::RealmId::ROOT,
@@ -765,9 +764,8 @@ pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
         quench_runtime::execute::get_property(&callback, "length"),
         Value::Number(length) if length >= 2.0
     );
-    let completion = Rc::new(quench_runtime::value::PromiseData::new(
-        quench_runtime::value::PromiseState::Pending,
-    ));
+    let completion =
+        quench_runtime::value::PromiseData::allocate(quench_runtime::value::PromiseState::Pending);
     let done = quench_runtime::host_api::bound_capability_with_arguments(
         quench_runtime::ops::HostCapabilityRef {
             realm: quench_runtime::ops::RealmId::ROOT,

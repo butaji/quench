@@ -16,9 +16,9 @@ fn cp_error_value(error: VmError) -> Result<Value, VmError> {
 }
 
 fn rejected(value: Value) -> Value {
-    let promise = Rc::new(quench_runtime::value::PromiseData::new(
+    let promise = quench_runtime::value::PromiseData::allocate(
         quench_runtime::value::PromiseState::Pending,
-    ));
+    );
     promise.state.replace(quench_runtime::value::PromiseState::Rejected(
         value.clone(),
     ));

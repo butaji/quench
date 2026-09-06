@@ -2518,7 +2518,7 @@ fn settle(result: Result<Value, VmError>) -> Value {
         Err(VmError::Thrown(error)) => quench_runtime::value::PromiseState::Rejected(error),
         Err(_) => quench_runtime::value::PromiseState::Rejected(Value::String("I/O error".into())),
     };
-    Value::Promise(Rc::new(quench_runtime::value::PromiseData::new(state)))
+    Value::Promise(quench_runtime::value::PromiseData::allocate(state))
 }
 
 const FILE_HANDLE_CONSTRUCTOR_KEY: &str = "\0quench:fs_file_handle_constructor";
@@ -2581,14 +2581,14 @@ pub fn promises_open(
     let fd = match open_sync(state, None, args) {
         Ok(fd) => fd,
         Err(VmError::Thrown(error)) => {
-            return Ok(Value::Promise(Rc::new(PromiseData::new(
+            return Ok(Value::Promise(PromiseData::allocate(
                 PromiseState::Rejected(error),
-            ))));
+            )));
         }
         Err(_) => {
-            return Ok(Value::Promise(Rc::new(PromiseData::new(
+            return Ok(Value::Promise(PromiseData::allocate(
                 PromiseState::Rejected(Value::String("I/O error".into())),
-            ))));
+            )));
         }
     };
     let constructor = file_handle_constructor();
