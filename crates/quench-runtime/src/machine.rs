@@ -5693,7 +5693,7 @@ fn select_local_numeric(
     cfg: &ControlFlowFacts,
     pc: usize,
 ) -> Option<crate::stencil_plan::LocalBinarySelection> {
-    select_value_window(code, entries, cfg, pc, |code, graph, operation, live| {
+    let selection = select_value_window(code, entries, cfg, pc, |code, graph, operation, live| {
         if operation.opcode == crate::ir::Opcode::AddConst {
             let crate::ops::Constant::Number(value) = code.constant(operation.c)? else {
                 return None;
@@ -5706,7 +5706,21 @@ fn select_local_numeric(
         } else {
             graph.select(operation, live)
         }
-    })
+    })?;
+    extend_local_numeric_store(entries, cfg, pc, selection).or(Some(selection))
+}
+
+fn extend_local_numeric_store(
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    selection: crate::stencil_plan::LocalBinarySelection,
+) -> Option<crate::stencil_plan::LocalBinarySelection> {
+    let store_pc = pc.checked_add(usize::from(selection.span))?;
+    let store = entries.get(store_pc)?.instruction;
+    (store.opcode == crate::ir::Opcode::StoreLocal && store.b == selection.output).then_some(())?;
+    cfg.region_control(pc, store_pc.checked_add(1)?)?;
+    selection.with_store(store.a)
 }
 
 fn select_local_property(
