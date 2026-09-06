@@ -112,7 +112,7 @@ fn rust_assembly_recipe_requires_name_abi_and_residual_shape() {
         Some(RustAssemblyRecipe::AddChain)
     );
     let recipe = rust_assembly_recipe(&add_chain).expect("add-chain recipe");
-    assert_eq!(recipe.composition(), RecipeComposition::AddChain);
+    assert_eq!(recipe.composition(), RecipeComposition::LinkedFragments);
     let continuation = recipe.continuation().expect("add-chain continuation");
     assert_eq!(continuation.head_name, "add_chain_head");
     assert_eq!(continuation.tail_name, "add_chain_tail");
