@@ -90,6 +90,33 @@ pub fn write_branch26<const N: usize>(
     Ok(())
 }
 
+/// Patch an AArch64 `B.cond` immediate from a byte displacement. The
+/// condition and opcode remain part of the verified template; only signed
+/// imm19 bits [23:5] are replaced (four-byte aligned, ±1 MiB).
+pub(crate) fn write_cond_branch19(
+    dst: &mut [u8],
+    offset: usize,
+    displacement: i64,
+) -> Result<(), PatchError> {
+    let slot = dst
+        .get_mut(offset..offset.saturating_add(4))
+        .ok_or(PatchError::OutOfBounds)?;
+    if offset % 4 != 0 || displacement % 4 != 0 {
+        return Err(PatchError::UnsupportedOffset);
+    }
+    let words = displacement / 4;
+    if !(-(1_i64 << 18)..(1_i64 << 18)).contains(&words) {
+        return Err(PatchError::UnsupportedOffset);
+    }
+    let mut instruction = u32::from_le_bytes(slot.try_into().expect("validated width"));
+    if instruction & 0xff00_0010 != 0x5400_0000 {
+        return Err(PatchError::UnsupportedOffset);
+    }
+    instruction = (instruction & !0x00ff_ffe0) | ((words as u32 & 0x7_ffff) << 5);
+    slot.copy_from_slice(&instruction.to_le_bytes());
+    Ok(())
+}
+
 pub fn apply_holes<const N: usize>(
     dst: &mut [u8],
     holes: &[Hole],
@@ -246,6 +273,37 @@ mod tests {
         let mut bytes = 0x5400_0000u32.to_le_bytes();
         assert_eq!(
             write_branch26(&mut bytes, 0, &values),
+            Err(PatchError::UnsupportedOffset)
+        );
+    }
+
+    #[test]
+    fn aarch64_cond_branch19_checks_opcode_alignment_and_signed_limits() {
+        let mut forward = [0xa5; 12];
+        forward[4..8].copy_from_slice(&0x5400_0001u32.to_le_bytes());
+        write_cond_branch19(&mut forward, 4, 4).unwrap();
+        assert_eq!(u32::from_le_bytes(forward[4..8].try_into().unwrap()), 0x5400_0021);
+        assert_eq!(&forward[..4], &[0xa5; 4]);
+        assert_eq!(&forward[8..], &[0xa5; 4]);
+
+        let mut boundary = 0x5400_0000u32.to_le_bytes();
+        assert!(write_cond_branch19(&mut boundary, 0, -(1_i64 << 20)).is_ok());
+        assert!(write_cond_branch19(&mut boundary, 0, (1_i64 << 20) - 4).is_ok());
+        assert_eq!(
+            write_cond_branch19(&mut boundary, 0, 1_i64 << 20),
+            Err(PatchError::UnsupportedOffset)
+        );
+        assert_eq!(
+            write_cond_branch19(&mut boundary, 0, -(1_i64 << 20) - 4),
+            Err(PatchError::UnsupportedOffset)
+        );
+        assert_eq!(
+            write_cond_branch19(&mut boundary, 0, 2),
+            Err(PatchError::UnsupportedOffset)
+        );
+        let mut wrong = 0x1400_0000u32.to_le_bytes();
+        assert_eq!(
+            write_cond_branch19(&mut wrong, 0, 4),
             Err(PatchError::UnsupportedOffset)
         );
     }
