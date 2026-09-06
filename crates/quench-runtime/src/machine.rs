@@ -2628,7 +2628,7 @@ impl NativeTruthinessPlan {
         }
     }
 
-    fn new_with_shared(
+    pub(crate) fn new_with_shared(
         instruction: crate::ir::Instruction,
         policy: crate::stencil_policy::ExecutionPolicy,
         shared: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
@@ -2882,6 +2882,23 @@ impl NativeTruthinessPlan {
         self.installed = InstalledTruthinessEntry::PointerLocal(address);
         self.note_entry();
         Ok(entry(value) != 0)
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn execute_tagged_bits(
+        &mut self,
+        bits: u64,
+    ) -> Result<bool, crate::stencil_arena::ArenaError> {
+        use crate::tagged_value::DecodedValue;
+        match crate::tagged_value::TaggedValue::from_bits(bits).decode() {
+            DecodedValue::Bool(_) | DecodedValue::Null | DecodedValue::Undefined => {
+                self.execute_word(bits)
+            }
+            DecodedValue::ObjectPtr(_)
+            | DecodedValue::ArrayPtr(_)
+            | DecodedValue::FunctionPtr(_) => self.execute_pointer(bits),
+            _ => Err(crate::stencil_arena::ArenaError::ProtectionFailed),
+        }
     }
 
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -5310,6 +5327,7 @@ enum NativeAdmission {
     Unary(Rc<RefCell<NativeUnaryPlan>>),
     AddChain(Rc<RefCell<NativeAddChainPlan>>),
     LocalBinary(Rc<RefCell<crate::stencil_fusion::NativeLocalBinaryPlan>>),
+    LocalTruthiness(Rc<RefCell<crate::stencil_fusion::NativeLocalTruthinessPlan>>),
     LocalProperty(Rc<RefCell<crate::stencil_fusion::NativeLocalPropertyPlan>>),
     Move(Rc<RefCell<NativeMovePlan>>),
     LoadLocal(Rc<RefCell<NativeMovePlan>>),
@@ -5332,6 +5350,9 @@ impl AdmissionEntry for NativeAdmission {
             Self::AddChain(_) => shared_value_bytes::<RefCell<NativeAddChainPlan>>(),
             Self::LocalBinary(_) => {
                 shared_value_bytes::<RefCell<crate::stencil_fusion::NativeLocalBinaryPlan>>()
+            }
+            Self::LocalTruthiness(_) => {
+                shared_value_bytes::<RefCell<crate::stencil_fusion::NativeLocalTruthinessPlan>>()
             }
             Self::LocalProperty(_) => {
                 shared_value_bytes::<RefCell<crate::stencil_fusion::NativeLocalPropertyPlan>>()
@@ -5358,6 +5379,7 @@ impl std::fmt::Debug for NativeAdmission {
             Self::Unary(_) => "unary",
             Self::AddChain(_) => "add_chain",
             Self::LocalBinary(_) => "local_binary",
+            Self::LocalTruthiness(_) => "local_truthiness",
             Self::LocalProperty(_) => "local_property",
             Self::Move(_) => "move",
             Self::LoadLocal(_) => "load_local",
@@ -5687,6 +5709,66 @@ fn local_property_admission(
     Some(NativeAdmission::LocalProperty(Rc::new(RefCell::new(plan))))
 }
 
+fn local_truthiness_admission(
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    let load = entries.get(pc)?.instruction;
+    for offset in 1..crate::stencil_plan::MAX_BLOCK_VALUES {
+        let branch_pc = pc.checked_add(offset)?;
+        let entry = entries.get(branch_pc)?;
+        if entry.instruction.opcode == crate::ir::Opcode::JumpIfFalse {
+            let control = cfg.region_control(pc, branch_pc.checked_add(1)?)?;
+            let live_after = cfg.live_out().get(branch_pc)?;
+            let discarded = discarded_region_definitions(entries, pc, branch_pc)?;
+            let selection = crate::stencil_plan::select_local_truthiness(
+                load,
+                entry.instruction,
+                live_after,
+                control,
+                discarded,
+            )?;
+            let plan = crate::stencil_fusion::NativeLocalTruthinessPlan::new(
+                selection,
+                entry.instruction,
+                policy,
+                Rc::clone(arena),
+            )?;
+            return Some(NativeAdmission::LocalTruthiness(Rc::new(RefCell::new(
+                plan,
+            ))));
+        }
+        if !dead_pure_definition(entry, cfg.live_out().get(branch_pc)?) {
+            return None;
+        }
+    }
+    None
+}
+
+fn discarded_region_definitions(
+    entries: &[BaselineEntry],
+    start: usize,
+    end: usize,
+) -> Option<crate::stencil_plan::DiscardedRegisters> {
+    let mut discarded = [None; crate::stencil_plan::MAX_BLOCK_VALUES];
+    let mut length = 0;
+    for register in entries
+        .get(start..end)?
+        .iter()
+        .filter_map(|entry| entry.instruction.register_flow().definition)
+    {
+        if discarded.contains(&Some(register)) {
+            continue;
+        }
+        *discarded.get_mut(length)? = Some(register);
+        length += 1;
+    }
+    Some(discarded)
+}
+
 fn select_local_numeric(
     code: CodeView<'_>,
     entries: &[BaselineEntry],
@@ -5875,6 +5957,10 @@ fn collect_admissions_at(
         pc,
         local_property_admission(code, entries, cfg, pc, policy, arena),
     );
+    builder.push_optional(
+        pc,
+        local_truthiness_admission(entries, cfg, pc, policy, arena),
+    );
     collect_memory_admissions(builder, pc, entry.instruction, policy, arena);
     builder.push_optional(pc, region_admission(entries, cfg, pc, policy, arena));
 }
@@ -5976,6 +6062,12 @@ impl BaselinePlan {
         crate::stencil_fusion::NativeLocalBinaryPlan
     );
     typed_admission_accessors!(
+        local_truthiness_handle_at,
+        native_local_truthiness_at,
+        LocalTruthiness,
+        crate::stencil_fusion::NativeLocalTruthinessPlan
+    );
+    typed_admission_accessors!(
         local_property_handle_at,
         native_local_property_at,
         LocalProperty,
@@ -6075,6 +6167,11 @@ impl OptimizingEntry<'_> {
         native_local_binary,
         LocalBinary,
         crate::stencil_fusion::NativeLocalBinaryPlan
+    );
+    optimizing_admission_accessors!(
+        native_local_truthiness,
+        LocalTruthiness,
+        crate::stencil_fusion::NativeLocalTruthinessPlan
     );
     optimizing_admission_accessors!(
         native_local_property,

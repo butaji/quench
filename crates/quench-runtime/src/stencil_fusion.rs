@@ -5,7 +5,8 @@
 
 use crate::machine::{NativeBinaryPlan, NativePropertyPlan};
 use crate::stencil_plan::{
-    LocalBinarySelection, LocalNumericInputs, LocalPropertySelection, NumericSource,
+    LocalBinarySelection, LocalNumericInputs, LocalPropertySelection, LocalTruthinessSelection,
+    NumericSource,
 };
 
 pub(crate) struct LocalNumericExecution {
@@ -81,6 +82,74 @@ pub(crate) struct NativeLocalPropertyPlan {
     property: NativePropertyPlan,
     #[cfg(test)]
     local_read_count: u64,
+}
+
+pub(crate) struct NativeLocalTruthinessPlan {
+    selection: LocalTruthinessSelection,
+    truthiness: crate::machine::NativeTruthinessPlan,
+}
+
+pub(crate) struct LocalTruthinessExecution {
+    next: usize,
+    discarded: crate::stencil_plan::DiscardedRegisters,
+}
+
+impl LocalTruthinessExecution {
+    pub(crate) fn commit(self, registers: &mut crate::register_file::RegisterFile) -> usize {
+        for register in self.discarded.into_iter().flatten() {
+            registers.clear_word(usize::from(register));
+        }
+        self.next
+    }
+}
+
+impl NativeLocalTruthinessPlan {
+    pub(crate) fn new(
+        selection: LocalTruthinessSelection,
+        branch: crate::ir::Instruction,
+        policy: crate::stencil_policy::ExecutionPolicy,
+        arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
+    ) -> Option<Self> {
+        let truthiness =
+            crate::machine::NativeTruthinessPlan::new_with_shared(branch, policy, arena)?;
+        Some(Self {
+            selection,
+            truthiness,
+        })
+    }
+
+    fn execute(
+        &mut self,
+        environment: &crate::environment::Environment,
+    ) -> Option<LocalTruthinessExecution> {
+        let slot = self.selection.source_slot;
+        let truthy = match environment.get_number(slot) {
+            Some(value) => self.truthiness.execute(value).ok()?,
+            None => {
+                let bits = environment.proven_tagged_bits(slot)?;
+                self.truthiness.execute_tagged_bits(bits).ok()?
+            }
+        };
+        let next = if truthy {
+            self.selection.true_pc
+        } else {
+            self.selection.false_pc
+        };
+        Some(LocalTruthinessExecution {
+            next,
+            discarded: self.selection.discarded,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn native_entry_count(&self) -> u64 {
+        self.truthiness.native_entry_count()
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn selection(&self) -> LocalTruthinessSelection {
+        self.selection
+    }
 }
 
 impl NativeLocalPropertyPlan {
@@ -331,4 +400,11 @@ pub(crate) fn execute_local_property(
     invoke: impl FnOnce(&mut NativePropertyPlan, &crate::value::Value) -> Option<u64>,
 ) -> Option<LocalPropertyExecution> {
     plan.borrow_mut().execute(environment, invoke)
+}
+
+pub(crate) fn execute_local_truthiness(
+    plan: &std::cell::RefCell<NativeLocalTruthinessPlan>,
+    environment: &crate::environment::Environment,
+) -> Option<LocalTruthinessExecution> {
+    plan.borrow_mut().execute(environment)
 }

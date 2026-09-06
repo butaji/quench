@@ -261,6 +261,18 @@ impl SlotStore {
                 .is_some_and(Option::is_some)
     }
 
+    #[inline(always)]
+    fn tagged_bits(&self, index: usize) -> Option<u64> {
+        if self
+            .bridges()
+            .and_then(|bridges| bridges.get(index))
+            .is_some_and(Option::is_some)
+        {
+            return None;
+        }
+        self.values().word_bits(index)
+    }
+
     fn copy_from_register(
         &self,
         index: usize,
@@ -998,6 +1010,16 @@ impl Environment {
             .with_binding(usize::from(slot), |store, index| {
                 store.immediate_word_ptr(index).map(|ptr| ptr.cast_const())
             })
+            .flatten()
+    }
+
+    #[inline(always)]
+    pub(crate) fn proven_tagged_bits(&self, slot: u16) -> Option<u64> {
+        if self.is_deleted_slot(slot) || self.is_uninitialized(slot) {
+            return None;
+        }
+        self.slots_ref()
+            .with_binding(usize::from(slot), SlotStore::tagged_bits)
             .flatten()
     }
 

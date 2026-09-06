@@ -163,6 +163,8 @@ mod stencil_value_graph;
 #[cfg(test)]
 mod stencil_test_support;
 pub mod stencil_select;
+#[cfg(test)]
+mod stencil_truthiness_fusion_tests;
 
 #[cfg(test)]
 mod architecture_invariants;

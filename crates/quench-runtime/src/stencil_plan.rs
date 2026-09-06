@@ -178,6 +178,14 @@ pub(crate) struct LocalPropertySelection {
     pub cost: FusionCost,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LocalTruthinessSelection {
+    pub source_slot: u16,
+    pub false_pc: usize,
+    pub true_pc: usize,
+    pub discarded: DiscardedRegisters,
+}
+
 impl_local_store_selection!(LocalBinarySelection);
 impl_local_store_selection!(LocalPropertySelection);
 
@@ -191,6 +199,27 @@ impl RankedSelection for LocalPropertySelection {
     fn rank(&self) -> (u8, u8) {
         (self.cost.rank(), self.span)
     }
+}
+
+pub(crate) fn select_local_truthiness(
+    load: Instruction,
+    branch: Instruction,
+    live_after: &BTreeSet<Register>,
+    control: crate::stencil_cfg::RegionControlPlan,
+    discarded: DiscardedRegisters,
+) -> Option<LocalTruthinessSelection> {
+    let (false_pc, true_pc) = control.terminal_conditional_exits()?;
+    (load.opcode == Opcode::LoadLocal
+        && branch.opcode == Opcode::JumpIfFalse
+        && branch.a == load.a
+        && usize::from(branch.b) == false_pc
+        && !live_after.contains(&load.a))
+    .then_some(LocalTruthinessSelection {
+        source_slot: load.b,
+        false_pc,
+        true_pc,
+        discarded,
+    })
 }
 
 pub(crate) fn select_add_chain(
