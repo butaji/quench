@@ -5118,6 +5118,18 @@ pub fn encrypt(
             return Ok(settled(result.map(|bytes| array_buffer(&bytes))));
         }
     }
+    if requested_name.eq_ignore_ascii_case("RSA-OAEP") {
+        let Some(key) = args.get(1) else {
+            return Ok(settled(Err(operation_error("The operation failed"))));
+        };
+        return Ok(settled(
+            rsa_oaep_crypt(args.first(), key, &data, true)
+                .map(|bytes| array_buffer(&bytes))
+                .map_err(|_| {
+                    operation_error("The operation failed for an operation-specific reason")
+                }),
+        ));
+    }
     if let (Some((iv, aad, tag_bits)), Some(key)) = (algorithm, key) {
         if let Some(result) = aes_gcm_crypt(&key, &iv, &aad, &data, tag_bits, true) {
             return Ok(settled(result.map_or_else(
@@ -5230,6 +5242,18 @@ pub fn decrypt(
         if let Some(result) = result {
             return Ok(settled(result.map(|bytes| array_buffer(&bytes))));
         }
+    }
+    if requested_name.eq_ignore_ascii_case("RSA-OAEP") {
+        let Some(key) = args.get(1) else {
+            return Ok(settled(Err(operation_error("The operation failed"))));
+        };
+        return Ok(settled(
+            rsa_oaep_crypt(args.first(), key, &data, false)
+                .map(|bytes| array_buffer(&bytes))
+                .map_err(|_| {
+                    operation_error("The operation failed for an operation-specific reason")
+                }),
+        ));
     }
     if algorithm == "AESGCM" && data.is_empty() {
         let value = quench_runtime::builtins::error(
