@@ -41,6 +41,15 @@ impl FusionCost {
         }
     }
 
+    fn constant_fold(count: usize) -> Self {
+        let count = u8::try_from(count).unwrap_or(u8::MAX);
+        Self {
+            removed_dispatches: count.saturating_add(1),
+            removed_materializations: count.saturating_add(1),
+            added_transfers: 1,
+        }
+    }
+
     const fn profitable(self) -> bool {
         self.removed_dispatches + self.removed_materializations > self.added_transfers
     }
@@ -74,6 +83,7 @@ pub(crate) enum NumericDefinition {
 pub(crate) enum LocalNumericInputs {
     Sources([NumericSource; 2]),
     SlotConstant { slot: u16, bits: u64 },
+    Folded { bits: u64 },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -106,35 +116,50 @@ pub(crate) fn select_local_binary(
     operation: Instruction,
     live_after: &BTreeSet<Register>,
 ) -> Option<LocalBinarySelection> {
-    if !(2..=3).contains(&producers.len())
-        || duplicate_definitions(producers)
-        || numeric_operation(operation).is_none()
-    {
+    if !(2..=3).contains(&producers.len()) || duplicate_definitions(producers) {
         return None;
     }
+    let operator = numeric_operation(operation)?;
     let inputs = operation_sources(producers, operation)?;
-    if inputs
-        .iter()
-        .all(|source| matches!(source, NumericSource::Constant(_)))
-    {
-        return None;
-    }
     let overwritten = operation.a;
     let lost_live_value = producers
         .iter()
         .any(|producer| producer.output != overwritten && live_after.contains(&producer.output));
-    let cost = FusionCost::numeric_producers(producers.len());
+    let folded = fold_numeric_sources(inputs, operator);
+    let cost = folded.map_or_else(
+        || FusionCost::numeric_producers(producers.len()),
+        |_| FusionCost::constant_fold(producers.len()),
+    );
     if lost_live_value || !cost.profitable() {
         return None;
     }
     Some(LocalBinarySelection {
-        inputs: LocalNumericInputs::Sources(inputs),
+        inputs: folded.map_or(LocalNumericInputs::Sources(inputs), |bits| {
+            LocalNumericInputs::Folded { bits }
+        }),
         output: operation.a,
         operation,
         span: u8::try_from(producers.len() + 1).ok()?,
         discarded: discarded_registers(producers, operation.a),
         cost,
     })
+}
+
+fn fold_numeric_sources(inputs: [NumericSource; 2], operator: crate::ops::BinaryOp) -> Option<u64> {
+    let [NumericSource::Constant(lhs), NumericSource::Constant(rhs)] = inputs else {
+        return None;
+    };
+    let lhs = f64::from_bits(lhs);
+    let rhs = f64::from_bits(rhs);
+    use crate::ops::BinaryOp::{Add, Divide, Multiply, Subtract};
+    let value = match operator {
+        Add => lhs + rhs,
+        Subtract => lhs - rhs,
+        Multiply => lhs * rhs,
+        Divide => lhs / rhs,
+        _ => return None,
+    };
+    Some(value.to_bits())
 }
 
 fn numeric_operation(instruction: Instruction) -> Option<crate::ops::BinaryOp> {
@@ -151,38 +176,56 @@ fn numeric_operation(instruction: Instruction) -> Option<crate::ops::BinaryOp> {
     matches!(operator, Add | Subtract | Multiply | Divide).then_some(operator)
 }
 
-pub(crate) fn select_local_add_const(
-    load: Instruction,
+pub(crate) fn select_source_add_const(
+    producer: NumericProducer,
     operation: Instruction,
     constant_bits: u64,
     live_after: &BTreeSet<Register>,
 ) -> Option<LocalBinarySelection> {
-    if load.opcode != Opcode::LoadLocal
-        || operation.opcode != Opcode::AddConst
-        || operation.flags != 0
-        || operation.b != load.a
-        || (load.a != operation.a && live_after.contains(&load.a))
+    if operation.opcode != Opcode::AddConst
+        || operation.b != producer.output
+        || (producer.output != operation.a && live_after.contains(&producer.output))
         || !FusionCost::LOCAL_CONSTANT.profitable()
     {
         return None;
     }
+    let inputs = add_const_inputs(producer.definition, operation, constant_bits)?;
     Some(LocalBinarySelection {
-        inputs: LocalNumericInputs::SlotConstant {
-            slot: load.b,
-            bits: constant_bits,
-        },
+        inputs,
         output: operation.a,
         operation,
         span: 2,
-        discarded: discarded_registers(
-            &[NumericProducer {
-                output: load.a,
-                definition: NumericDefinition::Source(NumericSource::Local(load.b)),
-            }],
-            operation.a,
-        ),
+        discarded: discarded_registers(&[producer], operation.a),
         cost: FusionCost::LOCAL_CONSTANT,
     })
+}
+
+fn add_const_inputs(
+    definition: NumericDefinition,
+    operation: Instruction,
+    constant_bits: u64,
+) -> Option<LocalNumericInputs> {
+    match definition {
+        NumericDefinition::Source(NumericSource::Local(slot)) if operation.flags == 0 => {
+            Some(LocalNumericInputs::SlotConstant {
+                slot,
+                bits: constant_bits,
+            })
+        }
+        NumericDefinition::Source(NumericSource::Constant(source_bits)) => {
+            let (lhs, rhs) = if operation.add_const_is_left() {
+                (constant_bits, source_bits)
+            } else {
+                (source_bits, constant_bits)
+            };
+            let bits = fold_numeric_sources(
+                [NumericSource::Constant(lhs), NumericSource::Constant(rhs)],
+                crate::ops::BinaryOp::Add,
+            )?;
+            Some(LocalNumericInputs::Folded { bits })
+        }
+        _ => None,
+    }
 }
 
 fn discarded_registers(producers: &[NumericProducer], output: Register) -> [Option<Register>; 3] {
