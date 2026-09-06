@@ -12,9 +12,15 @@ const ENTRY_LABEL: LabelId = LabelId(0);
 const FALLTHROUGH_LABEL: LabelId = LabelId(1);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct OperationPlacement {
+pub(crate) enum RegionPoint {
+    Operation(u8),
+    Exit(usize),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct FragmentPlacement {
     pub(crate) label: LabelId,
-    pub(crate) operation_offset: u8,
+    pub(crate) point: RegionPoint,
 }
 
 pub(crate) fn validate_selected_control(
@@ -26,13 +32,13 @@ pub(crate) fn validate_selected_control(
     }
     view.fallthrough.ok_or(LayoutError::MissingSuccessor)?;
     let placements = [
-        OperationPlacement {
+        FragmentPlacement {
             label: ENTRY_LABEL,
-            operation_offset: 0,
+            point: RegionPoint::Operation(0),
         },
-        OperationPlacement {
+        FragmentPlacement {
             label: FALLTHROUGH_LABEL,
-            operation_offset: 1,
+            point: RegionPoint::Operation(1),
         },
     ];
     validate_controlled_fixups(
@@ -46,7 +52,7 @@ pub(crate) fn validate_selected_control(
 pub(crate) fn validate_controlled_fixups(
     control: &crate::stencil_cfg::RegionControlPlan,
     operations: &[crate::ir::Opcode],
-    placements: &[OperationPlacement],
+    placements: &[FragmentPlacement],
     fixups: &[Fixup],
 ) -> Result<(), LayoutError> {
     validate_placements(control, operations, placements)?;
@@ -58,11 +64,11 @@ pub(crate) fn validate_controlled_fixups(
             .iter()
             .find(|placement| placement.label == fixup.target)
             .ok_or(LayoutError::UndefinedLabel(fixup.target))?;
-        if !control.permits_operation_transfer(
-            operations,
-            usize::from(source.operation_offset),
-            usize::from(target.operation_offset),
-        ) {
+        let RegionPoint::Operation(source) = source.point else {
+            return Err(LayoutError::RelocationContract);
+        };
+        let target = point_pc(control, target.point)?;
+        if !control.permits_transfer(operations, usize::from(source), target) {
             return Err(LayoutError::RelocationContract);
         }
     }
@@ -72,21 +78,44 @@ pub(crate) fn validate_controlled_fixups(
 fn validate_placements(
     control: &crate::stencil_cfg::RegionControlPlan,
     operations: &[crate::ir::Opcode],
-    placements: &[OperationPlacement],
+    placements: &[FragmentPlacement],
 ) -> Result<(), LayoutError> {
-    if control.span_len() != operations.len() || placements.len() != operations.len() {
+    if control.span_len() != operations.len() || placements.len() < operations.len() {
         return Err(LayoutError::RelocationContract);
     }
     for (index, placement) in placements.iter().enumerate() {
-        if usize::from(placement.operation_offset) != index
-            || placements[..index]
-                .iter()
-                .any(|prior| prior.label == placement.label)
+        if placements[..index]
+            .iter()
+            .any(|prior| prior.label == placement.label)
         {
             return Err(LayoutError::RelocationContract);
         }
     }
+    for offset in 0..operations.len() {
+        let offset = u8::try_from(offset).map_err(|_| LayoutError::RelocationContract)?;
+        let count = placements
+            .iter()
+            .filter(|placement| placement.point == RegionPoint::Operation(offset))
+            .count();
+        if count != 1 {
+            return Err(LayoutError::RelocationContract);
+        }
+    }
     Ok(())
+}
+
+fn point_pc(
+    control: &crate::stencil_cfg::RegionControlPlan,
+    point: RegionPoint,
+) -> Result<usize, LayoutError> {
+    match point {
+        RegionPoint::Operation(offset) => control
+            .start()
+            .checked_add(usize::from(offset))
+            .filter(|pc| *pc < control.end()),
+        RegionPoint::Exit(pc) => (!(control.start()..control.end()).contains(&pc)).then_some(pc),
+    }
+    .ok_or(LayoutError::RelocationContract)
 }
 
 pub(crate) fn validate_compare_branch_control(
@@ -108,6 +137,17 @@ pub(crate) fn compose_selected_region<const N: usize>(
     values: &PatchValues<'_, N>,
     output: &mut Vec<u8>,
 ) -> Result<(), LayoutError> {
+    let control = crate::stencil_cfg::RegionControlPlan::linear(0, view.record.operations.len())
+        .ok_or(LayoutError::RelocationContract)?;
+    compose_selected_controlled_region(view, &control, values, output)
+}
+
+pub(crate) fn compose_selected_controlled_region<const N: usize>(
+    view: PhysicalStencilView,
+    control: &crate::stencil_cfg::RegionControlPlan,
+    values: &PatchValues<'_, N>,
+    output: &mut Vec<u8>,
+) -> Result<(), LayoutError> {
     let tail = view.fallthrough.ok_or(LayoutError::MissingSuccessor)?;
     let fragments = [
         crate::stencil_layout::StencilFragment {
@@ -122,7 +162,39 @@ pub(crate) fn compose_selected_region<const N: usize>(
         },
     ];
     let fixups = selected_fixups(view)?;
-    compose_region(&fragments, &fixups, output)
+    let placements = [
+        FragmentPlacement {
+            label: ENTRY_LABEL,
+            point: RegionPoint::Operation(0),
+        },
+        FragmentPlacement {
+            label: FALLTHROUGH_LABEL,
+            point: RegionPoint::Operation(1),
+        },
+    ];
+    compose_controlled_region(
+        control,
+        view.record.operations,
+        &fragments,
+        &placements,
+        &fixups,
+        output,
+    )
+}
+
+pub(crate) fn compose_controlled_region<const N: usize>(
+    control: &crate::stencil_cfg::RegionControlPlan,
+    operations: &[crate::ir::Opcode],
+    fragments: &[crate::stencil_layout::StencilFragment<'_, '_, N>],
+    placements: &[FragmentPlacement],
+    fixups: &[Fixup],
+    output: &mut Vec<u8>,
+) -> Result<(), LayoutError> {
+    if fragments.len() != placements.len() {
+        return Err(LayoutError::RelocationContract);
+    }
+    validate_controlled_fixups(control, operations, placements, fixups)?;
+    compose_region(fragments, fixups, output)
 }
 
 fn selected_fixups(view: PhysicalStencilView) -> Result<Vec<Fixup>, LayoutError> {
@@ -242,6 +314,14 @@ mod tests {
             validate_selected_control(view, &short),
             Err(LayoutError::RelocationContract)
         );
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let values = PatchValues::from_site(&site);
+        let mut output = vec![9, 8, 7];
+        assert_eq!(
+            compose_selected_controlled_region(view, &short, &values, &mut output),
+            Err(LayoutError::RelocationContract)
+        );
+        assert_eq!(output, [9, 8, 7]);
     }
 
     #[test]
@@ -297,15 +377,52 @@ mod tests {
         );
     }
 
-    fn placements() -> [OperationPlacement; 2] {
-        [
-            OperationPlacement {
+    #[test]
+    fn controlled_fixups_preserve_exact_external_exit_pcs() {
+        let instructions = [
+            crate::ir::Instruction::jump_if_false(0, 2),
+            crate::ir::Instruction::ret(0),
+            crate::ir::Instruction::ret(1),
+        ];
+        let entries: Vec<_> = instructions.iter().copied().map(baseline_entry).collect();
+        let facts = crate::stencil_cfg::ControlFlowFacts::new(&entries, &[None; 3]);
+        let control = facts.region_control(0, 1).expect("conditional exit region");
+        let placements = [
+            FragmentPlacement {
                 label: ENTRY_LABEL,
-                operation_offset: 0,
+                point: RegionPoint::Operation(0),
             },
-            OperationPlacement {
+            FragmentPlacement {
                 label: FALLTHROUGH_LABEL,
-                operation_offset: 1,
+                point: RegionPoint::Exit(1),
+            },
+            FragmentPlacement {
+                label: LabelId(2),
+                point: RegionPoint::Exit(2),
+            },
+        ];
+        let exits = [fixup(0, FALLTHROUGH_LABEL), fixup(0, LabelId(2))];
+        assert!(
+            validate_controlled_fixups(&control, &[Opcode::JumpIfFalse], &placements, &exits,)
+                .is_ok()
+        );
+        let mut invalid = placements;
+        invalid[2].point = RegionPoint::Exit(3);
+        assert_eq!(
+            validate_controlled_fixups(&control, &[Opcode::JumpIfFalse], &invalid, &exits,),
+            Err(LayoutError::RelocationContract)
+        );
+    }
+
+    fn placements() -> [FragmentPlacement; 2] {
+        [
+            FragmentPlacement {
+                label: ENTRY_LABEL,
+                point: RegionPoint::Operation(0),
+            },
+            FragmentPlacement {
+                label: FALLTHROUGH_LABEL,
+                point: RegionPoint::Operation(1),
             },
         ]
     }
