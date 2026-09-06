@@ -3474,6 +3474,7 @@ pub(crate) struct NativeAddChainPlan {
     shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
     physical: PhysicalState,
     bindings: crate::stencil_plan::F64x3Bindings,
+    control: crate::stencil_cfg::RegionControlPlan,
     site: crate::quickening::QuickeningSite<4>,
     installed: InstalledF64x3Entry,
     #[cfg(test)]
@@ -3496,27 +3497,42 @@ impl NativeAddChainPlan {
         policy: crate::stencil_policy::ExecutionPolicy,
         shared_arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
         bindings: crate::stencil_plan::F64x3Bindings,
+        control: crate::stencil_cfg::RegionControlPlan,
     ) -> Option<Self> {
-        let mut plan = Self::new(policy, bindings)?;
+        let mut plan = Self::new(policy, bindings, control)?;
         plan.shared_arena = Some(shared_arena);
         Some(plan)
+    }
+
+    pub(crate) fn new_embedded_with_arena(
+        policy: crate::stencil_policy::ExecutionPolicy,
+        shared_arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
+        bindings: crate::stencil_plan::F64x3Bindings,
+    ) -> Option<Self> {
+        let control = crate::stencil_cfg::RegionControlPlan::linear(0, 2)?;
+        Self::new_with_arena(policy, shared_arena, bindings, control)
     }
 
     fn new(
         policy: crate::stencil_policy::ExecutionPolicy,
         bindings: crate::stencil_plan::F64x3Bindings,
+        control: crate::stencil_cfg::RegionControlPlan,
     ) -> Option<Self> {
         if !policy.native_leaves {
             return None;
         }
         let key = crate::stencil_select::add_chain_region_key();
-        crate::stencil_select::select_region(key)
-            .filter(|record| record.executable && validate_physical_template(record).is_ok())?;
+        let view = crate::stencil_select::select_physical(key)?;
+        (view.executable
+            && validate_physical_template(view.record).is_ok()
+            && crate::stencil_region_layout::validate_selected_control(view, &control).is_ok())
+        .then_some(())?;
         Some(Self {
             arena: None,
             shared_arena: None,
             physical: PhysicalState::new(),
             bindings,
+            control,
             site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
             installed: InstalledF64x3Entry::Unpublished,
             #[cfg(test)]
@@ -3595,6 +3611,8 @@ impl NativeAddChainPlan {
                 crate::stencil_select::RegionAbi::ScalarF64x3,
             )
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+            crate::stencil_region_layout::validate_selected_control(view, &self.control)
+                .map_err(|_| crate::stencil_arena::ArenaError::ProtectionFailed)?;
             let address =
                 slab.render_physical_view_or_get(&mut self.physical.cache, view, values)?;
             slab.make_executable(address)?;
@@ -3658,6 +3676,13 @@ impl NativeAddChainPlan {
         rhs: f64,
         third: f64,
     ) -> Result<f64, crate::stencil_arena::ArenaError> {
+        let view = crate::stencil_select::select_physical_for_abi(
+            key,
+            crate::stencil_select::RegionAbi::ScalarF64x3,
+        )
+        .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+        crate::stencil_region_layout::validate_selected_control(view, &self.control)
+            .map_err(|_| crate::stencil_arena::ArenaError::ProtectionFailed)?;
         if self.arena.is_none() {
             self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
         }
@@ -5608,15 +5633,13 @@ fn add_chain_admission(
     policy: crate::stencil_policy::ExecutionPolicy,
     arena: &SharedStencilPool,
 ) -> Option<NativeAdmission> {
-    if cfg.region_control(pc, pc.checked_add(2)?).is_none() {
-        return None;
-    }
+    let control = cfg.region_control(pc, pc.checked_add(2)?)?;
     let entry = entries.get(pc)?;
     let next = entries.get(pc + 1)?;
     let live_after = cfg.live_out().get(pc + 1)?;
     let selection =
         crate::stencil_plan::select_add_chain(entry.instruction, next.instruction, live_after)?;
-    NativeAddChainPlan::new_with_arena(policy, Rc::clone(arena), selection.bindings)
+    NativeAddChainPlan::new_with_arena(policy, Rc::clone(arena), selection.bindings, control)
         .map(|plan| NativeAdmission::AddChain(Rc::new(RefCell::new(plan))))
 }
 

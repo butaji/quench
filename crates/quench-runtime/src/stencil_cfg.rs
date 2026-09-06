@@ -27,6 +27,16 @@ pub(crate) struct RegionControlPlan {
 }
 
 impl RegionControlPlan {
+    pub(crate) fn linear(start: usize, len: usize) -> Option<Self> {
+        let end = start.checked_add(len)?;
+        (len > 0).then(|| {
+            let mut plan = empty_region_control(start, end);
+            plan.blocks[0] = start;
+            plan.block_len = 1;
+            plan
+        })
+    }
+
     pub(crate) fn blocks(&self) -> &[usize] {
         &self.blocks[..usize::from(self.block_len)]
     }
@@ -41,6 +51,14 @@ impl RegionControlPlan {
 
     pub(crate) const fn end(&self) -> usize {
         self.end
+    }
+
+    pub(crate) const fn span_len(&self) -> usize {
+        self.end.saturating_sub(self.start)
+    }
+
+    pub(crate) fn is_linear(&self) -> bool {
+        self.blocks() == [self.start] && self.edges().is_empty()
     }
 
     pub(crate) fn has_backedge(&self) -> bool {

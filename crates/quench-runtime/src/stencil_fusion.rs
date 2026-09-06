@@ -132,11 +132,11 @@ impl NativeLocalBinaryPlan {
         }
         let physical = match selection.inputs {
             LocalNumericInputs::Folded { .. } => LocalNumericPhysical::Folded,
-            LocalNumericInputs::AddChain { bindings, .. } => {
-                LocalNumericPhysical::AddChain(crate::machine::NativeAddChainPlan::new_with_arena(
+            LocalNumericInputs::AddChain { bindings, .. } => LocalNumericPhysical::AddChain(
+                crate::machine::NativeAddChainPlan::new_embedded_with_arena(
                     policy, arena, bindings,
-                )?)
-            }
+                )?,
+            ),
             _ => LocalNumericPhysical::Binary(NativeBinaryPlan::new_with_shared(
                 selection.operation,
                 policy,

@@ -11,6 +11,19 @@ use crate::stencil_select::{PhysicalRelocation, PhysicalStencilView};
 const ENTRY_LABEL: LabelId = LabelId(0);
 const FALLTHROUGH_LABEL: LabelId = LabelId(1);
 
+pub(crate) fn validate_selected_control(
+    view: PhysicalStencilView,
+    control: &crate::stencil_cfg::RegionControlPlan,
+) -> Result<(), LayoutError> {
+    if control.span_len() != view.record.operations.len() || !control.is_linear() {
+        return Err(LayoutError::RelocationContract);
+    }
+    view.fallthrough
+        .is_some()
+        .then_some(())
+        .ok_or(LayoutError::MissingSuccessor)
+}
+
 pub(crate) fn compose_selected_region<const N: usize>(
     view: PhysicalStencilView,
     values: &PatchValues<'_, N>,
@@ -137,5 +150,18 @@ mod tests {
             Err(LayoutError::RelocationContract)
         );
         assert_eq!(bytes, [1, 2, 3]);
+    }
+
+    #[test]
+    fn selected_control_must_match_the_residual_span() {
+        let key = crate::stencil_select::fallthrough_region_key();
+        let view = crate::stencil_select::select_physical(key).expect("fallthrough view");
+        let valid = crate::stencil_cfg::RegionControlPlan::linear(7, 2).expect("linear plan");
+        let short = crate::stencil_cfg::RegionControlPlan::linear(7, 1).expect("short plan");
+        assert_eq!(validate_selected_control(view, &valid), Ok(()));
+        assert_eq!(
+            validate_selected_control(view, &short),
+            Err(LayoutError::RelocationContract)
+        );
     }
 }
