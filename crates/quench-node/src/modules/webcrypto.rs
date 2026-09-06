@@ -31,6 +31,7 @@ use sha3::{
     digest::ExtendableOutput, digest::Update as ShaUpdate, digest::XofReader, TurboShake128,
     TurboShake128Core, TurboShake256, TurboShake256Core,
 };
+use tiny_keccak::{CShake, Hasher as TinyHasher};
 
 use crate::host::HostState;
 
@@ -1158,11 +1159,13 @@ fn imported_algorithm_metadata(
         return algorithm;
     }
     let name = algorithm_name(&algorithm).to_ascii_uppercase();
-    if !name.starts_with("AES-") || data.is_none() {
+    if !(name.starts_with("AES-") || matches!(name.as_str(), "KMAC128" | "KMAC256"))
+        || data.is_none()
+    {
         return algorithm;
     }
     let length = data.map_or(0, |bytes| bytes.len().saturating_mul(8));
-    if length == 0 {
+    if length == 0 && name.starts_with("AES-") {
         return algorithm;
     }
     match algorithm {
@@ -2550,10 +2553,86 @@ fn signature_bytes(algorithm: &Value, key: &Value, data: &[u8]) -> Result<Vec<u8
         let key_data = bytes(&key_data).unwrap_or_default();
         return crate::modules::crypto::hmac_bytes(hash, &key_data, data);
     }
+    if matches!(name.to_ascii_uppercase().as_str(), "KMAC128" | "KMAC256") {
+        let output_length = match execute::get_property(algorithm, "outputLength") {
+            Value::Number(length)
+                if length.is_finite() && length.fract() == 0.0 && length >= 0.0 =>
+            {
+                length as usize
+            }
+            _ => return Err(operation_error("Invalid KMAC output length")),
+        };
+        if output_length == 0 {
+            return Err(operation_error("Invalid KMAC output length"));
+        }
+        let customization = match execute::get_property(algorithm, "customization") {
+            Value::Undefined => Vec::new(),
+            value => bytes(&value).unwrap_or_default(),
+        };
+        let mut key_data = bytes(&execute::get_property(key, KEY_DATA_PROP)).unwrap_or_default();
+        let key_algorithm = execute::get_property(key, "algorithm");
+        let key_bits = match execute::get_property(&key_algorithm, "length") {
+            Value::Number(length) if length.is_finite() && length >= 0.0 => length as usize,
+            _ => key_data.len().saturating_mul(8),
+        };
+        if let Some(remainder) = key_bits.checked_rem(8).filter(|value| *value != 0) {
+            if let Some(last) = key_data.last_mut() {
+                *last &= 0xff_u8 << (8 - remainder);
+            }
+        }
+        let rate = if name.eq_ignore_ascii_case("KMAC256") {
+            136
+        } else {
+            168
+        };
+        let mut framed = sp800_left_encode(rate);
+        framed.extend(sp800_left_encode(key_bits));
+        framed.extend_from_slice(&key_data);
+        let padding = (rate - framed.len() % rate) % rate;
+        framed.resize(framed.len() + padding, 0);
+        framed.extend_from_slice(data);
+        framed.extend(sp800_right_encode(output_length));
+        let mut output = vec![0_u8; output_length.div_ceil(8)];
+        let mut mac = if name.eq_ignore_ascii_case("KMAC256") {
+            CShake::v256(b"KMAC", &customization)
+        } else {
+            CShake::v128(b"KMAC", &customization)
+        };
+        mac.update(&framed);
+        mac.finalize(&mut output);
+        if let Some(remainder) = output_length.checked_rem(8).filter(|value| *value != 0) {
+            if let Some(last) = output.last_mut() {
+                *last &= 0xff_u8 << (8 - remainder);
+            }
+        }
+        return Ok(output);
+    }
     Ok(crate::modules::crypto::digest_bytes(
         "sha256",
         &[name.as_bytes(), data].concat(),
     )?)
+}
+
+fn sp800_left_encode(value: usize) -> Vec<u8> {
+    let mut encoded = sp800_value_bytes(value);
+    let count = u8::try_from(encoded.len()).unwrap_or(u8::MAX);
+    encoded.insert(0, count);
+    encoded
+}
+
+fn sp800_right_encode(value: usize) -> Vec<u8> {
+    let mut encoded = sp800_value_bytes(value);
+    let count = u8::try_from(encoded.len()).unwrap_or(u8::MAX);
+    encoded.push(count);
+    encoded
+}
+
+fn sp800_value_bytes(value: usize) -> Vec<u8> {
+    let width = ((usize::BITS - value.leading_zeros()) as usize).div_ceil(8).max(1);
+    (0..width)
+        .rev()
+        .map(|index| (value >> (index * 8)) as u8)
+        .collect()
 }
 
 fn algorithm_name(value: &Value) -> String {
