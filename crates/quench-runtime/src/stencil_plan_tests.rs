@@ -396,6 +396,53 @@ fn proven_numeric_nodes_fold_exact_tree_and_omit_dead_nodes() {
 }
 
 #[test]
+fn value_graph_selects_ordered_nonconstant_add_tree() {
+    let mut graph = BlockValueGraph::new();
+    assert!(graph.push(Instruction::load_local(0, 6), |_| None));
+    assert!(graph.push(Instruction::load_local(1, 7), |_| None));
+    assert!(graph.push(Instruction::add(2, 0, 1), |_| None));
+    assert!(graph.push(Instruction::load_local(3, 8), |_| None));
+    let selected = graph
+        .select(Instruction::add(4, 2, 3), &BTreeSet::new())
+        .expect("ordered add tree");
+    assert_eq!(selected.span, 5);
+    assert_eq!(
+        selected.inputs,
+        LocalNumericInputs::AddChain {
+            sources: [
+                NumericSource::Local(6),
+                NumericSource::Local(7),
+                NumericSource::Local(8),
+            ],
+            bindings: F64x3Bindings {
+                inputs: [0, 1, 3],
+                output: 4,
+            },
+        }
+    );
+}
+
+#[test]
+fn value_graph_rejects_live_or_reassociated_add_tree() {
+    let mut graph = BlockValueGraph::new();
+    assert!(graph.push(Instruction::load_local(0, 6), |_| None));
+    assert!(graph.push(Instruction::load_local(1, 7), |_| None));
+    assert!(graph.push(Instruction::add(2, 0, 1), |_| None));
+    assert!(graph.push(Instruction::load_local(3, 8), |_| None));
+    assert!(graph
+        .select(Instruction::add(4, 2, 3), &BTreeSet::from([2]))
+        .is_none());
+    let subtract = Instruction {
+        opcode: Opcode::Sub,
+        flags: 0,
+        a: 4,
+        b: 2,
+        c: 3,
+    };
+    assert!(graph.select(subtract, &BTreeSet::new()).is_none());
+}
+
+#[test]
 fn value_slice_rejects_coercion_effects_control_and_computed_live_outs() {
     let mut graph = BlockValueGraph::new();
     assert!(graph.push(Instruction::load_const(2, 0), |_| Some(1.0_f64.to_bits())));
