@@ -319,4 +319,158 @@ mod tests {
         );
         assert_eq!(output, [0xA5, 0x5A]);
     }
+
+    const REL32_HOLE: crate::stencil_fact::Hole = crate::stencil_fact::Hole {
+        offset: 1,
+        kind: HoleKind::Rel32,
+    };
+    const JUMP_BYTES: [u8; 5] = [0xE9, 0, 0, 0, 0];
+    const JUMP_STENCIL: Stencil = Stencil {
+        bytes: &JUMP_BYTES,
+        holes: &[REL32_HOLE],
+    };
+    const RETURN_STENCIL: Stencil = Stencil {
+        bytes: &[0xC3],
+        holes: &[],
+    };
+
+    fn stencil_fragments() -> [StencilFragment<'static>; 3] {
+        [
+            StencilFragment {
+                label: START,
+                stencil: &JUMP_STENCIL,
+            },
+            StencilFragment {
+                label: MIDDLE,
+                stencil: &JUMP_STENCIL,
+            },
+            StencilFragment {
+                label: END,
+                stencil: &RETURN_STENCIL,
+            },
+        ]
+    }
+
+    fn patch_values(site: &crate::quickening::QuickeningSite<1>) -> PatchValues<'_, 1> {
+        PatchValues::from_site(site)
+    }
+
+    #[test]
+    fn composes_three_stencils_from_declared_successors() {
+        let fragments = stencil_fragments();
+        let fixups = [x86_fixup(0, MIDDLE), x86_fixup(1, END)];
+        let site = crate::quickening::QuickeningSite::<1>::new(crate::ir::Opcode::Jump);
+        let mut output = Vec::new();
+        compose_region(&fragments, &fixups, &patch_values(&site), &mut output).unwrap();
+        assert_eq!(i32::from_le_bytes(output[1..5].try_into().unwrap()), 0);
+        assert_eq!(i32::from_le_bytes(output[6..10].try_into().unwrap()), 0);
+        assert_eq!(output[10], 0xC3);
+    }
+
+    #[test]
+    fn stencil_composition_rejects_missing_and_duplicate_edges_transactionally() {
+        let fragments = stencil_fragments();
+        let site = crate::quickening::QuickeningSite::<1>::new(crate::ir::Opcode::Jump);
+        let values = patch_values(&site);
+        let mut output = vec![0xA5];
+        let one_edge = [x86_fixup(0, MIDDLE)];
+        assert_eq!(
+            compose_region(&fragments, &one_edge, &values, &mut output),
+            Err(LayoutError::MissingFixup(1, 1))
+        );
+        let duplicate = [x86_fixup(0, MIDDLE), x86_fixup(0, END), x86_fixup(1, END)];
+        assert_eq!(
+            compose_region(&fragments, &duplicate, &values, &mut output),
+            Err(LayoutError::DuplicateFixup(0, 1))
+        );
+        assert_eq!(output, [0xA5]);
+    }
+
+    #[test]
+    fn stencil_composition_rejects_undeclared_edge_transactionally() {
+        let fragments = [StencilFragment {
+            label: START,
+            stencil: &RETURN_STENCIL,
+        }];
+        let fixups = [x86_fixup(0, START)];
+        let site = crate::quickening::QuickeningSite::<1>::new(crate::ir::Opcode::Jump);
+        let mut output = vec![0xA5];
+        assert_eq!(
+            compose_region(&fragments, &fixups, &patch_values(&site), &mut output),
+            Err(LayoutError::UnexpectedFixup(0, 1))
+        );
+        assert_eq!(output, [0xA5]);
+    }
+
+    #[test]
+    fn stencil_composition_enforces_budgets_before_copying() {
+        let fragment = StencilFragment {
+            label: START,
+            stencil: &RETURN_STENCIL,
+        };
+        let fragments = [fragment; MAX_LAYOUT_FRAGMENTS + 1];
+        let site = crate::quickening::QuickeningSite::<1>::new(crate::ir::Opcode::Jump);
+        let values = patch_values(&site);
+        let mut output = vec![0xA5];
+        assert_eq!(
+            compose_region(&fragments, &[], &values, &mut output),
+            Err(LayoutError::FragmentBudget)
+        );
+
+        const TOO_MANY: [crate::stencil_fact::Hole; MAX_LAYOUT_HOLES + 1] =
+            [REL32_HOLE; MAX_LAYOUT_HOLES + 1];
+        const OVERFULL: Stencil = Stencil {
+            bytes: &JUMP_BYTES,
+            holes: &TOO_MANY,
+        };
+        let fragments = [StencilFragment {
+            label: START,
+            stencil: &OVERFULL,
+        }];
+        assert_eq!(
+            compose_region(&fragments, &[], &values, &mut output),
+            Err(LayoutError::HoleBudget)
+        );
+        assert_eq!(output, [0xA5]);
+    }
+
+    #[test]
+    fn stencil_composition_patches_literal_and_successor_from_one_view() {
+        const BYTES: [u8; 13] = [0, 0, 0, 0, 0, 0, 0, 0, 0xE9, 0, 0, 0, 0];
+        const HOLES: [crate::stencil_fact::Hole; 2] = [
+            crate::stencil_fact::Hole {
+                offset: 0,
+                kind: HoleKind::Literal64,
+            },
+            crate::stencil_fact::Hole {
+                offset: 9,
+                kind: HoleKind::Rel32,
+            },
+        ];
+        const HEAD: Stencil = Stencil {
+            bytes: &BYTES,
+            holes: &HOLES,
+        };
+        let fragments = [
+            StencilFragment {
+                label: START,
+                stencil: &HEAD,
+            },
+            StencilFragment {
+                label: END,
+                stencil: &RETURN_STENCIL,
+            },
+        ];
+        let fixup = Fixup {
+            offset: 9,
+            ..x86_fixup(0, END)
+        };
+        let site = crate::quickening::QuickeningSite::<1>::new(crate::ir::Opcode::Jump);
+        let values = patch_values(&site).with_constant_bits(0x0123_4567_89ab_cdef);
+        let mut output = Vec::new();
+        compose_region(&fragments, &[fixup], &values, &mut output).unwrap();
+        assert_eq!(&output[..8], &0x0123_4567_89ab_cdefu64.to_le_bytes());
+        assert_eq!(i32::from_le_bytes(output[9..13].try_into().unwrap()), 0);
+        assert_eq!(output[13], 0xC3);
+    }
 }
