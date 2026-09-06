@@ -40,7 +40,7 @@ impl<'a> NativeDispatchContext<'a> {
         self,
         status: u64,
     ) -> Result<DispatchTransition, crate::machine::NativeDispatchError> {
-        finish_native_outcome(status, self.outcome, self.entry_started, "bridge")
+        finish_native_outcome(status, self.outcome, self.entry_started, "bridge", self.pc)
     }
 }
 
@@ -110,7 +110,7 @@ impl<'a> NativeRegionContext<'a> {
         self,
         status: u64,
     ) -> Result<DispatchTransition, crate::machine::NativeDispatchError> {
-        finish_native_outcome(status, self.outcome, self.entry_started, "region")
+        finish_native_outcome(status, self.outcome, self.entry_started, "region", self.pc)
     }
 }
 
@@ -258,11 +258,33 @@ pub(crate) extern "C" fn native_dispatch_bridge(raw: *mut std::ffi::c_void) -> u
     }
 }
 
+fn record_native_region_error(
+    region: &mut NativeRegionContext<'_>,
+    error: crate::machine::NativeDispatchError,
+) -> u64 {
+    match error {
+        crate::machine::NativeDispatchError::SemanticAt { pc, error } => {
+            region.outcome = Some(NativeBridgeOutcome::Throw { pc, error });
+            NATIVE_DISPATCH_SEMANTIC_ERROR
+        }
+        crate::machine::NativeDispatchError::Committed { pc, message } => {
+            region.outcome = Some(NativeBridgeOutcome::InternalFailure { pc, message });
+            NATIVE_DISPATCH_COMMITTED_ERROR
+        }
+        crate::machine::NativeDispatchError::Physical(message) => {
+            region.outcome = Some(NativeBridgeOutcome::InternalFailure {
+                pc: region.pc,
+                message,
+            });
+            NATIVE_DISPATCH_COMMITTED_ERROR
+        }
+    }
+}
+
 /// Execute a build-admitted straight-line region through the same canonical
-/// handlers used by the ordinary baseline path. Every instruction and
-/// transition is checked before it is accepted; a changed quickened opcode,
-/// branch, completion, or malformed window returns the physical-failure code
-/// so the caller retries the complete ordinary path exactly once.
+/// handlers used by the ordinary baseline path. The immutable window is
+/// checked before entry. After entry every completion, throw, or internal
+/// failure crosses the ABI as one typed outcome and is never retried.
 pub(crate) extern "C" fn native_region_bridge(raw: *mut std::ffi::c_void) -> u64 {
     if raw.is_null() {
         return 0;
@@ -315,15 +337,7 @@ pub(crate) extern "C" fn native_region_bridge(raw: *mut std::ffi::c_void) -> u64
                 return NATIVE_DISPATCH_OK;
             }
             Some(Err(error)) => {
-                let (pc, error) = match error {
-                    crate::machine::NativeDispatchError::SemanticAt { pc, error } => (pc, error),
-                    crate::machine::NativeDispatchError::Committed(_)
-                    | crate::machine::NativeDispatchError::Physical(_) => {
-                        return NATIVE_DISPATCH_COMMITTED_ERROR
-                    }
-                };
-                region.outcome = Some(NativeBridgeOutcome::Throw { pc, error });
-                return NATIVE_DISPATCH_SEMANTIC_ERROR;
+                return record_native_region_error(region, error);
             }
             None => {
                 crate::execution_trace::stencil_observation(
@@ -347,12 +361,7 @@ pub(crate) extern "C" fn native_region_bridge(raw: *mut std::ffi::c_void) -> u64
             region.outcome = Some(NativeBridgeOutcome::Transition(transition));
             NATIVE_DISPATCH_OK
         }
-        Err(crate::machine::NativeDispatchError::SemanticAt { pc, error }) => {
-            region.outcome = Some(NativeBridgeOutcome::Throw { pc, error });
-            NATIVE_DISPATCH_SEMANTIC_ERROR
-        }
-        Err(crate::machine::NativeDispatchError::Physical(_)) => 0,
-        Err(crate::machine::NativeDispatchError::Committed(_)) => NATIVE_DISPATCH_COMMITTED_ERROR,
+        Err(error) => record_native_region_error(region, error),
     }
 }
 
@@ -697,19 +706,21 @@ fn execute_composed_array_get(
     region.native_entered = true;
     let status = invoke((&mut kernel as *mut NativeArrayElementContext).cast())
         .map_err(|error| {
-            crate::machine::NativeDispatchError::Committed(format!(
+            crate::machine::NativeDispatchError::committed(pc, format!(
                 "array get execution failed after entry: {error:?}"
             ))
     })?;
     drop(words);
     if status != NATIVE_DISPATCH_OK {
-        return Err(crate::machine::NativeDispatchError::Committed(
-            "array get returned invalid status".into(),
+        return Err(crate::machine::NativeDispatchError::committed(
+            pc,
+            "array get returned invalid status",
         ));
     }
     if kernel.result.to_bits() != expected.to_bits() {
-        return Err(crate::machine::NativeDispatchError::Committed(
-            "array get changed the proven element".into(),
+        return Err(crate::machine::NativeDispatchError::committed(
+            pc,
+            "array get changed the proven element",
         ));
     }
     registers.write_number(usize::from(instruction.a), kernel.result);
@@ -778,7 +789,7 @@ fn execute_composed_array_get_inc(
     region.native_entered = true;
     let status = invoke((&mut kernel as *mut NativeArrayGetIncContext).cast())
         .map_err(|error| {
-            crate::machine::NativeDispatchError::Committed(format!(
+            crate::machine::NativeDispatchError::committed(pc, format!(
                 "array get-inc execution failed after entry: {error:?}"
             ))
         })?;
@@ -787,8 +798,9 @@ fn execute_composed_array_get_inc(
         || kernel.result.to_bits() != expected.to_bits()
         || kernel.next_index != next_index
     {
-        return Err(crate::machine::NativeDispatchError::Committed(
-            "array get-inc returned invalid committed state".into(),
+        return Err(crate::machine::NativeDispatchError::committed(
+            pc,
+            "array get-inc returned invalid committed state",
         ));
     }
     registers.write_number(usize::from(instruction.a), kernel.result);
@@ -847,15 +859,16 @@ fn execute_composed_array_set(
     region.native_entered = true;
     let status = invoke((&mut kernel as *mut NativeArrayElementStoreContext).cast())
         .map_err(|error| {
-            crate::machine::NativeDispatchError::Committed(format!(
+            crate::machine::NativeDispatchError::committed(pc, format!(
                 "array set execution failed after entry: {error:?}"
             ))
         })?;
     let written = *element;
     drop(words);
     if status != NATIVE_DISPATCH_OK || written.to_bits() != expected.to_bits() {
-        return Err(crate::machine::NativeDispatchError::Committed(
-            "array set returned invalid committed state".into(),
+        return Err(crate::machine::NativeDispatchError::committed(
+            pc,
+            "array set returned invalid committed state",
         ));
     }
     crate::execution_trace::stencil_iterations(code, pc, "composed_array_set", 1);
@@ -956,15 +969,16 @@ fn execute_composed_array_update(
     region.native_entered = true;
     let status = invoke((&mut kernel as *mut NativeArrayKernelContext).cast())
         .map_err(|error| {
-            crate::machine::NativeDispatchError::Committed(format!(
+            crate::machine::NativeDispatchError::committed(pc + 2, format!(
                 "array update execution failed after entry: {error:?}"
             ))
         })?;
     let written = unsafe { *element };
     drop(words);
     if status != NATIVE_DISPATCH_OK || written.to_bits() != kernel.result.to_bits() {
-        return Err(crate::machine::NativeDispatchError::Committed(
-            "array update returned invalid committed state".into(),
+        return Err(crate::machine::NativeDispatchError::committed(
+            pc + 2,
+            "array update returned invalid committed state",
         ));
     }
     registers.write_number(usize::from(load.a), initial);
@@ -1201,21 +1215,23 @@ pub(crate) fn execute_composed_array_kernel(
     let status = invoke((&mut kernel as *mut NativeArrayKernelContext).cast());
     drop(words);
     let status = status.map_err(|error| {
-        crate::machine::NativeDispatchError::Committed(format!(
+        crate::machine::NativeDispatchError::committed(pc + 3, format!(
             "array kernel execution failed after entry: {error:?}"
         ))
     })?;
     if status != NATIVE_DISPATCH_OK {
-        return Err(crate::machine::NativeDispatchError::Committed(
-            "array kernel returned invalid status".into(),
+        return Err(crate::machine::NativeDispatchError::committed(
+            pc + 3,
+            "array kernel returned invalid status",
         ));
     }
     // The exclusive borrow and all shape checks remain valid across the
     // machine call, so this setter only records the monotonic representation
     // fact and performs the same guarded numeric write for non-Cell payloads.
     if !crate::value::ArrayData::set_kernel_existing_f64(&array, index, kernel.result) {
-        return Err(crate::machine::NativeDispatchError::Committed(
-            "array kernel commit lost its proven slot".into(),
+        return Err(crate::machine::NativeDispatchError::committed(
+            pc + 3,
+            "array kernel commit lost its proven slot",
         ));
     }
     registers.write(usize::from(i0.a), array_value);
@@ -1345,7 +1361,7 @@ pub(crate) fn execute_composed_array_numeric_loop(
     let status = invoke((&mut kernel as *mut NativeArrayLoopContext).cast());
     drop(words);
     let status = status.map_err(|error| {
-        crate::machine::NativeDispatchError::Committed(format!(
+        crate::machine::NativeDispatchError::committed(pc + 18, format!(
             "array loop kernel failed after entry: {error:?}"
         ))
     })?;
@@ -1370,8 +1386,9 @@ pub(crate) fn execute_composed_array_numeric_loop(
     let completed_after_interrupt =
         status == NATIVE_DISPATCH_INTERRUPT && kernel.index == end;
     if (status != NATIVE_DISPATCH_OK && !completed_after_interrupt) || kernel.index != end {
-        return Err(crate::machine::NativeDispatchError::Committed(
-            "array loop kernel returned incomplete progress".into(),
+        return Err(crate::machine::NativeDispatchError::committed(
+            pc + 18,
+            "array loop kernel returned incomplete progress",
         ));
     }
     materialize_array_loop_outputs(
@@ -1705,7 +1722,7 @@ pub(crate) fn execute_optimized_code_step_from(
                 );
                 crate::execution_trace::leaf_rejection("optimizing_native_region");
             }
-            Err(crate::machine::NativeDispatchError::Committed(message)) => {
+            Err(crate::machine::NativeDispatchError::Committed { pc, message }) => {
                 crate::execution_trace::stencil_rejection(
                     code,
                     start,
@@ -1719,7 +1736,7 @@ pub(crate) fn execute_optimized_code_step_from(
                     "committed_failure",
                 );
                 return Err(VmError::EvalError(format!(
-                    "committed native region failure: {message}"
+                    "committed native region failure at residual pc {pc}: {message}"
                 )));
             }
         }
@@ -2137,9 +2154,9 @@ pub(crate) fn execute_optimized_code_step_from(
                 crate::execution_trace::stencil_observation(code, start, "dispatch", false);
                 crate::execution_trace::leaf_rejection("optimizing_native_dispatch");
             }
-            Err(crate::machine::NativeDispatchError::Committed(message)) => {
+            Err(crate::machine::NativeDispatchError::Committed { pc, message }) => {
                 return Err(VmError::EvalError(format!(
-                    "committed native dispatch failure: {message}"
+                    "committed native dispatch failure at residual pc {pc}: {message}"
                 )));
             }
         }
@@ -2263,9 +2280,9 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                 Err(crate::machine::NativeDispatchError::SemanticAt { pc: fault_pc, error }) => {
                     return completion_step_after_error(registers, error, fault_pc + 1);
                 }
-                Err(crate::machine::NativeDispatchError::Committed(message)) => {
+                Err(crate::machine::NativeDispatchError::Committed { pc, message }) => {
                     return Err(VmError::EvalError(format!(
-                        "committed native region failure: {message}"
+                        "committed native region failure at residual pc {pc}: {message}"
                     )));
                 }
                 Err(crate::machine::NativeDispatchError::Physical(_)) => {
@@ -2736,9 +2753,9 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                         }
                     }
                 }
-                Err(crate::machine::NativeDispatchError::Committed(message)) => {
+                Err(crate::machine::NativeDispatchError::Committed { pc, message }) => {
                     return Err(VmError::EvalError(format!(
-                        "committed native dispatch failure: {message}"
+                        "committed native dispatch failure at residual pc {pc}: {message}"
                     )));
                 }
             },
@@ -5945,7 +5962,7 @@ mod compact_handler_tests {
         });
         assert!(matches!(
             result,
-            Err(crate::machine::NativeDispatchError::Committed(_))
+            Err(crate::machine::NativeDispatchError::Committed { .. })
         ));
         assert!(region.native_entered);
         assert_eq!(crate::vm::get_property_result(&array, "0").unwrap(), Value::Number(4.0));
@@ -6126,7 +6143,7 @@ mod compact_handler_tests {
         region.entry_started = true;
         assert!(matches!(
             region.finish(super::NATIVE_DISPATCH_COMMITTED_ERROR),
-            Err(crate::machine::NativeDispatchError::Committed(message))
+            Err(crate::machine::NativeDispatchError::Committed { pc: 0, message })
                 if message.contains("post-entry")
         ));
         assert_eq!(registers, before, "post-entry failure must not trigger replay");
@@ -6147,7 +6164,7 @@ mod compact_handler_tests {
         region.entry_started = true;
         assert!(matches!(
             region.finish(super::NATIVE_DISPATCH_INTERRUPT),
-            Err(crate::machine::NativeDispatchError::Committed(message))
+            Err(crate::machine::NativeDispatchError::Committed { pc: 0, message })
                 if message.contains("committed progress")
         ));
     }
@@ -6185,7 +6202,7 @@ mod compact_handler_tests {
         after.entry_started = true;
         assert!(matches!(
             after.finish(0xFFFF),
-            Err(crate::machine::NativeDispatchError::Committed(message))
+            Err(crate::machine::NativeDispatchError::Committed { pc: 0, message })
                 if message.contains("invalid post-entry status")
         ));
     }
@@ -6302,7 +6319,7 @@ mod compact_handler_tests {
         dispatch.entry_started = true;
         assert!(matches!(
             dispatch.finish(0),
-            Err(crate::machine::NativeDispatchError::Committed(_))
+            Err(crate::machine::NativeDispatchError::Committed { .. })
         ));
     }
 
@@ -6315,8 +6332,9 @@ mod compact_handler_tests {
                 Some(super::NativeBridgeOutcome::Transition(transition)),
                 true,
                 "region",
+                0,
             ),
-            Err(crate::machine::NativeDispatchError::Committed(_))
+            Err(crate::machine::NativeDispatchError::Committed { .. })
         ));
         let error = crate::vm::VmError::EvalError("exact fault".into());
         assert!(matches!(
@@ -6325,8 +6343,30 @@ mod compact_handler_tests {
                 Some(super::NativeBridgeOutcome::Throw { pc: 7, error }),
                 true,
                 "region",
+                0,
             ),
-            Err(crate::machine::NativeDispatchError::Committed(_))
+            Err(crate::machine::NativeDispatchError::Committed { .. })
+        ));
+    }
+
+    #[test]
+    fn committed_status_preserves_the_typed_fault_pc() {
+        let code = crate::machine::ExecutableCode::from_ops(vec![Op::Return { src: 0 }]);
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![Value::Undefined]);
+        let context = crate::vm::current_context_or_default();
+        let mut region = super::NativeRegionContext::new(
+            code.code(), 0, &[crate::ir::Opcode::Return], &mut registers, &context,
+        );
+        region.entry_started = true;
+        let status = super::record_native_region_error(
+            &mut region,
+            crate::machine::NativeDispatchError::committed(9, "exact internal fault"),
+        );
+        let result = region.finish(status);
+        assert!(matches!(
+            result,
+            Err(crate::machine::NativeDispatchError::Committed { pc: 9, message })
+                if message == "exact internal fault"
         ));
     }
 

@@ -3032,7 +3032,7 @@ impl PhysicalState {
     ) {
         match result {
             Err(NativeDispatchError::Physical(_)) => self.clear(),
-            Err(NativeDispatchError::Committed(_)) => {
+            Err(NativeDispatchError::Committed { .. }) => {
                 if let Some((arena, address)) = published {
                     let _ = arena
                         .borrow_mut()
@@ -4465,7 +4465,10 @@ pub(crate) enum NativeDispatchError {
     /// The physical entry was already called and cannot be retried without
     /// risking duplicated effects. This is an invariant failure, not an
     /// admission miss; callers surface it as an internal VM error.
-    Committed(String),
+    Committed {
+        pc: usize,
+        message: String,
+    },
     /// A canonical handler failed after region entry. The operation PC is
     /// retained so completion/exception machinery resumes after the exact
     /// failing residual operation rather than at the region start.
@@ -4473,6 +4476,15 @@ pub(crate) enum NativeDispatchError {
         pc: usize,
         error: crate::vm::VmError,
     },
+}
+
+impl NativeDispatchError {
+    pub(crate) fn committed(pc: usize, message: impl Into<String>) -> Self {
+        Self::Committed {
+            pc,
+            message: message.into(),
+        }
+    }
 }
 
 impl NativeDispatchPlan {
@@ -4629,7 +4641,7 @@ impl NativeDispatchPlan {
         })();
         if matches!(
             result,
-            Err(NativeDispatchError::Physical(_) | NativeDispatchError::Committed(_))
+            Err(NativeDispatchError::Physical(_) | NativeDispatchError::Committed { .. })
         ) {
             // The trampoline carries no persistent semantic state. If mapping,
             // protection, or the bridge fails, discard the physical view and

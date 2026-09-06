@@ -4,6 +4,7 @@
 enum NativeBridgeOutcome {
     Transition(DispatchTransition),
     Throw { pc: usize, error: VmError },
+    InternalFailure { pc: usize, message: String },
 }
 
 fn finish_native_outcome(
@@ -11,6 +12,7 @@ fn finish_native_outcome(
     outcome: Option<NativeBridgeOutcome>,
     entry_started: bool,
     boundary: &'static str,
+    pc: usize,
 ) -> Result<DispatchTransition, crate::machine::NativeDispatchError> {
     let status = NativeStatus::from(status);
     match (status, outcome) {
@@ -18,7 +20,11 @@ fn finish_native_outcome(
         (NativeStatus::SemanticError, Some(NativeBridgeOutcome::Throw { pc, error })) => {
             Err(crate::machine::NativeDispatchError::SemanticAt { pc, error })
         }
-        _ => Err(malformed_native_outcome(status, entry_started, boundary)),
+        (
+            NativeStatus::CommittedError,
+            Some(NativeBridgeOutcome::InternalFailure { pc, message }),
+        ) => Err(crate::machine::NativeDispatchError::committed(pc, message)),
+        _ => Err(malformed_native_outcome(status, entry_started, boundary, pc)),
     }
 }
 
@@ -26,6 +32,7 @@ fn malformed_native_outcome(
     status: NativeStatus,
     entry_started: bool,
     boundary: &'static str,
+    pc: usize,
 ) -> crate::machine::NativeDispatchError {
     let message = match (entry_started, status) {
         (true, NativeStatus::Interrupt) => "interrupted after committed progress".to_owned(),
@@ -37,7 +44,7 @@ fn malformed_native_outcome(
     };
     let message = format!("native {boundary} {message}");
     if entry_started {
-        crate::machine::NativeDispatchError::Committed(message)
+        crate::machine::NativeDispatchError::committed(pc, message)
     } else {
         crate::machine::NativeDispatchError::Physical(message)
     }
