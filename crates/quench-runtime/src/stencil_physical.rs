@@ -3,6 +3,39 @@
 //! These routines inspect bytes only; semantic admission and ABI facts remain
 //! in the generated catalog and `machine` verifier.
 
+pub(crate) fn unique_relative_target_offset(
+    relocations: &[crate::stencil_select::PhysicalRelocation],
+    target: &str,
+) -> Option<u16> {
+    let mut offsets = relocations
+        .iter()
+        .filter(|relocation| is_relative(relocation.kind) && relocation.target == target)
+        .map(|relocation| relocation.offset);
+    unique_offset(&mut offsets)
+}
+
+pub(crate) fn unique_relative_hole_offset(
+    holes: &[crate::stencil_fact::Hole],
+) -> Option<u16> {
+    let mut offsets = holes
+        .iter()
+        .filter(|hole| is_relative(hole.kind))
+        .map(|hole| hole.offset);
+    unique_offset(&mut offsets)
+}
+
+fn unique_offset(offsets: &mut impl Iterator<Item = u16>) -> Option<u16> {
+    let offset = offsets.next()?;
+    offsets.next().is_none().then_some(offset)
+}
+
+const fn is_relative(kind: crate::stencil_fact::HoleKind) -> bool {
+    matches!(
+        kind,
+        crate::stencil_fact::HoleKind::Branch26 | crate::stencil_fact::HoleKind::Rel32
+    )
+}
+
 pub(crate) fn contains_call(bytes: &[u8]) -> bool {
     #[cfg(target_arch = "aarch64")]
     {
@@ -225,6 +258,22 @@ fn known_aarch64_instruction(encoded: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn named_relative_fixup_requires_one_exact_target() {
+        let relocation = crate::stencil_select::PhysicalRelocation {
+            offset: 4,
+            kind: crate::stencil_fact::HoleKind::Branch26,
+            target: "q_tail",
+            addend: 0,
+        };
+        assert_eq!(unique_relative_target_offset(&[relocation], "q_tail"), Some(4));
+        assert_eq!(unique_relative_target_offset(&[relocation], "q_other"), None);
+        assert_eq!(
+            unique_relative_target_offset(&[relocation, relocation], "q_tail"),
+            None
+        );
+    }
 
     #[cfg(target_arch = "aarch64")]
     #[test]
