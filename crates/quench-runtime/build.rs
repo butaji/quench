@@ -10,9 +10,10 @@ mod build_stencil_contract;
 mod build_stencil_templates;
 
 use build_stencil_contract::{
-    rust_assembly_recipe, rust_leaf_recipe, DeclAbi, PhysicalBinding, PhysicalBindingValue,
-    PhysicalOperand, PhysicalOperandField, PhysicalOutput, PhysicalOutputDestination,
-    PhysicalOutputValue, RecipeComposition, RegionDeclaration, RustAssemblyRecipe, RustLeafRecipe,
+    region_key_name, rust_assembly_recipe, rust_leaf_recipe, DeclAbi, PhysicalBinding,
+    PhysicalBindingValue, PhysicalOperand, PhysicalOperandField, PhysicalOutput,
+    PhysicalOutputDestination, PhysicalOutputValue, RecipeComposition, RegionDeclaration,
+    RustAssemblyRecipe, RustLeafRecipe,
 };
 
 include!("build_stencil_catalog/encoding_common.rs");

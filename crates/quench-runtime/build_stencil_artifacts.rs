@@ -17,7 +17,7 @@ use object::{
     SectionKind,
 };
 
-use super::{RecipeComposition, RegionDeclaration, RustAssemblyRecipe};
+use super::{region_key_name, RecipeComposition, RegionDeclaration, RustAssemblyRecipe};
 
 const HEADER: &str = "/// Rust object artifacts generated at build time.\n";
 

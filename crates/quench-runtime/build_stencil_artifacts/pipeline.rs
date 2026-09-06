@@ -1,6 +1,6 @@
 fn empty_artifacts() -> String {
     format!(
-        "{HEADER}{}\npub static BUILD_STENCIL_ARTIFACTS: &[BuildStencilArtifact] = &[];\n",
+        "{HEADER}{}\npub static BUILD_STENCIL_ARTIFACTS: &[BuildStencilArtifact] = &[];\nfn build_stencil_artifact_lookup(_: crate::stencil_fact::RegionKey) -> Option<&'static BuildStencilArtifact> {{ None }}\n",
         artifact_schema()
     )
 }
@@ -25,6 +25,7 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
     let root = unique_directory();
     let mut constants = Vec::new();
     let mut rows = Vec::new();
+    let mut lookup_arms = Vec::new();
     for declaration in declarations {
         // A generated whole-function recipe owns its arguments directly, so
         // it does not need the canonical byte-template holes (AddConst is the
@@ -93,14 +94,20 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
         let (constant, row) =
             render_artifact(declaration, &target, &compiler, &fingerprint, &extracted);
         constants.push(constant);
+        lookup_arms.push(format!(
+            "        CANONICAL_{}_KEY => Some(&BUILD_STENCIL_ARTIFACTS[{}]),",
+            region_key_name(declaration.name),
+            rows.len()
+        ));
         rows.push(row);
     }
     assert!(!rows.is_empty(), "no extractable Rust stencil declarations");
     let generated = format!(
-        "{HEADER}{}\n{}\npub static BUILD_STENCIL_ARTIFACTS: &[BuildStencilArtifact] = &[\n{}\n];\n",
+        "{HEADER}{}\n{}\npub static BUILD_STENCIL_ARTIFACTS: &[BuildStencilArtifact] = &[\n{}\n];\nfn build_stencil_artifact_lookup(key: crate::stencil_fact::RegionKey) -> Option<&'static BuildStencilArtifact> {{\n    match key {{\n{}\n        _ => None,\n    }}\n}}\n",
         artifact_schema(),
         constants.join("\n"),
-        rows.join("\n")
+        rows.join("\n"),
+        lookup_arms.join("\n")
     );
     generated
 }
