@@ -12,16 +12,28 @@ pub(crate) struct LocalNumericExecution {
     pub output: crate::ir::Register,
     pub value: f64,
     pub span: usize,
+    pub store_slot: Option<u16>,
     pub discarded: crate::stencil_plan::DiscardedRegisters,
 }
 
 impl LocalNumericExecution {
-    pub(crate) fn commit(self, registers: &mut crate::register_file::RegisterFile) -> usize {
+    pub(crate) fn commit(
+        self,
+        registers: &mut crate::register_file::RegisterFile,
+        environment: &crate::environment::Environment,
+    ) -> Option<usize> {
+        registers.word_ptr(usize::from(self.output))?;
+        if let Some(slot) = self.store_slot {
+            let bits = crate::tagged_value::TaggedValue::number(self.value).bits();
+            environment
+                .store_proven_tagged_bits(slot, bits)
+                .then_some(())?;
+        }
         for register in self.discarded.into_iter().flatten() {
             registers.clear_word(usize::from(register));
         }
         registers.write_number(usize::from(self.output), self.value);
-        self.span
+        Some(self.span)
     }
 }
 
@@ -185,6 +197,13 @@ impl NativeLocalBinaryPlan {
         &mut self,
         environment: &crate::environment::Environment,
     ) -> Option<LocalNumericExecution> {
+        if self
+            .selection
+            .store_slot
+            .is_some_and(|slot| !environment.can_store_proven_tagged_bits(slot))
+        {
+            return None;
+        }
         let result = match self.selection.inputs {
             LocalNumericInputs::Folded { bits } => f64::from_bits(bits),
             LocalNumericInputs::AddChain { sources, .. } => {
@@ -203,6 +222,7 @@ impl NativeLocalBinaryPlan {
             output: self.selection.output,
             value: result,
             span: usize::from(self.selection.span),
+            store_slot: self.selection.store_slot,
             discarded: self.selection.discarded,
         })
     }
