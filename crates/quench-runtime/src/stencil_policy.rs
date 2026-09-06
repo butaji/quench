@@ -53,6 +53,19 @@ impl ExecutionPolicy {
         Self::from_architecture(Architecture::Aarch64, true)
     }
 
+    /// Exercise a helper-capable region through the normal baseline driver
+    /// without enabling it in the production AArch64 policy.
+    #[cfg(test)]
+    pub(crate) fn bridge_opt_in_for_test() -> Self {
+        Self {
+            native_leaves: false,
+            native_dispatch: false,
+            fused_regions: true,
+            composed_regions: false,
+            optimizing_view: false,
+        }
+    }
+
     fn from_architecture(arch: Architecture, arm_opt_in: bool) -> Self {
         match arch {
             Architecture::X86_64 => Self {

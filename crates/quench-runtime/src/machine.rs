@@ -2876,6 +2876,14 @@ impl PhysicalState {
         self.cache.clear();
         self.lifecycle.retire();
     }
+
+    fn apply_dispatch_outcome<T>(&mut self, result: &Result<T, NativeDispatchError>) {
+        match result {
+            Err(NativeDispatchError::Physical(_)) => self.clear(),
+            Err(NativeDispatchError::Committed(_)) => self.retire(),
+            _ => {}
+        }
+    }
 }
 
 pub(crate) struct NativeLoadConstPlan {
@@ -4382,9 +4390,7 @@ impl NativeDispatchPlan {
                 })?;
                 dispatch.finish(status)
             });
-            if matches!(result, Err(NativeDispatchError::Physical(_))) {
-                self.physical.clear();
-            }
+            self.physical.apply_dispatch_outcome(&result);
             return result;
         }
         if self.arena.is_none() {
@@ -4441,8 +4447,8 @@ impl NativeDispatchPlan {
             // protection, or the bridge fails, discard the physical view and
             // make the caller use the complete ordinary path next time.
             self.arena.take();
-            self.physical.clear();
         }
+        self.physical.apply_dispatch_outcome(&result);
         result
     }
 }
@@ -4483,6 +4489,8 @@ pub(crate) struct NativeRegionPlan {
     last_native_execution: bool,
     #[cfg(test)]
     last_native_view: Option<crate::stencil_select::PhysicalStencilView>,
+    #[cfg(test)]
+    physical_entry_count: u64,
 }
 
 /// Validate the complete residual window before a physical entry is
@@ -4727,6 +4735,8 @@ impl NativeRegionPlan {
             last_native_execution: false,
             #[cfg(test)]
             last_native_view: None,
+            #[cfg(test)]
+            physical_entry_count: 0,
         })
     }
 
@@ -4744,6 +4754,11 @@ impl NativeRegionPlan {
     #[cfg(test)]
     pub(crate) fn key_for_test(&self) -> crate::stencil_fact::RegionKey {
         self.key
+    }
+
+    #[cfg(test)]
+    pub(crate) fn physical_entry_count_for_test(&self) -> u64 {
+        self.physical_entry_count
     }
 
     #[cfg(test)]
@@ -4974,30 +4989,15 @@ impl NativeRegionPlan {
                     "native fused region execution failed: {error:?}"
                 ))
             })?;
+            #[cfg(test)]
+            {
+                self.physical_entry_count = self.physical_entry_count.saturating_add(1);
+                self.last_native_view = Some(view);
+            }
             region.finish(status)
         })();
-        self.retire_on_failure(&result);
+        self.physical.apply_dispatch_outcome(&result);
         result
-    }
-
-    fn retire_on_failure(
-        &mut self,
-        result: &Result<crate::vm::DispatchTransition, NativeDispatchError>,
-    ) {
-        match result {
-            Err(NativeDispatchError::Committed(_)) => {
-                // A committed failure cannot be replayed through the same
-                // bytes. Retire this version permanently while the shared
-                // owner remains live for unrelated regions.
-                self.physical.retire();
-            }
-            Err(NativeDispatchError::Physical(_)) => {
-                // Entry rejection is safe to rebuild after the caller takes
-                // the ordinary path; it did not cross the physical boundary.
-                self.physical.clear();
-            }
-            _ => {}
-        }
     }
 }
 
@@ -5635,6 +5635,11 @@ impl BaselinePlan {
     pub(crate) fn native_storage_for_test(&self) -> (usize, usize, usize) {
         let arena = self.shared_region_arena.borrow();
         (arena.used(), arena.capacity(), arena.slab_count())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shared_stencil_pool_for_test(&self) -> SharedStencilPool {
+        Rc::clone(&self.shared_region_arena)
     }
 
     fn compile(code: CodeView<'_>, policy: crate::stencil_policy::ExecutionPolicy) -> Self {
