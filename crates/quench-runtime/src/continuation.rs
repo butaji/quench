@@ -9,11 +9,11 @@ pub(crate) enum LoopPhase {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SuspensionPoint {
     Yield {
-        pc: usize,
+        resume: Option<crate::machine::CodeRange>,
         src: u16,
     },
     YieldStar {
-        pc: usize,
+        resume: Option<crate::machine::CodeRange>,
         dst: u16,
         iterator: u16,
     },

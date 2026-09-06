@@ -31,7 +31,9 @@ pub(crate) fn execute(
     let body_code = body.code().ok_or(crate::execute::VmError::MissingReturn)?;
     let init_code = init.code().ok_or(crate::execute::VmError::MissingReturn)?;
     let test_code = test.code().ok_or(crate::execute::VmError::MissingReturn)?;
-    let update_code = update.code().ok_or(crate::execute::VmError::MissingReturn)?;
+    let update_code = update
+        .code()
+        .ok_or(crate::execute::VmError::MissingReturn)?;
     run_loop(
         label,
         init_code,
@@ -137,20 +139,8 @@ fn run_loop_inner(
                 break;
             }
             crate::completion::LoopTransition::Propagate(completion) => {
-                let completion = loop_suspension(
-                    completion,
-                    promise_loop_point(
-                        body,
-                        body_next,
-                        suspension_slot,
-                        label,
-                        test,
-                        update,
-                        dst,
-                        post_test,
-                        per_iteration,
-                    ),
-                );
+                let completion =
+                    wrap_body_suspension(completion, body, body_next, suspension_slot, &shape)?;
                 return update_empty_from(registers, dst, completion);
             }
         }
@@ -204,8 +194,7 @@ fn phase_suspension(
     step: crate::vm::CompletionStep,
     registers: &crate::register_file::RegisterFile,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    let destination = suspension_slot(code, &step)
-        .ok_or(crate::execute::VmError::MissingReturn)?;
+    let destination = suspension_slot(code, &step).ok_or(crate::execute::VmError::MissingReturn)?;
     let point = shape.suspension_point(phase, code, step.next, destination);
     let completion = loop_suspension(step.completion, point);
     update_empty_from(registers, shape.dst, completion)
@@ -258,48 +247,49 @@ fn loop_test_completion(
     match completion {
         crate::completion::Completion::Return(value) => Ok(crate::execute::is_truthy(&value)),
         crate::completion::Completion::Normal => Ok(false),
-        completion => completion.into_vm_error().map(|value| crate::execute::is_truthy(&value)),
+        completion => completion
+            .into_vm_error()
+            .map(|value| crate::execute::is_truthy(&value)),
     }
 }
 
-fn promise_loop_point(
+fn wrap_body_suspension(
+    completion: crate::completion::Completion,
     body: crate::machine::CodeView<'_>,
     next: usize,
     suspension_slot: Option<u16>,
-    label: &Option<String>,
-    test: crate::machine::CodeView<'_>,
-    update: crate::machine::CodeView<'_>,
-    dst: u16,
-    post_test: bool,
-    per_iteration: &[u16],
-) -> crate::continuation::SuspensionPoint {
-    crate::continuation::SuspensionPoint::Loop {
-        pc: 0,
-        label: label.clone(),
-        body: body.range(),
-        test: test.range(),
-        update: update.range(),
-        phase: crate::continuation::LoopPhase::Body,
-        phase_resume: crate::machine::CodeRange {
-            code: body.range().code,
-            start: body.range().start.saturating_add(next as u32),
-            end: body.range().end,
-        },
-        dst,
-        yield_dst: suspension_slot.unwrap_or_else(|| suspended_destination(body, next)),
-        post_test,
-        per_iteration: per_iteration.into(),
+    shape: &LoopExecution<'_>,
+) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    if !completion.is_suspension() {
+        return Ok(completion);
     }
+    let destination = suspension_slot
+        .or_else(|| completion.suspension_point().and_then(point_destination))
+        .ok_or(crate::execute::VmError::MissingReturn)?;
+    let point = crate::continuation::SuspensionPoint::Loop {
+        pc: 0,
+        label: shape.label.clone(),
+        body: body.range(),
+        test: shape.test.range(),
+        update: shape.update.range(),
+        phase: crate::continuation::LoopPhase::Body,
+        phase_resume: suffix(body.range(), next),
+        dst: shape.dst,
+        yield_dst: destination,
+        post_test: shape.post_test,
+        per_iteration: shape.per_iteration.into(),
+    };
+    Ok(loop_suspension(completion, point))
 }
 
-fn suspended_destination(body: crate::machine::CodeView<'_>, next: usize) -> u16 {
-    next.checked_sub(1)
-        .and_then(|pc| body.cold_at(pc))
-        .and_then(|op| match op {
-            crate::ops::Op::Await { dst, .. } | crate::ops::Op::Yield { src: dst } => Some(*dst),
-            _ => None,
-        })
-        .unwrap_or(0)
+fn point_destination(point: &crate::continuation::SuspensionPoint) -> Option<u16> {
+    match point {
+        crate::continuation::SuspensionPoint::Yield { src, .. }
+        | crate::continuation::SuspensionPoint::Loop { yield_dst: src, .. }
+        | crate::continuation::SuspensionPoint::Branch { yield_dst: src, .. } => Some(*src),
+        crate::continuation::SuspensionPoint::YieldStar { dst, .. } => Some(*dst),
+        crate::continuation::SuspensionPoint::Nested { inner, .. } => point_destination(inner),
+    }
 }
 
 fn loop_suspension(
