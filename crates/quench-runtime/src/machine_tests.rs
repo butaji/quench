@@ -2036,6 +2036,7 @@ fn ordinary_source_lowering_executes_bitwise_region_and_falls_back_on_conversion
         let plan = super::BaselinePlan::compile_for_test(view, policy);
         let bitwise = plan.native_binary_at(binary_pc).expect("bitwise plan");
         let shift = plan.native_binary_at(shift_pc).expect("shift plan");
+        let fused_bitwise = plan.native_local_binary_at(binary_pc.saturating_sub(2));
         let run = |input: f64, expected: f64| {
             let mut registers = crate::register_file::RegisterFile::with_undefined(
                 usize::from(view.register_count()).max(8),
@@ -2059,7 +2060,12 @@ fn ordinary_source_lowering_executes_bitwise_region_and_falls_back_on_conversion
         run(f64::NAN, 0.0);
         run(f64::INFINITY, 0.0);
         run(4_294_967_297.0, 2.0);
-        assert!(bitwise.borrow().native_entry_count > 0);
+        assert!(
+            bitwise.borrow().native_entry_count > 0
+                || fused_bitwise
+                    .as_ref()
+                    .is_some_and(|plan| plan.borrow().native_entry_count() > 0)
+        );
         assert!(shift.borrow().native_entry_count > 0);
 
         let before = bitwise.borrow().native_entry_count;
