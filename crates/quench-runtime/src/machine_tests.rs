@@ -1950,6 +1950,33 @@ fn ordinary_source_lowering_executes_fused_indexed_numeric_update() {
             Some(5.0)
         );
         assert!(region.borrow().last_native_execution());
+        let published = {
+            let slab = plan.shared_region_arena.borrow();
+            (slab.slab_count(), slab.used(), slab.capacity())
+        };
+        crate::vm::execute_baseline_code_from(
+            view,
+            &plan,
+            pc,
+            &mut registers,
+            &context,
+            crate::environment::Environment::new(),
+        )
+        .expect("warm composed update");
+        assert_eq!(
+            registers
+                .read_array(usize::from(store.a))
+                .and_then(|array| array.dense_number_at(0)),
+            Some(7.0)
+        );
+        assert!(region.borrow().last_native_execution());
+        let slab = plan.shared_region_arena.borrow();
+        assert_eq!(
+            (slab.slab_count(), slab.used(), slab.capacity()),
+            published,
+            "warm region must not render or allocate again"
+        );
+        drop(slab);
         assert!(
             plan.shared_region_arena.borrow_mut().evict_idle(0) >= 1,
             "composed owner should expose an evictable published slab"
@@ -1967,7 +1994,7 @@ fn ordinary_source_lowering_executes_fused_indexed_numeric_update() {
             registers
                 .read_array(usize::from(store.a))
                 .and_then(|array| array.dense_number_at(0)),
-            Some(7.0)
+            Some(9.0)
         );
         assert!(region.borrow().last_native_execution());
         executed = true;
