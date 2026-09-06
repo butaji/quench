@@ -96,3 +96,27 @@ fn suspended_generator_keeps_captured_binding_during_collection() {
         "#,
     );
 }
+
+#[test]
+fn rejected_await_preserves_bindings_and_runs_catch_finally_once() {
+    run_async(
+        r#"
+        async function verify() {
+          var log=[],captured=function(){return 42;};
+          try {
+            log.push("before");
+            await Promise.reject("boom");
+            log.push("unreachable");
+          } catch(error) {
+            log.push("catch:"+error+":"+captured());
+          } finally {
+            log.push("finally:"+captured());
+          }
+          if(log.join("|")!=="before|catch:boom:42|finally:42") {
+            throw "rejected await replayed or lost its continuation";
+          }
+        }
+        verify().then(function(){throw "__continuation_contract_done__";});
+        "#,
+    );
+}

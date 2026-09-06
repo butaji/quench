@@ -18,6 +18,14 @@ pub(crate) fn queue_unhandled_rejection(promise: Rc<PromiseData>, reason: Value)
     UNHANDLED_REJECTIONS.with(|queue| queue.borrow_mut().push_back((promise, reason)));
 }
 
+pub(crate) fn remove_unhandled_rejection(promise: &Rc<PromiseData>) {
+    UNHANDLED_REJECTIONS.with(|queue| {
+        queue
+            .borrow_mut()
+            .retain(|(queued, _)| !Rc::ptr_eq(queued, promise));
+    });
+}
+
 pub fn take_unhandled_rejections() -> Vec<(Rc<PromiseData>, Value)> {
     UNHANDLED_REJECTIONS.with(|queue| queue.borrow_mut().drain(..).collect())
 }
