@@ -158,6 +158,7 @@ impl Drop for RootGuard {
 struct State {
     objects: HashMap<usize, Weak<ObjectData>>,
     functions: HashMap<usize, Weak<FunctionValue>>,
+    generators: HashMap<usize, Weak<crate::value::GeneratorData>>,
     bytes_since_gc: usize,
     threshold: usize,
     collecting: bool,
@@ -166,6 +167,7 @@ struct State {
 enum Node {
     Object(Rc<ObjectData>),
     Function(Rc<FunctionValue>),
+    Generator(Rc<crate::value::GeneratorData>),
 }
 
 impl Node {
@@ -173,6 +175,7 @@ impl Node {
         match self {
             Self::Object(value) => Rc::as_ptr(value) as usize,
             Self::Function(value) => Rc::as_ptr(value) as usize,
+            Self::Generator(value) => Rc::as_ptr(value) as usize,
         }
     }
 }
@@ -209,6 +212,21 @@ pub(crate) fn track_function(value: &Rc<FunctionValue>) {
     });
 }
 
+pub(crate) fn track_generator(value: &Rc<crate::value::GeneratorData>) {
+    STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        let key = Rc::as_ptr(value) as usize;
+        if state
+            .generators
+            .get(&key)
+            .is_none_or(|entry| entry.strong_count() == 0)
+        {
+            state.generators.insert(key, Rc::downgrade(value));
+            state.bytes_since_gc = state.bytes_since_gc.saturating_add(256);
+        }
+    });
+}
+
 /// Track a heap value encountered at a mutable property edge.
 pub(crate) fn track_value(value: &Value) {
     match value {
@@ -219,6 +237,7 @@ pub(crate) fn track_value(value: &Value) {
                 track_function(&function);
             }
         }
+        Value::Generator(generator) => track_generator(generator),
         _ => {}
     }
 }
@@ -245,10 +264,10 @@ pub(crate) fn collect_cycles() {
     if let Value::Object(global) = crate::vm::current_global_object() {
         track_object(&global);
     }
-    let (objects, functions) = STATE.with(|state| {
+    let (objects, functions, generators) = STATE.with(|state| {
         let mut state = state.borrow_mut();
         if state.collecting {
-            return (Vec::new(), Vec::new());
+            return (Vec::new(), Vec::new(), Vec::new());
         }
         state.collecting = true;
         state.bytes_since_gc = 0;
@@ -263,12 +282,18 @@ pub(crate) fn collect_cycles() {
                 .values()
                 .filter_map(Weak::upgrade)
                 .collect::<Vec<_>>(),
+            state
+                .generators
+                .values()
+                .filter_map(Weak::upgrade)
+                .collect::<Vec<_>>(),
         )
     });
 
-    let mut nodes = Vec::with_capacity(objects.len() + functions.len());
+    let mut nodes = Vec::with_capacity(objects.len() + functions.len() + generators.len());
     nodes.extend(objects.into_iter().map(Node::Object));
     nodes.extend(functions.into_iter().map(Node::Function));
+    nodes.extend(generators.into_iter().map(Node::Generator));
     let mut ids = HashMap::with_capacity(nodes.len());
     nodes.retain(|node| ids.insert(node.key(), ids.len()).is_none());
     let mut edges = vec![Vec::new(); nodes.len()];
@@ -290,6 +315,9 @@ pub(crate) fn collect_cycles() {
                     append_edges(&value, &ids, &mut edges[index]);
                 }
             }
+            Node::Generator(generator) => {
+                append_generator_edges(generator, &ids, &mut edges[index]);
+            }
         }
     }
 
@@ -306,6 +334,7 @@ pub(crate) fn collect_cycles() {
         let strong = match node {
             Node::Object(value) => Rc::strong_count(value),
             Node::Function(value) => Rc::strong_count(value),
+            Node::Generator(value) => Rc::strong_count(value),
         };
         // `nodes` owns one temporary reference to every candidate.
         external[index] = strong.saturating_sub(1) > incoming[index];
@@ -315,63 +344,13 @@ pub(crate) fn collect_cycles() {
     // walk below preserves everything they reference.
     ROOTS.with(|roots| {
         for value in roots.borrow().iter() {
-            match value {
-                Value::Object(object) => {
-                    if let Some(&id) = ids.get(&(Rc::as_ptr(object) as usize)) {
-                        external[id] = true;
-                    }
-                }
-                Value::Function(function) => {
-                    if let Some(&id) = ids.get(&(Rc::as_ptr(function) as usize)) {
-                        external[id] = true;
-                    }
-                }
-                Value::BindingCell(cell) => match cell.load() {
-                    Value::Object(object) => {
-                        if let Some(&id) = ids.get(&(Rc::as_ptr(&object) as usize)) {
-                            external[id] = true;
-                        }
-                    }
-                    Value::Function(function) => {
-                        if let Some(&id) = ids.get(&(Rc::as_ptr(&function) as usize)) {
-                            external[id] = true;
-                        }
-                    }
-                    _ => {}
-                },
-                _ => {}
-            }
+            mark_direct_root_value(value, &ids, &mut external);
         }
     });
     ENV_ROOTS.with(|environments| {
         for environment in environments.borrow().iter() {
             for value in environment.cycle_values() {
-                match value {
-                    Value::Object(object) => {
-                        if let Some(&id) = ids.get(&(Rc::as_ptr(&object) as usize)) {
-                            external[id] = true;
-                        }
-                    }
-                    Value::Function(function) => {
-                        if let Some(&id) = ids.get(&(Rc::as_ptr(&function) as usize)) {
-                            external[id] = true;
-                        }
-                    }
-                    Value::BindingCell(cell) => match cell.load() {
-                        Value::Object(object) => {
-                            if let Some(&id) = ids.get(&(Rc::as_ptr(&object) as usize)) {
-                                external[id] = true;
-                            }
-                        }
-                        Value::Function(function) => {
-                            if let Some(&id) = ids.get(&(Rc::as_ptr(&function) as usize)) {
-                                external[id] = true;
-                            }
-                        }
-                        _ => {}
-                    },
-                    _ => {}
-                }
+                mark_direct_root_value(&value, &ids, &mut external);
             }
         }
     });
@@ -429,6 +408,7 @@ pub(crate) fn collect_cycles() {
             match node {
                 Node::Object(object) => clear_object_edges(object, &doomed, &ids),
                 Node::Function(function) => clear_function_edges(function, &doomed, &ids),
+                Node::Generator(_) => {}
             }
         }
     }
@@ -441,6 +421,7 @@ pub(crate) fn collect_cycles() {
         let mut state = state.borrow_mut();
         state.objects.retain(|_, entry| entry.strong_count() > 0);
         state.functions.retain(|_, entry| entry.strong_count() > 0);
+        state.generators.retain(|_, entry| entry.strong_count() > 0);
         // QuickJS adapts its next pass to the surviving allocation volume.
         // Keep a floor so small programs do not turn collection into a tax.
         state.threshold = (live.max(1) * 256).max(INITIAL_THRESHOLD);
@@ -513,7 +494,13 @@ fn append_edges(value: &Value, ids: &HashMap<usize, usize>, output: &mut Vec<usi
                 append_edges(value, ids, output);
             }
         }
-        Value::Generator(generator) => append_generator_edges(generator, ids, output),
+        Value::Generator(generator) => {
+            if let Some(&id) = ids.get(&(Rc::as_ptr(generator) as usize)) {
+                output.push(id);
+            } else {
+                append_generator_edges(generator, ids, output);
+            }
+        }
         _ => {}
     }
 }
@@ -578,6 +565,10 @@ fn mark_direct_root_value(value: &Value, ids: &HashMap<usize, usize>, external: 
                 if !seen.insert(key) {
                     return;
                 }
+                if let Some(&id) = ids.get(&key) {
+                    external[id] = true;
+                    return;
+                }
                 visit(
                     &Value::Function(Rc::clone(&generator.function)),
                     ids,
@@ -599,10 +590,18 @@ fn mark_direct_root_value(value: &Value, ids: &HashMap<usize, usize>, external: 
                     .values
                     .visit_values(|value| visit(&value, ids, external, seen));
             }
-            Value::BindingCell(_)
-            | Value::ObjectAlias(_)
-            | Value::Proxy(_)
-            | Value::BoundFunction(_) => {}
+            Value::BindingCell(cell) => {
+                let key = Rc::as_ptr(cell) as usize;
+                if seen.insert(key) {
+                    visit(&cell.load(), ids, external, seen);
+                }
+            }
+            Value::ObjectAlias(alias) => {
+                if let Some(object) = alias.target() {
+                    visit(&Value::Object(object), ids, external, seen);
+                }
+            }
+            Value::Proxy(_) | Value::BoundFunction(_) => {}
             Value::WeakFunction(_)
             | Value::HostCapability(_)
             | Value::Builtin(_)
@@ -663,6 +662,9 @@ fn generator_points_to_doomed(
     doomed: &HashSet<usize>,
     ids: &HashMap<usize, usize>,
 ) -> bool {
+    if let Some(id) = ids.get(&(Rc::as_ptr(generator) as usize)) {
+        return doomed.contains(id);
+    }
     let function = Value::Function(Rc::clone(&generator.function));
     if value_points_to_doomed(&function, doomed, ids)
         || generator
@@ -935,6 +937,7 @@ mod tests {
             running: RefCell::new(false),
             async_next_queue: RefCell::new(std::collections::VecDeque::new()),
         });
+        track_generator(&generator);
         let holder = Rc::new(ObjectData::new(vec![(
             "generator".into(),
             Value::Generator(Rc::clone(&generator)),
