@@ -130,6 +130,7 @@ pub mod stencil_fact;
 pub mod stencil_lifecycle;
 pub mod stencil_patch;
 mod stencil_physical;
+mod stencil_plan;
 mod stencil_policy;
 pub mod stencil_select;
 
