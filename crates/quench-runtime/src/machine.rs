@@ -3047,8 +3047,7 @@ impl PhysicalState {
 pub(crate) struct NativeLoadConstPlan {
     bits: u64,
     key: crate::stencil_fact::RegionKey,
-    arena: Option<crate::stencil_arena::StencilArena>,
-    shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
+    storage: PhysicalStorage,
     physical: PhysicalState,
     site: crate::quickening::QuickeningSite<2>,
     installed: InstalledConstantEntry,
@@ -3079,7 +3078,7 @@ impl NativeLoadConstPlan {
         shared: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
     ) -> Option<Self> {
         let mut plan = Self::new(bits, policy)?;
-        plan.shared_arena = Some(shared);
+        plan.storage = PhysicalStorage::Shared(shared);
         Some(plan)
     }
 
@@ -3094,8 +3093,7 @@ impl NativeLoadConstPlan {
         .then_some(Self {
             bits,
             key,
-            arena: None,
-            shared_arena: None,
+            storage: PhysicalStorage::Local(None),
             physical: PhysicalState::new(),
             site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::LoadConst),
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -3115,7 +3113,7 @@ impl NativeLoadConstPlan {
         {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
         }
-        if let Some(shared) = self.shared_arena.clone() {
+        if let Some(shared) = self.storage.shared() {
             if let InstalledConstantEntry::Shared(owned) = self.installed {
                 if let Ok(result) = invoke_shared_entry!(shared, owned, |entry| entry()) {
                     #[cfg(test)]
@@ -3157,7 +3155,7 @@ impl NativeLoadConstPlan {
             };
         }
         if let InstalledConstantEntry::Local(address) = self.installed {
-            if let Some(arena) = self.arena.as_ref() {
+            if let Some(arena) = self.storage.local() {
                 if let Ok(entry) = arena.constant_word_entry(address) {
                     #[cfg(test)]
                     {
@@ -3168,15 +3166,9 @@ impl NativeLoadConstPlan {
             }
             self.installed = InstalledConstantEntry::Unpublished;
         }
-        if self.arena.is_none() {
-            self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
-        }
         let values =
             crate::stencil_fact::PatchValues::from_site(&self.site).with_constant_bits(self.bits);
-        let arena = self
-            .arena
-            .as_mut()
-            .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
+        let arena = self.storage.local_mut()?;
         let view = crate::stencil_select::select_physical_for_abi(
             self.key,
             crate::stencil_select::RegionAbi::ConstantWord,
@@ -3790,8 +3782,7 @@ enum InstalledWordEntry {
 }
 
 pub(crate) struct NativeMovePlan {
-    arena: Option<crate::stencil_arena::StencilArena>,
-    shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
+    storage: PhysicalStorage,
     physical: PhysicalState,
     site: crate::quickening::QuickeningSite<4>,
     opcode: crate::ir::Opcode,
@@ -3814,7 +3805,7 @@ impl NativeMovePlan {
         shared_arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
     ) -> Option<Self> {
         let mut plan = Self::new(instruction, policy)?;
-        plan.shared_arena = Some(shared_arena);
+        plan.storage = PhysicalStorage::Shared(shared_arena);
         Some(plan)
     }
 
@@ -3847,8 +3838,7 @@ impl NativeMovePlan {
                 && validate_physical_template(record).is_ok()
         })?;
         Some(Self {
-            arena: None,
-            shared_arena: None,
+            storage: PhysicalStorage::Local(None),
             physical: PhysicalState::new(),
             site: crate::quickening::QuickeningSite::new(instruction.opcode),
             opcode: instruction.opcode,
@@ -3897,9 +3887,9 @@ impl NativeMovePlan {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
         }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-        if self.shared_arena.is_none() {
+        if self.storage.shared().is_none() {
             if let InstalledWordEntry::Local(address) = self.installed {
-                if let Some(arena) = self.arena.as_ref() {
+                if let Some(arena) = self.storage.local() {
                     if let Ok(entry) = arena.tagged_word_entry(address) {
                         let value = entry(source);
                         self.note_entry();
@@ -3911,7 +3901,7 @@ impl NativeMovePlan {
         }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if let (Some(shared), InstalledWordEntry::Shared(owned)) =
-            (self.shared_arena.clone(), self.installed)
+            (self.storage.shared(), self.installed)
         {
             match invoke_shared_entry!(shared, owned, |entry| entry(source)) {
                 Ok(value) => {
@@ -3934,7 +3924,7 @@ impl NativeMovePlan {
         {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
         }
-        if let Some(shared) = self.shared_arena.clone() {
+        if let Some(shared) = self.storage.shared() {
             let rendered = (|| -> Result<_, crate::stencil_arena::ArenaError> {
                 let mut slab = shared.borrow_mut();
                 let view = crate::stencil_select::select_physical_for_abi(
@@ -3969,20 +3959,8 @@ impl NativeMovePlan {
                 }
             };
         }
-        if self.arena.is_none() {
-            match crate::stencil_arena::StencilArena::new(4096) {
-                Ok(arena) => self.arena = Some(arena),
-                Err(error) => {
-                    self.physical.lifecycle.reset();
-                    return Err(error);
-                }
-            }
-        }
         let result = (|| {
-            let arena = self
-                .arena
-                .as_mut()
-                .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
+            let arena = self.storage.local_mut()?;
             let view = crate::stencil_select::select_physical_for_abi(
                 key,
                 crate::stencil_select::RegionAbi::TaggedWord,
@@ -4001,7 +3979,7 @@ impl NativeMovePlan {
                 .map(|view| crate::stencil_arena::physical_cache_signature(view, &values));
             self.note_view(*view);
             self.note_entry();
-            if let Some(arena) = self.arena.as_ref() {
+            if let Some(arena) = self.storage.local() {
                 if let Some(address) = signature
                     .and_then(|signature| self.physical.cache.get_owned(key, signature, arena.id()))
                 {
@@ -4013,7 +3991,7 @@ impl NativeMovePlan {
             }
         }
         if result.is_err() {
-            self.arena.take();
+            self.storage.reset_local();
             self.physical.clear();
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             {
@@ -4031,12 +4009,7 @@ impl std::fmt::Debug for NativeMovePlan {
             .field("opcode", &self.opcode)
             .field(
                 "used_bytes",
-                &self
-                    .shared_arena
-                    .as_ref()
-                    .map(|arena| arena.borrow().used())
-                    .or_else(|| self.arena.as_ref().map(|arena| arena.used()))
-                    .unwrap_or(0),
+                &self.storage.used(),
             )
             .field("cache_len", &self.physical.cache.len())
             .finish()
