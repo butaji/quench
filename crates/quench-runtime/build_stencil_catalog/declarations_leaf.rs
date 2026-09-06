@@ -2,7 +2,7 @@ const LEAF_REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "loop",
         operations: &["Add", "Return"],
-        abi: DeclAbi::Scalar,
+        abi: DeclAbi::ScalarF64Binary,
         x86_bytes: &X86_LOOP_BYTES,
         aarch64_bytes: &AARCH64_LOOP_BYTES,
         portable_bytes: &[0xC3],
@@ -54,7 +54,7 @@ const LEAF_REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "fallthrough",
         operations: &["Add", "Return"],
-        abi: DeclAbi::Scalar,
+        abi: DeclAbi::ScalarF64Binary,
         x86_bytes: &X86_FALLTHROUGH_BYTES,
         // AArch64 uses a direct B/imm26 branch to the aligned return tail;
         // x86 keeps its rel32 form. Both are patched only after the two pieces
@@ -69,7 +69,7 @@ const LEAF_REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "subtract",
         operations: &["Sub", "Return"],
-        abi: DeclAbi::Scalar,
+        abi: DeclAbi::ScalarF64Binary,
         x86_bytes: &X86_SUBTRACT_BYTES,
         aarch64_bytes: &AARCH64_SUBTRACT_BYTES,
         portable_bytes: &[0xC3],
@@ -81,7 +81,7 @@ const LEAF_REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "multiply",
         operations: &["Mul", "Return"],
-        abi: DeclAbi::Scalar,
+        abi: DeclAbi::ScalarF64Binary,
         x86_bytes: &X86_MULTIPLY_BYTES,
         aarch64_bytes: &AARCH64_MULTIPLY_BYTES,
         portable_bytes: &[0xC3],
@@ -93,7 +93,7 @@ const LEAF_REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "divide",
         operations: &["Div", "Return"],
-        abi: DeclAbi::Scalar,
+        abi: DeclAbi::ScalarF64Binary,
         x86_bytes: &X86_DIVIDE_BYTES,
         aarch64_bytes: &AARCH64_DIVIDE_BYTES,
         portable_bytes: &[0xC3],
@@ -105,7 +105,7 @@ const LEAF_REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "add_const",
         operations: &["AddConst", "Return"],
-        abi: DeclAbi::Scalar,
+        abi: DeclAbi::ScalarF64Binary,
         x86_bytes: &X86_ADD_CONST_BYTES,
         // ldr d1, #16; fadd d0, d0, d1; ret; padding; <literal f64>
         aarch64_bytes: &AARCH64_ADD_CONST_BYTES,
@@ -303,7 +303,7 @@ const LEAF_REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "negate",
         operations: &["Unary", "Return"],
-        abi: DeclAbi::Scalar,
+        abi: DeclAbi::ScalarF64Unary,
         x86_bytes: &X86_NEGATE_BYTES,
         aarch64_bytes: &AARCH64_NEGATE_BYTES,
         portable_bytes: &[0xC3],

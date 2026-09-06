@@ -6,7 +6,7 @@ mod tests {
         RegionDeclaration {
             name: "identity_probe",
             operations: &["Add", "Return"],
-            abi: super::super::DeclAbi::Scalar,
+            abi: super::super::DeclAbi::ScalarF64Binary,
             x86_bytes: &[1],
             aarch64_bytes: &[2],
             portable_bytes: &[3],

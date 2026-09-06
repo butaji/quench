@@ -337,7 +337,7 @@ const COMPOSED_REGION_DECLARATIONS: &[RegionDeclaration] = &[
         // runtime admits this row only when the second add consumes the first
         // result; all other shapes use canonical handlers.
         operations: &["Add", "Add"],
-        abi: DeclAbi::Scalar,
+        abi: DeclAbi::ScalarF64x3,
         x86_bytes: &X86_ADD_CHAIN_BYTES,
         aarch64_bytes: &AARCH64_ADD_CHAIN_BYTES,
         portable_bytes: &[0xC3],
