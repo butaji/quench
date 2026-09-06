@@ -1559,7 +1559,7 @@ enum BinarySemantic {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct CompareBranch {
+pub(crate) struct CompareBranch {
     false_target: u16,
     span: u8,
 }
@@ -5446,7 +5446,7 @@ fn collect_numeric_admissions(
     );
 }
 
-fn compare_branch(
+pub(crate) fn compare_branch(
     entries: &[BaselineEntry],
     liveness: &[BTreeSet<u16>],
     pc: usize,
