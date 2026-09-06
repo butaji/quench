@@ -210,7 +210,7 @@ struct Counters {
     stencil_rejections: HashMap<(StencilKey, &'static str), u64>,
     stencil_outcomes: HashMap<(StencilKey, &'static str), u64>,
     stencil_iterations: HashMap<StencilKey, u64>,
-    stencil_storage: HashMap<StencilKey, (u64, u64)>,
+    stencil_storage: HashMap<StencilKey, crate::stencil_arena::ExecutableResourceSnapshot>,
     compact_sites: HashMap<CompactSiteKey, u64>,
     compact_site_dropped: u64,
 }
@@ -1757,20 +1757,19 @@ pub(crate) fn stencil_outcome(
 
 /// Record the bounded physical storage observed by a selected region.  This
 /// is optional attribution only; uninstrumented execution does not touch the
-/// map.  The pair is `(used_bytes, capacity_bytes)` for the owning shared
-/// slab, which makes code/cache cost visible without treating an entry attempt
-/// as a native hit.
+/// map. Resident, used, retired-live, cache and lease facts are one derived
+/// snapshot of the owning pool, not independently updated telemetry state.
 #[inline(always)]
 pub(crate) fn stencil_storage(
     code: crate::machine::CodeView<'_>,
     pc: usize,
     kind: &'static str,
-    used_bytes: usize,
-    capacity_bytes: usize,
+    pool: &crate::stencil_arena::SharedStencilSlab,
 ) {
     #[cfg(feature = "execution-trace")]
     if enabled() {
         let (_, code_id) = code.trace_identity();
+        let snapshot = pool.resource_snapshot();
         COUNTERS.with(|counters| {
             let mut counters = counters.borrow_mut();
             let key = StencilKey {
@@ -1779,13 +1778,11 @@ pub(crate) fn stencil_storage(
                 kind,
             };
             if admits_bounded(&counters.stencil_storage, &key, MAX_STENCIL_SITES) {
-                counters
-                    .stencil_storage
-                    .insert(key, (used_bytes as u64, capacity_bytes as u64));
+                counters.stencil_storage.insert(key, snapshot);
             }
         });
     }
-    let _ = (code, pc, kind, used_bytes, capacity_bytes);
+    let _ = (code, pc, kind, pool);
 }
 
 #[cfg(feature = "execution-trace")]
@@ -2025,9 +2022,17 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "stencil_storage": counters
                     .stencil_storage
                     .iter()
-                    .map(|(key, &(used, capacity))| (
+                    .map(|(key, snapshot)| (
                         format!("code={}:pc={}:{}", key.code, key.pc, key.kind),
-                        serde_json::json!({"used_bytes": used, "capacity_bytes": capacity}),
+                        serde_json::json!({
+                            "used_bytes": snapshot.used_bytes,
+                            "resident_bytes": snapshot.resident_bytes,
+                            "retired_live_bytes": snapshot.retired_live_bytes,
+                            "cache_rows": snapshot.cache_rows,
+                            "active_leases": snapshot.active_leases,
+                            "retired_owners": snapshot.retired_owners,
+                            "process_resident_bytes": snapshot.process_resident_bytes,
+                        }),
                     ))
                     .collect::<serde_json::Map<_, _>>(),
                 "events": events,
@@ -2108,20 +2113,29 @@ mod lane_profile_tests {
     }
 
     #[test]
-    fn stencil_storage_reports_bounded_code_capacity_separately() {
+    fn stencil_storage_keeps_retired_live_and_cache_facts_together() {
         let mut counters = Counters::default();
         let key = StencilKey {
             code: 3,
             pc: 4,
             kind: "array_numeric_loop",
         };
-        counters.stencil_storage.insert(key, (76, 4096));
+        let expected = crate::stencil_arena::ExecutableResourceSnapshot {
+            resident_bytes: 8192,
+            used_bytes: 76,
+            retired_live_bytes: 4096,
+            cache_rows: 1,
+            active_leases: 1,
+            retired_owners: 1,
+            process_resident_bytes: 12288,
+        };
+        counters.stencil_storage.insert(key, expected);
         let value = counters
             .stencil_storage
             .get(&key)
             .copied()
             .expect("storage fact");
-        assert_eq!(value, (76, 4096));
+        assert_eq!(value, expected);
     }
 
     #[test]
