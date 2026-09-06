@@ -284,7 +284,13 @@ pub(crate) fn execute_code_completion_step_with_owner(
             code, &plan, pc, registers, &context, owner,
         );
     }
-    run_code_completion_step_from(code, pc, registers, &context)
+    run_code_completion_step_from_with_owner(
+        code,
+        pc,
+        registers,
+        &context,
+        Some(owner),
+    )
 }
 
 fn drive_completion(
