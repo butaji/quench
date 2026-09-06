@@ -85,7 +85,8 @@ pub(crate) fn gpr_clobber_mask(bytes: &[u8]) -> u16 {
             .chunks_exact(4)
             .filter_map(|word| {
                 let encoded = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
-                let load = encoded & 0xFFC0_0000 == 0xF940_0000;
+                let load =
+                    encoded & 0xFFC0_0000 == 0xF940_0000 || encoded & 0xFFC0_0000 == 0xB940_0000;
                 let writes_rt = load
                     || encoded & 0xFFE0_0000 == 0x8B00_0000
                     || encoded & 0xFFC0_0000 == 0x9100_0000
@@ -188,6 +189,7 @@ fn known_aarch64_instruction(encoded: u32) -> bool {
     encoded == 0xD65F_03C0
         || encoded == 0x9E67_03E1
         || encoded & 0xFFC0_0000 == 0xF940_0000
+        || encoded & 0xFFC0_0000 == 0xB940_0000
         || encoded & 0xFFC0_0000 == 0xF900_0000
         || encoded & 0xFFC0_0000 == 0xFD40_0000
         || encoded & 0xFFC0_0000 == 0xFD00_0000
@@ -216,6 +218,8 @@ fn known_aarch64_instruction(encoded: u32) -> bool {
         || encoded & 0xFFE0_FC00 == 0x1AC0_2800
         || encoded & 0xFF20_FC00 == 0x1E20_4000
         || encoded & 0xFFE0_FC1F == 0xEB00_001F
+        || encoded & 0xFFE0_FC1F == 0x6B00_001F
+        || encoded & 0xFFC0_001F == 0x7100_001F
 }
 
 #[cfg(test)]

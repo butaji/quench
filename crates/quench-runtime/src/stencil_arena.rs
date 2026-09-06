@@ -661,6 +661,12 @@ impl SharedStencilSlab {
         extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64,
         crate::stencil_select::RegionAbi::TaggedWord
     );
+    typed_owned_entry!(
+        owned_property_guard_entry,
+        property_guard_entry,
+        extern "C" fn(*mut crate::native_property::NativePropertyReadContext) -> u32,
+        crate::stencil_select::RegionAbi::PropertyGuard
+    );
 
     pub(crate) fn with_owned<F: Copy, R>(
         &self,
@@ -803,6 +809,19 @@ impl SharedStencilSlab {
         self.slab_for(address)
             .ok_or(ArenaError::ProtectionFailed)?
             .tagged_word_entry(address)
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn property_guard_entry(
+        &self,
+        address: usize,
+    ) -> Result<
+        extern "C" fn(*mut crate::native_property::NativePropertyReadContext) -> u32,
+        ArenaError,
+    > {
+        self.slab_for(address)
+            .ok_or(ArenaError::ProtectionFailed)?
+            .property_guard_entry(address)
     }
 
     pub fn execute_dispatch(
@@ -1155,6 +1174,23 @@ impl StencilArena {
         address: usize,
     ) -> Result<extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64, ArenaError> {
         self.require_abi(address, crate::stencil_select::RegionAbi::TaggedWord)?;
+        let base = self.ptr as usize;
+        let end = base.saturating_add(self.cursor);
+        if !self.executable || address < base || address >= end {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        Ok(unsafe { std::mem::transmute(address) })
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn property_guard_entry(
+        &self,
+        address: usize,
+    ) -> Result<
+        extern "C" fn(*mut crate::native_property::NativePropertyReadContext) -> u32,
+        ArenaError,
+    > {
+        self.require_abi(address, crate::stencil_select::RegionAbi::PropertyGuard)?;
         let base = self.ptr as usize;
         let end = base.saturating_add(self.cursor);
         if !self.executable || address < base || address >= end {
@@ -3040,19 +3076,35 @@ mod tests {
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
-    fn executable_property_leaf_matches_raw_tagged_word_load() {
+    fn executable_property_leaf_guards_layout_and_loads_tagged_word() {
         let mut arena = StencilArena::new(4096).unwrap();
         let mut cache = RenderedRegionCache::new();
         let site = QuickeningSite::<2>::new(Opcode::GetN);
         let values = PatchValues::from_site(&site);
         let key = crate::stencil_select::property_region_key();
-        let record = crate::stencil_select::select_region(key).expect("property row");
+        let view = crate::stencil_select::select_physical_for_abi(
+            key,
+            crate::stencil_select::RegionAbi::PropertyGuard,
+        )
+        .expect("property view");
         let address = arena
-            .render_or_get(&mut cache, key, &record.stencil, &values)
+            .render_physical_view_or_get(&mut cache, view, &values)
             .unwrap();
         arena.make_executable().unwrap();
-        let word = crate::tagged_value::TaggedValue::from_bits(0x1234_5678_9ABC_DEF0);
-        assert_eq!(arena.execute_tagged_word(address, &word), Ok(word.bits()));
+        let object = crate::value::ObjectData::new(vec![(
+            "value".into(),
+            crate::value::Value::Number(42.5),
+        )]);
+        let access = object
+            .guarded_plain_slot(object.semantic_layout_id(), 0, "value")
+            .expect("plain slot");
+        let mut context = crate::native_property::NativePropertyReadContext::new(access);
+        let entry = arena.property_guard_entry(address).expect("typed entry");
+        let status = entry(&mut context);
+        assert_eq!(
+            context.result(status),
+            Some(crate::tagged_value::TaggedValue::number(42.5).bits())
+        );
     }
 
     #[cfg(target_arch = "x86_64")]

@@ -1291,6 +1291,57 @@ impl ObjectData {
         object_layout_slot(self.semantic_layout_id(), key)
     }
 
+    #[inline]
+    pub(crate) fn guarded_plain_slot(
+        &self,
+        layout: u32,
+        slot: u32,
+        key: &str,
+    ) -> Option<crate::native_property::GuardedPropertySlot> {
+        (self.semantic_layout_id() == layout).then_some(())?;
+        self.cache_plain_metadata_state()?;
+        let slot = usize::try_from(slot).ok()?;
+        self.properties
+            .name_at(slot)
+            .is_some_and(|name| name == key)
+            .then_some(())?;
+        let slot = self.properties.slot_word(slot)?;
+        slot.plain_tagged_bits()?;
+        if (slot.is_null() && crate::vm::global_builtin_exists(key))
+            || (key == "format" && slot.is_intl_format_builtin())
+        {
+            return None;
+        }
+        Some(crate::native_property::GuardedPropertySlot::new(
+            self.layout_id.as_ptr(),
+            layout,
+            self.descriptor_metadata_state.as_ptr(),
+            self.deleted_marker_state.as_ptr(),
+            slot,
+        ))
+    }
+
+    fn cache_plain_metadata_state(&self) -> Option<()> {
+        let descriptor = self.descriptor_metadata_state.get();
+        let deleted = self.deleted_marker_state.get();
+        if descriptor == 1 && deleted == 1 {
+            return Some(());
+        }
+        let has_descriptor = self
+            .properties
+            .names()
+            .any(|name| crate::builtins::is_descriptor_key(name.as_str()));
+        let has_deleted = self
+            .properties
+            .names()
+            .any(|name| crate::builtins::is_deleted_marker(name.as_str()));
+        self.descriptor_metadata_state
+            .set(if has_descriptor { 2 } else { 1 });
+        self.deleted_marker_state
+            .set(if has_deleted { 2 } else { 1 });
+        (!has_descriptor && !has_deleted).then_some(())
+    }
+
     pub(crate) fn invalidate_layout(&self) {
         self.layout_id.set(0);
         self.descriptor_metadata_state.set(0);

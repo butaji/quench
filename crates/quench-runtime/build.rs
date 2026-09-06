@@ -3,7 +3,7 @@ use std::{env, fs, path::PathBuf, process::Command};
 mod build_stencil_artifacts;
 mod build_stencil_contract;
 
-use build_stencil_contract::{DeclAbi, RegionDeclaration, RustLeafRecipe, rust_leaf_recipe};
+use build_stencil_contract::{rust_leaf_recipe, DeclAbi, RegionDeclaration, RustLeafRecipe};
 
 const fn le32(word: u32) -> [u8; 4] {
     word.to_le_bytes()
@@ -354,7 +354,25 @@ const fn x86_add_const_bytes() -> [u8; 21] {
 }
 
 const X86_LOOP_BYTES: [u8; 5] = x86_binary_ret(0x58);
-const X86_PROPERTY_BYTES: [u8; 4] = x86_word_load_ret();
+const X86_PROPERTY_BYTES: [u8; 48] = [
+    0x48, 0x8B, 0x07, // mov rax,[rdi] (layout pointer)
+    0x8B, 0x00, // mov eax,[rax]
+    0x3B, 0x47, 0x08, // cmp eax,[rdi+8]
+    0x75, 0x23, // jne rejected
+    0x48, 0x8B, 0x47, 0x10, // mov rax,[rdi+16]
+    0x80, 0x38, 0x01, // cmp byte ptr [rax],1
+    0x75, 0x1A, // jne rejected
+    0x48, 0x8B, 0x47, 0x18, // mov rax,[rdi+24]
+    0x80, 0x38, 0x01, // cmp byte ptr [rax],1
+    0x75, 0x11, // jne rejected
+    0x48, 0x8B, 0x47, 0x20, // mov rax,[rdi+32]
+    0x48, 0x8B, 0x00, // mov rax,[rax]
+    0x48, 0x89, 0x47, 0x28, // mov [rdi+40],rax
+    0xB8, 0x01, 0, 0, 0,    // mov eax,1
+    0xC3, // ret
+    0x31, 0xC0, // rejected: xor eax,eax
+    0xC3, // ret
+];
 const X86_MOVE_BYTES: [u8; 4] = x86_word_load_ret();
 const fn x86_fallthrough_bytes() -> [u8; 9] {
     let add = x86_sse2_binary(0x58, 0, 1);
@@ -478,6 +496,30 @@ const fn aarch64_ordered_compare_bytes(cset: u32) -> [u8; 20] {
 
 const AARCH64_LOOP_BYTES: [u8; 8] = aarch64_pair(aarch64_fadd_d(0, 0, 1), aarch64_ret());
 const AARCH64_PROPERTY_BYTES: [u8; 8] = aarch64_pair(aarch64_ldr_x0_x0(), aarch64_ret());
+const AARCH64_PROPERTY_GUARD_BYTES: [u8; 80] = {
+    let mut out = [0; 80];
+    put32(&mut out, 0, 0xF940_0001); // ldr x1, [x0] (layout pointer)
+    put32(&mut out, 4, 0xB940_0022); // ldr w2, [x1]
+    put32(&mut out, 8, 0xB940_0803); // ldr w3, [x0, #8]
+    put32(&mut out, 12, 0x6B03_005F); // cmp w2, w3
+    put32(&mut out, 16, aarch64_b_cond(14, 1)); // b.ne rejected
+    put32(&mut out, 20, 0xF940_0801); // ldr x1, [x0, #16]
+    put32(&mut out, 24, 0x3940_0022); // ldrb w2, [x1]
+    put32(&mut out, 28, 0x7100_045F); // cmp w2, #1 (known absent)
+    put32(&mut out, 32, aarch64_b_cond(10, 1)); // b.ne rejected
+    put32(&mut out, 36, 0xF940_0C01); // ldr x1, [x0, #24]
+    put32(&mut out, 40, 0x3940_0022); // ldrb w2, [x1]
+    put32(&mut out, 44, 0x7100_045F); // cmp w2, #1 (known absent)
+    put32(&mut out, 48, aarch64_b_cond(6, 1)); // b.ne rejected
+    put32(&mut out, 52, 0xF940_1001); // ldr x1, [x0, #32]
+    put32(&mut out, 56, 0xF940_0022); // ldr x2, [x1]
+    put32(&mut out, 60, 0xF900_1402); // str x2, [x0, #40]
+    put32(&mut out, 64, 0x5280_0020); // mov w0, #1
+    put32(&mut out, 68, aarch64_ret());
+    put32(&mut out, 72, 0x5280_0000); // rejected: mov w0, #0
+    put32(&mut out, 76, aarch64_ret());
+    out
+};
 const AARCH64_MOVE_BYTES: [u8; 8] = AARCH64_PROPERTY_BYTES;
 const AARCH64_ARRAY_GET_NUMBER_BYTES: [u8; 20] = aarch64_array_get_number_bytes();
 const AARCH64_ARRAY_SET_NUMBER_BYTES: [u8; 20] = aarch64_array_set_number_bytes();
@@ -655,12 +697,11 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "property",
         operations: &["GetN"],
-        abi: DeclAbi::TaggedWord,
-        // The property leaf only loads a word from a slot that the complete
-        // shape/accessor validator has already proven.  Ownership is retained
-        // by the Rust register writer after the leaf returns the raw word.
+        abi: DeclAbi::PropertyGuard,
+        // The physical entry validates live layout/metadata facts and loads
+        // the admitted slot without repeating semantic key/descriptor scans.
         x86_bytes: &X86_PROPERTY_BYTES,
-        aarch64_bytes: &AARCH64_PROPERTY_BYTES,
+        aarch64_bytes: &AARCH64_PROPERTY_GUARD_BYTES,
         portable_bytes: &[0xC3],
         holes: &[],
         aarch64_holes: &[],
@@ -1696,6 +1737,8 @@ fn generate_stencil_catalog() {
             };
             let executable = if declaration.name == "dispatch" {
                 "DISPATCH_EXECUTABLE"
+            } else if matches!(declaration.abi, DeclAbi::PropertyGuard) {
+                "cfg!(any(target_arch = \"x86_64\", target_arch = \"aarch64\"))"
             } else if matches!(declaration.abi, DeclAbi::ArrayKernel) {
                 // Raw element contexts have a real body only on ARM64.  The
                 // other targets keep the bridge declaration for auditing but
@@ -1878,6 +1921,7 @@ fn abi_expr(declaration: &RegionDeclaration) -> &'static str {
         DeclAbi::ScalarWordPairBool => "crate::stencil_select::RegionAbi::ScalarWordPairBool",
         DeclAbi::ScalarI32 => "crate::stencil_select::RegionAbi::ScalarI32",
         DeclAbi::ScalarU32 => "crate::stencil_select::RegionAbi::ScalarU32",
+        DeclAbi::PropertyGuard => "crate::stencil_select::RegionAbi::PropertyGuard",
         DeclAbi::Bridge => "crate::stencil_select::RegionAbi::Bridge",
         DeclAbi::ArrayKernel if target_is_aarch64 => {
             "crate::stencil_select::RegionAbi::ArrayKernel"
@@ -1947,6 +1991,12 @@ fn abi_contract_fields(abi: DeclAbi) -> (&'static str, bool, u8, &'static str) {
             3,
             "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x0007, hardware_gpr_clobber_mask: 0x007f, live_out_mask: 0x0003, root_materialization_required: false",
         ),
+        DeclAbi::PropertyGuard => (
+            "PropertyGuard",
+            true,
+            2,
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0x000f, live_out_mask: 1, root_materialization_required: false",
+        ),
     }
 }
 
@@ -1963,6 +2013,7 @@ fn abi_variant_name(abi: DeclAbi) -> &'static str {
         DeclAbi::Bridge => "Bridge",
         DeclAbi::ArrayKernel => "ArrayKernel",
         DeclAbi::ArrayNumericLoop => "ArrayNumericLoop",
+        DeclAbi::PropertyGuard => "PropertyGuard",
     }
 }
 
