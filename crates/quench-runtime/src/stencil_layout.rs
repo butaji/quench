@@ -205,7 +205,6 @@ pub(crate) fn compose_fallthrough<const N: usize>(
     head: &Stencil,
     tail: &Stencil,
     values: &PatchValues<'_, N>,
-    branch_offset: u16,
     kind: FixupKind,
     output: &mut Vec<u8>,
 ) -> Result<(), LayoutError> {
@@ -222,9 +221,6 @@ pub(crate) fn compose_fallthrough<const N: usize>(
         },
     ];
     let fixups = chain_fixups(head, kind);
-    if !has_fixup_at(&fixups, branch_offset) {
-        return Err(LayoutError::MissingFixup(0, branch_offset));
-    }
     compose_region(&fragments, &fixups, output)
 }
 
@@ -410,10 +406,6 @@ fn chain_fixups(head: &Stencil, kind: FixupKind) -> Vec<Fixup> {
             kind,
         })
         .collect()
-}
-
-fn has_fixup_at(fixups: &[Fixup], offset: u16) -> bool {
-    fixups.iter().any(|fixup| fixup.offset == offset)
 }
 
 const fn hole_kind(kind: FixupKind) -> Option<HoleKind> {

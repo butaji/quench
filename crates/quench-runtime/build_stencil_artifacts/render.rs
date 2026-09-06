@@ -34,7 +34,7 @@ fn render_artifact(
         .collect::<Vec<_>>()
         .join(", ");
     let row = format!(
-        "    BuildStencilArtifact {{ name: {name:?}, artifact_id: {artifact_id:?}, key: CANONICAL_{identifier}_KEY, target: {target:?}, compiler: {compiler:?}, fingerprint: {fingerprint:?}, abi: {}, entry: {}, external_entries: &[{}], has_fallthrough: {}, executable: true, template_calls_helper: {}, bytes: BYTES_{identifier}, data: &[], relocations: {}, stencil: crate::stencil_fact::Stencil {{ bytes: BYTES_{identifier}, holes: {} }}, fallthrough: {}, fallthrough_fixup_offset: {} }},",
+        "    BuildStencilArtifact {{ name: {name:?}, artifact_id: {artifact_id:?}, key: CANONICAL_{identifier}_KEY, target: {target:?}, compiler: {compiler:?}, fingerprint: {fingerprint:?}, abi: {}, entry: {}, external_entries: &[{}], has_fallthrough: {}, executable: true, template_calls_helper: {}, bytes: BYTES_{identifier}, data: &[], relocations: {}, stencil: crate::stencil_fact::Stencil {{ bytes: BYTES_{identifier}, holes: {} }}, fallthrough: {} }},",
         super::abi_expr(declaration),
         declaration.entry,
         entries,
@@ -45,7 +45,6 @@ fn render_artifact(
         extracted.fallthrough.as_ref().map_or("None".to_owned(), |_| {
             format!("Some(crate::stencil_fact::Stencil {{ bytes: FALLTHROUGH_{identifier}, holes: &[] }})")
         }),
-        fallthrough_offset(declaration, target),
         artifact_id = format!("{name}@{fingerprint}"),
     );
     (constant, row)
@@ -64,18 +63,6 @@ fn relocation_expr(extracted: &ExtractedObject) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!("&[{entries}]")
-}
-
-fn fallthrough_offset(declaration: &RegionDeclaration, target: &str) -> u16 {
-    let holes = if target.starts_with("aarch64") {
-        declaration.aarch64_holes
-    } else {
-        declaration.holes
-    };
-    holes
-        .iter()
-        .find(|(_, _, kind)| *kind == "Branch26" || *kind == "Rel32")
-        .map_or(0, |(offset, _, _)| *offset)
 }
 
 fn holes_expr(extracted: &ExtractedObject) -> String {
