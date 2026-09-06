@@ -4,7 +4,7 @@ use super::*;
 fn every_mapping_owns_exactly_one_aggregate_charge() {
     let direct = StencilArena::new(1).expect("direct arena");
     assert_eq!(direct.capacity, PAGE);
-    assert_eq!(direct.global_charge, PAGE);
+    assert_eq!(direct.global_charge.bytes(), PAGE);
 
     let mut shared = SharedStencilSlab::new(1).expect("shared pool");
     let stencil = Stencil {
@@ -22,5 +22,5 @@ fn every_mapping_owns_exactly_one_aggregate_charge() {
         )
         .expect("shared render");
     assert_eq!(shared.total_capacity(), PAGE);
-    assert_eq!(shared.slabs[0].global_charge, PAGE);
+    assert_eq!(shared.slabs[0].global_charge.bytes(), PAGE);
 }

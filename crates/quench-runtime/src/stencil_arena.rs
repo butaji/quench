@@ -4,6 +4,7 @@
 //! It exposes fallible allocation/copy/patch operations and never executes a
 //! partially rendered region.
 
+use crate::bounded_resource::{AtomicBudget, BudgetReservation};
 use crate::stencil_fact::{PatchValues, Stencil};
 #[cfg(test)]
 use crate::stencil_layout::FixupKind;
@@ -12,7 +13,7 @@ use crate::stencil_region_layout::{compose_selected_controlled_region, compose_s
 use crate::stencil_select::RenderedRegionCache;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
 extern "C" {
@@ -53,24 +54,11 @@ pub const MAX_SHARED_SLAB_BYTES: usize = 4 * MAX_ARENA_BYTES;
 /// Workload-independent disposable code budget for one arena.
 pub const MAX_ARENA_BYTES: usize = 1 << 20;
 const MAX_GLOBAL_SHARED_SLAB_BYTES: usize = 16 * MAX_SHARED_SLAB_BYTES;
-static GLOBAL_SHARED_SLAB_BYTES: AtomicUsize = AtomicUsize::new(0);
-
-fn reserve_global_bytes(bytes: usize) -> bool {
-    GLOBAL_SHARED_SLAB_BYTES
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
-            used.checked_add(bytes)
-                .filter(|next| *next <= MAX_GLOBAL_SHARED_SLAB_BYTES)
-        })
-        .is_ok()
-}
-
-fn release_global_bytes(bytes: usize) {
-    GLOBAL_SHARED_SLAB_BYTES.fetch_sub(bytes, Ordering::AcqRel);
-}
+static GLOBAL_EXECUTABLE_BUDGET: AtomicBudget = AtomicBudget::new(MAX_GLOBAL_SHARED_SLAB_BYTES);
 
 #[cfg(test)]
 pub(crate) fn global_shared_slab_bytes() -> usize {
-    GLOBAL_SHARED_SLAB_BYTES.load(Ordering::Acquire)
+    GLOBAL_EXECUTABLE_BUDGET.used()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -135,7 +123,7 @@ pub struct StencilArena {
     id: u64,
     published_abis: RefCell<HashMap<usize, crate::stencil_select::RegionAbi>>,
     last_physical_execution: Cell<Option<PhysicalExecutionWitness>>,
-    global_charge: usize,
+    global_charge: BudgetReservation<'static>,
 }
 
 /// Bounded collection of immutable-after-publication executable slabs.  Region
@@ -1046,9 +1034,9 @@ impl StencilArena {
             .checked_add(PAGE - 1)
             .ok_or(ArenaError::InvalidCapacity)?
             & !(PAGE - 1);
-        if !reserve_global_bytes(capacity) {
-            return Err(ArenaError::Exhausted);
-        }
+        let global_charge = GLOBAL_EXECUTABLE_BUDGET
+            .reserve(capacity)
+            .ok_or(ArenaError::Exhausted)?;
         let ptr = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
@@ -1060,7 +1048,6 @@ impl StencilArena {
             )
         };
         if ptr == libc::MAP_FAILED {
-            release_global_bytes(capacity);
             return Err(ArenaError::MappingFailed);
         }
         Ok(Self {
@@ -1071,7 +1058,7 @@ impl StencilArena {
             id: NEXT_ARENA_ID.fetch_add(1, Ordering::Relaxed),
             published_abis: RefCell::new(HashMap::new()),
             last_physical_execution: Cell::new(None),
-            global_charge: capacity,
+            global_charge,
         })
     }
 
@@ -2045,7 +2032,6 @@ impl Drop for StencilArena {
         unsafe {
             libc::munmap(self.ptr.cast(), self.capacity);
         }
-        release_global_bytes(self.global_charge);
     }
 }
 
