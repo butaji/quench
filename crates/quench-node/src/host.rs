@@ -574,11 +574,13 @@ pub fn install_with_argv_and_title_and_exec_argv(
     context = context.with_host_value("console".to_string(), console);
     let (crypto, crypto_key) = crate::modules::webcrypto::build();
     let crypto_key_prototype = quench_runtime::execute::get_property(&crypto_key, "prototype");
-    let subtle_crypto = crate::modules::webcrypto::subtle_crypto_constructor();
     context = context
         .with_persistent_host_value("crypto".to_string(), crypto)
         .with_host_value("CryptoKey".to_string(), crypto_key)
-        .with_host_value("SubtleCrypto".to_string(), subtle_crypto)
+        .with_host_value(
+            "__quench_subtle_supports".to_string(),
+            crate::host::capability(crate::registry::SPEC_WEBCRYPTO_SUPPORTS),
+        )
         .with_host_value(
             "__quench_crypto_key_prototype".to_string(),
             crypto_key_prototype,
