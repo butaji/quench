@@ -2877,10 +2877,24 @@ impl PhysicalState {
         self.lifecycle.retire();
     }
 
-    fn apply_dispatch_outcome<T>(&mut self, result: &Result<T, NativeDispatchError>) {
+    fn apply_dispatch_outcome<T>(
+        &mut self,
+        result: &Result<T, NativeDispatchError>,
+        published: Option<(
+            &Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
+            usize,
+        )>,
+    ) {
         match result {
             Err(NativeDispatchError::Physical(_)) => self.clear(),
-            Err(NativeDispatchError::Committed(_)) => self.retire(),
+            Err(NativeDispatchError::Committed(_)) => {
+                if let Some((arena, address)) = published {
+                    let _ = arena
+                        .borrow_mut()
+                        .retire_allocation(address, &mut self.cache);
+                }
+                self.retire();
+            }
             _ => {}
         }
     }
@@ -4368,7 +4382,9 @@ impl NativeDispatchPlan {
                 })?;
                 Ok::<_, NativeDispatchError>(address)
             })();
+            let mut published_address = None;
             let result = rendered.and_then(|address| {
+                published_address = Some(address);
                 let mut dispatch =
                     crate::vm::NativeDispatchContext::new(code, pc, entry, registers, context);
                 let raw = (&mut dispatch as *mut crate::vm::NativeDispatchContext<'_>)
@@ -4390,7 +4406,10 @@ impl NativeDispatchPlan {
                 })?;
                 dispatch.finish(status)
             });
-            self.physical.apply_dispatch_outcome(&result);
+            self.physical.apply_dispatch_outcome(
+                &result,
+                published_address.map(|address| (&shared, address)),
+            );
             return result;
         }
         if self.arena.is_none() {
@@ -4442,13 +4461,16 @@ impl NativeDispatchPlan {
                 })?;
             dispatch.finish(status)
         })();
-        if matches!(result, Err(NativeDispatchError::Physical(_))) {
+        if matches!(
+            result,
+            Err(NativeDispatchError::Physical(_) | NativeDispatchError::Committed(_))
+        ) {
             // The trampoline carries no persistent semantic state. If mapping,
             // protection, or the bridge fails, discard the physical view and
             // make the caller use the complete ordinary path next time.
             self.arena.take();
         }
-        self.physical.apply_dispatch_outcome(&result);
+        self.physical.apply_dispatch_outcome(&result, None);
         result
     }
 }
@@ -4813,6 +4835,7 @@ impl NativeRegionPlan {
                 "native fused region unavailable".into(),
             ));
         }
+        let mut published_address = None;
         let result = (|| {
             let arena = self.arena.as_ref().ok_or_else(|| {
                 NativeDispatchError::Physical("native fused region arena missing".into())
@@ -4849,6 +4872,7 @@ impl NativeRegionPlan {
                         "native fused region protection failed: {error:?}"
                     ))
                 })?;
+            published_address = Some(address);
             let storage_kind = record.name;
             let (used_bytes, capacity_bytes) = {
                 let slab = arena.borrow();
@@ -4996,7 +5020,11 @@ impl NativeRegionPlan {
             }
             region.finish(status)
         })();
-        self.physical.apply_dispatch_outcome(&result);
+        let published = self
+            .arena
+            .as_ref()
+            .and_then(|arena| published_address.map(|address| (arena, address)));
+        self.physical.apply_dispatch_outcome(&result, published);
         result
     }
 }
