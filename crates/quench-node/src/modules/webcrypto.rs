@@ -1942,6 +1942,135 @@ pub fn digest(
     Ok(settled(output.map(|bytes| array_buffer(&bytes))))
 }
 
+fn usages_from_mask(value: &Value) -> Value {
+    let mask = match value { Value::Number(value) if value.is_finite() && *value >= 0.0 => *value as u32, _ => 0 };
+    let names = ["encrypt", "decrypt", "sign", "verify", "deriveKey", "deriveBits", "wrapKey", "unwrapKey", "encapsulateKey", "encapsulateBits", "decapsulateKey", "decapsulateBits"];
+    host_api::array(names.into_iter().enumerate().filter(|(index, _)| mask & (1_u32 << index) != 0).map(|(_, name)| Value::String(name.into())).collect())
+}
+
+fn adopt_job_result(promise: &Rc<PromiseData>, result: Result<Value, VmError>) {
+    match result {
+        Ok(Value::Promise(inner)) => match inner.state.borrow().clone() {
+            PromiseState::Fulfilled(value) => quench_runtime::resolve_promise(promise, value),
+            PromiseState::Rejected(reason) => quench_runtime::reject_promise(promise, reason),
+            PromiseState::Pending => quench_runtime::reject_promise(promise, Value::String("Operation did not settle".into())),
+        },
+        Ok(value) => quench_runtime::resolve_promise(promise, value),
+        Err(VmError::Thrown(reason)) => quench_runtime::reject_promise(promise, reason),
+        Err(_) => quench_runtime::reject_promise(promise, Value::String("Operation failed".into())),
+    }
+}
+
+fn queued_job(operation: Rc<dyn Fn() -> Result<Value, VmError>>) -> Value {
+    let promise = Rc::new(PromiseData::new(PromiseState::Pending));
+    let result = promise.clone();
+    quench_runtime::module_bindings::enqueue_job(Rc::new(move || adopt_job_result(&result, operation())));
+    Value::Promise(promise)
+}
+
+fn subtle_value() -> Value {
+    let global = quench_runtime::vm::current_global_object();
+    execute::get_property(&execute::get_property(&global, "crypto"), "subtle")
+}
+
+pub fn hash_job_construct(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    Ok(host_api::object(vec![
+        ("run".into(), crate::host::capability(crate::registry::SPEC_INTERNAL_CRYPTO_HASH_JOB_RUN)),
+        ("\0quench:crypto-job:algorithm".into(), args.get(1).cloned().unwrap_or(Value::Undefined)),
+        ("\0quench:crypto-job:data".into(), args.get(2).cloned().unwrap_or(Value::Undefined)),
+    ]))
+}
+
+pub fn hash_job_run(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>, _args: &[Value]) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    let algorithm = execute::get_property(receiver, "\0quench:crypto-job:algorithm");
+    let data = execute::get_property(receiver, "\0quench:crypto-job:data");
+    let subtle = subtle_value();
+    let state = state.clone();
+    Ok(queued_job(Rc::new(move || digest(&state, Some(&subtle), &[algorithm.clone(), data.clone()]))))
+}
+
+pub fn secret_key_gen_job_construct(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    Ok(host_api::object(vec![
+        ("run".into(), crate::host::capability(crate::registry::SPEC_INTERNAL_CRYPTO_SECRET_KEY_GEN_JOB_RUN)),
+        ("\0quench:crypto-job:algorithm".into(), args.get(2).cloned().unwrap_or(Value::Undefined)),
+        ("\0quench:crypto-job:usages".into(), args.get(3).map(usages_from_mask).unwrap_or_else(|| host_api::array(Vec::new()))),
+        ("\0quench:crypto-job:extractable".into(), args.get(4).cloned().unwrap_or(Value::Boolean(false))),
+    ]))
+}
+
+pub fn secret_key_gen_job_run(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>, _args: &[Value]) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    let algorithm = execute::get_property(receiver, "\0quench:crypto-job:algorithm");
+    let usages = execute::get_property(receiver, "\0quench:crypto-job:usages");
+    let extractable = execute::get_property(receiver, "\0quench:crypto-job:extractable");
+    let subtle = subtle_value();
+    let state = state.clone();
+    Ok(queued_job(Rc::new(move || generate_key(&state, Some(&subtle), &[algorithm.clone(), extractable.clone(), usages.clone()]))))
+}
+
+pub fn ec_key_pair_gen_job_construct(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let public = args.get(4).map(usages_from_mask).unwrap_or_else(|| host_api::array(Vec::new()));
+    let private = args.get(5).map(usages_from_mask).unwrap_or_else(|| host_api::array(Vec::new()));
+    let mut names = Vec::new();
+    for usages in [&public, &private] {
+        if let Value::Number(length) = execute::get_property(usages, "length") {
+            for index in 0..length as usize {
+                let usage = execute::get_property(usages, &index.to_string());
+                if !names.iter().any(|value: &Value| value == &usage) { names.push(usage); }
+            }
+        }
+    }
+    Ok(host_api::object(vec![
+        ("run".into(), crate::host::capability(crate::registry::SPEC_INTERNAL_CRYPTO_EC_KEY_PAIR_GEN_JOB_RUN)),
+        ("\0quench:crypto-job:algorithm".into(), args.get(3).cloned().unwrap_or(Value::Undefined)),
+        ("\0quench:crypto-job:usages".into(), host_api::array(names)),
+        ("\0quench:crypto-job:extractable".into(), args.get(6).cloned().unwrap_or(Value::Boolean(false))),
+    ]))
+}
+
+pub fn ec_key_pair_gen_job_run(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>, _args: &[Value]) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    let algorithm = execute::get_property(receiver, "\0quench:crypto-job:algorithm");
+    let usages = execute::get_property(receiver, "\0quench:crypto-job:usages");
+    let extractable = execute::get_property(receiver, "\0quench:crypto-job:extractable");
+    let subtle = subtle_value();
+    let state = state.clone();
+    Ok(queued_job(Rc::new(move || generate_key(&state, Some(&subtle), &[algorithm.clone(), extractable.clone(), usages.clone()]))))
+}
+
+pub fn aes_cipher_job_construct(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let Some(iv) = args.get(5).and_then(crate::modules::crypto::bytes_from_value) else { return Err(error(Builtin::Error, None, "Invalid initialization vector")); };
+    if iv.len() != 16 { return Err(error(Builtin::Error, None, "Invalid initialization vector")); }
+    Ok(host_api::object(vec![
+        ("run".into(), crate::host::capability(crate::registry::SPEC_INTERNAL_CRYPTO_AES_CIPHER_JOB_RUN)),
+        ("\0quench:crypto-job:mode".into(), args.get(1).cloned().unwrap_or(Value::Undefined)),
+        ("\0quench:crypto-job:key".into(), args.get(2).cloned().unwrap_or(Value::Undefined)),
+        ("\0quench:crypto-job:data".into(), args.get(3).cloned().unwrap_or(Value::Undefined)),
+        ("\0quench:crypto-job:iv".into(), args.get(5).cloned().unwrap_or(Value::Undefined)),
+    ]))
+}
+
+pub fn aes_cipher_job_run(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>, _args: &[Value]) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    let mode = execute::get_property(receiver, "\0quench:crypto-job:mode");
+    let key_handle = execute::get_property(receiver, "\0quench:crypto-job:key");
+    let data = execute::get_property(receiver, "\0quench:crypto-job:data");
+    let iv = execute::get_property(receiver, "\0quench:crypto-job:iv");
+    let export = execute::get_property(&key_handle, "export");
+    let raw = execute::call(&export, &key_handle, &[]).ok().and_then(|value| bytes(&value)).ok_or_else(|| error(Builtin::TypeError, Some("ERR_INVALID_ARG_TYPE"), "Invalid AES key"))?;
+    let algorithm = host_api::object(vec![("name".into(), Value::String("AES-CBC".into())), ("iv".into(), iv)]);
+    let encrypting = matches!(mode, Value::Number(value) if value == 1.0);
+    let usages = host_api::array(vec![Value::String(if encrypting { "encrypt" } else { "decrypt" }.into())]);
+    let crypto_key = key(&key_prototype(), algorithm.clone(), false, usages, Some(raw));
+    let subtle = subtle_value();
+    let state = state.clone();
+    Ok(queued_job(Rc::new(move || {
+        let args = [algorithm.clone(), crypto_key.clone(), data.clone()];
+        if encrypting { encrypt(&state, Some(&subtle), &args) } else { decrypt(&state, Some(&subtle), &args) }
+    })))
+}
+
 fn not_supported(message: &str) -> VmError {
     let value = quench_runtime::builtins::error(Builtin::Error, &[Value::String(message.into())]);
     let value = execute::set_property(value, "name", Value::String("NotSupportedError".into()));
@@ -2495,6 +2624,16 @@ fn operation_error(message: &str) -> VmError {
     let value = quench_runtime::builtins::error(Builtin::Error, &[Value::String(message.into())]);
     let value = execute::set_property(value, "name", Value::String("OperationError".into()));
     VmError::Thrown(value)
+}
+
+fn operation_error_with_cause(message: &str, cause_message: &str) -> VmError {
+    let value = quench_runtime::builtins::error(Builtin::Error, &[Value::String(message.into())]);
+    let value = execute::set_property(value, "name", Value::String("OperationError".into()));
+    let cause = quench_runtime::builtins::error(
+        Builtin::Error,
+        &[Value::String(cause_message.into())],
+    );
+    VmError::Thrown(execute::set_property(value, "cause", cause))
 }
 
 fn invalid_access_error(message: &str) -> VmError {
@@ -4138,8 +4277,9 @@ fn aes_cbc(key: &[u8], iv: &[u8], input: &[u8], encrypt: bool) -> Result<Vec<u8>
         Ok(output)
     } else {
         if input.is_empty() || input.len() % 16 != 0 {
-            return Err(operation_error(
+            return Err(operation_error_with_cause(
                 "The operation failed for an operation-specific reason",
+                "Invalid ciphertext length",
             ));
         }
         let mut output = Vec::with_capacity(input.len());
@@ -4159,8 +4299,9 @@ fn aes_cbc(key: &[u8], iv: &[u8], input: &[u8], encrypt: bool) -> Result<Vec<u8>
             previous = ciphertext;
         }
         let Some(&padding) = output.last() else {
-            return Err(operation_error(
+            return Err(operation_error_with_cause(
                 "The operation failed for an operation-specific reason",
+                "Invalid ciphertext padding",
             ));
         };
         let padding = usize::from(padding);
@@ -4170,8 +4311,9 @@ fn aes_cbc(key: &[u8], iv: &[u8], input: &[u8], encrypt: bool) -> Result<Vec<u8>
                 .iter()
                 .any(|value| usize::from(*value) != padding)
         {
-            return Err(operation_error(
+            return Err(operation_error_with_cause(
                 "The operation failed for an operation-specific reason",
+                "Invalid ciphertext padding",
             ));
         }
         output.truncate(output.len() - padding);
