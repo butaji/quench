@@ -602,6 +602,11 @@ impl CodeArena {
             &self.instructions[start as usize..instruction_end],
             &mut metadata,
         );
+        let register_count = register_count_for(
+            &self.instructions[start as usize..instruction_end],
+            &metadata,
+            &operand_windows,
+        );
         self.metadata.push(metadata);
         self.quickening_sites.push(quickening_sites);
         self.operand_windows.push(operand_windows);
@@ -611,9 +616,7 @@ impl CodeArena {
         self.ranges.push((start, end));
         self.parameter_ends.push(parameter_end);
         self.constants.push(constants);
-        self.register_counts.push(register_count_for(
-            &self.instructions[start as usize..end as usize],
-        ));
+        self.register_counts.push(register_count);
         CodeRange { code, start, end }
     }
 
@@ -1345,11 +1348,19 @@ fn lower_proven_local_update(ops: &[Op]) -> Option<crate::ir::Instruction> {
         .then(|| crate::ir::Instruction::update_local(*old, *updated, *slot, decrement))
 }
 
-fn register_count_for(instructions: &[crate::ir::Instruction]) -> u16 {
+fn register_count_for(
+    instructions: &[crate::ir::Instruction],
+    metadata: &[InstructionMeta],
+    operand_windows: &[Rc<[u16]>],
+) -> u16 {
     let mut count = 0usize;
-    for instruction in instructions {
+    for (pc, instruction) in instructions.iter().enumerate() {
         let flow = instruction.register_flow();
-        let candidate = flow.highest_register().map_or_else(
+        let window = metadata
+            .get(pc)
+            .and_then(|meta| operand_windows.get(meta.operand_window as usize))
+            .map(AsRef::as_ref);
+        let candidate = highest_register(flow, window).map_or_else(
             || {
                 // Structured residuals are not yet physically composed;
                 // retain their compact words until their handler contract is
@@ -1365,6 +1376,13 @@ fn register_count_for(instructions: &[crate::ir::Instruction]) -> u16 {
         count = count.max(candidate.saturating_add(1));
     }
     u16::try_from(count).unwrap_or(u16::MAX)
+}
+
+fn highest_register(flow: crate::ir::RegisterFlow, window: Option<&[u16]>) -> Option<u16> {
+    flow.highest_register()
+        .into_iter()
+        .chain(window.into_iter().flatten().copied())
+        .max()
 }
 
 fn derive_frame_register_counts(
@@ -5117,9 +5135,13 @@ fn successor_pcs(entries: &[BaselineEntry], pc: usize) -> Vec<usize> {
     }
 }
 
-fn register_liveness(entries: &[BaselineEntry]) -> Vec<BTreeSet<u16>> {
+fn register_liveness(
+    entries: &[BaselineEntry],
+    operand_windows: &[Option<&[u16]>],
+) -> Vec<BTreeSet<u16>> {
     let mut live_in = vec![BTreeSet::new(); entries.len()];
     let mut live_out = vec![BTreeSet::new(); entries.len()];
+    let conservative = all_register_uses(entries, operand_windows);
     let mut changed = true;
     let mut rounds = 0;
     while changed && rounds <= entries.len().saturating_mul(2) {
@@ -5133,25 +5155,51 @@ fn register_liveness(entries: &[BaselineEntry]) -> Vec<BTreeSet<u16>> {
                 }
             }
             let flow = entries[pc].instruction.register_flow();
-            let mut input = if flow.complete {
-                out.clone()
-            } else {
-                entries
-                    .iter()
-                    .flat_map(|entry| entry.instruction.register_flow().uses)
-                    .flatten()
-                    .collect()
-            };
-            if let Some(definition) = flow.definition {
-                input.remove(&definition);
-            }
-            input.extend(flow.uses.into_iter().flatten());
+            let window = operand_windows.get(pc).copied().flatten();
+            let input = live_input(&out, flow, window, &conservative);
             changed |= live_out[pc] != out || live_in[pc] != input;
             live_out[pc] = out;
             live_in[pc] = input;
         }
     }
     live_out
+}
+
+fn all_register_uses(
+    entries: &[BaselineEntry],
+    operand_windows: &[Option<&[u16]>],
+) -> BTreeSet<u16> {
+    let mut uses = entries
+        .iter()
+        .flat_map(|entry| entry.instruction.register_flow().uses)
+        .flatten()
+        .collect::<BTreeSet<_>>();
+    uses.extend(
+        operand_windows
+            .iter()
+            .flatten()
+            .flat_map(|window| window.iter().copied()),
+    );
+    uses
+}
+
+fn live_input(
+    output: &BTreeSet<u16>,
+    flow: crate::ir::RegisterFlow,
+    window: Option<&[u16]>,
+    conservative: &BTreeSet<u16>,
+) -> BTreeSet<u16> {
+    let mut input = if flow.complete {
+        output.clone()
+    } else {
+        conservative.clone()
+    };
+    if let Some(definition) = flow.definition {
+        input.remove(&definition);
+    }
+    input.extend(flow.uses.into_iter().flatten());
+    input.extend(window.into_iter().flatten().copied());
+    input
 }
 
 fn region_entry_is_legal(entries: &[BaselineEntry], start: usize, end: usize) -> bool {
@@ -5438,7 +5486,10 @@ fn build_admissions(
     Rc<[NativeAdmission]>,
     SharedStencilPool,
 ) {
-    let liveness = register_liveness(entries);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let liveness = register_liveness(entries, &operand_windows);
     let arena = Rc::new(RefCell::new(
         crate::stencil_arena::SharedStencilSlab::new(4096)
             .expect("compile-time region slab capacity is valid"),
@@ -7011,8 +7062,8 @@ mod tests {
     fn zero_argument_named_call_does_not_use_sentinel_as_register() {
         let zero = crate::ir::Instruction::call_named(1, 2, None);
         let one = crate::ir::Instruction::call_named(1, 2, Some(9));
-        assert_eq!(super::register_count_for(&[zero]), 3);
-        assert_eq!(super::register_count_for(&[one]), 10);
+        assert_eq!(super::register_count_for(&[zero], &[], &[]), 3);
+        assert_eq!(super::register_count_for(&[one], &[], &[]), 10);
         assert_eq!(zero.register_flow().highest_register(), Some(2));
         assert_eq!(one.register_flow().highest_register(), Some(9));
     }
@@ -7025,12 +7076,12 @@ mod tests {
         let checked = crate::ir::Instruction::load_local_checked(3, u16::MAX);
         let local_move = crate::ir::Instruction::move_local(3, u16::MAX, u16::MAX - 1);
         let call = crate::ir::Instruction::call_registered_window(12, 2, 7, 4);
-        assert_eq!(super::register_count_for(&[add_const]), 5);
-        assert_eq!(super::register_count_for(&[load]), 4);
-        assert_eq!(super::register_count_for(&[local]), 4);
-        assert_eq!(super::register_count_for(&[checked]), 4);
-        assert_eq!(super::register_count_for(&[local_move]), 4);
-        assert_eq!(super::register_count_for(&[call]), 13);
+        assert_eq!(super::register_count_for(&[add_const], &[], &[]), 5);
+        assert_eq!(super::register_count_for(&[load], &[], &[]), 4);
+        assert_eq!(super::register_count_for(&[local], &[], &[]), 4);
+        assert_eq!(super::register_count_for(&[checked], &[], &[]), 4);
+        assert_eq!(super::register_count_for(&[local_move], &[], &[]), 4);
+        assert_eq!(super::register_count_for(&[call], &[], &[]), 13);
     }
 
     #[test]
@@ -7047,9 +7098,34 @@ mod tests {
                 control: crate::ir::ControlOperands::Return { source: 4 },
             },
         ];
-        let liveness = super::register_liveness(&entries);
+        let liveness = super::register_liveness(&entries, &[None, None]);
         assert_eq!(liveness[0], std::collections::BTreeSet::from([4]));
         assert!(!liveness[0].contains(&u16::MAX));
+    }
+
+    #[test]
+    fn out_of_line_call_arguments_size_and_remain_live_in_the_frame() {
+        let mut arena = super::CodeArena::new();
+        let range = arena.append_slice(&[
+            super::Op::Move { dst: 0, src: 1 },
+            super::Op::CallMethod {
+                dst: 20,
+                object: 2,
+                key: "method".into(),
+                callee: Some(4),
+                args: vec![5, 7, 9, 11, 13, 27],
+                spreads: vec![false; 6],
+            },
+        ]);
+        let store = arena.freeze();
+        let code = store.code(range).expect("compact code");
+        let entries = super::baseline_entries(code);
+        let windows = (0..entries.len())
+            .map(|pc| code.operand_window_at(pc))
+            .collect::<Vec<_>>();
+        let liveness = super::register_liveness(&entries, &windows);
+        assert_eq!(code.frame_register_count(), 28);
+        assert!(liveness[0].contains(&27));
     }
 
     #[test]
