@@ -1815,6 +1815,21 @@ pub(crate) fn execute_optimized_code_step_from(
     let _decode_guard = crate::execution_trace::compact(instruction.opcode);
     crate::execution_trace::compact_site(code, start);
     crate::execution_trace::operands(instruction);
+    if let Some(native) = entry.native_local_binary() {
+        let result = crate::locals::with_current_ref(|environment| {
+            environment.and_then(|environment| {
+                crate::stencil_fusion::execute_local_binary(native, environment)
+            })
+        });
+        if let Some((output, value)) = result {
+            registers.write_number(usize::from(output), value);
+            crate::execution_trace::stencil_observation(code, start, "local_binary", true);
+            crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+            return Ok((crate::completion::Completion::Normal, start + 3));
+        }
+        crate::execution_trace::stencil_observation(code, start, "local_binary", false);
+        crate::execution_trace::leaf_rejection("optimizing_native_local_binary");
+    }
     // These operations are pure and have no dynamic semantic gateway. Their
     // compact operands are already validated by the canonical lowering, so a
     // direct optimized step can avoid the baseline handler call entirely.
@@ -2352,6 +2367,21 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
         if skip_proven_object_coercible(code, pc, instruction, registers) {
             pc += 1;
             continue;
+        }
+        if let (Some(environment), Some(native)) =
+            (environment, plan.native_local_binary_at(pc))
+        {
+            if let Some((output, value)) =
+                crate::stencil_fusion::execute_local_binary(native, environment)
+            {
+                registers.write_number(usize::from(output), value);
+                crate::execution_trace::stencil_observation(code, pc, "local_binary", true);
+                crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                pc += 3;
+                continue;
+            }
+            crate::execution_trace::stencil_observation(code, pc, "local_binary", false);
+            crate::execution_trace::leaf_rejection("native_local_binary");
         }
         // Proven lexical transfers are pure frame-word operations. When the
         // baseline entry owns its Environment, keep the same frame fact for
