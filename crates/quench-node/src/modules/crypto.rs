@@ -4674,6 +4674,14 @@ fn rsa_operation(args: &[Value], operation: &str) -> Result<Value, VmError> {
     } else {
         key_value.clone()
     };
+    if matches!(
+        execute::get_property(&key_source, crate::modules::webcrypto::KEY_MARKER_PROP),
+        Value::Boolean(true)
+    ) {
+        return Err(invalid_type(
+            "The \"key\" argument must be a string, Buffer, TypedArray, DataView, KeyObject, or URL",
+        ));
+    }
     if (operation == "public_encrypt" || operation == "public_decrypt")
         && (crate::modules::url_whatwg::is_url_instance(key_value)
             || crate::modules::url_whatwg::is_url_instance(&key_source))
