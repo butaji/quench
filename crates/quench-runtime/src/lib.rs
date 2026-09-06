@@ -126,6 +126,7 @@ mod special;
 mod statement_control;
 mod statements;
 pub mod stencil_arena;
+mod stencil_cache;
 pub mod stencil_fact;
 pub mod stencil_lifecycle;
 pub mod stencil_patch;
