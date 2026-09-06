@@ -239,13 +239,25 @@ pub fn new_message_port(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError
         ("removeEventListener", crate::registry::SPEC_TARGET_REMOVE),
         ("dispatchEvent", crate::registry::SPEC_TARGET_DISPATCH),
     ] {
-        execute::set_property_in_place(&port, name, crate::host::capability(cap));
+        let descriptor = host_api::object(vec![
+            ("value".into(), crate::host::capability(cap)),
+            ("writable".into(), Value::Boolean(true)),
+            ("enumerable".into(), Value::Boolean(false)),
+            ("configurable".into(), Value::Boolean(true)),
+        ]);
+        let _ = execute::define_property(port.clone(), name, descriptor);
     }
     crate::modules::events::initialize_emitter(state, &port)?;
     if let Ok(prototype) = crate::modules::events::emitter_prototype() {
         for name in ["on", "addListener", "once", "emit", "removeListener", "off"] {
             let value = execute::get_property(&prototype, name);
-            execute::set_property_in_place(&port, name, value);
+            let descriptor = host_api::object(vec![
+                ("value".into(), value),
+                ("writable".into(), Value::Boolean(true)),
+                ("enumerable".into(), Value::Boolean(false)),
+                ("configurable".into(), Value::Boolean(true)),
+            ]);
+            let _ = execute::define_property(port.clone(), name, descriptor);
         }
     }
     if let Some(prototype) = MESSAGE_PORT_PROTOTYPE.with(|slot| slot.borrow().clone()) {
