@@ -481,6 +481,11 @@ fn worker_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, V
         ("exited", Value::Boolean(false)),
         ("_worker-filename", filename),
         ("_worker-options", options),
+        // Worker construction queues one launch at the end of the current
+        // turn.  A message posted immediately after construction must be
+        // captured by that launch rather than trying to start a second child
+        // process (the host worker transport is one-shot).
+        ("_worker-pending-message", Value::Undefined),
         ("_worker-refed", Value::Boolean(true)),
         ("_worker-started", Value::Boolean(false)),
         ("_worker-destroyed", Value::Boolean(false)),
@@ -502,7 +507,7 @@ fn worker_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, V
         "setEncoding",
         cap(WORKER_NOOP),
     );
-    execute::set_property_in_place(&worker, "postMessage", cap(WORKER_START));
+    execute::set_property_in_place(&worker, "postMessage", cap(WORKER_MESSAGE));
     execute::set_property_in_place(&worker, "ref", cap(WORKER_REF));
     execute::set_property_in_place(&worker, "unref", cap(WORKER_UNREF));
     execute::set_property_in_place(&worker, "hasRef", cap(WORKER_HAS_REF));
@@ -576,7 +581,7 @@ fn worker_start(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
     execute::set_property_in_place(worker, "_worker-started", Value::Boolean(true));
     let filename = execute::get_property(worker, "_worker-filename");
     let options = execute::get_property(worker, "_worker-options");
-    let message = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let message = execute::get_property(worker, "_worker-pending-message");
     let env_snapshot = execute::get_property(worker, "\0worker-env");
     let output = launch(filename, options, message, env_snapshot, state)?;
     state
@@ -820,22 +825,53 @@ fn worker_post_message(
         return Err(type_error("Cannot post message without a parentPort"));
     };
     if execute::get_property(port, "_worker-filename") != Value::Undefined {
-        return worker_start(
-            _state,
-            &[
-                port.clone(),
-                args.first().cloned().unwrap_or(Value::Undefined),
-            ],
+        // The construction microtask owns the child launch.  Store an
+        // immediately-posted message as a fact for that launch; launching a
+        // second subprocess here races the queued startup and loses the
+        // message (and produces a spurious `undefined` child invocation).
+        execute::set_property_in_place(
+            port,
+            "_worker-pending-message",
+            args.first().cloned().unwrap_or(Value::Undefined),
         );
+        return Ok(port.clone());
     }
     if !quench_runtime::is_callable(&execute::get_property(port, "emit")) {
         return Ok(Value::Undefined);
     }
     let value = args.first().cloned().unwrap_or(Value::Undefined);
     let encoded = serde_json::to_string(&to_json(&value)).unwrap_or_else(|_| "null".into());
+    if let Some(transfer) = args.get(1) {
+        detach_transfer_list(transfer)?;
+    }
     use std::io::Write;
     let _ = std::io::stdout().write_all(format!("__QUENCH_WORKER_MESSAGE__{encoded}\n").as_bytes());
     Ok(Value::Undefined)
+}
+
+fn detach_transfer_list(transfer: &Value) -> Result<(), VmError> {
+    let Value::Array(_) = transfer else {
+        return Ok(());
+    };
+    let length = match execute::get_property(transfer, "length") {
+        Value::Number(number) if number.is_finite() && number >= 0.0 => number as usize,
+        _ => 0,
+    };
+    for index in 0..length {
+        let item = execute::get_property(transfer, &index.to_string());
+        if let Value::ArrayBuffer(buffer) = item {
+            if buffer.untransferable {
+                return Err(quench_runtime::execute::VmError::Thrown(
+                    quench_runtime::builtins::dom_exception(
+                        "Cannot transfer an object that is not transferable",
+                        "DataCloneError",
+                    ),
+                ));
+            }
+            buffer.detach();
+        }
+    }
+    Ok(())
 }
 
 fn worker_close(
@@ -982,6 +1018,9 @@ fn type_error(message: &str) -> VmError {
 }
 
 fn to_json(value: &Value) -> serde_json::Value {
+    if let Some(wire) = crate::modules::webcrypto::key_to_wire(value) {
+        return wire;
+    }
     if let Some(wire) = crate::modules::crypto::key_object_to_wire(value) {
         return wire;
     }
@@ -1033,6 +1072,9 @@ fn from_json(value: serde_json::Value) -> Value {
             host_api::array(values.into_iter().map(from_json).collect())
         }
         serde_json::Value::Object(values) => {
+            if let Some(key) = crate::modules::webcrypto::key_from_wire(&values) {
+                return key;
+            }
             if let Some(key) = crate::modules::crypto::key_object_from_wire(&values) {
                 return key;
             }
