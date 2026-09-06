@@ -503,13 +503,32 @@ pub fn fork(
         if let Ok(workers) = execute::get_property_result(&module, "workers") {
             let _ = execute::set_property_in_place(&workers, &id.to_string(), worker.clone());
         }
-        let _ = crate::modules::events::method_emit(
-            state,
-            Some(&module),
-            &[Value::String("fork".into()), worker.clone()],
-        );
     }
     run_worker_script(state, id, &worker);
+    // Child bootstrap may have delivered a listening notification while the
+    // logical worker was re-entered. The parent-visible lifecycle still
+    // starts at `none` for the deferred fork event; the queued listening
+    // notification advances it after fork/online observers run.
+    let _ = execute::set_property_in_place(&worker, "state", Value::String("none".into()));
+    // The worker bootstrap above drains the current microtask queue. Queue
+    // `fork` only after that re-entry so it cannot run before `cluster.fork()`
+    // returns its Worker object to the caller.
+    if let Some(module) = state.borrow().cluster.module.clone() {
+        state.borrow().event_loop.queue_microtask_with_receiver(
+            crate::host::capability(SPEC_EVENTS_EMIT),
+            vec![Value::String("fork".into()), worker.clone()],
+            module,
+        );
+    }
+    // The online transition follows `fork` and owns the state change. This
+    // preserves the observable `none` state during the fork notification and
+    // gives listeners attached to the returned Worker the same next-turn
+    // online event as Node.
+    state.borrow().event_loop.queue_microtask_with_receiver(
+        crate::host::capability(SPEC_CLUSTER_WORKER_EMIT),
+        vec![Value::String("online".into())],
+        worker.clone(),
+    );
     let pending_listening = state
         .borrow_mut()
         .cluster
@@ -517,13 +536,6 @@ pub fn fork(
         .drain(..)
         .collect::<Vec<_>>();
     let module = { state.borrow().cluster.module.clone() };
-    if let Some(module) = module.clone() {
-        let _ = crate::modules::events::method_emit(
-            state,
-            Some(&module),
-            &[Value::String("online".into()), worker.clone()],
-        );
-    }
     if let Some(module) = module {
         let process_scope = state.borrow().cluster.process_scope();
         for (worker, address) in pending_listening {
@@ -556,7 +568,6 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
     ] {
         let _ = execute::set_property_in_place(&module, key, value);
     }
-    let _ = execute::set_property_in_place(worker, "state", Value::String("online".into()));
     let global = quench_runtime::vm::current_global_object();
     let process_value = execute::get_property_result(&global, "process").ok();
     let previous_process_id = process_value
@@ -944,13 +955,15 @@ fn worker(
             }
         })
         .ok_or_else(|| err("worker"))?;
-    let object = state
-        .borrow()
-        .cluster
-        .workers
-        .get(&id)
-        .map(|worker| worker.object.clone())
-        .unwrap_or_else(|| value.clone());
+    let object = {
+        let guard = state.borrow();
+        guard
+            .cluster
+            .workers
+            .get(&id)
+            .map(|worker| worker.object.clone())
+    }
+    .unwrap_or_else(|| value.clone());
     Ok((id, object))
 }
 pub fn is_dead(
@@ -997,7 +1010,7 @@ pub fn on(
         if !quench_runtime::is_callable(cb) {
             return Err(err("listener"));
         }
-        let child = state.borrow().cluster.worker_context == Some(id);
+        let child = { state.borrow().cluster.worker_context == Some(id) };
         {
             let mut guard = state.borrow_mut();
             let Some(worker) = guard.cluster.workers.get_mut(&id) else {
@@ -1098,43 +1111,22 @@ pub fn on(
                 );
             }
         }
-        match name.as_str() {
-            "online" => {
-                let _ =
-                    execute::set_property_in_place(&obj, "state", Value::String("online".into()));
-                let _ = execute::call(cb, &obj, &[]);
-                let module = state.borrow().cluster.module.clone();
-                if let Some(module) = module {
-                    let _ = crate::modules::events::method_emit(
-                        state,
-                        Some(&module),
-                        &[Value::String("online".into()), obj.clone()],
-                    );
-                }
-            }
-            "listening" => {
-                let _ = execute::set_property_in_place(
-                    &obj,
-                    "state",
-                    Value::String("listening".into()),
+        if name == "listening" {
+            let pending = state
+                .borrow_mut()
+                .cluster
+                .workers
+                .get_mut(&id)
+                .map(|worker| std::mem::take(&mut worker.pending_listening))
+                .unwrap_or_default();
+            for address in pending {
+                let info = listening_info(&address);
+                state.borrow_mut().event_loop.queue_microtask_with_receiver(
+                    crate::host::capability(SPEC_CLUSTER_WORKER_EMIT),
+                    vec![Value::String("listening".into()), info],
+                    obj.clone(),
                 );
-                let pending = state
-                    .borrow_mut()
-                    .cluster
-                    .workers
-                    .get_mut(&id)
-                    .map(|worker| std::mem::take(&mut worker.pending_listening))
-                    .unwrap_or_default();
-                for address in pending {
-                    let info = listening_info(&address);
-                    state.borrow_mut().event_loop.queue_microtask_with_receiver(
-                        cb.clone(),
-                        vec![info],
-                        obj.clone(),
-                    );
-                }
             }
-            _ => {}
         }
     }
     Ok(obj)
@@ -1149,23 +1141,40 @@ pub fn emit(
         Some(Value::String(s)) => s.clone(),
         _ => return Ok(Value::Boolean(false)),
     };
-    let child = state.borrow().cluster.worker_context == Some(id);
-    let callbacks = state
-        .borrow()
-        .cluster
-        .workers
-        .get(&id)
-        .and_then(|w| {
-            if child {
-                w.child_listeners.get(&name).cloned()
-            } else {
-                w.listeners.get(&name).cloned()
-            }
-        })
-        .unwrap_or_default();
+    let child = { state.borrow().cluster.worker_context == Some(id) };
+    let callbacks = {
+        let guard = state.borrow();
+        guard
+            .cluster
+            .workers
+            .get(&id)
+            .and_then(|w| {
+                if child {
+                    w.child_listeners.get(&name).cloned()
+                } else {
+                    w.listeners.get(&name).cloned()
+                }
+            })
+            .unwrap_or_default()
+    };
     let present = !callbacks.is_empty();
+    if name == "online" {
+        let _ = execute::set_property_in_place(&obj, "state", Value::String("online".into()));
+    } else if name == "listening" {
+        let _ = execute::set_property_in_place(&obj, "state", Value::String("listening".into()));
+    }
     for cb in callbacks {
         execute::call(&cb, &obj, &args[1..])?;
+    }
+    if name == "online" {
+        let module = { state.borrow().cluster.module.clone() };
+        if let Some(module) = module {
+            let _ = crate::modules::events::method_emit(
+                state,
+                Some(&module),
+                &[Value::String("online".into()), obj.clone()],
+            );
+        }
     }
     Ok(Value::Boolean(present))
 }

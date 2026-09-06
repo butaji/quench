@@ -337,6 +337,8 @@ node_api! {
     (SPEC_DIAGNOSTICS_CHANNEL_SCOPE, "diagnostics_channel:Channel:withStoreScope", 0x1F12),
     (SPEC_DIAGNOSTICS_SCOPE_DISPOSE, "diagnostics_channel:StoreScope:dispose", 0x1F13),
     (SPEC_DIAGNOSTICS_CHANNEL_RUN_STORES, "diagnostics_channel:Channel:runStores", 0x1F14),
+    (SPEC_WEB_LOCKS_REQUEST, "web_locks:request", 0x1F70),
+    (SPEC_WEB_LOCKS_SETTLE, "web_locks:settle", 0x1F71),
     (SPEC_ASYNC_RESOURCE, "async_hooks:AsyncResource", 0x1410),
     (SPEC_ASYNC_EXECUTION_ID, "async_hooks:executionAsyncId", 0x1411),
     (SPEC_ASYNC_TRIGGER_ID, "async_hooks:triggerAsyncId", 0x1412),
@@ -1775,6 +1777,8 @@ pub const CAP_DIAGNOSTICS_TRACING_SUBSCRIBE: CapId = SPEC_DIAGNOSTICS_TRACING_SU
 pub const CAP_DIAGNOSTICS_TRACING_TRACE_SYNC: CapId = SPEC_DIAGNOSTICS_TRACING_TRACE_SYNC.cap;
 pub const CAP_DIAGNOSTICS_TRACING_UNSUBSCRIBE: CapId = SPEC_DIAGNOSTICS_TRACING_UNSUBSCRIBE.cap;
 pub const CAP_DIAGNOSTICS_UNSUBSCRIBE: CapId = SPEC_DIAGNOSTICS_UNSUBSCRIBE.cap;
+pub const CAP_WEB_LOCKS_REQUEST: CapId = SPEC_WEB_LOCKS_REQUEST.cap;
+pub const CAP_WEB_LOCKS_SETTLE: CapId = SPEC_WEB_LOCKS_SETTLE.cap;
 pub const CAP_DNS_LOOKUP: CapId = SPEC_DNS_LOOKUP.cap;
 pub const CAP_DNS_LOOKUP_ADDRESSES: CapId = SPEC_DNS_LOOKUP_ADDRESSES.cap;
 pub const CAP_DNS_RESOLVE4: CapId = SPEC_DNS_RESOLVE4.cap;
@@ -2664,6 +2668,10 @@ fn push_bindings_with_exec_argv(
     // Internal Node modules use the unexported constructor name while public
     // code observes `Buffer`; both spellings are one identity.
     out.push(("NodeBuffer".to_string(), buffer));
+    out.push((
+        "__quenchNavigatorLocks".to_string(),
+        crate::modules::web_locks::build(),
+    ));
 }
 
 fn install_event_prototype(

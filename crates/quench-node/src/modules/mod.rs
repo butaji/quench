@@ -82,5 +82,6 @@ pub mod v8;
 pub mod vm_api;
 pub mod wasi;
 pub mod webcrypto;
+pub mod web_locks;
 pub mod worker_threads;
 pub mod zlib;
