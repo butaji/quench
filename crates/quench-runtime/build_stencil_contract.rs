@@ -25,6 +25,7 @@ pub(crate) enum DeclAbi {
     Bridge,
     ArrayKernel,
     ArrayNumericLoop,
+    CompareBranch,
     PropertyGuard,
     PropertyWriteGuard,
 }
@@ -136,6 +137,10 @@ macro_rules! rust_assembly_catalog {
 }
 
 rust_assembly_catalog! {
+    CompareLessBranch {
+        name: "compare_less_branch", abi: CompareBranch,
+        ops: ["Binary", "JumpIfFalse"], holes: []
+    },
     ArrayNumericLoop {
         name: "array_numeric_loop", abi: ArrayNumericLoop,
         ops: ["LoadLocal", "LoadConst", "Binary", "JumpIfFalse", "LoadLocal",

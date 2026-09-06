@@ -1547,6 +1547,11 @@ enum InstalledBinaryEntry {
     U32Shared(crate::stencil_arena::EntryToken<extern "C" fn(u32, u32) -> u32>),
     TaggedLocal(usize),
     TaggedShared(crate::stencil_arena::EntryToken<extern "C" fn(u64, u64) -> u64>),
+    CompareBranchShared(
+        crate::stencil_arena::EntryToken<
+            extern "C" fn(*mut crate::native_control::NativeCompareBranchContext) -> u32,
+        >,
+    ),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1564,6 +1569,7 @@ enum BinarySemantic {
 pub(crate) struct CompareBranch {
     false_target: u16,
     span: u8,
+    physical_key: Option<crate::stencil_fact::RegionKey>,
 }
 
 pub(crate) struct NativeBinaryPlan {
@@ -1806,11 +1812,18 @@ impl NativeBinaryPlan {
 
     #[inline]
     fn note_native_entry(&mut self) {
+        self.note_native_entry_for(self.key);
+    }
+
+    #[inline]
+    fn note_native_entry_for(&mut self, key: crate::stencil_fact::RegionKey) {
         #[cfg(test)]
         {
             self.native_entry_count = self.native_entry_count.saturating_add(1);
-            self.last_native_view = crate::stencil_select::select_physical(self.key);
+            self.last_native_view = crate::stencil_select::select_physical(key);
         }
+        #[cfg(not(test))]
+        let _ = key;
     }
 
     #[cfg(test)]
@@ -2332,6 +2345,78 @@ impl NativeBinaryPlan {
         }
     }
 
+    #[cfg(target_arch = "aarch64")]
+    pub(crate) fn execute_compare_branch(
+        &mut self,
+        pc: usize,
+        lhs: f64,
+        rhs: f64,
+    ) -> Result<crate::native_control::NativeCompareBranchOutcome, crate::stencil_arena::ArenaError>
+    {
+        let branch = self
+            .compare_branch
+            .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+        let key = branch
+            .physical_key
+            .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+        let true_pc = pc
+            .checked_add(usize::from(branch.span))
+            .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+        self.execute_compare_branch_with_key(key, lhs, rhs, true_pc, branch.false_target.into())
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    fn execute_compare_branch_with_key(
+        &mut self,
+        key: crate::stencil_fact::RegionKey,
+        lhs: f64,
+        rhs: f64,
+        true_pc: usize,
+        false_pc: usize,
+    ) -> Result<crate::native_control::NativeCompareBranchOutcome, crate::stencil_arena::ArenaError>
+    {
+        let shared = self
+            .shared_arena
+            .clone()
+            .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+        if let InstalledBinaryEntry::CompareBranchShared(token) = self.installed {
+            let result = invoke_compare_branch(&shared, token, lhs, rhs, true_pc, false_pc)?;
+            self.note_native_entry_for(key);
+            return Ok(result);
+        }
+        let token = self.publish_compare_branch(&shared, key)?;
+        let result = invoke_compare_branch(&shared, token, lhs, rhs, true_pc, false_pc)?;
+        self.installed = InstalledBinaryEntry::CompareBranchShared(token);
+        self.note_native_entry_for(key);
+        Ok(result)
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    fn publish_compare_branch(
+        &mut self,
+        shared: &std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
+        key: crate::stencil_fact::RegionKey,
+    ) -> Result<
+        crate::stencil_arena::EntryToken<
+            extern "C" fn(*mut crate::native_control::NativeCompareBranchContext) -> u32,
+        >,
+        crate::stencil_arena::ArenaError,
+    > {
+        let values = crate::stencil_fact::PatchValues::from_site(&self.site);
+        let address = {
+            let mut slab = shared.borrow_mut();
+            let view = crate::stencil_select::select_physical_for_abi(
+                key,
+                crate::stencil_select::RegionAbi::CompareBranch,
+            )
+            .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+            let address = slab.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
+            slab.make_executable(address)?;
+            address
+        };
+        shared.borrow().owned_compare_branch_entry(address)
+    }
+
     pub(crate) fn compare_branch_next(&self, pc: usize, value: bool) -> Option<usize> {
         let branch = self.compare_branch?;
         Some(if value {
@@ -2370,6 +2455,27 @@ impl std::fmt::Debug for NativeBinaryPlan {
             .field("cache_len", &self.physical.cache.len())
             .finish()
     }
+}
+
+#[cfg(target_arch = "aarch64")]
+fn invoke_compare_branch(
+    shared: &std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
+    token: crate::stencil_arena::EntryToken<
+        extern "C" fn(*mut crate::native_control::NativeCompareBranchContext) -> u32,
+    >,
+    lhs: f64,
+    rhs: f64,
+    true_pc: usize,
+    false_pc: usize,
+) -> Result<crate::native_control::NativeCompareBranchOutcome, crate::stencil_arena::ArenaError> {
+    let mut context = crate::native_control::NativeCompareBranchContext::new(
+        lhs, rhs, true_pc, false_pc,
+    );
+    let status = crate::stencil_arena::SharedStencilSlab::acquire_owned(shared, token)?
+        .invoke(|entry| entry(&mut context))?;
+    context
+        .finish(status)
+        .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)
 }
 
 fn constant_word_bits(constant: &crate::ops::Constant) -> Option<u64> {
@@ -5009,6 +5115,11 @@ impl NativeRegionPlan {
                         "property-write ABI cannot enter a region context".into(),
                     ));
                 }
+                crate::stencil_select::RegionAbi::CompareBranch => {
+                    return Err(NativeDispatchError::Physical(
+                        "compare-branch ABI requires its typed entry".into(),
+                    ));
+                }
                 crate::stencil_select::RegionAbi::ConstantWord => {
                     return Err(NativeDispatchError::Physical(
                         "constant-word ABI cannot enter a region context".into(),
@@ -5388,9 +5499,13 @@ fn compare_branch_at(
         return None;
     }
     let end = branch_pc.checked_add(1)?;
+    let physical_key = (crate::ir::compact_binary_operator(comparison.flags)
+        == Some(crate::ops::BinaryOp::LessThan))
+    .then(crate::stencil_select::compare_less_branch_region_key);
     cfg.region_entry_is_legal(start, end).then_some(CompareBranch {
         false_target: u16::try_from(false_target).ok()?,
         span: u8::try_from(end.checked_sub(start)?).ok()?,
+        physical_key,
     })
 }
 
