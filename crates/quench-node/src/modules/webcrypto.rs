@@ -21,16 +21,19 @@ use p256::{
     ecdh::diffie_hellman as p256_diffie_hellman, PublicKey as P256PublicKey,
     SecretKey as P256SecretKey,
 };
+use p256::ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey, VerifyingKey as P256VerifyingKey};
 use p384::elliptic_curve::sec1::ToEncodedPoint as P384ToEncodedPoint;
 use p384::{
     ecdh::diffie_hellman as p384_diffie_hellman, PublicKey as P384PublicKey,
     SecretKey as P384SecretKey,
 };
+use p384::ecdsa::{Signature as P384Signature, SigningKey as P384SigningKey, VerifyingKey as P384VerifyingKey};
 use p521::elliptic_curve::sec1::ToSec1Point as P521ToSec1Point;
 use p521::{
     ecdh::diffie_hellman as p521_diffie_hellman, PublicKey as P521PublicKey,
     SecretKey as P521SecretKey,
 };
+use p521::ecdsa::{Signature as P521Signature, SigningKey as P521SigningKey, VerifyingKey as P521VerifyingKey};
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
 use quench_runtime::ops::Builtin;
@@ -47,7 +50,9 @@ use tiny_keccak::{CShake, Hasher as TinyHasher};
 use rsa::pkcs1::DecodeRsaPublicKey;
 use rsa::pkcs8::{DecodePrivateKey, DecodePublicKey};
 use rsa::traits::PublicKeyParts;
-use rsa::{BigUint as RsaBigUint, RsaPrivateKey, RsaPublicKey};
+use rsa::{
+    BigUint as RsaBigUint, Pkcs1v15Sign, Pss, RsaPrivateKey, RsaPublicKey,
+};
 
 use crate::host::HostState;
 
@@ -1234,6 +1239,172 @@ fn rsa_oaep_crypt(
         encoded.extend(raw);
         rsa_oaep_unpadding(&hash, &label, encoded)
     }
+}
+
+// DigestInfo prefixes from RFC 8017, section 9.2.  Keeping these as one
+// table lets the RSA operation consume the same hash fact as OAEP and PSS,
+// without requiring digest crates to expose their optional OID features.
+fn rsa_pkcs1_digest_info(hash: &str, digest: &[u8]) -> Option<Vec<u8>> {
+    let prefix: &[u8] = match hash {
+        "SHA-1" => &[
+            0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a, 0x05, 0x00,
+            0x04, 0x14,
+        ],
+        "SHA-224" => &[
+            0x30, 0x2d, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04,
+            0x02, 0x04, 0x05, 0x00, 0x04, 0x1c,
+        ],
+        "SHA-256" => &[
+            0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04,
+            0x02, 0x01, 0x05, 0x00, 0x04, 0x20,
+        ],
+        "SHA-384" => &[
+            0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04,
+            0x02, 0x02, 0x05, 0x00, 0x04, 0x30,
+        ],
+        "SHA-512" => &[
+            0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04,
+            0x02, 0x03, 0x05, 0x00, 0x04, 0x40,
+        ],
+        "SHA3-256" => &[
+            0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04,
+            0x02, 0x08, 0x05, 0x00, 0x04, 0x20,
+        ],
+        "SHA3-384" => &[
+            0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04,
+            0x02, 0x09, 0x05, 0x00, 0x04, 0x30,
+        ],
+        "SHA3-512" => &[
+            0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04,
+            0x02, 0x0a, 0x05, 0x00, 0x04, 0x40,
+        ],
+        _ => return None,
+    };
+    let mut value = Vec::with_capacity(prefix.len() + digest.len());
+    value.extend_from_slice(prefix);
+    value.extend_from_slice(digest);
+    Some(value)
+}
+
+fn rsa_pss_salt_length(algorithm: &Value) -> Result<usize, VmError> {
+    match execute::get_property(algorithm, "saltLength") {
+        Value::Number(value)
+            if value.is_finite() && value.fract() == 0.0 && value >= 0.0 =>
+        {
+            usize::try_from(value as u64)
+                .map_err(|_| operation_error("algorithm.saltLength is out of range"))
+        }
+        _ => Err(operation_error("algorithm.saltLength is required")),
+    }
+}
+
+fn rsa_pss_salt_length_error(maximum: usize, received: usize) -> VmError {
+    let outer = quench_runtime::builtins::error(
+        Builtin::Error,
+        &[Value::String("The operation failed for an operation-specific reason".into())],
+    );
+    let outer = execute::set_property(outer, "name", Value::String("OperationError".into()));
+    let message = format!(
+        "The value of \"algorithm.saltLength\" is out of range. It must be >= 0 && <= {maximum}. Received {received}"
+    );
+    let cause = quench_runtime::builtins::error(Builtin::Error, &[Value::String(message.into())]);
+    let cause = execute::set_property(cause, "code", Value::String("ERR_OUT_OF_RANGE".into()));
+    VmError::Thrown(execute::set_property(outer, "cause", cause))
+}
+
+fn rsa_signature(
+    algorithm: &Value,
+    key: &Value,
+    data: &[u8],
+) -> Result<Vec<u8>, VmError> {
+    let name = algorithm_name(algorithm).to_ascii_uppercase();
+    let key_algorithm = execute::get_property(key, "algorithm");
+    let hash = algorithm_hash(&key_algorithm)
+        .or_else(|| algorithm_hash(algorithm))
+        .ok_or_else(|| not_supported("Unrecognized hash algorithm"))?;
+    let digest = rsa_hash_bytes(&hash, data)
+        .ok_or_else(|| not_supported("Unrecognized hash algorithm"))?;
+    let private = rsa_private_key(key)
+        .ok_or_else(|| operation_error("The operation failed for an operation-specific reason"))?;
+    let mut rng = rand::thread_rng();
+    let result = match name.as_str() {
+        "RSASSA-PKCS1-V1_5" => {
+            let digest_info = rsa_pkcs1_digest_info(&hash, &digest)
+                .ok_or_else(|| not_supported("Unrecognized hash algorithm"))?;
+            private.sign_with_rng(
+                &mut rng,
+                Pkcs1v15Sign::new_unprefixed(),
+                &digest_info,
+            )
+        }
+        "RSA-PSS" => {
+            let salt_length = rsa_pss_salt_length(algorithm)?;
+            let maximum = private.size().saturating_sub(digest.len() + 2);
+            if salt_length > maximum {
+                return Err(rsa_pss_salt_length_error(maximum, salt_length));
+            }
+            match hash.as_str() {
+                "SHA-1" => private.sign_with_rng(&mut rng, Pss::new_with_salt::<Sha1>(salt_length), &digest),
+                "SHA-224" => private.sign_with_rng(&mut rng, Pss::new_with_salt::<Sha224>(salt_length), &digest),
+                "SHA-256" => private.sign_with_rng(&mut rng, Pss::new_with_salt::<Sha256>(salt_length), &digest),
+                "SHA-384" => private.sign_with_rng(&mut rng, Pss::new_with_salt::<Sha384>(salt_length), &digest),
+                "SHA-512" => private.sign_with_rng(&mut rng, Pss::new_with_salt::<Sha512>(salt_length), &digest),
+                "SHA3-256" => private.sign_with_rng(&mut rng, Pss::new_with_salt::<Sha3_256>(salt_length), &digest),
+                "SHA3-384" => private.sign_with_rng(&mut rng, Pss::new_with_salt::<Sha3_384>(salt_length), &digest),
+                "SHA3-512" => private.sign_with_rng(&mut rng, Pss::new_with_salt::<Sha3_512>(salt_length), &digest),
+                _ => return Err(not_supported("Unrecognized hash algorithm")),
+            }
+        }
+        _ => return Err(not_supported("Unrecognized signature algorithm")),
+    };
+    result.map_err(|_| operation_error("The operation failed for an operation-specific reason"))
+}
+
+fn rsa_verify_signature(
+    algorithm: &Value,
+    key: &Value,
+    data: &[u8],
+    signature: &[u8],
+) -> Result<bool, VmError> {
+    let name = algorithm_name(algorithm).to_ascii_uppercase();
+    let key_algorithm = execute::get_property(key, "algorithm");
+    let Some(hash) = algorithm_hash(&key_algorithm).or_else(|| algorithm_hash(algorithm)) else {
+        return Ok(false);
+    };
+    let Some(digest) = rsa_hash_bytes(&hash, data) else {
+        return Ok(false);
+    };
+    let Some(public) = rsa_public_key(key) else {
+        return Ok(false);
+    };
+    let result = match name.as_str() {
+        "RSASSA-PKCS1-V1_5" => {
+            let Some(digest_info) = rsa_pkcs1_digest_info(&hash, &digest) else {
+                return Ok(false);
+            };
+            public.verify(Pkcs1v15Sign::new_unprefixed(), &digest_info, signature)
+        }
+        "RSA-PSS" => {
+            let salt_length = rsa_pss_salt_length(algorithm)?;
+            let maximum = public.size().saturating_sub(digest.len() + 2);
+            if salt_length > maximum {
+                return Err(rsa_pss_salt_length_error(maximum, salt_length));
+            }
+            match hash.as_str() {
+                "SHA-1" => public.verify(Pss::new_with_salt::<Sha1>(salt_length), &digest, signature),
+                "SHA-224" => public.verify(Pss::new_with_salt::<Sha224>(salt_length), &digest, signature),
+                "SHA-256" => public.verify(Pss::new_with_salt::<Sha256>(salt_length), &digest, signature),
+                "SHA-384" => public.verify(Pss::new_with_salt::<Sha384>(salt_length), &digest, signature),
+                "SHA-512" => public.verify(Pss::new_with_salt::<Sha512>(salt_length), &digest, signature),
+                "SHA3-256" => public.verify(Pss::new_with_salt::<Sha3_256>(salt_length), &digest, signature),
+                "SHA3-384" => public.verify(Pss::new_with_salt::<Sha3_384>(salt_length), &digest, signature),
+                "SHA3-512" => public.verify(Pss::new_with_salt::<Sha3_512>(salt_length), &digest, signature),
+                _ => return Ok(false),
+            }
+        }
+        _ => return Ok(false),
+    };
+    Ok(result.is_ok())
 }
 
 fn ec_curve_from_der(data: &[u8]) -> Option<&'static str> {
@@ -2772,10 +2943,7 @@ fn job_result(promise: &Rc<PromiseData>, result: Result<Value, VmError>) {
         },
         Ok(value) => quench_runtime::resolve_promise(promise, value),
         Err(VmError::Thrown(reason)) => quench_runtime::reject_promise(promise, reason),
-        Err(_) => quench_runtime::reject_promise(
-            promise,
-            Value::String("Operation failed".into()),
-        ),
+        Err(_) => quench_runtime::reject_promise(promise, Value::String("Operation failed".into())),
     }
 }
 
@@ -2815,16 +2983,13 @@ fn job_object(kind: &str, fields: Vec<(String, Value)>) -> Value {
     host_api::object(properties)
 }
 
-fn queue_crypto_job(
-    state: &Rc<RefCell<HostState>>,
-    job: Value,
-) -> Result<Value, VmError> {
+fn queue_crypto_job(state: &Rc<RefCell<HostState>>, job: Value) -> Result<Value, VmError> {
     let promise = Rc::new(PromiseData::new(PromiseState::Pending));
     execute::set_property_in_place(&job, JOB_RESULT_PROP, Value::Promise(promise.clone()));
-    state.borrow().event_loop.queue_immediate(
-        crypto_job_completion_capability(),
-        vec![job],
-    );
+    state
+        .borrow()
+        .event_loop
+        .queue_immediate(crypto_job_completion_capability(), vec![job]);
     Ok(Value::Promise(promise))
 }
 
@@ -2835,9 +3000,18 @@ pub fn hash_job_construct(
     Ok(job_object(
         JOB_KIND_HASH,
         vec![
-            ("algorithm".into(), args.get(1).cloned().unwrap_or(Value::Undefined)),
-            ("data".into(), args.get(2).cloned().unwrap_or(Value::Undefined)),
-            ("length".into(), args.get(3).cloned().unwrap_or(Value::Undefined)),
+            (
+                "algorithm".into(),
+                args.get(1).cloned().unwrap_or(Value::Undefined),
+            ),
+            (
+                "data".into(),
+                args.get(2).cloned().unwrap_or(Value::Undefined),
+            ),
+            (
+                "length".into(),
+                args.get(3).cloned().unwrap_or(Value::Undefined),
+            ),
         ],
     ))
 }
@@ -2849,10 +3023,22 @@ pub fn secret_key_gen_job_construct(
     Ok(job_object(
         JOB_KIND_SECRET_KEY,
         vec![
-            ("length".into(), args.get(1).cloned().unwrap_or(Value::Undefined)),
-            ("algorithm".into(), args.get(2).cloned().unwrap_or(Value::Undefined)),
-            ("usages".into(), usage_mask(args.get(3).unwrap_or(&Value::Undefined))),
-            ("extractable".into(), args.get(4).cloned().unwrap_or(Value::Boolean(false))),
+            (
+                "length".into(),
+                args.get(1).cloned().unwrap_or(Value::Undefined),
+            ),
+            (
+                "algorithm".into(),
+                args.get(2).cloned().unwrap_or(Value::Undefined),
+            ),
+            (
+                "usages".into(),
+                usage_mask(args.get(3).unwrap_or(&Value::Undefined)),
+            ),
+            (
+                "extractable".into(),
+                args.get(4).cloned().unwrap_or(Value::Boolean(false)),
+            ),
         ],
     ))
 }
@@ -2876,12 +3062,18 @@ pub fn ec_key_pair_gen_job_construct(
     Ok(job_object(
         JOB_KIND_EC_KEY_PAIR,
         vec![
-            ("namedCurve".into(), args.get(1).cloned().unwrap_or(Value::Undefined)),
+            (
+                "namedCurve".into(),
+                args.get(1).cloned().unwrap_or(Value::Undefined),
+            ),
             ("algorithm".into(), algorithm),
             ("usages".into(), usages),
             ("publicUsages".into(), public),
             ("privateUsages".into(), private),
-            ("extractable".into(), args.get(6).cloned().unwrap_or(Value::Boolean(false))),
+            (
+                "extractable".into(),
+                args.get(6).cloned().unwrap_or(Value::Boolean(false)),
+            ),
         ],
     ))
 }
@@ -2925,10 +3117,13 @@ pub fn aes_cipher_job_construct(
     _state: &Rc<RefCell<HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let variant = args.get(4).and_then(|value| match value {
-        Value::Number(value) if value.is_finite() && *value >= 0.0 => Some(*value as u32),
-        _ => None,
-    }).unwrap_or(3);
+    let variant = args
+        .get(4)
+        .and_then(|value| match value {
+            Value::Number(value) if value.is_finite() && *value >= 0.0 => Some(*value as u32),
+            _ => None,
+        })
+        .unwrap_or(3);
     let iv = args.get(5).cloned().unwrap_or(Value::Undefined);
     if matches!(variant, 0..=5 | 6..=8 | 12..=14) {
         let iv_len = bytes(&iv).map_or(0, |value| value.len());
@@ -2942,13 +3137,28 @@ pub fn aes_cipher_job_construct(
     Ok(job_object(
         JOB_KIND_AES,
         vec![
-            ("cipherMode".into(), args.get(1).cloned().unwrap_or(Value::Number(0.0))),
-            ("key".into(), args.get(2).cloned().unwrap_or(Value::Undefined)),
-            ("data".into(), args.get(3).cloned().unwrap_or(Value::Undefined)),
+            (
+                "cipherMode".into(),
+                args.get(1).cloned().unwrap_or(Value::Number(0.0)),
+            ),
+            (
+                "key".into(),
+                args.get(2).cloned().unwrap_or(Value::Undefined),
+            ),
+            (
+                "data".into(),
+                args.get(3).cloned().unwrap_or(Value::Undefined),
+            ),
             ("variant".into(), Value::Number(variant as f64)),
             ("iv".into(), iv),
-            ("tagLength".into(), args.get(6).cloned().unwrap_or(Value::Number(128.0))),
-            ("additionalData".into(), args.get(7).cloned().unwrap_or(Value::Undefined)),
+            (
+                "tagLength".into(),
+                args.get(6).cloned().unwrap_or(Value::Number(128.0)),
+            ),
+            (
+                "additionalData".into(),
+                args.get(7).cloned().unwrap_or(Value::Undefined),
+            ),
         ],
     ))
 }
@@ -2962,15 +3172,13 @@ fn key_from_handle(handle: &Value, algorithm: Value, usages: Value) -> Result<Va
     Ok(key(&key_prototype(), algorithm, false, usages, Some(data)))
 }
 
-fn complete_crypto_job(
-    state: &Rc<RefCell<HostState>>,
-    job: &Value,
-) -> Result<Value, VmError> {
+fn complete_crypto_job(state: &Rc<RefCell<HostState>>, job: &Value) -> Result<Value, VmError> {
     let result = execute::get_property(job, JOB_RESULT_PROP);
     let Value::Promise(promise) = result else {
         return Ok(Value::Undefined);
     };
-    let kind = execute::to_js_string(&execute::get_property(job, JOB_KIND_PROP)).unwrap_or_default();
+    let kind =
+        execute::to_js_string(&execute::get_property(job, JOB_KIND_PROP)).unwrap_or_default();
     let global = quench_runtime::vm::current_global_object();
     let crypto = execute::get_property(&global, "crypto");
     let subtle = execute::get_property(&crypto, "subtle");
@@ -2997,7 +3205,10 @@ fn complete_crypto_job(
             let handle = execute::get_property(job, "key");
             let data = execute::get_property(job, "data");
             let variant = execute::get_property(job, "variant");
-            let variant = match variant { Value::Number(value) => value as u32, _ => 3 };
+            let variant = match variant {
+                Value::Number(value) => value as u32,
+                _ => 3,
+            };
             let iv = execute::get_property(job, "iv");
             let tag = execute::get_property(job, "tagLength");
             let aad = execute::get_property(job, "additionalData");
@@ -4661,7 +4872,10 @@ pub fn sign(
         Ok(value) => value,
         Err(error) => return Ok(settled(Err(error))),
     };
-    let output = signature_bytes(algorithm, key, &data);
+    let output = match algorithm_name(algorithm).to_ascii_uppercase().as_str() {
+        "RSA-PSS" | "RSASSA-PKCS1-V1_5" => rsa_signature(algorithm, key, &data),
+        _ => signature_bytes(algorithm, key, &data),
+    };
     Ok(settled(output.map(|value| array_buffer(&value))))
 }
 
@@ -4680,6 +4894,19 @@ pub fn verify(
     let key = args.get(1).unwrap_or(&Value::Undefined);
     let signature = args.get(2).and_then(bytes).unwrap_or_default();
     let data = args.get(3).and_then(bytes).unwrap_or_default();
+    if matches!(
+        algorithm_name(algorithm).to_ascii_uppercase().as_str(),
+        "RSA-PSS" | "RSASSA-PKCS1-V1_5"
+    ) {
+        return Ok(settled(
+            rsa_verify_signature(algorithm, key, &data, &signature)
+                .map(Value::Boolean),
+        ));
+    }
+    if algorithm_name(algorithm).eq_ignore_ascii_case("ECDSA") {
+        return Ok(settled(ecdsa_verify(algorithm, key, &signature, &data)
+            .map(Value::Boolean)));
+    }
     let expected = signature_bytes(algorithm, key, &data);
     Ok(settled(
         expected.map(|value| Value::Boolean(value == signature)),
@@ -4774,10 +5001,196 @@ fn signature_bytes(algorithm: &Value, key: &Value, data: &[u8]) -> Result<Vec<u8
         }
         return Ok(output);
     }
+    if name.eq_ignore_ascii_case("ECDSA") {
+        return ecdsa_sign(algorithm, key, data);
+    }
     Ok(crate::modules::crypto::digest_bytes(
         "sha256",
         &[name.as_bytes(), data].concat(),
     )?)
+}
+
+fn ecdsa_digest(algorithm: &Value, data: &[u8]) -> Result<Vec<u8>, VmError> {
+    let hash = ecdsa_hash_name(algorithm)
+        .ok_or_else(|| not_supported("Unrecognized algorithm name"))?;
+    Ok(match hash.as_str() {
+        "SHA-1" => Sha1::digest(data).to_vec(),
+        "SHA-224" => Sha224::digest(data).to_vec(),
+        "SHA-256" => Sha256::digest(data).to_vec(),
+        "SHA-384" => Sha384::digest(data).to_vec(),
+        "SHA-512" => Sha512::digest(data).to_vec(),
+        "SHA3-256" => Sha3_256::digest(data).to_vec(),
+        "SHA3-384" => Sha3_384::digest(data).to_vec(),
+        "SHA3-512" => Sha3_512::digest(data).to_vec(),
+        _ => return Err(not_supported("Unrecognized algorithm name")),
+    })
+}
+
+fn ecdsa_hash_name(value: &Value) -> Option<String> {
+    let hash = execute::get_property(value, "hash");
+    let hash = match hash {
+        Value::Object(_) | Value::ObjectAlias(_) => execute::get_property(&hash, "name"),
+        value => value,
+    };
+    let hash = execute::to_js_string(&hash).ok()?;
+    matches!(
+        hash.as_str(),
+        "SHA-1"
+            | "SHA-224"
+            | "SHA-256"
+            | "SHA-384"
+            | "SHA-512"
+            | "SHA3-256"
+            | "SHA3-384"
+            | "SHA3-512"
+    )
+    .then_some(hash)
+}
+
+fn ecdsa_prehash(digest: Vec<u8>, field_size: usize) -> Vec<u8> {
+    let minimum = field_size.div_ceil(2);
+    if digest.len() >= minimum {
+        return digest;
+    }
+    let mut padded = vec![0; minimum - digest.len()];
+    padded.extend(digest);
+    padded
+}
+
+fn ec_jwk_component(key: &Value, name: &str, size: usize) -> Option<Vec<u8>> {
+    let jwk = execute::get_property(key, KEY_JWK_PROP);
+    let encoded = execute::to_js_string(&execute::get_property(&jwk, name)).ok()?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded)
+        .ok()?;
+    (bytes.len() == size).then_some(bytes)
+}
+
+fn ec_material(key: &Value, private: bool, size: usize) -> Option<Vec<u8>> {
+    if let Some(data) = ec_key_bytes(key, private, size) {
+        return Some(data);
+    }
+    if private {
+        return ec_jwk_component(key, "d", size);
+    }
+    let x = ec_jwk_component(key, "x", size)?;
+    let y = ec_jwk_component(key, "y", size)?;
+    let mut point = Vec::with_capacity(1 + 2 * size);
+    point.push(0x04);
+    point.extend(x);
+    point.extend(y);
+    Some(point)
+}
+
+fn ecdsa_sign(algorithm: &Value, key: &Value, data: &[u8]) -> Result<Vec<u8>, VmError> {
+    let curve = algorithm_name(&execute::get_property(
+        &key_slot(key, "algorithm"),
+        "namedCurve",
+    ))
+    .to_ascii_uppercase();
+    let size = match curve.as_str() {
+        "P-256" => 32,
+        "P-384" => 48,
+        "P-521" => 66,
+        _ => return Err(not_supported("Unrecognized named curve")),
+    };
+    let private = ec_material(key, true, size)
+        .ok_or_else(|| operation_error("Invalid private key data"))?;
+    let digest = ecdsa_prehash(ecdsa_digest(algorithm, data)?, size);
+    match curve.as_str() {
+        "P-256" => {
+            let signing = P256SigningKey::from_slice(&private)
+                .map_err(|_| operation_error("Invalid private key data"))?;
+            let signature: P256Signature =
+                p256::ecdsa::signature::hazmat::PrehashSigner::sign_prehash(&signing, &digest)
+                    .map_err(|_| operation_error("The operation failed"))?;
+            Ok(signature.to_bytes().to_vec())
+        }
+        "P-384" => {
+            let signing = P384SigningKey::from_slice(&private)
+                .map_err(|_| operation_error("Invalid private key data"))?;
+            let signature: P384Signature =
+                p384::ecdsa::signature::hazmat::PrehashSigner::sign_prehash(&signing, &digest)
+                    .map_err(|_| operation_error("The operation failed"))?;
+            Ok(signature.to_bytes().to_vec())
+        }
+        "P-521" => {
+            let signing = P521SigningKey::from_slice(&private)
+                .map_err(|_| operation_error("Invalid private key data"))?;
+            let signature: P521Signature =
+                p521::ecdsa::signature::hazmat::PrehashSigner::sign_prehash(&signing, &digest)
+                    .map_err(|_| operation_error("The operation failed"))?;
+            Ok(signature.to_bytes().to_vec())
+        }
+        _ => unreachable!(),
+    }
+}
+
+fn ecdsa_verify(
+    algorithm: &Value,
+    key: &Value,
+    signature: &[u8],
+    data: &[u8],
+) -> Result<bool, VmError> {
+    let curve = algorithm_name(&execute::get_property(
+        &key_slot(key, "algorithm"),
+        "namedCurve",
+    ))
+    .to_ascii_uppercase();
+    let size = match curve.as_str() {
+        "P-256" => 32,
+        "P-384" => 48,
+        "P-521" => 66,
+        _ => return Err(not_supported("Unrecognized named curve")),
+    };
+    let public = ec_material(key, false, size)
+        .ok_or_else(|| operation_error("Invalid public key data"))?;
+    let digest = ecdsa_prehash(ecdsa_digest(algorithm, data)?, size);
+    Ok(match curve.as_str() {
+        "P-256" => {
+            let Ok(verifying) = P256VerifyingKey::from_sec1_bytes(&public) else {
+                return Ok(false);
+            };
+            let Ok(signature) = P256Signature::from_slice(signature) else {
+                return Ok(false);
+            };
+            p256::ecdsa::signature::hazmat::PrehashVerifier::verify_prehash(
+                &verifying,
+                &digest,
+                &signature,
+            )
+            .is_ok()
+        }
+        "P-384" => {
+            let Ok(verifying) = P384VerifyingKey::from_sec1_bytes(&public) else {
+                return Ok(false);
+            };
+            let Ok(signature) = P384Signature::from_slice(signature) else {
+                return Ok(false);
+            };
+            p384::ecdsa::signature::hazmat::PrehashVerifier::verify_prehash(
+                &verifying,
+                &digest,
+                &signature,
+            )
+            .is_ok()
+        }
+        "P-521" => {
+            let Ok(verifying) = P521VerifyingKey::from_sec1_bytes(&public) else {
+                return Ok(false);
+            };
+            let Ok(signature) = P521Signature::from_slice(signature) else {
+                return Ok(false);
+            };
+            p521::ecdsa::signature::hazmat::PrehashVerifier::verify_prehash(
+                &verifying,
+                &digest,
+                &signature,
+            )
+            .is_ok()
+        }
+        _ => unreachable!(),
+    })
 }
 
 fn sp800_left_encode(value: usize) -> Vec<u8> {
