@@ -18,7 +18,7 @@ use crate::{
 };
 use std::{cell::RefCell, collections::BTreeSet, rc::Rc, sync::OnceLock};
 
-use crate::stencil_cfg::{register_liveness, region_entry_is_legal};
+use crate::stencil_cfg::ControlFlowFacts;
 
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
@@ -5245,6 +5245,7 @@ impl Eq for BaselineEntry {}
 /// plan can render or publish executable bytes.
 fn region_admission_matches(
     entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
     start: usize,
     record: &crate::stencil_select::RegionRecord,
 ) -> bool {
@@ -5259,7 +5260,7 @@ fn region_admission_matches(
         return false;
     }
     let end = start + contract.operations.len();
-    if !region_entry_is_legal(entries, start, end) {
+    if !cfg.region_entry_is_legal(start, end) {
         return false;
     }
     contract
@@ -5295,7 +5296,7 @@ type SharedStencilPool = Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>;
 fn collect_numeric_admissions(
     builder: &mut AdmissionBuilder<NativeAdmission>,
     entries: &[BaselineEntry],
-    liveness: &[BTreeSet<u16>],
+    cfg: &ControlFlowFacts,
     pc: usize,
     entry: BaselineEntry,
     code: CodeView<'_>,
@@ -5306,7 +5307,7 @@ fn collect_numeric_admissions(
     let binary =
         NativeBinaryPlan::new_with_shared(instruction, policy, Rc::clone(arena)).map(|mut plan| {
             if plan.returns_boolean() {
-                if let Some(branch) = compare_branch(entries, liveness, pc, instruction) {
+                if let Some(branch) = compare_branch(entries, cfg, pc, instruction) {
                     plan.install_compare_branch(branch);
                 }
             }
@@ -5352,7 +5353,7 @@ fn collect_numeric_admissions(
 
 pub(crate) fn compare_branch(
     entries: &[BaselineEntry],
-    liveness: &[BTreeSet<u16>],
+    cfg: &ControlFlowFacts,
     pc: usize,
     comparison: crate::ir::Instruction,
 ) -> Option<CompareBranch> {
@@ -5360,9 +5361,9 @@ pub(crate) fn compare_branch(
         let branch_pc = pc.checked_add(offset)?;
         let entry = entries.get(branch_pc)?;
         if entry.instruction.opcode == crate::ir::Opcode::JumpIfFalse {
-            return compare_branch_at(entries, pc, branch_pc, comparison, entry.instruction);
+            return compare_branch_at(entries, cfg, pc, branch_pc, comparison, entry.instruction);
         }
-        if !dead_pure_definition(entry, liveness.get(branch_pc)?) {
+        if !dead_pure_definition(entry, cfg.live_out().get(branch_pc)?) {
             return None;
         }
     }
@@ -5371,6 +5372,7 @@ pub(crate) fn compare_branch(
 
 fn compare_branch_at(
     entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
     start: usize,
     branch_pc: usize,
     comparison: crate::ir::Instruction,
@@ -5386,7 +5388,7 @@ fn compare_branch_at(
         return None;
     }
     let end = branch_pc.checked_add(1)?;
-    region_entry_is_legal(entries, start, end).then_some(CompareBranch {
+    cfg.region_entry_is_legal(start, end).then_some(CompareBranch {
         false_target: u16::try_from(false_target).ok()?,
         span: u8::try_from(end.checked_sub(start)?).ok()?,
     })
@@ -5451,17 +5453,17 @@ fn collect_memory_admissions(
 
 fn add_chain_admission(
     entries: &[BaselineEntry],
-    liveness: &[BTreeSet<u16>],
+    cfg: &ControlFlowFacts,
     pc: usize,
     policy: crate::stencil_policy::ExecutionPolicy,
     arena: &SharedStencilPool,
 ) -> Option<NativeAdmission> {
-    if !region_entry_is_legal(entries, pc, pc.checked_add(2)?) {
+    if !cfg.region_entry_is_legal(pc, pc.checked_add(2)?) {
         return None;
     }
     let entry = entries.get(pc)?;
     let next = entries.get(pc + 1)?;
-    let live_after = liveness.get(pc + 1)?;
+    let live_after = cfg.live_out().get(pc + 1)?;
     let selection = crate::stencil_plan::select_add_chain(
         entry.instruction,
         next.instruction,
@@ -5474,12 +5476,12 @@ fn add_chain_admission(
 fn local_binary_admission(
     code: CodeView<'_>,
     entries: &[BaselineEntry],
-    liveness: &[BTreeSet<u16>],
+    cfg: &ControlFlowFacts,
     pc: usize,
     policy: crate::stencil_policy::ExecutionPolicy,
     arena: &SharedStencilPool,
 ) -> Option<NativeAdmission> {
-    let selection = select_local_numeric(code, entries, liveness, pc)?;
+    let selection = select_local_numeric(code, entries, cfg, pc)?;
     let plan = crate::stencil_fusion::NativeLocalBinaryPlan::new(
         selection,
         policy,
@@ -5491,12 +5493,12 @@ fn local_binary_admission(
 fn local_property_admission(
     code: CodeView<'_>,
     entries: &[BaselineEntry],
-    liveness: &[BTreeSet<u16>],
+    cfg: &ControlFlowFacts,
     pc: usize,
     policy: crate::stencil_policy::ExecutionPolicy,
     arena: &SharedStencilPool,
 ) -> Option<NativeAdmission> {
-    let selection = select_local_property(code, entries, liveness, pc)?;
+    let selection = select_local_property(code, entries, cfg, pc)?;
     let plan = crate::stencil_fusion::NativeLocalPropertyPlan::new(
         selection,
         policy,
@@ -5508,10 +5510,10 @@ fn local_property_admission(
 fn select_local_numeric(
     code: CodeView<'_>,
     entries: &[BaselineEntry],
-    liveness: &[BTreeSet<u16>],
+    cfg: &ControlFlowFacts,
     pc: usize,
 ) -> Option<crate::stencil_plan::LocalBinarySelection> {
-    select_value_window(code, entries, liveness, pc, |code, graph, operation, live| {
+    select_value_window(code, entries, cfg, pc, |code, graph, operation, live| {
         if operation.opcode == crate::ir::Opcode::AddConst {
             let crate::ops::Constant::Number(value) = code.constant(operation.c)? else {
                 return None;
@@ -5530,10 +5532,10 @@ fn select_local_numeric(
 fn select_local_property(
     code: CodeView<'_>,
     entries: &[BaselineEntry],
-    liveness: &[BTreeSet<u16>],
+    cfg: &ControlFlowFacts,
     pc: usize,
 ) -> Option<crate::stencil_plan::LocalPropertySelection> {
-    select_value_window(code, entries, liveness, pc, |_, graph, operation, live| {
+    select_value_window(code, entries, cfg, pc, |_, graph, operation, live| {
         graph.select_property(operation, live)
     })
 }
@@ -5541,7 +5543,7 @@ fn select_local_property(
 fn select_value_window<T: crate::stencil_plan::RankedSelection>(
     code: CodeView<'_>,
     entries: &[BaselineEntry],
-    liveness: &[BTreeSet<u16>],
+    cfg: &ControlFlowFacts,
     pc: usize,
     mut select: impl FnMut(
         CodeView<'_>,
@@ -5558,10 +5560,10 @@ fn select_value_window<T: crate::stencil_plan::RankedSelection>(
         else {
             break;
         };
-        let Some(live_after) = liveness.get(operation_pc) else {
+        let Some(live_after) = cfg.live_out().get(operation_pc) else {
             break;
         };
-        if !region_entry_is_legal(entries, pc, end) {
+        if !cfg.region_entry_is_legal(pc, end) {
             continue;
         }
         let Some(selection) = select(code, graph, operation, live_after) else {
@@ -5613,6 +5615,7 @@ fn select_graph_add_const(
 
 fn region_admission(
     entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
     pc: usize,
     policy: crate::stencil_policy::ExecutionPolicy,
     arena: &SharedStencilPool,
@@ -5622,7 +5625,7 @@ fn region_admission(
         .filter(|record| {
             record.executable
                 && record.abi.accepts_region_context()
-                && region_admission_matches(entries, pc, record)
+                && region_admission_matches(entries, cfg, pc, record)
         })
         .max_by_key(|record| record.abi.priority())?;
     NativeRegionPlan::new_with_arena(record.key, policy, Rc::clone(arena))
@@ -5657,27 +5660,27 @@ fn collect_admissions_at(
     builder: &mut AdmissionBuilder<NativeAdmission>,
     code: CodeView<'_>,
     entries: &[BaselineEntry],
-    liveness: &[BTreeSet<u16>],
+    cfg: &ControlFlowFacts,
     pc: usize,
     policy: crate::stencil_policy::ExecutionPolicy,
     arena: &SharedStencilPool,
 ) {
     let entry = entries[pc];
-    collect_numeric_admissions(builder, entries, liveness, pc, entry, code, policy, arena);
+    collect_numeric_admissions(builder, entries, cfg, pc, entry, code, policy, arena);
     builder.push_optional(
         pc,
-        add_chain_admission(entries, liveness, pc, policy, arena),
+        add_chain_admission(entries, cfg, pc, policy, arena),
     );
     builder.push_optional(
         pc,
-        local_binary_admission(code, entries, liveness, pc, policy, arena),
+        local_binary_admission(code, entries, cfg, pc, policy, arena),
     );
     builder.push_optional(
         pc,
-        local_property_admission(code, entries, liveness, pc, policy, arena),
+        local_property_admission(code, entries, cfg, pc, policy, arena),
     );
     collect_memory_admissions(builder, pc, entry.instruction, policy, arena);
-    builder.push_optional(pc, region_admission(entries, pc, policy, arena));
+    builder.push_optional(pc, region_admission(entries, cfg, pc, policy, arena));
 }
 
 fn build_admissions(
@@ -5688,7 +5691,7 @@ fn build_admissions(
     let operand_windows = (0..entries.len())
         .map(|pc| code.operand_window_at(pc))
         .collect::<Vec<_>>();
-    let liveness = register_liveness(entries, &operand_windows);
+    let cfg = ControlFlowFacts::new(entries, &operand_windows);
     let arena = Rc::new(RefCell::new(
         crate::stencil_arena::SharedStencilSlab::new(4096)
             .expect("compile-time region slab capacity is valid"),
@@ -5698,7 +5701,7 @@ fn build_admissions(
         if builder.exhausted() {
             break;
         }
-        collect_admissions_at(&mut builder, code, entries, &liveness, pc, policy, &arena);
+        collect_admissions_at(&mut builder, code, entries, &cfg, pc, policy, &arena);
     }
     (builder.finish().map(Rc::new), arena)
 }
@@ -7292,9 +7295,9 @@ mod tests {
                 control: crate::ir::ControlOperands::Return { source: 4 },
             },
         ];
-        let liveness = super::register_liveness(&entries, &[None, None]);
-        assert_eq!(liveness[0], std::collections::BTreeSet::from([4]));
-        assert!(!liveness[0].contains(&u16::MAX));
+        let cfg = super::ControlFlowFacts::new(&entries, &[None, None]);
+        assert_eq!(cfg.live_out()[0], std::collections::BTreeSet::from([4]));
+        assert!(!cfg.live_out()[0].contains(&u16::MAX));
     }
 
     #[test]
@@ -7312,8 +7315,8 @@ mod tests {
         let code = function.code().expect("compact code");
         let entries = super::baseline_entries(code);
         let windows = vec![None; entries.len()];
-        let liveness = super::register_liveness(&entries, &windows);
-        let selected = super::select_local_numeric(code, &entries, &liveness, 0)
+        let cfg = super::ControlFlowFacts::new(&entries, &windows);
+        let selected = super::select_local_numeric(code, &entries, &cfg, 0)
             .expect("earlier profitable candidate survives exhausted lookahead");
         assert_eq!(selected.span, 3);
     }
@@ -7338,9 +7341,9 @@ mod tests {
         let windows = (0..entries.len())
             .map(|pc| code.operand_window_at(pc))
             .collect::<Vec<_>>();
-        let liveness = super::register_liveness(&entries, &windows);
+        let cfg = super::ControlFlowFacts::new(&entries, &windows);
         assert_eq!(code.frame_register_count(), 28);
-        assert!(liveness[0].contains(&27));
+        assert!(cfg.live_out()[0].contains(&27));
     }
 
     #[test]
