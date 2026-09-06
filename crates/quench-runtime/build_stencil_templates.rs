@@ -6,8 +6,7 @@ pub(crate) fn aarch64_tail() -> &'static str {
     "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_fallthrough_tail\nq_fallthrough_tail:\n  ret\nq_fallthrough_tail_end:\n\"#);\n"
 }
 
-pub(crate) fn aarch64_array_loop() -> &'static str {
-    r##"#![no_std]
+const AARCH64_ARRAY_LOOP: &str = r##"#![no_std]
 use core::arch::global_asm;
 global_asm!(r#"
 .text
@@ -44,11 +43,9 @@ q_array_numeric_loop:
   ret
 q_array_numeric_loop_end:
 "#);
-"##
-}
+"##;
 
-pub(crate) fn aarch64_prototype_property() -> &'static str {
-    r##"#![no_std]
+const AARCH64_PROTOTYPE_PROPERTY: &str = r##"#![no_std]
 use core::arch::global_asm;
 global_asm!(r#"
 .text
@@ -137,5 +134,78 @@ q_prototype_property:
   ret
 q_prototype_property_end:
 "#);
-"##
+"##;
+
+const AARCH64_PROPERTY_READ: &str = r##"#![no_std]
+use core::arch::global_asm;
+global_asm!(r#"
+.text
+.p2align 2
+.globl q_property
+q_property:
+  ldr x1, [x0]
+  ldr w2, [x1]
+  ldr w3, [x0, #8]
+  cmp w2, w3
+  b.ne 1f
+  ldr x1, [x0, #16]
+  ldrb w2, [x1]
+  cmp w2, #1
+  b.ne 1f
+  ldr x1, [x0, #24]
+  ldrb w2, [x1]
+  cmp w2, #1
+  b.ne 1f
+  ldr x1, [x0, #32]
+  ldr x2, [x1]
+  str x2, [x0, #40]
+  mov w0, #1
+  ret
+1:
+  mov w0, #0
+  ret
+q_property_end:
+"#);
+"##;
+
+const AARCH64_PROPERTY_WRITE: &str = r##"#![no_std]
+use core::arch::global_asm;
+global_asm!(r#"
+.text
+.p2align 2
+.globl q_store_property
+q_store_property:
+  ldr x1, [x0]
+  ldr w2, [x1]
+  ldr w3, [x0, #8]
+  cmp w2, w3
+  b.ne 1f
+  ldr x1, [x0, #16]
+  ldrb w2, [x1]
+  cmp w2, #1
+  b.ne 1f
+  ldr x1, [x0, #24]
+  ldrb w2, [x1]
+  cmp w2, #1
+  b.ne 1f
+  ldr x1, [x0, #32]
+  ldr x2, [x0, #40]
+  str x2, [x1]
+  mov w0, #1
+  ret
+1:
+  mov w0, #0
+  ret
+q_store_property_end:
+"#);
+"##;
+
+pub(crate) fn whole_region(name: &str) -> Option<&'static str> {
+    match name {
+        "array_numeric_loop" => Some(AARCH64_ARRAY_LOOP),
+        "property" => Some(AARCH64_PROPERTY_READ),
+        "prototype_property" => Some(AARCH64_PROTOTYPE_PROPERTY),
+        "store_property" => Some(AARCH64_PROPERTY_WRITE),
+        _ => None,
+    }
 }

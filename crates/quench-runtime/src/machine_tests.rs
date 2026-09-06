@@ -2730,6 +2730,19 @@ fn ordinary_residual_named_get_executes_guarded_property_stencil() {
         .map(|native| native.borrow().native_entry_count)
         .unwrap_or(0);
     assert!(native_count > 0);
+    #[cfg(quench_generated_stencil_artifacts)]
+    {
+        let expected = crate::stencil_select::select_physical(
+            crate::stencil_select::property_region_key(),
+        )
+        .expect("generated own-property view");
+        let witness = plan
+            .native_property_at(0)
+            .and_then(|native| native.borrow().last_native_view())
+            .expect("invoked own-property view");
+        assert!(expected.generated && witness.generated);
+        assert!(witness.matches(&expected));
+    }
     assert!(crate::execute::set_property_in_place(
         &crate::value::Value::Object(object_data),
         "other",
@@ -2751,6 +2764,101 @@ fn ordinary_residual_named_get_executes_guarded_property_stencil() {
         Some(native_count),
         "shape mutation must not re-enter the stale native slot"
     );
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn ordinary_source_named_store_executes_guarded_property_stencil() {
+    let program = crate::reduce::reduce_source("var o = { value: 1 }; o.value = 5;")
+        .expect("ordinary named store lowers");
+    let mut executed = false;
+    let mut inspect = |code: crate::machine::CodeView<'_>| {
+        let Some(pc) = (0..code.len()).find(|pc| {
+            code.instruction(*pc).is_some_and(|instruction| {
+                instruction.opcode == crate::ir::Opcode::SetN && instruction.flags == 0
+            })
+        }) else {
+            return;
+        };
+        execute_generated_property_store(code, pc);
+        executed = true;
+    };
+    inspect(program.code());
+    program.code().cold_ops().for_each(|(_, op)| {
+        op.visit_bodies(&mut |body| {
+            if let Some(code) = body.code() {
+                inspect(code);
+            }
+        });
+    });
+    assert!(executed, "ordinary source must lower a non-strict named store");
+}
+
+#[cfg(target_arch = "aarch64")]
+fn execute_generated_property_store(code: crate::machine::CodeView<'_>, pc: usize) {
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let plan = super::BaselinePlan::compile_for_test(code, policy);
+    let instruction = code.instruction(pc).expect("SetN instruction");
+    let object = std::rc::Rc::new(crate::value::ObjectData::new(vec![(
+        "value".into(),
+        crate::value::Value::Number(1.0),
+    )]));
+    let mut registers = crate::register_file::RegisterFile::with_undefined(
+        usize::from(code.register_count()).max(8),
+    );
+    registers.write(
+        usize::from(instruction.a),
+        crate::value::Value::Object(std::rc::Rc::clone(&object)),
+    );
+    let context = crate::vm::current_context_or_default();
+    run_property_store(code, &plan, pc, &mut registers, &context, instruction.b, 5.0);
+    assert_eq!(named_value(&registers, instruction.a), crate::value::Value::Number(5.0));
+    run_property_store(code, &plan, pc, &mut registers, &context, instruction.b, 7.0);
+    assert_eq!(named_value(&registers, instruction.a), crate::value::Value::Number(7.0));
+    let native = plan.native_store_property_at(pc).expect("native store plan");
+    assert!(native.borrow().native_entry_count() > 0);
+    #[cfg(quench_generated_stencil_artifacts)]
+    assert_generated_property_store(&native.borrow());
+}
+
+#[cfg(target_arch = "aarch64")]
+fn run_property_store(
+    code: crate::machine::CodeView<'_>,
+    plan: &super::BaselinePlan,
+    pc: usize,
+    registers: &mut crate::register_file::RegisterFile,
+    context: &crate::vm::VmContext,
+    source: u16,
+    number: f64,
+) {
+    registers.write(usize::from(source), crate::value::Value::Number(number));
+    crate::vm::execute_baseline_code_from(
+        code,
+        plan,
+        pc,
+        registers,
+        context,
+        crate::environment::Environment::new(),
+    )
+    .expect("named store execution");
+}
+
+#[cfg(target_arch = "aarch64")]
+fn named_value(registers: &crate::register_file::RegisterFile, object: u16) -> crate::value::Value {
+    let receiver = registers.read(usize::from(object)).expect("stored receiver");
+    crate::vm::get_named_property_result(&receiver, "value", &std::cell::Cell::new(0))
+        .expect("read stored value")
+}
+
+#[cfg(all(target_arch = "aarch64", quench_generated_stencil_artifacts))]
+fn assert_generated_property_store(plan: &super::NativePropertyPlan) {
+    let expected = crate::stencil_select::select_physical(
+        crate::stencil_select::store_property_region_key(),
+    )
+    .expect("generated store-property view");
+    let witness = plan.last_native_view().expect("invoked store-property view");
+    assert!(expected.generated && witness.generated);
+    assert!(witness.matches(&expected));
 }
 
 #[cfg(target_arch = "aarch64")]
