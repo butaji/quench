@@ -345,6 +345,18 @@ const COMPOSED_REGION_DECLARATIONS: &[RegionDeclaration] = &[
         external_entries: &[0],
     },
     RegionDeclaration {
+        name: "compare_less_branch",
+        operations: &["Binary", "JumpIfFalse"],
+        abi: DeclAbi::CompareBranch,
+        x86_bytes: &[0xC3],
+        aarch64_bytes: &AARCH64_COMPARE_LESS_BRANCH_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
         name: "array_numeric_loop",
         operations: &[
             "LoadLocal",

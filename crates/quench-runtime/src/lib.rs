@@ -18,6 +18,7 @@ pub mod layer;
 pub mod mir;
 pub mod native;
 mod native_property;
+mod native_control;
 pub mod shape_cache;
 pub mod slot;
 pub mod unwind;

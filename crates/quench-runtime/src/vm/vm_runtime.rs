@@ -310,6 +310,26 @@ fn try_native_identity_compare(
         .flatten()
 }
 
+#[cfg(target_arch = "aarch64")]
+fn try_native_number_compare_branch(
+    native: &std::cell::RefCell<crate::machine::NativeBinaryPlan>,
+    registers: &crate::register_file::RegisterFile,
+    instruction: crate::ir::Instruction,
+    pc: usize,
+) -> Option<crate::native_control::NativeCompareBranchOutcome> {
+    if instruction.opcode != crate::ir::Opcode::Binary {
+        return None;
+    }
+    let (lhs, rhs) = registers.read_number_pair(
+        usize::from(instruction.b),
+        usize::from(instruction.c),
+    )?;
+    native
+        .borrow_mut()
+        .execute_compare_branch(pc, lhs, rhs)
+        .ok()
+}
+
 /// The only code pointer embedded in the generated all-opcode trampoline.
 /// It does no operation selection and owns no values; it simply invokes the
 /// same baseline handler/control path used by the non-native driver.
@@ -2122,6 +2142,20 @@ pub(crate) fn execute_optimized_code_step_from(
                     .unwrap_or(start + 1);
                 return Ok((crate::completion::Completion::Normal, next));
             }
+            #[cfg(target_arch = "aarch64")]
+            if let Some(outcome) =
+                try_native_number_compare_branch(native, registers, instruction, start)
+            {
+                write_value(registers, instruction.a, Value::Boolean(outcome.result));
+                crate::execution_trace::stencil_observation(
+                    code,
+                    start,
+                    "binary_branch",
+                    true,
+                );
+                crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                return Ok((crate::completion::Completion::Normal, outcome.next_pc));
+            }
         }
     }
     if let Some(native) = entry.native_binary() {
@@ -2698,6 +2732,21 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                         .borrow()
                         .compare_branch_next(pc, result)
                         .unwrap_or(pc + 1);
+                    continue;
+                }
+                #[cfg(target_arch = "aarch64")]
+                if let Some(outcome) =
+                    try_native_number_compare_branch(native, registers, instruction, pc)
+                {
+                    registers.write_boolean(usize::from(instruction.a), outcome.result);
+                    crate::execution_trace::stencil_observation(
+                        code,
+                        pc,
+                        "binary_branch",
+                        true,
+                    );
+                    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                    pc = outcome.next_pc;
                     continue;
                 }
             }

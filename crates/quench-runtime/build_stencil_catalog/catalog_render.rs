@@ -121,6 +121,7 @@ fn executable_expr(declaration: &RegionDeclaration) -> &'static str {
             "cfg!(any(target_arch = \"x86_64\", target_arch = \"aarch64\"))"
         }
         (_, DeclAbi::ArrayKernel) => "cfg!(target_arch = \"aarch64\")",
+        (_, DeclAbi::CompareBranch) => "cfg!(target_arch = \"aarch64\")",
         _ => "EXECUTABLE",
     }
 }
@@ -334,9 +335,12 @@ fn abi_expr(declaration: &RegionDeclaration) -> &'static str {
         DeclAbi::ArrayNumericLoop if target_is_aarch64 => {
             "crate::stencil_select::RegionAbi::ArrayNumericLoop"
         }
+        DeclAbi::CompareBranch if target_is_aarch64 => {
+            "crate::stencil_select::RegionAbi::CompareBranch"
+        }
         // The raw array ABI is only implemented on ARM64. Other targets keep
         // the same semantic declaration but route through the typed bridge.
-        DeclAbi::ArrayKernel | DeclAbi::ArrayNumericLoop => {
+        DeclAbi::ArrayKernel | DeclAbi::ArrayNumericLoop | DeclAbi::CompareBranch => {
             "crate::stencil_select::RegionAbi::Bridge"
         }
     }
@@ -396,6 +400,12 @@ fn abi_contract_fields(abi: DeclAbi) -> (&'static str, bool, u8, &'static str) {
             3,
             "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x0007, hardware_gpr_clobber_mask: 0x007f, live_out_mask: 0x0003, root_materialization_required: false",
         ),
+        DeclAbi::CompareBranch => (
+            "CompareBranch",
+            true,
+            3,
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0x0003, hardware_gpr_clobber_mask: 0x0007, live_out_mask: 0x0003, root_materialization_required: false",
+        ),
         DeclAbi::PropertyGuard => (
             "PropertyGuard",
             true,
@@ -424,6 +434,7 @@ fn abi_variant_name(abi: DeclAbi) -> &'static str {
         DeclAbi::Bridge => "Bridge",
         DeclAbi::ArrayKernel => "ArrayKernel",
         DeclAbi::ArrayNumericLoop => "ArrayNumericLoop",
+        DeclAbi::CompareBranch => "CompareBranch",
         DeclAbi::PropertyGuard => "PropertyGuard",
         DeclAbi::PropertyWriteGuard => "PropertyWriteGuard",
     }

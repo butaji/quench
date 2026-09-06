@@ -352,3 +352,25 @@ const AARCH64_ARRAY_LOOP_BYTES: [u8; 100] = {
     put32(&mut out, 96, aarch64_ret());
     out
 };
+
+/// Pure Number less-than plus successor selection. The typed context is
+/// validated before entry; the body publishes both the Boolean live-out and
+/// one of the two declared residual PCs.
+const AARCH64_COMPARE_LESS_BRANCH_BYTES: [u8; 56] = {
+    let mut out = [0; 56];
+    put32(&mut out, 0, 0xFD40_0000); // ldr d0, [x0]
+    put32(&mut out, 4, 0xFD40_0401); // ldr d1, [x0, #8]
+    put32(&mut out, 8, 0x1E61_2000); // fcmp d0, d1
+    put32(&mut out, 12, aarch64_b_cond(2, 6)); // b.vs false
+    put32(&mut out, 16, aarch64_b_cond(4, 11)); // b.lt true
+    put32(&mut out, 20, 0x5280_0001); // false: mov w1, #0
+    put32(&mut out, 24, 0xF940_0C02); // ldr x2, [x0, #24]
+    put32(&mut out, 28, aarch64_b_imm26(3)); // b publish
+    put32(&mut out, 32, 0x5280_0021); // true: mov w1, #1
+    put32(&mut out, 36, 0xF940_0802); // ldr x2, [x0, #16]
+    put32(&mut out, 40, 0xF900_1001); // publish: str x1, [x0, #32]
+    put32(&mut out, 44, 0xF900_1402); // str x2, [x0, #40]
+    put32(&mut out, 48, 0x5280_0020); // mov w0, #1
+    put32(&mut out, 52, aarch64_ret());
+    out
+};

@@ -8,6 +8,7 @@ struct BranchResult {
     compare_entries: u64,
     truthiness_entries: u64,
     generated: bool,
+    artifact_id: Option<&'static str>,
 }
 
 fn execute_compare_branch(view: CodeView<'_>, lhs: Value, rhs: Value) -> Option<BranchResult> {
@@ -34,16 +35,14 @@ fn execute_compare_branch(view: CodeView<'_>, lhs: Value, rhs: Value) -> Option<
     let truthiness = plan.native_truthiness_at(branch_pc)?;
     let compare_entries = compare.borrow().native_entry_count();
     let truthiness_entries = truthiness.borrow().native_entry_count();
-    let generated = compare
-        .borrow()
-        .last_native_view()
-        .is_some_and(|view| view.generated);
+    let physical = compare.borrow().last_native_view();
     Some(BranchResult {
         completion,
         comparison: registers.read(usize::from(instruction.a))?,
         compare_entries,
         truthiness_entries,
-        generated,
+        generated: physical.is_some_and(|view| view.generated),
+        artifact_id: physical.map(|view| view.artifact_id),
     })
 }
 
@@ -125,6 +124,9 @@ fn ordinary_source_compare_branch_fuses_dispatch_and_preserves_live_boolean() {
         else {
             return;
         };
+        assert!(taken
+            .artifact_id
+            .is_some_and(|identity| identity.starts_with("compare_less_branch")));
         assert_branch(taken, 11.0, true, 1, 0);
         let fallthrough = execute_compare_branch(view, Value::Number(3.0), Value::Number(2.0))
             .expect("same admitted comparison");
@@ -282,4 +284,19 @@ fn assert_branch(result: BranchResult, returned: f64, comparison: bool, native: 
     assert_eq!(result.compare_entries, native);
     assert_eq!(result.truthiness_entries, truthy);
     assert_eq!(result.generated, native != 0 && cfg!(quench_generated_stencil_artifacts));
+}
+
+#[test]
+fn compare_branch_key_rejects_scalar_entry_routing() {
+    let key = crate::stencil_select::compare_less_branch_region_key();
+    let physical = crate::stencil_select::select_physical_for_abi(
+        key,
+        crate::stencil_select::RegionAbi::CompareBranch,
+    );
+    assert_eq!(physical.is_some(), cfg!(target_arch = "aarch64"));
+    assert!(crate::stencil_select::select_physical_for_abi(
+        key,
+        crate::stencil_select::RegionAbi::ScalarBool,
+    )
+    .is_none());
 }

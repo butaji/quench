@@ -45,6 +45,34 @@ q_array_numeric_loop_end:
 "#);
 "##;
 
+const AARCH64_COMPARE_LESS_BRANCH: &str = r##"#![no_std]
+use core::arch::global_asm;
+global_asm!(r#"
+.text
+.p2align 2
+.globl q_compare_less_branch
+q_compare_less_branch:
+  ldr d0, [x0]
+  ldr d1, [x0, #8]
+  fcmp d0, d1
+  b.vs 2f
+  b.lt 1f
+2:
+  mov w1, #0
+  ldr x2, [x0, #24]
+  b 3f
+1:
+  mov w1, #1
+  ldr x2, [x0, #16]
+3:
+  str x1, [x0, #32]
+  str x2, [x0, #40]
+  mov w0, #1
+  ret
+q_compare_less_branch_end:
+"#);
+"##;
+
 const AARCH64_PROTOTYPE_PROPERTY: &str = r##"#![no_std]
 use core::arch::global_asm;
 global_asm!(r#"
@@ -257,6 +285,7 @@ fn nullish_word_source(name: &str) -> String {
 pub(crate) fn assembly_source(recipe: crate::build_stencil_contract::RustAssemblyRecipe) -> String {
     use crate::build_stencil_contract::RustAssemblyRecipe::*;
     match recipe {
+        CompareLessBranch => AARCH64_COMPARE_LESS_BRANCH.to_owned(),
         ArrayNumericLoop => AARCH64_ARRAY_LOOP.to_owned(),
         Property => AARCH64_PROPERTY_READ.to_owned(),
         PrototypeProperty => AARCH64_PROTOTYPE_PROPERTY.to_owned(),
