@@ -4466,9 +4466,6 @@ pub(crate) enum NativeDispatchError {
     /// risking duplicated effects. This is an invariant failure, not an
     /// admission miss; callers surface it as an internal VM error.
     Committed(String),
-    /// The canonical handler itself produced a VM error. Retrying it would
-    /// duplicate observable effects, so this edge must be propagated.
-    Semantic(crate::vm::VmError),
     /// A canonical handler failed after region entry. The operation PC is
     /// retained so completion/exception machinery resumes after the exact
     /// failing residual operation rather than at the region start.
