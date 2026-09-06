@@ -48,6 +48,10 @@ pub(crate) fn local_binary_operands(
             environment.get_number(slots[0])?,
             environment.get_number(slots[1])?,
         )),
+        LocalNumericInputs::RepeatedSlot(slot) => {
+            let value = environment.get_number(slot)?;
+            Some((value, value))
+        }
         LocalNumericInputs::SlotConstant { slot, bits } => {
             Some((environment.get_number(slot)?, f64::from_bits(bits)))
         }
