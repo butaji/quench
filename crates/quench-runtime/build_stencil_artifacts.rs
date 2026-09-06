@@ -220,10 +220,11 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
                 &rustflags,
                 declaration,
             )
-        } else if let Some(source) = super::build_stencil_templates::whole_region(declaration.name) {
+        } else if let Some(recipe) = super::rust_assembly_recipe(declaration) {
             if !target.starts_with("aarch64") {
                 continue;
             }
+            let source = super::build_stencil_templates::assembly_source(recipe);
             ExtractedObject {
                 bytes: compile_assembly_fragment(
                     &root.path,
@@ -232,7 +233,7 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
                     &flags,
                     &rustflags,
                     declaration.name,
-                    source,
+                    &source,
                     &[],
                 )
                 .bytes,
@@ -917,7 +918,8 @@ fn fingerprint(
             let source = super::rust_leaf_recipe(item)
                 .map(|recipe| rust_source(item.name, recipe))
                 .or_else(|| {
-                    super::build_stencil_templates::whole_region(item.name).map(str::to_owned)
+                    super::rust_assembly_recipe(item)
+                        .map(super::build_stencil_templates::assembly_source)
                 })
                 .or_else(|| (item.name == "fallthrough").then(|| {
                     super::build_stencil_templates::aarch64_head().to_owned()

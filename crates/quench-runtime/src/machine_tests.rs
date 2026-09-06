@@ -2426,9 +2426,12 @@ fn native_move_uses_rendered_address_without_remapping() {
         opcode: crate::ir::Opcode::Move,
         installed: super::InstalledWordEntry::Unpublished,
         native_entry_count: 0,
+        last_native_view: None,
     };
     let source = crate::tagged_value::TaggedValue::from_bits(0x1234_5678_9ABC_DEF0);
     assert_eq!(plan.execute(&source), Ok(source.bits()));
+    #[cfg(quench_generated_stencil_artifacts)]
+    assert!(plan.last_native_view.expect("invoked move view").generated);
     let used = plan.arena.as_ref().expect("rendered arena").used();
     assert!(used > 0);
     assert_eq!(plan.execute(&source), Ok(source.bits()));
@@ -2480,6 +2483,8 @@ fn native_load_local_uses_declared_tagged_word_entry() {
         .expect("declared LoadLocal body");
     let source = crate::tagged_value::TaggedValue::from_bits(0x1357_9BDF);
     assert_eq!(plan.execute(&source), Ok(source.bits()));
+    #[cfg(quench_generated_stencil_artifacts)]
+    assert!(plan.last_native_view.expect("invoked load-local view").generated);
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -2500,6 +2505,8 @@ fn native_store_local_uses_declared_tagged_word_entry() {
         .expect("declared StoreLocal body");
     let source = crate::tagged_value::TaggedValue::from_bits(0x2468_ACED);
     assert_eq!(plan.execute(&source), Ok(source.bits()));
+    #[cfg(quench_generated_stencil_artifacts)]
+    assert!(plan.last_native_view.expect("invoked store-local view").generated);
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
