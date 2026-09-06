@@ -669,6 +669,10 @@ mod generated_region_admission_tests {
                         )
                     ));
                 }
+                RegionAbi::PropertyGuard => {
+                    assert!(matches!(record.stencil.bytes.len(), 48 | 80));
+                    assert_eq!(record.operations, [crate::ir::Opcode::GetN]);
+                }
                 RegionAbi::ConstantWord => {
                     assert!(matches!(record.stencil.bytes.len(), 11 | 16));
                     assert!(matches!(
@@ -770,7 +774,7 @@ mod generated_region_admission_tests {
             select_region(property_region_key())
                 .expect("property row")
                 .abi,
-            RegionAbi::TaggedWord
+            RegionAbi::PropertyGuard
         );
         assert_eq!(
             select_region(move_region_key()).expect("move row").abi,
@@ -784,6 +788,8 @@ mod generated_region_admission_tests {
         assert!(RegionAbi::Scalar.contract().preserves_vm_registers);
         assert_eq!(RegionAbi::TaggedWord.contract().context_arg_words, 0);
         assert!(RegionAbi::TaggedWord.contract().preserves_vm_registers);
+        assert_eq!(RegionAbi::PropertyGuard.contract().context_arg_words, 1);
+        assert!(!RegionAbi::PropertyGuard.contract().may_call_helper);
         assert_eq!(RegionAbi::ScalarI32.contract().context_arg_words, 0);
         assert!(RegionAbi::ScalarI32.contract().preserves_vm_registers);
         assert_eq!(RegionAbi::ScalarU32.contract().context_arg_words, 0);
@@ -999,9 +1005,9 @@ mod tests {
         assert_eq!(
             record.stencil.bytes.len(),
             if cfg!(target_arch = "x86_64") {
-                4
+                48
             } else if cfg!(target_arch = "aarch64") {
-                8
+                80
             } else {
                 1
             }

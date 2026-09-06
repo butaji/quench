@@ -25,6 +25,7 @@ pub(crate) enum DeclAbi {
     Bridge,
     ArrayKernel,
     ArrayNumericLoop,
+    PropertyGuard,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
