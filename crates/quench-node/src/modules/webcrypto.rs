@@ -14,10 +14,13 @@ use aes_gcm::{
 use base64::Engine;
 use chacha20poly1305::ChaCha20Poly1305;
 use cipher::{generic_array::GenericArray, BlockDecrypt, BlockEncrypt};
+use hmac::{Hmac, Mac};
+use p384::elliptic_curve::sec1::ToEncodedPoint as P384ToEncodedPoint;
 use p384::{
     ecdh::diffie_hellman as p384_diffie_hellman, PublicKey as P384PublicKey,
     SecretKey as P384SecretKey,
 };
+use p521::elliptic_curve::sec1::ToSec1Point as P521ToSec1Point;
 use p521::{
     ecdh::diffie_hellman as p521_diffie_hellman, PublicKey as P521PublicKey,
     SecretKey as P521SecretKey,
@@ -27,9 +30,11 @@ use quench_runtime::host_api;
 use quench_runtime::ops::Builtin;
 use quench_runtime::value::{ArrayBufferData, PromiseData, PromiseState, Value};
 use rand::RngCore;
+use sha1::Sha1;
+use sha2::{Sha224, Sha256, Sha384, Sha512};
 use sha3::{
-    digest::ExtendableOutput, digest::Update as ShaUpdate, digest::XofReader, TurboShake128,
-    TurboShake128Core, TurboShake256, TurboShake256Core,
+    digest::ExtendableOutput, digest::Update as ShaUpdate, digest::XofReader, Sha3_256, Sha3_384,
+    Sha3_512, TurboShake128, TurboShake128Core, TurboShake256, TurboShake256Core,
 };
 use tiny_keccak::{CShake, Hasher as TinyHasher};
 
@@ -696,6 +701,9 @@ fn cfrg_derive_bits(
 fn ec_key_bytes(key: &Value, private: bool, size: usize) -> Option<Vec<u8>> {
     let data = bytes(&execute::get_property(key, KEY_DATA_PROP))?;
     if private {
+        if data.len() == size {
+            return Some(data);
+        }
         // PKCS#8 wraps an ECPrivateKey in an OCTET STRING.  The scalar is
         // the first OCTET STRING with the curve's field width; looking for
         // that typed value also keeps the parser independent of DER length
@@ -708,6 +716,9 @@ fn ec_key_bytes(key: &Value, private: bool, size: usize) -> Option<Vec<u8>> {
         }
         None
     } else {
+        if data.len() == 1 + size * 2 && data.first() == Some(&0x04) {
+            return Some(data);
+        }
         // SPKI's BIT STRING contains an uncompressed SEC1 point: 00 04 X Y.
         // Return the complete SEC1 point expected by the RustCrypto parser.
         let point_size = 1 + size * 2;
@@ -908,9 +919,9 @@ impl<'a> DerReader<'a> {
             let end = self.offset.checked_add(count)?;
             let encoded = self.bytes.get(self.offset..end)?;
             self.offset = end;
-            encoded
-                .iter()
-                .try_fold(0usize, |value, byte| value.checked_mul(256)?.checked_add(usize::from(*byte)))?
+            encoded.iter().try_fold(0usize, |value, byte| {
+                value.checked_mul(256)?.checked_add(usize::from(*byte))
+            })?
         };
         let end = self.offset.checked_add(length)?;
         let result = self.bytes.get(self.offset..end)?;
@@ -961,10 +972,7 @@ fn rsa_algorithm_metadata(
     jwk: Option<&Value>,
 ) -> Value {
     let name = algorithm_name(&algorithm).to_ascii_uppercase();
-    if !matches!(
-        name.as_str(),
-        "RSA-OAEP" | "RSA-PSS" | "RSASSA-PKCS1-V1_5"
-    ) {
+    if !matches!(name.as_str(), "RSA-OAEP" | "RSA-PSS" | "RSASSA-PKCS1-V1_5") {
         return algorithm;
     }
     let components = jwk
@@ -988,11 +996,7 @@ fn rsa_algorithm_metadata(
         return algorithm;
     };
     let normalized = normalize_key_algorithm(algorithm);
-    let normalized = execute::set_property(
-        normalized,
-        "modulusLength",
-        Value::Number(bits as f64),
-    );
+    let normalized = execute::set_property(normalized, "modulusLength", Value::Number(bits as f64));
     execute::set_property(normalized, "publicExponent", host_api::bytes(&exponent))
 }
 
@@ -1011,9 +1015,7 @@ fn rsa_jwk_algorithm(name: &str, hash: &Value) -> Option<String> {
     let suffix = hash.strip_prefix("SHA-")?;
     match name {
         "RSA-PSS" => Some(format!("PS{}", if suffix == "1" { "1" } else { suffix })),
-        "RSASSA-PKCS1-V1_5" => {
-            Some(format!("RS{}", if suffix == "1" { "1" } else { suffix }))
-        }
+        "RSASSA-PKCS1-V1_5" => Some(format!("RS{}", if suffix == "1" { "1" } else { suffix })),
         "RSA-OAEP" => Some(if suffix == "1" {
             "RSA-OAEP".into()
         } else {
@@ -1031,15 +1033,11 @@ fn validate_rsa_import(
     usages: &Value,
 ) -> Result<(), VmError> {
     let name = algorithm_name(algorithm).to_ascii_uppercase();
-    if !matches!(
-        name.as_str(),
-        "RSA-OAEP" | "RSA-PSS" | "RSASSA-PKCS1-V1_5"
-    ) {
+    if !matches!(name.as_str(), "RSA-OAEP" | "RSA-PSS" | "RSASSA-PKCS1-V1_5") {
         return Ok(());
     }
-    let private = format == "pkcs8" || jwk.is_some_and(|value| {
-        execute::get_property(value, "d") != Value::Undefined
-    });
+    let private = format == "pkcs8"
+        || jwk.is_some_and(|value| execute::get_property(value, "d") != Value::Undefined);
     if private && usage_names(usages).is_empty() {
         return Err(named_import_error(
             "SyntaxError",
@@ -1050,32 +1048,35 @@ fn validate_rsa_import(
         let Some(jwk) = jwk else {
             return Err(named_import_error("DataError", "Invalid keyData"));
         };
-        let kty = execute::to_js_string(&execute::get_property(jwk, "kty"))
-            .unwrap_or_default();
+        let kty = execute::to_js_string(&execute::get_property(jwk, "kty")).unwrap_or_default();
         let modulus = execute::to_js_string(&execute::get_property(jwk, "n"))
             .ok()
             .and_then(|value| {
-                base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(value).ok()
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(value)
+                    .ok()
             });
         let exponent = execute::to_js_string(&execute::get_property(jwk, "e"))
             .ok()
             .and_then(|value| {
-                base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(value).ok()
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(value)
+                    .ok()
             });
         if kty != "RSA" || modulus.is_none() || exponent.is_none() {
             return Err(named_import_error("DataError", "Invalid keyData"));
         }
         if private
-            && ["d", "p", "q", "dp", "dq", "qi"]
-                .iter()
-                .any(|field| {
-                    execute::to_js_string(&execute::get_property(jwk, field))
-                        .ok()
-                        .and_then(|value| {
-                            base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(value).ok()
-                        })
-                        .is_none()
-                })
+            && ["d", "p", "q", "dp", "dq", "qi"].iter().any(|field| {
+                execute::to_js_string(&execute::get_property(jwk, field))
+                    .ok()
+                    .and_then(|value| {
+                        base64::engine::general_purpose::URL_SAFE_NO_PAD
+                            .decode(value)
+                            .ok()
+                    })
+                    .is_none()
+            })
         {
             return Err(named_import_error("DataError", "Invalid keyData"));
         }
@@ -1102,7 +1103,9 @@ fn validate_rsa_import(
         return Ok(());
     }
     if matches!(format, "spki" | "pkcs8")
-        && data.and_then(|value| rsa_der_components(value, format)).is_none()
+        && data
+            .and_then(|value| rsa_der_components(value, format))
+            .is_none()
     {
         return Err(named_import_error("DataError", "Invalid key type"));
     }
@@ -1114,9 +1117,7 @@ fn imported_key_type(format: &str, algorithm: &Value, jwk: Option<&Value>) -> &'
         "pkcs8" => "private",
         "spki" | "raw-public" => "public",
         "jwk" => {
-            if jwk.is_some_and(|value| {
-                execute::get_property(value, "d") != Value::Undefined
-            }) {
+            if jwk.is_some_and(|value| execute::get_property(value, "d") != Value::Undefined) {
                 "private"
             } else if jwk.is_some_and(|value| {
                 execute::to_js_string(&execute::get_property(value, "kty"))
@@ -1150,11 +1151,7 @@ fn imported_key_type(format: &str, algorithm: &Value, jwk: Option<&Value>) -> &'
     }
 }
 
-fn imported_algorithm_metadata(
-    algorithm: Value,
-    format: &str,
-    data: Option<&[u8]>,
-) -> Value {
+fn imported_algorithm_metadata(algorithm: Value, format: &str, data: Option<&[u8]>) -> Value {
     if !matches!(format, "raw" | "raw-secret") {
         return algorithm;
     }
@@ -1173,8 +1170,9 @@ fn imported_algorithm_metadata(
             ("name".into(), Value::String(name)),
             ("length".into(), Value::Number(length as f64)),
         ]),
-        value if matches!(value, Value::Object(_) | Value::ObjectAlias(_))
-            && matches!(execute::get_property(&value, "length"), Value::Undefined) =>
+        value
+            if matches!(value, Value::Object(_) | Value::ObjectAlias(_))
+                && matches!(execute::get_property(&value, "length"), Value::Undefined) =>
         {
             execute::set_property(value, "length", Value::Number(length as f64))
         }
@@ -1237,6 +1235,20 @@ pub(crate) fn clone_key(value: &Value) -> Option<Value> {
         &key_type,
         &format,
     ))
+}
+
+pub fn crypto_key_handle(value: &Value) -> Value {
+    let data = bytes(&execute::get_property(value, KEY_DATA_PROP)).unwrap_or_default();
+    let source = "(size, data) => ({ getSymmetricKeySize: () => size, export: () => data })";
+    let Some(factory) = eval_function(source).ok() else {
+        return Value::Undefined;
+    };
+    execute::call(
+        &factory,
+        &Value::Undefined,
+        &[Value::Number(data.len() as f64), array_buffer(&data)],
+    )
+    .unwrap_or(Value::Undefined)
 }
 
 fn normalize_usages(value: &Value) -> Value {
@@ -1306,12 +1318,9 @@ fn asymmetric_usages(name: &str, requested: &Value) -> Result<(Value, Value), Vm
 fn symmetric_usages(name: &str, requested: &Value) -> Result<Value, VmError> {
     let allowed: &[&str] = match name {
         "HMAC" | "KMAC128" | "KMAC256" => &["sign", "verify"],
-        "AES-CTR"
-        | "AES-CBC"
-        | "AES-GCM"
-        | "AES-KW"
-        | "AES-OCB"
-        | "CHACHA20-POLY1305" => &["encrypt", "decrypt", "wrapKey", "unwrapKey"],
+        "AES-CTR" | "AES-CBC" | "AES-GCM" | "AES-KW" | "AES-OCB" | "CHACHA20-POLY1305" => {
+            &["encrypt", "decrypt", "wrapKey", "unwrapKey"]
+        }
         _ => return Err(not_supported("Unrecognized algorithm name")),
     };
     let requested = usage_names(requested);
@@ -1677,13 +1686,9 @@ pub fn import_key(
     let prototype = key_prototype();
     let jwk = (format == "jwk").then(|| args.get(1).cloned()).flatten();
     let key_type = imported_key_type(&format, &algorithm, jwk.as_ref());
-    if let Err(error) = validate_rsa_import(
-        &algorithm,
-        &format,
-        data.as_deref(),
-        jwk.as_ref(),
-        &usages,
-    ) {
+    if let Err(error) =
+        validate_rsa_import(&algorithm, &format, data.as_deref(), jwk.as_ref(), &usages)
+    {
         return Ok(settled(Err(error)));
     }
     let algorithm = imported_algorithm_metadata(algorithm, &format, data.as_deref());
@@ -1922,6 +1927,35 @@ pub fn generate_key(
                 rand::thread_rng().fill_bytes(&mut private);
                 (Some(private.to_vec()), Some(x448(&private, &base).to_vec()))
             }
+            "ECDH" => match algorithm_name(&execute::get_property(&algorithm, "namedCurve"))
+                .to_ascii_uppercase()
+                .as_str()
+            {
+                "P-384" => {
+                    let secret = P384SecretKey::random(&mut rand::thread_rng());
+                    let public = secret.public_key();
+                    (
+                        Some(secret.to_bytes().to_vec()),
+                        Some(public.to_encoded_point(false).as_bytes().to_vec()),
+                    )
+                }
+                "P-521" => {
+                    let secret = loop {
+                        let mut raw = [0_u8; 66];
+                        rand::thread_rng().fill_bytes(&mut raw);
+                        raw[0] &= 1;
+                        if let Ok(secret) = P521SecretKey::from_slice(&raw) {
+                            break secret;
+                        }
+                    };
+                    let public = secret.public_key();
+                    (
+                        Some(secret.to_bytes().to_vec()),
+                        Some(public.to_encoded_point(false).as_bytes().to_vec()),
+                    )
+                }
+                _ => (None, None),
+            },
             _ => (None, None),
         };
         let private_key = key_metadata(
@@ -2095,7 +2129,7 @@ fn pbkdf2_webcrypto(
     let digest = hash.to_ascii_lowercase().replace('-', "");
     if !matches!(
         digest.as_str(),
-        "sha1" | "sha224" | "sha256" | "sha384" | "sha512"
+        "sha1" | "sha224" | "sha256" | "sha384" | "sha512" | "sha3256" | "sha3384" | "sha3512"
     ) {
         return Err(not_supported("Unrecognized algorithm name"));
     }
@@ -2114,6 +2148,54 @@ fn pbkdf2_webcrypto(
     let Some(key_data) = bytes(&key_data) else {
         return Err(operation_error("Invalid key data"));
     };
+    if matches!(digest.as_str(), "sha3256" | "sha3384" | "sha3512") {
+        let iterations = match iterations {
+            Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value >= 1.0 => {
+                value as u32
+            }
+            _ => return Err(operation_error("Invalid iterations")),
+        };
+        let output_length = length.div_ceil(8);
+        macro_rules! derive {
+            ($digest:ty) => {{
+                let mut output = Vec::with_capacity(output_length);
+                let mut block = 1_u32;
+                while output.len() < output_length {
+                    let mut mac = <Hmac<$digest> as Mac>::new_from_slice(&key_data)
+                        .map_err(|_| operation_error("Invalid key data"))?;
+                    Mac::update(&mut mac, &salt);
+                    Mac::update(&mut mac, &block.to_be_bytes());
+                    let mut previous = mac.finalize().into_bytes().to_vec();
+                    let mut mixed = previous.clone();
+                    for _ in 1..iterations {
+                        let mut mac = <Hmac<$digest> as Mac>::new_from_slice(&key_data)
+                            .map_err(|_| operation_error("Invalid key data"))?;
+                        Mac::update(&mut mac, &previous);
+                        previous = mac.finalize().into_bytes().to_vec();
+                        for (left, right) in mixed.iter_mut().zip(&previous) {
+                            *left ^= *right;
+                        }
+                    }
+                    output.extend_from_slice(&mixed);
+                    block = block
+                        .checked_add(1)
+                        .ok_or_else(|| operation_error("Invalid derived key length"))?;
+                }
+                output.truncate(output_length);
+                if let Some(remainder) = length.checked_rem(8).filter(|value| *value != 0) {
+                    if let Some(last) = output.last_mut() {
+                        *last &= 0xff_u8 << (8 - remainder);
+                    }
+                }
+                return Ok(output);
+            }};
+        }
+        match digest.as_str() {
+            "sha3256" => derive!(Sha3_256),
+            "sha3384" => derive!(Sha3_384),
+            _ => derive!(Sha3_512),
+        }
+    }
     let args = [
         array_buffer(&key_data),
         array_buffer(&salt),
@@ -2273,11 +2355,42 @@ pub fn derive_key(
         ))));
     };
     let name = algorithm_name(derived_algorithm).to_ascii_uppercase();
-    let length = match name.as_str() {
-        "AES-CBC" | "AES-CTR" | "AES-GCM" | "AES-KW" | "AES-OCB" | "HMAC" => {
-            match execute::get_property(derived_algorithm, "length") {
+    let length = if matches!(derived_algorithm, Value::String(_))
+        && matches!(name.as_str(), "KMAC128" | "KMAC256")
+    {
+        if name == "KMAC128" {
+            128
+        } else {
+            256
+        }
+    } else if matches!(derived_algorithm, Value::String(_))
+        && matches!(name.as_str(), "HKDF" | "PBKDF2")
+    {
+        match base_name_upper.as_str() {
+            "ECDH" => {
+                let base_algorithm =
+                    key_slot(args.get(1).unwrap_or(&Value::Undefined), "algorithm");
+                match algorithm_name(&execute::get_property(&base_algorithm, "namedCurve"))
+                    .to_ascii_uppercase()
+                    .as_str()
+                {
+                    "P-384" => 384,
+                    "P-521" => 528,
+                    _ => 0,
+                }
+            }
+            "X25519" => 256,
+            "X448" => 448,
+            _ => 0,
+        }
+    } else {
+        match name.as_str() {
+            "AES-CBC" | "AES-CTR" | "AES-GCM" | "AES-KW" | "AES-OCB" | "HMAC" | "KMAC128"
+            | "KMAC256" => match execute::get_property(derived_algorithm, "length") {
                 Value::Number(value)
-                    if value.is_finite() && value.fract() == 0.0 && value > 0.0 =>
+                    if value.is_finite()
+                        && value.fract() == 0.0
+                        && (value > 0.0 || matches!(name.as_str(), "KMAC128" | "KMAC256")) =>
                 {
                     value as usize
                 }
@@ -2291,6 +2404,13 @@ pub fn derive_key(
                     };
                     length
                 }
+                Value::Undefined if matches!(name.as_str(), "KMAC128" | "KMAC256") => {
+                    if name == "KMAC128" {
+                        128
+                    } else {
+                        256
+                    }
+                }
                 _ => {
                     return Ok(settled(Err(error(
                         Builtin::TypeError,
@@ -2298,30 +2418,42 @@ pub fn derive_key(
                         "The \"length\" option is required",
                     ))))
                 }
-            }
+            },
+            _ => return Ok(settled(Err(not_supported("Unrecognized algorithm name")))),
         }
-        _ => return Ok(settled(Err(not_supported("Unrecognized algorithm name")))),
     };
     let valid_length = match name.as_str() {
         "AES-OCB" => matches!(length, 128 | 256),
         "AES-CBC" | "AES-CTR" | "AES-GCM" | "AES-KW" => {
             matches!(length, 128 | 192 | 256)
         }
+        "KMAC128" | "KMAC256" => true,
+        "HKDF" | "PBKDF2" => length > 0,
         _ => length > 0,
     };
     if !valid_length {
         return Ok(settled(Err(operation_error("Invalid key length"))));
     }
-    let normalized_derived_algorithm = if name == "HMAC"
+    let normalized_derived_algorithm = if matches!(derived_algorithm, Value::String(_))
+        && matches!(name.as_str(), "KMAC128" | "KMAC256")
+    {
+        host_api::object(vec![
+            ("name".into(), Value::String(name.clone())),
+            ("length".into(), Value::Number(length as f64)),
+        ])
+    } else if matches!(name.as_str(), "HMAC" | "KMAC128" | "KMAC256")
         && matches!(
             execute::get_property(derived_algorithm, "length"),
             Value::Undefined
-        ) {
-        execute::set_property(
-            derived_algorithm.clone(),
-            "length",
-            Value::Number(length as f64),
         )
+    {
+        match derived_algorithm {
+            Value::String(_) => host_api::object(vec![
+                ("name".into(), Value::String(name.clone())),
+                ("length".into(), Value::Number(length as f64)),
+            ]),
+            value => execute::set_property(value.clone(), "length", Value::Number(length as f64)),
+        }
     } else {
         derived_algorithm.clone()
     };
@@ -2628,7 +2760,9 @@ fn sp800_right_encode(value: usize) -> Vec<u8> {
 }
 
 fn sp800_value_bytes(value: usize) -> Vec<u8> {
-    let width = ((usize::BITS - value.leading_zeros()) as usize).div_ceil(8).max(1);
+    let width = ((usize::BITS - value.leading_zeros()) as usize)
+        .div_ceil(8)
+        .max(1);
     (0..width)
         .rev()
         .map(|index| (value >> (index * 8)) as u8)
