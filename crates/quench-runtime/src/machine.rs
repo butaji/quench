@@ -3480,6 +3480,8 @@ pub(crate) struct NativeAddChainPlan {
     site: crate::quickening::QuickeningSite<4>,
     installed: InstalledF64x3Entry,
     #[cfg(test)]
+    last_native_view: Option<crate::stencil_select::PhysicalStencilView>,
+    #[cfg(test)]
     native_entry_count: u64,
 }
 
@@ -3487,6 +3489,10 @@ impl NativeAddChainPlan {
     #[inline]
     fn clear_shared_capabilities(&mut self) {
         reset_installed!(self, InstalledF64x3Entry::Unpublished);
+        #[cfg(test)]
+        {
+            self.last_native_view = None;
+        }
     }
 
     pub(crate) fn new_with_arena(
@@ -3517,6 +3523,8 @@ impl NativeAddChainPlan {
             site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
             installed: InstalledF64x3Entry::Unpublished,
             #[cfg(test)]
+            last_native_view: None,
+            #[cfg(test)]
             native_entry_count: 0,
         })
     }
@@ -3524,6 +3532,11 @@ impl NativeAddChainPlan {
     #[cfg(test)]
     pub(crate) fn native_entry_count(&self) -> u64 {
         self.native_entry_count
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_native_view(&self) -> Option<crate::stencil_select::PhysicalStencilView> {
+        self.last_native_view
     }
 
     pub(crate) const fn bindings(&self) -> crate::stencil_plan::F64x3Bindings {
@@ -3578,7 +3591,7 @@ impl NativeAddChainPlan {
             .shared_arena
             .clone()
             .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
-        let rendered = (|| -> Result<usize, crate::stencil_arena::ArenaError> {
+        let rendered = (|| {
             let mut slab = shared.borrow_mut();
             let view = crate::stencil_select::select_physical_for_abi(
                 key,
@@ -3588,9 +3601,9 @@ impl NativeAddChainPlan {
             let address =
                 slab.render_physical_view_or_get(&mut self.physical.cache, view, values)?;
             slab.make_executable(address)?;
-            Ok(address)
+            Ok::<_, crate::stencil_arena::ArenaError>((address, view))
         })();
-        let address = match rendered {
+        let (address, _view) = match rendered {
             Ok(rendered) => rendered,
             Err(error) => {
                 self.physical.clear();
@@ -3599,6 +3612,10 @@ impl NativeAddChainPlan {
         };
         let owned = shared.borrow().owned_f64x3_entry(address)?;
         self.installed = InstalledF64x3Entry::Shared(owned);
+        #[cfg(test)]
+        {
+            self.last_native_view = Some(_view);
+        }
         Ok(owned)
     }
 
@@ -3653,6 +3670,13 @@ impl NativeAddChainPlan {
             .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?
             .render_selected_f64x3(&mut self.physical.cache, key, values, lhs, rhs, third);
         if result.is_ok() {
+            #[cfg(test)]
+            {
+                self.last_native_view = crate::stencil_select::select_physical_for_abi(
+                    key,
+                    crate::stencil_select::RegionAbi::ScalarF64x3,
+                );
+            }
             self.note_entry();
             if let Some(arena) = self.arena.as_ref() {
                 let signature = crate::stencil_arena::physical_cache_signature(

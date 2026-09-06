@@ -273,6 +273,14 @@ impl NativeLocalBinaryPlan {
     }
 
     #[cfg(test)]
+    pub(crate) fn last_native_view(&self) -> Option<crate::stencil_select::PhysicalStencilView> {
+        match &self.physical {
+            LocalNumericPhysical::AddChain(chain) => chain.last_native_view(),
+            _ => None,
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn local_read_count(&self) -> u64 {
         self.local_read_count
     }
