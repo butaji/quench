@@ -308,10 +308,9 @@ impl BlockValueGraph {
             inputs: folded.map_or(LocalNumericInputs::Sources(inputs), |bits| {
                 LocalNumericInputs::Folded { bits }
             }),
-            output: operation.a,
+            result: crate::stencil_plan::LocalResultBinding::register(operation.a),
             operation,
             span: u8::try_from(self.len() + 1).ok()?,
-            store_slot: None,
             discarded: self.discarded_registers(operation.a),
             cost,
         })
@@ -354,10 +353,9 @@ impl BlockValueGraph {
         let cost = FusionCost::numeric_producers(self.marked_len(&[operation.b, operation.c]));
         cost.profitable().then_some(LocalBinarySelection {
             inputs: LocalNumericInputs::AddChain { sources, bindings },
-            output: operation.a,
+            result: crate::stencil_plan::LocalResultBinding::register(operation.a),
             operation,
             span: u8::try_from(self.len() + 1).ok()?,
-            store_slot: None,
             discarded: self.discarded_registers(operation.a),
             cost,
         })
@@ -422,7 +420,7 @@ fn select_local_property(
     }
     Some(LocalPropertySelection {
         receiver_slot,
-        output: operation.a,
+        result: crate::stencil_plan::LocalResultBinding::register(operation.a),
         operation,
         span: u8::try_from(graph.len() + 1).ok()?,
         discarded: graph.discarded_registers(operation.a),
