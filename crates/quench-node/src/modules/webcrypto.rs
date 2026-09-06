@@ -73,11 +73,11 @@ fn key_prototype() -> Value {
 }
 
 fn settled(result: Result<Value, VmError>) -> Value {
-    Value::Promise(Rc::new(PromiseData::new(match result {
+    Value::Promise(PromiseData::allocate(match result {
         Ok(value) => PromiseState::Fulfilled(value),
         Err(VmError::Thrown(value)) => PromiseState::Rejected(value),
         Err(_) => PromiseState::Rejected(Value::String("Operation failed".into())),
-    })))
+    }))
 }
 
 fn invalid_subtle_this(receiver: Option<&Value>) -> Option<Value> {
@@ -116,7 +116,7 @@ pub fn illegal_constructor(
 fn bytes(value: &Value) -> Option<Vec<u8>> {
     macro_rules! view {
         ($view:expr) => {{
-            if $view.buffer.shared {
+            if $view.buffer.shared || $view.buffer.max_byte_length.is_some() {
                 return None;
             }
             let bytes = $view.buffer.bytes.borrow();
@@ -128,7 +128,11 @@ fn bytes(value: &Value) -> Option<Vec<u8>> {
         }};
     }
     match value {
-        Value::ArrayBuffer(buffer) if !buffer.shared => Some(buffer.bytes.borrow().clone()),
+        Value::ArrayBuffer(buffer)
+            if !buffer.shared && buffer.max_byte_length.is_none() =>
+        {
+            Some(buffer.bytes.borrow().clone())
+        }
         Value::DataView(view) => view!(view),
         Value::Float64Array(view) => view!(view),
         Value::Float32Array(view) => view!(view),
@@ -1019,6 +1023,30 @@ fn rsa_modulus_bits(modulus: &[u8]) -> Option<usize> {
     Some((significant.len() - 1) * 8 + (8 - significant[0].leading_zeros() as usize))
 }
 
+fn ec_curve_from_der(data: &[u8]) -> Option<&'static str> {
+    // The named-curve AlgorithmIdentifier is encoded as an OID in both
+    // SubjectPublicKeyInfo and PrivateKeyInfo.  Matching the complete OID
+    // bytes keeps this parser independent of surrounding DER lengths.
+    const P256: &[u8] = &[0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
+    const P384: &[u8] = &[0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22];
+    const P521: &[u8] = &[0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x23];
+    if data.windows(P256.len()).any(|window| window == P256)
+        || matches!(data.len(), 32 | 65)
+    {
+        Some("P-256")
+    } else if data.windows(P384.len()).any(|window| window == P384)
+        || matches!(data.len(), 48 | 97)
+    {
+        Some("P-384")
+    } else if data.windows(P521.len()).any(|window| window == P521)
+        || matches!(data.len(), 66 | 133)
+    {
+        Some("P-521")
+    } else {
+        None
+    }
+}
+
 fn rsa_algorithm_metadata(
     algorithm: Value,
     format: &str,
@@ -1050,8 +1078,21 @@ fn rsa_algorithm_metadata(
         return algorithm;
     };
     let normalized = normalize_key_algorithm(algorithm);
-    let normalized = execute::set_property(normalized, "modulusLength", Value::Number(bits as f64));
-    execute::set_property(normalized, "publicExponent", host_api::bytes(&exponent))
+    // Metadata is host-created and must be an own data-property.  Routing
+    // through ordinary [[Set]] would invoke a user-poisoned inherited setter
+    // (or expose its getter later), leaking Object.prototype values into the
+    // imported CryptoKey algorithm.
+    let _ = execute::set_property_in_place(
+        &normalized,
+        "modulusLength",
+        Value::Number(bits as f64),
+    );
+    let _ = execute::set_property_in_place(
+        &normalized,
+        "publicExponent",
+        host_api::bytes(&exponent),
+    );
+    normalized
 }
 
 fn named_import_error(name: &str, message: &str) -> VmError {
@@ -1172,6 +1213,7 @@ fn symmetric_allowed_usages(name: &str) -> Option<&'static [&'static str]> {
         "AES-CTR" | "AES-CBC" | "AES-GCM" | "AES-KW" | "AES-OCB" | "CHACHA20-POLY1305" => {
             Some(&["encrypt", "decrypt", "wrapKey", "unwrapKey"])
         }
+        "HKDF" | "PBKDF2" => Some(&["deriveKey", "deriveBits"]),
         _ => None,
     }
 }
@@ -1181,6 +1223,8 @@ fn symmetric_import_error(name: &str, empty_usages: bool) -> VmError {
         "Usages cannot be empty when importing a secret key.".to_string()
     } else if name == "CHACHA20-POLY1305" {
         "Unsupported key usage".to_string()
+    } else if matches!(name, "HKDF" | "PBKDF2") {
+        format!("Unsupported key usage for a {name} key")
     } else {
         format!("Unsupported key usage for {name} key")
     };
@@ -1600,6 +1644,14 @@ fn normalize_usages(value: &Value) -> Value {
 }
 
 fn usage_names(value: &Value) -> Vec<String> {
+    if let Value::Set(data) = value {
+        return data
+            .values
+            .borrow()
+            .iter()
+            .filter_map(|value| execute::to_js_string(value).ok())
+            .collect();
+    }
     let length = match execute::get_property(value, "length") {
         Value::Number(length) if length.is_finite() && length > 0.0 => length as usize,
         _ => 0,
@@ -1631,6 +1683,15 @@ fn usage_names(value: &Value) -> Vec<String> {
 /// so it can report `Unsupported key usage` instead of silently normalizing
 /// them away as an empty list.
 fn all_usage_names(value: &Value) -> Vec<String> {
+    if let Value::Set(data) = value {
+        return data
+            .values
+            .borrow()
+            .iter()
+            .filter_map(|value| execute::to_js_string(value).ok())
+            .filter(|name| !name.is_empty())
+            .collect();
+    }
     let length = match execute::get_property(value, "length") {
         Value::Number(length) if length.is_finite() && length > 0.0 => length as usize,
         _ => 0,
@@ -1744,7 +1805,7 @@ fn key_getter(name: &str) -> Option<Value> {
         KEY_PUBLIC_USAGES_PROP.trim_start_matches('\0')
     );
     let source = format!(
-        "(name) => function() {{ const receiver = this; if ((receiver === null) || ((typeof receiver !== \"object\") && (typeof receiver !== \"function\")) || receiver[{marker}] !== true) {{ const error = new TypeError(\"Illegal invocation\"); error.code = \"ERR_INVALID_THIS\"; throw error; }} const value = receiver[{metadata}][name]; if (name === \"usages\") {{ const cached = receiver[{public_usages}]; if (cached !== undefined) return cached; const copy = Array.from(value); Object.defineProperty(receiver, {public_usages}, {{ value: copy, writable: true, configurable: true }}); return copy; }} if (name === \"algorithm\") {{ const cached = receiver[{public_algorithm}]; if (cached !== undefined) return cached; const copy = Object.assign({{}}, value); if (value.hash && typeof value.hash === \"object\") copy.hash = Object.assign({{}}, value.hash); if (value.publicExponent && typeof value.publicExponent === \"object\") copy.publicExponent = new Uint8Array(value.publicExponent); Object.defineProperty(receiver, {public_algorithm}, {{ value: copy, writable: true, configurable: true }}); return copy; }} return value; }}"
+        "(name) => function() {{ const receiver = this; if ((receiver === null) || ((typeof receiver !== \"object\") && (typeof receiver !== \"function\")) || receiver[{marker}] !== true) {{ const error = new TypeError(\"Illegal invocation\"); error.code = \"ERR_INVALID_THIS\"; throw error; }} const value = receiver[{metadata}][name]; if (name === \"usages\") {{ const cached = receiver[{public_usages}]; if (cached !== undefined) return cached; const copy = Array.from(value); Object.defineProperty(receiver, {public_usages}, {{ value: copy, writable: true, configurable: true }}); return copy; }} if (name === \"algorithm\") {{ const cached = receiver[{public_algorithm}]; if (cached !== undefined) return cached; const copy = {{}}; for (const key of Object.keys(value)) Object.defineProperty(copy, key, {{ value: value[key], writable: true, enumerable: true, configurable: true }}); if (value.hash && typeof value.hash === \"object\") {{ const hash = {{}}; for (const key of Object.keys(value.hash)) Object.defineProperty(hash, key, {{ value: value.hash[key], writable: true, enumerable: true, configurable: true }}); copy.hash = hash; }} if (value.publicExponent && typeof value.publicExponent === \"object\") copy.publicExponent = new Uint8Array(value.publicExponent); Object.defineProperty(receiver, {public_algorithm}, {{ value: copy, writable: true, configurable: true }}); return copy; }} return value; }}"
     );
     let factory = eval_function(&source).ok()?;
     execute::call(&factory, &Value::Undefined, &[Value::String(name.into())]).ok()
@@ -2154,6 +2215,23 @@ pub fn import_key(
         ))));
     }
     let algorithm = args.get(2).cloned().unwrap_or(Value::Undefined);
+    let algorithm_name_upper = algorithm_name(&algorithm).to_ascii_uppercase();
+    let raw_alias_unsupported = (format == "raw-public"
+        && matches!(
+            algorithm_name_upper.as_str(),
+            "HKDF" | "PBKDF2" | "ARGON2D" | "ARGON2I" | "ARGON2ID"
+        ))
+        || (format == "raw-secret"
+            && matches!(
+                algorithm_name_upper.as_str(),
+                "ECDSA" | "ECDH" | "ED25519" | "ED448" | "X25519" | "X448"
+            ));
+    if raw_alias_unsupported {
+        let name = algorithm_name(&algorithm);
+        return Ok(settled(Err(not_supported(&format!(
+            "Unable to import {name} using {format} format"
+        )))));
+    }
     let extractable = matches!(args.get(3), Some(Value::Boolean(true)));
     let usages = args
         .get(4)
@@ -2192,6 +2270,44 @@ pub fn import_key(
     };
     if symmetric_data.is_some() {
         data = symmetric_data;
+    }
+    let algorithm_name_upper = algorithm_name(&algorithm).to_ascii_uppercase();
+    if matches!(algorithm_name_upper.as_str(), "ECDSA" | "ECDH")
+        && matches!(format.as_str(), "spki" | "pkcs8")
+    {
+        let requested_curve = execute::to_js_string(&execute::get_property(&algorithm, "namedCurve"))
+            .unwrap_or_default();
+        if let Some(actual_curve) = data.as_deref().and_then(ec_curve_from_der) {
+            if !requested_curve.eq_ignore_ascii_case(actual_curve) {
+                return Ok(settled(Err(named_import_error(
+                    "DataError",
+                    "Named curve mismatch",
+                ))));
+            }
+        }
+    }
+    if matches!(
+        algorithm_name_upper.as_str(),
+        "RSA-OAEP"
+            | "RSA-PSS"
+            | "RSASSA-PKCS1-V1_5"
+            | "ECDSA"
+            | "ECDH"
+            | "ED25519"
+            | "ED448"
+            | "X25519"
+            | "X448"
+    ) && !all_usage_names(&usages).is_empty()
+    {
+        if let Ok((private_usages, public_usages)) =
+            asymmetric_usages(&algorithm_name_upper, &usages)
+        {
+            let disallowed = (key_type == "public" && !all_usage_names(&private_usages).is_empty())
+                || (key_type == "private" && !all_usage_names(&public_usages).is_empty());
+            if disallowed {
+                return Ok(settled(Err(syntax_error("Unsupported key usage"))));
+            }
+        }
     }
     let algorithm = imported_algorithm_metadata(algorithm, &format, data.as_deref());
     let algorithm = rsa_algorithm_metadata(algorithm, &format, data.as_deref(), jwk.as_ref());
@@ -2583,7 +2699,7 @@ pub fn generate_key(
                 let public = pkey.public_key_to_der().ok();
                 (private, public)
             }
-            "ECDH" => match algorithm_name(&execute::get_property(&algorithm, "namedCurve"))
+            "ECDH" | "ECDSA" => match algorithm_name(&execute::get_property(&algorithm, "namedCurve"))
                 .to_ascii_uppercase()
                 .as_str()
             {
@@ -2855,16 +2971,36 @@ fn pbkdf2_webcrypto(
         value => bytes(&value).unwrap_or_default(),
     };
     let iterations = execute::get_property(algorithm, "iterations");
+    // WebCrypto's PBKDF2 `iterations` member is an [EnforceRange] unsigned
+    // long.  Conversion takes the integer part (rather than requiring an
+    // already-integral Number), while still rejecting values that end up
+    // below the mandated minimum of one.
+    let iterations = match iterations {
+        Value::Number(value) if value.is_finite() && value >= 0.0 => {
+            let integer = value.trunc();
+            if integer < 1.0 || integer > i32::MAX as f64 {
+                return Err(error(
+                    Builtin::TypeError,
+                    Some("ERR_OUT_OF_RANGE"),
+                    "The value of \"iterations\" is out of range. It must be an integer",
+                ));
+            }
+            Value::Number(integer)
+        }
+        _ => return Err(error(
+            Builtin::TypeError,
+            Some("ERR_INVALID_ARG_TYPE"),
+            "The \"iterations\" member must be of type number",
+        )),
+    };
     let key_data = execute::get_property(key.unwrap_or(&Value::Undefined), KEY_DATA_PROP);
     let Some(key_data) = bytes(&key_data) else {
         return Err(operation_error("Invalid key data"));
     };
     if matches!(digest.as_str(), "sha3256" | "sha3384" | "sha3512") {
         let iterations = match iterations {
-            Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value >= 1.0 => {
-                value as u32
-            }
-            _ => return Err(operation_error("Invalid iterations")),
+            Value::Number(value) => value as u32,
+            _ => unreachable!("PBKDF2 iterations are normalized above"),
         };
         let output_length = length.div_ceil(8);
         macro_rules! derive {
