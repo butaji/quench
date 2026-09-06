@@ -279,4 +279,44 @@ mod tests {
         );
         assert_eq!(output, [0xA5]);
     }
+
+    #[test]
+    fn fallthrough_peephole_is_transactional_when_later_fixup_fails() {
+        let mut head = [0u8; 8];
+        head[..4].copy_from_slice(&0x1400_0000u32.to_le_bytes());
+        head[4..].copy_from_slice(&0x5400_0000u32.to_le_bytes());
+        let tail = 0xD65F_03C0u32.to_le_bytes();
+        let fragments = [
+            Fragment {
+                label: START,
+                bytes: &head,
+            },
+            Fragment {
+                label: END,
+                bytes: &tail,
+            },
+        ];
+        let fixups = [
+            Fixup {
+                fragment: 0,
+                offset: 0,
+                target: END,
+                addend: -4,
+                kind: FixupKind::Aarch64Branch26,
+            },
+            Fixup {
+                fragment: 0,
+                offset: 4,
+                target: END,
+                addend: 0,
+                kind: FixupKind::Aarch64Branch26,
+            },
+        ];
+        let mut output = vec![0xA5, 0x5A];
+        assert_eq!(
+            StencilLayout::new(&fragments, &fixups).finalize_into(&mut output),
+            Err(LayoutError::Patch(PatchError::UnsupportedOffset))
+        );
+        assert_eq!(output, [0xA5, 0x5A]);
+    }
 }
