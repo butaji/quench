@@ -65,6 +65,16 @@ impl FusionCost {
     const fn profitable(self) -> bool {
         self.removed_dispatches + self.removed_materializations > self.added_transfers
     }
+
+    const fn rank(self) -> u8 {
+        self.removed_dispatches
+            .saturating_add(self.removed_materializations)
+            .saturating_sub(self.added_transfers)
+    }
+}
+
+pub(crate) trait RankedSelection {
+    fn rank(&self) -> (u8, u8);
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -101,6 +111,11 @@ pub(crate) struct ValueId {
 pub(crate) enum ValueDefinition {
     Source(NumericSource),
     Alias(ValueId),
+    AddConstant {
+        source: ValueId,
+        bits: u64,
+        left: bool,
+    },
     Binary {
         operator: crate::ops::BinaryOp,
         lhs: ValueId,
@@ -139,6 +154,18 @@ pub(crate) struct LocalPropertySelection {
     pub span: u8,
     pub discarded: DiscardedRegisters,
     pub cost: FusionCost,
+}
+
+impl RankedSelection for LocalBinarySelection {
+    fn rank(&self) -> (u8, u8) {
+        (self.cost.rank(), self.span)
+    }
+}
+
+impl RankedSelection for LocalPropertySelection {
+    fn rank(&self) -> (u8, u8) {
+        (self.cost.rank(), self.span)
+    }
 }
 
 /// Disposable value/use view for one bounded straight-line residual window.
@@ -213,12 +240,30 @@ impl BlockValueGraph {
         select_local_property(self, operation, live_after)
     }
 
+    pub(crate) fn select_add_const(
+        &self,
+        operation: Instruction,
+        bits: u64,
+        live_after: &BTreeSet<Register>,
+    ) -> Option<LocalBinarySelection> {
+        if operation.opcode != Opcode::AddConst {
+            return None;
+        }
+        let source = self.resolve_register(operation.b)?;
+        let inputs = if operation.add_const_is_left() {
+            [NumericSource::Constant(bits), source]
+        } else {
+            [source, NumericSource::Constant(bits)]
+        };
+        self.select_resolved(operation, crate::ops::BinaryOp::Add, inputs, live_after)
+    }
+
     pub(crate) fn first(&self) -> Option<NumericProducer> {
         let node = self.nodes().first()?;
         let definition = match node.definition {
             ValueDefinition::Source(source) => NumericDefinition::Source(source),
             ValueDefinition::Alias(id) => NumericDefinition::Alias(id.register),
-            ValueDefinition::Binary { .. } => return None,
+            ValueDefinition::AddConstant { .. } | ValueDefinition::Binary { .. } => return None,
         };
         Some(NumericProducer {
             output: node.id.register,
@@ -244,6 +289,15 @@ impl BlockValueGraph {
             return None;
         }
         let id = self.next_id(flow.definition?)?;
+        let definition = self.value_definition(instruction, constant_bits)?;
+        Some(ValueNode { id, definition })
+    }
+
+    fn value_definition(
+        &self,
+        instruction: Instruction,
+        constant_bits: impl FnOnce(u16) -> Option<u64>,
+    ) -> Option<ValueDefinition> {
         let definition = match instruction.opcode {
             Opcode::LoadLocal if pure(instruction.opcode) => {
                 ValueDefinition::Source(NumericSource::Local(instruction.b))
@@ -254,23 +308,42 @@ impl BlockValueGraph {
             Opcode::Move if instruction.flags == 0 && pure(instruction.opcode) => {
                 ValueDefinition::Alias(self.canonical(self.current(instruction.b)?)?)
             }
+            Opcode::AddConst => self.add_constant_definition(instruction, constant_bits)?,
             opcode if opcode.has_guard(crate::facts::OperationGuard::Number) => {
-                let lhs = self.canonical(self.current(instruction.b)?)?;
-                let rhs = self.canonical(self.current(instruction.c)?)?;
-                if !matches!(self.resolve(lhs)?, NumericSource::Constant(_))
-                    || !matches!(self.resolve(rhs)?, NumericSource::Constant(_))
-                {
-                    return None;
-                }
-                ValueDefinition::Binary {
-                    operator: numeric_operation(instruction)?,
-                    lhs,
-                    rhs,
-                }
+                self.constant_binary_definition(instruction)?
             }
             _ => return None,
         };
-        Some(ValueNode { id, definition })
+        Some(definition)
+    }
+
+    fn constant_binary_definition(&self, instruction: Instruction) -> Option<ValueDefinition> {
+        let lhs = self.canonical(self.current(instruction.b)?)?;
+        let rhs = self.canonical(self.current(instruction.c)?)?;
+        if !matches!(self.resolve(lhs)?, NumericSource::Constant(_))
+            || !matches!(self.resolve(rhs)?, NumericSource::Constant(_))
+        {
+            return None;
+        }
+        Some(ValueDefinition::Binary {
+            operator: numeric_operation(instruction)?,
+            lhs,
+            rhs,
+        })
+    }
+
+    fn add_constant_definition(
+        &self,
+        instruction: Instruction,
+        constant_bits: impl FnOnce(u16) -> Option<u64>,
+    ) -> Option<ValueDefinition> {
+        let source = self.canonical(self.current(instruction.b)?)?;
+        matches!(self.resolve(source)?, NumericSource::Constant(_)).then_some(())?;
+        Some(ValueDefinition::AddConstant {
+            source,
+            bits: constant_bits(instruction.c)?,
+            left: instruction.add_const_is_left(),
+        })
     }
 
     fn next_id(&self, register: Register) -> Option<ValueId> {
@@ -314,6 +387,16 @@ impl BlockValueGraph {
         match self.node(id)?.definition {
             ValueDefinition::Source(source) => Some(source),
             ValueDefinition::Alias(source) => self.resolve(source),
+            ValueDefinition::AddConstant { source, bits, left } => {
+                let source = self.resolve(source)?;
+                let inputs = if left {
+                    [NumericSource::Constant(bits), source]
+                } else {
+                    [source, NumericSource::Constant(bits)]
+                };
+                fold_numeric_sources(inputs, crate::ops::BinaryOp::Add)
+                    .map(NumericSource::Constant)
+            }
             ValueDefinition::Binary { operator, lhs, rhs } => {
                 let inputs = [self.resolve(lhs)?, self.resolve(rhs)?];
                 fold_numeric_sources(inputs, operator).map(NumericSource::Constant)
@@ -394,6 +477,7 @@ impl BlockValueGraph {
         }
         match self.nodes[index].definition {
             ValueDefinition::Alias(source) => self.mark(source, marked),
+            ValueDefinition::AddConstant { source, .. } => self.mark(source, marked),
             ValueDefinition::Binary { lhs, rhs, .. } => {
                 self.mark(lhs, marked);
                 self.mark(rhs, marked);
@@ -501,15 +585,13 @@ fn fold_numeric_sources(inputs: [NumericSource; 2], operator: crate::ops::Binary
 
 fn numeric_operation(instruction: Instruction) -> Option<crate::ops::BinaryOp> {
     use crate::ops::BinaryOp::{Add, Divide, Multiply, Subtract};
-    if instruction.opcode == Opcode::AddConst
-        || (instruction.opcode != Opcode::Binary && instruction.flags != 0)
-    {
-        return None;
-    }
-    let operator = instruction
-        .opcode
-        .numeric_operator()
-        .or_else(|| crate::ir::compact_binary_operator(instruction.flags))?;
+    let operator = match instruction.opcode {
+        Opcode::Add | Opcode::Sub | Opcode::Mul | Opcode::Div if instruction.flags == 0 => {
+            instruction.opcode.numeric_operator()?
+        }
+        Opcode::Binary => crate::ir::compact_binary_operator(instruction.flags)?,
+        _ => return None,
+    };
     matches!(operator, Add | Subtract | Multiply | Divide).then_some(operator)
 }
 
