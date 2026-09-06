@@ -772,4 +772,55 @@ mod tests {
         drop(guards);
         assert_eq!(FRAME_ROOTS.with(|frames| frames.borrow().len()), 0);
     }
+
+    #[test]
+    fn suspended_generator_root_transfers_and_reclaims_cycle() {
+        let environment = Environment::new();
+        let code = crate::machine::FunctionCode::from_ops(Vec::new());
+        let function = Rc::new(FunctionValue {
+            code: code.clone(),
+            params: 0,
+            captures: Rc::clone(&environment),
+            with_captures: Vec::new(),
+            properties: Rc::new(RefCell::new(Vec::new())),
+            private_slots: Rc::new(RefCell::new(Vec::new())),
+            private_environment: Default::default(),
+            instance_fields: Rc::new(RefCell::new(Vec::new())),
+            kind: crate::ops::FunctionKind::Ordinary,
+            strictness: crate::ops::FunctionStrictness::Sloppy,
+            is_async: true,
+            mapped_arguments: false,
+        });
+        track_function(&function);
+        environment.set(0, Value::Function(Rc::clone(&function)));
+        let mut machine = crate::machine::Machine::with_function(
+            &code,
+            crate::machine::EnvironmentRef(0),
+            1,
+        );
+        machine.install_environment(Rc::clone(&environment));
+        let generator = Rc::new(crate::value::GeneratorData {
+            function: Rc::clone(&function),
+            machine: crate::value::ExecutionCell::new(machine),
+            receiver: Value::Undefined,
+            arguments: Vec::new(),
+            done: RefCell::new(false),
+            state: RefCell::new(None),
+            pending_yield: RefCell::new(false),
+            executing: RefCell::new(false),
+            running: RefCell::new(false),
+            async_next_queue: RefCell::new(std::collections::VecDeque::new()),
+        });
+        let weak = Rc::downgrade(&function);
+        retain_suspended_generator(&generator);
+        drop(function);
+        collect_cycles();
+        assert!(weak.upgrade().is_some(), "pending continuation lost its root");
+
+        release_suspended_generator(&generator);
+        drop(generator);
+        drop(environment);
+        collect_cycles();
+        assert!(weak.upgrade().is_none(), "released continuation retained a cycle");
+    }
 }

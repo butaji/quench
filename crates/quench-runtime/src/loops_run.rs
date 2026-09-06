@@ -178,9 +178,21 @@ fn loop_suspension(
         crate::completion::Completion::Suspend(promise) => {
             crate::completion::Completion::SuspendAt(promise, point)
         }
+        crate::completion::Completion::Yield(value) => {
+            crate::completion::Completion::YieldAt(value, point)
+        }
         crate::completion::Completion::SuspendAt(promise, inner) => {
             crate::completion::Completion::SuspendAt(
                 promise,
+                crate::continuation::SuspensionPoint::Nested {
+                    inner: Box::new(inner),
+                    outer: Box::new(point),
+                },
+            )
+        }
+        crate::completion::Completion::YieldAt(value, inner) => {
+            crate::completion::Completion::YieldAt(
+                value,
                 crate::continuation::SuspensionPoint::Nested {
                     inner: Box::new(inner),
                     outer: Box::new(point),

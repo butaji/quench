@@ -162,12 +162,12 @@ fn admits_bounded<K: Eq + Hash, V>(map: &HashMap<K, V>, key: &K, capacity: usize
 }
 
 #[cfg(feature = "execution-trace")]
-fn record_stencil_rejection(
-    counters: &mut Counters,
-    key: StencilKey,
-    reason: &'static str,
-) {
-    record_bounded(&mut counters.stencil_rejections, (key, reason), MAX_STENCIL_SITES);
+fn record_stencil_rejection(counters: &mut Counters, key: StencilKey, reason: &'static str) {
+    record_bounded(
+        &mut counters.stencil_rejections,
+        (key, reason),
+        MAX_STENCIL_SITES,
+    );
 }
 
 #[cfg(feature = "execution-trace")]
@@ -1779,10 +1779,9 @@ pub(crate) fn stencil_storage(
                 kind,
             };
             if admits_bounded(&counters.stencil_storage, &key, MAX_STENCIL_SITES) {
-                counters.stencil_storage.insert(
-                    key,
-                    (used_bytes as u64, capacity_bytes as u64),
-                );
+                counters
+                    .stencil_storage
+                    .insert(key, (used_bytes as u64, capacity_bytes as u64));
             }
         });
     }
@@ -1808,9 +1807,7 @@ fn stencil_profile(counters: &Counters) -> serde_json::Map<String, serde_json::V
 }
 
 #[cfg(feature = "execution-trace")]
-fn stencil_rejection_profile(
-    counters: &Counters,
-) -> serde_json::Map<String, serde_json::Value> {
+fn stencil_rejection_profile(counters: &Counters) -> serde_json::Map<String, serde_json::Value> {
     counters
         .stencil_rejections
         .iter()
