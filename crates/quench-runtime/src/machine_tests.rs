@@ -171,7 +171,11 @@ fn lowered_named_call_width_uses_real_argument_operands() {
     assert_eq!(many.required_register_count(), 12);
 }
 
-fn source_call_frame(source: &str, argc: u8) -> (u16, Option<Vec<u16>>) {
+fn source_call_frame(
+    source: &str,
+    opcode: crate::ir::Opcode,
+    argc: u8,
+) -> (u16, Option<Vec<u16>>) {
     let program = crate::reduce::reduce_source(source).expect("call source lowers");
     let mut found = None;
     crate::stencil_test_support::visit_code_views(program.code(), &mut |code| {
@@ -179,7 +183,7 @@ fn source_call_frame(source: &str, argc: u8) -> (u16, Option<Vec<u16>>) {
             let Some(instruction) = code.instruction(pc) else {
                 continue;
             };
-            if instruction.opcode == crate::ir::Opcode::CallN && instruction.flags == argc {
+            if instruction.opcode == opcode && instruction.flags == argc {
                 found = Some((
                     code.frame_register_count(),
                     code.operand_window_at(pc).map(<[u16]>::to_vec),
@@ -197,13 +201,20 @@ fn ordinary_source_call_frames_use_declared_argument_windows() {
         "function f(o){return o.m(1,2,3)} ",
         "if(f({m(a,b,c){return a+b+c}})!==6)throw 0"
     );
-    let zero = source_call_frame(zero_source, 0);
-    let many = source_call_frame(many_source, 3);
+    let direct_source = concat!(
+        "function g(a,b,c){return a+b+c} function f(){return g(1,2,3)} ",
+        "if(f()!==6)throw 0"
+    );
+    let zero = source_call_frame(zero_source, crate::ir::Opcode::CallN, 0);
+    let many = source_call_frame(many_source, crate::ir::Opcode::CallN, 3);
+    let direct = source_call_frame(direct_source, crate::ir::Opcode::Call, 3);
     assert!(zero.0 < 32, "zero-argument sentinel widened frame");
     assert_eq!(zero.1, None);
     assert_eq!(many.1.as_deref(), Some([2, 3, 4].as_slice()));
     assert!(many.0 < 32, "fixed argument window widened frame");
-    for source in [zero_source, many_source] {
+    assert_eq!(direct.1.as_ref().map(Vec::len), Some(3));
+    assert!(direct.0 < 32, "direct argument window widened frame");
+    for source in [zero_source, many_source, direct_source] {
         let program = crate::reduce::reduce_source(source).expect("call source reduces");
         crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default())
             .expect("call source executes");
