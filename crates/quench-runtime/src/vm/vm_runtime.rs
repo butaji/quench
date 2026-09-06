@@ -7102,6 +7102,24 @@ mod compact_handler_tests {
                                 .native_region_at(shape_pc)
                                 .is_some_and(|region| region.borrow().last_native_execution());
                             if execution.is_ok() && native_execution {
+                                #[cfg(quench_generated_stencil_artifacts)]
+                                {
+                                    let region = plan
+                                        .native_region_at(shape_pc)
+                                        .expect("executed native region");
+                                    let witness = region
+                                        .borrow()
+                                        .last_native_view_for_test()
+                                        .expect("invocation-local physical witness");
+                                    let selected = crate::stencil_select::select_physical(
+                                        crate::stencil_select::array_numeric_loop_region_key(),
+                                    )
+                                    .expect("generated numeric-loop view");
+                                    assert!(witness.generated);
+                                    assert_eq!(witness.artifact_id, selected.artifact_id);
+                                    assert_eq!(witness.fingerprint, selected.fingerprint);
+                                    assert_eq!(witness.stencil.bytes, selected.stencil.bytes);
+                                }
                                 assert!(
                                     unsafe { &*context.interrupt_flag() }
                                         .load(std::sync::atomic::Ordering::Acquire)
