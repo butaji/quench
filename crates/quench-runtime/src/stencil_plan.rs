@@ -50,9 +50,20 @@ pub(crate) struct AddChainSelection {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NumericSource {
+    Local(u16),
+    Constant(u64),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct NumericProducer {
+    pub output: Register,
+    pub source: NumericSource,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum LocalNumericInputs {
-    Slots([u16; 2]),
-    RepeatedSlot(u16),
+    Sources([NumericSource; 2]),
     SlotConstant { slot: u16, bits: u64 },
 }
 
@@ -82,38 +93,47 @@ pub(crate) fn select_add_chain(
 }
 
 pub(crate) fn select_local_binary(
-    loads: [Instruction; 2],
+    producers: [NumericProducer; 2],
     operation: Instruction,
     live_after: &BTreeSet<Register>,
 ) -> Option<LocalBinarySelection> {
-    if loads.iter().any(|load| load.opcode != Opcode::LoadLocal)
-        || loads[0].a == loads[1].a
-        || operation.flags != 0
-        || operation.opcode.numeric_operator().is_none()
+    if producers[0].output == producers[1].output || numeric_operation(operation).is_none() {
+        return None;
+    }
+    let inputs = operation_sources(producers, operation)?;
+    if inputs
+        .iter()
+        .all(|source| matches!(source, NumericSource::Constant(_)))
     {
         return None;
     }
-    let slots = operation_slots(loads, operation)?;
     let overwritten = operation.a;
-    let lost_live_value = loads
+    let lost_live_value = producers
         .iter()
-        .any(|load| load.a != overwritten && live_after.contains(&load.a));
+        .any(|producer| producer.output != overwritten && live_after.contains(&producer.output));
     if lost_live_value || !FusionCost::LOCAL_BINARY.profitable() {
         return None;
     }
-    let inputs = if slots[0] == slots[1] {
-        LocalNumericInputs::RepeatedSlot(slots[0])
-    } else {
-        LocalNumericInputs::Slots(slots)
-    };
     Some(LocalBinarySelection {
-        inputs,
+        inputs: LocalNumericInputs::Sources(inputs),
         output: operation.a,
         operation,
         span: 3,
-        discarded: discarded_registers(loads.map(|load| load.a), operation.a),
+        discarded: discarded_registers(producers.map(|producer| producer.output), operation.a),
         cost: FusionCost::LOCAL_BINARY,
     })
+}
+
+fn numeric_operation(instruction: Instruction) -> Option<crate::ops::BinaryOp> {
+    use crate::ops::BinaryOp::{Add, Divide, Multiply, Subtract};
+    if instruction.opcode != Opcode::Binary && instruction.flags != 0 {
+        return None;
+    }
+    let operator = instruction
+        .opcode
+        .numeric_operator()
+        .or_else(|| crate::ir::compact_binary_operator(instruction.flags))?;
+    matches!(operator, Add | Subtract | Multiply | Divide).then_some(operator)
 }
 
 pub(crate) fn select_local_add_const(
@@ -156,14 +176,17 @@ fn discarded_registers(producers: [Register; 2], output: Register) -> [Option<Re
     discarded
 }
 
-fn operation_slots(loads: [Instruction; 2], operation: Instruction) -> Option<[u16; 2]> {
-    let slot_for = |register| {
-        loads
+fn operation_sources(
+    producers: [NumericProducer; 2],
+    operation: Instruction,
+) -> Option<[NumericSource; 2]> {
+    let source_for = |register| {
+        producers
             .iter()
-            .find(|load| load.a == register)
-            .map(|load| load.b)
+            .find(|producer| producer.output == register)
+            .map(|producer| producer.source)
     };
-    Some([slot_for(operation.b)?, slot_for(operation.c)?])
+    Some([source_for(operation.b)?, source_for(operation.c)?])
 }
 
 fn add_chain_bindings(first: Instruction, second: Instruction) -> Option<F64x3Bindings> {
@@ -192,6 +215,20 @@ mod tests {
 
     fn add(dst: Register, lhs: Register, rhs: Register) -> Instruction {
         Instruction::add(dst, lhs, rhs)
+    }
+
+    fn local(output: Register, slot: u16) -> NumericProducer {
+        NumericProducer {
+            output,
+            source: NumericSource::Local(slot),
+        }
+    }
+
+    fn constant(output: Register, value: f64) -> NumericProducer {
+        NumericProducer {
+            output,
+            source: NumericSource::Constant(value.to_bits()),
+        }
     }
 
     #[test]
@@ -225,12 +262,15 @@ mod tests {
     #[test]
     fn local_binary_selection_forwards_slots_and_removes_materialization() {
         let selected = select_local_binary(
-            [Instruction::load_local(4, 9), Instruction::load_local(7, 3)],
+            [local(4, 9), local(7, 3)],
             Instruction::add(1, 7, 4),
             &BTreeSet::new(),
         )
         .unwrap();
-        assert_eq!(selected.inputs, LocalNumericInputs::Slots([3, 9]));
+        assert_eq!(
+            selected.inputs,
+            LocalNumericInputs::Sources([NumericSource::Local(3), NumericSource::Local(9)])
+        );
         assert_eq!(selected.output, 1);
         assert_eq!(selected.span, 3);
         assert_eq!(selected.discarded, [Some(4), Some(7)]);
@@ -239,7 +279,7 @@ mod tests {
 
     #[test]
     fn local_binary_selection_rejects_live_or_unrelated_loads() {
-        let loads = [Instruction::load_local(4, 9), Instruction::load_local(7, 3)];
+        let loads = [local(4, 9), local(7, 3)];
         assert!(
             select_local_binary(loads, Instruction::add(1, 7, 4), &BTreeSet::from([4])).is_none()
         );
@@ -249,13 +289,43 @@ mod tests {
     #[test]
     fn local_binary_selection_numbers_repeated_slot_once() {
         let selected = select_local_binary(
-            [Instruction::load_local(4, 9), Instruction::load_local(7, 9)],
+            [local(4, 9), local(7, 9)],
             Instruction::add(1, 4, 7),
             &BTreeSet::new(),
         )
         .unwrap();
-        assert_eq!(selected.inputs, LocalNumericInputs::RepeatedSlot(9));
+        assert_eq!(
+            selected.inputs,
+            LocalNumericInputs::Sources([NumericSource::Local(9), NumericSource::Local(9)])
+        );
         assert_eq!(selected.discarded, [Some(4), Some(7)]);
+    }
+
+    #[test]
+    fn local_binary_selection_propagates_constant_and_preserves_order() {
+        let selected = select_local_binary(
+            [constant(4, 2.5), local(7, 3)],
+            Instruction::binary_operator(1, crate::ops::BinaryOp::Subtract, 4, 7),
+            &BTreeSet::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            selected.inputs,
+            LocalNumericInputs::Sources([
+                NumericSource::Constant(2.5_f64.to_bits()),
+                NumericSource::Local(3),
+            ])
+        );
+    }
+
+    #[test]
+    fn local_binary_selection_rejects_constant_only_work() {
+        let selected = select_local_binary(
+            [constant(4, 2.5), constant(7, 1.5)],
+            Instruction::add(1, 4, 7),
+            &BTreeSet::new(),
+        );
+        assert!(selected.is_none());
     }
 
     #[test]
