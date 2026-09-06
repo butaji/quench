@@ -11,10 +11,10 @@ pub(crate) struct ExecutableResourceSnapshot {
     pub resident_bytes: usize,
     pub used_bytes: usize,
     pub retired_live_bytes: usize,
-    pub cache_rows: usize,
+    pub owner_cache_rows: usize,
     pub active_leases: usize,
     pub retired_owners: usize,
-    pub process_resident_bytes: usize,
+    pub process_executable_bytes: usize,
 }
 
 impl SharedStencilSlab {
@@ -29,10 +29,10 @@ impl SharedStencilSlab {
             resident_bytes: self.capacity(),
             used_bytes: self.used(),
             retired_live_bytes,
-            cache_rows: self.cache.len(),
+            owner_cache_rows: self.cache.len(),
             active_leases: self.active_leases(),
             retired_owners: self.lease_state.retired.borrow().len(),
-            process_resident_bytes: super::GLOBAL_EXECUTABLE_BUDGET.used(),
+            process_executable_bytes: super::GLOBAL_EXECUTABLE_BUDGET.used(),
         }
     }
 }
@@ -94,8 +94,8 @@ mod tests {
         assert_eq!(snapshot.retired_live_bytes, 4096);
         assert_eq!(snapshot.active_leases, 1);
         assert_eq!(snapshot.retired_owners, 1);
-        assert_eq!(snapshot.cache_rows, 0);
-        assert!(snapshot.process_resident_bytes >= snapshot.resident_bytes);
+        assert_eq!(snapshot.owner_cache_rows, 0);
+        assert!(snapshot.process_executable_bytes >= snapshot.resident_bytes);
     }
 
     fn assert_released(snapshot: ExecutableResourceSnapshot) {
@@ -103,6 +103,6 @@ mod tests {
         assert_eq!(snapshot.retired_live_bytes, 0);
         assert_eq!(snapshot.active_leases, 0);
         assert_eq!(snapshot.retired_owners, 0);
-        assert!(snapshot.cache_rows > 0);
+        assert!(snapshot.owner_cache_rows > 0);
     }
 }
