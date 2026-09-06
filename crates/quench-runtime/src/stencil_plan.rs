@@ -29,13 +29,13 @@ impl FusionCost {
     const LOCAL_BINARY: Self = Self {
         removed_dispatches: 2,
         removed_materializations: 2,
-        added_transfers: 0,
+        added_transfers: 2,
     };
 
     const LOCAL_CONSTANT: Self = Self {
         removed_dispatches: 1,
         removed_materializations: 1,
-        added_transfers: 0,
+        added_transfers: 1,
     };
 
     const fn profitable(self) -> bool {
@@ -62,6 +62,7 @@ pub(crate) struct LocalBinarySelection {
     pub output: Register,
     pub operation: Instruction,
     pub span: u8,
+    pub discarded: [Option<Register>; 2],
     pub cost: FusionCost,
 }
 
@@ -110,6 +111,7 @@ pub(crate) fn select_local_binary(
         output: operation.a,
         operation,
         span: 3,
+        discarded: discarded_registers(loads.map(|load| load.a), operation.a),
         cost: FusionCost::LOCAL_BINARY,
     })
 }
@@ -137,8 +139,21 @@ pub(crate) fn select_local_add_const(
         output: operation.a,
         operation,
         span: 2,
+        discarded: discarded_registers([load.a, load.a], operation.a),
         cost: FusionCost::LOCAL_CONSTANT,
     })
+}
+
+fn discarded_registers(producers: [Register; 2], output: Register) -> [Option<Register>; 2] {
+    let mut discarded = [None; 2];
+    let mut length = 0;
+    for producer in producers {
+        if producer != output && !discarded.contains(&Some(producer)) {
+            discarded[length] = Some(producer);
+            length += 1;
+        }
+    }
+    discarded
 }
 
 fn operation_slots(loads: [Instruction; 2], operation: Instruction) -> Option<[u16; 2]> {
@@ -218,6 +233,7 @@ mod tests {
         assert_eq!(selected.inputs, LocalNumericInputs::Slots([3, 9]));
         assert_eq!(selected.output, 1);
         assert_eq!(selected.span, 3);
+        assert_eq!(selected.discarded, [Some(4), Some(7)]);
         assert!(selected.cost.profitable());
     }
 
@@ -239,6 +255,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(selected.inputs, LocalNumericInputs::RepeatedSlot(9));
+        assert_eq!(selected.discarded, [Some(4), Some(7)]);
     }
 
     #[test]
@@ -256,6 +273,7 @@ mod tests {
             LocalNumericInputs::SlotConstant { slot: 9, bits }
         );
         assert_eq!(selected.span, 2);
+        assert_eq!(selected.discarded, [Some(4), None]);
     }
 
     #[test]

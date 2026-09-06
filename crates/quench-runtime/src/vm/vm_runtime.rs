@@ -1821,8 +1821,8 @@ pub(crate) fn execute_optimized_code_step_from(
                 crate::stencil_fusion::execute_local_binary(native, environment)
             })
         });
-        if let Some((output, value, span)) = result {
-            registers.write_number(usize::from(output), value);
+        if let Some(result) = result {
+            let span = result.commit(registers);
             crate::execution_trace::stencil_observation(code, start, "local_binary", true);
             crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
             return Ok((crate::completion::Completion::Normal, start + span));
@@ -2371,10 +2371,10 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
         if let (Some(environment), Some(native)) =
             (environment, plan.native_local_binary_at(pc))
         {
-            if let Some((output, value, span)) =
+            if let Some(result) =
                 crate::stencil_fusion::execute_local_binary(native, environment)
             {
-                registers.write_number(usize::from(output), value);
+                let span = result.commit(registers);
                 crate::execution_trace::stencil_observation(code, pc, "local_binary", true);
                 crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
                 pc += span;
