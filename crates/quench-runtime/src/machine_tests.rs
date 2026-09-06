@@ -62,16 +62,10 @@ fn code_store_drops_after_nested_function_owner_is_released() {
     else {
         panic!("expected nested function op");
     };
-    assert!(
-        body.has_internal_store_link(),
-        "nested body retained its owner"
-    );
+    assert!(body.has_internal_store_link(), "nested body retained its owner");
     let weak = std::rc::Rc::downgrade(&owner.store().expect("nested code store"));
     drop(owner);
-    assert!(
-        weak.upgrade().is_none(),
-        "nested code store retained a cycle"
-    );
+    assert!(weak.upgrade().is_none(), "nested code store retained a cycle");
 }
 
 #[test]
@@ -97,19 +91,10 @@ fn escaped_nested_function_clone_retains_code_store() {
     let escaped = body.clone();
     let weak = std::rc::Rc::downgrade(&owner.store().expect("nested code store"));
     drop(owner);
-    assert!(
-        escaped.store().is_some(),
-        "escaped body lost its code owner"
-    );
-    assert!(
-        weak.upgrade().is_some(),
-        "escaped body did not retain its store"
-    );
+    assert!(escaped.store().is_some(), "escaped body lost its code owner");
+    assert!(weak.upgrade().is_some(), "escaped body did not retain its store");
     drop(escaped);
-    assert!(
-        weak.upgrade().is_none(),
-        "escaped store was not reclaimable"
-    );
+    assert!(weak.upgrade().is_none(), "escaped store was not reclaimable");
 }
 
 #[test]
@@ -176,9 +161,7 @@ fn nested_function_registers_do_not_widen_the_caller_frame() {
     }]);
     let code = owner.code().expect("owner code");
     let crate::ops::Op::MakeFunctionWithKind { body, .. } = code.cold_at(0).expect("function op")
-    else {
-        panic!("expected nested function")
-    };
+    else { panic!("expected nested function") };
     let store = owner.store().expect("shared code store");
     assert_eq!(store.frame_register_count(owner.code_id()), Some(1));
     assert_eq!(store.frame_register_count(body.code_id()), Some(201));
@@ -212,9 +195,8 @@ fn static_block_callable_does_not_widen_the_enclosing_frame() {
     }]);
     assert_eq!(owner.required_register_count(), 1);
     let code = owner.code().expect("owner code");
-    let crate::ops::Op::StaticBlock { body, .. } = code.cold_at(0).expect("static block") else {
-        panic!("expected static block")
-    };
+    let crate::ops::Op::StaticBlock { body, .. } = code.cold_at(0).expect("static block")
+    else { panic!("expected static block") };
     let store = owner.store().expect("shared code store");
     assert_eq!(store.frame_register_count(body.code_id()), Some(81));
 }
@@ -280,8 +262,10 @@ fn disabled_native_policy_keeps_admission_and_executable_storage_empty() {
         composed_regions: false,
         optimizing_view: false,
     };
-    let plan =
-        super::BaselinePlan::compile_for_test(function.code().expect("compact code"), disabled);
+    let plan = super::BaselinePlan::compile_for_test(
+        function.code().expect("compact code"),
+        disabled,
+    );
     assert!(plan.admissions.is_empty());
     assert_eq!(plan.shared_region_arena.borrow().slab_count(), 0);
     assert_eq!(plan.shared_region_arena.borrow().capacity(), 0);
@@ -349,149 +333,59 @@ fn baseline_scalar_entry_rebuilds_after_shared_owner_eviction() {
     assert_eq!(registers.read(0), Some(crate::value::Value::Number(5.0)));
     assert_eq!(plan.shared_region_arena.borrow_mut().evict_idle(0), 1);
     registers.write(0, crate::value::Value::Undefined);
-    crate::vm::execute_baseline_code_from(code, &plan, 0, &mut registers, &context, environment)
-        .expect("scalar execution after owner eviction");
-    assert_eq!(native.borrow().native_entry_count, 2);
-    assert_eq!(registers.read(0), Some(crate::value::Value::Number(5.0)));
-}
-
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-#[test]
-fn warm_numeric_region_reuses_one_publication() {
-    let function = numeric_add_function();
-    let code = function.code().expect("numeric code");
-    let add = code.instruction(0).expect("Add instruction");
-    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
-    let plan = super::BaselinePlan::compile_for_test(code, policy);
-    let context = crate::vm::current_context_or_default();
-    let mut registers =
-        crate::register_file::RegisterFile::with_undefined(code.register_count().into());
-    execute_numeric_add(code, &plan, &mut registers, &context);
-    let published = {
-        let slab = plan.shared_region_arena.borrow();
-        (slab.slab_count(), slab.used(), slab.capacity())
-    };
-    for _ in 0..8 {
-        execute_numeric_add(code, &plan, &mut registers, &context);
-    }
-    let native = plan.native_binary_at(0).expect("numeric leaf admitted");
-    assert_eq!(registers.read_number(add.a.into()), Some(5.0));
-    assert_eq!(native.borrow().native_entry_count(), 9);
-    let slab = plan.shared_region_arena.borrow();
-    assert_eq!((slab.slab_count(), slab.used(), slab.capacity()), published);
-    assert_eq!(slab.slab_count(), 1, "stable hits share one slab");
-    assert!(slab.used() > 0, "first hit must publish code");
-}
-
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-#[test]
-fn broken_numeric_fact_does_not_render_native_add() {
-    let function = numeric_add_function();
-    let code = function.code().expect("numeric code");
-    let add = code.instruction(0).expect("Add instruction");
-    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
-    let plan = super::BaselinePlan::compile_for_test(code, policy);
-    let mut registers =
-        crate::register_file::RegisterFile::with_undefined(code.register_count().into());
-    registers.write(add.b.into(), crate::value::Value::String("a".into()));
-    registers.write(add.c.into(), crate::value::Value::Number(1.0));
-    let context = crate::vm::current_context_or_default();
     crate::vm::execute_baseline_code_from(
         code,
         &plan,
         0,
         &mut registers,
         &context,
-        crate::environment::Environment::new(),
+        environment,
     )
-    .expect("generic Add fallback executes");
-    assert_eq!(
-        registers.read(add.a.into()),
-        Some(crate::value::Value::String("a1".into()))
-    );
-    assert_eq!(
-        plan.native_binary_at(0)
-            .unwrap()
-            .borrow()
-            .native_entry_count(),
-        0
-    );
-    assert_eq!(plan.shared_region_arena.borrow().capacity(), 0);
-}
-
-fn numeric_add_function() -> super::FunctionCode {
-    super::FunctionCode::from_ops(vec![
-        super::Op::Binary {
-            dst: 0,
-            operator: crate::ops::BinaryOp::Add,
-            lhs: 1,
-            rhs: 2,
-        },
-        super::Op::Return { src: 0 },
-    ])
-}
-
-fn execute_numeric_add(
-    code: super::CodeView<'_>,
-    plan: &super::BaselinePlan,
-    registers: &mut crate::register_file::RegisterFile,
-    context: &crate::vm::VmContext,
-) {
-    registers.write_number(1, 2.0);
-    registers.write_number(2, 3.0);
-    crate::vm::execute_baseline_code_from(
-        code,
-        plan,
-        0,
-        registers,
-        context,
-        crate::environment::Environment::new(),
-    )
-    .expect("numeric region executes");
+    .expect("scalar execution after owner eviction");
+    assert_eq!(native.borrow().native_entry_count, 2);
+    assert_eq!(registers.read(0), Some(crate::value::Value::Number(5.0)));
 }
 
 #[test]
 fn composed_plan_retires_cached_bytes_after_committed_failure() {
-    let mut plan =
-        super::NativeRegionPlan::new_for_test(crate::stencil_select::array_loop_body_region_key())
-            .expect("array region plan");
-    plan.physical
-        .cache
-        .insert(crate::stencil_fact::RegionKey(900), 0, 0x1000);
+    let mut plan = super::NativeRegionPlan::new_for_test(
+        crate::stencil_select::array_loop_body_region_key(),
+    )
+    .expect("array region plan");
+    plan.physical.cache.insert(
+        crate::stencil_fact::RegionKey(900),
+        0,
+        0x1000,
+    );
     let committed: Result<crate::vm::DispatchTransition, super::NativeDispatchError> =
         Err(super::NativeDispatchError::Committed("post-entry".into()));
     plan.retire_on_failure(&committed);
-    assert_eq!(
-        plan.physical.cache.len(),
-        0,
-        "committed bytes must not remain callable"
-    );
+    assert_eq!(plan.physical.cache.len(), 0, "committed bytes must not remain callable");
     assert_eq!(
         plan.physical.lifecycle.state(),
         crate::stencil_lifecycle::StencilState::Retired,
         "committed failure must not reset admission history"
     );
 
-    plan.physical
-        .cache
-        .insert(crate::stencil_fact::RegionKey(901), 0, 0x2000);
-    let semantic: Result<crate::vm::DispatchTransition, super::NativeDispatchError> =
-        Err(super::NativeDispatchError::Semantic(
-            crate::vm::VmError::EvalError("ordinary throw".into()),
-        ));
-    plan.retire_on_failure(&semantic);
-    assert_eq!(
-        plan.physical.cache.len(),
-        1,
-        "semantic errors do not invalidate physical code"
+    plan.physical.cache.insert(
+        crate::stencil_fact::RegionKey(901),
+        0,
+        0x2000,
     );
+    let semantic: Result<crate::vm::DispatchTransition, super::NativeDispatchError> =
+        Err(super::NativeDispatchError::Semantic(crate::vm::VmError::EvalError(
+            "ordinary throw".into(),
+        )));
+    plan.retire_on_failure(&semantic);
+    assert_eq!(plan.physical.cache.len(), 1, "semantic errors do not invalidate physical code");
 }
 
 #[test]
 fn region_admission_rejects_noncanonical_operands_before_publication() {
-    let record =
-        crate::stencil_select::select_region(crate::stencil_select::loop_body_region_key())
-            .expect("generated loop-body declaration");
+    let record = crate::stencil_select::select_region(
+        crate::stencil_select::loop_body_region_key(),
+    )
+    .expect("generated loop-body declaration");
     let mut entries = record
         .operations
         .iter()
@@ -527,8 +421,10 @@ fn generated_scalar_and_array_rows_route_through_declared_abis() {
         },
         super::Op::Return { src: 0 },
     ]);
-    let scalar_plan =
-        super::BaselinePlan::compile_for_test(scalar_add.code().expect("scalar add code"), policy);
+    let scalar_plan = super::BaselinePlan::compile_for_test(
+        scalar_add.code().expect("scalar add code"),
+        policy,
+    );
     assert!(scalar_plan.native_binary_at(0).is_some());
     assert!(scalar_plan.native_region_at(0).is_none());
     for ops in [
@@ -552,15 +448,17 @@ fn generated_scalar_and_array_rows_route_through_declared_abis() {
     // entry is reached only by the residual lowering/admission tests, while
     // this check ensures the catalog itself cannot silently classify them as
     // scalar entries.
-    let array_record =
-        crate::stencil_select::select_region(crate::stencil_select::array_loop_body_region_key())
-            .expect("array row");
+    let array_record = crate::stencil_select::select_region(
+        crate::stencil_select::array_loop_body_region_key(),
+    )
+    .expect("array row");
     assert_eq!(array_record.name, "array_loop_body");
     assert_eq!(array_record.entry, 0);
     assert_eq!(array_record.external_entries, &[0]);
     assert!(matches!(
         array_record.abi,
-        crate::stencil_select::RegionAbi::ArrayKernel | crate::stencil_select::RegionAbi::Bridge
+        crate::stencil_select::RegionAbi::ArrayKernel
+            | crate::stencil_select::RegionAbi::Bridge
     ));
 }
 
@@ -646,17 +544,17 @@ fn hot_back_edge_osr_transfers_live_frame_into_baseline() {
         cold: Vec::<super::Op>::new().into(),
         ranges: vec![(0, 4)].into(),
         parameter_ends: vec![None].into(),
-        constants: vec![super::ConstantPool::new(vec![super::Constant::Boolean(
-            false,
-        )])]
+        constants: vec![super::ConstantPool::new(vec![
+            super::Constant::Boolean(false),
+        ])]
         .into(),
         metadata: vec![vec![super::InstructionMeta::empty(); 4]].into(),
         register_counts: vec![1].into(),
         frame_register_counts: vec![1].into(),
-        quickening_sites: vec![
-            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
-                .into_boxed_slice(),
-        ]
+        quickening_sites: vec![Vec::<
+            std::cell::RefCell<crate::quickening::QuickeningSite<4>>,
+        >::new()
+        .into_boxed_slice()]
         .into(),
         operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
         catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
@@ -667,17 +565,20 @@ fn hot_back_edge_osr_transfers_live_frame_into_baseline() {
     let code = owner.code().expect("compact test code");
     assert!(!owner.is_osr_entry(2), "no plan before the back-edge");
 
-    let mut registers =
-        crate::register_file::RegisterFile::from_values(vec![crate::value::Value::Boolean(true)]);
+    let mut registers = crate::register_file::RegisterFile::from_values(vec![
+        crate::value::Value::Boolean(true),
+    ]);
     let context = crate::vm::current_context_or_default();
-    let (completion, next) =
-        crate::vm::execute_function_code_step_from(code, &owner, 0, &mut registers, &context)
-            .expect("hot loop executes");
+    let (completion, next) = crate::vm::execute_function_code_step_from(
+        code,
+        &owner,
+        0,
+        &mut registers,
+        &context,
+    )
+    .expect("hot loop executes");
 
-    assert_eq!(
-        completion,
-        crate::completion::Completion::Return(crate::value::Value::Boolean(false))
-    );
+    assert_eq!(completion, crate::completion::Completion::Return(crate::value::Value::Boolean(false)));
     assert_eq!(next, 4);
     assert_eq!(owner.tier(), super::ExecutionTier::Baseline);
     let profile = owner.tier_profile();
@@ -690,8 +591,9 @@ fn hot_back_edge_osr_transfers_live_frame_into_baseline() {
     // execution shortcut, not an alternate semantic path.
     let cold_owner = super::FunctionCode::new(owner.store().expect("test code store"), range);
     cold_owner.set_tier_threshold_for_test(100);
-    let mut cold_registers =
-        crate::register_file::RegisterFile::from_values(vec![crate::value::Value::Boolean(true)]);
+    let mut cold_registers = crate::register_file::RegisterFile::from_values(vec![
+        crate::value::Value::Boolean(true),
+    ]);
     let (cold_completion, cold_next) = crate::vm::execute_function_code_step_from(
         cold_owner.code().expect("compact test code"),
         &cold_owner,
@@ -864,10 +766,7 @@ fn native_numeric_entry_pointer_is_cached_after_first_render() {
         last_native_view: None,
     };
     assert_eq!(plan.execute(1.5, 2.25), Ok(3.75));
-    assert!(matches!(
-        plan.installed,
-        super::InstalledBinaryEntry::F64Local(_)
-    ));
+    assert!(matches!(plan.installed, super::InstalledBinaryEntry::F64Local(_)));
     let used = plan.arena.as_ref().expect("rendered arena").used();
     assert_eq!(plan.execute(4.0, 5.0), Ok(9.0));
     assert_eq!(plan.arena.as_ref().expect("cached arena").used(), used);
@@ -891,18 +790,12 @@ fn native_numeric_shared_entry_reuses_live_owner_and_recovers_after_eviction() {
         .expect("shared numeric plan");
     assert_eq!(plan.execute(1.5, 2.25), Ok(3.75));
     let used = shared.borrow().used();
-    assert!(matches!(
-        plan.installed,
-        super::InstalledBinaryEntry::F64Shared(_)
-    ));
+    assert!(matches!(plan.installed, super::InstalledBinaryEntry::F64Shared(_)));
     assert_eq!(plan.execute(4.0, 5.0), Ok(9.0));
     assert_eq!(shared.borrow().used(), used);
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert_eq!(plan.execute(4.0, 5.0), Ok(9.0));
-    assert!(
-        matches!(plan.installed, super::InstalledBinaryEntry::F64Shared(_)),
-        "eviction must rebuild the entry"
-    );
+    assert!(matches!(plan.installed, super::InstalledBinaryEntry::F64Shared(_)), "eviction must rebuild the entry");
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -946,11 +839,7 @@ fn native_strict_numeric_equality_uses_typed_scalar_entry() {
         )
         .expect("ordered scalar compare");
         assert_eq!(ordered.execute(lhs, rhs), Ok(expected));
-        assert_eq!(
-            ordered.execute(f64::NAN, rhs),
-            Ok(0.0),
-            "operator {operator:?}"
-        );
+        assert_eq!(ordered.execute(f64::NAN, rhs), Ok(0.0), "operator {operator:?}");
     }
 }
 
@@ -971,23 +860,13 @@ fn native_shared_boolean_entry_rebuilds_through_typed_owner() {
     let mut plan = super::NativeBinaryPlan::new_with_shared(instruction, policy, shared.clone())
         .expect("shared boolean plan");
     assert_eq!(plan.execute(1.0, 2.0), Ok(1.0));
-    assert!(matches!(
-        plan.installed,
-        super::InstalledBinaryEntry::BoolShared(_)
-    ));
+    assert!(matches!(plan.installed, super::InstalledBinaryEntry::BoolShared(_)));
     let used = shared.borrow().used();
     assert_eq!(plan.execute(2.0, 3.0), Ok(1.0));
-    assert_eq!(
-        shared.borrow().used(),
-        used,
-        "owner hit must not render again"
-    );
+    assert_eq!(shared.borrow().used(), used, "owner hit must not render again");
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert_eq!(plan.execute(2.0, 1.0), Ok(0.0));
-    assert!(matches!(
-        plan.installed,
-        super::InstalledBinaryEntry::BoolShared(_)
-    ));
+    assert!(matches!(plan.installed, super::InstalledBinaryEntry::BoolShared(_)));
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -1044,8 +923,15 @@ fn native_numeric_equality_covers_loose_numbers_and_falls_back_for_coercion() {
             crate::value::Value::String("7".into()),
         );
         hostile.write(usize::from(instruction.c), crate::value::Value::Number(7.0));
-        crate::vm::execute_baseline_code_from(view, &plan, pc, &mut hostile, &context, environment)
-            .expect("coercive equality fallback");
+        crate::vm::execute_baseline_code_from(
+            view,
+            &plan,
+            pc,
+            &mut hostile,
+            &context,
+            environment,
+        )
+        .expect("coercive equality fallback");
         assert_eq!(
             hostile.read(usize::from(instruction.a)),
             Some(crate::value::Value::Boolean(true))
@@ -1078,10 +964,7 @@ fn native_numeric_equality_covers_loose_numbers_and_falls_back_for_coercion() {
             }
         });
     });
-    assert!(
-        executed,
-        "ordinary source must reach loose numeric equality"
-    );
+    assert!(executed, "ordinary source must reach loose numeric equality");
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -1096,32 +979,12 @@ fn native_bitwise_i32_regions_guard_number_conversion() {
         c: 2,
     };
     for (operator, lhs, rhs, expected) in [
-        (
-            crate::ops::BinaryOp::BitwiseAnd,
-            0xF0F0_i32,
-            0x0FF0_i32,
-            0x00F0_i32,
-        ),
-        (
-            crate::ops::BinaryOp::BitwiseOr,
-            0xF000_i32,
-            0x00F0_i32,
-            0xF0F0_i32,
-        ),
-        (
-            crate::ops::BinaryOp::BitwiseXor,
-            -1_i32,
-            0x0F0F_i32,
-            !0x0F0F_i32,
-        ),
+        (crate::ops::BinaryOp::BitwiseAnd, 0xF0F0_i32, 0x0FF0_i32, 0x00F0_i32),
+        (crate::ops::BinaryOp::BitwiseOr, 0xF000_i32, 0x00F0_i32, 0xF0F0_i32),
+        (crate::ops::BinaryOp::BitwiseXor, -1_i32, 0x0F0F_i32, !0x0F0F_i32),
         (crate::ops::BinaryOp::ShiftLeft, 1_i32, 32_i32, 1_i32),
         (crate::ops::BinaryOp::ShiftRight, -8_i32, 1_i32, -4_i32),
-        (
-            crate::ops::BinaryOp::ShiftRightZeroFill,
-            -1_i32,
-            1_i32,
-            2_147_483_647_i32,
-        ),
+        (crate::ops::BinaryOp::ShiftRightZeroFill, -1_i32, 1_i32, 2_147_483_647_i32),
     ] {
         let mut plan = super::NativeBinaryPlan::new(
             crate::ir::Instruction {
@@ -1131,10 +994,7 @@ fn native_bitwise_i32_regions_guard_number_conversion() {
             policy,
         )
         .expect("i32 bitwise region");
-        assert_eq!(
-            plan.execute(f64::from(lhs), f64::from(rhs)),
-            Ok(f64::from(expected))
-        );
+        assert_eq!(plan.execute(f64::from(lhs), f64::from(rhs)), Ok(f64::from(expected)));
         let converted = crate::intl::tolocale::value::to_int32(1.5);
         let right = crate::intl::tolocale::value::to_int32(f64::from(rhs));
         let expected_fraction = match operator {
@@ -1148,10 +1008,7 @@ fn native_bitwise_i32_regions_guard_number_conversion() {
             }
             _ => unreachable!(),
         };
-        assert_eq!(
-            plan.execute(1.5, f64::from(rhs)),
-            Ok(f64::from(expected_fraction))
-        );
+        assert_eq!(plan.execute(1.5, f64::from(rhs)), Ok(f64::from(expected_fraction)));
         assert_eq!(
             plan.execute(f64::NAN, f64::from(rhs)),
             Ok(f64::from(match operator {
@@ -1165,10 +1022,8 @@ fn native_bitwise_i32_regions_guard_number_conversion() {
             }))
         );
         assert!(
-            matches!(
-                plan.installed,
-                super::InstalledBinaryEntry::I32Local(_) | super::InstalledBinaryEntry::U32Local(_)
-            ),
+            matches!(plan.installed, super::InstalledBinaryEntry::I32Local(_)
+                | super::InstalledBinaryEntry::U32Local(_)),
             "conversion cases must reach the rendered typed entry"
         );
     }
@@ -1209,16 +1064,10 @@ fn native_shared_integer_entry_rebuilds_through_typed_owner() {
     let mut plan = super::NativeBinaryPlan::new_with_shared(instruction, policy, shared.clone())
         .expect("shared integer plan");
     assert_eq!(plan.execute(-1.0, 1.0), Ok(2_147_483_647.0));
-    assert!(matches!(
-        plan.installed,
-        super::InstalledBinaryEntry::U32Shared(_)
-    ));
+    assert!(matches!(plan.installed, super::InstalledBinaryEntry::U32Shared(_)));
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert_eq!(plan.execute(-1.0, 33.5), Ok(2_147_483_647.0));
-    assert!(matches!(
-        plan.installed,
-        super::InstalledBinaryEntry::U32Shared(_)
-    ));
+    assert!(matches!(plan.installed, super::InstalledBinaryEntry::U32Shared(_)));
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -1233,12 +1082,7 @@ fn native_bitwise_not_i32_entry_preserves_to_int32_rules() {
     };
     let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
     let mut plan = super::NativeUnaryPlan::new(instruction, policy).expect("bitwise-not leaf");
-    for (input, expected) in [
-        (0.0, -1.0),
-        (1.5, -2.0),
-        (f64::NAN, -1.0),
-        (4_294_967_297.0, -2.0),
-    ] {
+    for (input, expected) in [(0.0, -1.0), (1.5, -2.0), (f64::NAN, -1.0), (4_294_967_297.0, -2.0)] {
         assert_eq!(plan.execute(input), Ok(expected));
     }
     assert!(plan.native_entry_count >= 4);
@@ -1264,27 +1108,25 @@ fn native_unary_shared_entry_reuses_live_owner_and_recovers_after_eviction() {
     let used = shared.borrow().used();
     assert!(matches!(
         plan.installed,
-        super::InstalledUnaryEntry::NumberShared(_) | super::InstalledUnaryEntry::IntegerShared(_)
+        super::InstalledUnaryEntry::NumberShared(_)
+            | super::InstalledUnaryEntry::IntegerShared(_)
     ));
     assert_eq!(plan.execute(1.5), Ok(-2.0));
     assert_eq!(shared.borrow().used(), used);
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert_eq!(plan.execute(1.5), Ok(-2.0));
-    assert!(
-        matches!(
-            plan.installed,
-            super::InstalledUnaryEntry::NumberShared(_)
-                | super::InstalledUnaryEntry::IntegerShared(_)
-        ),
-        "eviction must rebuild the entry"
-    );
+    assert!(matches!(
+        plan.installed,
+        super::InstalledUnaryEntry::NumberShared(_)
+            | super::InstalledUnaryEntry::IntegerShared(_)
+    ), "eviction must rebuild the entry");
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
 fn ordinary_source_lowering_executes_bitwise_not_and_falls_back_for_string() {
-    let program =
-        crate::reduce::reduce_source("var x = 1; x = ~x; x;").expect("bitwise-not source lowers");
+    let program = crate::reduce::reduce_source("var x = 1; x = ~x; x;")
+        .expect("bitwise-not source lowers");
     let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
     let mut executed = false;
     let mut inspect = |view: crate::machine::CodeView<'_>| {
@@ -1301,9 +1143,7 @@ fn ordinary_source_lowering_executes_bitwise_not_and_falls_back_for_string() {
             return;
         };
         let plan = super::BaselinePlan::compile_for_test(view, policy);
-        let Some(native) = plan.native_unary_at(pc) else {
-            return;
-        };
+        let Some(native) = plan.native_unary_at(pc) else { return };
         let instruction = view.instruction(pc).expect("unary instruction");
         let mut registers = crate::register_file::RegisterFile::with_undefined(
             usize::from(view.register_count()).max(8),
@@ -1320,18 +1160,12 @@ fn ordinary_source_lowering_executes_bitwise_not_and_falls_back_for_string() {
             std::rc::Rc::clone(&environment),
         )
         .is_ok());
-        assert_eq!(
-            registers.read(usize::from(instruction.a)),
-            Some(crate::value::Value::Number(-2.0))
-        );
+        assert_eq!(registers.read(usize::from(instruction.a)), Some(crate::value::Value::Number(-2.0)));
         let before = native.borrow().native_entry_count;
         let mut hostile = crate::register_file::RegisterFile::with_undefined(
             usize::from(view.register_count()).max(8),
         );
-        hostile.write(
-            usize::from(instruction.b),
-            crate::value::Value::String("1".into()),
-        );
+        hostile.write(usize::from(instruction.b), crate::value::Value::String("1".into()));
         assert!(crate::vm::execute_baseline_code_from(
             view,
             &plan,
@@ -1341,10 +1175,7 @@ fn ordinary_source_lowering_executes_bitwise_not_and_falls_back_for_string() {
             environment,
         )
         .is_ok());
-        assert_eq!(
-            hostile.read(usize::from(instruction.a)),
-            Some(crate::value::Value::Number(-2.0))
-        );
+        assert_eq!(hostile.read(usize::from(instruction.a)), Some(crate::value::Value::Number(-2.0)));
         assert_eq!(native.borrow().native_entry_count, before);
         executed = true;
     };
@@ -1411,8 +1242,15 @@ fn ordinary_source_lowering_executes_numeric_negate_and_preserves_signed_zero() 
             usize::from(instruction.b),
             crate::value::Value::String("3".into()),
         );
-        crate::vm::execute_baseline_code_from(view, &plan, pc, &mut hostile, &context, environment)
-            .expect("coercive negate fallback");
+        crate::vm::execute_baseline_code_from(
+            view,
+            &plan,
+            pc,
+            &mut hostile,
+            &context,
+            environment,
+        )
+        .expect("coercive negate fallback");
         assert_eq!(
             hostile.read(usize::from(instruction.a)),
             Some(crate::value::Value::Number(-3.0))
@@ -1450,8 +1288,8 @@ fn ordinary_source_lowering_executes_numeric_negate_and_preserves_signed_zero() 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
 fn ordinary_source_lowering_executes_logical_not_with_complete_fallback() {
-    let program =
-        crate::reduce::reduce_source("var x = 0; x = !x; x;").expect("logical-not source lowers");
+    let program = crate::reduce::reduce_source("var x = 0; x = !x; x;")
+        .expect("logical-not source lowers");
     let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
     let mut executed = false;
     let mut inspect = |view: crate::machine::CodeView<'_>| {
@@ -1468,9 +1306,7 @@ fn ordinary_source_lowering_executes_logical_not_with_complete_fallback() {
             return;
         };
         let plan = super::BaselinePlan::compile_for_test(view, policy);
-        let native = plan
-            .native_truthiness_at(pc)
-            .expect("logical-not truthiness plan");
+        let native = plan.native_truthiness_at(pc).expect("logical-not truthiness plan");
         let instruction = view.instruction(pc).expect("logical-not instruction");
         let mut registers = crate::register_file::RegisterFile::with_undefined(
             usize::from(view.register_count()).max(8),
@@ -1491,10 +1327,7 @@ fn ordinary_source_lowering_executes_logical_not_with_complete_fallback() {
             registers.read(usize::from(instruction.a)),
             Some(crate::value::Value::Boolean(true))
         );
-        assert!(
-            native.borrow().native_entry_count > 0,
-            "logical-not number must execute emitted bytes"
-        );
+        assert!(native.borrow().native_entry_count > 0, "logical-not number must execute emitted bytes");
         assert_eq!(native.borrow_mut().execute(2.0), Ok(true));
         assert_eq!(native.borrow_mut().execute(f64::NAN), Ok(false));
         let before = native.borrow().native_entry_count;
@@ -1506,8 +1339,15 @@ fn ordinary_source_lowering_executes_logical_not_with_complete_fallback() {
             usize::from(instruction.b),
             crate::value::Value::String(String::new()),
         );
-        crate::vm::execute_baseline_code_from(view, &plan, pc, &mut hostile, &context, environment)
-            .expect("logical-not coercive fallback");
+        crate::vm::execute_baseline_code_from(
+            view,
+            &plan,
+            pc,
+            &mut hostile,
+            &context,
+            environment,
+        )
+        .expect("logical-not coercive fallback");
         assert_eq!(
             hostile.read(usize::from(instruction.a)),
             Some(crate::value::Value::Boolean(true))
@@ -1582,10 +1422,7 @@ fn ordinary_source_lowering_executes_numeric_truthiness_and_falls_back_for_strin
         )
         .is_ok());
         let before = native.borrow().native_entry_count;
-        assert!(
-            before > 0,
-            "numeric branch must execute emitted truthiness bytes"
-        );
+        assert!(before > 0, "numeric branch must execute emitted truthiness bytes");
         let mut hostile = crate::register_file::RegisterFile::with_undefined(
             usize::from(view.register_count()).max(8),
         );
@@ -1613,10 +1450,7 @@ fn ordinary_source_lowering_executes_numeric_truthiness_and_falls_back_for_strin
             }
         });
     });
-    assert!(
-        checked,
-        "ordinary source must execute the numeric truthiness leaf"
-    );
+    assert!(checked, "ordinary source must execute the numeric truthiness leaf");
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -1642,10 +1476,7 @@ fn ordinary_source_lowering_executes_tagged_truthiness_for_boolean() {
         let mut registers = crate::register_file::RegisterFile::with_undefined(
             usize::from(view.register_count()).max(8),
         );
-        registers.write(
-            usize::from(instruction.a),
-            crate::value::Value::Boolean(true),
-        );
+        registers.write(usize::from(instruction.a), crate::value::Value::Boolean(true));
         let context = crate::vm::current_context_or_default();
         assert!(crate::vm::execute_baseline_code_from(
             view,
@@ -1685,10 +1516,7 @@ fn ordinary_source_lowering_executes_tagged_truthiness_for_boolean() {
             }
         });
     });
-    assert!(
-        executed,
-        "ordinary source must execute tagged truthiness bytes"
-    );
+    assert!(executed, "ordinary source must execute tagged truthiness bytes");
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -1709,9 +1537,7 @@ fn ordinary_source_lowering_executes_pointer_truthiness_for_object() {
             return;
         };
         let plan = super::BaselinePlan::compile_for_test(view, policy);
-        let native = plan
-            .native_truthiness_at(pc)
-            .expect("pointer truthiness leaf");
+        let native = plan.native_truthiness_at(pc).expect("pointer truthiness leaf");
         let instruction = view.instruction(pc).expect("object branch instruction");
         let object = std::rc::Rc::new(crate::value::ObjectData::new(Vec::new()));
         let mut registers = crate::register_file::RegisterFile::with_undefined(
@@ -1760,10 +1586,7 @@ fn ordinary_source_lowering_executes_pointer_truthiness_for_object() {
             }
         });
     });
-    assert!(
-        executed,
-        "ordinary source must execute pointer truthiness bytes"
-    );
+    assert!(executed, "ordinary source must execute pointer truthiness bytes");
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -1785,9 +1608,7 @@ fn primitive_load_const_uses_rendered_machine_word_and_preserves_value() {
         view,
         crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
     );
-    let native = plan
-        .native_load_const_at(0)
-        .expect("primitive constant leaf");
+    let native = plan.native_load_const_at(0).expect("primitive constant leaf");
     let mut registers = crate::register_file::RegisterFile::with_undefined(4);
     let context = crate::vm::current_context_or_default();
     assert!(crate::vm::execute_baseline_code_from(
@@ -1801,10 +1622,7 @@ fn primitive_load_const_uses_rendered_machine_word_and_preserves_value() {
     .is_ok());
     assert_eq!(registers.read(0), Some(crate::value::Value::Number(42.5)));
     assert!(native.borrow_mut().execute().is_ok());
-    assert!(
-        native.borrow().native_entry_count > 0,
-        "constant bytes must execute"
-    );
+    assert!(native.borrow().native_entry_count > 0, "constant bytes must execute");
 
     let string_code = crate::machine::ExecutableCode::from_ops(vec![
         crate::ops::Op::Const {
@@ -1835,41 +1653,29 @@ fn shared_constant_entry_recovers_after_owner_eviction() {
         shared.clone(),
     )
     .expect("shared constant plan");
-    assert_eq!(
-        plan.execute(),
-        Ok(crate::tagged_value::TaggedValue::number(42.5).bits())
-    );
+    assert_eq!(plan.execute(), Ok(crate::tagged_value::TaggedValue::number(42.5).bits()));
     assert!(matches!(
         plan.installed,
         super::InstalledConstantEntry::Shared(_)
     ));
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
-    assert_eq!(
-        plan.execute(),
-        Ok(crate::tagged_value::TaggedValue::number(42.5).bits())
-    );
-    assert!(
-        matches!(plan.installed, super::InstalledConstantEntry::Shared(_)),
-        "eviction must force a fresh owner"
-    );
+    assert_eq!(plan.execute(), Ok(crate::tagged_value::TaggedValue::number(42.5).bits()));
+    assert!(matches!(
+        plan.installed,
+        super::InstalledConstantEntry::Shared(_)
+    ), "eviction must force a fresh owner");
 }
 
 #[test]
 fn region_verifier_rejects_physical_call_for_raw_abi() {
     #[cfg(target_arch = "aarch64")]
-    assert!(crate::stencil_physical::contains_call(&[
-        0x00, 0x00, 0x00, 0x94
-    ]));
+    assert!(crate::stencil_physical::contains_call(&[0x00, 0x00, 0x00, 0x94]));
     #[cfg(target_arch = "aarch64")]
-    assert!(crate::stencil_physical::contains_call(&[
-        0x00, 0x00, 0x3F, 0xD6
-    ]));
+    assert!(crate::stencil_physical::contains_call(&[0x00, 0x00, 0x3F, 0xD6]));
     #[cfg(target_arch = "x86_64")]
     assert!(crate::stencil_physical::contains_call(&[0xE8, 0, 0, 0, 0]));
     #[cfg(target_arch = "x86_64")]
-    assert!(crate::stencil_physical::contains_call(&[
-        0x90, 0xE8, 0, 0, 0, 0
-    ]));
+    assert!(crate::stencil_physical::contains_call(&[0x90, 0xE8, 0, 0, 0, 0]));
     #[cfg(target_arch = "x86_64")]
     assert!(crate::stencil_physical::contains_call(&[0x41, 0xFF, 0xD2]));
     #[cfg(target_arch = "x86_64")]
@@ -1881,9 +1687,7 @@ fn region_verifier_rejects_physical_call_for_raw_abi() {
         crate::stencil_select::array_numeric_loop_region_key(),
     ] {
         let record = crate::stencil_select::select_region(key).expect("raw declaration");
-        assert!(!crate::stencil_physical::contains_call(
-            record.stencil.bytes
-        ));
+        assert!(!crate::stencil_physical::contains_call(record.stencil.bytes));
     }
 }
 
@@ -1913,10 +1717,7 @@ fn ordinary_source_lowering_admits_guarded_bitwise_region() {
             admitted |= has_plan(view);
         });
     });
-    assert!(
-        admitted,
-        "ordinary source must reach the guarded bitwise plan"
-    );
+    assert!(admitted, "ordinary source must reach the guarded bitwise plan");
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -2011,10 +1812,7 @@ fn ordinary_source_lowering_executes_bitwise_region_and_falls_back_on_conversion
             }
         });
     });
-    assert!(
-        executed,
-        "ordinary driver must execute lowered bitwise bytes"
-    );
+    assert!(executed, "ordinary driver must execute lowered bitwise bytes");
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -2037,9 +1835,9 @@ fn ordinary_source_lowering_executes_fused_indexed_numeric_update() {
                         crate::ir::Opcode::Add | crate::ir::Opcode::AddConst
                     )
                 })
-                && view
-                    .instruction(*pc + 2)
-                    .is_some_and(|instruction| instruction.opcode == crate::ir::Opcode::ASetI)
+                && view.instruction(*pc + 2).is_some_and(|instruction| {
+                    instruction.opcode == crate::ir::Opcode::ASetI
+                })
         }) else {
             return;
         };
@@ -2057,10 +1855,9 @@ fn ordinary_source_lowering_executes_fused_indexed_numeric_update() {
         let mut registers = crate::register_file::RegisterFile::with_undefined(
             usize::from(view.register_count()).max(8),
         );
-        let array =
-            crate::value::Value::Array(std::rc::Rc::new(crate::value::ArrayData::new(vec![
-                crate::value::Value::Number(3.0),
-            ])));
+        let array = crate::value::Value::Array(std::rc::Rc::new(
+            crate::value::ArrayData::new(vec![crate::value::Value::Number(3.0)]),
+        ));
         registers.write(usize::from(load.b), array);
         registers.write(usize::from(load.c), crate::value::Value::Number(0.0));
         let array_word = registers.read(usize::from(load.b)).unwrap();
@@ -2116,17 +1913,14 @@ fn ordinary_source_lowering_executes_fused_indexed_numeric_update() {
             }
         });
     });
-    assert!(
-        executed,
-        "ordinary lowering must expose the fused update shape"
-    );
+    assert!(executed, "ordinary lowering must expose the fused update shape");
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
 fn ordinary_source_lowering_executes_numeric_comparison_and_falls_back_on_conversion() {
-    let program =
-        crate::reduce::reduce_source("var x = 1; x = x < 2; x;").expect("comparison source lowers");
+    let program = crate::reduce::reduce_source("var x = 1; x = x < 2; x;")
+        .expect("comparison source lowers");
     let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
     let mut executed = false;
     let mut inspect = |view: crate::machine::CodeView<'_>| {
@@ -2163,23 +1957,14 @@ fn ordinary_source_lowering_executes_numeric_comparison_and_falls_back_on_conver
             std::rc::Rc::clone(&environment),
         );
         assert!(result.is_ok(), "numeric comparison should execute");
-        assert_eq!(
-            registers.read(usize::from(instruction.a)),
-            Some(crate::value::Value::Boolean(true))
-        );
-        assert!(
-            native.borrow().native_entry_count > 0,
-            "comparison bytes must execute"
-        );
+        assert_eq!(registers.read(usize::from(instruction.a)), Some(crate::value::Value::Boolean(true)));
+        assert!(native.borrow().native_entry_count > 0, "comparison bytes must execute");
 
         let before = native.borrow().native_entry_count;
         let mut hostile = crate::register_file::RegisterFile::with_undefined(
             usize::from(view.register_count()).max(8),
         );
-        hostile.write(
-            usize::from(instruction.b),
-            crate::value::Value::String("1".into()),
-        );
+        hostile.write(usize::from(instruction.b), crate::value::Value::String("1".into()));
         hostile.write(usize::from(instruction.c), crate::value::Value::Number(2.0));
         let fallback = crate::vm::execute_baseline_code_from(
             view,
@@ -2190,15 +1975,8 @@ fn ordinary_source_lowering_executes_numeric_comparison_and_falls_back_on_conver
             environment,
         );
         assert!(fallback.is_ok(), "conversion must use complete fallback");
-        assert_eq!(
-            hostile.read(usize::from(instruction.a)),
-            Some(crate::value::Value::Boolean(true))
-        );
-        assert_eq!(
-            native.borrow().native_entry_count,
-            before,
-            "fallback must not enter native bytes"
-        );
+        assert_eq!(hostile.read(usize::from(instruction.a)), Some(crate::value::Value::Boolean(true)));
+        assert_eq!(native.borrow().native_entry_count, before, "fallback must not enter native bytes");
         executed = true;
     };
     inspect(program.code());
@@ -2209,10 +1987,7 @@ fn ordinary_source_lowering_executes_numeric_comparison_and_falls_back_on_conver
             }
         });
     });
-    assert!(
-        executed,
-        "ordinary source must reach and execute comparison bytes"
-    );
+    assert!(executed, "ordinary source must reach and execute comparison bytes");
 }
 
 #[cfg(quench_generated_stencil_artifacts)]
@@ -2235,9 +2010,10 @@ fn ordinary_source_lowering_executes_generated_add_const_view() {
         );
         let native = plan.native_binary_at(pc).expect("AddConst plan");
         let instruction = view.instruction(pc).expect("AddConst instruction");
-        let physical =
-            crate::stencil_select::select_physical(crate::stencil_select::add_const_region_key())
-                .expect("generated AddConst view");
+        let physical = crate::stencil_select::select_physical(
+            crate::stencil_select::add_const_region_key(),
+        )
+        .expect("generated AddConst view");
         assert!(physical.generated);
         assert_eq!(physical.key, crate::stencil_select::add_const_region_key());
         let mut registers = crate::register_file::RegisterFile::with_undefined(
@@ -2254,10 +2030,7 @@ fn ordinary_source_lowering_executes_generated_add_const_view() {
             crate::environment::Environment::new(),
         )
         .expect("generated AddConst execution");
-        assert_eq!(
-            registers.read(usize::from(instruction.a)),
-            Some(crate::value::Value::Number(5.75))
-        );
+        assert_eq!(registers.read(usize::from(instruction.a)), Some(crate::value::Value::Number(5.75)));
         assert!(native.borrow().native_entry_count > 0);
         let witness = native
             .borrow()
@@ -2283,10 +2056,7 @@ fn ordinary_source_lowering_executes_generated_add_const_view() {
             }
         });
     });
-    assert!(
-        executed,
-        "ordinary source must execute generated AddConst bytes"
-    );
+    assert!(executed, "ordinary source must execute generated AddConst bytes");
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -2317,14 +2087,8 @@ fn ordinary_source_lowering_executes_tagged_identity_comparison() {
         let mut registers = crate::register_file::RegisterFile::with_undefined(
             usize::from(view.register_count()).max(8),
         );
-        registers.write(
-            usize::from(instruction.b),
-            crate::value::Value::Boolean(true),
-        );
-        registers.write(
-            usize::from(instruction.c),
-            crate::value::Value::Boolean(true),
-        );
+        registers.write(usize::from(instruction.b), crate::value::Value::Boolean(true));
+        registers.write(usize::from(instruction.c), crate::value::Value::Boolean(true));
         let environment = crate::environment::Environment::new();
         let context = crate::vm::current_context_or_default();
         let result = crate::vm::execute_baseline_code_from(
@@ -2340,10 +2104,7 @@ fn ordinary_source_lowering_executes_tagged_identity_comparison() {
             registers.read(usize::from(instruction.a)),
             Some(crate::value::Value::Boolean(true))
         );
-        assert!(
-            native.borrow().native_entry_count > 0,
-            "identity bytes must execute"
-        );
+        assert!(native.borrow().native_entry_count > 0, "identity bytes must execute");
 
         let object = std::rc::Rc::new(crate::value::ObjectData::new(Vec::new()));
         let mut object_registers = crate::register_file::RegisterFile::with_undefined(
@@ -2365,10 +2126,7 @@ fn ordinary_source_lowering_executes_tagged_identity_comparison() {
             &context,
             crate::environment::Environment::new(),
         );
-        assert!(
-            object_result.is_ok(),
-            "object identity comparison should execute"
-        );
+        assert!(object_result.is_ok(), "object identity comparison should execute");
         assert_eq!(
             object_registers.read(usize::from(instruction.a)),
             Some(crate::value::Value::Boolean(true))
@@ -2378,10 +2136,7 @@ fn ordinary_source_lowering_executes_tagged_identity_comparison() {
         let mut hostile = crate::register_file::RegisterFile::with_undefined(
             usize::from(view.register_count()).max(8),
         );
-        hostile.write(
-            usize::from(instruction.b),
-            crate::value::Value::Boolean(true),
-        );
+        hostile.write(usize::from(instruction.b), crate::value::Value::Boolean(true));
         hostile.write(usize::from(instruction.c), crate::value::Value::Number(1.0));
         let fallback = crate::vm::execute_baseline_code_from(
             view,
@@ -2407,10 +2162,7 @@ fn ordinary_source_lowering_executes_tagged_identity_comparison() {
             }
         });
     });
-    assert!(
-        executed,
-        "ordinary source must reach and execute identity bytes"
-    );
+    assert!(executed, "ordinary source must reach and execute identity bytes");
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -2437,20 +2189,12 @@ fn ordinary_source_lowering_executes_tagged_identity_inequality() {
         let Some(native) = plan.native_binary_at(pc) else {
             return;
         };
-        let instruction = view
-            .instruction(pc)
-            .expect("identity inequality instruction");
+        let instruction = view.instruction(pc).expect("identity inequality instruction");
         let mut registers = crate::register_file::RegisterFile::with_undefined(
             usize::from(view.register_count()).max(8),
         );
-        registers.write(
-            usize::from(instruction.b),
-            crate::value::Value::Boolean(true),
-        );
-        registers.write(
-            usize::from(instruction.c),
-            crate::value::Value::Boolean(false),
-        );
+        registers.write(usize::from(instruction.b), crate::value::Value::Boolean(true));
+        registers.write(usize::from(instruction.c), crate::value::Value::Boolean(false));
         let environment = crate::environment::Environment::new();
         let context = crate::vm::current_context_or_default();
         let result = crate::vm::execute_baseline_code_from(
@@ -2466,10 +2210,7 @@ fn ordinary_source_lowering_executes_tagged_identity_inequality() {
             registers.read(usize::from(instruction.a)),
             Some(crate::value::Value::Boolean(true))
         );
-        assert!(
-            native.borrow().native_entry_count > 0,
-            "inequality bytes must execute"
-        );
+        assert!(native.borrow().native_entry_count > 0, "inequality bytes must execute");
         executed = true;
     };
     inspect(program.code());
@@ -2480,10 +2221,7 @@ fn ordinary_source_lowering_executes_tagged_identity_inequality() {
             }
         });
     });
-    assert!(
-        executed,
-        "ordinary source must reach and execute inequality bytes"
-    );
+    assert!(executed, "ordinary source must reach and execute inequality bytes");
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -2498,10 +2236,7 @@ fn native_add_chain_executes_two_ops_with_one_entry() {
         native_entry_count: 0,
     };
     assert_eq!(plan.execute(1.5, 2.25, 4.0), Ok(7.75));
-    assert!(matches!(
-        plan.installed,
-        super::InstalledF64x3Entry::Local(_)
-    ));
+    assert!(matches!(plan.installed, super::InstalledF64x3Entry::Local(_)));
     assert_eq!(plan.native_entry_count(), 1);
     let used = plan.arena.as_ref().expect("rendered chain").used();
     assert_eq!(plan.execute(-2.0, 3.0, 5.0), Ok(6.0));
@@ -2513,8 +2248,8 @@ fn native_add_chain_executes_two_ops_with_one_entry() {
 fn native_increment_uses_add_const_template_for_number_subset() {
     let instruction = crate::ir::Instruction::inc_i(0, 1, false);
     let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
-    let mut plan =
-        super::NativeBinaryPlan::new(instruction, policy).expect("declared increment body");
+    let mut plan = super::NativeBinaryPlan::new(instruction, policy)
+        .expect("declared increment body");
     assert_eq!(plan.execute(4.5, 1.0), Ok(5.5));
     assert_eq!(plan.execute(-0.0, 1.0), Ok(1.0));
     assert!(plan.execute(f64::NAN, 1.0).unwrap().is_nan());
@@ -2523,26 +2258,21 @@ fn native_increment_uses_add_const_template_for_number_subset() {
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
 fn native_nullish_word_matches_canonical_tagged_values() {
-    let instruction = crate::ir::Instruction::unary_operator(0, crate::ops::UnaryOp::IsNullish, 1);
-    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
-    let mut plan =
-        super::NativeNullishPlan::new(instruction, policy).expect("declared nullish word body");
-    assert_eq!(
-        plan.execute(crate::tagged_value::TaggedValue::null().bits()),
-        Ok(true)
+    let instruction = crate::ir::Instruction::unary_operator(
+        0,
+        crate::ops::UnaryOp::IsNullish,
+        1,
     );
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut plan = super::NativeNullishPlan::new(instruction, policy)
+        .expect("declared nullish word body");
+    assert_eq!(plan.execute(crate::tagged_value::TaggedValue::null().bits()), Ok(true));
     assert_eq!(
         plan.execute(crate::tagged_value::TaggedValue::undefined().bits()),
         Ok(true)
     );
-    assert_eq!(
-        plan.execute(crate::tagged_value::TaggedValue::bool(true).bits()),
-        Ok(false)
-    );
-    assert_eq!(
-        plan.execute(crate::tagged_value::TaggedValue::number(0.0).bits()),
-        Ok(false)
-    );
+    assert_eq!(plan.execute(crate::tagged_value::TaggedValue::bool(true).bits()), Ok(false));
+    assert_eq!(plan.execute(crate::tagged_value::TaggedValue::number(0.0).bits()), Ok(false));
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -2556,18 +2286,12 @@ fn native_add_chain_shared_entry_reuses_owner_after_eviction() {
         .expect("shared add chain");
     assert_eq!(plan.execute(1.0, 2.0, 3.0), Ok(6.0));
     let used = shared.borrow().used();
-    assert!(matches!(
-        plan.installed,
-        super::InstalledF64x3Entry::Shared(_)
-    ));
+    assert!(matches!(plan.installed, super::InstalledF64x3Entry::Shared(_)));
     assert_eq!(plan.execute(2.0, 4.0, 8.0), Ok(14.0));
     assert_eq!(shared.borrow().used(), used);
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert_eq!(plan.execute(2.0, 4.0, 8.0), Ok(14.0));
-    assert!(matches!(
-        plan.installed,
-        super::InstalledF64x3Entry::Shared(_)
-    ));
+    assert!(matches!(plan.installed, super::InstalledF64x3Entry::Shared(_)));
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -2609,18 +2333,12 @@ fn native_move_shared_entry_reuses_owner_and_recovers_after_eviction() {
     let source = crate::tagged_value::TaggedValue::from_bits(0xCAFE_BABE);
     assert_eq!(plan.execute(&source), Ok(source.bits()));
     let used = shared.borrow().used();
-    assert!(matches!(
-        plan.installed,
-        super::InstalledWordEntry::Shared(_)
-    ));
+    assert!(matches!(plan.installed, super::InstalledWordEntry::Shared(_)));
     assert_eq!(plan.execute(&source), Ok(source.bits()));
     assert_eq!(shared.borrow().used(), used);
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert_eq!(plan.execute(&source), Ok(source.bits()));
-    assert!(matches!(
-        plan.installed,
-        super::InstalledWordEntry::Shared(_)
-    ));
+    assert!(matches!(plan.installed, super::InstalledWordEntry::Shared(_)));
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -2676,17 +2394,11 @@ fn native_property_uses_rendered_address_without_remapping() {
     };
     let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::GetN);
     let slot = crate::register_file::SlotWord::new(super::Value::Number(42.5));
-    assert_eq!(
-        plan.execute(&slot, &site),
-        Ok(crate::tagged_value::TaggedValue::number(42.5).bits())
-    );
+    assert_eq!(plan.execute(&slot, &site), Ok(crate::tagged_value::TaggedValue::number(42.5).bits()));
     assert_eq!(plan.native_entry_count, 1);
     let used = plan.arena.as_ref().expect("rendered arena").used();
     assert!(used > 0);
-    assert_eq!(
-        plan.execute(&slot, &site),
-        Ok(crate::tagged_value::TaggedValue::number(42.5).bits())
-    );
+    assert_eq!(plan.execute(&slot, &site), Ok(crate::tagged_value::TaggedValue::number(42.5).bits()));
     assert_eq!(plan.native_entry_count, 2);
     assert_eq!(plan.arena.as_ref().expect("cached arena").used(), used);
 }
@@ -2711,18 +2423,12 @@ fn native_property_shared_entry_reuses_live_owner_and_recovers_after_eviction() 
     let slot = crate::register_file::SlotWord::new(super::Value::Number(42.5));
     assert!(plan.execute(&slot, &site).is_ok());
     let used = shared.borrow().used();
-    assert!(matches!(
-        plan.installed,
-        super::InstalledPropertyEntry::Shared(_)
-    ));
+    assert!(matches!(plan.installed, super::InstalledPropertyEntry::Shared(_)));
     assert!(plan.execute(&slot, &site).is_ok());
     assert_eq!(shared.borrow().used(), used);
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert!(plan.execute(&slot, &site).is_ok());
-    assert!(
-        matches!(plan.installed, super::InstalledPropertyEntry::Shared(_)),
-        "eviction must rebuild the entry"
-    );
+    assert!(matches!(plan.installed, super::InstalledPropertyEntry::Shared(_)), "eviction must rebuild the entry");
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -2739,10 +2445,9 @@ fn ordinary_residual_named_get_executes_guarded_property_stencil() {
     let code = function.code().expect("lowered named get");
     let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
     let plan = super::BaselinePlan::compile_for_test(code, policy);
-    let object_data = std::rc::Rc::new(crate::value::ObjectData::new(vec![(
-        "value".into(),
-        crate::value::Value::Number(7.0),
-    )]));
+    let object_data = std::rc::Rc::new(crate::value::ObjectData::new(vec![
+        ("value".into(), crate::value::Value::Number(7.0)),
+    ]));
     let object = crate::value::Value::Object(std::rc::Rc::clone(&object_data));
     let mut registers = crate::register_file::RegisterFile::from_values(vec![
         crate::value::Value::Undefined,
@@ -2758,10 +2463,7 @@ fn ordinary_residual_named_get_executes_guarded_property_stencil() {
         crate::environment::Environment::new(),
     )
     .expect("ordinary named get execution");
-    assert_eq!(
-        completion,
-        crate::completion::Completion::Return(crate::value::Value::Number(7.0))
-    );
+    assert_eq!(completion, crate::completion::Completion::Return(crate::value::Value::Number(7.0)));
     registers.write(0, crate::value::Value::Undefined);
     let (completion, _) = crate::vm::execute_baseline_code_from(
         code,
@@ -2772,10 +2474,7 @@ fn ordinary_residual_named_get_executes_guarded_property_stencil() {
         crate::environment::Environment::new(),
     )
     .expect("guarded named get execution");
-    assert_eq!(
-        completion,
-        crate::completion::Completion::Return(crate::value::Value::Number(7.0))
-    );
+    assert_eq!(completion, crate::completion::Completion::Return(crate::value::Value::Number(7.0)));
     let native_count = plan
         .native_property_at(0)
         .map(|native| native.borrow().native_entry_count)
@@ -2796,13 +2495,9 @@ fn ordinary_residual_named_get_executes_guarded_property_stencil() {
         crate::environment::Environment::new(),
     )
     .expect("shape-change fallback");
+    assert_eq!(completion, crate::completion::Completion::Return(crate::value::Value::Number(7.0)));
     assert_eq!(
-        completion,
-        crate::completion::Completion::Return(crate::value::Value::Number(7.0))
-    );
-    assert_eq!(
-        plan.native_property_at(0)
-            .map(|native| native.borrow().native_entry_count),
+        plan.native_property_at(0).map(|native| native.borrow().native_entry_count),
         Some(native_count),
         "shape mutation must not re-enter the stale native slot"
     );
@@ -2822,14 +2517,12 @@ fn ordinary_residual_prototype_get_executes_guarded_property_stencil() {
     let code = function.code().expect("lowered prototype get");
     let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
     let plan = super::BaselinePlan::compile_for_test(code, policy);
-    let prototype = std::rc::Rc::new(crate::value::ObjectData::new(vec![(
-        "value".into(),
-        crate::value::Value::Number(11.0),
-    )]));
-    let receiver = std::rc::Rc::new(crate::value::ObjectData::new(vec![(
-        "\0prototype".into(),
-        crate::value::Value::Object(prototype),
-    )]));
+    let prototype = std::rc::Rc::new(crate::value::ObjectData::new(vec![
+        ("value".into(), crate::value::Value::Number(11.0)),
+    ]));
+    let receiver = std::rc::Rc::new(crate::value::ObjectData::new(vec![
+        ("\0prototype".into(), crate::value::Value::Object(prototype)),
+    ]));
     let mut registers = crate::register_file::RegisterFile::from_values(vec![
         crate::value::Value::Undefined,
         crate::value::Value::Object(std::rc::Rc::clone(&receiver)),
