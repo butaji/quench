@@ -3,10 +3,12 @@
 //! Selections own operand wiring and cost facts. JavaScript behavior remains
 //! in the canonical instructions and their ordinary fallback handlers.
 
-use crate::machine::{NativeBinaryPlan, NativePropertyPlan};
+use crate::machine::{
+    NativeBinaryPlan, NativeNullishPlan, NativePropertyPlan, NativeTruthinessPlan,
+};
 use crate::stencil_plan::{
-    LocalBinarySelection, LocalNumericInputs, LocalPropertySelection, LocalTruthinessSelection,
-    NumericSource,
+    LocalBinarySelection, LocalNumericInputs, LocalPredicate, LocalPredicateSelection,
+    LocalPropertySelection, NumericSource,
 };
 
 pub(crate) struct LocalNumericExecution {
@@ -84,70 +86,101 @@ pub(crate) struct NativeLocalPropertyPlan {
     local_read_count: u64,
 }
 
-pub(crate) struct NativeLocalTruthinessPlan {
-    selection: LocalTruthinessSelection,
-    truthiness: crate::machine::NativeTruthinessPlan,
+pub(crate) struct NativeLocalPredicatePlan {
+    selection: LocalPredicateSelection,
+    physical: LocalPredicatePhysical,
 }
 
-pub(crate) struct LocalTruthinessExecution {
+enum LocalPredicatePhysical {
+    Truthiness(NativeTruthinessPlan),
+    Nullish(NativeNullishPlan),
+}
+
+pub(crate) struct LocalPredicateExecution {
     next: usize,
+    live_source: Option<(crate::ir::Register, u64)>,
     discarded: crate::stencil_plan::DiscardedRegisters,
 }
 
-impl LocalTruthinessExecution {
-    pub(crate) fn commit(self, registers: &mut crate::register_file::RegisterFile) -> usize {
+impl LocalPredicateExecution {
+    pub(crate) fn commit(
+        self,
+        registers: &mut crate::register_file::RegisterFile,
+    ) -> Option<usize> {
         for register in self.discarded.into_iter().flatten() {
             registers.clear_word(usize::from(register));
         }
-        self.next
+        if let Some((register, bits)) = self.live_source {
+            registers.write_tagged_bits(usize::from(register), bits)?;
+        }
+        Some(self.next)
     }
 }
 
-impl NativeLocalTruthinessPlan {
+impl NativeLocalPredicatePlan {
     pub(crate) fn new(
-        selection: LocalTruthinessSelection,
+        selection: LocalPredicateSelection,
         branch: crate::ir::Instruction,
         policy: crate::stencil_policy::ExecutionPolicy,
         arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
     ) -> Option<Self> {
-        let truthiness =
-            crate::machine::NativeTruthinessPlan::new_with_shared(branch, policy, arena)?;
+        let physical = match selection.predicate {
+            LocalPredicate::Truthiness => LocalPredicatePhysical::Truthiness(
+                NativeTruthinessPlan::new_with_shared(branch, policy, arena)?,
+            ),
+            LocalPredicate::Nullish => {
+                let unary = crate::ir::Instruction::unary_operator(
+                    branch.a,
+                    crate::ops::UnaryOp::IsNullish,
+                    branch.a,
+                );
+                LocalPredicatePhysical::Nullish(NativeNullishPlan::new_with_shared(
+                    unary, policy, arena,
+                )?)
+            }
+        };
         Some(Self {
             selection,
-            truthiness,
+            physical,
         })
     }
 
     fn execute(
         &mut self,
         environment: &crate::environment::Environment,
-    ) -> Option<LocalTruthinessExecution> {
-        let slot = self.selection.source_slot;
-        let truthy = match environment.get_number(slot) {
-            Some(value) => self.truthiness.execute(value).ok()?,
-            None => {
-                let bits = environment.proven_tagged_bits(slot)?;
-                self.truthiness.execute_tagged_bits(bits).ok()?
+    ) -> Option<LocalPredicateExecution> {
+        let bits = environment.proven_tagged_bits(self.selection.source_slot)?;
+        let truthy = match &mut self.physical {
+            LocalPredicatePhysical::Truthiness(plan) => {
+                match environment.get_number(self.selection.source_slot) {
+                    Some(value) => plan.execute(value).ok()?,
+                    None => plan.execute_tagged_bits(bits).ok()?,
+                }
             }
+            LocalPredicatePhysical::Nullish(plan) => plan.execute(bits).ok()?,
         };
         let next = if truthy {
             self.selection.true_pc
         } else {
             self.selection.false_pc
         };
-        Some(LocalTruthinessExecution {
+        Some(LocalPredicateExecution {
             next,
+            live_source: self.selection.live_source.map(|register| (register, bits)),
             discarded: self.selection.discarded,
         })
     }
 
     #[cfg(test)]
     pub(crate) fn native_entry_count(&self) -> u64 {
-        self.truthiness.native_entry_count()
+        match &self.physical {
+            LocalPredicatePhysical::Truthiness(plan) => plan.native_entry_count(),
+            LocalPredicatePhysical::Nullish(plan) => plan.native_entry_count(),
+        }
     }
 
     #[cfg(test)]
-    pub(crate) const fn selection(&self) -> LocalTruthinessSelection {
+    pub(crate) const fn selection(&self) -> LocalPredicateSelection {
         self.selection
     }
 }
@@ -402,9 +435,9 @@ pub(crate) fn execute_local_property(
     plan.borrow_mut().execute(environment, invoke)
 }
 
-pub(crate) fn execute_local_truthiness(
-    plan: &std::cell::RefCell<NativeLocalTruthinessPlan>,
+pub(crate) fn execute_local_predicate(
+    plan: &std::cell::RefCell<NativeLocalPredicatePlan>,
     environment: &crate::environment::Environment,
-) -> Option<LocalTruthinessExecution> {
+) -> Option<LocalPredicateExecution> {
     plan.borrow_mut().execute(environment)
 }
