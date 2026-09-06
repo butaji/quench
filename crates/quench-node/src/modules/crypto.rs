@@ -1409,6 +1409,84 @@ pub(crate) fn clone_key_object(value: &Value) -> Option<Value> {
     Some(clone)
 }
 
+/// Encode a KeyObject's portable Rust-owned facts for a worker subprocess.
+/// The worker transport is JSON, so enumerable JavaScript properties alone
+/// would erase the non-enumerable key material and prototype identity.
+pub(crate) fn key_object_to_wire(value: &Value) -> Option<serde_json::Value> {
+    if !is_key_object(value) {
+        return None;
+    }
+    let Value::String(key_type) = key_hidden(value, KEY_TYPE_PROP) else {
+        return None;
+    };
+    let data = bytes_from_value(&key_hidden(value, KEY_DATA_PROP))?;
+    let mut wire = serde_json::Map::new();
+    wire.insert(
+        "__quench_key_object".into(),
+        serde_json::Value::Bool(true),
+    );
+    wire.insert("type".into(), serde_json::Value::String(key_type));
+    wire.insert(
+        "data".into(),
+        serde_json::Value::Array(
+            data.into_iter()
+                .map(|byte| serde_json::Value::Number(byte.into()))
+                .collect(),
+        ),
+    );
+    if let Value::Number(size) = key_hidden(value, KEY_SIZE_PROP) {
+        if let Some(number) = serde_json::Number::from_f64(size) {
+            wire.insert("size".into(), serde_json::Value::Number(number));
+        }
+    }
+    if let Value::String(kind) = key_hidden(value, KEY_ASYM_TYPE_PROP) {
+        wire.insert("asymmetricKeyType".into(), serde_json::Value::String(kind));
+    }
+    Some(serde_json::Value::Object(wire))
+}
+
+/// Rebuild a KeyObject received through the worker JSON boundary.
+pub(crate) fn key_object_from_wire(
+    wire: &serde_json::Map<String, serde_json::Value>,
+) -> Option<Value> {
+    if wire
+        .get("__quench_key_object")
+        .and_then(serde_json::Value::as_bool)
+        != Some(true)
+    {
+        return None;
+    }
+    let key_type = wire.get("type").and_then(serde_json::Value::as_str)?;
+    let data = wire
+        .get("data")
+        .and_then(serde_json::Value::as_array)?
+        .iter()
+        .map(|value| value.as_u64().and_then(|byte| u8::try_from(byte).ok()))
+        .collect::<Option<Vec<_>>>()?;
+    let value = host_api::object(Vec::new());
+    define_hidden(&value, KEY_MARKER_PROP, Value::Boolean(true));
+    define_hidden(&value, KEY_TYPE_PROP, Value::String(key_type.into()));
+    define_hidden(
+        &value,
+        KEY_DATA_PROP,
+        crate::modules::buffer_proto::make_buffer(&data),
+    );
+    if let Some(size) = wire.get("size").and_then(serde_json::Value::as_f64) {
+        define_hidden(&value, KEY_SIZE_PROP, Value::Number(size));
+    }
+    if let Some(kind) = wire
+        .get("asymmetricKeyType")
+        .and_then(serde_json::Value::as_str)
+    {
+        define_hidden(
+            &value,
+            KEY_ASYM_TYPE_PROP,
+            Value::String(kind.into()),
+        );
+    }
+    clone_key_object(&value)
+}
+
 pub fn key_object_construct(
     state: &Rc<RefCell<HostState>>,
     args: &[Value],
