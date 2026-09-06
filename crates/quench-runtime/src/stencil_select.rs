@@ -539,7 +539,9 @@ mod generated_region_admission_tests {
     fn generated_abi_classification_matches_physical_entry_shape() {
         for record in CANONICAL_REGION_TABLE {
             match record.abi {
-                RegionAbi::Scalar => {
+                RegionAbi::ScalarF64Binary
+                | RegionAbi::ScalarF64Unary
+                | RegionAbi::ScalarF64x3 => {
                     assert!(!record.stencil.bytes.is_empty());
                     assert_ne!(record.stencil.bytes.len(), 44);
                     assert_ne!(record.stencil.bytes.len(), 76);
@@ -658,7 +660,7 @@ mod generated_region_admission_tests {
         let scalar = select_region(loop_region_key())
             .expect("scalar row")
             .contract();
-        assert_eq!(scalar.abi, RegionAbi::Scalar);
+        assert_eq!(scalar.abi, RegionAbi::ScalarF64Binary);
         assert!(scalar.has_effect(crate::facts::OperationEffect::MayThrow));
         assert!(!scalar.has_effect(crate::facts::OperationEffect::WriteHeap));
         assert!(scalar.legal_external_entry(0));
@@ -687,8 +689,14 @@ mod generated_region_admission_tests {
 
     #[test]
     fn abi_contracts_keep_scalar_bridge_and_raw_entries_distinct() {
-        assert_eq!(RegionAbi::Scalar.contract().context_arg_words, 0);
-        assert!(RegionAbi::Scalar.contract().preserves_vm_registers);
+        for abi in [
+            RegionAbi::ScalarF64Binary,
+            RegionAbi::ScalarF64Unary,
+            RegionAbi::ScalarF64x3,
+        ] {
+            assert_eq!(abi.contract().context_arg_words, 0);
+            assert!(abi.contract().preserves_vm_registers);
+        }
         assert_eq!(RegionAbi::TaggedWord.contract().context_arg_words, 0);
         assert!(RegionAbi::TaggedWord.contract().preserves_vm_registers);
         assert_eq!(RegionAbi::PropertyGuard.contract().context_arg_words, 1);
@@ -715,7 +723,10 @@ mod generated_region_admission_tests {
                 record.contract().abi_contract().context_arg_words == 1
             );
         }
-        assert_eq!(RegionAbi::Scalar.contract().hardware_clobber_mask, 0);
+        assert_eq!(
+            RegionAbi::ScalarF64Binary.contract().hardware_clobber_mask,
+            0
+        );
         assert_eq!(RegionAbi::ArrayNumericLoop.contract().live_out_mask, 0x0003);
         assert!(RegionAbi::Bridge.contract().root_materialization_required);
     }
@@ -1279,7 +1290,7 @@ mod tests {
             target: "test",
             compiler: "test",
             fingerprint: "test",
-            abi: RegionAbi::Scalar,
+            abi: RegionAbi::ScalarF64Binary,
             entry: 1,
             external_entries: &[0],
             has_fallthrough: false,
@@ -1302,7 +1313,7 @@ mod tests {
             target: "test",
             compiler: "test",
             fingerprint: "test",
-            abi: RegionAbi::Scalar,
+            abi: RegionAbi::ScalarF64Binary,
             entry: 0,
             external_entries: WRONG_ENTRIES,
             has_fallthrough: false,
@@ -1325,7 +1336,7 @@ mod tests {
             target: TARGET,
             compiler: "test",
             fingerprint: "test",
-            abi: RegionAbi::Scalar,
+            abi: RegionAbi::ScalarF64Binary,
             entry: 0,
             external_entries: &[0],
             has_fallthrough: true,
@@ -1371,7 +1382,7 @@ mod tests {
             target: TARGET,
             compiler: "test",
             fingerprint: "test",
-            abi: RegionAbi::Scalar,
+            abi: RegionAbi::ScalarF64Binary,
             entry: 0,
             external_entries: &[0],
             has_fallthrough: false,
@@ -1410,7 +1421,7 @@ mod tests {
             target: "mismatched-target",
             compiler: "test",
             fingerprint: "test",
-            abi: RegionAbi::Scalar,
+            abi: RegionAbi::ScalarF64Binary,
             entry: 0,
             external_entries: &[0],
             has_fallthrough: false,
@@ -1446,7 +1457,7 @@ mod tests {
         assert!(checked > 0, "catalog must expose a typed physical view");
         let scalar = CANONICAL_REGION_TABLE
             .iter()
-            .find(|record| record.abi == RegionAbi::Scalar)
+            .find(|record| record.abi == RegionAbi::ScalarF64Binary)
             .expect("scalar catalog row");
         assert!(select_physical_for_abi(scalar.key, RegionAbi::TaggedWord).is_none());
     }

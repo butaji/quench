@@ -71,7 +71,7 @@ const TAGGED_REGION_DECLARATIONS: &[RegionDeclaration] = &[
         // IncI is admitted only for Number values; ToNumeric/BigInt and
         // overflow-sensitive cases remain on the canonical updater.
         operations: &["IncI", "Return"],
-        abi: DeclAbi::Scalar,
+        abi: DeclAbi::ScalarF64Binary,
         x86_bytes: &X86_ADD_CONST_BYTES,
         aarch64_bytes: &AARCH64_ADD_CONST_BYTES,
         portable_bytes: &[0xC3],

@@ -275,7 +275,7 @@ fn assert_unique_region_ids(declarations: &[RegionDeclaration]) {
 }
 
 fn is_numeric_scalar_leaf(declaration: &RegionDeclaration) -> bool {
-    declaration.abi == DeclAbi::Scalar
+    declaration.abi == DeclAbi::ScalarF64Binary
         && declaration.operations.last() == Some(&"Return")
         && declaration
             .operations
@@ -318,7 +318,9 @@ fn abi_expr(declaration: &RegionDeclaration) -> &'static str {
             .ok()
             .is_some_and(|target| target.starts_with("aarch64"));
     match declaration.abi {
-        DeclAbi::Scalar => "crate::stencil_select::RegionAbi::Scalar",
+        DeclAbi::ScalarF64Binary => "crate::stencil_select::RegionAbi::ScalarF64Binary",
+        DeclAbi::ScalarF64Unary => "crate::stencil_select::RegionAbi::ScalarF64Unary",
+        DeclAbi::ScalarF64x3 => "crate::stencil_select::RegionAbi::ScalarF64x3",
         DeclAbi::TaggedWord => "crate::stencil_select::RegionAbi::TaggedWord",
         DeclAbi::ConstantWord => "crate::stencil_select::RegionAbi::ConstantWord",
         DeclAbi::ScalarBool => "crate::stencil_select::RegionAbi::ScalarBool",
@@ -369,7 +371,9 @@ fn generated_abi_catalog(declarations: &[RegionDeclaration]) -> String {
 
 fn abi_contract_fields(abi: DeclAbi) -> (&'static str, bool, &'static str) {
     match abi {
-        DeclAbi::Scalar
+        DeclAbi::ScalarF64Binary
+        | DeclAbi::ScalarF64Unary
+        | DeclAbi::ScalarF64x3
         | DeclAbi::TaggedWord
         | DeclAbi::ConstantWord
         | DeclAbi::ScalarBool
@@ -416,7 +420,9 @@ fn abi_contract_fields(abi: DeclAbi) -> (&'static str, bool, &'static str) {
 
 fn abi_variant_name(abi: DeclAbi) -> &'static str {
     match abi {
-        DeclAbi::Scalar => "Scalar",
+        DeclAbi::ScalarF64Binary => "ScalarF64Binary",
+        DeclAbi::ScalarF64Unary => "ScalarF64Unary",
+        DeclAbi::ScalarF64x3 => "ScalarF64x3",
         DeclAbi::TaggedWord => "TaggedWord",
         DeclAbi::ConstantWord => "ConstantWord",
         DeclAbi::ScalarBool => "ScalarBool",

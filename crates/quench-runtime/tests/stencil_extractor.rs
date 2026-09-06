@@ -7,7 +7,7 @@ mod harness {
     };
 
     fn abi_expr(_: &RegionDeclaration) -> String {
-        "crate::stencil_select::RegionAbi::Scalar".to_owned()
+        "crate::stencil_select::RegionAbi::ScalarF64Binary".to_owned()
     }
 
     fn target_template_calls_helper(_: &RegionDeclaration) -> bool {
@@ -56,7 +56,7 @@ fn rust_leaf_recipe_requires_name_abi_and_residual_shape() {
     assert_eq!(rust_leaf_recipe(&exact), Some(RustLeafRecipe::Equal));
     assert!(rust_leaf_recipe(&declaration(
         "compare_equal",
-        DeclAbi::Scalar,
+        DeclAbi::ScalarF64Binary,
         &["Binary", "Return"]
     ))
     .is_none());
@@ -80,7 +80,12 @@ fn rust_assembly_recipe_requires_name_abi_and_residual_shape() {
 
     let exact = declaration("move", DeclAbi::TaggedWord, &["Move"]);
     assert_eq!(rust_assembly_recipe(&exact), Some(RustAssemblyRecipe::Move));
-    assert!(rust_assembly_recipe(&declaration("move", DeclAbi::Scalar, &["Move"])).is_none());
+    assert!(rust_assembly_recipe(&declaration(
+        "move",
+        DeclAbi::ScalarF64Binary,
+        &["Move"]
+    ))
+    .is_none());
     assert!(
         rust_assembly_recipe(&declaration("move", DeclAbi::TaggedWord, &["LoadLocal"])).is_none()
     );
