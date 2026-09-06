@@ -246,24 +246,26 @@ const AARCH64_WORD_NOT_EQUAL_BYTES: [u8; 12] =
     aarch64_triple(aarch64_cmp_x0_x1(), aarch64_cset_ne_w0(), aarch64_ret());
 const X86_ADD_CHAIN_BYTES: [u8; 9] = {
     let first = x86_sse2_binary(0x58, 0, 1);
-    let second = x86_sse2_binary(0x58, 0, 2);
     [
         first[0],
         first[1],
         first[2],
         first[3],
-        second[0],
-        second[1],
-        second[2],
-        second[3],
-        x86_ret(),
+        0xE9,
+        0,
+        0,
+        0,
+        0,
     ]
 };
-const AARCH64_ADD_CHAIN_BYTES: [u8; 12] = aarch64_triple(
-    aarch64_fadd_d(0, 0, 1),
-    aarch64_fadd_d(0, 0, 2),
-    aarch64_ret(),
-);
+const X86_ADD_CHAIN_TAIL_BYTES: [u8; 5] = {
+    let second = x86_sse2_binary(0x58, 0, 2);
+    [second[0], second[1], second[2], second[3], x86_ret()]
+};
+const AARCH64_ADD_CHAIN_BYTES: [u8; 8] =
+    aarch64_pair(aarch64_fadd_d(0, 0, 1), aarch64_b());
+const AARCH64_ADD_CHAIN_TAIL_BYTES: [u8; 8] =
+    aarch64_pair(aarch64_fadd_d(0, 0, 2), aarch64_ret());
 const X86_LOAD_CONST_BYTES: [u8; 11] = [0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0xC3];
 const X86_TRUTHY_NUMBER_BYTES: [u8; 23] = [
     0x0F, 0x57, 0xC9, // xorps xmm1, xmm1

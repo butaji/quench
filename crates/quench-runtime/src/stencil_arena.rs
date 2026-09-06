@@ -121,6 +121,7 @@ fn selected_chain_matches(
     selected: Option<crate::stencil_select::PhysicalStencilView>,
     head: &Stencil,
     tail: &Stencil,
+    abi: crate::stencil_select::RegionAbi,
 ) -> bool {
     let Some(view) = selected.or_else(|| crate::stencil_select::select_physical(key)) else {
         return true;
@@ -129,7 +130,7 @@ fn selected_chain_matches(
         return false;
     };
     view.key == key
-        && view.abi == crate::stencil_select::RegionAbi::ScalarF64Binary
+        && view.abi == abi
         && view.stencil.bytes == head.bytes
         && view.stencil.holes == head.holes
         && expected_tail.bytes == tail.bytes
@@ -148,12 +149,18 @@ fn generated_chain_relocation_is_declared(
     } else {
         crate::stencil_fact::HoleKind::Rel32
     };
+    let Some(target) = view.relocations.first().map(|relocation| relocation.target) else {
+        return false;
+    };
+    if target.is_empty() {
+        return false;
+    }
     view.relocations.len() == view.stencil.holes.len()
         && view.relocations.iter().all(|relocation| {
             view.stencil.holes.iter().any(|hole| {
                 hole.offset == relocation.offset
                     && hole.kind == relocation.kind
-                    && relocation.target == "q_fallthrough_tail"
+                    && relocation.target == target
                     && relocation.addend == 0
             })
         })
@@ -598,7 +605,7 @@ impl SharedStencilSlab {
             if self.lease_state.is_retired(slab.id()) {
                 continue;
             }
-            match slab.render_selected_view(&mut self.cache, view, values) {
+            match slab.render_selected_physical_view(&mut self.cache, view, values) {
                 Ok(address) => {
                     let owner = slab.id();
                     cache.insert_owned(view.key, signature, address, owner);
@@ -621,7 +628,7 @@ impl SharedStencilSlab {
                 return Err(error);
             }
         };
-        let address = match slab.render_selected_view(&mut self.cache, view, values) {
+        let address = match slab.render_selected_physical_view(&mut self.cache, view, values) {
             Ok(address) => address,
             Err(error) => {
                 release_global_bytes(self.slab_capacity);
@@ -1128,7 +1135,8 @@ impl StencilArena {
                 fingerprint: view.fingerprint,
                 abi: view.abi,
                 entry: view.entry,
-                byte_len: view.stencil.bytes.len(),
+                byte_len: view.stencil.bytes.len()
+                    + view.fallthrough.map_or(0, |(tail, _)| tail.bytes.len()),
             }));
     }
 
@@ -1613,6 +1621,31 @@ impl StencilArena {
         Ok(cache.insert_owned(view.key, signature, address, self.id))
     }
 
+    fn render_selected_physical_view<const N: usize>(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        view: crate::stencil_select::PhysicalStencilView,
+        values: &PatchValues<'_, N>,
+    ) -> Result<usize, ArenaError> {
+        let Some((tail, branch_offset)) = view.fallthrough else {
+            return self.render_selected_view(cache, view, values);
+        };
+        if !selected_chain_matches(view.key, Some(view), view.stencil, tail, view.abi) {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        self.install_fallthrough(
+            cache,
+            view.key,
+            physical_cache_signature(view, values),
+            view.stencil,
+            tail,
+            values,
+            branch_offset,
+            fallthrough_fixup_kind(),
+            view.abi,
+        )
+    }
+
     pub fn render_physical_view_or_get<const N: usize>(
         &mut self,
         cache: &mut RenderedRegionCache,
@@ -1624,7 +1657,7 @@ impl StencilArena {
         if !view.contract().abi_is_well_formed() || !view.matches(&selected) {
             return Err(ArenaError::ProtectionFailed);
         }
-        self.render_selected_view(cache, view, values)
+        self.render_selected_physical_view(cache, view, values)
     }
 
     fn record_abi(&self, address: usize, abi: crate::stencil_select::RegionAbi) {
@@ -1940,11 +1973,8 @@ impl StencilArena {
         else {
             return Err(ArenaError::ProtectionFailed);
         };
-        // A fused chain is emitted as one complete stencil and therefore must
-        // not recurse through the two-piece fallthrough renderer.
         if view.contract().abi != crate::stencil_select::RegionAbi::ScalarF64x3
             || view.record.operations != &[crate::ir::Opcode::Add, crate::ir::Opcode::Add]
-            || view.fallthrough.is_some()
         {
             return Err(ArenaError::ProtectionFailed);
         }
@@ -1973,7 +2003,13 @@ impl StencilArena {
         selected: Option<crate::stencil_select::PhysicalStencilView>,
         fallback: impl FnOnce() -> Result<f64, ArenaError>,
     ) -> Result<f64, ArenaError> {
-        if !selected_chain_matches(key, selected, head, tail) {
+        if !selected_chain_matches(
+            key,
+            selected,
+            head,
+            tail,
+            crate::stencil_select::RegionAbi::ScalarF64Binary,
+        ) {
             return fallback();
         }
         let signature = selected
@@ -1989,6 +2025,7 @@ impl StencilArena {
             values,
             branch_offset,
             kind,
+            crate::stencil_select::RegionAbi::ScalarF64Binary,
         ) {
             Ok(address) => address,
             Err(_) => return fallback(),
@@ -2029,6 +2066,7 @@ impl StencilArena {
         values: &PatchValues<'_, N>,
         branch_offset: u16,
         kind: FixupKind,
+        abi: crate::stencil_select::RegionAbi,
     ) -> Result<usize, ArenaError> {
         if let Some(address) = self.cached_executable(cache, key, signature) {
             return Ok(address);
@@ -2036,7 +2074,7 @@ impl StencilArena {
         let mut bytes = Vec::new();
         compose_fallthrough(head, tail, values, branch_offset, kind, &mut bytes)
             .map_err(|_| ArenaError::ProtectionFailed)?;
-        self.publish_composed(cache, key, signature, &bytes)
+        self.publish_composed(cache, key, signature, &bytes, abi)
     }
 
     fn cached_executable(
@@ -2063,15 +2101,13 @@ impl StencilArena {
         key: crate::stencil_fact::RegionKey,
         signature: u64,
         bytes: &[u8],
+        abi: crate::stencil_select::RegionAbi,
     ) -> Result<usize, ArenaError> {
         let checkpoint = self.cursor;
         let offset = self.alloc_aligned(bytes.len(), STENCIL_ALIGNMENT)?;
         unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.ptr.add(offset), bytes.len()) };
         let address = self.address(offset).ok_or(ArenaError::Exhausted)?;
-        self.record_abi(
-            address,
-            crate::stencil_select::RegionAbi::ScalarF64Binary,
-        );
+        self.record_abi(address, abi);
         cache.insert_owned(key, signature, address, self.id);
         if let Err(error) = self.make_executable() {
             cache.remove(key, signature, address);
@@ -3505,7 +3541,13 @@ mod tests {
         let mut arena = StencilArena::new(4096).unwrap();
         let mut cache = RenderedRegionCache::new();
         let address = arena
-            .publish_composed(&mut cache, crate::stencil_fact::RegionKey(45), 0, &bytes)
+            .publish_composed(
+                &mut cache,
+                crate::stencil_fact::RegionKey(45),
+                0,
+                &bytes,
+                crate::stencil_select::RegionAbi::ScalarF64Binary,
+            )
             .unwrap();
         assert_eq!(arena.execute_f64(address, 1.0, 2.0), Ok(5.0));
         assert_eq!(arena.used(), bytes.len());
@@ -3617,7 +3659,10 @@ mod tests {
             crate::stencil_select::RegionAbi::ScalarF64Binary
         );
         assert_eq!(witness.entry, view.entry);
-        assert_eq!(witness.byte_len, view.stencil.bytes.len());
+        assert_eq!(
+            witness.byte_len,
+            view.stencil.bytes.len() + view.fallthrough.map_or(0, |(tail, _)| tail.bytes.len())
+        );
         #[cfg(quench_generated_stencil_artifacts)]
         assert!(witness.generated);
     }
@@ -3822,13 +3867,30 @@ mod tests {
         let view = crate::stencil_select::select_physical(key).expect("generated chain view");
         assert!(view.generated, "chain must use generated artifact");
         assert_eq!(view.abi, crate::stencil_select::RegionAbi::ScalarF64x3);
-        assert!(view.fallthrough.is_none());
+        let (tail, branch_offset) = view.fallthrough.expect("generated chain tail");
+        assert_eq!(branch_offset, 4);
+        assert_eq!(view.relocations.len(), 1);
+        assert_eq!(view.relocations[0].offset, branch_offset);
+        assert_eq!(view.relocations[0].target, "q_add_chain_tail");
+        assert_eq!(view.relocations[0].addend, 0);
         assert_eq!(view.entry, 0);
         assert_eq!(view.external_entries, &[0]);
         assert_eq!(
             arena.render_selected_f64x3(&mut cache, key, &values, 1.5, 2.25, 3.0),
             Ok(6.75)
         );
+        let witness = arena
+            .last_physical_execution()
+            .expect("generated chain execution witness");
+        assert_eq!(witness.key, key);
+        assert!(witness.generated);
+        assert_eq!(witness.fingerprint, view.fingerprint);
+        assert_eq!(witness.abi, view.abi);
+        assert_eq!(
+            witness.byte_len,
+            view.stencil.bytes.len() + tail.bytes.len()
+        );
+        assert_eq!(arena.used(), witness.byte_len);
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
