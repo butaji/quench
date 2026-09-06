@@ -1,11 +1,34 @@
+#[macro_use]
 #[path = "../build_stencil_contract.rs"]
 mod build_stencil_contract;
 
+mod leaf_catalog {
+    use super::build_stencil_contract::{DeclAbi, RecipeComposition, RegionDeclaration};
+
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/build_stencil_catalog/encoding_common.rs"
+    ));
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/build_stencil_catalog/encoding_x86.rs"
+    ));
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/build_stencil_catalog/encoding_aarch64.rs"
+    ));
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/build_stencil_catalog/declarations_rust_leaf.rs"
+    ));
+}
+
 mod harness {
     use super::build_stencil_contract::{
-        region_key_name, rust_assembly_recipe, rust_leaf_recipe, DeclAbi, RecipeComposition,
-        RegionDeclaration, RustAssemblyRecipe, RustLeafRecipe,
+        region_key_name, rust_assembly_recipe, DeclAbi, RecipeComposition, RegionDeclaration,
+        RustAssemblyRecipe,
     };
+    use super::leaf_catalog::{rust_leaf_recipe, RustLeafRecipe};
 
     fn abi_expr(_: &RegionDeclaration) -> String {
         "crate::stencil_select::RegionAbi::ScalarF64Binary".to_owned()
@@ -50,29 +73,50 @@ fn declaration(
 }
 
 #[test]
-fn rust_leaf_recipe_requires_name_abi_and_residual_shape() {
-    use build_stencil_contract::{rust_leaf_recipe, DeclAbi, RustLeafRecipe};
+fn rust_leaf_recipe_requires_full_physical_contract() {
+    use build_stencil_contract::DeclAbi;
+    use leaf_catalog::{rust_leaf_declaration, rust_leaf_recipe, RustLeafRecipe};
 
-    let exact = declaration("compare_equal", DeclAbi::ScalarBool, &["Binary", "Return"]);
+    let exact = *rust_leaf_declaration(RustLeafRecipe::Equal);
     assert_eq!(rust_leaf_recipe(&exact), Some(RustLeafRecipe::Equal));
-    assert!(rust_leaf_recipe(&declaration(
-        "compare_equal",
-        DeclAbi::ScalarF64Binary,
-        &["Binary", "Return"]
-    ))
-    .is_none());
-    assert!(rust_leaf_recipe(&declaration(
-        "compare_equal",
-        DeclAbi::ScalarBool,
-        &["Add", "Return"]
-    ))
-    .is_none());
-    assert!(rust_leaf_recipe(&declaration(
-        "unknown_equal",
-        DeclAbi::ScalarBool,
-        &["Binary", "Return"]
-    ))
-    .is_none());
+    let mut wrong_name = exact;
+    wrong_name.name = "unknown_equal";
+    let mut wrong_abi = exact;
+    wrong_abi.abi = DeclAbi::ScalarF64Binary;
+    let mut wrong_ops = exact;
+    wrong_ops.operations = &["Add", "Return"];
+    let mutations = [wrong_name, wrong_abi, wrong_ops];
+    assert!(mutations
+        .iter()
+        .all(|item| rust_leaf_recipe(item).is_none()));
+
+    let mut wrong_bytes = exact;
+    wrong_bytes.aarch64_bytes = &[0xC0, 0x03, 0x5F, 0xD6];
+    assert!(rust_leaf_recipe(&wrong_bytes).is_none());
+}
+
+#[test]
+fn rust_leaf_recipe_rejects_layout_drift() {
+    use leaf_catalog::{rust_leaf_declaration, rust_leaf_recipe, RustLeafRecipe};
+
+    let exact = *rust_leaf_declaration(RustLeafRecipe::AddConst);
+    let mut wrong_hole = exact;
+    wrong_hole.aarch64_holes = &[];
+    let mut wrong_entry = exact;
+    wrong_entry.entry = 4;
+    let mut wrong_external_entry = exact;
+    wrong_external_entry.external_entries = &[0, 4];
+    let mut wrong_portable = exact;
+    wrong_portable.portable_bytes = &[];
+    let mutations = [
+        wrong_hole,
+        wrong_entry,
+        wrong_external_entry,
+        wrong_portable,
+    ];
+    assert!(mutations
+        .iter()
+        .all(|item| rust_leaf_recipe(item).is_none()));
 }
 
 #[test]
