@@ -185,6 +185,33 @@ fn baseline_admissions_use_sparse_indexed_storage() {
 }
 
 #[test]
+fn disabled_native_policy_keeps_admission_and_executable_storage_empty() {
+    let function = super::FunctionCode::from_ops(vec![
+        super::Op::Binary {
+            dst: 0,
+            operator: crate::ops::BinaryOp::Add,
+            lhs: 1,
+            rhs: 2,
+        },
+        super::Op::Return { src: 0 },
+    ]);
+    let disabled = crate::stencil_policy::ExecutionPolicy {
+        native_leaves: false,
+        native_dispatch: false,
+        fused_regions: false,
+        composed_regions: false,
+        optimizing_view: false,
+    };
+    let plan = super::BaselinePlan::compile_for_test(
+        function.code().expect("compact code"),
+        disabled,
+    );
+    assert!(plan.admissions.is_empty());
+    assert_eq!(plan.shared_region_arena.borrow().slab_count(), 0);
+    assert_eq!(plan.shared_region_arena.borrow().capacity(), 0);
+}
+
+#[test]
 fn optimizing_entries_reuse_sparse_admission_storage() {
     let function = super::FunctionCode::from_ops(vec![
         super::Op::Binary {
