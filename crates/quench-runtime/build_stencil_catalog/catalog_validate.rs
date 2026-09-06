@@ -76,7 +76,15 @@ fn has_single_external_entry(entry: u32, external_entries: &[u32]) -> bool {
 /// the runtime arena.
 fn validate_stencil_declarations(declarations: &[RegionDeclaration]) {
     let facts = fs::read_to_string("src/stencil_fact.rs").expect("read stencil facts");
-    let selector = fs::read_to_string("src/stencil_select.rs").expect("read stencil selector");
+    let selector_paths = [
+        "src/stencil_select.rs",
+        "src/stencil_physical_select.rs",
+        "src/stencil_select_optimizer.rs",
+    ];
+    let selector = selector_paths
+        .iter()
+        .map(|path| fs::read_to_string(path).expect("read stencil selector module"))
+        .collect::<String>();
     let ir = fs::read_to_string("src/ir.rs").expect("read canonical opcode declaration");
     for required in ["RegionKey", "HoleKind", "PatchValues", "BoxingFact"] {
         assert!(facts.contains(required), "stencil facts missing {required}");
@@ -105,7 +113,9 @@ fn validate_stencil_declarations(declarations: &[RegionDeclaration]) {
         }
     }
     println!("cargo:rerun-if-changed=src/stencil_fact.rs");
-    println!("cargo:rerun-if-changed=src/stencil_select.rs");
+    for path in selector_paths {
+        println!("cargo:rerun-if-changed={path}");
+    }
 }
 
 fn generate_op_names() {
