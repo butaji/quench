@@ -123,6 +123,82 @@ fn source_plan() -> (FunctionCode, BaselinePlan, usize) {
     (body, plan, pc)
 }
 
+fn run_local_property(
+    code: CodeView<'_>,
+    plan: &BaselinePlan,
+    pc: usize,
+    receiver: Value,
+) -> Value {
+    let native = plan
+        .native_local_property_at(pc)
+        .expect("local property plan");
+    let slot = native.borrow().selection().receiver_slot;
+    let environment = crate::environment::Environment::new();
+    environment.set(slot, receiver);
+    let mut registers = crate::register_file::RegisterFile::with_undefined(
+        usize::from(code.register_count()).max(8),
+    );
+    let (completion, _) = crate::vm::execute_baseline_code_from(
+        code,
+        plan,
+        pc,
+        &mut registers,
+        &crate::vm::current_context_or_default(),
+        environment,
+    )
+    .expect("local property execution");
+    let Completion::Return(value) = completion else {
+        panic!("local property function must return")
+    };
+    value
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn ordinary_source_fuses_local_load_with_guarded_property_get() {
+    let (body, plan, get_pc) = source_plan();
+    let code = body.code().unwrap();
+    let pc = (0..get_pc)
+        .find(|pc| plan.native_local_property_at(*pc).is_some())
+        .expect("source producer window is admitted");
+    let chain = prototype_chain(11.0);
+    let receiver = || Value::Object(Rc::clone(&chain.receiver));
+    assert_eq!(
+        run_local_property(code, &plan, pc, receiver()),
+        Value::Number(11.0)
+    );
+    let load_entries = plan
+        .native_load_local_at(pc)
+        .map(|native| native.borrow().native_entry_count())
+        .unwrap_or(0);
+    assert_eq!(
+        run_local_property(code, &plan, pc, receiver()),
+        Value::Number(11.0)
+    );
+    let native = plan.native_local_property_at(pc).unwrap().borrow();
+    assert_eq!(native.native_entry_count(), 1);
+    assert_eq!(native.local_read_count(), 2);
+    drop(native);
+    assert_eq!(
+        plan.native_load_local_at(pc)
+            .map(|native| native.borrow().native_entry_count())
+            .unwrap_or(0),
+        load_entries,
+        "warm fusion must skip the scalar local-load entry"
+    );
+    assert_eq!(
+        run_local_property(code, &plan, pc, Value::String("x".into())),
+        Value::Undefined
+    );
+    assert_eq!(
+        plan.native_local_property_at(pc)
+            .unwrap()
+            .borrow()
+            .native_entry_count(),
+        1
+    );
+}
+
 #[cfg(target_arch = "aarch64")]
 #[test]
 fn ordinary_source_prototype_get_executes_native_and_invalidates_chain() {

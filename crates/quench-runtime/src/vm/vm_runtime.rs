@@ -1815,6 +1815,28 @@ pub(crate) fn execute_optimized_code_step_from(
     let _decode_guard = crate::execution_trace::compact(instruction.opcode);
     crate::execution_trace::compact_site(code, start);
     crate::execution_trace::operands(instruction);
+    if let Some(native) = entry.native_local_property() {
+        let property_pc = start + native.borrow().operation_offset();
+        let result = crate::locals::with_current_ref(|environment| {
+            environment.and_then(|environment| {
+                crate::stencil_fusion::execute_local_property(
+                    native,
+                    environment,
+                    |property, receiver| {
+                        let object = native_property_object(receiver)?;
+                        native_property_bits_plan(property, code, property_pc, object)
+                    },
+                )
+            })
+        });
+        if let Some(span) = result.and_then(|result| result.commit(registers)) {
+            crate::execution_trace::stencil_observation(code, start, "local_property", true);
+            crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+            return Ok((crate::completion::Completion::Normal, start + span));
+        }
+        crate::execution_trace::stencil_observation(code, start, "local_property", false);
+        crate::execution_trace::leaf_rejection("optimizing_native_local_property");
+    }
     if let Some(native) = entry.native_local_binary() {
         let result = crate::locals::with_current_ref(|environment| {
             environment.and_then(|environment| {
@@ -2074,50 +2096,10 @@ pub(crate) fn execute_optimized_code_step_from(
     }
     if instruction.opcode == crate::ir::Opcode::GetN && instruction.flags == 0 {
         if let Some(native) = entry.native_property() {
-            let slot = registers
-                .read_object(usize::from(instruction.b))
-                .filter(|object| {
-                    !object.has_replacement()
-                        && !object.is_dictionary()
-                        && !object.is_realm_global()
-                        && !object.is_script_global_view()
-                        && !object.has_regexp_internal_slot()
-                })
-                .and_then(|object| {
-                    let key = code
-                        .metadata_at(start)
-                        .and_then(|metadata| metadata.name.as_deref())?;
-                    quickened_native_own_slot(code, start, &object, key).or_else(|| {
-                        object
-                            .hot_properties()
-                            .position_rev(key)
-                            .is_none()
-                            .then(|| {
-                                crate::vm::get_named_cached_prototype_guard(
-                                    &object,
-                                    key,
-                                    &code.metadata_at(start)?.named_cache,
-                                )
-                            })
-                            .flatten()
-                    })
-                });
-            if let Some(slot) = slot {
-                if let Some(site) = code.quickening_site(start) {
-                    let site = site.borrow();
-                    if let Ok(bits) = native.borrow_mut().execute(slot, &site) {
-                        if registers
-                            .write_tagged_bits(usize::from(instruction.a), bits)
-                            .is_some()
-                        {
-                            crate::execution_trace::stencil_observation(
-                                code, start, "property", true,
-                            );
-                            crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
-                            return Ok((crate::completion::Completion::Normal, start + 1));
-                        }
-                    }
-                }
+            if try_native_property_get(native, code, start, registers, instruction) {
+                crate::execution_trace::stencil_observation(code, start, "property", true);
+                crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                return Ok((crate::completion::Completion::Normal, start + 1));
             }
             crate::execution_trace::stencil_observation(code, start, "property", false);
             crate::execution_trace::leaf_rejection("optimizing_native_property");
@@ -2375,6 +2357,27 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
             continue;
         }
         if let (Some(environment), Some(native)) =
+            (environment, plan.native_local_property_at(pc))
+        {
+            let property_pc = pc + native.borrow().operation_offset();
+            let result = crate::stencil_fusion::execute_local_property(
+                native,
+                environment,
+                |property, receiver| {
+                    let object = native_property_object(receiver)?;
+                    native_property_bits_plan(property, code, property_pc, object)
+                },
+            );
+            if let Some(span) = result.and_then(|result| result.commit(registers)) {
+                crate::execution_trace::stencil_observation(code, pc, "local_property", true);
+                crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                pc += span;
+                continue;
+            }
+            crate::execution_trace::stencil_observation(code, pc, "local_property", false);
+            crate::execution_trace::leaf_rejection("native_local_property");
+        }
+        if let (Some(environment), Some(native)) =
             (environment, plan.native_local_binary_at(pc))
         {
             if let Some(result) =
@@ -2553,56 +2556,14 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
         }
         if instruction.opcode == crate::ir::Opcode::GetN && instruction.flags == 0 {
             if let Some(native) = plan.native_property_at(pc) {
-                let slot = registers
-                    .read_object(usize::from(instruction.b))
-                    .filter(|object| {
-                        !object.has_replacement()
-                            && !object.is_dictionary()
-                            && !object.is_realm_global()
-                            && !object.is_script_global_view()
-                            && !object.has_regexp_internal_slot()
-                    })
-                    .and_then(|object| {
-                        let key = code
-                            .metadata_at(pc)
-                            .and_then(|metadata| metadata.name.as_deref())?;
-                        quickened_native_own_slot(code, pc, &object, key).or_else(|| {
-                            object
-                                .hot_properties()
-                                .position_rev(key)
-                                .is_none()
-                                .then(|| {
-                                    crate::vm::get_named_cached_prototype_guard(
-                                        &object,
-                                        key,
-                                        &code.metadata_at(pc)?.named_cache,
-                                    )
-                                })
-                                .flatten()
-                        })
-                    });
-                if let Some(slot) = slot {
-                    if let Some(site) = code.quickening_site(pc) {
-                        let site = site.borrow();
-                        if let Ok(bits) = native.borrow_mut().execute(slot, &site) {
-                            if registers
-                                .write_tagged_bits(usize::from(instruction.a), bits)
-                                .is_some()
-                            {
-                                crate::execution_trace::stencil_observation(
-                                    code, pc, "property", true,
-                                );
-                                crate::execution_trace::event(
-                                    crate::execution_trace::Event::LeafHit,
-                                );
-                                pc += 1;
-                                continue;
-                            }
-                        }
-                    }
-                    crate::execution_trace::stencil_observation(code, pc, "property", false);
-                    crate::execution_trace::leaf_rejection("native_property");
+                if try_native_property_get(native, code, pc, registers, instruction) {
+                    crate::execution_trace::stencil_observation(code, pc, "property", true);
+                    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                    pc += 1;
+                    continue;
                 }
+                crate::execution_trace::stencil_observation(code, pc, "property", false);
+                crate::execution_trace::leaf_rejection("native_property");
             }
         }
         if instruction.opcode == crate::ir::Opcode::SetN && instruction.flags == 0 {
@@ -4146,6 +4107,65 @@ fn quickened_native_own_slot(
         code.dequicken_instruction(pc);
         None
     })
+}
+
+fn native_property_object(value: &crate::value::Value) -> Option<&crate::value::ObjectData> {
+    let crate::value::Value::Object(object) = value else {
+        return None;
+    };
+    native_property_object_guard(object)
+}
+
+fn native_property_object_guard(
+    object: &crate::value::ObjectData,
+) -> Option<&crate::value::ObjectData> {
+    (!object.has_replacement()
+        && !object.is_dictionary()
+        && !object.is_realm_global()
+        && !object.is_script_global_view()
+        && !object.has_regexp_internal_slot())
+    .then_some(object)
+}
+
+fn native_property_bits(
+    native: &std::cell::RefCell<crate::machine::NativePropertyPlan>,
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    object: &crate::value::ObjectData,
+) -> Option<u64> {
+    native_property_bits_plan(&mut native.borrow_mut(), code, pc, object)
+}
+
+fn native_property_bits_plan(
+    native: &mut crate::machine::NativePropertyPlan,
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    object: &crate::value::ObjectData,
+) -> Option<u64> {
+    let metadata = code.metadata_at(pc)?;
+    let key = metadata.name.as_deref()?;
+    let slot = quickened_native_own_slot(code, pc, object, key).or_else(|| {
+        object.hot_properties().position_rev(key).is_none().then(|| {
+            crate::vm::get_named_cached_prototype_guard(object, key, &metadata.named_cache)
+        })?
+    })?;
+    let site = code.quickening_site(pc)?;
+    native.execute(slot, &site.borrow()).ok()
+}
+
+fn try_native_property_get(
+    native: &std::cell::RefCell<crate::machine::NativePropertyPlan>,
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    registers: &mut crate::register_file::RegisterFile,
+    instruction: crate::ir::Instruction,
+) -> bool {
+    let bits = registers
+        .read_object(usize::from(instruction.b))
+        .and_then(native_property_object_guard)
+        .and_then(|object| native_property_bits(native, code, pc, object));
+    bits.and_then(|bits| registers.write_tagged_bits(usize::from(instruction.a), bits))
+        .is_some()
 }
 
 #[inline(always)]
