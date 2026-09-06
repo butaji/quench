@@ -2644,24 +2644,15 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
         }
         if instruction.opcode == crate::ir::Opcode::Add && instruction.flags == 0 {
             if let Some(native) = plan.native_add_chain_at(pc) {
-                let next = plan.instruction(pc + 1);
-                let chain_shape = next.filter(|next| {
-                    next.opcode == crate::ir::Opcode::Add
-                        && next.flags == 0
-                        && next.b == instruction.a
-                        // Reading the first result as the second add's third
-                        // operand would require an intermediate materialized
-                        // value; leave that alias to the complete handlers.
-                        && next.c != instruction.a
-                });
-                let operands = chain_shape.and_then(|next| {
+                let bindings = native.borrow().bindings();
+                let operands = (|| {
                     let first = registers.read_number_pair(
-                        usize::from(instruction.b),
-                        usize::from(instruction.c),
+                        usize::from(bindings.inputs[0]),
+                        usize::from(bindings.inputs[1]),
                     )?;
-                    let third = registers.read_number(usize::from(next.c))?;
-                    Some((first.0, first.1, third, next.a))
-                });
+                    let third = registers.read_number(usize::from(bindings.inputs[2]))?;
+                    Some((first.0, first.1, third, bindings.output))
+                })();
                 if let Some((lhs, rhs, third, destination)) = operands {
                     if let Ok(result) = native.borrow_mut().execute(lhs, rhs, third) {
                         crate::execution_trace::stencil_observation(
@@ -6761,6 +6752,71 @@ mod compact_handler_tests {
         );
         let plan = function.baseline_plan().expect("baseline plan");
         assert!(plan.native_add_chain_at(0).is_none());
+    }
+
+    #[test]
+    fn fused_add_chain_rejects_unsafe_intermediate_aliases() {
+        let function = crate::machine::FunctionCode::from_ops(vec![
+            Op::Binary {
+                dst: 3,
+                operator: crate::ops::BinaryOp::Add,
+                lhs: 1,
+                rhs: 2,
+            },
+            Op::Binary {
+                dst: 5,
+                operator: crate::ops::BinaryOp::Add,
+                lhs: 3,
+                rhs: 3,
+            },
+            Op::Return { src: 5 },
+        ]);
+        let code = function.code().expect("lowered aliases");
+        let plan = crate::machine::BaselinePlan::compile_for_test(
+            code,
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        );
+        assert!(plan.native_add_chain_at(0).is_none());
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn fused_add_chain_executes_planned_nontrivial_bindings() {
+        let function = crate::machine::FunctionCode::from_ops(vec![
+            Op::Binary { dst: 6, operator: crate::ops::BinaryOp::Add, lhs: 2, rhs: 4 },
+            Op::Binary { dst: 1, operator: crate::ops::BinaryOp::Add, lhs: 6, rhs: 3 },
+            Op::Return { src: 1 },
+        ]);
+        let code = function.code().expect("lowered planned chain");
+        let plan = crate::machine::BaselinePlan::compile_for_test(
+            code,
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        );
+        let native = plan.native_add_chain_at(0).expect("planned fusion");
+        assert_eq!(native.borrow().bindings().inputs, [2, 4, 3]);
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![
+            Value::Undefined,
+            Value::Undefined,
+            Value::Number(1.25),
+            Value::Number(8.0),
+            Value::Number(2.5),
+            Value::Undefined,
+            Value::Undefined,
+        ]);
+        let result = crate::vm::execute_baseline_code_from(
+            code,
+            &plan,
+            0,
+            &mut registers,
+            &crate::vm::current_context_or_default(),
+            crate::environment::Environment::new(),
+        )
+        .expect("planned fusion execution");
+        assert_eq!(
+            result.0,
+            crate::completion::Completion::Return(Value::Number(11.75))
+        );
+        assert_eq!(native.borrow().native_entry_count(), 1);
     }
 
     fn execute_one_at_a_time(
