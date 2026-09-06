@@ -133,6 +133,10 @@ pub(crate) struct ValueNode {
 pub(crate) enum LocalNumericInputs {
     Sources([NumericSource; 2]),
     SlotConstant { slot: u16, bits: u64 },
+    AddChain {
+        sources: [NumericSource; 3],
+        bindings: F64x3Bindings,
+    },
     Folded { bits: u64 },
 }
 
@@ -225,11 +229,13 @@ impl BlockValueGraph {
         live_after: &BTreeSet<Register>,
     ) -> Option<LocalBinarySelection> {
         let operator = numeric_operation(operation)?;
-        let inputs = [
-            self.resolve_register(operation.b)?,
-            self.resolve_register(operation.c)?,
-        ];
-        self.select_resolved(operation, operator, inputs, live_after)
+        let direct = self
+            .resolve_register(operation.b)
+            .zip(self.resolve_register(operation.c));
+        if let Some((lhs, rhs)) = direct {
+            return self.select_resolved(operation, operator, [lhs, rhs], live_after);
+        }
+        self.select_add_tree(operation, operator, live_after)
     }
 
     pub(crate) fn select_property(
@@ -310,21 +316,16 @@ impl BlockValueGraph {
             }
             Opcode::AddConst => self.add_constant_definition(instruction, constant_bits)?,
             opcode if opcode.has_guard(crate::facts::OperationGuard::Number) => {
-                self.constant_binary_definition(instruction)?
+                self.binary_definition(instruction)?
             }
             _ => return None,
         };
         Some(definition)
     }
 
-    fn constant_binary_definition(&self, instruction: Instruction) -> Option<ValueDefinition> {
+    fn binary_definition(&self, instruction: Instruction) -> Option<ValueDefinition> {
         let lhs = self.canonical(self.current(instruction.b)?)?;
         let rhs = self.canonical(self.current(instruction.c)?)?;
-        if !matches!(self.resolve(lhs)?, NumericSource::Constant(_))
-            || !matches!(self.resolve(rhs)?, NumericSource::Constant(_))
-        {
-            return None;
-        }
         Some(ValueDefinition::Binary {
             operator: numeric_operation(instruction)?,
             lhs,
@@ -442,6 +443,51 @@ impl BlockValueGraph {
             inputs: folded.map_or(LocalNumericInputs::Sources(inputs), |bits| {
                 LocalNumericInputs::Folded { bits }
             }),
+            output: operation.a,
+            operation,
+            span: u8::try_from(self.len() + 1).ok()?,
+            discarded: self.discarded_registers(operation.a),
+            cost,
+        })
+    }
+
+    fn select_add_tree(
+        &self,
+        operation: Instruction,
+        operator: crate::ops::BinaryOp,
+        live_after: &BTreeSet<Register>,
+    ) -> Option<LocalBinarySelection> {
+        if operator != crate::ops::BinaryOp::Add {
+            return None;
+        }
+        let inner = self.canonical(self.current(operation.b)?)?;
+        let ValueDefinition::Binary { operator, lhs, rhs } = self.node(inner)?.definition else {
+            return None;
+        };
+        if operator != crate::ops::BinaryOp::Add {
+            return None;
+        }
+        let sources = [self.resolve(lhs)?, self.resolve(rhs)?, self.resolve_register(operation.c)?];
+        let bindings = F64x3Bindings {
+            inputs: [lhs.register, rhs.register, operation.c],
+            output: operation.a,
+        };
+        self.select_add_tree_sources(operation, sources, bindings, live_after)
+    }
+
+    fn select_add_tree_sources(
+        &self,
+        operation: Instruction,
+        sources: [NumericSource; 3],
+        bindings: F64x3Bindings,
+        live_after: &BTreeSet<Register>,
+    ) -> Option<LocalBinarySelection> {
+        if self.has_unsupported_live_out(operation.a, live_after) {
+            return None;
+        }
+        let cost = FusionCost::numeric_producers(self.marked_len(&[operation.b, operation.c]));
+        cost.profitable().then_some(LocalBinarySelection {
+            inputs: LocalNumericInputs::AddChain { sources, bindings },
             output: operation.a,
             operation,
             span: u8::try_from(self.len() + 1).ok()?,
