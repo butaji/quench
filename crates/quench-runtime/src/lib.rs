@@ -33,6 +33,7 @@ pub mod benchmark;
 mod bigint;
 mod binding_patterns;
 mod blocks;
+mod bounded_resource;
 mod branch;
 mod builtin_meta;
 pub mod builtins;
