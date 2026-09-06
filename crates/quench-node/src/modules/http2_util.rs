@@ -69,6 +69,7 @@ pub fn module() -> Value {
         ("assertIsObject".into(), make("object")),
         ("assertIsArray".into(), make("array")),
         ("assertWithinRange".into(), make("range")),
+        ("sessionName".into(), make("sessionName")),
         ("updateOptionsBuffer".into(), make("updateOptionsBuffer")),
         ("getAuthority".into(), make("getAuthority")),
         ("buildNgHeaderString".into(), make("buildNgHeaderString")),
@@ -471,8 +472,18 @@ pub fn dispatch(
         "object" => http2_asserts::object(values),
         "array" => http2_asserts::array(values),
         "range" => http2_asserts::range(values),
+        "sessionName" => session_name(values),
         _ => Err(VmError::NotCallable),
     }
+}
+
+fn session_name(values: &[Value]) -> Result<Value, VmError> {
+    let name = match values.first() {
+        Some(Value::Number(value)) if *value == 0.0 => "server",
+        Some(Value::Number(value)) if *value == 1.0 => "client",
+        _ => "<invalid>",
+    };
+    Ok(Value::String(name.into()))
 }
 
 fn get_authority(values: &[Value]) -> Result<Value, VmError> {
