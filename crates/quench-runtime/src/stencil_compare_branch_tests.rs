@@ -7,6 +7,7 @@ struct BranchResult {
     comparison: Value,
     compare_entries: u64,
     truthiness_entries: u64,
+    generated: bool,
 }
 
 fn execute_compare_branch(view: CodeView<'_>, lhs: Value, rhs: Value) -> Option<BranchResult> {
@@ -33,11 +34,16 @@ fn execute_compare_branch(view: CodeView<'_>, lhs: Value, rhs: Value) -> Option<
     let truthiness = plan.native_truthiness_at(branch_pc)?;
     let compare_entries = compare.borrow().native_entry_count();
     let truthiness_entries = truthiness.borrow().native_entry_count();
+    let generated = compare
+        .borrow()
+        .last_native_view()
+        .is_some_and(|view| view.generated);
     Some(BranchResult {
         completion,
         comparison: registers.read(usize::from(instruction.a))?,
         compare_entries,
         truthiness_entries,
+        generated,
     })
 }
 
@@ -83,4 +89,5 @@ fn assert_branch(result: BranchResult, returned: f64, comparison: bool, native: 
     assert_eq!(result.comparison, Value::Boolean(comparison));
     assert_eq!(result.compare_entries, native);
     assert_eq!(result.truthiness_entries, truthy);
+    assert_eq!(result.generated, native != 0 && cfg!(quench_generated_stencil_artifacts));
 }
