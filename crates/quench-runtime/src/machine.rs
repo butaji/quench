@@ -3676,8 +3676,12 @@ impl NativeAddChainPlan {
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
             crate::stencil_region_layout::validate_selected_control(view, &self.control)
                 .map_err(|_| crate::stencil_arena::ArenaError::ProtectionFailed)?;
-            let address =
-                slab.render_physical_view_or_get(&mut self.physical.cache, view, values)?;
+            let address = slab.render_controlled_physical_view_or_get(
+                &mut self.physical.cache,
+                view,
+                values,
+                &self.control,
+            )?;
             slab.make_executable(address)?;
             Ok::<_, crate::stencil_arena::ArenaError>((address, view))
         })();
@@ -3746,14 +3750,18 @@ impl NativeAddChainPlan {
         .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
         crate::stencil_region_layout::validate_selected_control(view, &self.control)
             .map_err(|_| crate::stencil_arena::ArenaError::ProtectionFailed)?;
-        let result = self.storage.local_mut()?.render_selected_f64x3(
-            &mut self.physical.cache,
-            key,
-            values,
-            lhs,
-            rhs,
-            third,
-        );
+        let result = (|| {
+            let arena = self.storage.local_mut()?;
+            let address = arena.render_controlled_physical_view_or_get(
+                &mut self.physical.cache,
+                view,
+                values,
+                &self.control,
+            )?;
+            arena.make_executable()?;
+            let entry = arena.f64x3_entry(address)?;
+            Ok(entry(lhs, rhs, third))
+        })();
         if result.is_ok() {
             #[cfg(test)]
             {
