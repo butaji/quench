@@ -99,8 +99,8 @@ impl Frame {
             Self::Iterator { body, body_resume, resume, .. } => vec![*body, *body_resume, *resume],
             Self::Branch { branch_resume, resume, .. } => vec![*branch_resume, *resume],
             Self::Private { body_resume, resume, .. } => vec![*body_resume, *resume],
-            Self::Loop { body, test, update, body_resume, resume, .. } => {
-                vec![*body, *test, *update, *body_resume, *resume]
+            Self::Loop { body, test, update, phase_resume, resume, .. } => {
+                vec![*body, *test, *update, *phase_resume, *resume]
             }
             Self::Await { resume, .. } => vec![*resume],
             Self::Delegate { .. } => Vec::new(),
@@ -121,9 +121,17 @@ impl Frame {
                 ids
             }
             Self::Iterator { binding, yield_dst, slot, .. } => vec![*binding, *yield_dst, *slot],
-            Self::Branch { dst, yield_dst, .. } => vec![*dst, *yield_dst],
+            Self::Branch { dst, yield_dst, .. } => dst
+                .iter()
+                .copied()
+                .chain(std::iter::once(*yield_dst))
+                .collect(),
             Self::Private { yield_dst, .. } => vec![*yield_dst],
-            Self::Loop { dst, yield_dst, .. } => vec![*dst, *yield_dst],
+            Self::Loop { dst, yield_dst, per_iteration, .. } => {
+                let mut ids = vec![*dst, *yield_dst];
+                ids.extend(per_iteration.iter().copied());
+                ids
+            }
             Self::Await { .. } | Self::Delegate { .. } => Vec::new(),
             Self::Dispose { yield_dst, .. } => vec![*yield_dst],
         }

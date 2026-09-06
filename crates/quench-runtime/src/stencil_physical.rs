@@ -8,8 +8,7 @@ pub(crate) fn contains_call(bytes: &[u8]) -> bool {
     {
         return bytes.chunks_exact(4).any(|word| {
             let encoded = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
-            encoded & 0xFC00_0000 == 0x9400_0000
-                || encoded & 0xFFFF_FC1F == 0xD63F_0000
+            encoded & 0xFC00_0000 == 0x9400_0000 || encoded & 0xFFFF_FC1F == 0xD63F_0000
         });
     }
     #[cfg(target_arch = "x86_64")]
@@ -65,7 +64,11 @@ pub(crate) fn simd_clobber_mask(bytes: &[u8]) -> u16 {
                 (fp_load || fp_arith || fp_move).then_some((encoded & 0x1f) as u16)
             })
             .fold(0u16, |mask, register| {
-                if register < 16 { mask | (1u16 << register) } else { u16::MAX }
+                if register < 16 {
+                    mask | (1u16 << register)
+                } else {
+                    u16::MAX
+                }
             });
     }
     #[cfg(not(target_arch = "aarch64"))]
@@ -91,7 +94,11 @@ pub(crate) fn gpr_clobber_mask(bytes: &[u8]) -> u16 {
                 writes_rt.then_some((encoded & 0x1f) as u16)
             })
             .fold(0u16, |mask, register| {
-                if register < 16 { mask | (1u16 << register) } else { u16::MAX }
+                if register < 16 {
+                    mask | (1u16 << register)
+                } else {
+                    u16::MAX
+                }
             });
     }
     #[cfg(not(target_arch = "aarch64"))]
@@ -114,7 +121,9 @@ pub(crate) fn validate_raw_instruction_stream(bytes: &[u8]) -> Result<(), String
         for (index, word) in bytes.chunks_exact(4).enumerate() {
             let encoded = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
             if !known_aarch64_raw_instruction(encoded) {
-                return Err(format!("raw stencil contains unknown instruction {encoded:08x} at {index}"));
+                return Err(format!(
+                    "raw stencil contains unknown instruction {encoded:08x} at {index}"
+                ));
             }
             if !branch_target_is_local(encoded, index, bytes.len()) {
                 return Err(format!("raw stencil branch leaves region at {index}"));
@@ -130,9 +139,7 @@ pub(crate) fn validate_raw_instruction_stream(bytes: &[u8]) -> Result<(), String
 fn branch_target_is_local(encoded: u32, index: usize, length: usize) -> bool {
     let (immediate, bits) = if encoded & 0xFC00_0000 == 0x1400_0000 {
         (encoded & 0x03FF_FFFF, 26)
-    } else if encoded & 0xFF00_0010 == 0x5400_0000
-        || encoded & 0x7F00_0000 == 0x3500_0000
-    {
+    } else if encoded & 0xFF00_0010 == 0x5400_0000 || encoded & 0x7F00_0000 == 0x3500_0000 {
         ((encoded >> 5) & 0x7_FFFF, 19)
     } else {
         return true;
@@ -160,7 +167,9 @@ pub(crate) fn validate_aarch64_instruction_stream(bytes: &[u8]) -> Result<(), St
         for (index, word) in bytes.chunks_exact(4).enumerate() {
             let encoded = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
             if !known_aarch64_instruction(encoded) {
-                return Err(format!("AArch64 stencil contains unknown instruction {encoded:08x} at {index}"));
+                return Err(format!(
+                    "AArch64 stencil contains unknown instruction {encoded:08x} at {index}"
+                ));
             }
         }
     }

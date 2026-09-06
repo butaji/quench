@@ -539,11 +539,7 @@ fn parse_object_range(
     assert_target_architecture(&file, env::var("TARGET").ok().as_deref());
     assert_target_format(&file, env::var("TARGET").ok().as_deref());
     reject_unwind_or_tls_sections(&file);
-    let relocations = validate_fragment_relocations(
-        &file,
-        expected_relocations,
-        "Rust fragment",
-    );
+    let relocations = validate_fragment_relocations(&file, expected_relocations, "Rust fragment");
     let (start_section, start_address) = find_text_symbol(&file, name);
     let (end_section, end_address) = find_text_symbol(&file, end_name);
     assert_eq!(start_section, end_section, "fragment bounds cross sections");
@@ -576,7 +572,10 @@ fn parse_object_range(
         assert_eq!(output.len() % 4, 0, "AArch64 fragment bounds are invalid");
     }
     assert_no_other_global_text_symbols(&file, section_index, name);
-    ParsedFragment { bytes: output, relocations }
+    ParsedFragment {
+        bytes: output,
+        relocations,
+    }
 }
 
 fn validate_fragment_relocations(
@@ -655,7 +654,10 @@ fn validate_fragment_relocations(
             expected.len(),
             "{context} relocation count mismatch"
         );
-        assert!(consumed.into_iter().all(|matched| matched), "{context} missing relocation");
+        assert!(
+            consumed.into_iter().all(|matched| matched),
+            "{context} missing relocation"
+        );
         return records;
     }
     let text_index = file
@@ -718,7 +720,10 @@ fn validate_fragment_relocations(
         expected.len(),
         "{context} relocation count mismatch"
     );
-    assert!(consumed.into_iter().all(|matched| matched), "{context} missing relocation");
+    assert!(
+        consumed.into_iter().all(|matched| matched),
+        "{context} missing relocation"
+    );
     records
 }
 

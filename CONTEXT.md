@@ -1,27 +1,18 @@
-# Quench vocabulary
+# Runtime map
 
-Quench uses one runtime with three frontends: Typed TypeScript, JavaScript,
-and WebAssembly. The runtime owns execution, allocation, strings, functions,
-exceptions, modules, host calls, and profiling.
+- `quench-runtime` owns language execution and JavaScript semantics.
+  JS reduction/compact execution uses `reduce`, `ir`, `machine` and `vm`;
+  shared typed execution also has `hir`, `mir` and `interp`.
+- `quench-node` owns Node APIs and host effects.
+- `quench-wasm` decodes/validates Wasm and adapts spec scripts to the runtime.
+- Native, Fast and Dynamic describe execution/representation facts, not separate
+  languages or permission to introduce alternate semantics.
+- Do not describe all current storage as one tracing collector: the runtime
+  contains both GC machinery and JS reference-cycle collection. Respect the
+  actual ownership/rooting contract of each value.
+- Desired architecture and verified implementation are distinct.
+  [Repository rules](AGENTS.md) apply throughout.
 
-- **Native** is fully known, unboxed execution: Wasm scalars, fixed layouts,
-  linear-memory bytes, and direct calls.
-- **Fast** is specialised execution guarded by facts such as shape, slot, or
-  number kind.
-- **Dynamic** resolves meaning at run time for operations such as JavaScript
-  coercion, computed properties, and unknown calls.
-- A **layer** describes representation and dispatch, not a language. Guards
-  and boxes make layer changes explicit.
-- **HIR** is the shared typed register program emitted by each frontend.
-  **MIR** is its specialised executable form.
-- **GC** owns heap data whose lifetime exceeds a call, compile, or job.
-  **Arena** storage is limited to bounded scratch and is never a long-lived
-  instance resource.
-- A **trap** is a Native instruction failure. A **Wasm exception** is a tagged
-  throw matched by a Wasm handler. Dynamic throws follow JavaScript catch
-  rules; all three use the shared unwind mechanism.
-- The **spec suite** is the vendored WebAssembly testsuite. Compatibility is
-  measured across every directive, including proposal tests.
-
-Keep these concepts shared across frontends. Do not introduce language-owned
-object models, duplicate collectors, or alternate execution semantics.
+Active work: [task queue](tasks/index.json).
+Implementation contract: [stencil specification](docs/stencil-jit-implementation-spec.md).
+Manuals and verification: [documentation index](docs/README.md).

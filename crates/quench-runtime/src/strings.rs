@@ -583,9 +583,7 @@ pub(crate) fn repeat(
     // The lossy display form of StringUnits can have the same unit length as
     // the exact source while containing replacement characters.  Only the
     // UTF-8-owned variant can use String::repeat without changing units.
-    if matches!(receiver, Some(Value::String(_)))
-        && source.len() == value.encode_utf16().count()
-    {
+    if matches!(receiver, Some(Value::String(_))) && source.len() == value.encode_utf16().count() {
         return Ok(Value::String(value.repeat(count)));
     }
     let mut result = Vec::with_capacity(total_units);
@@ -1042,7 +1040,10 @@ mod tests {
     fn repeat_preserves_lone_surrogate_units() {
         let source = super::from_units(vec![u16::from(b'x'), 0xd800]);
         let repeated = super::repeat(Some(&source), &[Value::Number(1.0)]).unwrap();
-        assert_eq!(super::units_of(&repeated), Some(vec![u16::from(b'x'), 0xd800]));
+        assert_eq!(
+            super::units_of(&repeated),
+            Some(vec![u16::from(b'x'), 0xd800])
+        );
     }
 
     #[test]

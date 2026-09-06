@@ -3,11 +3,13 @@ struct LoopFrameResume {
     body: crate::machine::CodeRange,
     test: crate::machine::CodeRange,
     update: crate::machine::CodeRange,
-    body_resume: crate::machine::CodeRange,
+    phase: crate::continuation::LoopPhase,
+    phase_resume: crate::machine::CodeRange,
     resume: crate::machine::CodeRange,
     dst: u16,
     yield_dst: u16,
     post_test: bool,
+    per_iteration: std::rc::Rc<[u16]>,
 }
 
 fn loop_frame_resume(generator: &GeneratorData) -> Option<LoopFrameResume> {
@@ -21,11 +23,13 @@ fn loop_frame_resume(generator: &GeneratorData) -> Option<LoopFrameResume> {
         body,
         test,
         update,
-        body_resume,
+        phase,
+        phase_resume,
         resume,
         dst,
         yield_dst,
         post_test,
+        per_iteration,
     } = frame
     else {
         return None;
@@ -35,11 +39,13 @@ fn loop_frame_resume(generator: &GeneratorData) -> Option<LoopFrameResume> {
         body,
         test,
         update,
-        body_resume,
+        phase,
+        phase_resume,
         resume,
         dst,
         yield_dst,
         post_test,
+        per_iteration,
     })
 }
 
@@ -145,46 +151,138 @@ fn run_loop_after_yield(
     generator: &GeneratorData,
     frame: &LoopFrameResume,
 ) -> Result<crate::completion::Completion, VmError> {
-    let body = frame.body;
-    let mut resume = frame.body_resume;
+    let mut phase = frame.phase;
+    let mut resume = frame.phase_resume;
     loop {
-        let pc = resume.start.saturating_sub(body.start) as usize;
-        let step = execute_loop_body_range(generator, body, pc)?;
+        let (code, pc) = phase_execution(frame, phase, resume);
+        let step = execute_loop_phase(generator, code, pc)?;
         if step.completion.is_suspension() {
-            if let Some(crate::continuation::SuspensionPoint::Yield { src, .. }) = step.suspension {
-                update_loop_body_resume(generator, body, step.pc, src)?;
-                return Ok(step.completion);
-            }
-            let destination = step
-                .suspension
-                .as_ref()
-                .and_then(resume_destination)
-                .unwrap_or(frame.yield_dst);
-            update_loop_body_resume(generator, body, step.pc, destination)?;
-            let point = loop_point(body, step.pc, destination, frame);
-            return Ok(wrap_loop_suspension(step.completion, point));
+            return suspend_loop_phase(generator, frame, phase, code, step);
         }
-        match step.completion {
-            crate::completion::Completion::Normal => {}
-            crate::completion::Completion::Return(value) => {
-                return Ok(crate::completion::Completion::Return(value));
-            }
-            completion => match completion.into_loop_transition(&frame.label) {
-                crate::completion::LoopTransition::Continue(_) => {}
-                crate::completion::LoopTransition::Break(value) => {
-                    store_loop_value(generator, frame.dst, value)?;
-                    return Ok(crate::completion::Completion::Normal);
-                }
-                crate::completion::LoopTransition::Propagate(completion) => return Ok(completion),
-            },
+        if let Some(completion) = finish_loop_phase(generator, frame, phase, step.completion)? {
+            return Ok(completion);
         }
+        phase = next_loop_phase(phase, frame.post_test);
+        resume = phase_range(frame, phase);
+    }
+}
 
-        execute_loop_fragment(generator, frame.update)?;
-        let test = execute_loop_test(generator, frame.test)?;
-        if !test {
-            return Ok(crate::completion::Completion::Normal);
+fn execute_loop_phase(
+    generator: &GeneratorData,
+    range: crate::machine::CodeRange,
+    pc: usize,
+) -> Result<crate::vm::GeneratorStep, VmError> {
+    if range.start == range.end {
+        return Ok(crate::vm::GeneratorStep {
+            completion: crate::completion::Completion::Normal,
+            pc: 0,
+            suspension: None,
+        });
+    }
+    execute_loop_body_range(generator, range, pc)
+}
+
+fn phase_execution(
+    frame: &LoopFrameResume,
+    phase: crate::continuation::LoopPhase,
+    resume: crate::machine::CodeRange,
+) -> (crate::machine::CodeRange, usize) {
+    let base = phase_range(frame, phase);
+    if phase == crate::continuation::LoopPhase::Init || resume.code != base.code {
+        return (resume, 0);
+    }
+    let pc = resume.start.saturating_sub(base.start) as usize;
+    (base, pc)
+}
+
+fn suspend_loop_phase(
+    generator: &GeneratorData,
+    frame: &LoopFrameResume,
+    phase: crate::continuation::LoopPhase,
+    resume: crate::machine::CodeRange,
+    step: crate::vm::GeneratorStep,
+) -> Result<crate::completion::Completion, VmError> {
+    let destination = step
+        .suspension
+        .as_ref()
+        .and_then(resume_destination)
+        .unwrap_or(frame.yield_dst);
+    update_loop_phase_resume(generator, frame.body, phase, resume, step.pc, destination)?;
+    if matches!(step.completion, crate::completion::Completion::Yield(_)) {
+        return Ok(step.completion);
+    }
+    let point = loop_point(phase, resume, step.pc, destination, frame);
+    Ok(wrap_loop_suspension(step.completion, point))
+}
+
+fn finish_loop_phase(
+    generator: &GeneratorData,
+    frame: &LoopFrameResume,
+    phase: crate::continuation::LoopPhase,
+    completion: crate::completion::Completion,
+) -> Result<Option<crate::completion::Completion>, VmError> {
+    match phase {
+        crate::continuation::LoopPhase::Init => {
+            finish_fragment(completion)?;
+            refresh_loop_bindings(&frame.per_iteration);
+            Ok(None)
         }
-        resume = frame.body;
+        crate::continuation::LoopPhase::Test => {
+            Ok((!test_completion(completion)?).then_some(crate::completion::Completion::Normal))
+        }
+        crate::continuation::LoopPhase::Update => {
+            finish_fragment(completion)?;
+            Ok(None)
+        }
+        crate::continuation::LoopPhase::Body => finish_loop_body(generator, frame, completion),
+    }
+}
+
+fn finish_loop_body(
+    generator: &GeneratorData,
+    frame: &LoopFrameResume,
+    completion: crate::completion::Completion,
+) -> Result<Option<crate::completion::Completion>, VmError> {
+    match completion {
+        crate::completion::Completion::Return(value) => Ok(Some(crate::completion::Completion::Return(value))),
+        completion => match completion.into_loop_transition(&frame.label) {
+            crate::completion::LoopTransition::Continue(value) => {
+                store_loop_value(generator, frame.dst, value)?;
+                refresh_loop_bindings(&frame.per_iteration);
+                Ok(None)
+            }
+            crate::completion::LoopTransition::Break(value) => {
+                store_loop_value(generator, frame.dst, value)?;
+                Ok(Some(crate::completion::Completion::Normal))
+            }
+            crate::completion::LoopTransition::Propagate(completion) => Ok(Some(completion)),
+        },
+    }
+}
+
+fn next_loop_phase(
+    phase: crate::continuation::LoopPhase,
+    post_test: bool,
+) -> crate::continuation::LoopPhase {
+    match phase {
+        crate::continuation::LoopPhase::Init if post_test => crate::continuation::LoopPhase::Body,
+        crate::continuation::LoopPhase::Init | crate::continuation::LoopPhase::Update => {
+            crate::continuation::LoopPhase::Test
+        }
+        crate::continuation::LoopPhase::Test => crate::continuation::LoopPhase::Body,
+        crate::continuation::LoopPhase::Body => crate::continuation::LoopPhase::Update,
+    }
+}
+
+fn phase_range(
+    frame: &LoopFrameResume,
+    phase: crate::continuation::LoopPhase,
+) -> crate::machine::CodeRange {
+    match phase {
+        crate::continuation::LoopPhase::Body => frame.body,
+        crate::continuation::LoopPhase::Test => frame.test,
+        crate::continuation::LoopPhase::Update => frame.update,
+        crate::continuation::LoopPhase::Init => frame.phase_resume,
     }
 }
 
@@ -195,12 +293,14 @@ fn resume_destination(
         crate::continuation::SuspensionPoint::Yield { src, .. }
         | crate::continuation::SuspensionPoint::Loop { yield_dst: src, .. } => Some(*src),
         crate::continuation::SuspensionPoint::YieldStar { dst, .. } => Some(*dst),
+        crate::continuation::SuspensionPoint::Branch { yield_dst, .. } => Some(*yield_dst),
         crate::continuation::SuspensionPoint::Nested { inner, .. } => resume_destination(inner),
     }
 }
 
 fn loop_point(
-    body: crate::machine::CodeRange,
+    phase: crate::continuation::LoopPhase,
+    resume: crate::machine::CodeRange,
     next: usize,
     destination: u16,
     frame: &LoopFrameResume,
@@ -208,17 +308,19 @@ fn loop_point(
     crate::continuation::SuspensionPoint::Loop {
         pc: 0,
         label: frame.label.clone(),
-        body,
+        body: frame.body,
         test: frame.test,
         update: frame.update,
-        body_resume: crate::machine::CodeRange {
-            code: body.code,
-            start: body.start.saturating_add(next as u32),
-            end: body.end,
+        phase,
+        phase_resume: crate::machine::CodeRange {
+            code: resume.code,
+            start: resume.start.saturating_add(next as u32),
+            end: resume.end,
         },
         dst: frame.dst,
         yield_dst: destination,
         post_test: frame.post_test,
+        per_iteration: std::rc::Rc::clone(&frame.per_iteration),
     }
 }
 
@@ -267,46 +369,28 @@ fn execute_loop_body_range(
     })
 }
 
-fn execute_loop_fragment(
-    generator: &GeneratorData,
-    range: crate::machine::CodeRange,
-) -> Result<(), VmError> {
-    let store = generator
-        .machine
-        .borrow()
-        .store
-        .clone()
-        .ok_or(VmError::MissingReturn)?;
-    let code = store.code(range).ok_or(VmError::MissingReturn)?;
-    let completion = execute_with_generator_registers(generator, |registers| {
-        crate::vm::execute_code_completion_in_current_frame(code, registers)
-    })?;
+fn finish_fragment(completion: crate::completion::Completion) -> Result<(), VmError> {
     match completion {
         crate::completion::Completion::Normal | crate::completion::Completion::Return(_) => Ok(()),
         completion => completion.into_vm_error().map(|_| ()),
     }
 }
 
-fn execute_loop_test(
-    generator: &GeneratorData,
-    range: crate::machine::CodeRange,
-) -> Result<bool, VmError> {
-    let store = generator
-        .machine
-        .borrow()
-        .store
-        .clone()
-        .ok_or(VmError::MissingReturn)?;
-    let code = store.code(range).ok_or(VmError::MissingReturn)?;
-    let completion = execute_with_generator_registers(generator, |registers| {
-        crate::vm::execute_code_completion_in_current_frame(code, registers)
-    })?;
+fn test_completion(completion: crate::completion::Completion) -> Result<bool, VmError> {
     match completion {
         crate::completion::Completion::Return(value) => Ok(crate::execute::is_truthy(&value)),
         crate::completion::Completion::Normal => Ok(false),
         completion => completion
             .into_vm_error()
             .map(|value| crate::execute::is_truthy(&value)),
+    }
+}
+
+fn refresh_loop_bindings(slots: &[u16]) {
+    let environment = crate::locals::current();
+    for &slot in slots {
+        let value = environment.get(slot);
+        let _ = environment.replace_slot(slot, value);
     }
 }
 
@@ -321,8 +405,10 @@ fn store_loop_value(
     Ok(())
 }
 
-fn update_loop_body_resume(
+fn update_loop_phase_resume(
     generator: &GeneratorData,
+    loop_body: crate::machine::CodeRange,
+    next_phase: crate::continuation::LoopPhase,
     range: crate::machine::CodeRange,
     next: usize,
     yield_dst: u16,
@@ -334,11 +420,17 @@ fn update_loop_body_resume(
     };
     let mut machine = generator.machine.borrow_mut();
     let index = machine.frames.frames.iter().rposition(|frame| {
-        matches!(frame, crate::machine::Frame::Loop { body, .. } if *body == range)
+        matches!(frame, crate::machine::Frame::Loop { body, .. } if *body == loop_body)
     }).ok_or(VmError::MissingReturn)?;
-    let crate::machine::Frame::Loop { body_resume, yield_dst: destination, .. } =
+    let crate::machine::Frame::Loop {
+        phase: current_phase,
+        phase_resume,
+        yield_dst: destination,
+        ..
+    } =
         &mut machine.frames.frames[index] else { return Err(VmError::MissingReturn) };
-    *body_resume = resume;
+    *current_phase = next_phase;
+    *phase_resume = resume;
     *destination = yield_dst;
     Ok(())
 }

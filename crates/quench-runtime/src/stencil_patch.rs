@@ -263,7 +263,10 @@ mod tests {
         write_branch26(&mut bytes, 4, &values).expect("branch at offset four");
         assert_eq!(&bytes[..4], original_prefix.as_slice());
         assert_eq!(&bytes[8..], original_suffix.as_slice());
-        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 0x1400_0002);
+        assert_eq!(
+            u32::from_le_bytes(bytes[4..8].try_into().unwrap()),
+            0x1400_0002
+        );
     }
 
     #[test]

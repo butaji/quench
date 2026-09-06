@@ -27,7 +27,46 @@ Family/variant counts and percentage coverage are measurements, not acceptance
 targets. There is no requirement for 35 families, 500 variants, or 90% coverage.
 Copy-and-patch is runtime compilation with a small backend, not an absence of JIT.
 
+Treat interpreter, generic native, IC-specialized, fused and loop-region execution
+as capabilities over shared semantics, not five mandatory independent tier states.
+No new quota of250–400 families,3,000–8,000 variants or100–300 fusions is required.
+Generate structural variants only when representation, ABI, effects or instruction
+encoding changes. Property offsets/constants are typed patch bindings unless their
+range or encoding forces another form; reject or select a declared alternative.
+Prune impossible/dominated combinations instead of enumerating every axis product.
+Budget shipped template bytes, matcher metadata, resident pages and emitted hot
+code separately: unused template data does not directly occupy instruction cache.
+Rank valid fusion candidates with bounded cost estimates for bytes, moves/spills,
+guards/exits and removed dispatch; longest match alone is not a profitability proof.
+Derive loop plans from existing control flow and Proven/Guarded facts, with explicit
+alias/effect kills, liveness, safe entry/exit maps and bounded work/code budgets.
+Invariant guards require valid inputs at entry, not merely absence of local stores;
+callbacks, prototype/shape mutation, resizing and reentry can invalidate assumptions.
+Runtime planning may compose offline-optimized Rust bodies but cannot assume LLVM
+optimizes across patched edges or that stable Rust guarantees tail-call/register ABI.
+
 ## 2. Canonical declarations and generated consequences
+
+Apply the `lisp-mindset` skill throughout this design, using idiomatic Rust:
+model facts first, derive consequences, compose small mechanisms and keep effects
+at explicit boundaries. Extend the existing Rust macro catalogs rather than
+creating a parallel stencil DSL with its own semantic facts. Prefer declarative
+Rust macros for repetitive declarations, typed wrappers, tables and test cases;
+macros must not hide exceptional JS behavior or unsafe execution contracts.
+Build-time assembly/compiler tooling remains responsible for machine bytes.
+
+Represent lifecycle and execution outcomes as typed state transitions. Derived
+views must not become independently mutable authorities. Avoid boolean-only
+contracts that merely restate their own labels without validating execution.
+No macro-per-case expansion, string-replacement framework or opaque abstraction
+should replace a clear shared declaration and explicit irreducible behavior.
+
+Apply the skill's size limits to the stencil implementation and its refactored
+integration units: functions at most 40 lines, complexity at most 10, source
+files at most 500 lines. Split by cohesive responsibility, not arbitrary chunks
+or one-use forwarding wrappers. Do not conceal oversized handwritten code inside
+macro token bodies. Generated artifacts remain derived, not hand-maintained.
+Preserve concurrent work; avoid unrelated repository-wide refactoring.
 
 Each supported shape MUST declare or reference canonical facts for:
 
@@ -51,6 +90,164 @@ assembly use labels and extracted/validated relocation records instead of hand
 counted branch offsets. Keep generation reproducible with explicit toolchain
 requirements. A build-time LLVM toolchain must not become a runtime dependency.
 Retain a small audited target patcher, rejecting unsupported relocations.
+
+### Selected implementation architecture
+
+Use a bounded copy-and-patch backend over existing residual operations, not a
+second optimizing VM. This is the best-fit design decision for Quench's current
+constraints, not a claim that it outperforms every alternative.
+
+The dependency direction is:
+
+```text
+existing semantic facts + existing lowered CFG
+  -> verified physical region plan
+  -> target stencil recipes + checked relocations
+  -> published typed entry + allocation lease
+  -> exact VM continuation
+```
+
+The physical plan references existing operation IDs, values and PCs; it records
+only bindings, guards, native layout, roots and exits. It is not another semantic
+IR. Unknown facts select ordinary semantics cheaply. Existing quickening owns
+observations and invalidation; the backend consumes them without a second IC.
+
+Keep these responsibilities separate and compose them:
+
+- **Catalog:** extend the existing declarations to reference semantic facts and
+  declare physical signatures, templates, effects and patch slots once. Generate
+  closed ABI routing, constructors, validation tables and repetitive test cases.
+  Explicit target templates and exceptional JS behavior remain inspectable.
+- **Planner/verifier:** pure bounded selection and placement over the actual CFG.
+  Compose compatible core stencils into straight-line blocks and bounded regions,
+  with explicit branch targets, live-outs and a finite register/spill convention.
+  Reject incompatible compositions before publication. Do not substitute a
+  growing list of whole-loop opcode patterns for reusable composition. Fused
+  kernels are optional physical recipes using the same contracts and budget.
+- **Emitter:** copy build-time artifacts and resolve typed patch records. Prefer
+  compiler-generated templates; retain audited assembler/label-based templates
+  where required by the ABI. No runtime LLVM, ad hoc optimizer framework, or
+  independent handwritten semantic implementation in the generator.
+- **Code store:** own mappings, publication, leases, retirement and budget charges.
+  Plans and caches reference capabilities; they do not each own executable pages.
+- **VM adapter:** materialize canonical live state, acquire the entry lease,
+  invoke through its exact ABI, and interpret one typed outcome. Reuse ordinary
+  helpers and completion handling. Keep unsafe conversion and effects here or
+  inside the code-store boundary, not spread through opcode dispatch.
+
+An entry MUST be constructed from a verified published region and a closed ABI
+identity, never an arbitrary address paired with a caller-supplied function
+pointer. Private fields and restricted constructors enforce this. Checking that
+an address belongs to an executable slab does not establish its entry boundary,
+signature or correspondence to the invoked pointer.
+
+Use one authoritative physical installation payload integrated with the existing
+`StencilLifecycle`; do not introduce a competing lifecycle. Represent legitimate
+ABI alternatives with a bounded discriminated union, not parallel optional raw
+and shared entries plus independently mutable result-kind flags. Common retirement
+clears the whole installation atomically at the logical level; semantic exceptions
+must not be misclassified as physical invalidation. Cache records are disposable
+derived indices, never a second authority for callability.
+
+Separate an allocation-retaining lease from any non-owning lookup token. Acquire
+the lease before invocation and release mutable pool/cache borrows before a helper
+can reenter. Retirement prevents new admission while active leases retain code and
+associated metadata through return or unwind. Never reopen an actively executing
+slab for patching: publish a replacement or use independently synchronized data
+slots under an explicit contract. Count retired-but-live allocations against the
+aggregate budget; budget exhaustion rejects admission instead of forcing reclaim.
+
+Migrate incrementally, retaining correctness after each slice: finish the existing
+constant/move slice, then migrate binary, unary, truthiness/nullish, property and
+region paths to the same mechanism. Remove superseded fields and cleanup paths
+in each slice. Do not retain two production architectures after migration.
+Split catalog/generation, target templates, verified plans, code ownership and
+VM adapters into cohesive modules under the skill's limits; no unrelated rewrite.
+
+### rustc/LLVM artifact pipeline
+
+User-selected implementation: Rust-owned generation using rustc/LLVM, without
+C templates or a Clang dependency. This supersedes the previous Clang direction.
+Keep the VM, helpers, catalog, object extractor and runtime patcher in Rust.
+Compile suitable whole-function Rust leaves/kernels with `rustc --emit=obj`.
+For composable interiors needing exact registers and continuations, generate
+labeled target assembly through Rust `global_asm!`; use `naked_asm!` only where
+its whole-function contract fits. Assembly remains target-specific assembly,
+not ordinary Rust optimized by LLVM. Derive bindings/layout constants from the
+same Rust catalog and validate compiled artifacts against it. No new runtime crate.
+
+This choice borrows CPython's object-extraction approach, not its separate
+micro-op architecture or C toolchain. Do not add rustc-private dependencies,
+rewrite rustc's LLVM IR text, or introduce a parallel LLVM-IR generator. Do not
+require nightly explicit tail calls or rely on incidental tail-call optimization.
+Use explicit assembly continuation transfers for the stable-toolchain path.
+
+1. Record target triple, CPU/features, compiler identity/version, template/catalog
+   hash, physical ABI version, layout constants and generation flags in an
+   artifact fingerprint. Use the Cargo target, not the build host. Probe required
+   rustc target/features and record its LLVM version. Invoke the configured Rust
+   compiler for isolated build artifacts without recursively building the runtime.
+2. Compile isolated templates to relocatable objects, with no cross-template LTO,
+   fast-math, implicit runtime instrumentation or uncontrolled helper dependencies.
+   Use named external hole/continuation symbols and explicit entry symbols. Do not
+   depend on symbol adjacency, sentinel byte searches, or optimization luck to
+   discover function boundaries or preserve patch sites.
+3. Parse object symbols, sections and relocations (Mach-O first for the current
+   ARM64 host; preserve existing target support). Extract code and all referenced
+   literals/data; classify every external reference as a declared hole, helper,
+   continuation or explicitly supported relocation. Reject anything else. Verify
+   no unexpected TLS, unwind/exception dependency, stack protector or compiler
+   helper escaped into a supposedly leaf template.
+4. Generate immutable Rust artifact tables with entry bounds, bytes, data, typed
+   relocations and ABI/effect metadata. Artifact mismatch fails regeneration or
+   disables optional native admission explicitly; never load stale compatible-
+   looking bytes. Ordinary execution remains available without runtime LLVM.
+5. At runtime, bound layout first, resolve cross-stencil branches/data/helper
+   addresses, check overflow and relocation instruction masks, then publish once.
+   Handle ARM64 paired/page-relative relocations and branch reach through a small
+   supported allowlist; bounded veneers/literal indirection or safe rejection
+   handle out-of-range targets. Never silently truncate a displacement.
+
+Use a Rust-declared `extern "C"` entry/exit trampoline and a separate documented
+internal continuation ABI. `extern "C"` and `repr(C)` are ABI/layout contracts,
+not C source or a Clang dependency; retain them where required for safety.
+All connected templates must agree on registers, stack layout and transfer rules.
+Generate explicit branches/jumps for internal continuations and verify stack
+balance, preserved registers and bounded backedges on each supported target.
+Never invoke a custom-convention interior through a Rust `extern "C"` pointer.
+
+Rust `--emit=obj` is suitable for whole-function leaf artifacts with an explicit
+FFI contract and validated dependencies. It does not make arbitrary Rust functions
+concatenable. Never cut off compiler prologues/epilogues by byte heuristics or
+assume Rust's default ABI is stable. Helpers use explicit C-compatible layouts,
+status returns and canonical roots; JS throws are values/completions, not native
+unwinding. Rust panics must not unwind through generated frames: contain them at
+an appropriate Rust boundary or use an explicit fatal policy, without converting
+a post-effect panic into a retryable JS miss.
+
+First prove extraction, relocation, ABI transfer and actual execution with a
+constant, a two-stencil arithmetic chain and a bounded native backedge. Then
+migrate existing templates in vertical slices; preserve passing native coverage
+throughout. Full infra requires this real generation path, not only a future
+generator interface around manually maintained byte arrays. Replace any newly
+introduced stencil-specific C templates, Clang commands/dependencies, flags and
+documentation with this pipeline; preserve unrelated platform C ABI integration.
+
+Implementation acceptance for the Rust extractor: parse object bytes with a
+Rust object-format reader, not `nm`/`objdump` text or a flattened `.text` dump.
+Use section-relative symbol identity and validated explicit bounds; where native
+symbol sizes are absent, use declared end labels or isolated validated sections,
+never the next unrelated symbol. Resolve local relocations too: no undefined
+symbols does not mean position-independent or relocation-free code. Declared
+external patch holes are legal, while undeclared references are rejected.
+Select recipes through typed catalog entries, not a second operation-name-to-
+expression match table. Each artifact owns one byte slice referenced by derived
+views. Generation tests require nonempty expected coverage and actual runtime
+selection of the generated artifact, not silent fallback to older byte tables.
+Physical effect verification must reject unrecognized instructions or use a
+validated decoder for the admitted subset; byte-pattern presence and partial
+clobber scans alone are not safety proofs. Labels/relocations distinguish internal
+continuations from helper calls and data from executable instructions.
 
 ## 3. Semantic coverage and execution classes
 
@@ -100,6 +297,42 @@ classified as cold. Do not add IC machinery parallel to existing quickening.
   its element conversion, bounds, detachment/resizing and buffer semantics.
 - Guard facts may be hoisted only across effects proven not to invalidate them.
   Preserve computed-key evaluation, coercion order and optional-chain short circuit.
+
+### Performance-sensitive patterns and LLVM contracts
+
+LLVM optimizes ordinary Rust template bodies at build time, not across fragments
+patched together at runtime. Assembly interiors are opaque to those optimizations.
+Use a bounded set of fused physical recipes when cross-operation optimization
+is justified; retain general fragment composition and the same semantic verifier.
+Do not promise full LLVM optimization from runtime concatenation.
+
+Test reusable patterns within the supported core: loop-carried arithmetic and
+ordered reductions; dense indexed updates with aliasing; repeated own/prototype
+property access across mutation; alternating numeric/tagged facts; nullish and
+truthiness control flow; local/captured live state across calls and exceptions.
+Each test pairs stable fast facts with a fact-breaking case and verifies exact
+ordinary behavior. Unsupported call/capture/exotic interiors use existing B
+boundaries, not newly mandated native families.
+
+Only export compiler assumptions established by Proven facts or dominating guards
+whose validity survives intervening effects. Never manufacture `noalias` through
+overlapping Rust mutable references, or keep references/raw buffer addresses alive
+across invalidating helper calls. Raw pointers still require valid provenance,
+alignment, lifetime and bounds; guard before creating a reference or accessing it.
+Use checked arithmetic for Number specializations and explicit wrapping/masked
+operations for JS bitwise behavior. Rust float-to-integer casts alone are not JS
+ToInt32. No unchecked assumptions, invalid enum/bool values or speculative loads
+may turn JS guard failure into Rust/LLVM undefined behavior.
+
+Preserve signed zero, NaN behavior and evaluation order: no fast-math, reassociated
+floating reductions or implicit fused multiply-add that changes JS results.
+SIMD and CPU-specific variants are optional and require proven dependence/alias
+safety, correct tails/bounds and target-feature admission. Generic artifacts stay
+on the declared baseline; unsupported feature variants reject before entry.
+Record effective compiler flags/features and inspect representative optimized IR
+and object code for assumptions, spills, calls and transfers. Inspection supports
+tests; it is not proof of JS semantics or performance. Do not add a runtime LLVM
+optimizer or an unlimited variant cross-product to satisfy these requirements.
 
 ## 5. Region verification, native composition and runtime integration
 
@@ -182,7 +415,50 @@ Required verification:
 10. Existing runtime/host regressions with nonzero relevant test counts; do not
     present cross-compilation or modeled callbacks as executed native coverage.
 
+### Unit tests for infrastructure, core bodies and efficiency patterns
+
+Unit coverage is mandatory, alongside actual native and normal-driver integration
+tests. Build-script helpers need an explicitly runnable Rust test target; merely
+placing `#[test]` in build-script sources does not establish executed coverage.
+Generate mechanical catalog/ABI/target case matrices with Rust macros, but derive
+semantic expectations independently from canonical ordinary execution and explicit
+edge cases. Do not compare two outputs generated from the same mistaken metadata.
+
+- Infrastructure: object bounds/symbol identity, local and external relocations,
+  exact signed limits/alignment/instruction masks, transactional patch failure,
+  wrong ABI, publication failure, stale entry rejection, reentrant retirement,
+  roots, exact exits, interruption and no replay after committed effects.
+- Core bodies: each required N/G family has executable input/output and guard-miss
+  tests, including numeric extremes, aliases/live-outs, binding restrictions,
+  property/prototype mutations and dense-array bounds/holes. Each B family has
+  exact tested ordinary-boundary behavior. Unsupported hosts report skips, not
+  successful native execution; supported native runs require nonzero coverage.
+- Efficiency: after admission/warmup, stable hits perform no rendering/repatching
+  or executable allocation; leaf dispatch introduces no unnecessary allocation;
+  composed interiors have no per-operation/per-iteration Rust bridge; native loop
+  initialization runs once. Test these through scoped actual-event witnesses.
+- Boundedness: equivalent valid specialization keys reuse code; distinct ABI,
+  layout or invalidation facts cannot alias. Churn/retry/caches/code stay within
+  policy caps; retired-live allocations remain charged until leases release;
+  eviction/disposal restore the documented baseline. Cold/Unknown paths avoid
+  speculative rendering and unnecessary per-site executable ownership.
+
+Use deterministic event counts, bounded byte accounting and state transitions,
+not wall-clock/RSS/Bun thresholds in unit tests. Derive bounds from declared
+policy and workloads; do not freeze incidental instruction sequences or forbid
+legitimate JS allocation/safepoint costs. Isolate instrumentation from parallel
+tests and keep it out of production hot paths. Actual timing/RSS and comparative
+efficiency remain micros evidence after the full infrastructure gate passes.
+
 ## 9. Completion gate and handoff
+
+Deliver in this finite order: (1) verified typed publication/lease and unified
+installation state; (2) generated catalog and reusable region composition;
+(3) every N/G core family in section 3 with actual emitted bodies, plus every B boundary;
+(4) complete normal-driver integration and cross-layer adversarial verification;
+(5) micros. Wire and test each vertical slice during steps 1-3, but do not start
+benchmark-led tuning early. Infrastructure with catalog-only placeholder stencils
+does not pass, and native bodies without normal-runtime reachability do not pass.
 
 Maintain a matrix with one row per section and coverage family: code locations,
 normal-runtime wiring, executed tests/results, supported subset and safe exclusions.
@@ -207,6 +483,9 @@ follow merely from infrastructure tests.
 - [Copy-and-patch compilation](https://arxiv.org/abs/2011.13127): prebuilt binary templates with patched holes.
 - [Deegen](https://arxiv.org/abs/2411.11469): specialization, quickening, ICs and generated VM execution mechanisms.
 - [CPython PEP 744](https://peps.python.org/pep-0744/): build-time stencil generation and a small runtime compiler.
+- [CPython JIT internals](https://github.com/python/cpython/blob/main/InternalDocs/jit.md): compile templates to objects and extract stencil artifacts.
+- [Rust assembly](https://doc.rust-lang.org/reference/inline-assembly.html): labeled target assembly and explicit function-boundary contracts.
+- [rustc code generation](https://doc.rust-lang.org/rustc/codegen-options/index.html) and [Rust function ABIs](https://doc.rust-lang.org/reference/items/functions.html): compiler controls and explicit ABI boundaries.
 - [ECMAScript ordinary/exotic object behavior](https://tc39.es/ecma262/2024/multipage/ordinary-and-exotic-objects-behaviours.html): observable get/set/receiver semantics.
 
 These inform the design; they establish neither Quench performance nor a required

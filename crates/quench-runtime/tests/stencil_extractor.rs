@@ -41,6 +41,9 @@ mod harness {
     }
 
     mod implementation {
-        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/build_stencil_artifacts.rs"));
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/build_stencil_artifacts.rs"
+        ));
     }
 }
