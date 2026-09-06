@@ -4717,6 +4717,7 @@ pub(crate) struct NativeRegionPlan {
     site: crate::quickening::QuickeningSite<4>,
     key: crate::stencil_fact::RegionKey,
     operations: &'static [crate::ir::Opcode],
+    admitted_control: Option<crate::stencil_cfg::RegionControlPlan>,
     /// Diagnostic witness set only by a direct machine-code entry. A region
     /// selected through the canonical Rust bridge is deliberately not counted
     /// as native execution.
@@ -4792,6 +4793,22 @@ fn validate_region_window(
                 ));
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_admitted_region_control(
+    record: &crate::stencil_select::RegionRecord,
+    pc: usize,
+    control: &crate::stencil_cfg::RegionControlPlan,
+) -> Result<(), NativeDispatchError> {
+    let expected_end = pc
+        .checked_add(record.operations.len())
+        .ok_or_else(|| NativeDispatchError::Physical("native region pc overflow".into()))?;
+    if control.start() != pc || control.end() != expected_end {
+        return Err(NativeDispatchError::Physical(
+            "native region control contract changed before entry".into(),
+        ));
     }
     Ok(())
 }
@@ -4911,20 +4928,11 @@ fn raw_region_declares_allocation(contract: crate::stencil_select::RegionContrac
 }
 
 impl NativeRegionPlan {
-    fn new(
-        key: crate::stencil_fact::RegionKey,
-        policy: crate::stencil_policy::ExecutionPolicy,
-    ) -> Option<Self> {
-        let arena = std::rc::Rc::new(std::cell::RefCell::new(
-            crate::stencil_arena::SharedStencilSlab::new(4096).ok()?,
-        ));
-        Self::new_with_arena(key, policy, arena)
-    }
-
     fn new_with_arena(
         key: crate::stencil_fact::RegionKey,
         policy: crate::stencil_policy::ExecutionPolicy,
         arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
+        control: crate::stencil_cfg::RegionControlPlan,
     ) -> Option<Self> {
         let composed = crate::stencil_select::select_region(key).is_some_and(|record| {
             matches!(
@@ -4937,6 +4945,7 @@ impl NativeRegionPlan {
             key,
             policy.fused_regions || (policy.composed_regions && composed),
             arena,
+            Some(control),
         )
     }
 
@@ -4944,6 +4953,7 @@ impl NativeRegionPlan {
         key: crate::stencil_fact::RegionKey,
         enabled: bool,
         arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
+        admitted_control: Option<crate::stencil_cfg::RegionControlPlan>,
     ) -> Option<Self> {
         if !enabled {
             return None;
@@ -4966,6 +4976,7 @@ impl NativeRegionPlan {
             site: crate::quickening::QuickeningSite::new(record.operations[0]),
             key,
             operations: record.operations,
+            admitted_control,
             last_native_execution: false,
             #[cfg(test)]
             last_native_view: None,
@@ -4991,6 +5002,13 @@ impl NativeRegionPlan {
     }
 
     #[cfg(test)]
+    pub(crate) fn admitted_control_for_test(
+        &self,
+    ) -> Option<crate::stencil_cfg::RegionControlPlan> {
+        self.admitted_control
+    }
+
+    #[cfg(test)]
     pub(crate) fn physical_entry_count_for_test(&self) -> u64 {
         self.physical_entry_count
     }
@@ -5000,7 +5018,7 @@ impl NativeRegionPlan {
         let arena = std::rc::Rc::new(std::cell::RefCell::new(
             crate::stencil_arena::SharedStencilSlab::new(4096).ok()?,
         ));
-        Self::new_inner(key, true, arena)
+        Self::new_inner(key, true, arena, None)
     }
 
     pub(crate) fn execute(
@@ -5037,6 +5055,9 @@ impl NativeRegionPlan {
             return Err(NativeDispatchError::Physical(
                 "native fused region operation contract changed".into(),
             ));
+        }
+        if let Some(control) = self.admitted_control {
+            validate_admitted_region_control(record, pc, &control)?;
         }
         validate_region_window(code, pc, record, view.stencil)?;
         if !record.executable
@@ -5420,19 +5441,30 @@ impl Eq for BaselineEntry {}
 /// shape checks out of the hot driver: execution still revalidates the live
 /// code window, but malformed operands or successors are rejected before a
 /// plan can render or publish executable bytes.
+fn region_admission_control(
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    start: usize,
+    record: &crate::stencil_select::RegionRecord,
+) -> Option<crate::stencil_cfg::RegionControlPlan> {
+    let contract = record.contract();
+    if !contract.executable || !contract.has_single_entry() || !contract.legal_external_entry(0) {
+        return None;
+    }
+    let control = cfg.region_plan(entries, start, contract.operations)?;
+    (record.bindings_match_entries(entries, start)
+        && region_outputs_cover_exit(entries, cfg, start, record))
+    .then_some(control)
+}
+
+#[cfg(test)]
 fn region_admission_matches(
     entries: &[BaselineEntry],
     cfg: &ControlFlowFacts,
     start: usize,
     record: &crate::stencil_select::RegionRecord,
 ) -> bool {
-    let contract = record.contract();
-    if !contract.executable || !contract.has_single_entry() || !contract.legal_external_entry(0) {
-        return false;
-    }
-    cfg.region_plan(entries, start, contract.operations).is_some()
-        && record.bindings_match_entries(entries, start)
-        && region_outputs_cover_exit(entries, cfg, start, record)
+    region_admission_control(entries, cfg, start, record).is_some()
 }
 
 fn region_outputs_cover_exit(
@@ -5796,15 +5828,15 @@ fn region_admission(
     policy: crate::stencil_policy::ExecutionPolicy,
     arena: &SharedStencilPool,
 ) -> Option<NativeAdmission> {
-    let record = crate::stencil_select::region_records()
+    let (record, control) = crate::stencil_select::region_records()
         .iter()
-        .filter(|record| {
-            record.executable
-                && record.abi.accepts_region_context()
-                && region_admission_matches(entries, cfg, pc, record)
+        .filter_map(|record| {
+            (record.executable && record.abi.accepts_region_context()).then_some(())?;
+            let control = region_admission_control(entries, cfg, pc, record)?;
+            Some((record, control))
         })
-        .max_by_key(|record| crate::stencil_select::admission_rank(record))?;
-    NativeRegionPlan::new_with_arena(record.key, policy, Rc::clone(arena))
+        .max_by_key(|(record, _)| crate::stencil_select::admission_rank(record))?;
+    NativeRegionPlan::new_with_arena(record.key, policy, Rc::clone(arena), control)
         .map(|plan| NativeAdmission::Region(Rc::new(RefCell::new(plan))))
 }
 
