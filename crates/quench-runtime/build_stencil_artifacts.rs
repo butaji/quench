@@ -277,9 +277,10 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
 fn rust_source(name: &str, recipe: super::RustLeafRecipe) -> String {
     assert_valid_symbol_name(name);
     format!(
-        "#![no_std]\n#[no_mangle]\n#[inline(never)]\npub extern \"C\" fn q_{}({}) -> f64 {{ {} }}\n",
+        "#![no_std]\n#[no_mangle]\n#[inline(never)]\npub extern \"C\" fn q_{}({}) -> {} {{ {} }}\n",
         name,
         recipe.parameters(),
+        recipe.result(),
         recipe.expression()
     )
 }
