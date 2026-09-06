@@ -297,6 +297,7 @@ pub struct PhysicalRelocation {
     pub offset: u16,
     pub kind: crate::stencil_fact::HoleKind,
     pub target: &'static str,
+    pub addend: i64,
 }
 
 /// Disposable, fixed-capacity memo table.  Replacement is round-robin and is
@@ -542,6 +543,7 @@ fn generated_physical_view(
 fn relocations_match(stencil: Stencil, relocations: &[PhysicalRelocation]) -> bool {
     relocations.iter().all(|relocation| {
         !relocation.target.is_empty()
+            && relocation.addend == 0
             && stencil
                 .holes
                 .iter()
@@ -1283,6 +1285,10 @@ mod tests {
                     hole.offset == relocation.offset && hole.kind == relocation.kind
                 }));
                 assert!(!relocation.target.is_empty());
+                assert_eq!(
+                    relocation.addend, 0,
+                    "only zero-addend patches are supported"
+                );
             }
         }
         if !BUILD_STENCIL_ARTIFACTS.is_empty() {
@@ -1301,6 +1307,26 @@ mod tests {
                 "normal selection must use the generated chain artifact"
             );
         }
+    }
+
+    #[test]
+    fn physical_relocations_reject_unsupported_addends() {
+        static BYTES: [u8; 4] = 0x1400_0000u32.to_le_bytes();
+        static HOLES: [crate::stencil_fact::Hole; 1] = [crate::stencil_fact::Hole {
+            offset: 0,
+            kind: crate::stencil_fact::HoleKind::Branch26,
+        }];
+        let stencil = Stencil {
+            bytes: &BYTES,
+            holes: &HOLES,
+        };
+        let relocation = PhysicalRelocation {
+            offset: 0,
+            kind: crate::stencil_fact::HoleKind::Branch26,
+            target: "q_tail",
+            addend: 4,
+        };
+        assert!(!relocations_match(stencil, &[relocation]));
     }
 
     #[test]
@@ -1422,6 +1448,7 @@ mod tests {
                 offset: 4,
                 kind: crate::stencil_fact::HoleKind::Branch26,
                 target: "q_missing",
+                addend: 0,
             }],
             stencil: Stencil {
                 bytes: BYTES,
