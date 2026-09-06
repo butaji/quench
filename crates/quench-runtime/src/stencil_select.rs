@@ -5,9 +5,10 @@
 //! miss. Instruction selection and CFG reasoning do not belong here.
 
 use crate::facts::OperationEffect;
+pub use crate::stencil_cache::{
+    RenderedRegion, RenderedRegionCache, MAX_RENDERED_REGIONS,
+};
 use crate::stencil_fact::{FactState, RegionId, RegionKey, Stencil};
-
-pub const MAX_RENDERED_REGIONS: usize = 16;
 
 /// Physical calling convention declared by a stencil row.  Selection uses
 /// the same generated declaration for opcode shape and ABI, so a scalar leaf
@@ -210,17 +211,6 @@ impl RegionRecord {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RenderedRegion {
-    pub key: RegionKey,
-    pub signature: u64,
-    pub address: usize,
-    /// Identity of the executable slab that owns `address`.  A raw address
-    /// is not sufficient: an OS may reuse a mapping after an arena is
-    /// dropped, so cache entries must never become callable in a new owner.
-    pub owner: u64,
-}
-
 /// One verified physical selection.  Canonical semantic facts stay in the
 /// catalog record; the view only couples those facts to the exact bytes that
 /// will be rendered, preventing generated/legacy metadata from being mixed.
@@ -298,123 +288,6 @@ pub struct PhysicalRelocation {
     pub kind: crate::stencil_fact::HoleKind,
     pub target: &'static str,
     pub addend: i64,
-}
-
-/// Disposable, fixed-capacity memo table.  Replacement is round-robin and is
-/// independent of workload identity, source paths, and hotness thresholds.
-#[derive(Clone, Debug)]
-pub struct RenderedRegionCache {
-    entries: Vec<RenderedRegion>,
-    next: usize,
-}
-
-impl Default for RenderedRegionCache {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl RenderedRegionCache {
-    pub const fn new() -> Self {
-        Self {
-            entries: Vec::new(),
-            next: 0,
-        }
-    }
-
-    pub fn get(&self, key: RegionKey, signature: u64) -> Option<usize> {
-        self.entries
-            .iter()
-            .find(|entry| entry.key == key && entry.signature == signature)
-            .map(|entry| entry.address)
-    }
-
-    pub fn get_owned(&self, key: RegionKey, signature: u64, owner: u64) -> Option<usize> {
-        self.entries
-            .iter()
-            .find(|entry| entry.key == key && entry.signature == signature && entry.owner == owner)
-            .map(|entry| entry.address)
-    }
-
-    pub fn insert(&mut self, key: RegionKey, signature: u64, address: usize) -> usize {
-        self.insert_owned(key, signature, address, 0)
-    }
-
-    pub fn insert_owned(
-        &mut self,
-        key: RegionKey,
-        signature: u64,
-        address: usize,
-        owner: u64,
-    ) -> usize {
-        if let Some(entry) = self.entries.iter_mut().find(|entry| {
-            entry.key == key && entry.signature == signature && entry.owner == owner
-        })
-        {
-            entry.address = address;
-            return address;
-        }
-        let entry = RenderedRegion {
-            key,
-            signature,
-            address,
-            owner,
-        };
-        if self.entries.len() < MAX_RENDERED_REGIONS {
-            self.entries.push(entry);
-        } else {
-            self.entries[self.next] = entry;
-            self.next = (self.next + 1) % MAX_RENDERED_REGIONS;
-        }
-        address
-    }
-
-    /// Remove one unpublished/invalidated render.  Protection is an explicit
-    /// lifecycle edge, so a writable address must not remain visible as a
-    /// reusable executable entry when that edge fails.
-    pub fn remove(&mut self, key: RegionKey, signature: u64, address: usize) -> bool {
-        let Some(index) = self.entries.iter().position(|entry| {
-            entry.key == key && entry.signature == signature && entry.address == address
-        }) else {
-            return false;
-        };
-        self.entries.remove(index);
-        true
-    }
-
-    /// Remove every render owned by a retired executable slab.  Cache entries
-    /// are derived lookup data; dropping them at the same ownership boundary
-    /// keeps stale generations from consuming the bounded table or being
-    /// mistaken for a rebuild hit.
-    pub(crate) fn remove_owner(&mut self, owner: u64) -> usize {
-        let before = self.entries.len();
-        self.entries.retain(|entry| entry.owner != owner);
-        before - self.entries.len()
-    }
-
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-    pub const fn capacity(&self) -> usize {
-        MAX_RENDERED_REGIONS
-    }
-
-    pub fn clear(&mut self) {
-        self.entries = Vec::new();
-        self.next = 0;
-    }
-
-    #[cfg(test)]
-    pub(crate) fn allocated_entries(&self) -> usize {
-        self.entries.capacity()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn allocated_bytes(&self) -> usize {
-        self.entries
-            .capacity()
-            .saturating_mul(std::mem::size_of::<RenderedRegion>())
-    }
 }
 
 include!(concat!(env!("OUT_DIR"), "/stencil_catalog.rs"));
