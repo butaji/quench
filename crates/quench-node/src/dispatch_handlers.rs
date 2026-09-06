@@ -10464,7 +10464,9 @@ fn fork_child_start(
     // Forked workers reuse the parent VM realm, but their source is reduced
     // independently from the runner bootstrap. Ensure the canonical fetch
     // global is present before common modules inspect the global surface.
-    let support_surface = crate::polyfills::bootstrap::lookup("support").unwrap_or("");
+    let support_surface = crate::polyfills::bootstrap::lookup("support")
+        .map(|surface| format!("{{\n{surface}\n}}"))
+        .unwrap_or_default();
     let fetch_surface = crate::polyfills::bootstrap::lookup("fetch").unwrap_or("");
     // The ESM reducer lowers `import.meta` to the canonical Rust-provided
     // global.  A forked entry is reduced outside the top-level fixture
