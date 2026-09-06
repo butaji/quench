@@ -2506,12 +2506,15 @@ fn native_property_uses_rendered_address_without_remapping() {
         native_entry_count: 0,
     };
     let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::GetN);
-    let slot = crate::register_file::SlotWord::new(super::Value::Number(42.5));
-    assert_eq!(plan.execute(&slot, &site), Ok(crate::tagged_value::TaggedValue::number(42.5).bits()));
+    let object = crate::value::ObjectData::new(vec![("value".into(), super::Value::Number(42.5))]);
+    let access = object
+        .guarded_plain_slot(object.semantic_layout_id(), 0, "value")
+        .expect("plain guarded slot");
+    assert_eq!(plan.execute(access, &site), Ok(crate::tagged_value::TaggedValue::number(42.5).bits()));
     assert_eq!(plan.native_entry_count, 1);
     let used = plan.arena.as_ref().expect("rendered arena").used();
     assert!(used > 0);
-    assert_eq!(plan.execute(&slot, &site), Ok(crate::tagged_value::TaggedValue::number(42.5).bits()));
+    assert_eq!(plan.execute(access, &site), Ok(crate::tagged_value::TaggedValue::number(42.5).bits()));
     assert_eq!(plan.native_entry_count, 2);
     assert_eq!(plan.arena.as_ref().expect("cached arena").used(), used);
 }
@@ -2533,15 +2536,55 @@ fn native_property_shared_entry_reuses_live_owner_and_recovers_after_eviction() 
     let mut plan = super::NativePropertyPlan::new_with_arena(instruction, policy, shared.clone())
         .expect("shared property plan");
     let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::GetN);
-    let slot = crate::register_file::SlotWord::new(super::Value::Number(42.5));
-    assert!(plan.execute(&slot, &site).is_ok());
+    let object = crate::value::ObjectData::new(vec![("value".into(), super::Value::Number(42.5))]);
+    let access = object
+        .guarded_plain_slot(object.semantic_layout_id(), 0, "value")
+        .expect("plain guarded slot");
+    assert!(plan.execute(access, &site).is_ok());
     let used = shared.borrow().used();
     assert!(matches!(plan.installed, super::InstalledPropertyEntry::Shared(_)));
-    assert!(plan.execute(&slot, &site).is_ok());
+    assert!(plan.execute(access, &site).is_ok());
     assert_eq!(shared.borrow().used(), used);
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
-    assert!(plan.execute(&slot, &site).is_ok());
+    assert!(plan.execute(access, &site).is_ok());
     assert!(matches!(plan.installed, super::InstalledPropertyEntry::Shared(_)), "eviction must rebuild the entry");
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn native_property_rejects_stale_layout_before_loading_slot() {
+    let mut plan = super::NativePropertyPlan {
+        arena: None,
+        shared_arena: None,
+        physical: super::PhysicalState::new(),
+        opcode: crate::ir::Opcode::GetN,
+        installed: super::InstalledPropertyEntry::Unpublished,
+        native_entry_count: 0,
+    };
+    let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::GetN);
+    let mut object = crate::value::ObjectData::new(vec![
+        ("value".into(), crate::value::Value::Number(42.5)),
+    ]);
+    let stale = object
+        .guarded_plain_slot(object.semantic_layout_id(), 0, "value")
+        .expect("plain guarded slot");
+    object.set_property_in_place("other", crate::value::Value::Number(1.0));
+    assert!(plan.execute(stale, &site).is_err());
+    assert_eq!(object.hot_properties().position_rev("value"), Some(0));
+}
+
+#[test]
+fn guarded_property_slot_rejects_descriptor_metadata() {
+    let object = crate::value::ObjectData::new(vec![
+        ("value".into(), crate::value::Value::Number(42.5)),
+        (
+            crate::builtins::descriptor_key("value"),
+            crate::value::Value::Undefined,
+        ),
+    ]);
+    assert!(object
+        .guarded_plain_slot(object.semantic_layout_id(), 0, "value")
+        .is_none());
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
