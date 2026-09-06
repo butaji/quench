@@ -573,8 +573,11 @@ impl CodeArena {
                     *dst,
                     constants.id(value).expect("constant was collected"),
                 ),
-                Op::CallMethod { .. } => lower_registered_call(op, &mut meta, &mut operand_windows)
-                    .unwrap_or_else(|| self.push_cold(op)),
+                Op::CallMethod { .. } | Op::Call { .. } => {
+                    lower_operand_window_call(op, &mut meta, &mut operand_windows)
+                        .or_else(|| crate::ir::lower_compact(op))
+                        .unwrap_or_else(|| self.push_cold(op))
+                }
                 _ => crate::ir::lower_compact(op).unwrap_or_else(|| {
                     self.push_cold(op)
                 }),
@@ -708,8 +711,11 @@ impl CodeArena {
                     *dst,
                     constants.id(value).expect("constant was collected"),
                 ),
-                Op::CallMethod { .. } => lower_registered_call(op, &mut meta, operand_windows)
-                    .unwrap_or_else(|| self.push_cold(op)),
+                Op::CallMethod { .. } | Op::Call { .. } => {
+                    lower_operand_window_call(op, &mut meta, operand_windows)
+                        .or_else(|| crate::ir::lower_compact(op))
+                        .unwrap_or_else(|| self.push_cold(op))
+                }
                 _ => crate::ir::lower_compact(op).unwrap_or_else(|| {
                     self.push_cold(op)
                 }),
@@ -1236,28 +1242,72 @@ fn lower_named_call(ops: &[Op]) -> Option<crate::ir::Instruction> {
     .then(|| crate::ir::Instruction::call_named(*dst, *object, args.first().copied()))
 }
 
-fn lower_registered_call(
+fn lower_operand_window_call(
     op: &Op,
     metadata: &mut InstructionMeta,
     windows: &mut Vec<Rc<[u16]>>,
 ) -> Option<crate::ir::Instruction> {
-    let Op::CallMethod {
-        dst,
-        object,
-        callee: Some(callee),
-        args,
-        spreads,
-        ..
-    } = op
-    else {
-        return None;
-    };
+    let (instruction, args, spreads) = call_window_parts(op)?;
     let argc = u8::try_from(args.len()).ok()?;
     (!args.is_empty() && spreads.iter().all(|spread| !spread)).then(|| {
         metadata.operand_window = windows.len() as u32;
         windows.push(Rc::from(args.as_slice()));
-        crate::ir::Instruction::call_registered_window(*dst, *object, *callee, argc)
+        instruction.build(argc)
     })
+}
+
+enum CallWindowKind {
+    Function { dst: u16, callee: u16 },
+    Method { dst: u16, object: u16, callee: u16 },
+}
+
+impl CallWindowKind {
+    fn build(self, argc: u8) -> crate::ir::Instruction {
+        match self {
+            Self::Function { dst, callee } => {
+                crate::ir::Instruction::call_registered_arguments(dst, callee, argc)
+            }
+            Self::Method { dst, object, callee } => {
+                crate::ir::Instruction::call_registered_window(dst, object, callee, argc)
+            }
+        }
+    }
+}
+
+fn call_window_parts(op: &Op) -> Option<(CallWindowKind, &Vec<u16>, &Vec<bool>)> {
+    match op {
+        Op::CallMethod {
+            dst,
+            object,
+            callee: Some(callee),
+            args,
+            spreads,
+            ..
+        } => Some((
+            CallWindowKind::Method {
+                dst: *dst,
+                object: *object,
+                callee: *callee,
+            },
+            args,
+            spreads,
+        )),
+        Op::Call {
+            dst,
+            callee,
+            receiver: None,
+            args,
+            spreads,
+        } if args.len() > 1 => Some((
+            CallWindowKind::Function {
+                dst: *dst,
+                callee: *callee,
+            },
+            args,
+            spreads,
+        )),
+        _ => None,
+    }
 }
 
 fn lower_local_update(ops: &[Op]) -> Option<crate::ir::Instruction> {

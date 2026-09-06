@@ -951,6 +951,15 @@ impl Instruction {
             c: argument,
         }
     }
+    pub const fn call_registered_arguments(dst: Register, callee: Register, argc: u8) -> Self {
+        Self {
+            opcode: Opcode::Call,
+            flags: argc,
+            a: dst,
+            b: callee,
+            c: 0,
+        }
+    }
     pub const fn call_named(dst: Register, object: Register, argument: Option<Register>) -> Self {
         let (flags, argument) = match argument {
             Some(argument) => (1, argument),
