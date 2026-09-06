@@ -2849,8 +2849,7 @@ enum InstalledNullishEntry {
 
 pub(crate) struct NativeNullishPlan {
     key: crate::stencil_fact::RegionKey,
-    arena: Option<crate::stencil_arena::StencilArena>,
-    shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
+    storage: PhysicalStorage,
     physical: PhysicalState,
     site: crate::quickening::QuickeningSite<4>,
     installed: InstalledNullishEntry,
@@ -2870,7 +2869,7 @@ impl NativeNullishPlan {
         shared: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
     ) -> Option<Self> {
         let mut plan = Self::new(instruction, policy)?;
-        plan.shared_arena = Some(shared);
+        plan.storage = PhysicalStorage::Shared(shared);
         Some(plan)
     }
 
@@ -2889,8 +2888,7 @@ impl NativeNullishPlan {
             }))
         .then_some(Self {
             key,
-            arena: None,
-            shared_arena: None,
+            storage: PhysicalStorage::Local(None),
             physical: PhysicalState::new(),
             site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Unary),
             installed: InstalledNullishEntry::Unpublished,
@@ -2906,7 +2904,7 @@ impl NativeNullishPlan {
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn execute(&mut self, bits: u64) -> Result<bool, crate::stencil_arena::ArenaError> {
-        if let Some(shared) = self.shared_arena.clone() {
+        if let Some(shared) = self.storage.shared() {
             if let InstalledNullishEntry::Shared(owned) = self.installed {
                 if let Ok(result) = invoke_shared_entry!(shared, owned, |entry| entry(bits)) {
                     #[cfg(test)]
@@ -2946,7 +2944,7 @@ impl NativeNullishPlan {
             return result;
         }
         if let InstalledNullishEntry::Local(address) = self.installed {
-            if let Some(arena) = self.arena.as_ref() {
+            if let Some(arena) = self.storage.local() {
                 if let Ok(entry) = arena.word_bool_entry(address) {
                     #[cfg(test)]
                     {
@@ -2957,15 +2955,9 @@ impl NativeNullishPlan {
             }
             self.installed = InstalledNullishEntry::Unpublished;
         }
-        if self.arena.is_none() {
-            self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
-        }
         let values = crate::stencil_fact::PatchValues::from_site(&self.site)
             .with_constant_bits(0x7ff8_4000_0000_0003);
-        let arena = self
-            .arena
-            .as_mut()
-            .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
+        let arena = self.storage.local_mut()?;
         let view = crate::stencil_select::select_physical_for_abi(
             self.key,
             crate::stencil_select::RegionAbi::ScalarWordBool,
