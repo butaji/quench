@@ -324,7 +324,7 @@ impl PromiseData {
         promise
     }
 
-    pub fn new(state: PromiseState) -> Self {
+    fn new(state: PromiseState) -> Self {
         let already_resolved = !matches!(state, PromiseState::Pending);
         let result = match &state {
             PromiseState::Pending => None,
