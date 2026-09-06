@@ -48,6 +48,43 @@ mod tests {
         }
     }
 
+    fn macho_branch_object(addend: i64) -> Vec<u8> {
+        use object::write::{Object, Relocation, StandardSection, Symbol, SymbolSection};
+        let mut output = Object::new(
+            BinaryFormat::MachO,
+            object::Architecture::Aarch64,
+            object::Endianness::Little,
+        );
+        let text = output.section_id(StandardSection::Text);
+        output.append_section_data(text, &0x9400_0000_u32.to_le_bytes(), 4);
+        let target = output.add_symbol(Symbol {
+            name: b"q_tail".to_vec(),
+            value: 0,
+            size: 0,
+            kind: object::SymbolKind::Text,
+            scope: object::SymbolScope::Linkage,
+            weak: false,
+            section: SymbolSection::Undefined,
+            flags: object::SymbolFlags::None,
+        });
+        output
+            .add_relocation(
+                text,
+                Relocation {
+                    offset: 0,
+                    symbol: target,
+                    addend,
+                    flags: RelocationFlags::Generic {
+                        kind: RelocationKind::PltRelative,
+                        encoding: RelocationEncoding::AArch64Call,
+                        size: 26,
+                    },
+                },
+            )
+            .expect("write branch relocation");
+        output.write().expect("write Mach-O fixture")
+    }
+
     #[test]
     fn relocation_transaction_accepts_reordered_two_hole_input() {
         let expected = [expected(4, "first"), expected(12, "second")];
@@ -115,6 +152,29 @@ mod tests {
         assert_eq!(
             match_relocation_observations(&overlap, &[]),
             Err(RelocationContractError::Overlap)
+        );
+    }
+
+    #[test]
+    fn macho_adapter_preserves_paired_branch_addend() {
+        let bytes = macho_branch_object(4);
+        let file = object::File::parse(&*bytes).expect("parse Mach-O fixture");
+        let object::File::MachO64(file) = file else {
+            panic!("fixture must be Mach-O64")
+        };
+        let observed_records = observe_macho_relocations(&file);
+        assert_eq!(
+            observed_records,
+            [ObservedRelocation {
+                addend: 4,
+                ..observed(0, "q_tail")
+            }]
+        );
+        let mut expected = expected(0, "q_tail");
+        expected.addend = 4;
+        assert_eq!(
+            match_relocation_observations(&[expected.clone()], &observed_records),
+            Ok(vec![expected])
         );
     }
 
