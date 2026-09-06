@@ -4,7 +4,7 @@
 //! in the canonical instructions and their ordinary fallback handlers.
 
 use crate::machine::NativeBinaryPlan;
-use crate::stencil_plan::{LocalBinarySelection, LocalNumericInputs};
+use crate::stencil_plan::{LocalBinarySelection, LocalNumericInputs, NumericSource};
 
 pub(crate) struct LocalNumericExecution {
     pub output: crate::ir::Register,
@@ -85,17 +85,36 @@ impl NativeLocalBinaryPlan {
 
     fn operands(&mut self, environment: &crate::environment::Environment) -> Option<(f64, f64)> {
         match self.selection.inputs {
-            LocalNumericInputs::Slots(slots) => Some((
-                self.read_number(environment, slots[0])?,
-                self.read_number(environment, slots[1])?,
-            )),
-            LocalNumericInputs::RepeatedSlot(slot) => {
-                let value = self.read_number(environment, slot)?;
-                Some((value, value))
-            }
+            LocalNumericInputs::Sources(sources) => self.read_sources(environment, sources),
             LocalNumericInputs::SlotConstant { slot, bits } => {
                 Some((self.read_number(environment, slot)?, f64::from_bits(bits)))
             }
+        }
+    }
+
+    fn read_sources(
+        &mut self,
+        environment: &crate::environment::Environment,
+        sources: [NumericSource; 2],
+    ) -> Option<(f64, f64)> {
+        if sources[0] == sources[1] {
+            let value = self.read_source(environment, sources[0])?;
+            return Some((value, value));
+        }
+        Some((
+            self.read_source(environment, sources[0])?,
+            self.read_source(environment, sources[1])?,
+        ))
+    }
+
+    fn read_source(
+        &mut self,
+        environment: &crate::environment::Environment,
+        source: NumericSource,
+    ) -> Option<f64> {
+        match source {
+            NumericSource::Local(slot) => self.read_number(environment, slot),
+            NumericSource::Constant(bits) => Some(f64::from_bits(bits)),
         }
     }
 
