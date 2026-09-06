@@ -72,7 +72,55 @@ pub(crate) fn validate_controlled_fixups(
             return Err(LayoutError::RelocationContract);
         }
     }
+    validate_edge_coverage(control, operations, placements, fixups)
+}
+
+fn validate_edge_coverage(
+    control: &crate::stencil_cfg::RegionControlPlan,
+    operations: &[crate::ir::Opcode],
+    placements: &[FragmentPlacement],
+    fixups: &[Fixup],
+) -> Result<(), LayoutError> {
+    for edge in control.edges() {
+        let offset = edge.from.saturating_sub(control.start());
+        let Some(opcode) = operations.get(offset) else {
+            return Err(LayoutError::RelocationContract);
+        };
+        if !matches!(
+            opcode.control_flow(),
+            crate::facts::ControlFlow::Branch | crate::facts::ControlFlow::Jump
+        ) {
+            continue;
+        }
+        let expected = control
+            .edges()
+            .iter()
+            .filter(|candidate| *candidate == edge)
+            .count();
+        let actual = fixups
+            .iter()
+            .filter(|fixup| fixup_edge(control, placements, **fixup) == Some(*edge))
+            .count();
+        if actual != expected {
+            return Err(LayoutError::RelocationContract);
+        }
+    }
     Ok(())
+}
+
+fn fixup_edge(
+    control: &crate::stencil_cfg::RegionControlPlan,
+    placements: &[FragmentPlacement],
+    fixup: Fixup,
+) -> Option<crate::stencil_cfg::RegionEdge> {
+    let RegionPoint::Operation(source) = placements.get(usize::from(fixup.fragment))?.point else {
+        return None;
+    };
+    let target = placements.iter().find(|item| item.label == fixup.target)?;
+    Some(crate::stencil_cfg::RegionEdge {
+        from: control.start().checked_add(usize::from(source))?,
+        to: point_pc(control, target.point).ok()?,
+    })
 }
 
 fn validate_placements(

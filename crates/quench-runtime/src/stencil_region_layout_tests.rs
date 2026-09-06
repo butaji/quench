@@ -138,7 +138,43 @@ mod tests {
                 &control,
                 &[Opcode::JumpIfFalse, Opcode::Return],
                 &placements,
-                &[fixup(1, ENTRY_LABEL)],
+                &[backedge],
+            ),
+            Err(LayoutError::RelocationContract)
+        );
+    }
+
+    #[test]
+    fn controlled_fixups_reject_duplicate_or_missing_edges() {
+        let instructions = [
+            crate::ir::Instruction::jump_if_false(0, 0),
+            crate::ir::Instruction::ret(0),
+        ];
+        let entries: Vec<_> = instructions.iter().copied().map(baseline_entry).collect();
+        let facts = crate::stencil_cfg::ControlFlowFacts::new(&entries, &[None]);
+        let control = facts.region_control(0, 1).expect("bounded branch exits");
+        let placements = [
+            FragmentPlacement {
+                label: ENTRY_LABEL,
+                point: RegionPoint::Operation(0),
+            },
+            FragmentPlacement {
+                label: FALLTHROUGH_LABEL,
+                point: RegionPoint::Exit(1),
+            },
+        ];
+        let backedge = fixup(0, ENTRY_LABEL);
+        let exit = fixup(0, FALLTHROUGH_LABEL);
+        assert_eq!(
+            validate_controlled_fixups(&control, &[Opcode::JumpIfFalse], &placements, &[backedge]),
+            Err(LayoutError::RelocationContract)
+        );
+        assert_eq!(
+            validate_controlled_fixups(
+                &control,
+                &[Opcode::JumpIfFalse],
+                &placements,
+                &[backedge, exit, exit],
             ),
             Err(LayoutError::RelocationContract)
         );
