@@ -179,11 +179,19 @@ pub(crate) struct LocalPropertySelection {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct LocalTruthinessSelection {
+pub(crate) struct LocalPredicateSelection {
     pub source_slot: u16,
+    pub live_source: Option<Register>,
+    pub predicate: LocalPredicate,
     pub false_pc: usize,
     pub true_pc: usize,
     pub discarded: DiscardedRegisters,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LocalPredicate {
+    Truthiness,
+    Nullish,
 }
 
 impl_local_store_selection!(LocalBinarySelection);
@@ -201,21 +209,35 @@ impl RankedSelection for LocalPropertySelection {
     }
 }
 
-pub(crate) fn select_local_truthiness(
+pub(crate) fn select_local_predicate(
     load: Instruction,
+    predicate: Option<Instruction>,
     branch: Instruction,
     live_after: &BTreeSet<Register>,
     control: crate::stencil_cfg::RegionControlPlan,
     discarded: DiscardedRegisters,
-) -> Option<LocalTruthinessSelection> {
+) -> Option<LocalPredicateSelection> {
     let (false_pc, true_pc) = control.terminal_conditional_exits()?;
+    let (kind, condition) = match predicate {
+        None => (LocalPredicate::Truthiness, load.a),
+        Some(unary)
+            if unary.opcode == Opcode::Unary
+                && unary.flags == crate::ir::compact_unary_id(crate::ops::UnaryOp::IsNullish)
+                && unary.b == load.a =>
+        {
+            (LocalPredicate::Nullish, unary.a)
+        }
+        Some(_) => return None,
+    };
     (load.opcode == Opcode::LoadLocal
         && branch.opcode == Opcode::JumpIfFalse
-        && branch.a == load.a
+        && branch.a == condition
         && usize::from(branch.b) == false_pc
-        && !live_after.contains(&load.a))
-    .then_some(LocalTruthinessSelection {
+        && (condition == load.a || !live_after.contains(&condition)))
+    .then_some(LocalPredicateSelection {
         source_slot: load.b,
+        live_source: live_after.contains(&load.a).then_some(load.a),
+        predicate: kind,
         false_pc,
         true_pc,
         discarded,
