@@ -4882,16 +4882,20 @@ impl AdmissionBuilder {
         }
     }
 
+    fn push_optional(&mut self, pc: usize, admission: Option<NativeAdmission>) {
+        if let Some(admission) = admission {
+            self.push(pc, admission);
+        }
+    }
+
     fn finish(self) -> (Rc<[AdmissionSpan]>, Rc<[NativeAdmission]>) {
         (self.spans.into(), self.entries.into())
     }
 }
 
-macro_rules! collect_admission {
-    ($builder:expr, $pc:expr, $list:expr, $variant:ident) => {
-        if let Some(plan) = $list.get($pc).and_then(Clone::clone) {
-            $builder.push($pc, NativeAdmission::$variant(plan));
-        }
+macro_rules! native_admission {
+    ($variant:ident, $plan:expr) => {
+        $plan.map(|plan| NativeAdmission::$variant(Rc::new(RefCell::new(plan))))
     };
 }
 
@@ -5042,6 +5046,145 @@ fn region_admission_matches(
         })
 }
 
+type SharedStencilPool = Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>;
+
+fn collect_numeric_admissions(
+    builder: &mut AdmissionBuilder,
+    pc: usize,
+    entry: BaselineEntry,
+    code: CodeView<'_>,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) {
+    let instruction = entry.instruction;
+    builder.push_optional(pc, native_admission!(Binary,
+        NativeBinaryPlan::new_with_shared(instruction, policy, Rc::clone(arena))));
+    let constant = (instruction.opcode == crate::ir::Opcode::LoadConst)
+        .then(|| code.constant(instruction.b).and_then(constant_word_bits))
+        .flatten();
+    builder.push_optional(pc, native_admission!(LoadConst, constant.and_then(|bits|
+        NativeLoadConstPlan::new_with_shared(bits, policy, Rc::clone(arena)))));
+    builder.push_optional(pc, native_admission!(Truthiness,
+        NativeTruthinessPlan::new_with_shared(instruction, policy, Rc::clone(arena))));
+    builder.push_optional(pc, native_admission!(Nullish,
+        NativeNullishPlan::new_with_shared(instruction, policy, Rc::clone(arena))));
+    builder.push_optional(pc, native_admission!(Unary,
+        NativeUnaryPlan::new_with_shared(instruction, policy, Rc::clone(arena))));
+}
+
+fn move_admission(
+    instruction: crate::ir::Instruction,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    let plan = NativeMovePlan::new_with_arena(instruction, policy, Rc::clone(arena))?;
+    let plan = Rc::new(RefCell::new(plan));
+    match instruction.opcode {
+        crate::ir::Opcode::Move => Some(NativeAdmission::Move(plan)),
+        crate::ir::Opcode::LoadLocal => Some(NativeAdmission::LoadLocal(plan)),
+        crate::ir::Opcode::StoreLocal => Some(NativeAdmission::StoreLocal(plan)),
+        crate::ir::Opcode::SetN => Some(NativeAdmission::StoreProperty(plan)),
+        _ => None,
+    }
+}
+
+fn collect_memory_admissions(
+    builder: &mut AdmissionBuilder,
+    pc: usize,
+    instruction: crate::ir::Instruction,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) {
+    builder.push_optional(pc, move_admission(instruction, policy, arena));
+    builder.push_optional(pc, native_admission!(Property,
+        NativePropertyPlan::new_with_arena(instruction, policy, Rc::clone(arena))));
+    builder.push_optional(pc, native_admission!(Dispatch,
+        NativeDispatchPlan::new_with_arena(instruction, policy, Rc::clone(arena))));
+}
+
+fn add_chain_admission(
+    entries: &[BaselineEntry],
+    liveness: &[BTreeSet<u16>],
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    let entry = entries.get(pc)?;
+    let next = entries.get(pc + 1)?;
+    let first_result_is_live = liveness
+        .get(pc + 1)
+        .is_some_and(|live| live.contains(&entry.instruction.a));
+    (entry.instruction.opcode == crate::ir::Opcode::Add
+        && next.instruction.opcode == crate::ir::Opcode::Add
+        && !first_result_is_live)
+        .then(|| NativeAddChainPlan::new_with_arena(policy, Rc::clone(arena)))
+        .flatten()
+        .map(|plan| NativeAdmission::AddChain(Rc::new(RefCell::new(plan))))
+}
+
+fn region_admission(
+    entries: &[BaselineEntry],
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    let record = crate::stencil_select::region_records()
+        .iter()
+        .filter(|record| {
+            record.executable
+                && record.abi.accepts_region_context()
+                && region_admission_matches(entries, pc, record)
+        })
+        .max_by_key(|record| record.abi.priority())?;
+    NativeRegionPlan::new_with_arena(record.key, policy, Rc::clone(arena))
+        .map(|plan| NativeAdmission::Region(Rc::new(RefCell::new(plan))))
+}
+
+fn baseline_entries(code: CodeView<'_>) -> Rc<[BaselineEntry]> {
+    (0..code.len())
+        .filter_map(|pc| {
+            let instruction = code.instruction(pc)?;
+            Some(BaselineEntry {
+                instruction,
+                handler: instruction.opcode.handler(),
+                control: instruction.opcode.control_operands(instruction),
+            })
+        })
+        .collect::<Vec<_>>()
+        .into()
+}
+
+fn baseline_osr_entries(code: CodeView<'_>) -> Rc<[u32]> {
+    (0..code.len())
+        .filter_map(|pc| {
+            let instruction = code.instruction(pc)?;
+            is_osr_candidate(pc, instruction).then_some(pc as u32)
+        })
+        .collect::<Vec<_>>()
+        .into()
+}
+
+fn build_admissions(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    policy: crate::stencil_policy::ExecutionPolicy,
+) -> (Rc<[AdmissionSpan]>, Rc<[NativeAdmission]>, SharedStencilPool) {
+    let liveness = register_liveness(entries);
+    let arena = Rc::new(RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096)
+            .expect("compile-time region slab capacity is valid"),
+    ));
+    let mut builder = AdmissionBuilder::new(entries.len());
+    for (pc, entry) in entries.iter().copied().enumerate() {
+        collect_numeric_admissions(&mut builder, pc, entry, code, policy, &arena);
+        builder.push_optional(pc, add_chain_admission(entries, &liveness, pc, policy, &arena));
+        collect_memory_admissions(&mut builder, pc, entry.instruction, policy, &arena);
+        builder.push_optional(pc, region_admission(entries, pc, policy, &arena));
+    }
+    let (index, admissions) = builder.finish();
+    (index, admissions, arena)
+}
+
 impl BaselinePlan {
     #[cfg(test)]
     pub(crate) fn compile_for_test(
@@ -5052,231 +5195,10 @@ impl BaselinePlan {
     }
 
     fn compile(code: CodeView<'_>, policy: crate::stencil_policy::ExecutionPolicy) -> Self {
-        let entries: Rc<[BaselineEntry]> = (0..code.len())
-            .filter_map(|pc| {
-                let instruction = code.instruction(pc)?;
-                Some(BaselineEntry {
-                    instruction,
-                    handler: instruction.opcode.handler(),
-                    control: instruction.opcode.control_operands(instruction),
-                })
-            })
-            .collect::<Vec<_>>()
-            .into();
-        let osr_entries = (0..code.len())
-            .filter_map(|pc| {
-                let instruction = code.instruction(pc)?;
-                is_osr_candidate(pc, instruction).then_some(pc as u32)
-            })
-            .collect::<Vec<_>>()
-            .into();
-        let liveness = register_liveness(&entries);
-        let shared_region_arena = Rc::new(RefCell::new(
-            crate::stencil_arena::SharedStencilSlab::new(4096)
-                .expect("compile-time region slab capacity is valid"),
-        ));
-        let native_binary: Vec<Option<Rc<RefCell<NativeBinaryPlan>>>> = entries
-            .iter()
-            .map(|entry| {
-                NativeBinaryPlan::new_with_shared(
-                    entry.instruction,
-                    policy,
-                    Rc::clone(&shared_region_arena),
-                )
-                .map(|native| Rc::new(RefCell::new(native)))
-            })
-            .collect();
-        let native_load_const: Vec<Option<Rc<RefCell<NativeLoadConstPlan>>>> = entries
-            .iter()
-            .map(|entry| {
-                (entry.instruction.opcode == crate::ir::Opcode::LoadConst)
-                    .then(|| {
-                        code.constant(entry.instruction.b)
-                            .and_then(constant_word_bits)
-                    })
-                    .flatten()
-                    .and_then(|bits| {
-                        NativeLoadConstPlan::new_with_shared(
-                            bits,
-                            policy,
-                            Rc::clone(&shared_region_arena),
-                        )
-                    })
-                    .map(|native| Rc::new(RefCell::new(native)))
-            })
-            .collect();
-        let native_truthiness: Vec<Option<Rc<RefCell<NativeTruthinessPlan>>>> = entries
-            .iter()
-            .map(|entry| {
-                NativeTruthinessPlan::new_with_shared(
-                    entry.instruction,
-                    policy,
-                    Rc::clone(&shared_region_arena),
-                )
-                .map(|native| Rc::new(RefCell::new(native)))
-            })
-            .collect();
-        let native_nullish: Vec<Option<Rc<RefCell<NativeNullishPlan>>>> = entries
-            .iter()
-            .map(|entry| {
-                NativeNullishPlan::new_with_shared(
-                    entry.instruction,
-                    policy,
-                    Rc::clone(&shared_region_arena),
-                )
-                .map(|native| Rc::new(RefCell::new(native)))
-            })
-            .collect();
-        let native_unary: Vec<Option<Rc<RefCell<NativeUnaryPlan>>>> = entries
-            .iter()
-            .map(|entry| {
-                NativeUnaryPlan::new_with_shared(
-                    entry.instruction,
-                    policy,
-                    Rc::clone(&shared_region_arena),
-                )
-                .map(|native| Rc::new(RefCell::new(native)))
-            })
-            .collect();
-        let native_add_chains: Vec<Option<Rc<RefCell<NativeAddChainPlan>>>> = entries
-            .iter()
-            .enumerate()
-            .map(|(pc, entry)| {
-                let admissible = entry.instruction.opcode == crate::ir::Opcode::Add
-                    && entries
-                        .get(pc + 1)
-                        .is_some_and(|next| next.instruction.opcode == crate::ir::Opcode::Add)
-                    // The native chain returns only the second result. Keep
-                    // it out of regions where the first destination remains
-                    // live; the canonical handlers then retain the complete
-                    // residual value flow.
-                    && !liveness
-                        .get(pc + 1)
-                        .is_some_and(|live| live.contains(&entry.instruction.a));
-                admissible
-                    .then(|| {
-                        NativeAddChainPlan::new_with_arena(policy, Rc::clone(&shared_region_arena))
-                    })
-                    .flatten()
-                    .map(|native| Rc::new(RefCell::new(native)))
-            })
-            .collect();
-        let native_property: Vec<Option<Rc<RefCell<NativePropertyPlan>>>> = entries
-            .iter()
-            .map(|entry| {
-                NativePropertyPlan::new_with_arena(
-                    entry.instruction,
-                    policy,
-                    Rc::clone(&shared_region_arena),
-                )
-                .map(|native| Rc::new(RefCell::new(native)))
-            })
-            .collect();
-        let native_move: Vec<Option<Rc<RefCell<NativeMovePlan>>>> = entries
-            .iter()
-            .map(|entry| {
-                NativeMovePlan::new_with_arena(
-                    entry.instruction,
-                    policy,
-                    Rc::clone(&shared_region_arena),
-                )
-                .filter(|_| entry.instruction.opcode == crate::ir::Opcode::Move)
-                .map(|native| Rc::new(RefCell::new(native)))
-            })
-            .collect();
-        let native_load_local: Vec<Option<Rc<RefCell<NativeMovePlan>>>> = entries
-            .iter()
-            .map(|entry| {
-                NativeMovePlan::new_with_arena(
-                    entry.instruction,
-                    policy,
-                    Rc::clone(&shared_region_arena),
-                )
-                .filter(|_| entry.instruction.opcode == crate::ir::Opcode::LoadLocal)
-                .map(|native| Rc::new(RefCell::new(native)))
-            })
-            .collect();
-        let native_store_local: Vec<Option<Rc<RefCell<NativeMovePlan>>>> = entries
-            .iter()
-            .map(|entry| {
-                NativeMovePlan::new_with_arena(
-                    entry.instruction,
-                    policy,
-                    Rc::clone(&shared_region_arena),
-                )
-                .filter(|_| entry.instruction.opcode == crate::ir::Opcode::StoreLocal)
-                .map(|native| Rc::new(RefCell::new(native)))
-            })
-            .collect();
-        let native_store_property: Vec<Option<Rc<RefCell<NativeMovePlan>>>> = entries
-            .iter()
-            .map(|entry| {
-                NativeMovePlan::new_with_arena(
-                    entry.instruction,
-                    policy,
-                    Rc::clone(&shared_region_arena),
-                )
-                .filter(|_| entry.instruction.opcode == crate::ir::Opcode::SetN)
-                .map(|native| Rc::new(RefCell::new(native)))
-            })
-            .collect();
-        let native_dispatch: Vec<Option<Rc<RefCell<NativeDispatchPlan>>>> = entries
-            .iter()
-            .map(|entry| {
-                NativeDispatchPlan::new_with_arena(
-                    entry.instruction,
-                    policy,
-                    Rc::clone(&shared_region_arena),
-                )
-                .map(|native| Rc::new(RefCell::new(native)))
-            })
-            .collect();
-        let native_regions: Vec<Option<Rc<RefCell<NativeRegionPlan>>>> = entries
-            .iter()
-            .enumerate()
-            .map(|(pc, _)| {
-                crate::stencil_select::region_records()
-                    .iter()
-                    .filter(|record| {
-                        // Region plans consume only the erased bridge or one
-                        // of the explicitly typed raw-array ABIs.  Scalar
-                        // leaves (Add/Move/property) have separate typed
-                        // plans and must never be passed a
-                        // NativeRegionContext pointer merely because their
-                        // opcode prefix matches this window.
-                        if !record.executable || !record.abi.accepts_region_context() {
-                            return false;
-                        }
-                        region_admission_matches(&entries, pc, record)
-                    })
-                    .max_by_key(|record| record.abi.priority())
-                    .and_then(|record| {
-                        NativeRegionPlan::new_with_arena(
-                            record.key,
-                            policy,
-                            Rc::clone(&shared_region_arena),
-                        )
-                    })
-                    .map(|region| Rc::new(RefCell::new(region)))
-            })
-            .collect();
-        let mut admission_builder = AdmissionBuilder::new(entries.len());
-        for pc in 0..entries.len() {
-            collect_admission!(admission_builder, pc, native_binary, Binary);
-            collect_admission!(admission_builder, pc, native_load_const, LoadConst);
-            collect_admission!(admission_builder, pc, native_truthiness, Truthiness);
-            collect_admission!(admission_builder, pc, native_nullish, Nullish);
-            collect_admission!(admission_builder, pc, native_unary, Unary);
-            collect_admission!(admission_builder, pc, native_add_chains, AddChain);
-            collect_admission!(admission_builder, pc, native_move, Move);
-            collect_admission!(admission_builder, pc, native_load_local, LoadLocal);
-            collect_admission!(admission_builder, pc, native_store_local, StoreLocal);
-            collect_admission!(admission_builder, pc, native_store_property, StoreProperty);
-            collect_admission!(admission_builder, pc, native_property, Property);
-            collect_admission!(admission_builder, pc, native_dispatch, Dispatch);
-            collect_admission!(admission_builder, pc, native_regions, Region);
-        }
-        let (admission_index, admissions) = admission_builder.finish();
+        let entries = baseline_entries(code);
+        let osr_entries = baseline_osr_entries(code);
+        let (admission_index, admissions, shared_region_arena) =
+            build_admissions(code, &entries, policy);
         Self {
             entries,
             osr_entries,
