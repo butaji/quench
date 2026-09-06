@@ -573,27 +573,10 @@ impl CodeArena {
                     *dst,
                     constants.id(value).expect("constant was collected"),
                 ),
-                Op::CallMethod {
-                    dst,
-                    object,
-                    callee: Some(callee),
-                    args,
-                    spreads,
-                    ..
-                } if args.len() == 6 && spreads.iter().all(|spread| !spread) => {
-                    meta.operand_window = operand_windows.len() as u32;
-                    operand_windows.push(Rc::from(args.as_slice()));
-                    crate::ir::Instruction::call_registered_window(
-                        *dst,
-                        *object,
-                        *callee,
-                        args.len() as u8,
-                    )
-                }
+                Op::CallMethod { .. } => lower_registered_call(op, &mut meta, &mut operand_windows)
+                    .unwrap_or_else(|| self.push_cold(op)),
                 _ => crate::ir::lower_compact(op).unwrap_or_else(|| {
-                    let index = self.cold.len() as u32;
-                    self.cold.push(op.clone());
-                    crate::ir::Instruction::slow_at(index)
+                    self.push_cold(op)
                 }),
             };
             self.instructions.push(instruction);
@@ -621,6 +604,12 @@ impl CodeArena {
         self.constants.push(constants);
         self.register_counts.push(register_count);
         CodeRange { code, start, end }
+    }
+
+    fn push_cold(&mut self, op: &Op) -> crate::ir::Instruction {
+        let index = self.cold.len() as u32;
+        self.cold.push(op.clone());
+        crate::ir::Instruction::slow_at(index)
     }
 
     fn emit_conditional(
@@ -719,27 +708,10 @@ impl CodeArena {
                     *dst,
                     constants.id(value).expect("constant was collected"),
                 ),
-                Op::CallMethod {
-                    dst,
-                    object,
-                    callee: Some(callee),
-                    args,
-                    spreads,
-                    ..
-                } if args.len() == 6 && spreads.iter().all(|spread| !spread) => {
-                    meta.operand_window = operand_windows.len() as u32;
-                    operand_windows.push(Rc::from(args.as_slice()));
-                    crate::ir::Instruction::call_registered_window(
-                        *dst,
-                        *object,
-                        *callee,
-                        args.len() as u8,
-                    )
-                }
+                Op::CallMethod { .. } => lower_registered_call(op, &mut meta, operand_windows)
+                    .unwrap_or_else(|| self.push_cold(op)),
                 _ => crate::ir::lower_compact(op).unwrap_or_else(|| {
-                    let index = self.cold.len() as u32;
-                    self.cold.push(op.clone());
-                    crate::ir::Instruction::slow_at(index)
+                    self.push_cold(op)
                 }),
             };
             self.instructions.push(instruction);
@@ -1262,6 +1234,30 @@ fn lower_named_call(ops: &[Op]) -> Option<crate::ir::Instruction> {
         && args.len() <= 1
         && spreads.iter().all(|spread| !spread))
     .then(|| crate::ir::Instruction::call_named(*dst, *object, args.first().copied()))
+}
+
+fn lower_registered_call(
+    op: &Op,
+    metadata: &mut InstructionMeta,
+    windows: &mut Vec<Rc<[u16]>>,
+) -> Option<crate::ir::Instruction> {
+    let Op::CallMethod {
+        dst,
+        object,
+        callee: Some(callee),
+        args,
+        spreads,
+        ..
+    } = op
+    else {
+        return None;
+    };
+    let argc = u8::try_from(args.len()).ok()?;
+    (!args.is_empty() && spreads.iter().all(|spread| !spread)).then(|| {
+        metadata.operand_window = windows.len() as u32;
+        windows.push(Rc::from(args.as_slice()));
+        crate::ir::Instruction::call_registered_window(*dst, *object, *callee, argc)
+    })
 }
 
 fn lower_local_update(ops: &[Op]) -> Option<crate::ir::Instruction> {
