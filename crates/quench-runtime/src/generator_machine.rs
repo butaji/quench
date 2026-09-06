@@ -141,6 +141,7 @@ fn suspension_destination(point: &crate::continuation::SuspensionPoint) -> Optio
         crate::continuation::SuspensionPoint::Loop { yield_dst, .. }
         | crate::continuation::SuspensionPoint::Yield { src: yield_dst, .. } => Some(*yield_dst),
         crate::continuation::SuspensionPoint::YieldStar { dst, .. } => Some(*dst),
+        crate::continuation::SuspensionPoint::Branch { yield_dst, .. } => Some(*yield_dst),
         crate::continuation::SuspensionPoint::Nested { inner, .. } => suspension_destination(inner),
     }
 }
@@ -213,7 +214,7 @@ fn push_branch_frame(generator: &GeneratorData, state: &GeneratorState) -> Resul
             phase: crate::machine::BranchPhase::Body,
             branch_resume,
             resume,
-            dst: *dst,
+            dst: Some(*dst),
             yield_dst: *src,
         },
     )

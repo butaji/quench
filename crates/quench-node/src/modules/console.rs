@@ -86,8 +86,28 @@ pub fn build_value() -> Value {
                     crate::host::capability(spec),
                 );
             }
+            module = bind_console_methods(module);
         }
         module = quench_runtime::execute::set_property(module, "Console", console);
+    }
+    module
+}
+
+fn bind_console_methods(mut module: Value) -> Value {
+    for name in [
+        "dir", "time", "timeEnd", "timeLog", "trace", "assert", "clear", "count",
+        "countReset", "group", "groupEnd", "table", "dirxml", "groupCollapsed",
+    ] {
+        let Ok(method) = quench_runtime::execute::get_property_result(&module, name) else {
+            continue;
+        };
+        let Ok(bind) = quench_runtime::execute::get_property_result(&method, "bind") else {
+            continue;
+        };
+        let Ok(bound) = quench_runtime::execute::call(&bind, &method, &[module.clone()]) else {
+            continue;
+        };
+        module = quench_runtime::execute::set_property(module, name, bound);
     }
     module
 }

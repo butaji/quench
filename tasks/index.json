@@ -1,127 +1,61 @@
 {
-    "schema": 1,
-    "title": "Fact-generated interpreter VM — Deegen two-tier paper alignment",
-    "north_star": "A fully-proven, correctness-verified JS VM (test262/Node-oracle backed) that reaches V8-comparable performance on the real v8-v7 (Octane-derived) benchmark suite -- not a curriculum proxy -- with minimal RSS, achieved entirely through general, workload-shape-justified architecture (fact-generated interpreter, region-stencil baseline JIT, tier-switching, generic IC, a proven cycle collector, provably-scoped arenas) and ZERO benchmark-specific cheating of any kind: no code path may detect a benchmark's name, file, fixture identity, or shape and special-case it; every optimization admitted anywhere in this codebase must be justified by a runtime-shape argument that generalizes to any JavaScript program with that shape, verified against the neutral corpus AND the deegen-curriculum AND the v8-v7 suite together, never tuned to move one benchmark's number in isolation. See docs/benchmark-integrity.md for the mechanical detail; this is the plain-language statement of why that document's rules exist.",
-    "source_of_truth": "tasks/index.json",
-    "constraints": [
-        "quench-runtime owns JavaScript semantics; quench-node owns only the Node host boundary",
-        "Benchmark fixtures and workload-specific kernels are not production VM semantics",
-        "No benchmark cheating, stated plainly: production code must never special-case a specific benchmark file, function name, fixture identity, or known input shape from richards.js/deltablue.js/splay.js/etc (or any curriculum/micros case). If a change only helps because it recognizes which program is running, it is disallowed regardless of the score improvement -- see the north_star field above and docs/benchmark-integrity.md.",
-        "Every fact is Proven, Guarded, or Unknown; every fast path (interpreter, IC, JIT) has complete fallback semantics",
-        "Generated code is derived from one declaration; handwritten code is limited to irreducible behavior",
-        "Every task belongs to exactly one theme",
-        "Performance measurements are evidence: any optimization admitted here must generalize to any JavaScript program with the same runtime shape, not be sized to one fixture's numbers (see docs/benchmark-integrity.md)",
-        "Deegen (arXiv:2411.11469) is a two-tier design: interpreter + baseline JIT + tier-switching. No optimizing JIT, no deoptimization protocol — the paper doesn't build either. See docs/deegen-alignment.md.",
-        "Tasks 027-037 closed with task 037's own recorded finding that the status-table closure gate was NOT fully satisfied (Optimizing-tier net win unproven, tag register blocked, hot-cold splitting not justified -- all three confounded by the x86_64-only executable gate on this ARM64 dev machine, see docs/deegen-alignment.md). Tasks 039+ are the direct, in-backlog continuation addressing that finding, not new scope creep. No fixture-specific tuning (e.g. Splay/Richards helpers) or performance work OUTSIDE this deegen_full_jit theme starts until this theme's own task chain is done.",
-        "The existing ExecutionTier::Optimizing scaffold is kept as a beyond-paper extra optimization layer, not described as the paper's (nonexistent) optimizing tier"
-    ],
-    "implementation_state": {
-        "completed_slices": [
-            "001-026 (prior queue, all themes deegen_codegen/quickjs_perf/benchmark_integrity/copy_patch_jit): single-source vm_op! catalog, ordinary interpreter, bounded quickening/inline-cache state, compact tagged values, hashed shape/atom lookup, copy-and-patch region-stencil baseline JIT tier, callee-directed continuation dispatch. See git history and docs/architecture-evidence.md for evidence.",
-            "027-037 (this theme's first pass): tier-up/OSR committed and verified, slow-path outlining, register-pinning approximation, bounded logical quickening, bounded SMC IC stub chain + inline slab, catalog admission reconciled. NOT fully closed -- see docs/deegen-alignment.md for the honestly-recorded remainder (tag register blocked, hot-cold splitting not justified, Optimizing-tier net win unproven), all three confounded by the x86_64-only executable gate. Tasks 039+ continue from here.",
-            "039: native AArch64 stencil execution, closed and verified (const-fn bit-packed encoders, no hex, no assembler crate).",
-            "040: measured bounded region coverage for arithmetic glue, calls, properties, arrays, and ForI, closed (commits 1951baf57, 87bcff851, a203c88ac).",
-            "041: V8-informed scenario survey, including packed/holey array differential coverage and explicit deferred findings, closed (commit b0de7ce8a).",
-            "042: bounded multi-op sequential region bridge, closed (commit ab738f909) -- full-span validation and atomic fallback are real. A generated two-Add numeric chain now executes genuine composed machine code (one entry, two FP ops, one return) with guarded fallback; wider glue remains bridge-backed until separately justified by profile data.",
-            "034 follow-up: ARM64 CPU-counter gate measured, but no applicable cold basic block or fallthrough branch exists in the current straight-line catalog; no transform attempted (commit 01d06abe1).",
-            "043: stencil-local tag-register survey closed with a no-eligible-region finding; current 040/041 regions do not materialize TAG_PREFIX/TAG_SHIFT/TAG_MASK more than once (commit 933e7765)",
-            "044: generated region-admission and CFG-test wiring closed; one declaration covers all 21 catalog regions without changing semantics (commit 406089899)",
-            "045: profile-gated shared megamorphic cache closed with no-go finding; degraded-site trace measured 0/399 reusable re-encounters, so no cache was implemented",
-            "046: profile-gated rope representation closed with no-go finding; case-032 isolation was split/regex dominated, so no representation change was implemented",
-            "047: profile-gated call-frame reuse closed with no-go finding; DWARF sampling did not isolate frame setup as a material CPU share, so no pool/layout change was implemented",
-            "050: detached console methods fixed and audited across logging/diagnostic methods (commits bdb396785, 8a64db057)",
-            "051: the original reported Splay mismatch was a stale timing-score comparison, but the real runner later exposed a general cycle-collector root-safety bug under allocation-heavy nested calls. Caller environments are now temporary collector roots with a synthetic regression test; Splay emits a verified completion marker on the rebuilt artifact. Full eight-fixture closure remains task 052's responsibility",
-            "052: tracked v8-v7 runner now has a complete 300-second ARM64 release ground-truth row; all eight fixtures finish with output_equal:true and per-benchmark score, wall time, and peak RSS recorded",
-            "056: cycle audit confirmed real pure-Rc reference-cycle retention with quantified RSS scaling for plain objects, closure captures, and a DeltaBlue-shaped graph; committed probe tools/cycle-audit.mjs justifies 057 (commit efe5a19fa)",
-            "057: periodic full-pass trial-deletion collector implemented and validated; closure environments (including captured parent frames) are traversed, weak edges remain non-owning, and long-running closure-cycle RSS is bounded. Follow-up root-safety corrections protect Rust-held caller environments/continuations, active execution environments, and the global object during collection; a deliberate returned-closure regression probe remains correct under allocation pressure",
-            "058: shape hash-consing audit closed with a finding; the single-thread runtime already interns structurally-identical visible property layouts globally within its VM thread, with independent-transition regression coverage. Full descriptor/prototype identity remains intentionally outside the derived slot-layout key and no semantics-changing expansion was justified",
-            "068: ARM64 stencil call-boundary profile closed with a qualified fix/no-go; DWARF sampling found and fixed the address-vs-offset remapping bug, then a second profile pass added validated typed-entry caching for numeric/Move/property leaves. Targeted cache-reuse tests pass and long numeric loops are 6-7% faster, but the neutral composite remains parity and memory is not positive, so ARM execution remains opt-in pending curriculum/v8-v7 wins",
-            "072: prototype-chain dispatch probe closed with a narrowing finding; a stable one-level prototype method produced 19,998 named-property hits, zero prototype misses, and 9,998 quickened GetN hits. The existing compact path already covers this idiom, so no guard change was justified",
-            "071: IC/layout-mismatch investigation closed with a no-go finding; synthetic probes showed negligible mismatch volume, while the full trace's slow lane was dominated by generic Branch/TraceSite/CheckInitialized/Unary handlers. Follow-up task 074 owns that broader survey",
-            "061: DeltaBlue/Richards catastrophic-slowdown investigation closed with a minimal five-shape reproduction and execution-trace evidence; scaling was linear with no semantic bug or non-terminating path, identifying bounded single-entry IC/layout-mismatch cost for a future general optimization",
-            "069: Crypto completion/profile closed with a no-go finding; a 300-second run still produced no result marker, while a five-second DWARF sample of the actual quench-node process showed active nested execute_call/execute_direct/execute_interpreter work rather than a tight hang. No Crypto-specific optimization was justified",
-            "053: regex profile follow-up replaced the regress backend with a guarded regex automata backend for regular ASCII patterns, retained the repository-owned matcher as the complete fallback, and routed replacement/split through the shared source/flags cache. Same-tree RegExp moved from score 13.7/225s to 59.3/54s with output_equal:true; the ~1.79GiB RSS outlier remains open for a separate memory investigation",
-            "074: profile-first slow-lane dispatch survey closed with a no-go finding; a neutral branch/unary clone was dominated by distributed run_instruction/call machinery, while the only generic inlining candidate was neutral in optimized timing and RSS, so no semantic fast path was justified",
-            "070: 300-second ARM64 release rebaseline completed all eight v8-v7 fixtures with output_equal:true; Crypto/EarleyBoyer/RegExp are finite but extremely slow (215.17s/66.55s/225.18s), and RegExp's 1.59GiB peak RSS is now an explicit memory finding rather than a timeout unknown",
-            "055: allocation-throughput survey completed on Splay, RayTrace, and EarleyBoyer with execution-trace allocation/lifecycle counts and native samples; allocation events were 7.3%, 10.7%, and 3.2% of handler events while slow lanes were dispatch/trace/call dominated, so no bounded allocation site or Rc-model change was justified"
-            ,"062: architecture invariant suite covers object/shape/call/enumeration/dispatch scaling; all five task invariants pass in both feature configurations and each ratio gate was validated against a temporary representative regression before restoration"
-            ,"063: array/Map/Set invariants pass in both feature configurations; packed access, cross-instance collection access, and mutation-history iteration each rejected deliberate scaling regressions before restoration"
-            ,"064: string append/search/comparison invariants pass in both feature configurations; each rejected a deliberate superlinear or unrelated-state regression before restoration"
-            ,"065: closure creation, recursive frame, and argument marshaling invariants pass in both feature configurations; all three rejected deliberate history/depth/catalog scans before restoration"
-            ,"066: allocation and drop invariants pass in both feature configurations; both rejected deliberate live-heap scans before restoration, with arena-specific coverage deferred until task 059"
-            ,"067: generated direct RegionKey dispatch, fixed-capacity render-cache checks, and arena scaling invariants pass in both feature configurations; native ARM64 Add execution is exercised under the opt-in gate and the arena test rejected a deliberate cursor-scan regression"
-            ,"048: profiled seven-op LOOP_BODY region added with bounded sequential execution and atomic complete fallback; CFG/interpreter differential tests, both runtime feature gates, neutral 100/100 corpus, curriculum 017-019, and the 300-second all-eight-fixture v8-v7 cross-check passed. Neutral/curriculum movement was within run noise; ARM native execution remains opt-in pending task 068 (coverage expansion, not a score claim)."
-            ,"049: profile-gated bounded polymorphic variant survey closed as a no-go; curriculum 013 (three stable property shapes) and hostile 021 (shape churn) are correctly handled by the existing bounded generic IC, but no finite reusable RegionKey fact-set was observable to justify N-times rendered variants. Complete fallback and bounded code-size discipline are preserved."
-            ,"054: TypedArray survey closed with an evidence-backed finding; AGetI/ASetI opcode bridges already admit typed-array operations when native regions are enabled, while packed-array counters correctly remain zero and canonical typed-array/property handling supplies the fallback. NavierStokes completed output-correct at 192 score/26.27s/19.0MiB; no new representation mechanism was justified."
-            ,"059: scoped-arena audit closed as a no-go; FrameStack/RegisterFile already provide bounded contiguous reuse, but call continuations, closures, environments, and temporary Values can escape across returns/coroutines/hosts, so no build-time non-escape proof supports a new data arena. Call-heavy curriculum and Richards/DeltaBlue measurements were recorded with correctness intact."
-            ,"060: mandatory Gate 0 is blocked pending a concrete web-framework host use case and explicit request-arena ownership contract; no speculative API or unsafe escape assumption was implemented."
-            ,"073: capstone trajectory rows recorded with paired v8-v7/neutral/curriculum measurements and anti-cheat scans; the latest production no-trace row (3ee862587) has all eight fixtures output-verified at 66.87 score geomean with 2.417x aggregate RSS, still far below the ~60k north-star target, so the capstone remains open for future general optimizations."
-        ],
-        "remaining_slices": [
-            "060", "073"
-        ]
+  "schema": 1,
+  "title": "Quench active work",
+  "source_of_truth": "tasks/index.json",
+  "rules": "../AGENTS.md",
+  "implementation_spec": "../docs/stencil-jit-implementation-spec.md",
+  "constraints": [
+    "Complete and verify stencil infrastructure, required core bodies, VM integration and unit/efficiency tests before micros or benchmark-led tuning.",
+    "Use Rust-only stencil generation and implementation; preserve explicit ABI contracts and shared JS semantics.",
+    "Continue runtime/host/oracle correctness tests throughout implementation.",
+    "Historical task closure and measurements do not certify the current implementation."
+  ],
+  "themes": {
+    "stencil_infrastructure": {
+      "goal": "Complete the safe, bounded native-region system, required core stencils and surrounding VM integration.",
+      "plan": [
+        "075"
+      ]
     },
-    "themes": {
-        "deegen_full_jit": {
-            "goal": "Complete quench's alignment with the Deegen paper's (arXiv:2411.11469) actual two-tier design, per the audited gap table in docs/deegen-alignment.md. Tasks 027-044 are closed (034 and 043 with applicability findings). External research (2026-09) found IC/stencil-coverage refinement has a well-documented diminishing return versus true speculative optimization, which this project has correctly and permanently decided not to build (see docs/deegen-alignment.md). Tasks 045-047 are now closed profile-gated no-go findings: their required measurements did not justify a shared cache, rope representation, or frame-pooling change. Tasks 048-049 are now closed: one profiled bounded whole-body span was added, while bounded polymorphic variants were not justified by evidence; all paths remain fallback-complete.",
-            "plan": ["027", "028", "029", "030", "031", "032", "033", "034", "035", "036", "037", "039", "040", "041", "042", "043", "044", "045", "046", "047", "048", "049"]
-        },
-        "vm_completeness": {
-            "goal": "Beyond Deegen-paper alignment: what a top-level JS VM needs that the deegen_full_jit theme never covered, discovered while trying to run the v8-v7 (Octane-derived) benchmark suite for a real V8-comparison score. Task 050 is fixed and task 051 is closed with a finding: the reported Splay mismatch was a stale timing-score harness comparison, not a VM tree-semantics divergence. Task 052's tracked runner is landed and its 300-second ARM64 release ground-truth row now verifies all eight fixtures. Then survey three genuinely uncovered areas by any prior task: regex engine performance (053), TypedArray fast-path coverage (054), and allocation-throughput for allocation-heavy workloads (055) -- all profile-gated, same discipline as 045-047. Task 056 now has measured evidence of pure-Rc cycle retention in plain-object, closure, and DeltaBlue-shaped graphs; task 057 is therefore justified for the periodic full-pass cycle-collection implementation. NAMED TARGET, reverse-engineered from real numbers: the complete 300-second row is 71.84 geomean versus a ~60,000 target (Node's own local aggregate is 87,774.56), with RegExp's 1.59GiB peak RSS now explicit. Four tasks close the gap this session's investigation found NOT previously covered: 068 (highest leverage -- native ARM64 stencil execution is opt-in-only and currently a net loss when enabled, so tasks 039/040/042/048/049/058's work contributes zero to any measured score until this is fixed), 069 (Crypto has no owner among the 5 timing-out benchmarks), 070 (completed ground truth for all 8 benchmarks before 053/054/055/069's surveys work half-blind), 071 (attack the IC/layout-mismatch constant factor directly -- 062-067 prove the complexity class is sound, but Richards/DeltaBlue's ~1000x gap is a constant-factor problem 045/047's narrower closed questions didn't fully explain). Every one of 068-071 carries a mandatory anti-cheat validation section (synthetic generalization clone, grep for fixture-identity detection, cross-verification against the neutral corpus and curriculum, not just v8-v7) so gains are architectural, not benchmark-specific tuning.",
-            "plan": ["050", "051", "052", "053", "054", "055", "056", "057", "058", "059", "060", "061", "068", "069", "070", "071", "072", "073"]
-        },
-        "architecture_invariants": {
-            "goal": "Prove the VM's foundational complexity claims hold via permanent cargo-test invariants (scaling behavior, never absolute wall-clock thresholds), subsystem by subsystem, BEFORE further tuning work proceeds in that subsystem -- flip the order from 'tune, then accidentally discover an architecture bug' (how the for-in quadratic scan, the property-write quadratic bug, and task 061's DeltaBlue finding all actually happened) to 'prove the foundation first, then tune with confidence.' 062 covers object/shape/property/call-dispatch/bytecode-dispatch (already in progress, invariant #1 passed). 063-067 extend the same technique to array/Map/Set, strings, closures/call-frames, raw allocation, and the JIT/stencil tier respectively. Tuning tasks in the other themes are wired to depend on their subsystem's invariant suite: 054 (TypedArray) on 063, 058 (shape hash-consing) on 062, 059 (arena) on 066, 048/049 (region growth) on 067. Every invariant must be validated to actually fail against a deliberately-introduced regression before being trusted to pass against the real implementation -- a loose bound defeats the purpose.",
-            "plan": ["062", "063", "064", "065", "066", "067"]
-        }
+    "performance_validation": {
+      "goal": "Measure and improve general JS performance and memory after the infrastructure gate.",
+      "plan": [
+        "073"
+      ]
     },
-    "items": [
-        {"id": "027", "file": "027.md", "title": "Commit and verify the existing uncommitted tier-up/OSR/stencil work", "theme": "deegen_full_jit", "depends_on": []},
-        {"id": "028", "file": "028.md", "title": "Audit and complete OSR-entry wiring end-to-end", "theme": "deegen_full_jit", "depends_on": ["027"]},
-        {"id": "029", "file": "029.md", "title": "Slow-path outlining: CPS EnterSlowPath construct, AOT non-inlined slow paths", "theme": "deegen_full_jit", "depends_on": ["028"]},
-        {"id": "030", "file": "030.md", "title": "Register pinning for VM dispatch state (§6.1)", "theme": "deegen_full_jit", "depends_on": ["028"]},
-        {"id": "031", "file": "031.md", "title": "Tag register optimization for the boxing scheme (§5.3)", "theme": "deegen_full_jit", "depends_on": ["030"]},
-        {"id": "032", "file": "032.md", "title": "True bytecode quickening: instruction-stream rewrite on IC hit (§6.2)", "theme": "deegen_full_jit", "depends_on": ["028"]},
-        {"id": "033", "file": "033.md", "title": "JIT-side self-modifying-code IC stub chain and inline slab (§7.1)", "theme": "deegen_full_jit", "depends_on": ["032"]},
-        {"id": "034", "file": "034.md", "title": "Hot-cold code splitting by block-frequency analysis (§7.2)", "theme": "deegen_full_jit", "depends_on": ["028"]},
-        {"id": "035", "file": "035.md", "title": "Widen region-stencil coverage breadth toward full-catalog parity", "theme": "deegen_full_jit", "depends_on": ["033"]},
-        {"id": "036", "file": "036.md", "title": "Verify and document the beyond-paper Optimizing tier as a kept, measured net win", "theme": "deegen_full_jit", "depends_on": ["035"]},
-        {"id": "037", "file": "037.md", "title": "Full differential and neutral-corpus verification of the complete two-tier system", "theme": "deegen_full_jit", "depends_on": ["036"]},
-        {"id": "039", "file": "039.md", "title": "Native AArch64 stencil execution backend (this machine's actual architecture)", "theme": "deegen_full_jit", "depends_on": ["037"]},
-        {"id": "040", "file": "040.md", "title": "Widen specialized stencil leaves by real hotness evidence (call, property, loop glue, array, ForI)", "theme": "deegen_full_jit", "depends_on": ["039"]},
-        {"id": "041", "file": "041.md", "title": "V8-informed JS-scenario stencil coverage survey", "theme": "deegen_full_jit", "depends_on": ["040"]},
-        {"id": "042", "file": "042.md", "title": "Build genuine multi-op sequential stencil execution", "theme": "deegen_full_jit", "depends_on": ["039"]},
-        {"id": "043", "file": "043.md", "title": "Stencil-local tag register optimization", "theme": "deegen_full_jit", "depends_on": ["040", "041"]},
-        {"id": "044", "file": "044.md", "title": "Generate region-admission and CFG-soundness-test boilerplate", "theme": "deegen_full_jit", "depends_on": ["040", "041"]},
-        {"id": "045", "file": "045.md", "title": "Shared global megamorphic property/call cache (V8-style stub cache)", "theme": "deegen_full_jit", "depends_on": ["041"]},
-        {"id": "046", "file": "046.md", "title": "String concatenation representation (rope/cons-string)", "theme": "deegen_full_jit", "depends_on": []},
-        {"id": "047", "file": "047.md", "title": "Reduce call-frame allocation overhead for the Call/CallN region", "theme": "deegen_full_jit", "depends_on": ["040"]},
-        {"id": "048", "file": "048.md", "title": "Grow region scope from hot glue sequence to whole loop body / small function", "theme": "deegen_full_jit", "depends_on": ["042", "067"]},
-        {"id": "049", "file": "049.md", "title": "Pre-render multiple specialized variants per hot pattern (build-time-enumerated, not speculative)", "theme": "deegen_full_jit", "depends_on": ["048"]},
-        {"id": "050", "file": "050.md", "title": "Fix console.log crash when detached from `this` (P0 Node-compat bug)", "theme": "vm_completeness", "depends_on": []},
-        {"id": "051", "file": "051.md", "title": "Fix Splay benchmark output correctness (v8-v7 suite)", "theme": "vm_completeness", "depends_on": ["050"]},
-        {"id": "052", "file": "052.md", "title": "Wire the v8-v7 benchmark suite into the tracked verification loop", "theme": "vm_completeness", "depends_on": ["050", "051"]},
-        {"id": "053", "file": "053.md", "title": "Regex engine performance survey (Irregexp-informed)", "theme": "vm_completeness", "depends_on": ["052"]},
-        {"id": "054", "file": "054.md", "title": "TypedArray fast-path coverage (NavierStokes-class workloads)", "theme": "vm_completeness", "depends_on": ["052", "063"]},
-        {"id": "055", "file": "055.md", "title": "Allocation-throughput survey for allocation-heavy workloads (Splay, RayTrace, EarleyBoyer)", "theme": "vm_completeness", "depends_on": ["052"]},
-        {"id": "056", "file": "056.md", "title": "Audit for reference-cycle memory leaks (no cycle collector exists)", "theme": "vm_completeness", "depends_on": []},
-        {"id": "057", "file": "057.md", "title": "Periodic full-pass cycle collector (only if task 056 confirms a real leak)", "theme": "vm_completeness", "depends_on": ["056"]},
-        {"id": "058", "file": "058.md", "title": "Global shape hash-consing (structural deduplication)", "theme": "vm_completeness", "depends_on": ["062"]},
-        {"id": "059", "file": "059.md", "title": "Bump-pointer arena allocation for provably-scoped short-lived values", "theme": "vm_completeness", "depends_on": ["066"]},
-        {"id": "060", "file": "060.md", "title": "Host-level opt-in request-scoped arena (web-backend memory bound)", "theme": "vm_completeness", "depends_on": ["059"]},
-        {"id": "061", "file": "061.md", "title": "Investigate catastrophic DeltaBlue/Richards slowdown (v8-v7 suite)", "theme": "vm_completeness", "depends_on": ["050"]},
-        {"id": "062", "file": "062.md", "title": "Architecture invariant test suite (algorithmic-complexity regression tests)", "theme": "architecture_invariants", "depends_on": []},
-        {"id": "063", "file": "063.md", "title": "Array/collection algorithmic-complexity invariants", "theme": "architecture_invariants", "depends_on": []},
-        {"id": "064", "file": "064.md", "title": "String operation algorithmic-complexity invariants", "theme": "architecture_invariants", "depends_on": []},
-        {"id": "065", "file": "065.md", "title": "Closure/call-frame algorithmic-complexity invariants", "theme": "architecture_invariants", "depends_on": []},
-        {"id": "066", "file": "066.md", "title": "Allocation/memory algorithmic-complexity invariants", "theme": "architecture_invariants", "depends_on": []},
-        {"id": "067", "file": "067.md", "title": "JIT/stencil-tier algorithmic-complexity invariants", "theme": "architecture_invariants", "depends_on": []},
-        {"id": "068", "file": "068.md", "title": "Fix ARM64 native stencil call overhead; flip default-on once net-positive", "theme": "vm_completeness", "depends_on": ["067"]},
-        {"id": "069", "file": "069.md", "title": "Crypto benchmark -- profile and close the completion gap", "theme": "vm_completeness", "depends_on": ["052"]},
-        {"id": "070", "file": "070.md", "title": "Get real completion numbers for all 8 v8-v7 benchmarks", "theme": "vm_completeness", "depends_on": ["052"]},
-        {"id": "071", "file": "071.md", "title": "Attack the IC/layout-mismatch constant factor directly (Richards/DeltaBlue-class gap)", "theme": "vm_completeness", "depends_on": ["062", "067"]},
-        {"id": "072", "file": "072.md", "title": "Prototype-chain method-dispatch cost, isolated from own-property access cost", "theme": "vm_completeness", "depends_on": ["062", "071"]},
-        {"id": "073", "file": "073.md", "title": "Close the loop -- track and reach a 60k v8-v7 aggregate score", "theme": "vm_completeness", "depends_on": ["052", "068", "070", "071", "072"]},
-        {"id": "074", "file": "074.md", "title": "Survey slow-lane dispatch constant factors after IC no-go", "theme": "vm_completeness", "depends_on": ["071"]}
-    ]
+    "deferred_host_api": {
+      "goal": "Requires a concrete use case and explicit user direction; not part of the current gate.",
+      "plan": [
+        "060"
+      ]
+    }
+  },
+  "items": [
+    {
+      "id": "075",
+      "file": "075.md",
+      "title": "Complete stencil infrastructure, core bodies and VM integration",
+      "theme": "stencil_infrastructure",
+      "status": "in_progress",
+      "depends_on": []
+    },
+    {
+      "id": "073",
+      "file": "073.md",
+      "title": "Validate performance and memory",
+      "theme": "performance_validation",
+      "status": "pending",
+      "depends_on": [
+        "075"
+      ]
+    },
+    {
+      "id": "060",
+      "file": "060.md",
+      "title": "Request-scoped allocation proposal",
+      "theme": "deferred_host_api",
+      "status": "deferred",
+      "depends_on": []
+    }
+  ]
 }

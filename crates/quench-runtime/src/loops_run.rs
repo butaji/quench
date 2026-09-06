@@ -83,15 +83,46 @@ fn run_loop_inner(
     let loop_shape = crate::execution_trace::loop_shape(body);
     let (post_test, dst, per_iteration) = config;
     let (init_owner, test_owner, body_owner, update_owner) = owners;
+    let shape = LoopExecution {
+        label,
+        body,
+        test,
+        update,
+        dst,
+        post_test,
+        per_iteration,
+    };
     let _ = init_owner.enter_invocation();
-    run_fragment(init, init_owner, registers)?;
+    let init_step = execute_loop_fragment_step_with_owner(registers, init, init_owner, 0)?;
+    if init_step.completion.is_suspension() {
+        return phase_suspension(
+            &shape,
+            crate::continuation::LoopPhase::Init,
+            init,
+            init_step,
+            registers,
+        );
+    }
+    finish_loop_fragment(&init_step.completion)?;
     refresh_per_iteration(per_iteration);
     loop {
         crate::execution_trace::event(crate::execution_trace::Event::LoopIteration);
         crate::execution_trace::loop_shape_iteration(loop_shape);
-        let _ = test_owner.enter_invocation();
-        if !post_test && !loop_test(test, test_owner, registers)? {
-            break;
+        if !post_test {
+            let _ = test_owner.enter_invocation();
+            let step = execute_loop_fragment_step_with_owner(registers, test, test_owner, 0)?;
+            if step.completion.is_suspension() {
+                return phase_suspension(
+                    &shape,
+                    crate::continuation::LoopPhase::Test,
+                    test,
+                    step,
+                    registers,
+                );
+            }
+            if !loop_test_completion(step.completion)? {
+                break;
+            }
         }
         crate::execute::write_value(registers, dst, crate::value::Value::Undefined);
         let _ = body_owner.enter_invocation();
@@ -117,6 +148,7 @@ fn run_loop_inner(
                         update,
                         dst,
                         post_test,
+                        per_iteration,
                     ),
                 );
                 return update_empty_from(registers, dst, completion);
@@ -124,13 +156,110 @@ fn run_loop_inner(
         }
         refresh_per_iteration(per_iteration);
         let _ = update_owner.enter_invocation();
-        run_fragment(update, update_owner, registers)?;
-        let _ = test_owner.enter_invocation();
-        if post_test && !loop_test(test, test_owner, registers)? {
-            break;
+        let step = execute_loop_fragment_step_with_owner(registers, update, update_owner, 0)?;
+        if step.completion.is_suspension() {
+            return phase_suspension(
+                &shape,
+                crate::continuation::LoopPhase::Update,
+                update,
+                step,
+                registers,
+            );
+        }
+        finish_loop_fragment(&step.completion)?;
+        if post_test {
+            let _ = test_owner.enter_invocation();
+            let step = execute_loop_fragment_step_with_owner(registers, test, test_owner, 0)?;
+            if step.completion.is_suspension() {
+                return phase_suspension(
+                    &shape,
+                    crate::continuation::LoopPhase::Test,
+                    test,
+                    step,
+                    registers,
+                );
+            }
+            if !loop_test_completion(step.completion)? {
+                break;
+            }
         }
     }
     Ok(crate::completion::Completion::Normal)
+}
+
+struct LoopExecution<'a> {
+    label: &'a Option<String>,
+    body: crate::machine::CodeView<'a>,
+    test: crate::machine::CodeView<'a>,
+    update: crate::machine::CodeView<'a>,
+    dst: u16,
+    post_test: bool,
+    per_iteration: &'a [u16],
+}
+
+fn phase_suspension(
+    shape: &LoopExecution<'_>,
+    phase: crate::continuation::LoopPhase,
+    code: crate::machine::CodeView<'_>,
+    step: crate::vm::CompletionStep,
+    registers: &crate::register_file::RegisterFile,
+) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    let destination = suspension_slot(code, &step)
+        .ok_or(crate::execute::VmError::MissingReturn)?;
+    let point = shape.suspension_point(phase, code, step.next, destination);
+    let completion = loop_suspension(step.completion, point);
+    update_empty_from(registers, shape.dst, completion)
+}
+
+impl LoopExecution<'_> {
+    fn suspension_point(
+        &self,
+        phase: crate::continuation::LoopPhase,
+        code: crate::machine::CodeView<'_>,
+        next: usize,
+        destination: u16,
+    ) -> crate::continuation::SuspensionPoint {
+        crate::continuation::SuspensionPoint::Loop {
+            pc: 0,
+            label: self.label.clone(),
+            body: self.body.range(),
+            test: self.test.range(),
+            update: self.update.range(),
+            phase,
+            phase_resume: suffix(code.range(), next),
+            dst: self.dst,
+            yield_dst: destination,
+            post_test: self.post_test,
+            per_iteration: self.per_iteration.into(),
+        }
+    }
+}
+
+fn suffix(range: crate::machine::CodeRange, next: usize) -> crate::machine::CodeRange {
+    crate::machine::CodeRange {
+        code: range.code,
+        start: range.start.saturating_add(next as u32),
+        end: range.end,
+    }
+}
+
+fn finish_loop_fragment(
+    completion: &crate::completion::Completion,
+) -> Result<(), crate::execute::VmError> {
+    match completion {
+        crate::completion::Completion::Normal | crate::completion::Completion::Return(_) => Ok(()),
+        completion => completion.clone().into_vm_error().map(|_| ()),
+    }
+}
+
+fn loop_test_completion(
+    completion: crate::completion::Completion,
+) -> Result<bool, crate::execute::VmError> {
+    match completion {
+        crate::completion::Completion::Return(value) => Ok(crate::execute::is_truthy(&value)),
+        crate::completion::Completion::Normal => Ok(false),
+        completion => completion.into_vm_error().map(|value| crate::execute::is_truthy(&value)),
+    }
 }
 
 fn promise_loop_point(
@@ -142,6 +271,7 @@ fn promise_loop_point(
     update: crate::machine::CodeView<'_>,
     dst: u16,
     post_test: bool,
+    per_iteration: &[u16],
 ) -> crate::continuation::SuspensionPoint {
     crate::continuation::SuspensionPoint::Loop {
         pc: 0,
@@ -149,7 +279,8 @@ fn promise_loop_point(
         body: body.range(),
         test: test.range(),
         update: update.range(),
-        body_resume: crate::machine::CodeRange {
+        phase: crate::continuation::LoopPhase::Body,
+        phase_resume: crate::machine::CodeRange {
             code: body.range().code,
             start: body.range().start.saturating_add(next as u32),
             end: body.range().end,
@@ -157,6 +288,7 @@ fn promise_loop_point(
         dst,
         yield_dst: suspension_slot.unwrap_or_else(|| suspended_destination(body, next)),
         post_test,
+        per_iteration: per_iteration.into(),
     }
 }
 

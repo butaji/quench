@@ -445,3 +445,315 @@ fn normalize_script_completion(
 fn reduce(source: &str) -> Result<quench_runtime::reduce::ResidualProgram, String> {
     quench_runtime::reduce::reduce_source(source).map_err(|errors| errors.join("; "))
 }
+#[cfg(test)]
+mod tests {
+    use super::{eval_script, run_script_with_sink};
+    use quench_runtime::vm::OutputSink;
+    use std::path::Path;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn detached_console_methods_do_not_require_a_receiver() {
+        let output = Arc::new(Mutex::new(String::new()));
+        let sink_output = Arc::clone(&output);
+        let sink: OutputSink = Arc::new(move |chunk| {
+            sink_output.lock().unwrap().push_str(chunk);
+        });
+        let source = r#"
+          const methods = [
+            "log", "info", "warn", "error", "debug", "trace", "dir",
+            "table", "group", "groupCollapsed", "groupEnd", "clear", "assert",
+            "count", "countReset", "time", "timeLog", "timeEnd",
+          ];
+          for (const name of methods) {
+            const method = console[name];
+            if (typeof method !== "function") continue;
+            const detached = method;
+            if (name === "assert") detached(false, "detached");
+            else if (name === "time" || name === "timeLog" || name === "timeEnd") detached("detached");
+            else detached("detached");
+          }
+          const log = console.log;
+          log("detached-log");
+        "#;
+        let outcome = eval_script(source, sink);
+        assert!(
+            outcome.error.is_none(),
+            "detached console call failed: {:?}",
+            outcome.error
+        );
+        assert!(output.lock().unwrap().contains("detached-log"));
+    }
+
+    #[test]
+    fn eval_routes_print_through_the_vm_output_sink() {
+        let output = Arc::new(Mutex::new(String::new()));
+        let sink_output = Arc::clone(&output);
+        let sink: OutputSink = Arc::new(move |chunk| {
+            sink_output.lock().unwrap().push_str(chunk);
+        });
+        let outcome = eval_script("print('plain');", sink);
+        assert!(outcome.error.is_none(), "print failed: {:?}", outcome.error);
+        assert_eq!(output.lock().unwrap().as_str(), "plain\n");
+    }
+
+    #[test]
+    fn print_delimits_records_without_changing_stream_writes() {
+        let output = Arc::new(Mutex::new(String::new()));
+        let sink_output = Arc::clone(&output);
+        let sink: OutputSink = Arc::new(move |chunk| {
+            sink_output.lock().unwrap().push_str(chunk);
+        });
+        let outcome = eval_script(
+            "print('line'); process.stdout.write('raw'); process.stdout.write('\\nnext');",
+            sink,
+        );
+        assert!(
+            outcome.error.is_none(),
+            "print/write failed: {:?}",
+            outcome.error
+        );
+        assert_eq!(output.lock().unwrap().as_str(), "line\nraw\nnext");
+    }
+
+    #[test]
+    fn conditional_returned_function_keeps_linked_body_and_completion() {
+        let output = Arc::new(Mutex::new(String::new()));
+        let sink_output = Arc::clone(&output);
+        let sink: OutputSink = Arc::new(move |chunk| {
+            sink_output.lock().unwrap().push_str(chunk);
+        });
+        let source = r#"
+          function choose(flag) {
+            if (flag) return { f: function() { return 42; } };
+            return { f: function() { return 7; } };
+          }
+          const yes = choose(true);
+          const no = choose(false);
+          console.log(yes.f());
+          console.log(no.f());
+          console.log("after");
+        "#;
+        let outcome = eval_script(source, sink);
+        assert!(
+            outcome.error.is_none(),
+            "conditional call failed: {:?}",
+            outcome.error
+        );
+        assert_eq!(output.lock().unwrap().as_str(), "42\n7\nafter\n");
+    }
+
+    #[test]
+    fn file_runner_pumps_timers_and_preserves_sync_output_order() {
+        let output = Arc::new(Mutex::new(String::new()));
+        let sink_output = Arc::clone(&output);
+        let sink: OutputSink = Arc::new(move |chunk| {
+            sink_output.lock().unwrap().push_str(chunk);
+        });
+        let outcome = run_script_with_sink(
+            Path::new("/tmp/quench-host-timer.js"),
+            &[],
+            "console.log('sync'); setTimeout(() => console.log('timer'), 0);",
+            sink,
+        );
+        assert!(outcome.error.is_none(), "timer failed: {:?}", outcome.error);
+        assert_eq!(output.lock().unwrap().as_str(), "sync\ntimer\n");
+    }
+
+    #[test]
+    fn async_loop_continuations_preserve_conditional_and_finally_suffixes() {
+        let output = Arc::new(Mutex::new(String::new()));
+        let sink_output = Arc::clone(&output);
+        let sink: OutputSink = Arc::new(move |chunk| {
+            sink_output.lock().unwrap().push_str(chunk);
+        });
+        let source = r#"
+          async function conditional() {
+            let value = 0;
+            for (let i = 0; i < 2; i++) {
+              if (i === 1) value += await 1;
+              value += await 10;
+            }
+            return value;
+          }
+          async function finalized() {
+            let value = 0;
+            try { for (let i = 0; i < 2; i++) value += await 1; }
+            finally { value += 100; }
+            return value;
+          }
+          conditional().then(console.log);
+          finalized().then(console.log);
+        "#;
+        let outcome = run_script_with_sink(
+            Path::new("/tmp/quench-async-continuation.js"),
+            &[],
+            source,
+            sink,
+        );
+        assert!(
+            outcome.error.is_none(),
+            "async continuation failed: {:?}",
+            outcome.error
+        );
+        let lines = output
+            .lock()
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        assert!(
+            lines.contains(&"21".to_string()),
+            "missing conditional result: {lines:?}"
+        );
+        assert!(
+            lines.contains(&"102".to_string()),
+            "missing finally result: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn sequential_async_loops_keep_each_loop_continuation() {
+        let output = Arc::new(Mutex::new(String::new()));
+        let sink_output = Arc::clone(&output);
+        let sink: OutputSink = Arc::new(move |chunk| sink_output.lock().unwrap().push_str(chunk));
+        let source = r#"
+          async function run() {
+            const first = [], second = [];
+            for (let i = 0; i < 2; i++) first.push(await 1);
+            for (let i = 0; i < 2; i++) second.push(await 2);
+            return JSON.stringify([first, second]);
+          }
+          run().then(console.log);
+        "#;
+        let outcome = run_script_with_sink(
+            Path::new("/tmp/quench-sequential-async-loops.js"),
+            &[],
+            source,
+            sink,
+        );
+        assert!(
+            outcome.error.is_none(),
+            "sequential async loops failed: {:?}",
+            outcome.error
+        );
+        assert_eq!(output.lock().unwrap().trim(), "[[1,1],[2,2]]");
+    }
+
+    #[test]
+    fn nested_generator_progress_and_source_return_are_exact() {
+        let output = Arc::new(Mutex::new(String::new()));
+        let sink_output = Arc::clone(&output);
+        let sink: OutputSink = Arc::new(move |chunk| sink_output.lock().unwrap().push_str(chunk));
+        let source = r#"
+          function* nested() {
+            for (let i = 0; i < 2; i++)
+              for (let j = 0; j < 2; j++) yield i * 10 + j;
+          }
+          const a = nested(), values = [];
+          for (let i = 0; i < 6; i++) { const r = a.next(); values.push([r.value, r.done]); }
+          function* returned() {
+            for (let i = 0; i < 3; i++) { yield i; if (i === 1) return 99; }
+          }
+          const b = returned();
+          console.log(JSON.stringify(values));
+          console.log(JSON.stringify([b.next().value, b.next().value, b.next().value, b.next().value]));
+        "#;
+        let outcome = run_script_with_sink(
+            Path::new("/tmp/quench-nested-generators.js"),
+            &[],
+            source,
+            sink,
+        );
+        assert!(
+            outcome.error.is_none(),
+            "nested generator failed: {:?}",
+            outcome.error
+        );
+        let lines = output
+            .lock()
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lines.first().map(String::as_str),
+            Some("[[0,false],[1,false],[10,false],[11,false],[null,true],[null,true]]")
+        );
+        assert_eq!(lines.get(1).map(String::as_str), Some("[0,1,99,null]"));
+    }
+
+    #[test]
+    fn suspended_shared_bindings_survive_collection_with_dead_siblings() {
+        let output = Arc::new(Mutex::new(String::new()));
+        let sink_output = Arc::clone(&output);
+        let sink: OutputSink = Arc::new(move |chunk| {
+            sink_output.lock().unwrap().push_str(chunk);
+        });
+        let source = r#"
+          async function worker() {
+            const signature = function(value) { return value + 1; };
+            const operation = async function() { return 41; };
+            await Promise.resolve(0);
+            for (let i = 0; i < 4096; i++) {
+              const dead = { i: i, payload: [i, i + 1, i + 2, i + 3] };
+              if (dead.i < 0) console.log(dead);
+            }
+            return [typeof signature, typeof operation, signature(await operation())];
+          }
+          worker().then(function(result) { console.log(result.join(':')); });
+        "#;
+        let outcome = run_script_with_sink(
+            Path::new("/tmp/quench-suspended-binding-gc.js"),
+            &[],
+            source,
+            sink,
+        );
+        assert!(
+            outcome.error.is_none(),
+            "suspended binding run failed: {:?}",
+            outcome.error
+        );
+        assert_eq!(output.lock().unwrap().trim(), "function:function:42");
+    }
+
+    #[test]
+    fn polymorphic_method_dispatch_preserves_semantics() {
+        let output = Arc::new(Mutex::new(String::new()));
+        let sink_output = Arc::clone(&output);
+        let sink: OutputSink = Arc::new(move |chunk| {
+            sink_output.lock().unwrap().push_str(chunk);
+        });
+        // This is deliberately a small, general reproduction of the
+        // DeltaBlue shape: unrelated constructors share one method name while
+        // each instance has a distinct property layout.  It must remain on
+        // the ordinary complete semantics path for every shape.
+        let source = r#"
+          function A() { this.x = 1; this.a = 0; }
+          function B() { this.x = 2; this.b = 0; }
+          function C() { this.x = 3; this.c = 0; }
+          function D() { this.x = 4; this.d = 0; }
+          function E() { this.x = 5; this.e = 0; }
+          A.prototype.f = B.prototype.f = C.prototype.f =
+            D.prototype.f = E.prototype.f = function() {
+              this.a = this.x + 1;
+              return this.x;
+            };
+          const values = [];
+          for (let i = 0; i < 25; i++) {
+            values.push(i % 5 === 0 ? new A : i % 5 === 1 ? new B :
+              i % 5 === 2 ? new C : i % 5 === 3 ? new D : new E);
+          }
+          let total = 0;
+          for (let i = 0; i < 250; i++) total += values[i % values.length].f();
+          console.log(total);
+        "#;
+        let outcome = eval_script(source, sink);
+        assert!(
+            outcome.error.is_none(),
+            "polymorphic dispatch failed: {:?}",
+            outcome.error
+        );
+        assert_eq!(output.lock().unwrap().trim(), "750");
+    }
+}

@@ -1,7 +1,7 @@
 struct BranchFrameResume {
     branch_resume: crate::machine::CodeRange,
     resume: crate::machine::CodeRange,
-    dst: u16,
+    dst: Option<u16>,
     yield_dst: u16,
 }
 
@@ -35,12 +35,16 @@ fn resume_branch_frame(
         advance_frame_after_yield(generator, frame.branch_resume, step.next)?;
         return Ok(Some(completion));
     }
-    let crate::completion::Completion::Return(value) = completion else {
-        return Ok(Some(completion));
+    let completion = match (frame.dst, completion) {
+        (Some(dst), crate::completion::Completion::Return(value)) => {
+            crate::execute::write_value(&mut registers_mut(generator), dst, value);
+            crate::completion::Completion::Normal
+        }
+        (Some(_), completion) => return Ok(Some(completion)),
+        (None, completion) => completion,
     };
-    crate::execute::write_value(&mut registers_mut(generator), frame.dst, value);
     generator.machine.borrow_mut().pop_frame();
-    resume_generator_range(generator, state, frame.resume, crate::completion::Completion::Normal).map(Some)
+    resume_generator_range(generator, state, frame.resume, completion).map(Some)
 }
 
 fn install_branch_frame_input(generator: &GeneratorData, input: &Value) -> bool {

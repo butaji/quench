@@ -354,44 +354,13 @@ fn update_machine_frame(
     state: &GeneratorState,
     completion: &crate::completion::Completion,
 ) -> Result<(), VmError> {
-    if let Some(crate::continuation::SuspensionPoint::Nested { inner, outer }) =
-        state.suspension.clone()
+    if let Some(point @ (crate::continuation::SuspensionPoint::Nested { .. }
+        | crate::continuation::SuspensionPoint::Loop { .. }
+        | crate::continuation::SuspensionPoint::Branch { .. })) = state.suspension.clone()
     {
         push_initial_try_frames(generator)?;
-        if !has_loop_frame(generator, &outer) {
-            push_loop_suspension_frame(generator, state, *outer)?;
-        }
-        push_loop_suspension_frame(generator, state, *inner)?;
-        return Ok(());
-    }
-    if let Some(crate::continuation::SuspensionPoint::Loop {
-        label,
-        body,
-        test,
-        update,
-        body_resume,
-        dst,
-        yield_dst,
-        post_test,
-        ..
-    }) = state.suspension.clone()
-    {
-        push_initial_try_frames(generator)?;
-        push_loop_suspension_frame(
-            generator,
-            state,
-            crate::continuation::SuspensionPoint::Loop {
-                pc: 0,
-                label,
-                body,
-                test,
-                update,
-                body_resume,
-                dst,
-                yield_dst,
-                post_test,
-            },
-        )?;
+        let resume = parent_resume_range(generator, state);
+        install_suspension_frames(generator, point, resume)?;
         return Ok(());
     }
     if completion.is_suspension() && state.suspension.is_none() {
@@ -423,10 +392,51 @@ fn update_machine_frame(
     )
 }
 
-fn has_loop_frame(
+fn install_suspension_frames(
     generator: &GeneratorData,
+    point: crate::continuation::SuspensionPoint,
+    parent_resume: crate::machine::CodeRange,
+) -> Result<(), VmError> {
+    match point {
+        crate::continuation::SuspensionPoint::Nested { inner, outer } => {
+            let child_resume = suspension_child_resume(&outer).unwrap_or(parent_resume);
+            install_suspension_frames(generator, *outer, parent_resume)?;
+            install_suspension_frames(generator, *inner, child_resume)
+        }
+        point @ crate::continuation::SuspensionPoint::Loop { .. } => {
+            push_loop_suspension_frame_at(generator, point, parent_resume)
+        }
+        crate::continuation::SuspensionPoint::Branch {
+            body_resume,
+            yield_dst,
+        } => try_push_frame(
+            &mut generator.machine.borrow_mut(),
+            crate::machine::Frame::Branch {
+                phase: crate::machine::BranchPhase::Body,
+                branch_resume: body_resume,
+                resume: parent_resume,
+                dst: None,
+                yield_dst,
+            },
+        ),
+        _ => Ok(()),
+    }
+}
+
+fn suspension_child_resume(
     point: &crate::continuation::SuspensionPoint,
-) -> bool {
+) -> Option<crate::machine::CodeRange> {
+    match point {
+        crate::continuation::SuspensionPoint::Loop { phase_resume, .. } => Some(*phase_resume),
+        crate::continuation::SuspensionPoint::Branch { body_resume, .. } => Some(*body_resume),
+        crate::continuation::SuspensionPoint::Nested { inner, .. } => {
+            suspension_child_resume(inner)
+        }
+        _ => None,
+    }
+}
+
+fn has_loop_frame(generator: &GeneratorData, point: &crate::continuation::SuspensionPoint) -> bool {
     let crate::continuation::SuspensionPoint::Loop { body, .. } = point else {
         return false;
     };
@@ -440,21 +450,31 @@ fn push_loop_suspension_frame(
     state: &GeneratorState,
     point: crate::continuation::SuspensionPoint,
 ) -> Result<(), VmError> {
+    let resume = parent_resume_range(generator, state);
+    push_loop_suspension_frame_at(generator, point, resume)
+}
+
+fn push_loop_suspension_frame_at(
+    generator: &GeneratorData,
+    point: crate::continuation::SuspensionPoint,
+    resume: crate::machine::CodeRange,
+) -> Result<(), VmError> {
     let crate::continuation::SuspensionPoint::Loop {
         label,
         body,
         test,
         update,
-        body_resume,
+        phase,
+        phase_resume,
         dst,
         yield_dst,
         post_test,
+        per_iteration,
         ..
     } = point
     else {
         return Ok(());
     };
-    let resume = parent_resume_range(generator, state);
     try_push_frame(
         &mut generator.machine.borrow_mut(),
         crate::machine::Frame::Loop {
@@ -462,11 +482,13 @@ fn push_loop_suspension_frame(
             body,
             test,
             update,
-            body_resume,
+            phase,
+            phase_resume,
             resume,
             dst,
             yield_dst,
             post_test,
+            per_iteration,
         },
     )
 }
@@ -485,6 +507,7 @@ fn push_initial_loop_frame(
         update,
         post_test,
         dst,
+        per_iteration,
         ..
     }) = generator
         .function
@@ -494,7 +517,7 @@ fn push_initial_loop_frame(
     else {
         return Ok(false);
     };
-    let Some((body_resume, yield_dst, nested)) = find_loop_resume_path(body) else {
+    let Some((phase_resume, yield_dst, nested)) = find_loop_resume_path(body) else {
         return Ok(false);
     };
     let spec = LoopResumeSpec {
@@ -502,10 +525,12 @@ fn push_initial_loop_frame(
         body: body.range,
         test: test.range,
         update: update.range,
-        body_resume,
+        phase: crate::continuation::LoopPhase::Body,
+        phase_resume,
         dst: *dst,
         yield_dst,
         post_test: *post_test,
+        per_iteration: per_iteration.clone().into(),
         nested,
     };
     push_loop_resume_specs(generator, spec, parent_resume_range(generator, state))?;
@@ -517,10 +542,12 @@ struct LoopResumeSpec {
     body: crate::machine::CodeRange,
     test: crate::machine::CodeRange,
     update: crate::machine::CodeRange,
-    body_resume: crate::machine::CodeRange,
+    phase: crate::continuation::LoopPhase,
+    phase_resume: crate::machine::CodeRange,
     dst: u16,
     yield_dst: u16,
     post_test: bool,
+    per_iteration: std::rc::Rc<[u16]>,
     nested: Option<Box<Self>>,
 }
 
@@ -529,19 +556,24 @@ fn push_loop_resume_specs(
     spec: LoopResumeSpec,
     resume: crate::machine::CodeRange,
 ) -> Result<(), VmError> {
-    let child_resume = spec.body_resume;
+    let child_resume = spec.phase_resume;
     let nested = spec.nested;
-    try_push_frame(&mut generator.machine.borrow_mut(), crate::machine::Frame::Loop {
-        label: spec.label,
-        body: spec.body,
-        test: spec.test,
-        update: spec.update,
-        body_resume: spec.body_resume,
-        resume,
-        dst: spec.dst,
-        yield_dst: spec.yield_dst,
-        post_test: spec.post_test,
-    })?;
+    try_push_frame(
+        &mut generator.machine.borrow_mut(),
+        crate::machine::Frame::Loop {
+            label: spec.label,
+            body: spec.body,
+            test: spec.test,
+            update: spec.update,
+            phase: spec.phase,
+            phase_resume: spec.phase_resume,
+            resume,
+            dst: spec.dst,
+            yield_dst: spec.yield_dst,
+            post_test: spec.post_test,
+            per_iteration: spec.per_iteration,
+        },
+    )?;
     if let Some(nested) = nested {
         push_loop_resume_specs(generator, *nested, child_resume)?;
     }
@@ -565,21 +597,28 @@ fn find_loop_resume_path(
                 update,
                 post_test,
                 dst,
+                per_iteration,
                 ..
             } => {
-                let (body_resume, yield_dst, nested) = find_loop_resume_path(body)?;
+                let (phase_resume, yield_dst, nested) = find_loop_resume_path(body)?;
                 let child = LoopResumeSpec {
                     label: label.clone(),
                     body: body.range,
                     test: test.range,
                     update: update.range,
-                    body_resume,
+                    phase: crate::continuation::LoopPhase::Body,
+                    phase_resume,
                     dst: *dst,
                     yield_dst,
                     post_test: *post_test,
+                    per_iteration: per_iteration.clone().into(),
                     nested,
                 };
-                return Some((resume_after_emitted_op(code, range, index), yield_dst, Some(Box::new(child))));
+                return Some((
+                    resume_after_emitted_op(code, range, index),
+                    yield_dst,
+                    Some(Box::new(child)),
+                ));
             }
             _ => {}
         }
@@ -814,7 +853,10 @@ fn restore_nested_loop_frames(
             !matches!(frame, crate::machine::Frame::Loop { body, .. } if !desired.contains(body))
         });
     }
-    let missing = points.into_iter().filter(|point| !has_loop_frame(generator, point)).collect::<Vec<_>>();
+    let missing = points
+        .into_iter()
+        .filter(|point| !has_loop_frame(generator, point))
+        .collect::<Vec<_>>();
     if missing.is_empty() {
         return Ok(());
     }
@@ -825,9 +867,12 @@ fn restore_nested_loop_frames(
     Ok(())
 }
 
-fn loop_point_range(point: &crate::continuation::SuspensionPoint) -> Option<crate::machine::CodeRange> {
+fn loop_point_range(
+    point: &crate::continuation::SuspensionPoint,
+) -> Option<crate::machine::CodeRange> {
     match point {
         crate::continuation::SuspensionPoint::Loop { body, .. } => Some(*body),
+        crate::continuation::SuspensionPoint::Branch { .. } => None,
         _ => None,
     }
 }
@@ -838,6 +883,7 @@ fn collect_loop_points(
 ) {
     match point {
         crate::continuation::SuspensionPoint::Loop { .. } => output.push(point.clone()),
+        crate::continuation::SuspensionPoint::Branch { .. } => {}
         crate::continuation::SuspensionPoint::Nested { inner, outer } => {
             collect_loop_points(inner, output);
             collect_loop_points(outer, output);

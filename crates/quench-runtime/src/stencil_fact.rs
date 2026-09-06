@@ -238,9 +238,7 @@ impl<'a, const N: usize> PatchValues<'a, N> {
                 .relative_target
                 .map_or(0, |(target, next)| target.wrapping_sub(next) as u64),
             HoleKind::Literal64 => self.constant_bits.unwrap_or(self.opcode() as u64),
-            HoleKind::Ptr64 => self
-                .pointer_bits
-                .unwrap_or(self.opcode() as u64),
+            HoleKind::Ptr64 => self.pointer_bits.unwrap_or(self.opcode() as u64),
         }
     }
 
@@ -517,6 +515,9 @@ mod tests {
         assert_eq!(pointer_a.value_for(HoleKind::Ptr64), 0x1000);
         let constant = PatchValues::from_site(&first_site).with_constant_bits(0x1234);
         assert_eq!(constant.value_for(HoleKind::Literal64), 0x1234);
-        assert_eq!(constant.value_for(HoleKind::Ptr64), crate::ir::Opcode::GetProperty as u64);
+        assert_eq!(
+            constant.value_for(HoleKind::Ptr64),
+            crate::ir::Opcode::GetProperty as u64
+        );
     }
 }
