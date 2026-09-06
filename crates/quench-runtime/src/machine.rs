@@ -5499,14 +5499,27 @@ fn compare_branch_at(
         return None;
     }
     let end = branch_pc.checked_add(1)?;
-    let physical_key = (crate::ir::compact_binary_operator(comparison.flags)
-        == Some(crate::ops::BinaryOp::LessThan))
-    .then(crate::stencil_select::compare_less_branch_region_key);
+    let physical_key = comparison_branch_key(comparison.flags);
     cfg.region_entry_is_legal(start, end).then_some(CompareBranch {
         false_target: u16::try_from(false_target).ok()?,
         span: u8::try_from(end.checked_sub(start)?).ok()?,
         physical_key,
     })
+}
+
+fn comparison_branch_key(flags: u8) -> Option<crate::stencil_fact::RegionKey> {
+    use crate::ops::BinaryOp::*;
+    match crate::ir::compact_binary_operator(flags)? {
+        Equal | StrictEqual => Some(crate::stencil_select::compare_equal_branch_region_key()),
+        NotEqual | StrictNotEqual => {
+            Some(crate::stencil_select::compare_not_equal_branch_region_key())
+        }
+        LessThan => Some(crate::stencil_select::compare_less_branch_region_key()),
+        LessEqual => Some(crate::stencil_select::compare_less_equal_branch_region_key()),
+        GreaterThan => Some(crate::stencil_select::compare_greater_branch_region_key()),
+        GreaterEqual => Some(crate::stencil_select::compare_greater_equal_branch_region_key()),
+        _ => None,
+    }
 }
 
 fn dead_pure_definition(entry: &BaselineEntry, live_after: &BTreeSet<u16>) -> bool {
