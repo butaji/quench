@@ -1172,7 +1172,6 @@ mod tests {
                 assert!(!artifact.stencil.holes.is_empty());
                 assert!(artifact.fallthrough.is_some());
             } else {
-                assert!(artifact.stencil.holes.is_empty());
                 assert!(artifact.fallthrough.is_none());
             }
             assert!(!artifact.fingerprint.is_empty());
@@ -1189,6 +1188,13 @@ mod tests {
                     relocation.addend, 0,
                     "only zero-addend patches are supported"
                 );
+            }
+            for hole in artifact.stencil.holes {
+                assert!(hole.kind == crate::stencil_fact::HoleKind::Literal64
+                    || artifact
+                        .relocations
+                        .iter()
+                        .any(|relocation| relocation.offset == hole.offset));
             }
         }
         if !BUILD_STENCIL_ARTIFACTS.is_empty() {

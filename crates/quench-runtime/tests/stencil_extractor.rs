@@ -87,4 +87,16 @@ fn rust_assembly_recipe_requires_name_abi_and_residual_shape() {
     assert!(
         rust_assembly_recipe(&declaration("load_local", DeclAbi::TaggedWord, &["Move"])).is_none()
     );
+
+    let mut missing_hole = declaration(
+        "load_const",
+        DeclAbi::ConstantWord,
+        &["LoadConst", "Return"],
+    );
+    assert!(rust_assembly_recipe(&missing_hole).is_none());
+    missing_hole.aarch64_holes = &[(8, 8, "Literal64")];
+    assert_eq!(
+        rust_assembly_recipe(&missing_hole),
+        Some(RustAssemblyRecipe::LoadConst)
+    );
 }
