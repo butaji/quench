@@ -17,6 +17,7 @@ use crate::registry::{
 };
 
 const ID: &str = "\0quench:domain:id";
+pub(crate) const PROMISE_DOMAIN: &str = "\0quench:domain:promise";
 pub(crate) const HANDLER_DOMAIN: &str = "\0quench:domain:handler";
 
 struct DomainData {
@@ -32,6 +33,7 @@ pub struct DomainState {
     stack: Vec<u64>,
     domains: HashMap<u64, DomainData>,
     module: Option<Value>,
+    process: Option<Value>,
 }
 
 impl DomainState {
@@ -41,6 +43,7 @@ impl DomainState {
             stack: Vec::new(),
             domains: HashMap::new(),
             module: None,
+            process: None,
         }
     }
 }
@@ -55,19 +58,27 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
         ("createDomain", crate::host::capability(SPEC_DOMAIN_CREATE)),
     ])
     .unwrap_or(Value::Undefined);
-    state.borrow_mut().domain.module = Some(module.clone());
+    let process = execute::get_property(&quench_runtime::vm::current_global_object(), "process");
+    let mut host = state.borrow_mut();
+    host.domain.module = Some(module.clone());
+    if matches!(process, Value::Object(_) | Value::ObjectAlias(_)) {
+        host.domain.process = Some(process);
+    }
     module
 }
 
-fn install_promise_bridge() {
-    let global = quench_runtime::vm::current_global_object();
-    if matches!(
-        execute::get_property(&global, "__quench_domain_promises_patched"),
-        Value::Boolean(true)
-    ) {
-        return;
-    }
-    let source = r#"(() => {
+pub(crate) const PROMISE_BRIDGE_SOURCE: &str = r#"(() => {
+      const promiseDomain = "\0quench:domain:promise";
+      const tag = (promise) => {
+        const domain = globalThis.process?.domain;
+        if (domain) Object.defineProperty(promise, promiseDomain, {
+          configurable: true,
+          value: domain,
+        });
+        return promise;
+      };
+      const originalResolve = Promise.resolve;
+      const originalReject = Promise.reject;
       const originalThen = Promise.prototype.then;
       const wrap = (callback) => {
         const domain = globalThis.process?.domain;
@@ -78,14 +89,34 @@ fn install_promise_bridge() {
         configurable: true,
         writable: true,
         value: function(onFulfilled, onRejected) {
-          return originalThen.call(this, wrap(onFulfilled), wrap(onRejected));
+          return tag(originalThen.call(this, wrap(onFulfilled), wrap(onRejected)));
         },
+      });
+      Object.defineProperty(Promise, "resolve", {
+        configurable: true,
+        writable: true,
+        value: function(value) { return tag(originalResolve.call(this, value)); },
+      });
+      Object.defineProperty(Promise, "reject", {
+        configurable: true,
+        writable: true,
+        value: function(value) { return tag(originalReject.call(this, value)); },
       });
       Object.defineProperty(globalThis, "__quench_domain_promises_patched", {
         configurable: true,
         value: true,
       });
     })()"#;
+
+fn install_promise_bridge() {
+    let global = quench_runtime::vm::current_global_object();
+    if matches!(
+        execute::get_property(&global, "__quench_domain_promises_patched"),
+        Value::Boolean(true)
+    ) {
+        return;
+    }
+    let source = PROMISE_BRIDGE_SOURCE;
     let Ok(program) = quench_runtime::reduce::reduce_global_script_source(source) else {
         return;
     };
@@ -168,10 +199,11 @@ fn with_domain<'a>(
         .map_err(|_| type_error("domain"))
 }
 fn refresh(state: &Rc<RefCell<HostState>>) {
-    let (module, stack, active) = {
+    let (module, process, stack, active) = {
         let host = state.borrow();
         (
             host.domain.module.clone(),
+            host.domain.process.clone(),
             host.domain.stack.clone(),
             host.domain.stack.last().copied(),
         )
@@ -200,8 +232,10 @@ fn refresh(state: &Rc<RefCell<HostState>>) {
             })
             .unwrap_or(Value::Null);
         let _ = execute::set_property_in_place(&module, "active", active.clone());
+        let process = process.unwrap_or_else(|| {
+            execute::get_property(&quench_runtime::vm::current_global_object(), "process")
+        });
         let global = quench_runtime::vm::current_global_object();
-        let process = execute::get_property(&global, "process");
         let process_domain = if matches!(active, Value::Null) {
             Value::Undefined
         } else {
@@ -257,7 +291,9 @@ pub fn exit(
     let id = id(receiver)?;
     let mut host = state.borrow_mut();
     if let Some(pos) = host.domain.stack.iter().rposition(|entry| *entry == id) {
-        host.domain.stack.remove(pos);
+        // Exiting a domain unwinds it and every nested domain entered after
+        // it; the stack is a dynamic context, not a set of independent IDs.
+        host.domain.stack.truncate(pos);
     }
     drop(host);
     refresh(state);
@@ -462,7 +498,10 @@ fn mark_error(
     callback: &Value,
     thrown: bool,
 ) -> Result<Value, VmError> {
-    let value = if matches!(error, Value::Object(_) | Value::ObjectAlias(_)) {
+    // Error objects are identity-bearing JavaScript values.  Mutate the
+    // existing object in place so a domain handler observes the exact error
+    // instance thrown by the callback, rather than a host-created clone.
+    if matches!(error, Value::Object(_) | Value::ObjectAlias(_)) {
         execute::define_property(
             error.clone(),
             "domain",
@@ -472,20 +511,32 @@ fn mark_error(
                 ("writable".into(), Value::Boolean(true)),
                 ("value".into(), domain.clone()),
             ]),
-        )?
-    } else {
-        error.clone()
-    };
-    let value = execute::set_property(value, "domainThrown", Value::Boolean(thrown));
-    if thrown {
-        Ok(value)
-    } else {
-        Ok(execute::set_property(
-            value,
-            "domainBound",
-            callback.clone(),
-        ))
+        )?;
+        let _ = execute::define_property(
+            error.clone(),
+            "domainThrown",
+            host_api::object(vec![
+                ("configurable".into(), Value::Boolean(true)),
+                ("enumerable".into(), Value::Boolean(false)),
+                ("writable".into(), Value::Boolean(true)),
+                ("value".into(), Value::Boolean(thrown)),
+            ]),
+        );
+        if !thrown {
+            let _ = execute::define_property(
+                error.clone(),
+                "domainBound",
+                host_api::object(vec![
+                    ("configurable".into(), Value::Boolean(true)),
+                    ("enumerable".into(), Value::Boolean(false)),
+                    ("writable".into(), Value::Boolean(true)),
+                    ("value".into(), callback.clone()),
+                ]),
+            );
+        }
+        return Ok(error.clone());
     }
+    Ok(error.clone())
 }
 pub fn dispose(
     state: &Rc<RefCell<HostState>>,
@@ -558,6 +609,15 @@ pub fn error_handler(state: &Rc<RefCell<HostState>>, domain: &Value) -> Option<V
         .domains
         .get(&id)
         .and_then(|entry| entry.handler.clone())
+}
+
+pub(crate) fn promise_domain(
+    state: &Rc<RefCell<HostState>>,
+    promise: &Value,
+) -> Option<(Value, Value)> {
+    let domain = execute::get_property(promise, PROMISE_DOMAIN);
+    let handler = error_handler(state, &domain)?;
+    Some((domain, handler))
 }
 
 pub(crate) fn stack_values(state: &Rc<RefCell<HostState>>) -> Vec<Value> {

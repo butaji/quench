@@ -75,13 +75,82 @@ pub fn transform_esm_imports(source: &str) -> String {
             continue;
         }
         if let Some((replacement, rest)) = convert_import_statement(&after) {
-            let consumed = source.len() - rest.len() - 1;
+            let consumed = source.len() - rest.len();
             out.push_str(&replacement);
             iter = source[consumed..].chars().peekable();
         } else {
             out.push(ch);
         }
         prev_char = Some(ch);
+    }
+    out
+}
+
+/// Lower the small, host-facing ESM surface needed by CommonJS
+/// `require()` under `--experimental-require-module`. OXC/runtime owns the
+/// JavaScript syntax; this pass only materializes the namespace assignments
+/// that are otherwise mechanical consequences of export declarations.
+pub fn transform_esm_module(source: &str) -> String {
+    let source = transform_esm_imports(source);
+    let mut out = String::with_capacity(source.len() + 64);
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        let indent = &line[..line.len() - trimmed.len()];
+        if let Some(rest) = trimmed.strip_prefix("export default ") {
+            out.push_str(indent);
+            out.push_str("exports.default = ");
+            out.push_str(rest);
+            out.push('\n');
+            continue;
+        }
+        let declaration = trimmed
+            .strip_prefix("export ")
+            .filter(|rest| rest.starts_with("const ") || rest.starts_with("let ") || rest.starts_with("var "));
+        if let Some(declaration) = declaration {
+            out.push_str(indent);
+            out.push_str(declaration);
+            out.push('\n');
+            let names = declaration
+                .split_once('=')
+                .map(|(left, _)| left.trim())
+                .unwrap_or_default()
+                .trim_start_matches("const ")
+                .trim_start_matches("let ")
+                .trim_start_matches("var ")
+                .split(',')
+                .filter_map(|name| name.trim().split_whitespace().next())
+                .filter(|name| !name.is_empty());
+            for name in names {
+                out.push_str(indent);
+                out.push_str("exports.");
+                out.push_str(name);
+                out.push_str(" = ");
+                out.push_str(name);
+                out.push_str(";\n");
+            }
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("export {") {
+            out.push_str(indent);
+            out.push_str("// export list lowered by quench-node\n");
+            let names = rest.split('}').next().unwrap_or_default();
+            for entry in names.split(',') {
+                let mut parts = entry.trim().split(" as ");
+                let local = parts.next().unwrap_or_default().trim();
+                let exported = parts.next().unwrap_or(local).trim();
+                if !local.is_empty() {
+                    out.push_str(indent);
+                    out.push_str("exports.");
+                    out.push_str(exported);
+                    out.push_str(" = ");
+                    out.push_str(local);
+                    out.push_str(";\n");
+                }
+            }
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
     }
     out
 }
@@ -159,10 +228,11 @@ fn split_import_body(body: &str) -> Option<(String, String)> {
         i += 1;
     }
     let spec = body[start..i].trim();
-    let remainder = body[i..].trim_start();
-    let remainder = remainder.trim_start_matches(';').trim_start();
+    // Preserve the exact suffix so the scanner can resume at the original
+    // byte offset. Trimming here loses semicolons/newlines and causes the
+    // following expression to be swallowed into the generated require call.
+    let remainder = body[i..].to_string();
     let replacement = convert_import_spec(spec)?;
-    let remainder = remainder.to_string();
     Some((replacement, remainder))
 }
 
@@ -170,6 +240,18 @@ fn convert_import_spec(spec: &str) -> Option<String> {
     let spec = spec.trim();
     let rest = spec.trim_end_matches(';').trim();
     let rest = strip_import_with_clause(rest);
+    // Side-effect imports have no binding clause.  Lower them to the same
+    // host module request as bound imports so an async-module fallback can
+    // execute the complete module body without leaving `import` syntax in a
+    // function scope.
+    if rest.starts_with('"') || rest.starts_with('\'') {
+        let module = rest.trim_matches(|c| c == '"' || c == '\'');
+        let module = module
+            .strip_suffix(".mjs")
+            .or_else(|| module.strip_suffix(".js"))
+            .unwrap_or(module);
+        return Some(format!("require({module:?});"));
+    }
     let from_index = rest.rfind(" from ")?;
     let (left, right) = rest.split_at(from_index);
     let right = &right[" from ".len()..];
@@ -342,6 +424,7 @@ fn parse_import_names(inner: &str) -> String {
         .collect::<Vec<_>>()
         .join(", ")
 }
+
 
 /// Strip the trailing `with { type: 'json' }` clause from an import path.
 fn strip_import_with_clause(rest: &str) -> &str {

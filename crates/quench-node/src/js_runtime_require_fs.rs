@@ -2,7 +2,7 @@ fn fs_promises_surface() -> Value {
     Value::object(vec![
         (
             "cp".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::FsCp)),
+            crate::host::capability(crate::registry::SPEC_FS_CP),
         ),
         (
             "writeFile".into(),
@@ -255,11 +255,11 @@ fn require_fs_module(name: &str) -> Option<Value> {
                 ),
                 (
                     "cpSync".into(),
-                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsCpSync)),
+                    crate::host::capability(crate::registry::SPEC_FS_CP_SYNC),
                 ),
                 (
                     "cp".into(),
-                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsCp)),
+                    crate::host::capability(crate::registry::SPEC_FS_CP),
                 ),
                 (
                     "mkdirSync".into(),

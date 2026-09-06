@@ -62,12 +62,19 @@ globalThis.__nodeEventEmitter.on = async function* (emitter, event, options) {
   const queue = [];
   let wake;
   let aborted = false;
+  let failure;
   const listener = (...args) => {
     if (aborted) return;
     queue.push(args);
     if (wake) (wake(), (wake = undefined));
   };
+  const onError = (error) => {
+    if (aborted || failure !== undefined) return;
+    failure = error;
+    if (wake) (wake(), (wake = undefined));
+  };
   emitter.on(event, listener);
+  if (event !== "error") emitter.on("error", onError);
   const signal = options?.signal;
   if (signal?.aborted) {
     throw new DOMException("The operation was aborted.", "AbortError");
@@ -79,15 +86,26 @@ globalThis.__nodeEventEmitter.on = async function* (emitter, event, options) {
   signal?.addEventListener("abort", onAbort);
   try {
     while (true) {
-      if (aborted) {
+      // Deliver events already observed before a terminal error. Node's
+      // iterator preserves this FIFO edge, then rejects on the following
+      // request and tears down both listeners in `finally`.
+      if (!queue.length) {
+        if (aborted) {
+          throw new DOMException("The operation was aborted.", "AbortError");
+        }
+        if (failure !== undefined) throw failure;
+        await new Promise((resolve) => (wake = resolve));
+      }
+      if (!queue.length && aborted) {
         throw new DOMException("The operation was aborted.", "AbortError");
       }
-      if (!queue.length) await new Promise((resolve) => (wake = resolve));
+      if (!queue.length && failure !== undefined) throw failure;
       yield queue.shift();
     }
   } finally {
     signal?.removeEventListener("abort", onAbort);
     emitter.off(event, listener);
+    if (event !== "error") emitter.off("error", onError);
   }
 };
 const __nodeReadableEmitClose = (stream) => {

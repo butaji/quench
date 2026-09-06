@@ -1,9 +1,10 @@
 //! `process` module — pure Rust process info.
 
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use quench_runtime::execute::VmError;
+use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
 use quench_runtime::value::Value;
 
@@ -23,10 +24,15 @@ pub struct ProcessState {
     pub before_exit_handlers: Vec<(Value, bool)>,
     /// `(handler, once)` — `once` handlers fire a single time.
     pub uncaught_exception_handlers: Vec<(Value, bool)>,
+    pub uncaught_exception_capture_callback: Option<Value>,
     pub warning_handlers: Vec<(Value, bool)>,
     pub unhandled_rejection_handlers: Vec<(Value, bool)>,
     pub unhandled_rejection_mode: UnhandledRejectionMode,
     pub other_handlers: Vec<(String, Value, bool)>,
+    /// Process listeners are scoped when a forked primary/worker is
+    /// re-entered in the host VM; separate logical processes must not see one
+    /// another's message channels.
+    pub scoped_handlers: HashMap<u64, Vec<(String, Value, bool)>>,
     /// Warning names already emitted; duration warnings fire once per process.
     pub warnings_emitted: Vec<String>,
     pub deprecations_emitted: Vec<(Value, Option<String>)>,
@@ -35,8 +41,28 @@ pub struct ProcessState {
     pub version: String,
     pub versions: Vec<(String, String)>,
     pub exit_code: Option<i32>,
+    /// Invocation policy: abort instead of reporting an unhandled exception.
+    /// This is carried in the host state so child re-execs observe the same
+    /// process-level flag without inspecting fixture names or source text.
+    pub abort_on_uncaught_exception: bool,
     pub cwd: std::path::PathBuf,
     pub umask: u32,
+    pub title: String,
+    /// Host-simulated child identities visible to `process.kill`.
+    pub alive_pids: HashSet<i64>,
+    /// Trace-event output is owned by the process host so static flags and
+    /// dynamic `trace_events` calls share one writer and one event list.
+    pub trace_categories: HashSet<String>,
+    pub trace_events: Vec<String>,
+    pub trace_event_file: Option<std::path::PathBuf>,
+    pub trace_timestamp: u64,
+    /// Invocation-level permission facts.  These are kept with the process
+    /// rather than inferred by child-process handlers so every host API sees
+    /// one policy and `drop()` can monotonically revoke a capability.
+    pub permission_enabled: bool,
+    pub permission_audit: bool,
+    pub permissions: HashSet<String>,
+    pub dropped_permissions: HashSet<String>,
 }
 
 impl Default for ProcessState {
@@ -54,6 +80,10 @@ impl ProcessState {
         let versions = vec![
             ("node".to_string(), "v22.0.0".into()),
             ("quench".to_string(), "v0.1.0".into()),
+            // The Rust crypto backend follows the OpenSSL 3 API surface.
+            // Expose the fact through the same versions object Node tests
+            // use for feature gating.
+            ("openssl".to_string(), "3.0.0".into()),
         ];
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
         Self {
@@ -61,10 +91,12 @@ impl ProcessState {
             exit_handlers: Vec::new(),
             before_exit_handlers: Vec::new(),
             uncaught_exception_handlers: Vec::new(),
+            uncaught_exception_capture_callback: None,
             warning_handlers: Vec::new(),
             unhandled_rejection_handlers: Vec::new(),
             unhandled_rejection_mode: UnhandledRejectionMode::Throw,
             other_handlers: Vec::new(),
+            scoped_handlers: HashMap::new(),
             warnings_emitted: Vec::new(),
             deprecations_emitted: Vec::new(),
             exit_handlers_ran: false,
@@ -72,10 +104,333 @@ impl ProcessState {
             version: "v22.0.0".into(),
             versions,
             exit_code: None,
+            abort_on_uncaught_exception: false,
             cwd,
             umask: 0o022,
+            title: "quench-node".into(),
+            alive_pids: HashSet::from([std::process::id() as i64]),
+            trace_categories: HashSet::new(),
+            trace_events: Vec::new(),
+            trace_event_file: None,
+            trace_timestamp: 0,
+            permission_enabled: false,
+            permission_audit: false,
+            permissions: HashSet::new(),
+            dropped_permissions: HashSet::new(),
         }
     }
+}
+
+/// Install invocation-time trace categories before bootstrap creates any
+/// timers or promises. The process state is the single source of truth for
+/// both `--trace-event-categories` and `trace_events.createTracing()`.
+pub fn configure_trace(state: &Rc<RefCell<HostState>>, exec_argv: &[String]) {
+    let categories = exec_argv
+        .iter()
+        .enumerate()
+        .find_map(|(index, flag)| {
+            (flag == "--trace-event-categories")
+                .then(|| exec_argv.get(index + 1).cloned())
+                .flatten()
+        })
+        .or_else(|| {
+            exec_argv.iter().find_map(|flag| {
+                flag.strip_prefix("--trace-event-categories=")
+                    .map(str::to_owned)
+            })
+        });
+    let Some(categories) = categories else { return };
+    let mut host = state.borrow_mut();
+    host.process.trace_categories = categories
+        .split(',')
+        .filter(|category| !category.is_empty())
+        .map(str::to_string)
+        .collect();
+    host.process.trace_event_file = Some(host.process.cwd.join("node_trace.1.log"));
+}
+
+fn trace_enabled(process: &ProcessState) -> bool {
+    process.trace_categories.contains("node.async_hooks") || process.trace_categories.contains("*")
+}
+
+pub(crate) fn trace_enable(state: &Rc<RefCell<HostState>>, categories: &[String]) {
+    let mut host = state.borrow_mut();
+    host.process
+        .trace_categories
+        .extend(categories.iter().cloned());
+    host.process.trace_event_file = Some(host.process.cwd.join("node_trace.1.log"));
+}
+
+pub(crate) fn trace_disable(state: &Rc<RefCell<HostState>>, categories: &[String]) {
+    let mut host = state.borrow_mut();
+    for category in categories {
+        host.process.trace_categories.remove(category);
+    }
+}
+
+pub(crate) fn trace_categories(state: &Rc<RefCell<HostState>>) -> String {
+    let mut categories = state
+        .borrow()
+        .process
+        .trace_categories
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    categories.sort();
+    categories.join(",")
+}
+
+fn json_escape(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Record the observable async-hooks init event. The event shape intentionally
+/// contains only stable Node fields; host timing and V8 compiler events are
+/// not fabricated.
+pub(crate) fn trace_resource_init(
+    state: &Rc<RefCell<HostState>>,
+    resource_type: &str,
+    id: u64,
+    trigger: u64,
+    tid: u64,
+) {
+    let mut host = state.borrow_mut();
+    if !trace_enabled(&host.process) {
+        return;
+    }
+    let timestamp = host.process.trace_timestamp;
+    host.process.trace_timestamp = timestamp.saturating_add(1);
+    host.process.trace_event_file = Some(host.process.cwd.join("node_trace.1.log"));
+    host.process.trace_events.push(format!(
+        "{{\"pid\":{},\"tid\":{},\"cat\":\"node,node.async_hooks\",\"ph\":\"b\",\"name\":\"{}\",\"ts\":{},\"args\":{{\"data\":{{\"executionAsyncId\":{},\"triggerAsyncId\":{}}}}}}}",
+        std::process::id(),
+        tid,
+        json_escape(resource_type),
+        timestamp,
+        id,
+        trigger
+    ));
+}
+
+pub(crate) fn trace_worker_started(state: &Rc<RefCell<HostState>>, tid: u64) {
+    let id = crate::modules::async_hooks::current_resource_id(state).max(1);
+    trace_resource_init(state, "Timeout", id, id, tid);
+}
+
+/// Flush the per-process trace list at the same boundary where the runner
+/// resolves the process exit code. A missing category or empty list produces
+/// no file, matching Node's disabled tracing behavior.
+pub fn flush_trace_events(state: &Rc<RefCell<HostState>>) {
+    let (path, events) = {
+        let host = state.borrow();
+        if !trace_enabled(&host.process) || host.process.trace_events.is_empty() {
+            return;
+        }
+        (
+            host.process.trace_event_file.clone(),
+            host.process.trace_events.clone(),
+        )
+    };
+    let Some(path) = path else { return };
+    let payload = format!("{{\"traceEvents\":[{}]}}", events.join(","));
+    let _ = std::fs::write(path, payload);
+}
+
+/// The upstream test helper skips only when Node is built with Perfetto. The
+/// Rust host has no Perfetto backend, so this compatibility probe is a
+/// deliberate no-op rather than a fixture-specific branch.
+pub(crate) fn skip_if_perfetto(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Undefined)
+}
+
+pub fn set_abort_on_uncaught_exception(state: &Rc<RefCell<HostState>>, exec_argv: &[String]) {
+    let enabled = exec_argv.iter().any(|flag| {
+        matches!(
+            flag.as_str(),
+            "--abort-on-uncaught-exception" | "--abort_on_uncaught_exception"
+        )
+    });
+    state.borrow_mut().process.abort_on_uncaught_exception = enabled;
+}
+
+/// Parse Node permission flags into one process-owned policy.  Flags are
+/// facts supplied by the invocation (or NODE_OPTIONS), never fixture/source
+/// hints.  An explicit `--permission`/`--permission-audit` list wins over
+/// NODE_OPTIONS so child invocations can intentionally replace inherited
+/// permissions just as Node does.
+pub fn configure_permissions(state: &Rc<RefCell<HostState>>, exec_argv: &[String]) {
+    let env_flags = std::env::var("NODE_OPTIONS")
+        .ok()
+        .map(|options| {
+            options
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let explicit_model = exec_argv
+        .iter()
+        .any(|flag| flag == "--permission" || flag == "--permission-audit");
+    let flags = if explicit_model || env_flags.is_empty() {
+        exec_argv
+    } else {
+        &env_flags
+    };
+    let enabled = flags
+        .iter()
+        .any(|flag| flag == "--permission" || flag == "--permission-audit");
+    let audit = flags.iter().any(|flag| flag == "--permission-audit");
+    let mut permissions = HashSet::new();
+    for flag in flags {
+        let scope = match flag.as_str() {
+            "--allow-child-process" => Some("child"),
+            "--allow-fs-read" => Some("fs.read"),
+            "--allow-fs-write" => Some("fs.write"),
+            "--allow-net" => Some("net"),
+            "--allow-worker" => Some("worker"),
+            "--allow-wasi" => Some("wasi"),
+            "--allow-inspector" => Some("inspector"),
+            "--allow-addons" => Some("addon"),
+            "--allow-ffi" => Some("ffi"),
+            "--allow-openssl-store" => Some("openssl.store"),
+            value if value.starts_with("--allow-fs-read=") => Some("fs.read"),
+            value if value.starts_with("--allow-fs-write=") => Some("fs.write"),
+            _ => None,
+        };
+        if let Some(scope) = scope {
+            permissions.insert(scope.to_string());
+        }
+    }
+    let mut process = state.borrow_mut();
+    process.process.permission_enabled = enabled;
+    process.process.permission_audit = audit;
+    process.process.permissions = permissions;
+}
+
+/// Return whether a process-owned permission is currently granted.  This
+/// does not treat a permission-looking substring in NODE_OPTIONS as a flag:
+/// only exact option tokens are accepted by `configure_permissions`.
+pub fn permission_allows(state: &Rc<RefCell<HostState>>, scope: &str) -> bool {
+    let process = state.borrow();
+    if !process.process.permission_enabled {
+        return true;
+    }
+    process.process.permissions.contains(scope)
+        && !process.process.dropped_permissions.contains(scope)
+}
+
+pub fn permission_enabled(state: &Rc<RefCell<HostState>>) -> bool {
+    state.borrow().process.permission_enabled
+}
+
+pub fn permission_audit(state: &Rc<RefCell<HostState>>) -> bool {
+    state.borrow().process.permission_audit
+}
+
+pub fn permission_error(scope: &str, resource: &str) -> VmError {
+    let (flag, label) = match scope {
+        "fs.write" => ("--allow-fs-write", "FileSystemWrite"),
+        "fs.read" => ("--allow-fs-read", "FileSystemRead"),
+        "child" => ("--allow-child-process", "ChildProcess"),
+        "net" => ("--allow-net", "Net"),
+        "worker" => ("--allow-worker", "Worker"),
+        _ => ("the corresponding allow flag", "Unknown"),
+    };
+    let mut error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String(format!(
+            "Access to this API has been restricted. Use {flag} to manage permissions."
+        ))],
+    );
+    execute::set_property_in_place(
+        &mut error,
+        "code",
+        Value::String("ERR_ACCESS_DENIED".into()),
+    );
+    execute::set_property_in_place(&mut error, "permission", Value::String(label.into()));
+    execute::set_property_in_place(&mut error, "resource", Value::String(resource.into()));
+    VmError::Thrown(error)
+}
+
+pub fn drop_permission(state: &Rc<RefCell<HostState>>, scope: &str) {
+    state
+        .borrow_mut()
+        .process
+        .dropped_permissions
+        .insert(scope.to_string());
+}
+
+/// Add the current process policy to a self-reexec's argv.  Node propagates
+/// permission flags to children unless the child supplies its own model
+/// flags (or a real model flag in NODE_OPTIONS).  Keeping this transform next
+/// to the policy prevents each child-process entry point from inventing its
+/// own inheritance rules.
+pub fn permission_exec_argv(
+    state: &Rc<RefCell<HostState>>,
+    mut args: Vec<String>,
+    env: Option<&Value>,
+) -> Vec<String> {
+    let (enabled, audit, permissions) = {
+        let process = state.borrow();
+        (
+            process.process.permission_enabled,
+            process.process.permission_audit,
+            process.process.permissions.clone(),
+        )
+    };
+    if !enabled
+        || args
+            .iter()
+            .any(|flag| flag == "--permission" || flag == "--permission-audit")
+    {
+        return args;
+    }
+    let node_options = env
+        .and_then(|value| {
+            let options = execute::get_property(value, "NODE_OPTIONS");
+            matches!(options, Value::String(_)).then(|| execute::to_js_string(&options).ok())
+        })
+        .flatten()
+        .unwrap_or_default();
+    if node_options
+        .split_whitespace()
+        .any(|flag| flag == "--permission" || flag == "--permission-audit")
+    {
+        return args;
+    }
+    let mut inherited = vec![if audit {
+        "--permission-audit".to_string()
+    } else {
+        "--permission".to_string()
+    }];
+    for (scope, flag) in [
+        ("child", "--allow-child-process"),
+        ("fs.read", "--allow-fs-read=*"),
+        ("fs.write", "--allow-fs-write=*"),
+        ("net", "--allow-net"),
+        ("worker", "--allow-worker"),
+        ("wasi", "--allow-wasi"),
+        ("inspector", "--allow-inspector"),
+        ("addon", "--allow-addons"),
+        ("ffi", "--allow-ffi"),
+        ("openssl.store", "--allow-openssl-store"),
+    ] {
+        if permissions.contains(scope)
+            && !state.borrow().process.dropped_permissions.contains(scope)
+        {
+            inherited.push(flag.to_string());
+        }
+    }
+    inherited.append(&mut args);
+    inherited
+}
+
+pub fn abort_on_uncaught_exception(state: &Rc<RefCell<HostState>>) -> bool {
+    state.borrow().process.abort_on_uncaught_exception
 }
 
 pub(crate) fn mark_deprecation(
@@ -105,7 +460,27 @@ pub(crate) fn mark_deprecation(
 }
 
 pub fn build(argv: &[String], exec_path: &str) -> Value {
-    let mut props = info_props(argv, exec_path);
+    build_with_title(argv, exec_path, "quench-node")
+}
+
+pub fn build_with_title(argv: &[String], exec_path: &str, title: &str) -> Value {
+    let exec_argv = std::env::var("QUENCH_EXEC_ARGV")
+        .ok()
+        .and_then(|value| serde_json::from_str::<Vec<String>>(&value).ok())
+        .unwrap_or_default();
+    build_with_title_and_exec_argv(argv, exec_path, title, &exec_argv)
+}
+
+/// Build the process namespace with invocation flags supplied by the host
+/// runner.  Keeping `execArgv` separate from `argv` mirrors Node's argument
+/// split and avoids a mutable global/environment handoff for fixture flags.
+pub fn build_with_title_and_exec_argv(
+    argv: &[String],
+    exec_path: &str,
+    title: &str,
+    exec_argv: &[String],
+) -> Value {
+    let mut props = info_props_with_exec_argv(argv, exec_path, title, Some(exec_argv));
     props.extend(method_props());
     let process =
         crate::host::namespace_object(props).unwrap_or_else(|_| host_api::object(Vec::new()));
@@ -125,28 +500,117 @@ pub fn build(argv: &[String], exec_path: &str) -> Value {
     process
 }
 
-fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
+const ALLOWED_NODE_ENVIRONMENT_FLAGS: &str = "--allow-addons --allow-child-process --allow-fs-read --allow-fs-write --allow-inspector --allow-net --allow-openssl-store --allow-wasi --allow-worker --conditions -C --diagnostic-dir --disable-proto --disable-sigusr1 --disable-warning --disable-wasm-trap-handler --dns-result-order --enable-fips --enable-network-family-autoselection --enable-source-maps --entry-url --experimental-abortcontroller --experimental-addon-modules --experimental-detect-module --experimental-dtls --experimental-eventsource --experimental-import-meta-resolve --experimental-import-text --experimental-json-modules --experimental-loader --experimental-modules --experimental-package-map --experimental-print-required-tla --experimental-quic --experimental-repl-await --experimental-require-module --experimental-shadow-realm --experimental-specifier-resolution --experimental-stream-iter --experimental-test-isolation --experimental-top-level-await --experimental-vfs --experimental-vm-modules --experimental-wasi-unstable-preview1 --experimental-web-worker --force-context-aware --force-fips --force-node-api-uncaught-exceptions-policy --frozen-intrinsics --heapsnapshot-near-heap-limit --heapsnapshot-signal --http-parser --icu-data-dir --import --input-type --insecure-http-parser --localstorage-file --max-http-header-size --max-old-space-size-percentage --network-family-autoselection-attempt-timeout --addons --async-context-frame --deprecation --experimental-global-navigator --experimental-sqlite --experimental-strip-types --experimental-websocket --experimental-webstorage --extra-info-on-fatal-exception --force-async-hooks-checks --global-search-paths --network-family-autoselection --strip-types --warnings --webstorage --node-memory-debug --openssl-config --openssl-legacy-provider --openssl-shared-config --pending-deprecation --permission-audit --permission --preserve-symlinks-main --preserve-symlinks --prof-process --redirect-warnings --report-compact --report-dir --report-directory --report-exclude-env --report-exclude-network --report-filename --report-on-fatalerror --report-on-signal --report-signal --report-uncaught-exception --require-module --require --secure-heap-min --secure-heap --snapshot-blob --test-coverage-branches --test-coverage-exclude --test-coverage-functions --test-coverage-include-all --test-coverage-include --test-coverage-lines --test-global-setup --test-isolation --test-name-pattern --test-only --test-random-seed --test-randomize --test-reporter-destination --test-reporter --test-rerun-failures --test-shard --test-skip-pattern --throw-deprecation --title --tls-cipher-list --tls-keylog --tls-max-v1.2 --tls-max-v1.3 --tls-min-v1.0 --tls-min-v1.1 --tls-min-v1.2 --tls-min-v1.3 --trace-deprecation --trace-env-js-stack --trace-env-native-stack --trace-env --trace-event-categories --trace-event-file-pattern --trace-events-enabled --trace-exit --trace-require-module --trace-sigint --trace-sync-io --trace-tls --trace-uncaught --trace-warnings --track-heap-objects --unhandled-rejections --use-bundled-ca --use-env-proxy --use-largepages --use-openssl-ca --use-system-ca --v8-pool-size --watch-kill-signal --watch-path --watch-preserve-output --watch --zero-fill-buffers --abort-on-uncaught-exception --disallow-code-generation-from-strings --enable-etw-stack-walking --expose-gc --interpreted-frames-native-stack --jitless --max-heap-size --max-old-space-size --max-semi-space-size --perf-basic-prof-only-functions --perf-basic-prof --perf-prof-unwinding-info --perf-prof"
+    ;
+
+pub fn allowed_node_environment_flags() -> Value {
+    let values = ALLOWED_NODE_ENVIRONMENT_FLAGS
+        .split_whitespace()
+        .chain([
+            "-r",
+            "--stack-trace-limit",
+            "--debug-arraybuffer-allocations",
+            "--no-debug-arraybuffer-allocations",
+            "--es-module-specifier-resolution",
+            "--experimental-fetch",
+            "--experimental-wasm-modules",
+            "--experimental-global-customevent",
+            "--experimental-global-webcrypto",
+            "--experimental-report",
+            "--experimental-worker",
+            "--napi-modules",
+            "--node-snapshot",
+            "--no-node-snapshot",
+            "--loader",
+            "--verify-base-objects",
+            "--no-verify-base-objects",
+            "--trace-promises",
+            "--no-trace-promises",
+        ])
+        .map(|flag| Value::String(flag.into()))
+        .collect();
+    quench_runtime::execute::construct_value(
+        &Value::Builtin(quench_runtime::ops::Builtin::Set),
+        &[host_api::array(values)],
+    )
+    .unwrap_or_else(|_| host_api::object(Vec::new()))
+}
+
+fn info_props_with_exec_argv(
+    argv: &[String],
+    exec_path: &str,
+    title: &str,
+    explicit_exec_argv: Option<&[String]>,
+) -> Vec<(&'static str, Value)> {
+    let channel_handle = host_api::object(vec![
+        (
+            "readStop".into(),
+            Value::Builtin(quench_runtime::ops::Builtin::Object),
+        ),
+        (
+            "readStart".into(),
+            Value::Builtin(quench_runtime::ops::Builtin::Object),
+        ),
+    ]);
+    let stdin = crate::host::namespace_object_from_pairs(vec![
+        ("fd".into(), Value::Number(0.0)),
+        (
+            "on".into(),
+            Value::Builtin(quench_runtime::ops::Builtin::Object),
+        ),
+        (
+            "once".into(),
+            Value::Builtin(quench_runtime::ops::Builtin::Object),
+        ),
+        (
+            "resume".into(),
+            Value::Builtin(quench_runtime::ops::Builtin::Object),
+        ),
+        (
+            "ref".into(),
+            crate::host::capability(crate::registry::SPEC_PROCESS_REF),
+        ),
+        (
+            "unref".into(),
+            crate::host::capability(crate::registry::SPEC_PROCESS_UNREF),
+        ),
+    ]);
+    let allowed_flags = allowed_node_environment_flags();
     vec![
         ("Symbol.toStringTag", Value::String("process".into())),
         (
             "argv",
             host_api::array(argv.iter().cloned().map(Value::String).collect()),
         ),
+        // Keep the public Node shape present even though this Rust host does
+        // not expose Node's native snapshot-loader inventory.  Require hooks
+        // can still observe and mutate one canonical per-process list.
+        ("moduleLoadList", host_api::array(Vec::new())),
         ("env", env_object()),
         (
             "config",
             crate::host::readonly_namespace_from_pairs(vec![(
                 "variables".to_string(),
-                crate::host::readonly_namespace_from_pairs(vec![(
-                    "v8_enable_i18n_support".to_string(),
-                    Value::Number(1.0),
-                )]),
+                crate::host::readonly_namespace_from_pairs(vec![
+                    ("v8_enable_i18n_support".to_string(), Value::Number(1.0)),
+                    ("node_module_version".to_string(), Value::Number(127.0)),
+                    ("napi_build_version".to_string(), Value::String("9".into())),
+                    (
+                        "node_builtin_shareable_builtins".to_string(),
+                        host_api::array(Vec::new()),
+                    ),
+                    ("node_use_lief".to_string(), Value::Boolean(false)),
+                    ("node_use_amaro".to_string(), Value::Boolean(false)),
+                    ("node_use_ffi".to_string(), Value::Boolean(false)),
+                    ("node_shared".to_string(), Value::Boolean(false)),
+                    ("node_shared_openssl".to_string(), Value::Boolean(false)),
+                ]),
             )]),
         ),
         ("execPath", Value::String(exec_path.to_string())),
         (
             "argv0",
-            Value::String(std::env::var("QUENCH_ARGV0").unwrap_or_else(|_| exec_path.to_string())),
+            Value::String(std::env::var("QUENCH_ARGV0").unwrap_or_else(|_| "node".into())),
         ),
         (
             "release",
@@ -156,7 +620,7 @@ fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
         ("version", Value::String("v22.0.0".into())),
         (
             "versions",
-            crate::host::namespace_object_from_pairs(versions_props()),
+            crate::host::readonly_namespace_from_pairs(versions_props()),
         ),
         (
             "platform",
@@ -173,10 +637,44 @@ fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
                     .unwrap_or_else(process_parent_id) as f64,
             ),
         ),
-        ("execArgv", host_api::array(vec![])),
+        (
+            "execArgv",
+            host_api::array(
+                explicit_exec_argv
+                    .map(|values| values.to_vec())
+                    .or_else(|| {
+                        std::env::var("QUENCH_EXEC_ARGV")
+                            .ok()
+                            .and_then(|value| serde_json::from_str::<Vec<String>>(&value).ok())
+                    })
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(Value::String)
+                    .collect(),
+            ),
+        ),
+        ("allowedNodeEnvironmentFlags", allowed_flags),
+        ("title", Value::String(title.to_string())),
         ("features", features()),
+        (
+            "permission",
+            host_api::object(vec![
+                (
+                    "has".into(),
+                    crate::host::capability(crate::registry::SPEC_PROCESS_PERMISSION_HAS),
+                ),
+                (
+                    "drop".into(),
+                    crate::host::capability(crate::registry::SPEC_PROCESS_PERMISSION_DROP),
+                ),
+            ]),
+        ),
         ("stdout", std_stream(false)),
         ("stderr", std_stream(true)),
+        ("stdin", stdin),
+        ("\0kChannelHandle", channel_handle.clone()),
+        ("Symbol.kChannelHandle\0", channel_handle.clone()),
+        ("Symbol.kChannelHandle", channel_handle),
     ]
 }
 
@@ -211,7 +709,7 @@ pub fn features() -> Value {
 
 /// `process.stdout` / `process.stderr` — non-TTY write streams.
 fn std_stream(is_error: bool) -> Value {
-    crate::host::namespace_object_from_pairs(vec![
+    host_api::object(vec![
         ("isTTY".to_string(), Value::Boolean(false)),
         ("isRawTTY".to_string(), Value::Boolean(false)),
         ("writable".to_string(), Value::Boolean(true)),
@@ -231,6 +729,22 @@ fn std_stream(is_error: bool) -> Value {
                 if is_error { 0x0A0A } else { 0x0A09 },
             )),
         ),
+        (
+            "end".to_string(),
+            crate::host::capability(if is_error {
+                crate::registry::SPEC_STDERR_END
+            } else {
+                crate::registry::SPEC_STDOUT_END
+            }),
+        ),
+        (
+            "ref".to_string(),
+            crate::host::capability(crate::registry::SPEC_PROCESS_REF),
+        ),
+        (
+            "unref".to_string(),
+            crate::host::capability(crate::registry::SPEC_PROCESS_UNREF),
+        ),
     ])
 }
 
@@ -239,6 +753,11 @@ fn method_props() -> Vec<(&'static str, Value)> {
         crate::host::capability(crate::registry::SPEC_PROCESS_HRTIME),
         "bigint",
         crate::host::capability(crate::registry::SPEC_PROCESS_HRTIME_BIGINT),
+    );
+    let memory_usage = quench_runtime::execute::set_property(
+        crate::host::capability(crate::registry::SPEC_PROCESS_MEMORY_USAGE),
+        "rss",
+        crate::host::capability(crate::registry::SPEC_PROCESS_MEMORY_USAGE_RSS),
     );
     vec![
         (
@@ -254,9 +773,18 @@ fn method_props() -> Vec<(&'static str, Value)> {
             crate::host::capability(crate::registry::SPEC_PROCESS_EXIT),
         ),
         (
+            "_rawDebug",
+            crate::host::capability(crate::registry::SPEC_PROCESS_RAW_DEBUG),
+        ),
+        (
             "kill",
             crate::host::capability(crate::registry::SPEC_PROCESS_KILL),
         ),
+        (
+            "binding",
+            crate::host::capability(crate::registry::SPEC_INTERNAL_BINDING),
+        ),
+        ("_kill", Value::Undefined),
         (
             "abort",
             crate::host::capability(crate::registry::SPEC_PROCESS_EXIT),
@@ -267,6 +795,43 @@ fn method_props() -> Vec<(&'static str, Value)> {
         ),
         ("hrtime", hrtime),
         ("cpuUsage", crate::host::process_cpu_usage_capability()),
+        (
+            "threadCpuUsage",
+            crate::host::process_cpu_usage_capability(),
+        ),
+        ("memoryUsage", memory_usage),
+        (
+            "initgroups",
+            crate::host::capability(crate::registry::SPEC_PROCESS_INITGROUPS),
+        ),
+        (
+            "setgroups",
+            crate::host::capability(crate::registry::SPEC_PROCESS_SETGROUPS),
+        ),
+        (
+            "setSourceMapsEnabled",
+            crate::host::capability(crate::registry::SPEC_PROCESS_SET_SOURCE_MAPS_ENABLED),
+        ),
+        (
+            "ref",
+            crate::host::capability(crate::registry::SPEC_PROCESS_REF),
+        ),
+        (
+            "unref",
+            crate::host::capability(crate::registry::SPEC_PROCESS_UNREF),
+        ),
+        (
+            "setUncaughtExceptionCaptureCallback",
+            crate::host::capability(
+                crate::registry::SPEC_PROCESS_SET_UNCAUGHT_EXCEPTION_CAPTURE_CALLBACK,
+            ),
+        ),
+        (
+            "hasUncaughtExceptionCaptureCallback",
+            crate::host::capability(
+                crate::registry::SPEC_PROCESS_HAS_UNCAUGHT_EXCEPTION_CAPTURE_CALLBACK,
+            ),
+        ),
         ("uptime", crate::host::process_uptime_capability()),
         (
             "availableMemory",
@@ -289,6 +854,10 @@ fn method_props() -> Vec<(&'static str, Value)> {
             crate::host::capability(crate::registry::SPEC_PROCESS_ON),
         ),
         (
+            "prependListener",
+            crate::host::capability(crate::registry::SPEC_PROCESS_PREPEND),
+        ),
+        (
             "once",
             crate::host::capability(crate::registry::SPEC_PROCESS_ONCE),
         ),
@@ -296,10 +865,10 @@ fn method_props() -> Vec<(&'static str, Value)> {
             "emit",
             crate::host::capability(crate::registry::SPEC_PROCESS_EMIT),
         ),
-        (
-            "send",
-            crate::host::capability(crate::registry::SPEC_CLUSTER_WORKER_PROCESS_SEND),
-        ),
+        // `process.send` exists only inside a cluster/child-process IPC
+        // context. The host installs the appropriate scoped capability when
+        // entering one; the base process surface must remain undefined.
+        ("send", Value::Undefined),
         (
             "removeListener",
             crate::host::capability(crate::registry::SPEC_PROCESS_REMOVE_LISTENER),
@@ -323,6 +892,10 @@ fn method_props() -> Vec<(&'static str, Value)> {
         (
             "getgid",
             crate::host::capability(crate::registry::SPEC_PROCESS_GETGID),
+        ),
+        (
+            "getgroups",
+            crate::host::capability(crate::registry::SPEC_PROCESS_GETGROUPS),
         ),
         (
             "geteuid",
@@ -407,6 +980,10 @@ fn env_object() -> Value {
         .collect();
     pairs.push(("\0quench:process_env".into(), Value::Boolean(true)));
     pairs.push((
+        "\0quench:process_env_tz_setter".into(),
+        crate::host::capability(crate::registry::SPEC_PROCESS_ENV_SET),
+    ));
+    pairs.push((
         "\0quench:descriptor:\0quench:process_env".into(),
         host_api::object(vec![
             ("writable".into(), Value::Boolean(false)),
@@ -419,8 +996,35 @@ fn env_object() -> Value {
 
 pub fn versions_props() -> Vec<(String, Value)> {
     vec![
-        ("node".to_string(), Value::String("v22.0.0".into())),
-        ("quench".to_string(), Value::String("v0.1.0".into())),
+        ("node".to_string(), Value::String("22.0.0".into())),
+        ("acorn".to_string(), Value::String("8.18.0".into())),
+        ("ada".to_string(), Value::String("2.7.8".into())),
+        ("ares".to_string(), Value::String("1.0.0".into())),
+        ("brotli".to_string(), Value::String("1.1.0".into())),
+        ("cldr".to_string(), Value::String("45.0".into())),
+        ("icu".to_string(), Value::String("75.1".into())),
+        ("llhttp".to_string(), Value::String("9.2.1".into())),
+        ("merve".to_string(), Value::String("1.0.0".into())),
+        ("modules".to_string(), Value::String("127".into())),
+        ("napi".to_string(), Value::String("9".into())),
+        ("nbytes".to_string(), Value::String("1.0.0".into())),
+        ("ncrypto".to_string(), Value::String("1.0.0".into())),
+        ("nghttp2".to_string(), Value::String("1.61.0".into())),
+        ("nghttp3".to_string(), Value::String("1.3.0".into())),
+        ("ngtcp2".to_string(), Value::String("1.4.0".into())),
+        ("openssl".to_string(), Value::String("3.0.0".into())),
+        ("simdjson".to_string(), Value::String("1.0.0".into())),
+        ("simdutf".to_string(), Value::String("5.2.4".into())),
+        ("tz".to_string(), Value::String("2024a".into())),
+        ("unicode".to_string(), Value::String("15.1".into())),
+        ("uv".to_string(), Value::String("1.48.0".into())),
+        ("uvwasi".to_string(), Value::String("1.0.0".into())),
+        (
+            "v8".to_string(),
+            Value::String("12.4.254.21-node.20".into()),
+        ),
+        ("zlib".to_string(), Value::String("1.3.0".into())),
+        ("zstd".to_string(), Value::String("1.0.0".into())),
     ]
 }
 
@@ -430,24 +1034,110 @@ pub fn versions_props() -> Vec<(String, Value)> {
 pub fn exit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let code = args.first().map(value_to_i32).unwrap_or(0);
     state.borrow_mut().process.exit_code = Some(code);
+    // Node's public `process.exit()` funnels through the internal
+    // `reallyExit` hook. Keep that edge observable so embedders and test
+    // harnesses that replace `process.reallyExit` see the same final output;
+    // the host still records the exit code and unwinds instead of terminating
+    // the embedding process directly.
+    let process = quench_runtime::execute::get_property(
+        &quench_runtime::vm::current_global_object(),
+        "process",
+    );
+    let really_exit = quench_runtime::execute::get_property(&process, "reallyExit");
+    if quench_runtime::is_callable(&really_exit) {
+        let _ =
+            quench_runtime::execute::call(&really_exit, &process, &[Value::Number(code as f64)]);
+    }
     Err(VmError::Thrown(Value::String(format!(
         "process.exit({code})"
     ))))
 }
 
-pub fn kill(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    let pid = args.first().and_then(|value| match value {
-        Value::Number(number) if number.is_finite() => Some(*number as i64),
-        _ => None,
-    });
-    if pid != Some(std::process::id() as i64) {
-        return Err(VmError::Thrown(host_api::object(vec![
-            ("name".into(), Value::String("Error".into())),
-            ("message".into(), Value::String("kill ESRCH".into())),
-            ("code".into(), Value::String("ESRCH".into())),
-        ])));
+pub fn kill(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let value = args.first().unwrap_or(&Value::Undefined);
+    let pid = match value {
+        Value::Number(number) if number.is_finite() => *number as i64,
+        Value::String(text) => text.parse::<i64>().map_err(|_| invalid_pid(value))?,
+        _ => return Err(invalid_pid(value)),
+    };
+    let signal = match args.get(1) {
+        None | Some(Value::Undefined) => 15,
+        Some(Value::Number(number)) if number.is_finite() => *number as i32,
+        Some(Value::String(name)) => match name.as_str() {
+            "SIGHUP" => 1,
+            "SIGTERM" => 15,
+            "SIGKILL" => 9,
+            "SIGINT" => 2,
+            _ => return Err(unknown_signal(name)),
+        },
+        Some(_) => return Err(invalid_signal()),
+    };
+    if !(0..=64).contains(&signal) {
+        return Err(kill_einval());
+    }
+    let process = quench_runtime::vm::current_global_object();
+    let process = quench_runtime::execute::get_property(&process, "process");
+    let internal = quench_runtime::execute::get_property(&process, "_kill");
+    if quench_runtime::is_callable(&internal) {
+        quench_runtime::execute::call(
+            &internal,
+            &process,
+            &[Value::Number(pid as f64), Value::Number(signal as f64)],
+        )?;
+    } else if pid == 0 || (pid > 0 && !state.borrow().process.alive_pids.contains(&pid)) {
+        let error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String("kill ESRCH".into())],
+        );
+        let error =
+            quench_runtime::execute::set_property(error, "code", Value::String("ESRCH".into()));
+        return Err(VmError::Thrown(error));
     }
     Ok(Value::Boolean(true))
+}
+
+fn invalid_pid(value: &Value) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+        (
+            "message".into(),
+            Value::String(format!(
+                "The \"pid\" argument must be of type number.{}",
+                crate::modules::util::invalid_arg_received(value)
+            )),
+        ),
+    ]))
+}
+
+fn invalid_signal() -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+        (
+            "message".into(),
+            Value::String("The \"signal\" argument must be of type string or number.".into()),
+        ),
+    ]))
+}
+
+fn unknown_signal(name: &str) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_UNKNOWN_SIGNAL".into())),
+        (
+            "message".into(),
+            Value::String(format!("Unknown signal: {name}")),
+        ),
+    ]))
+}
+
+fn kill_einval() -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("Error".into())),
+        ("code".into(), Value::String("EINVAL".into())),
+        ("message".into(), Value::String("kill EINVAL".into())),
+    ]))
 }
 
 pub fn cwd(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
@@ -464,7 +1154,8 @@ pub fn chdir(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, Vm
     let pb = std::path::PathBuf::from(&path);
     match std::env::set_current_dir(&pb) {
         Ok(()) => {
-            state.borrow_mut().process.cwd = std::env::current_dir().unwrap_or(pb);
+            let previous = state.borrow().process.cwd.clone();
+            state.borrow_mut().process.cwd = lexical_cwd(&previous, &pb);
             Ok(Value::Undefined)
         }
         Err(error) => Err(VmError::Thrown(host_api::object(vec![
@@ -492,6 +1183,25 @@ pub fn chdir(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, Vm
     }
 }
 
+fn lexical_cwd(previous: &std::path::Path, requested: &std::path::Path) -> std::path::PathBuf {
+    let joined = if requested.is_absolute() {
+        requested.to_path_buf()
+    } else {
+        previous.join(requested)
+    };
+    let mut normalized = std::path::PathBuf::new();
+    for component in joined.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            component => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
+}
+
 pub fn next_tick(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let cb = args.first().cloned().unwrap_or(Value::Undefined);
     if !quench_runtime::is_callable(&cb) {
@@ -514,10 +1224,11 @@ pub fn next_tick(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value
         }
     }
     let domain_stack = crate::modules::domain::stack_values(state);
+    let process_scope = state.borrow().cluster.process_scope();
     state
         .borrow_mut()
         .event_loop
-        .queue_microtask_with_domain_stack(cb, rest, resource, domain_stack);
+        .queue_microtask_with_domain_stack_scope(cb, rest, resource, domain_stack, process_scope);
     Ok(Value::Undefined)
 }
 
@@ -610,11 +1321,31 @@ pub fn once(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
             "uncaughtException" | "warning" | "unhandledRejection" => {
                 push_handler(state, handler, event.as_str(), true)
             }
-            _ => state.borrow_mut().process.other_handlers.push((
-                event.clone(),
-                handler.clone(),
-                true,
-            )),
+            _ => push_other_handler(state, event, handler, true),
+        }
+    }
+    Ok(Value::Undefined)
+}
+
+/// `process.prependListener(event, handler)` — register an ordinary process
+/// event ahead of listeners already attached for the same event.
+pub fn prepend(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    if let (Some(Value::String(event)), Some(handler)) = (args.first(), args.get(1)) {
+        match event.as_str() {
+            "exit" => state
+                .borrow_mut()
+                .process
+                .exit_handlers
+                .insert(0, (handler.clone(), false)),
+            "beforeExit" => state
+                .borrow_mut()
+                .process
+                .before_exit_handlers
+                .insert(0, (handler.clone(), false)),
+            "uncaughtException" | "warning" | "unhandledRejection" => {
+                prepend_handler(state, handler, event.as_str(), false)
+            }
+            _ => prepend_other_handler(state, event, handler, false),
         }
     }
     Ok(Value::Undefined)
@@ -632,6 +1363,57 @@ fn push_handler(state: &Rc<RefCell<HostState>>, handler: &Value, event: &str, on
             .unhandled_rejection_handlers
             .push((handler.clone(), once)),
         _ => {}
+    }
+}
+
+fn prepend_handler(state: &Rc<RefCell<HostState>>, handler: &Value, event: &str, once: bool) {
+    let mut guard = state.borrow_mut();
+    let process = &mut guard.process;
+    match event {
+        "uncaughtException" => process
+            .uncaught_exception_handlers
+            .insert(0, (handler.clone(), once)),
+        "warning" => process.warning_handlers.insert(0, (handler.clone(), once)),
+        "unhandledRejection" => process
+            .unhandled_rejection_handlers
+            .insert(0, (handler.clone(), once)),
+        _ => {}
+    }
+}
+
+fn push_other_handler(state: &Rc<RefCell<HostState>>, event: &str, handler: &Value, once: bool) {
+    let scope = state.borrow().cluster.process_scope();
+    let mut guard = state.borrow_mut();
+    if scope == 0 {
+        guard
+            .process
+            .other_handlers
+            .push((event.to_string(), handler.clone(), once));
+    } else {
+        guard
+            .process
+            .scoped_handlers
+            .entry(scope)
+            .or_default()
+            .push((event.to_string(), handler.clone(), once));
+    }
+}
+
+fn prepend_other_handler(state: &Rc<RefCell<HostState>>, event: &str, handler: &Value, once: bool) {
+    let scope = state.borrow().cluster.process_scope();
+    let mut guard = state.borrow_mut();
+    if scope == 0 {
+        guard
+            .process
+            .other_handlers
+            .insert(0, (event.to_string(), handler.clone(), once));
+    } else {
+        guard
+            .process
+            .scoped_handlers
+            .entry(scope)
+            .or_default()
+            .insert(0, (event.to_string(), handler.clone(), once));
     }
 }
 
@@ -653,13 +1435,86 @@ fn value_to_i32(value: &Value) -> i32 {
 
 /// `process.stdout.write(chunk)` / `process.stderr.write(chunk)` —
 /// writes the chunk to the host output sink and returns true.
-pub fn stream_write(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+pub fn stream_write(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+    is_error: bool,
+) -> Result<Value, VmError> {
     let chunk = stream_chunk(args.first());
+    // A self-reexecuted compatibility runner has real OS stdio. Preserve the
+    // stdout/stderr boundary there so `exec()`/`spawn()` capture raw chunks
+    // instead of the line-oriented parent test sink. In the parent in-process
+    // runner, retain the configured sink used by tests and APIs.
+    if std::env::var_os("QUENCH_CHILD_RUNNER").is_some() {
+        use std::io::Write as _;
+        if is_error {
+            let mut stream = std::io::stderr();
+            let _ = stream.write_all(chunk.as_bytes());
+            let _ = stream.flush();
+        } else {
+            let mut stream = std::io::stdout();
+            let _ = stream.write_all(chunk.as_bytes());
+            let _ = stream.flush();
+        }
+        return Ok(Value::Boolean(true));
+    }
     let guard = state.borrow();
     if let Some(sink) = &guard.output {
         sink(&chunk);
     }
     Ok(Value::Boolean(true))
+}
+
+/// `process.stdout.end(chunk)` / `process.stderr.end(chunk)` — write an
+/// optional final chunk and complete the process-owned stream.  The process
+/// streams are host-owned and do not expose a separately closable descriptor;
+/// completion therefore records the public writable state while preserving
+/// the ordinary output boundary.
+pub fn stream_end(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+    is_error: bool,
+) -> Result<Value, VmError> {
+    if let Some(chunk) = args
+        .first()
+        .filter(|value| !quench_runtime::is_callable(value))
+    {
+        stream_write(state, std::slice::from_ref(chunk), is_error)?;
+    }
+    if let Some(stream) = receiver {
+        let _ = quench_runtime::execute::set_property_in_place(
+            stream,
+            "writable",
+            Value::Boolean(false),
+        );
+        return Ok(stream.clone());
+    }
+    Ok(Value::Undefined)
+}
+
+/// `process._rawDebug(...args)` — low-level stderr formatting that bypasses
+/// the console object while retaining the host's observable stream boundary.
+pub fn raw_debug(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let mut message = args.first().map(raw_debug_text).unwrap_or_default();
+    for value in args.iter().skip(1) {
+        if let Some(index) = message.find("%s") {
+            let replacement = raw_debug_text(value);
+            message.replace_range(index..index + 2, &replacement);
+        }
+    }
+    stream_write(state, &[Value::String(format!("{message}\n"))], true)
+}
+
+fn raw_debug_text(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Number(number) => number.to_string(),
+        Value::Boolean(value) => value.to_string(),
+        Value::Null => "null".into(),
+        Value::Undefined => "undefined".into(),
+        _ => crate::modules::util::inspect(value),
+    }
 }
 
 fn stream_chunk(value: Option<&Value>) -> String {
@@ -668,6 +1523,11 @@ fn stream_chunk(value: Option<&Value>) -> String {
     };
     match value {
         Value::String(text) => text.clone(),
+        // OXC keeps literals containing escapes in the compact UTF-16
+        // representation.  Stream writes are byte/text transport, so they
+        // must observe the decoded string rather than `inspect()`'s quoted
+        // diagnostic form.
+        Value::StringUnits(units) => String::from_utf16_lossy(units),
         Value::Uint8Array(view) => {
             let bytes = view.buffer.bytes.borrow();
             let end = view
@@ -728,14 +1588,31 @@ pub fn on(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmErr
                 push_handler(state, handler, event, false)
             }
             "warning" => push_handler(state, handler, "warning", false),
-            _ => state.borrow_mut().process.other_handlers.push((
-                event.clone(),
-                handler.clone(),
-                false,
-            )),
+            _ => push_other_handler(state, event, handler, false),
         }
     }
     Ok(Value::Undefined)
+}
+
+/// Whether the current logical process has a listener for an ordinary event.
+/// Host event producers use this to preserve Node's distinction between an
+/// IPC notification that is observed by user code and one that should fall
+/// through to the module's default delivery path.
+pub(crate) fn has_listener(state: &Rc<RefCell<HostState>>, event: &str) -> bool {
+    let guard = state.borrow();
+    let handlers = if guard.cluster.process_scope() == 0 {
+        &guard.process.other_handlers
+    } else {
+        match guard
+            .process
+            .scoped_handlers
+            .get(&guard.cluster.process_scope())
+        {
+            Some(handlers) => handlers,
+            None => return false,
+        }
+    };
+    handlers.iter().any(|(name, _, _)| name == event)
 }
 
 /// Emit a process event synchronously, preserving listener order and `once` removal.
@@ -744,59 +1621,111 @@ pub fn emit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
         return Ok(Value::Boolean(false));
     };
     let values = args.get(1..).unwrap_or(&[]).to_vec();
-    let (normal, once) = {
+    let (normal, once, worker) = {
         let guard = state.borrow();
-        let handlers = match event.as_str() {
-            "warning" => &guard.process.warning_handlers,
-            "uncaughtException" => &guard.process.uncaught_exception_handlers,
-            "unhandledRejection" => &guard.process.unhandled_rejection_handlers,
-            _ => {
-                let callbacks = guard
+        match event.as_str() {
+            "warning" => (
+                guard
                     .process
-                    .other_handlers
+                    .warning_handlers
                     .iter()
-                    .filter(|(name, _, _)| name == event)
-                    .map(|(_, handler, once)| (handler.clone(), *once))
-                    .collect::<Vec<_>>();
-                let worker = guard.cluster.active_worker();
-                drop(guard);
-                for (handler, once) in callbacks {
-                    if once {
-                        remove_other_handler(state, event, &handler);
-                    }
-                    quench_runtime::execute::call(&handler, &Value::Undefined, &values)?;
-                }
-                if let Some(worker) = worker {
-                    let _ = crate::modules::cluster::emit(
-                        state,
-                        Some(&worker),
-                        &std::iter::once(Value::String(event.clone()))
-                            .chain(values.iter().cloned())
-                            .collect::<Vec<_>>(),
-                    )?;
-                }
-                return Ok(Value::Boolean(true));
+                    .filter(|(_, once)| !*once)
+                    .map(|(handler, _)| handler.clone())
+                    .collect::<Vec<_>>(),
+                guard
+                    .process
+                    .warning_handlers
+                    .iter()
+                    .filter(|(_, once)| *once)
+                    .map(|(handler, _)| handler.clone())
+                    .collect::<Vec<_>>(),
+                None,
+            ),
+            "uncaughtException" => (
+                guard
+                    .process
+                    .uncaught_exception_handlers
+                    .iter()
+                    .filter(|(_, once)| !*once)
+                    .map(|(handler, _)| handler.clone())
+                    .collect::<Vec<_>>(),
+                guard
+                    .process
+                    .uncaught_exception_handlers
+                    .iter()
+                    .filter(|(_, once)| *once)
+                    .map(|(handler, _)| handler.clone())
+                    .collect::<Vec<_>>(),
+                None,
+            ),
+            "unhandledRejection" => (
+                guard
+                    .process
+                    .unhandled_rejection_handlers
+                    .iter()
+                    .filter(|(_, once)| !*once)
+                    .map(|(handler, _)| handler.clone())
+                    .collect::<Vec<_>>(),
+                guard
+                    .process
+                    .unhandled_rejection_handlers
+                    .iter()
+                    .filter(|(_, once)| *once)
+                    .map(|(handler, _)| handler.clone())
+                    .collect::<Vec<_>>(),
+                None,
+            ),
+            _ => {
+                let scope = guard.cluster.process_scope();
+                let handlers = if scope == 0 {
+                    guard.process.other_handlers.iter().collect::<Vec<_>>()
+                } else {
+                    guard
+                        .process
+                        .scoped_handlers
+                        .get(&scope)
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>()
+                };
+                (
+                    handlers
+                        .iter()
+                        .filter(|(name, _, once)| name == event && !*once)
+                        .map(|(_, handler, _)| handler.clone())
+                        .collect(),
+                    handlers
+                        .iter()
+                        .filter(|(name, _, once)| name == event && *once)
+                        .map(|(_, handler, _)| handler.clone())
+                        .collect(),
+                    guard.cluster.active_worker(),
+                )
             }
-        };
-        (
-            handlers
-                .iter()
-                .filter(|(_, once)| !*once)
-                .map(|(handler, _)| handler.clone())
-                .collect::<Vec<_>>(),
-            handlers
-                .iter()
-                .filter(|(_, once)| *once)
-                .map(|(handler, _)| handler.clone())
-                .collect::<Vec<_>>(),
-        )
+        }
     };
     for handler in once {
-        remove_handler(state, event, &handler);
+        if matches!(
+            event.as_str(),
+            "warning" | "uncaughtException" | "unhandledRejection"
+        ) {
+            remove_handler(state, event, &handler);
+        } else {
+            remove_other_handler(state, event, &handler);
+        }
         quench_runtime::execute::call(&handler, &Value::Undefined, &values)?;
     }
     for handler in normal {
         quench_runtime::execute::call(&handler, &Value::Undefined, &values)?;
+    }
+    if let Some(worker) = worker {
+        let _ = crate::modules::cluster::emit(
+            state,
+            Some(&worker),
+            &std::iter::once(Value::String(event.clone()))
+                .chain(values.iter().cloned())
+                .collect::<Vec<_>>(),
+        )?;
     }
     Ok(Value::Boolean(true))
 }
@@ -847,18 +1776,31 @@ pub fn remove_all_listeners(
     process
         .other_handlers
         .retain(|(name, _, _)| event.is_some_and(|target| target != name));
+    for handlers in process.scoped_handlers.values_mut() {
+        handlers.retain(|(name, _, _)| event.is_some_and(|target| target != name));
+    }
     Ok(Value::Undefined)
 }
 
 fn remove_other_handler(state: &Rc<RefCell<HostState>>, event: &str, target: &Value) {
     let mut guard = state.borrow_mut();
-    if let Some(index) = guard
-        .process
-        .other_handlers
-        .iter()
-        .position(|(name, handler, once)| name == event && *once && handler == target)
-    {
-        guard.process.other_handlers.remove(index);
+    let scope = guard.cluster.process_scope();
+    if scope == 0 {
+        if let Some(index) = guard
+            .process
+            .other_handlers
+            .iter()
+            .position(|(name, handler, once)| name == event && *once && handler == target)
+        {
+            guard.process.other_handlers.remove(index);
+        }
+    } else if let Some(handlers) = guard.process.scoped_handlers.get_mut(&scope) {
+        if let Some(index) = handlers
+            .iter()
+            .position(|(name, handler, once)| name == event && *once && handler == target)
+        {
+            handlers.remove(index);
+        }
     }
 }
 
@@ -892,6 +1834,28 @@ pub(crate) fn emit_warning(
     emit_warning_with_detail(state, name, message, code, None, once_per_process);
 }
 
+/// Deliver an internal warning before the next promise reaction. Node's
+/// promisify deprecation path schedules on nextTick, which precedes promise
+/// jobs; the host uses this edge when the caller is already inside that turn.
+pub(crate) fn emit_warning_now(
+    state: &Rc<RefCell<HostState>>,
+    name: &str,
+    message: &str,
+    code: Option<&str>,
+    once_per_process: bool,
+) {
+    if once_per_process {
+        let mut guard = state.borrow_mut();
+        let key = format!("{name}:{message}");
+        if guard.process.warnings_emitted.iter().any(|n| n == &key) {
+            return;
+        }
+        guard.process.warnings_emitted.push(key);
+    }
+    let warning = warning_value(state, name, message, code, None);
+    let _ = emit(state, &[Value::String("warning".into()), warning]);
+}
+
 pub(crate) fn emit_warning_with_detail(
     state: &Rc<RefCell<HostState>>,
     name: &str,
@@ -908,6 +1872,26 @@ pub(crate) fn emit_warning_with_detail(
         }
         guard.process.warnings_emitted.push(key);
     }
+    let warning = warning_value(state, name, message, code, detail);
+    // Node schedules warnings on its next-tick queue, ahead of ordinary
+    // promise reactions.  A resolved runtime promise gives us that ordering
+    // while retaining the canonical process emitter capability and keeping
+    // delivery asynchronous to the caller.
+    let emitter = quench_runtime::host_api::bound_capability_with_arguments(
+        crate::host::capability_ref(crate::registry::SPEC_PROCESS_EMIT),
+        vec![Value::String("warning".into()), warning],
+    );
+    let ready = quench_runtime::promise_resolve(&[Value::Undefined]);
+    let _ = quench_runtime::promise_then(Some(&ready), &[emitter]);
+}
+
+fn warning_value(
+    _state: &Rc<RefCell<HostState>>,
+    name: &str,
+    message: &str,
+    code: Option<&str>,
+    detail: Option<&str>,
+) -> Value {
     let mut props = vec![
         ("name".to_string(), Value::String(name.to_string())),
         ("message".to_string(), Value::String(message.to_string())),
@@ -924,16 +1908,7 @@ pub(crate) fn emit_warning_with_detail(
         _ => format!("{name}: {message}"),
     };
     props.push(("stack".to_string(), Value::String(stack)));
-    let warning = host_api::object(props);
-    // Node delivers warnings on a later turn, so listeners installed after
-    // `emitWarning()` still observe the event. Queue the canonical process
-    // emitter capability rather than calling it inline; this preserves the
-    // process event identity while keeping delivery asynchronous.
-    let emitter = crate::host::capability(crate::registry::SPEC_PROCESS_EMIT);
-    state
-        .borrow_mut()
-        .event_loop
-        .queue_microtask(emitter, vec![Value::String("warning".into()), warning]);
+    host_api::object(props)
 }
 
 /// Emit the pair of warnings Node exposes for an unhandled rejection in

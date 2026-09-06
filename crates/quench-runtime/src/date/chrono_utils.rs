@@ -1,9 +1,30 @@
 //! Chrono utility functions for Date implementation.
 
-use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
-use std::cell::Cell;
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Offset, Utc};
+use std::cell::{Cell, RefCell};
 
-thread_local! { static MOCK_NOW: Cell<Option<f64>> = const { Cell::new(None) }; static MOCK_ENABLED: Cell<bool> = const { Cell::new(false) }; }
+thread_local! {
+    static MOCK_NOW: Cell<Option<f64>> = const { Cell::new(None) };
+    static MOCK_ENABLED: Cell<bool> = const { Cell::new(false) };
+    static LOCAL_TZ_OFFSET: Cell<Option<i32>> = const { Cell::new(None) };
+    static LOCAL_TZ_NAME: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+pub fn set_local_timezone(name: Option<&str>) {
+    let offset = name.and_then(|name| {
+        let zone = name.parse::<chrono_tz::Tz>().ok()?;
+        Some(
+            Utc::now()
+                .with_timezone(&zone)
+                .offset()
+                .fix()
+                .local_minus_utc()
+                / 60,
+        )
+    });
+    LOCAL_TZ_OFFSET.with(|current| current.set(offset));
+    LOCAL_TZ_NAME.with(|current| *current.borrow_mut() = name.map(str::to_owned));
+}
 
 pub fn set_mock_now(value: Option<f64>) {
     MOCK_NOW.with(|now| now.set(value));
@@ -243,7 +264,9 @@ fn parse_display_string(s: &str) -> Option<f64> {
 
 /// Get local timezone offset in minutes.
 pub fn local_tz_offset_minutes() -> i32 {
-    chrono::Local::now().offset().local_minus_utc() / 60
+    LOCAL_TZ_OFFSET
+        .with(Cell::get)
+        .unwrap_or_else(|| chrono::Local::now().offset().local_minus_utc() / 60)
 }
 
 /// Extract date/time components from milliseconds in local time.

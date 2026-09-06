@@ -3,10 +3,12 @@
 //! only piece of the workspace allowed to know what
 //! "Node" is. Keep the host boundary and runtime semantics separate.
 //!
-//! Architecture: every Node API is a pure Rust object. There is no
-//! self-hosted JavaScript builtin layer and no JS bridge. The host
-//! installs Node builtins into the runtime through the same public
-//! `VmContext` / `host_api` / `execute` API that test262 uses.
+//! Architecture: Node host state, capability dispatch, and observable API
+//! handlers are Rust. A small, explicit set of compatibility bridge fragments
+//! may assemble those Rust capabilities into Node-shaped objects; they are
+//! data evaluated by `quench-runtime`, never a second VM or builtin runtime.
+//! The host installs Node builtins through the same `VmContext` / `host_api` /
+//! `execute` boundary used by test262.
 //!
 //! One canonical `NodeSpec` table in `registry` declares every Node
 //! global, every `node:` module, and the cap-dispatch ids. A single

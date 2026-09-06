@@ -7,7 +7,6 @@ autobins = false
 [[bin]]
 name = "quench-node"
 path = "src/main.rs"
-
 description = "Node.js-API compatibility host on top of quench-runtime"
 license = "MIT"
 
@@ -24,10 +23,13 @@ sha1 = "0.10"
 hmac = "0.12"
 md-5 = "0.10"
 sha3 = "0.10"
+tiny-keccak = { version = "2", features = ["k12"] }
 rand = "0.8"
 libc = "0.2"
 hostname = "0.4"
 flate2 = "1"
+brotli = "7"
+zstd = "0.13"
 url = "2"
 oxc_resolver = "2"
 base64 = "0.22"
@@ -35,3 +37,13 @@ sysinfo = "0.32"
 hex = "0.4"
 encoding_rs = "0.8"
 idna = "1"
+aes = "0.8"
+des = "0.8"
+cbc = "0.1"
+cipher = "0.4"
+aes-gcm = "0.10"
+chacha20poly1305 = "0.10"
+chacha20 = "0.9"
+openssl = "0.10"
+p384 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdh"] }
+p521 = { version = "0.14", default-features = false, features = ["arithmetic", "ecdh"] }

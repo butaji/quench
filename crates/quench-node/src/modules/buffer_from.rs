@@ -146,6 +146,19 @@ fn from_array_buffer(
 }
 
 fn from_array_like(value: &Value) -> Result<Value, VmError> {
+    // Dense ordinary arrays are the common Buffer.from(array) path.  Their
+    // packed storage is already the authoritative element sequence; reading
+    // each index through generic property dispatch needlessly re-resolves the
+    // same shape for every byte.
+    if let Value::Array(array) = value {
+        if let Some(values) = array.packed_values() {
+            let bytes: Vec<u8> = values
+                .into_iter()
+                .map(|value| number_to_byte(to_number(&value)))
+                .collect();
+            return Ok(crate::modules::buffer_proto::make_buffer(&bytes));
+        }
+    }
     let length = match get_property(value, "length") {
         Value::Number(n) if n.is_finite() && n > 0.0 => n.trunc().min(u32::MAX as f64) as u32,
         _ => u32::MAX,
@@ -156,14 +169,17 @@ fn from_array_like(value: &Value) -> Result<Value, VmError> {
         if matches!(v, Value::Undefined) && length == u32::MAX {
             break;
         }
-        let n = to_number(&v);
-        bytes.push(if n.is_finite() {
-            n.trunc().rem_euclid(256.0) as u8
-        } else {
-            0
-        });
+        bytes.push(number_to_byte(to_number(&v)));
     }
     Ok(crate::modules::buffer_proto::make_buffer(&bytes))
+}
+
+fn number_to_byte(number: f64) -> u8 {
+    if number.is_finite() {
+        number.trunc().rem_euclid(256.0) as u8
+    } else {
+        0
+    }
 }
 
 fn is_symbol_payload(text: &str) -> bool {

@@ -433,7 +433,7 @@ pub fn build_object() -> Value {
 
 /// Build the `node:buffer` module namespace.
 pub fn build_module() -> Value {
-    let module_props: Vec<(String, Value)> = vec![
+    let mut module_props: Vec<(String, Value)> = vec![
         ("Buffer".to_string(), buffer_constructor()),
         ("atob".to_string(), atob_value()),
         ("btoa".to_string(), btoa_value()),
@@ -451,7 +451,26 @@ pub fn build_module() -> Value {
             Value::Number(MAX_STRING_LENGTH),
         ),
         ("constants".to_string(), constants_object()),
+        (
+            "resolveObjectURL".to_string(),
+            crate::host::capability(crate::registry::SPEC_BUFFER_RESOLVE_OBJECT_URL),
+        ),
     ];
+    let global = quench_runtime::vm::current_global_object();
+    let blob = get_property(&global, "Blob");
+    if matches!(
+        blob,
+        Value::Function(_) | Value::BoundFunction(_) | Value::HostCapability(_) | Value::Builtin(_)
+    ) {
+        module_props.push(("Blob".to_string(), blob));
+    }
+    let file = get_property(&global, "File");
+    if matches!(
+        file,
+        Value::Function(_) | Value::BoundFunction(_) | Value::HostCapability(_) | Value::Builtin(_)
+    ) {
+        module_props.push(("File".to_string(), file));
+    }
     let module = crate::host::namespace_object_from_pairs(module_props);
     let descriptor = host_api::object(vec![
         (
@@ -467,6 +486,23 @@ pub fn build_module() -> Value {
     ]);
     quench_runtime::execute::define_property(module, "INSPECT_MAX_BYTES", descriptor)
         .unwrap_or_else(|_| Value::Undefined)
+}
+
+/// Resolve a live Blob URL registered by `URL.createObjectURL`.
+pub fn resolve_object_url(
+    state: &Rc<RefCell<crate::host::HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(Value::String(id)) = args.first() else {
+        return Ok(Value::Undefined);
+    };
+    Ok(state
+        .borrow()
+        .blob_urls
+        .get(id)
+        .cloned()
+        .unwrap_or(Value::Undefined))
 }
 
 thread_local! {

@@ -213,11 +213,7 @@ const __quenchDgramSend = (socket, message, ...args) => {
   const payload = typeof message === "string"
     ? NodeBuffer.from(message)
     : Array.isArray(message)
-    ? NodeBuffer.concat(
-      message.map((chunk) =>
-        typeof chunk === "string" ? NodeBuffer.from(chunk) : chunk
-      ),
-    )
+    ? NodeBuffer.concat(message.map((chunk) => NodeBuffer.from(chunk)))
     : message;
   const bytePayload = payload instanceof NodeBuffer
     ? payload
@@ -281,7 +277,8 @@ const __quenchDgramSend = (socket, message, ...args) => {
     });
     return socket;
   }
-  const sendResult = socket[__quenchDgramStateSymbol].handle.send?.();
+  const send = socket[__quenchDgramStateSymbol].handle.send;
+  const sendResult = typeof send === "function" ? send() : undefined;
   if (sendResult) {
     const error = Object.assign(
       new Error(`send UNKNOWN ${address || "127.0.0.1"}:${destinationPort}`),

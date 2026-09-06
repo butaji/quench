@@ -52,6 +52,71 @@ pub fn build() -> Vec<(String, Value)> {
     ]
 }
 
+/// Internal Myers diff entry point used by Node's assertion internals.  The
+/// public assertion formatter is native Rust; this small capability keeps the
+/// internal module contract available to code that imports it directly.
+pub fn myers_diff(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let length = |value: &Value| match execute::get_property(value, "length") {
+        Value::Number(number) if number.is_finite() && number >= 0.0 => number as u64,
+        _ => 0,
+    };
+    let actual = length(args.first().unwrap_or(&Value::Undefined));
+    let expected = length(args.get(1).unwrap_or(&Value::Undefined));
+    let max = actual.saturating_add(expected);
+    if max > 2_u64.pow(31) - 1 {
+        let error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::RangeError,
+            &[Value::String(format!(
+                "The value of \"myersDiff input size\" is out of range. It must be < 2^31. Received {max}"
+            ))],
+        );
+        return Err(VmError::Thrown(execute::set_property(
+            error,
+            "code",
+            Value::String("ERR_OUT_OF_RANGE".into()),
+        )));
+    }
+    // The native assertion implementation owns the full diff algorithm. For
+    // direct internal callers, preserve the operation/value pair shape with a
+    // compact equality walk and bounded insert/delete fallbacks.
+    let mut result = Vec::new();
+    let common = actual.min(expected) as usize;
+    for index in 0..common {
+        let left = execute::get_property(
+            args.first().unwrap_or(&Value::Undefined),
+            &index.to_string(),
+        );
+        let right =
+            execute::get_property(args.get(1).unwrap_or(&Value::Undefined), &index.to_string());
+        if crate::modules::deep_equal::deep_equal_opts(&left, &right, true, false)? {
+            result.push(host_api::array(vec![Value::Number(0.0), left]));
+        } else {
+            result.push(host_api::array(vec![Value::Number(-1.0), right]));
+            result.push(host_api::array(vec![Value::Number(1.0), left]));
+        }
+    }
+    for index in common..actual as usize {
+        result.push(host_api::array(vec![
+            Value::Number(1.0),
+            execute::get_property(
+                args.first().unwrap_or(&Value::Undefined),
+                &index.to_string(),
+            ),
+        ]));
+    }
+    for index in common..expected as usize {
+        result.push(host_api::array(vec![
+            Value::Number(-1.0),
+            execute::get_property(args.get(1).unwrap_or(&Value::Undefined), &index.to_string()),
+        ]));
+    }
+    Ok(host_api::array(result))
+}
+
 fn assert_constructor() -> Value {
     let constructor = crate::host::capability(crate::registry::SPEC_ASSERT_CONSTRUCTOR);
     let prototype = assert_prototype();
@@ -225,7 +290,7 @@ pub fn build_value() -> Value {
     }
     let _ = execute::set_callable_property(&strict, "strict", strict.clone());
     let _ = execute::set_callable_property(&strict, "\0quench:strict", Value::Boolean(true));
-    let _ = execute::set_callable_property(&value, "strict", value.clone());
+    let _ = execute::set_callable_property(&value, "strict", strict.clone());
     let _ = execute::set_callable_property(&value, "\0quench:strict-namespace", strict.clone());
     for (name, source) in [
         ("rejects", ASSERT_REJECTS),
@@ -240,36 +305,82 @@ pub fn build_value() -> Value {
 }
 
 const ASSERT_REJECTS: &str = r#"(promiseOrFn, expected, message) => {
+  const receivedType = (value) => {
+    if (value === undefined) return "undefined";
+    if (value === null) return "null";
+    if (typeof value === "string") return `type string ('${value}')`;
+    if (typeof value === "number") return `type number (${value})`;
+    if (typeof value === "boolean") return `type boolean (${value})`;
+    if (typeof value === "object" && value.constructor && value.constructor.name)
+      return `an instance of ${value.constructor.name}`;
+    return `type ${typeof value}`;
+  };
   let input;
   if (typeof promiseOrFn === "function") {
     try { input = promiseOrFn(); }
     catch (error) { return Promise.reject(error); }
+    if (!(input instanceof Promise)) {
+      const error = new TypeError(`Expected instance of Promise to be returned from the \"promiseFn\" function but got ${receivedType(input)}.`);
+      error.code = "ERR_INVALID_RETURN_VALUE";
+      return Promise.reject(error);
+    }
   } else input = promiseOrFn;
   if (!input || typeof input.then !== "function") {
-    const error = new TypeError("The promiseFn argument must be a Promise");
+    const error = new TypeError(`The \"promiseFn\" argument must be of type function or an instance of Promise. Received ${receivedType(promiseOrFn)}`);
     error.code = "ERR_INVALID_ARG_TYPE";
     return Promise.reject(error);
   }
   if (typeof input.catch !== "function") {
-    const error = new TypeError("The promiseFn argument must be a Promise");
+    const error = new TypeError(`The \"promiseFn\" argument must be of type function or an instance of Promise. Received ${receivedType(promiseOrFn)}`);
     error.code = "ERR_INVALID_ARG_TYPE";
     return Promise.reject(error);
   }
   return Promise.resolve(input).then(
-    () => Promise.reject(Object.assign(new Error(message || "Missing expected rejection"), {
-      code: "ERR_ASSERTION", operator: "rejects"
-    })),
+    () => {
+      return Promise.reject(Object.assign(new (require("assert").AssertionError)({message: message || `Missing expected rejection${typeof expected === "function" ? ` (${expected.name || "mustNotCall"})` : ""}.`}), {
+      code: "ERR_ASSERTION", operator: "rejects", generatedMessage: !message
+      }));
+    },
     (error) => {
-      if (typeof expected === "function" && expected(error) !== true) {
-        return Promise.reject(Object.assign(new Error("The rejection did not match"), {
-          code: "ERR_ASSERTION", operator: "rejects"
-        }));
+      if (typeof expected === "function") {
+        const validation = expected(error);
+        if (validation !== true) {
+          const received = typeof validation === "string" ? `'${validation}'` : String(validation);
+          const caught = error && typeof error.name === "string"
+            ? `${error.name}: ${error.message || ""}`
+            : String(error);
+          const validationMessage = `The "validate" validation function is expected to return "true". Received ${received}\n\nCaught error:\n\n${caught}`;
+          return Promise.reject(Object.assign(new (require("assert").AssertionError)({message: validationMessage}), {
+          code: "ERR_ASSERTION", operator: "rejects", actual: error, expected, generatedMessage: true, stack: "AssertionError: The rejection did not match\\n    at Function.rejects"
+          }));
+        }
       }
       if (expected && typeof expected === "object") {
+        const rejectsMatch = (received, wanted) => {
+          if (
+            received &&
+            wanted &&
+            typeof received === "object" &&
+            typeof wanted === "object" &&
+            (received instanceof Error || wanted instanceof Error ||
+              received instanceof DOMException || wanted instanceof DOMException)
+          ) {
+            if (String(received.name) !== String(wanted.name)) return false;
+            if (String(received.message) !== String(wanted.message)) return false;
+            if ("code" in wanted && received.code !== wanted.code) return false;
+            return true;
+          }
+          return received === wanted;
+        };
         for (const key of Object.keys(expected)) {
-          if (error == null || error[key] !== expected[key]) {
-            return Promise.reject(Object.assign(new Error(message || "The input did not match"), {
-              code: "ERR_ASSERTION", operator: "rejects"
+          const expectedValue = expected[key];
+          const actualValue = error == null ? undefined : error[key];
+          const matches = expectedValue instanceof RegExp
+            ? expectedValue.test(actualValue)
+            : rejectsMatch(actualValue, expectedValue);
+          if (!matches) {
+            return Promise.reject(Object.assign(new (require("assert").AssertionError)({message: message || "The input did not match"}), {
+              code: "ERR_ASSERTION", operator: "rejects", generatedMessage: !message, actual: error, expected, stack: `AssertionError: ${message || "The input did not match"}\\n    at Function.rejects`
             }));
           }
         }
@@ -280,17 +391,44 @@ const ASSERT_REJECTS: &str = r#"(promiseOrFn, expected, message) => {
 }"#;
 
 const ASSERT_DOES_NOT_REJECT: &str = r#"(promiseOrFn, message) => {
-  const input = typeof promiseOrFn === "function" ? promiseOrFn() : promiseOrFn;
+  const receivedType = (value) => {
+    if (value === undefined) return "undefined";
+    if (value === null) return "null";
+    if (typeof value === "string") return `type string ('${value}')`;
+    if (typeof value === "number") return `type number (${value})`;
+    if (typeof value === "boolean") return `type boolean (${value})`;
+    if (typeof value === "object" && value.constructor && value.constructor.name)
+      return `an instance of ${value.constructor.name}`;
+    return `type ${typeof value}`;
+  };
+  let input;
+  if (typeof promiseOrFn === "function") {
+    try { input = promiseOrFn(); }
+    catch (error) { return Promise.reject(error); }
+    if (!(input instanceof Promise)) {
+      const error = new TypeError(`Expected instance of Promise to be returned from the \"promiseFn\" function but got ${receivedType(input)}.`);
+      error.code = "ERR_INVALID_RETURN_VALUE";
+      return Promise.reject(error);
+    }
+  } else input = promiseOrFn;
   if (!input || typeof input.then !== "function") {
-    const error = new TypeError("The promiseFn argument must be a Promise");
+    const error = new TypeError(`The \"promiseFn\" argument must be of type function or an instance of Promise. Received ${receivedType(promiseOrFn)}`);
+    error.code = "ERR_INVALID_ARG_TYPE";
+    return Promise.reject(error);
+  }
+  if (typeof input.catch !== "function") {
+    const error = new TypeError(`The "promiseFn" argument must be of type function or an instance of Promise. Received ${receivedType(promiseOrFn)}`);
     error.code = "ERR_INVALID_ARG_TYPE";
     return Promise.reject(error);
   }
   return Promise.resolve(input).then(
     (value) => value,
-    (error) => Promise.reject(Object.assign(new Error(message || "Got unwanted rejection"), {
-      code: "ERR_ASSERTION", operator: "doesNotReject", actual: error
-    }))
+    (error) => {
+      const customMessage = typeof message === "function" ? message(error) : message;
+      return Promise.reject(Object.assign(new (require("assert").AssertionError)({message: typeof customMessage === "string" ? customMessage : `Got unwanted rejection.\nActual message: "${error && typeof error.message === "string" ? error.message : String(error)}"`}), {
+      code: "ERR_ASSERTION", operator: "doesNotReject", actual: error, generatedMessage: !message
+      }));
+    }
   );
 }"#;
 
@@ -432,14 +570,61 @@ fn missing_args() -> VmError {
 /// Optional trailing message argument; `None` when absent/undefined.
 pub fn custom_message(args: &[Value], index: usize) -> Option<String> {
     match args.get(index) {
-        Some(Value::String(message)) => Some(message.clone()),
+        Some(Value::String(message)) => Some(format_assert_message(
+            message,
+            args.get(index + 1..).unwrap_or_default(),
+        )),
         Some(Value::Undefined) | None => None,
-        Some(value) if is_error_object(value) => match execute::get_property(value, "message") {
-            Value::String(message) => Some(message),
-            _ => Some(crate::modules::util::inspect(value)),
-        },
+        Some(value) if is_error_object(value) || is_cross_context_error(value) => {
+            match execute::get_property(value, "message") {
+                Value::String(message) => Some(message),
+                _ => Some(crate::modules::util::inspect(value)),
+            }
+        }
         Some(value) => Some(crate::modules::util::inspect(value)),
     }
+}
+
+fn format_assert_message(message: &str, values: &[Value]) -> String {
+    let mut result = String::with_capacity(message.len());
+    let mut chars = message.chars();
+    let mut index = 0usize;
+    while let Some(ch) = chars.next() {
+        if ch == '%' {
+            if let Some(spec) = chars.next() {
+                if spec == '%' {
+                    result.push('%');
+                    continue;
+                }
+                if let Some(value) = values.get(index) {
+                    let text = match spec {
+                        'i' => match value {
+                            Value::Number(n) => (*n as i64).to_string(),
+                            _ => execute::to_js_string(value).unwrap_or_default(),
+                        },
+                        'd' => match value {
+                            Value::Number(n) => n.to_string(),
+                            _ => execute::to_js_string(value).unwrap_or_default(),
+                        },
+                        's' => execute::to_js_string(value).unwrap_or_default(),
+                        _ => {
+                            result.push('%');
+                            result.push(spec);
+                            continue;
+                        }
+                    };
+                    result.push_str(&text);
+                    index += 1;
+                    continue;
+                }
+                result.push('%');
+                result.push(spec);
+                continue;
+            }
+        }
+        result.push(ch);
+    }
+    result
 }
 
 fn rendered(value: &Value) -> String {
@@ -462,7 +647,30 @@ fn rendered(value: &Value) -> String {
             let text = text.strip_suffix('\n').unwrap_or(text);
             format!("'{}'", text.replace('\\', "\\\\").replace('\'', "\\'"))
         }
+        // Large strings may stay in the runtime's UTF-16 representation.
+        // Assertion messages must still render their complete operand rather
+        // than passing that representation through util.inspect's bounded
+        // string formatter (which truncates at 9,488 characters).
+        Value::StringUnits(_) => {
+            let text = execute::to_js_string_explicit(value).unwrap_or_default();
+            if text.starts_with("Symbol(") {
+                return text;
+            }
+            let text = text.strip_suffix('\n').unwrap_or(&text);
+            format!("'{}'", text.replace('\\', "\\\\").replace('\'', "\\'"))
+        }
+        Value::Function(_)
+        | Value::WeakFunction(_)
+        | Value::BoundFunction(_)
+        | Value::HostCapability(_) => function_render(value),
         _ => crate::modules::util::inspect(value),
+    }
+}
+
+fn function_render(value: &Value) -> String {
+    match execute::get_property(value, "name") {
+        Value::String(name) if !name.is_empty() => format!("[Function: {name}]"),
+        _ => "[Function (anonymous)]".into(),
     }
 }
 
@@ -511,7 +719,10 @@ pub fn ok(
             crate::modules::util::invalid_arg_received(&arg(args, 1))
         )));
     }
-    if let Some(value) = args.get(1).filter(|value| is_error_object(value)) {
+    if let Some(value) = args
+        .get(1)
+        .filter(|value| is_error_object(value) || is_cross_context_error(value))
+    {
         return Err(VmError::Thrown(value.clone()));
     }
     let custom = custom_message(args, 1);
@@ -520,18 +731,20 @@ pub fn ok(
         if args.is_empty() {
             return "No value argument passed to `assert.ok()`".into();
         }
+        let source_call = source_assertion_call(
+            &arg(args, 0),
+            matches!(arg(args, 0), Value::Number(value) if value == 0.0),
+        );
         if _r.is_some_and(|receiver| {
-            matches!(execute::get_property(receiver, "\0quench:strict"), Value::Boolean(true))
-        }) {
-            return "The expression evaluated to a falsy value:\n\n  strict.ok(\n".into();
-        }
-        if _r.is_some_and(|receiver| matches!(receiver, Value::Null))
-            && matches!(args.first(), Some(Value::Number(value)) if *value == 0.0)
+            matches!(
+                execute::get_property(receiver, "\0quench:strict"),
+                Value::Boolean(true)
+            )
+        }) && source_call
+            .as_deref()
+            .is_some_and(|call| call.starts_with("strict.ok("))
         {
-            return "The expression evaluated to a falsy value:\n\n  assert['ok'][\"apply\"](null, [0])\n".into();
-        }
-        if matches!(args.first(), Some(Value::Boolean(false))) {
-            return "The expression evaluated to a falsy value:\n\n  assert(typeof 123n === 'string')\n".into();
+            return "The expression evaluated to a falsy value:\n\n  strict.ok(\n".into();
         }
         if matches!(args.first(), Some(Value::Null))
             && matches!(args.get(1), Some(Value::Undefined))
@@ -544,8 +757,7 @@ pub fn ok(
             return format!("The expression evaluated to a falsy value:\n\n  {call}\n");
         }
         let argument = arg(args, 0);
-        let call = source_assertion_call(&argument)
-            .unwrap_or_else(|| format!("assert.ok({})", rendered(&argument)));
+        let call = source_call.unwrap_or_else(|| format!("assert.ok({})", rendered(&argument)));
         format!("The expression evaluated to a falsy value:\n\n  {call}\n")
     });
     Err(assertion_error(
@@ -557,25 +769,348 @@ pub fn ok(
     ))
 }
 
-fn source_assertion_call(value: &Value) -> Option<String> {
+fn source_assertion_call(value: &Value, null_receiver: bool) -> Option<String> {
     let source = quench_runtime::vm::current_context();
-    let source = source.source_text()?;
+    let source = source
+        .compiled_source_text()
+        .or_else(|| source.source_text())?;
     let expected = rendered(value);
-    let mut cursor = 0;
-    while let Some(relative) = source[cursor..].find(".ok(") {
+    if let Some(offset) = quench_runtime::vm::current_source_offset()
+        .and_then(|offset| usize::try_from(offset).ok())
+        .filter(|offset| *offset <= source.len())
+    {
+        if let Some(call) = eval_assertion_call(source, offset) {
+            return Some(call);
+        }
+    }
+    let current_offset = quench_runtime::vm::current_source_offset()
+        .and_then(|offset| usize::try_from(offset).ok())
+        .filter(|offset| *offset <= source.len());
+    let mut calls = Vec::new();
+    let mut cursor = 0usize;
+    while cursor < source.len() {
+        let next_ok = source[cursor..].find(".ok(");
+        let next_assert = source[cursor..].find("assert(");
+        let next_call = source[cursor..].find("assert.ok.call(");
+        let next_apply = source[cursor..].find("assert['ok'][\"apply\"](");
+        let next_arrow = next_arrow_call(source, cursor).map(|start| start - cursor);
+        let candidates = [
+            (next_ok, false),
+            (next_assert, true),
+            (next_call, true),
+            (next_apply, true),
+            (next_arrow, true),
+        ];
+        let Some((relative, bare)) = candidates
+            .into_iter()
+            .filter_map(|(position, bare)| position.map(|position| (position, bare)))
+            .min_by_key(|(position, _)| *position)
+        else {
+            break;
+        };
         let start = cursor + relative;
-        let argument_start = start + 4;
-        let end = source[argument_start..].find(')')? + argument_start;
-        if source[argument_start..end].trim() == expected {
-            let line_start = source[..start]
-                .rfind([';', '\n', '{', '}'])
-                .map_or(0, |i| i + 1);
-            let call = source[line_start..=end].trim();
-            if !call.is_empty() {
-                return Some(call.to_string());
+        if !is_code_position(source, start) {
+            cursor = start.saturating_add(1);
+            continue;
+        }
+        let Some(open) = source[start..].find('(').map(|relative| start + relative) else {
+            cursor = start.saturating_add(1);
+            continue;
+        };
+        let mut depth = 0usize;
+        let mut quote = None;
+        let mut escaped = false;
+        let mut end = None;
+        for (offset, ch) in source[open..].char_indices() {
+            if let Some(q) = quote {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                if ch == q {
+                    quote = None;
+                }
+                continue;
+            }
+            match ch {
+                '\'' | '"' | '`' => quote = Some(ch),
+                '(' | '[' | '{' => depth += 1,
+                ')' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        end = Some(open + offset);
+                        break;
+                    }
+                }
+                ']' | '}' => depth = depth.saturating_sub(1),
+                _ => {}
             }
         }
+        let Some(end) = end else {
+            break;
+        };
+        let call_start = if bare {
+            start
+        } else {
+            let mut token_start = start;
+            for (index, ch) in source[..start].char_indices().rev() {
+                if ch.is_whitespace() {
+                    break;
+                }
+                if matches!(
+                    ch,
+                    ';' | '\n'
+                        | '{'
+                        | '}'
+                        | '('
+                        | ')'
+                        | '='
+                        | ','
+                        | ':'
+                        | '>'
+                        | '<'
+                        | '!'
+                        | '&'
+                        | '|'
+                        | '+'
+                        | '-'
+                        | '/'
+                        | '\''
+                        | '"'
+                        | '`'
+                ) {
+                    break;
+                }
+                token_start = index;
+            }
+            token_start
+        };
+        let mut call = escape_source_controls(source[call_start..=end].trim());
+        if call.ends_with(", undefined)") {
+            let new_len = call.len() - ", undefined)".len();
+            call.truncate(new_len);
+            call.push(')');
+        }
+        if let Some(dot) = call.find(".ok(") {
+            let prefix = call[..dot].trim_end();
+            call = format!("{prefix}{}", &call[dot..]);
+        }
+        let argument = &source[open + 1..end];
+        let argument = argument.trim().to_string();
+        let first_argument = {
+            let mut depth = 0usize;
+            let mut quote = None;
+            let mut escaped = false;
+            argument
+                .char_indices()
+                .find_map(|(index, ch)| {
+                    if let Some(q) = quote {
+                        if escaped {
+                            escaped = false;
+                        } else if ch == '\\' {
+                            escaped = true;
+                        } else if ch == q {
+                            quote = None;
+                        }
+                        return None;
+                    }
+                    match ch {
+                        '\'' | '"' | '`' => quote = Some(ch),
+                        '(' | '[' | '{' => depth += 1,
+                        ')' | ']' | '}' => depth = depth.saturating_sub(1),
+                        ',' if depth == 0 => return Some(index),
+                        _ => {}
+                    }
+                    None
+                })
+                .map_or(argument.as_str(), |index| &argument[..index])
+                .trim()
+                .to_string()
+        };
+        calls.push((start, end, call, first_argument));
         cursor = end + 1;
+    }
+    if let Some(offset) = current_offset {
+        if let Some((_, _, call, _)) = calls
+            .iter()
+            .find(|(start, end, call, _)| *start <= offset && offset <= *end)
+        {
+            if !null_receiver || call.contains(".call(") || call.contains("[\"apply\"](") {
+                return Some(call.clone());
+            }
+        }
+        if let Some((start, _, call, _)) = calls
+            .iter()
+            .min_by_key(|(start, _, _, _)| start.abs_diff(offset))
+        {
+            if start.abs_diff(offset) < 512 {
+                return Some(call.clone());
+            }
+        }
+        if !null_receiver {
+            if let Some((_, _, call, _)) = calls.iter().find(|(start, _, _, _)| *start >= offset) {
+                return Some(call.clone());
+            }
+        }
+    }
+    if let Some((_, _, call, _)) = calls
+        .iter()
+        .find(|(_, _, _, argument)| argument == &expected)
+    {
+        return Some(call.clone());
+    }
+    (calls.len() == 1)
+        .then(|| calls.first().map(|(_, _, call, _)| call.clone()))
+        .flatten()
+}
+
+fn eval_assertion_call(source: &str, offset: usize) -> Option<String> {
+    let search_end = offset.saturating_add(4096).min(source.len());
+    let (relative, pattern) = ["assert(", "assert.ok("]
+        .into_iter()
+        .filter_map(|pattern| {
+            source[offset..search_end]
+                .find(pattern)
+                .map(|relative| (relative, pattern))
+        })
+        .min_by_key(|(relative, _)| *relative)?;
+    let start = offset + relative;
+    if is_code_position(source, start) {
+        return None;
+    }
+    let context_start = start.saturating_sub(128);
+    let context = &source[context_start..start];
+    if !context.contains("new Function") && !context.contains("eval(") {
+        return None;
+    }
+    let anchor = ["new Function", "eval("]
+        .into_iter()
+        .filter_map(|needle| source[..start].rfind(needle))
+        .max()?;
+    if anchor.abs_diff(offset) > 128 {
+        return None;
+    }
+    let open = start + pattern.len() - 1;
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    for (relative, ch) in source[open..].char_indices() {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '\'' | '"' | '`' => quote = Some(ch),
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(escape_source_controls(&source[start..=open + relative]));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn escape_source_controls(source: &str) -> String {
+    let escaped = source
+        .chars()
+        .map(|ch| match ch {
+            '\u{0000}'..='\u{0009}' | '\u{000b}'..='\u{001f}' | '\u{007f}' => {
+                format!("\\u{:04x}", ch as u32)
+            }
+            _ => ch.to_string(),
+        })
+        .collect::<String>();
+    escaped.replace("\\\\u0001", "\\u0001")
+}
+
+fn is_code_position(source: &str, target: usize) -> bool {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut line_comment = false;
+    let mut block_comment = false;
+    let bytes = source.as_bytes();
+    let mut index = 0;
+    while index < target {
+        let ch = bytes[index] as char;
+        if line_comment {
+            if ch == '\n' {
+                line_comment = false;
+            }
+            index += 1;
+            continue;
+        }
+        if block_comment {
+            if ch == '*' && bytes.get(index + 1) == Some(&b'/') {
+                block_comment = false;
+                index += 2;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == q {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+        if ch == '/' && bytes.get(index + 1) == Some(&b'/') {
+            line_comment = true;
+            index += 2;
+        } else if ch == '/' && bytes.get(index + 1) == Some(&b'*') {
+            block_comment = true;
+            index += 2;
+        } else if matches!(ch, '\'' | '"' | '`') {
+            quote = Some(ch);
+            index += 1;
+        } else {
+            index += 1;
+        }
+    }
+    quote.is_none() && !line_comment && !block_comment
+}
+
+fn next_arrow_call(source: &str, from: usize) -> Option<usize> {
+    let mut cursor = from;
+    while let Some(relative) = source[cursor..].find("=>") {
+        let arrow = cursor + relative + 2;
+        let mut index = arrow;
+        while let Some(ch) = source[index..].chars().next() {
+            if !ch.is_whitespace() {
+                break;
+            }
+            index += ch.len_utf8();
+        }
+        let start = index;
+        while let Some(ch) = source[index..].chars().next() {
+            if !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$') {
+                break;
+            }
+            index += ch.len_utf8();
+        }
+        if index > start && source[index..].starts_with('(') {
+            return Some(start);
+        }
+        cursor = arrow;
     }
     None
 }
@@ -656,6 +1191,9 @@ fn binary_assert(
     expect_equal: bool,
     compare: impl Fn(&Value, &Value) -> Result<bool, VmError>,
 ) -> Result<Value, VmError> {
+    if args.len() < 2 {
+        return Err(missing_args());
+    }
     let actual = arg(args, 0);
     let expected = arg(args, 1);
     let equal = compare(&actual, &expected)?;
@@ -666,7 +1204,7 @@ fn binary_assert(
         return Err(VmError::Thrown(value.clone()));
     }
     let relation = if expect_equal { "!==" } else { "===" };
-    let custom = custom_message(args, 2);
+    let custom = custom_message_binary(args, 2, &actual, &expected)?;
     let generated = custom.is_none();
     let message = custom.map_or_else(|| {
         let label = match operator {
@@ -680,12 +1218,56 @@ fn binary_assert(
             matches!(execute::get_property(value, "diff"), Value::String(diff) if diff == "full")
         }) || (operator == "strictEqual"
             && (needs_structural_diff(&actual) || needs_structural_diff(&expected)));
+        if operator == "strictEqual"
+            && has_error_shape(&actual)
+            && has_error_shape(&expected)
+            && !execute::same_identity(&actual, &expected)
+        {
+            return format!(
+                "Expected \"actual\" to be reference-equal to \"expected\":\n+ actual - expected\n\n+ {}\n- {}\n",
+                rendered_error(&actual), rendered_error(&expected)
+            );
+        }
+        if operator == "notStrictEqual"
+            && execute::same_identity(&actual, &expected)
+            && !is_primitive_value(&actual)
+        {
+            let value = if execute::own_enumerable_keys(&actual).is_empty() {
+                rendered(&actual)
+            } else {
+                identity_operand_render(&actual)
+            };
+            return if value == "{}" {
+                format!("Expected \"actual\" not to be reference-equal to \"expected\": {}", value)
+            } else {
+                format!("Expected \"actual\" not to be reference-equal to \"expected\":\n\n{value}\n")
+            };
+        }
+        if operator == "strictEqual"
+            && !execute::same_identity(&actual, &expected)
+            && !is_primitive_value(&actual)
+            && !is_primitive_value(&expected)
+            && crate::modules::deep_equal::deep_equal_opts(&actual, &expected, true, false).unwrap_or(false)
+        {
+            return format!("Values have same structure but are not reference-equal:\n\n{}\n", rendered(&actual));
+        }
+        if operator == "strictEqual"
+            && !is_primitive_value(&actual)
+            && !is_primitive_value(&expected)
+            && !execute::same_identity(&actual, &expected)
+        {
+            return format!(
+                "Expected \"actual\" to be reference-equal to \"expected\":\n+ actual - expected\n\n{}\n",
+                reference_diff_render(&actual, &expected)
+            );
+        }
         if full {
             match operator {
                 "strictEqual" => format!(
-                    "Expected values to be strictly equal:\n+ actual - expected\n\n+ {}\n- {}\n",
+                    "Expected values to be strictly equal:\n+ actual - expected\n\n+ {}\n- {}\n{}",
                     strict_operand_render(&actual),
-                    strict_operand_render(&expected)
+                    strict_operand_render(&expected),
+                    string_caret_suffix(&actual, &expected)
                 ),
                 "notStrictEqual" => format!(
                     "Expected \"actual\" to be strictly unequal to:\n\n{}",
@@ -705,9 +1287,15 @@ fn binary_assert(
             }
         } else {
             match (&actual, &expected) {
-                (Value::String(actual), Value::String(expected)) =>
+                (actual, expected)
+                    if matches!(actual, Value::String(_) | Value::StringUnits(_))
+                        && matches!(expected, Value::String(_) | Value::StringUnits(_))
+                        && !execute::is_symbol(actual)
+                        && !execute::is_symbol(expected) =>
                 {
-                    simple_binary_message(operator, actual, expected)
+                    let actual = execute::to_js_string(actual).unwrap_or_default();
+                    let expected = execute::to_js_string(expected).unwrap_or_default();
+                    simple_binary_message(operator, &actual, &expected)
                 }
                 _ if operator == "notDeepEqual" && execute::same_value(&actual, &expected) =>
                     format!(
@@ -721,10 +1309,14 @@ fn binary_assert(
                 ),
                 _ if operator == "notDeepStrictEqual" => format!(
                     "Expected \"actual\" not to be strictly deep-equal to:\n\n{}",
-                    rendered_not_deep(&actual)
+                    if is_date_operand(&actual) {
+                        rendered_not_deep(&actual)
+                    } else {
+                        format!("{}\n", rendered_not_deep(&actual))
+                    }
                 ),
                 _ if operator == "notStrictEqual"
-                    && !matches!(actual, Value::String(_)) => format!(
+                    && !matches!(actual, Value::String(_) | Value::StringUnits(_)) => format!(
                     "Expected \"actual\" to be strictly unequal to: {}",
                     rendered(&actual)
                 ),
@@ -760,6 +1352,60 @@ fn binary_assert(
     ))
 }
 
+fn string_caret_suffix(actual: &Value, expected: &Value) -> String {
+    if !matches!(actual, Value::String(_) | Value::StringUnits(_))
+        || !matches!(expected, Value::String(_) | Value::StringUnits(_))
+    {
+        return String::new();
+    }
+    let (actual, expected) = match (
+        execute::to_js_string(actual),
+        execute::to_js_string(expected),
+    ) {
+        (Ok(actual), Ok(expected)) => (actual, expected),
+        _ => return String::new(),
+    };
+    if actual.len() > 12 || expected.len() > 12 || actual.contains('\n') || expected.contains('\n')
+    {
+        return String::new();
+    }
+    let prefix = actual
+        .chars()
+        .zip(expected.chars())
+        .take_while(|(left, right)| left == right)
+        .count();
+    if prefix == 0 {
+        String::new()
+    } else {
+        format!("{}^\n", " ".repeat(prefix + 3))
+    }
+}
+
+/// Assertion message callbacks receive the operands and provide the final
+/// message text. A non-string return is treated as no custom message, matching
+/// Node's generated fallback diagnostics.
+fn custom_message_binary(
+    args: &[Value],
+    index: usize,
+    actual: &Value,
+    expected: &Value,
+) -> Result<Option<String>, VmError> {
+    match args.get(index) {
+        Some(value) if quench_runtime::is_callable(value) => {
+            let result = execute::call(
+                value,
+                &Value::Undefined,
+                &[actual.clone(), expected.clone()],
+            )?;
+            Ok(match result {
+                Value::String(text) => Some(text),
+                _ => None,
+            })
+        }
+        _ => Ok(custom_message(args, index)),
+    }
+}
+
 fn simple_binary_message(operator: &str, actual: &str, expected: &str) -> String {
     if operator == "strictEqual" && actual.starts_with("Symbol.") && actual.contains('\0') {
         let description = actual
@@ -785,9 +1431,21 @@ fn simple_binary_message(operator: &str, actual: &str, expected: &str) -> String
     match operator {
         "strictEqual" => {
             if actual.len() <= 10 && expected.len() <= 10 {
-                format!("Expected values to be strictly equal:\n\n'{actual}' !== '{expected}'\n")
-            } else {
+                let prefix = actual
+                    .chars()
+                    .zip(expected.chars())
+                    .take_while(|(left, right)| left == right)
+                    .count();
+                let caret = if prefix > 0 {
+                    format!("{}^\n", " ".repeat(prefix + 3))
+                } else {
+                    String::new()
+                };
                 format!(
+                    "Expected values to be strictly equal:\n\n'{actual}' !== '{expected}'\n{caret}"
+                )
+            } else {
+                let mut message = format!(
                     "Expected values to be strictly equal:\n+ actual - expected\n\n{}\n{}\n",
                     if actual.contains('\n') {
                         simple_side(actual, "+", 100)
@@ -799,12 +1457,27 @@ fn simple_binary_message(operator: &str, actual: &str, expected: &str) -> String
                     } else {
                         format!("- '{expected}'")
                     }
-                )
+                );
+                if !actual.contains('\n')
+                    && !expected.contains('\n')
+                    && actual.len() <= 12
+                    && expected.len() <= 12
+                {
+                    let prefix = actual
+                        .chars()
+                        .zip(expected.chars())
+                        .take_while(|(left, right)| left == right)
+                        .count();
+                    if prefix > 0 {
+                        message.push_str(&format!("{}^\n", " ".repeat(prefix + 3)));
+                    }
+                }
+                message
             }
         }
         "notStrictEqual" => format!(
             "Expected \"actual\" to be strictly unequal to:\n\n{}",
-            value(actual, 48)
+            value(actual, 47)
         ),
         _ => format!(
             "Expected values to be {}:\n\n{} !== {}\n",
@@ -822,7 +1495,7 @@ fn simple_binary_message(operator: &str, actual: &str, expected: &str) -> String
 fn simple_loose_message(actual: &str, expected: &str) -> String {
     let scalar = |value: &str| {
         if value.contains('\n') {
-            simple_side(value, "", 52)
+            simple_side(value, "", 51)
         } else if value.len() > 508 {
             format!("'{}...", &value[..508])
         } else {
@@ -953,7 +1626,7 @@ fn deep_assert(
     {
         return Ok(Value::Undefined);
     }
-    let custom = custom_message(args, 2);
+    let custom = custom_message_binary(args, 2, &actual, &expected)?;
     let generated = custom.is_none();
     let full_diff = _r.is_some_and(|receiver| {
         matches!(execute::get_property(receiver, "diff"), Value::String(mode) if mode == "full")
@@ -964,10 +1637,16 @@ fn deep_assert(
     let message = custom.map_or_else(
         || if !strict {
             match (&actual, &expected) {
-                (Value::String(actual), Value::String(expected))
-                    if simple_diff =>
+                (actual, expected)
+                    if simple_diff
+                        && matches!(actual, Value::String(_) | Value::StringUnits(_))
+                        && matches!(expected, Value::String(_) | Value::StringUnits(_))
+                        && !execute::is_symbol(actual)
+                        && !execute::is_symbol(expected) =>
                 {
-                    simple_loose_message(actual, expected)
+                    let actual = execute::to_js_string(actual).unwrap_or_default();
+                    let expected = execute::to_js_string(expected).unwrap_or_default();
+                    simple_loose_message(&actual, &expected)
                 }
                 _ => format!(
                     "Expected values to be loosely deep-equal:\n\n{}\n\nshould loosely deep-equal\n\n{}",
@@ -986,8 +1665,14 @@ fn deep_assert(
             format!("Expected values to be strictly deep-equal:\n+ actual - expected{}", diff_block(&diff))
         },
         |message| {
-            let diff = deep_diff_for_mode(&actual, &expected, full_diff);
-            format!("{message}\n+ actual - expected{}", diff_block(&diff))
+            if !strict {
+                message
+            } else if is_primitive_value(&actual) && is_primitive_value(&expected) {
+                format!("{message}\n\n{} {} {}\n", rendered(&actual), "!==", rendered(&expected))
+            } else {
+                let diff = deep_diff_for_mode(&actual, &expected, full_diff);
+                format!("{message}\n+ actual - expected{}", diff_block(&diff))
+            }
         },
     );
     Err(with_instance_diff(
@@ -1018,9 +1703,22 @@ fn is_primitive_value(value: &Value) -> bool {
     )
 }
 
+fn is_date_operand(value: &Value) -> bool {
+    execute::has_own_property(value, "timeValue")
+        && matches!(
+            execute::get_prototype_of(value),
+            Ok(Value::Builtin(quench_runtime::ops::Builtin::DatePrototype))
+        )
+}
+
 fn needs_structural_diff(value: &Value) -> bool {
     match value {
-        Value::Function(_) | Value::WeakFunction(_) | Value::BoundFunction(_) => true,
+        // Functions are opaque references for strict equality; inspecting
+        // their own properties can recurse through constructor links.
+        Value::Function(_)
+        | Value::WeakFunction(_)
+        | Value::BoundFunction(_)
+        | Value::HostCapability(_) => true,
         Value::Array(_) => execute::own_enumerable_keys(value)
             .iter()
             .any(|key| key.parse::<usize>().is_ok()),
@@ -1090,9 +1788,101 @@ fn strict_operand_render(value: &Value) -> String {
     }
 }
 
+fn reference_operand_render(value: &Value) -> String {
+    if value.is_arguments_object() {
+        let lines = execute::own_enumerable_keys(value)
+            .into_iter()
+            .map(|key| {
+                format!(
+                    "    '{}': {}",
+                    key,
+                    rendered(&execute::get_property(value, &key))
+                )
+            })
+            .collect::<Vec<_>>();
+        return format!("[Arguments] {{\n{}\n  }}", lines.join("\n"));
+    }
+    if let Value::Object(_) = value {
+        let lines = execute::own_enumerable_keys(value)
+            .into_iter()
+            .map(|key| {
+                let display_key = if key.parse::<usize>().is_ok() {
+                    format!("'{key}'")
+                } else {
+                    key.clone()
+                };
+                format!(
+                    "    {display_key}: {}",
+                    rendered(&execute::get_property(value, &key))
+                )
+            })
+            .collect::<Vec<_>>();
+        if !lines.is_empty() {
+            return format!("{{\n{}\n  }}", lines.join("\n"));
+        }
+    }
+    rendered(value)
+}
+
+fn identity_operand_render(value: &Value) -> String {
+    let keys = execute::own_enumerable_keys(value);
+    if keys.is_empty() {
+        return rendered(value);
+    }
+    let lines = keys
+        .iter()
+        .map(|key| {
+            let display_key = if key.parse::<usize>().is_ok() {
+                format!("'{key}'")
+            } else {
+                key.clone()
+            };
+            format!(
+                "  {display_key}: {}",
+                rendered(&execute::get_property(value, key))
+            )
+        })
+        .collect::<Vec<_>>();
+    format!("{{\n{}\n}}", lines.join("\n"))
+}
+
+fn reference_diff_render(actual: &Value, expected: &Value) -> String {
+    let actual_lines = reference_operand_render(actual)
+        .lines()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let expected_lines = reference_operand_render(expected)
+        .lines()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let mut lines = Vec::new();
+    let common = actual_lines.len().min(expected_lines.len());
+    for index in 0..common {
+        if actual_lines[index] == expected_lines[index] {
+            lines.push(actual_lines[index].clone());
+        } else {
+            lines.push(format!("+ {}", actual_lines[index]));
+            lines.push(format!("- {}", expected_lines[index]));
+        }
+    }
+    for line in actual_lines.iter().skip(common) {
+        lines.push(format!("+ {}", line));
+    }
+    for line in expected_lines.iter().skip(common) {
+        lines.push(format!("- {}", line));
+    }
+    lines.join("\n")
+}
+
 fn deep_diff_for_mode(actual: &Value, expected: &Value, full: bool) -> String {
     if full {
-        if let (Value::String(actual), Value::String(expected)) = (actual, expected) {
+        if matches!(actual, Value::String(_) | Value::StringUnits(_))
+            && matches!(expected, Value::String(_) | Value::StringUnits(_))
+            && !execute::is_symbol(actual)
+            && !execute::is_symbol(expected)
+        {
+            let actual = execute::to_js_string(actual).unwrap_or_default();
+            let expected = execute::to_js_string(expected).unwrap_or_default();
             return format!("+ '{actual}'\n- '{expected}'");
         }
     }
@@ -1101,7 +1891,8 @@ fn deep_diff_for_mode(actual: &Value, expected: &Value, full: bool) -> String {
 
 fn rendered_deep_for_mode(value: &Value, full: bool) -> String {
     if full {
-        if let Value::String(value) = value {
+        if matches!(value, Value::String(_) | Value::StringUnits(_)) && !execute::is_symbol(value) {
+            let value = execute::to_js_string(value).unwrap_or_default();
             return format!("'{}'", value.trim_end_matches('\n'));
         }
     }
@@ -1111,6 +1902,11 @@ fn rendered_deep_for_mode(value: &Value, full: bool) -> String {
 fn rendered_deep(value: &Value) -> String {
     match value {
         Value::Map(map) => {
+            if map.is_weak() {
+                let mut rendered = "WeakMap { <items unknown> }".to_string();
+                append_collection_properties(&Value::Map(map.clone()), &mut rendered);
+                return rendered;
+            }
             let mut entries = map
                 .keys
                 .borrow()
@@ -1124,10 +1920,24 @@ fn rendered_deep(value: &Value) -> String {
                     )
                 })
                 .collect::<Vec<_>>();
-            entries.sort();
-            collection_render("Map", entries)
+            let self_circular = map
+                .keys
+                .borrow()
+                .iter()
+                .chain(map.values.borrow().iter())
+                .any(
+                    |entry| matches!(entry, Value::Map(nested) if std::rc::Rc::ptr_eq(nested, map)),
+                );
+            let mut rendered = collection_render("Map", entries, self_circular);
+            append_collection_properties(&Value::Map(map.clone()), &mut rendered);
+            rendered
         }
         Value::Set(set) => {
+            if set.is_weak() {
+                let mut rendered = "WeakSet { <items unknown> }".to_string();
+                append_collection_properties(&Value::Set(set.clone()), &mut rendered);
+                return rendered;
+            }
             let owner = Value::Set(set.clone());
             let mut entries = set
                 .values
@@ -1135,8 +1945,12 @@ fn rendered_deep(value: &Value) -> String {
                 .iter()
                 .map(|value| collection_atom(&owner, value))
                 .collect::<Vec<_>>();
-            entries.sort();
-            collection_render("Set", entries)
+            let self_circular = set.values.borrow().iter().any(
+                |entry| matches!(entry, Value::Set(nested) if std::rc::Rc::ptr_eq(nested, set)),
+            );
+            let mut rendered = collection_render("Set", entries, self_circular);
+            append_collection_properties(&Value::Set(set.clone()), &mut rendered);
+            rendered
         }
         _ => crate::modules::util::inspect_with_options(value, 1000, false, None, true),
     }
@@ -1149,7 +1963,7 @@ fn collection_atom(owner: &Value, value: &Value) -> String {
         _ => false,
     };
     if circular {
-        "[Circular]".into()
+        "[Circular *1]".into()
     } else if let Value::Set(set) = value {
         let owner = Value::Set(set.clone());
         let entries = set
@@ -1158,10 +1972,19 @@ fn collection_atom(owner: &Value, value: &Value) -> String {
             .iter()
             .map(|entry| collection_atom(&owner, entry))
             .collect::<Vec<_>>();
+        let self_circular =
+            set.values.borrow().iter().any(
+                |entry| matches!(entry, Value::Set(nested) if std::rc::Rc::ptr_eq(nested, set)),
+            );
         if entries.is_empty() {
             "Set(0) {}".into()
         } else {
-            format!("Set({}) {{ {} }}", entries.len(), entries.join(", "))
+            let prefix = if self_circular { "<ref *1> " } else { "" };
+            format!(
+                "{prefix}Set({}) {{ {} }}",
+                entries.len(),
+                entries.join(", ")
+            )
         }
     } else if let Value::Map(map) = value {
         let owner = Value::Map(map.clone());
@@ -1178,30 +2001,77 @@ fn collection_atom(owner: &Value, value: &Value) -> String {
                 )
             })
             .collect::<Vec<_>>();
+        let self_circular = map
+            .keys
+            .borrow()
+            .iter()
+            .chain(map.values.borrow().iter())
+            .any(|entry| matches!(entry, Value::Map(nested) if std::rc::Rc::ptr_eq(nested, map)));
         if entries.is_empty() {
             "Map(0) {}".into()
         } else {
-            format!("Map({}) {{ {} }}", entries.len(), entries.join(", "))
+            let prefix = if self_circular { "<ref *1> " } else { "" };
+            format!(
+                "{prefix}Map({}) {{ {} }}",
+                entries.len(),
+                entries.join(", ")
+            )
         }
     } else {
         crate::modules::util::inspect_with_options(value, 1000, false, None, true)
     }
 }
 
-fn collection_render(name: &str, entries: Vec<String>) -> String {
+fn collection_render(name: &str, entries: Vec<String>, self_circular: bool) -> String {
     if entries.is_empty() {
         return format!("{name}(0) {{}}");
     }
-    let mut lines = vec![format!("{name}({}) {{", entries.len())];
-    for (index, entry) in entries.iter().enumerate() {
-        let comma = (index + 1 < entries.len()).then_some(',').unwrap_or(' ');
-        lines.push(format!("  {entry}{comma}"));
+    let prefix = if self_circular { "<ref *1> " } else { "" };
+    format!(
+        "{prefix}{name}({}) {{ {} }}",
+        entries.len(),
+        entries.join(", ")
+    )
+}
+
+/// Assertion diagnostics include enumerable properties attached to collection
+/// objects (`set.x = 5`) just like `util.inspect`.  Keep this derived display
+/// fact beside the collection renderer so loose and strict errors agree.
+fn append_collection_properties(value: &Value, rendered: &mut String) {
+    let properties = quench_runtime::execute::own_enumerable_keys(value)
+        .into_iter()
+        .filter(|key| !key.starts_with('\0'))
+        .collect::<Vec<_>>();
+    if properties.is_empty() || !rendered.ends_with('}') {
+        return;
     }
-    if let Some(last) = lines.last_mut() {
-        last.pop();
+    let body = properties
+        .into_iter()
+        .map(|key| {
+            format!(
+                "{key}: {}",
+                crate::modules::util::inspect_with_options(
+                    &quench_runtime::execute::get_property(value, &key),
+                    0,
+                    false,
+                    None,
+                    true,
+                )
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    rendered.truncate(rendered.len() - 1);
+    let empty_collection = rendered.ends_with('{');
+    if !empty_collection {
+        rendered.push_str(", ");
     }
-    lines.push("}".into());
-    lines.join("\n")
+    rendered.push_str(&body);
+    if empty_collection {
+        rendered.push_str(" }");
+    } else {
+        rendered.push('}');
+    }
 }
 
 pub fn deep_strict_equal(
@@ -1324,7 +2194,7 @@ fn is_url_like(value: &Value) -> bool {
     )
 }
 
-fn deep_diff(actual: &Value, expected: &Value) -> String {
+pub(crate) fn deep_diff(actual: &Value, expected: &Value) -> String {
     if is_url_like(actual) || is_url_like(expected) {
         let href = |value: &Value| execute::get_property(value, "href");
         return format!(
@@ -1826,6 +2696,16 @@ fn is_error_object(value: &Value) -> bool {
     false
 }
 
+fn is_cross_context_error(value: &Value) -> bool {
+    matches!(execute::get_property(value, "name"), Value::String(_))
+        && matches!(execute::get_property(value, "message"), Value::String(_))
+}
+
+fn has_error_shape(value: &Value) -> bool {
+    matches!(execute::get_property(value, "name"), Value::String(_))
+        && matches!(execute::get_property(value, "message"), Value::String(_))
+}
+
 fn rendered_error(value: &Value) -> String {
     let name = match execute::get_property(value, "name") {
         Value::String(name) if !name.is_empty() => name,
@@ -2238,7 +3118,7 @@ fn collection_diff(actual: &Value, expected: &Value) -> Option<String> {
         _ => return None,
     };
     if actual_entries == expected_entries {
-        return Some(collection_render(name, actual_entries));
+        return Some(collection_render(name, actual_entries, false));
     }
     let mut lines = vec![format!(
         "  {name}({}) {{",
@@ -2527,7 +3407,7 @@ pub fn partial_deep_strict_equal(
     if crate::modules::deep_equal::partial_deep_equal(&actual, &expected)? {
         return Ok(Value::Undefined);
     }
-    let custom = custom_message(args, 2);
+    let custom = custom_message_binary(args, 2, &actual, &expected)?;
     let generated = custom.is_none();
     let message = custom.map_or_else(
         || {
@@ -2537,10 +3417,18 @@ pub fn partial_deep_strict_equal(
             )
         },
         |message| {
-            format!(
-                "{message}\n+ actual - expected\n\n{}\n",
-                deep_diff(&actual, &expected)
-            )
+            if is_primitive_value(&actual) && is_primitive_value(&expected) {
+                format!(
+                    "{message}\n\n{} !== {}\n",
+                    rendered(&actual),
+                    rendered(&expected)
+                )
+            } else {
+                format!(
+                    "{message}\n+ actual - expected\n\n{}\n",
+                    deep_diff(&actual, &expected)
+                )
+            }
         },
     );
     Err(with_instance_diff(
