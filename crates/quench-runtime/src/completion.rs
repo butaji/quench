@@ -208,6 +208,10 @@ pub enum Completion {
     /// only the promise through `into_vm_error`.
     SuspendAt(Rc<PromiseData>, crate::continuation::SuspensionPoint),
     Yield(Value),
+    /// A generator yield carrying the exact structured continuation that
+    /// produced it. This keeps loop/try state in the completion rather than
+    /// reconstructing it from source-shaped fragments on resume.
+    YieldAt(Value, crate::continuation::SuspensionPoint),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -248,7 +252,10 @@ impl Completion {
     }
 
     pub(crate) fn is_suspension(&self) -> bool {
-        matches!(self, Self::Suspend(_) | Self::SuspendAt(_, _) | Self::Yield(_))
+        matches!(
+            self,
+            Self::Suspend(_) | Self::SuspendAt(_, _) | Self::Yield(_) | Self::YieldAt(_, _)
+        )
     }
 
     pub(crate) fn suspension_point(
@@ -256,6 +263,7 @@ impl Completion {
     ) -> Option<&crate::continuation::SuspensionPoint> {
         match self {
             Self::SuspendAt(_, point) => Some(point),
+            Self::YieldAt(_, point) => Some(point),
             _ => None,
         }
     }
@@ -294,6 +302,9 @@ impl Completion {
             Self::Suspend(promise) => Err(VmError::Suspended(promise)),
             Self::SuspendAt(promise, _) => Err(VmError::Suspended(promise)),
             Self::Yield(_) => Err(VmError::EvalError(
+                "Unconsumed yield completion".to_string(),
+            )),
+            Self::YieldAt(_, _) => Err(VmError::EvalError(
                 "Unconsumed yield completion".to_string(),
             )),
         }
