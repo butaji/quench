@@ -1,0 +1,132 @@
+fn rust_source(name: &str, recipe: super::RustLeafRecipe) -> String {
+    assert_valid_symbol_name(name);
+    format!(
+        "#![no_std]\n#[no_mangle]\n#[inline(never)]\npub extern \"C\" fn q_{}({}) -> {} {{ {} }}\n",
+        name,
+        recipe.parameters(),
+        recipe.result(),
+        recipe.expression()
+    )
+}
+
+fn assert_valid_symbol_name(name: &str) {
+    let mut chars = name.chars();
+    let valid_start = chars
+        .next()
+        .is_some_and(|character| character == '_' || character.is_ascii_alphabetic());
+    assert!(valid_start, "invalid Rust stencil symbol name {name:?}");
+    assert!(
+        chars.all(|character| character == '_' || character.is_ascii_alphanumeric()),
+        "invalid Rust stencil symbol name {name:?}"
+    );
+}
+
+fn compile_one(
+    root: &Path,
+    target: &str,
+    compiler: &str,
+    flags: &[&str],
+    rustflags: &[String],
+    declaration: &RegionDeclaration,
+    recipe: super::RustLeafRecipe,
+) -> Vec<u8> {
+    let source = root.join(format!("{}.rs", declaration.name));
+    let object = root.join(format!("{}.o", declaration.name));
+    fs::write(&source, rust_source(declaration.name, recipe)).expect("write Rust stencil source");
+    let mut command = Command::new(compiler);
+    command
+        .args(["--target", target])
+        .args(flags)
+        .args(rustflags)
+        .args([source.to_str().unwrap(), "-o", object.to_str().unwrap()]);
+    run(&mut command, "compile Rust stencil object");
+    parse_object(&object, &format!("q_{}", declaration.name))
+}
+
+fn compile_fragment_pair(
+    root: &Path,
+    target: &str,
+    compiler: &str,
+    flags: &[&str],
+    rustflags: &[String],
+    declaration: &RegionDeclaration,
+) -> ExtractedObject {
+    if !target.starts_with("aarch64") {
+        return ExtractedObject {
+            bytes: Vec::new(),
+            fallthrough: None,
+            relocations: Vec::new(),
+            holes: Vec::new(),
+        };
+    }
+    let expected = declaration
+        .aarch64_holes
+        .iter()
+        .map(|(offset, width, kind)| ExpectedRelocation {
+            section: SectionKind::Text,
+            offset: *offset,
+            width: *width,
+            kind,
+            target: "q_fallthrough_tail",
+            addend: 0,
+        })
+        .collect::<Vec<_>>();
+    let head = compile_assembly_fragment(
+        root,
+        target,
+        compiler,
+        flags,
+        rustflags,
+        "fallthrough_head",
+        super::build_stencil_templates::aarch64_head(),
+        &expected,
+        &[],
+    );
+    let tail = compile_assembly_fragment(
+        root,
+        target,
+        compiler,
+        flags,
+        rustflags,
+        "fallthrough_tail",
+        super::build_stencil_templates::aarch64_tail(),
+        &[],
+        &[],
+    );
+    ExtractedObject {
+        bytes: head.bytes,
+        fallthrough: Some(tail.bytes),
+        relocations: head.relocations,
+        holes: head.holes,
+    }
+}
+
+fn compile_assembly_fragment(
+    root: &Path,
+    target: &str,
+    compiler: &str,
+    flags: &[&str],
+    rustflags: &[String],
+    name: &str,
+    source_text: &str,
+    expected_relocations: &[ExpectedRelocation],
+    expected_holes: &[ExtractedHole],
+) -> ParsedFragment {
+    let source = root.join(format!("{name}.rs"));
+    let object = root.join(format!("{name}.o"));
+    fs::write(&source, source_text).expect("write Rust assembly fragment");
+    let mut command = Command::new(compiler);
+    command
+        .args(["--target", target])
+        .args(flags)
+        .args(rustflags)
+        .args([source.to_str().unwrap(), "-o", object.to_str().unwrap()]);
+    run(&mut command, "compile Rust assembly fragment");
+    parse_object_range(
+        &object,
+        &format!("q_{name}"),
+        &format!("q_{name}_end"),
+        expected_relocations,
+        expected_holes,
+    )
+}

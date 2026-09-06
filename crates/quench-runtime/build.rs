@@ -1971,6 +1971,9 @@ fn canonical_region_lookup(key: crate::stencil_fact::RegionKey) -> Option<&'stat
     fs::write(output.join("stencil_catalog.rs"), generated).expect("write stencil catalog");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=build_stencil_artifacts.rs");
+    println!("cargo:rerun-if-changed=build_stencil_artifacts");
+    println!("cargo:rerun-if-changed=build_stencil_contract.rs");
+    println!("cargo:rerun-if-changed=build_stencil_templates.rs");
     println!("cargo:rerun-if-changed=src/ir.rs");
 }
 
