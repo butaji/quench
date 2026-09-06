@@ -2028,10 +2028,10 @@ pub fn snapshot() -> Option<serde_json::Value> {
                             "used_bytes": snapshot.used_bytes,
                             "resident_bytes": snapshot.resident_bytes,
                             "retired_live_bytes": snapshot.retired_live_bytes,
-                            "cache_rows": snapshot.cache_rows,
+                            "owner_cache_rows": snapshot.owner_cache_rows,
                             "active_leases": snapshot.active_leases,
                             "retired_owners": snapshot.retired_owners,
-                            "process_resident_bytes": snapshot.process_resident_bytes,
+                            "process_executable_bytes": snapshot.process_executable_bytes,
                         }),
                     ))
                     .collect::<serde_json::Map<_, _>>(),
@@ -2124,10 +2124,10 @@ mod lane_profile_tests {
             resident_bytes: 8192,
             used_bytes: 76,
             retired_live_bytes: 4096,
-            cache_rows: 1,
+            owner_cache_rows: 1,
             active_leases: 1,
             retired_owners: 1,
-            process_resident_bytes: 12288,
+            process_executable_bytes: 12288,
         };
         counters.stencil_storage.insert(key, expected);
         let value = counters
