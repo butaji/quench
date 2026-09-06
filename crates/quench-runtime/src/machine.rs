@@ -3342,7 +3342,7 @@ impl NativeAddChainPlan {
         reset_installed!(self, InstalledF64x3Entry::Unpublished);
     }
 
-    fn new_with_arena(
+    pub(crate) fn new_with_arena(
         policy: crate::stencil_policy::ExecutionPolicy,
         shared_arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
         bindings: crate::stencil_plan::F64x3Bindings,

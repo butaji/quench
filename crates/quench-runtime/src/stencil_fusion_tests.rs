@@ -13,6 +13,58 @@ fn visit_views(view: CodeView<'_>, visit: &mut impl FnMut(CodeView<'_>)) {
     });
 }
 
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn execute_source_add_chain(
+    view: CodeView<'_>,
+    inputs: [Value; 3],
+) -> Option<(Completion, u64)> {
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let plan = BaselinePlan::compile_for_test(view, policy);
+    let pc = (0..view.len()).find(|pc| {
+        plan.native_local_binary_at(*pc).is_some_and(|native| {
+            matches!(
+                native.borrow().selection().inputs,
+                crate::stencil_plan::LocalNumericInputs::AddChain { .. }
+            )
+        })
+    })?;
+    let native = plan.native_local_binary_at(pc)?;
+    let selection = native.borrow().selection();
+    let crate::stencil_plan::LocalNumericInputs::AddChain { sources, .. } = selection.inputs else {
+        return None;
+    };
+    let environment = add_chain_environment(sources, inputs)?;
+    let mut registers = crate::register_file::RegisterFile::with_undefined(
+        usize::from(view.register_count()).max(8),
+    );
+    let (completion, _) = crate::vm::execute_baseline_code_from(
+        view,
+        &plan,
+        0,
+        &mut registers,
+        &crate::vm::current_context_or_default(),
+        environment,
+    )
+    .ok()?;
+    let entries = native.borrow().native_entry_count();
+    Some((completion, entries))
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn add_chain_environment(
+    sources: [crate::stencil_plan::NumericSource; 3],
+    inputs: [Value; 3],
+) -> Option<std::rc::Rc<crate::environment::Environment>> {
+    let environment = crate::environment::Environment::new();
+    for (source, value) in sources.into_iter().zip(inputs) {
+        let crate::stencil_plan::NumericSource::Local(slot) = source else {
+            return None;
+        };
+        environment.set(slot, value);
+    }
+    Some(environment)
+}
+
 fn execute_case(
     view: CodeView<'_>,
     plan: &BaselinePlan,
@@ -40,6 +92,13 @@ fn execute_case(
         }
         crate::stencil_plan::LocalNumericInputs::SlotConstant { slot, .. } => {
             environment.set(slot, values[0].clone());
+        }
+        crate::stencil_plan::LocalNumericInputs::AddChain { sources, .. } => {
+            for (index, source) in sources.into_iter().enumerate() {
+                if let crate::stencil_plan::NumericSource::Local(slot) = source {
+                    environment.set(slot, values[index.min(1)].clone());
+                }
+            }
         }
         crate::stencil_plan::LocalNumericInputs::Folded { .. } => {}
     }
@@ -339,6 +398,41 @@ fn ordinary_source_folds_a_bounded_numeric_value_tree() {
         executed = true;
     });
     assert!(executed, "source must select the folded value tree");
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn ordinary_source_add_tree_executes_native_and_guarded_fallback() {
+    let source = "function f(a,b,c){return (a+b)+c} f(1,2,4)";
+    let program = crate::reduce::reduce_source(source).expect("ordinary source lowers");
+    let mut checked = false;
+    visit_views(program.code(), &mut |view| {
+        let Some(numeric) = execute_source_add_chain(
+            view,
+            [Value::Number(1.0), Value::Number(2.0), Value::Number(4.0)],
+        ) else {
+            return;
+        };
+        assert_eq!(numeric, (Completion::Return(Value::Number(7.0)), 1));
+        let ordered = execute_source_add_chain(
+            view,
+            [
+                Value::Number(f64::MAX),
+                Value::Number(f64::MAX),
+                Value::Number(-f64::MAX),
+            ],
+        )
+        .expect("ordered overflow case");
+        assert_eq!(ordered, (Completion::Return(Value::Number(f64::INFINITY)), 1));
+        let fallback = execute_source_add_chain(
+            view,
+            [Value::String("x".into()), Value::Number(2.0), Value::Number(3.0)],
+        )
+        .expect("same admitted source shape");
+        assert_eq!(fallback, (Completion::Return(Value::String("x23".into())), 0));
+        checked = true;
+    });
+    assert!(checked, "lowered add tree must reach normal native admission");
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]

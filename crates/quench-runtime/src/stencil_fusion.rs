@@ -27,9 +27,15 @@ impl LocalNumericExecution {
 
 pub(crate) struct NativeLocalBinaryPlan {
     selection: LocalBinarySelection,
-    binary: Option<NativeBinaryPlan>,
+    physical: LocalNumericPhysical,
     #[cfg(test)]
     local_read_count: u64,
+}
+
+enum LocalNumericPhysical {
+    Folded,
+    Binary(NativeBinaryPlan),
+    AddChain(crate::machine::NativeAddChainPlan),
 }
 
 pub(crate) struct LocalPropertyExecution {
@@ -124,9 +130,14 @@ impl NativeLocalBinaryPlan {
         if !policy.native_leaves {
             return None;
         }
-        let binary = match selection.inputs {
-            LocalNumericInputs::Folded { .. } => None,
-            _ => Some(NativeBinaryPlan::new_with_shared(
+        let physical = match selection.inputs {
+            LocalNumericInputs::Folded { .. } => LocalNumericPhysical::Folded,
+            LocalNumericInputs::AddChain { bindings, .. } => {
+                LocalNumericPhysical::AddChain(crate::machine::NativeAddChainPlan::new_with_arena(
+                    policy, arena, bindings,
+                )?)
+            }
+            _ => LocalNumericPhysical::Binary(NativeBinaryPlan::new_with_shared(
                 selection.operation,
                 policy,
                 arena,
@@ -134,7 +145,7 @@ impl NativeLocalBinaryPlan {
         };
         Some(Self {
             selection,
-            binary,
+            physical,
             #[cfg(test)]
             local_read_count: 0,
         })
@@ -149,10 +160,10 @@ impl NativeLocalBinaryPlan {
         lhs: f64,
         rhs: f64,
     ) -> Result<f64, crate::stencil_arena::ArenaError> {
-        self.binary
-            .as_mut()
-            .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?
-            .execute(lhs, rhs)
+        let LocalNumericPhysical::Binary(binary) = &mut self.physical else {
+            return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
+        };
+        binary.execute(lhs, rhs)
     }
 
     fn read_number(
@@ -176,6 +187,13 @@ impl NativeLocalBinaryPlan {
     ) -> Option<LocalNumericExecution> {
         let result = match self.selection.inputs {
             LocalNumericInputs::Folded { bits } => f64::from_bits(bits),
+            LocalNumericInputs::AddChain { sources, .. } => {
+                let [lhs, rhs, third] = self.read_three_sources(environment, sources)?;
+                let LocalNumericPhysical::AddChain(chain) = &mut self.physical else {
+                    return None;
+                };
+                chain.execute(lhs, rhs, third).ok()?
+            }
             _ => {
                 let (lhs, rhs) = self.operands(environment)?;
                 self.execute(lhs, rhs).ok()?
@@ -196,7 +214,27 @@ impl NativeLocalBinaryPlan {
                 Some((self.read_number(environment, slot)?, f64::from_bits(bits)))
             }
             LocalNumericInputs::Folded { .. } => None,
+            LocalNumericInputs::AddChain { .. } => None,
         }
+    }
+
+    fn read_three_sources(
+        &mut self,
+        environment: &crate::environment::Environment,
+        sources: [NumericSource; 3],
+    ) -> Option<[f64; 3]> {
+        let first = self.read_source(environment, sources[0])?;
+        let second = if sources[1] == sources[0] {
+            first
+        } else {
+            self.read_source(environment, sources[1])?
+        };
+        let third = match sources[..2].iter().position(|source| *source == sources[2]) {
+            Some(0) => first,
+            Some(1) => second,
+            _ => self.read_source(environment, sources[2])?,
+        };
+        Some([first, second, third])
     }
 
     fn read_sources(
@@ -227,9 +265,11 @@ impl NativeLocalBinaryPlan {
 
     #[cfg(test)]
     pub(crate) fn native_entry_count(&self) -> u64 {
-        self.binary
-            .as_ref()
-            .map_or(0, NativeBinaryPlan::native_entry_count)
+        match &self.physical {
+            LocalNumericPhysical::Folded => 0,
+            LocalNumericPhysical::Binary(binary) => binary.native_entry_count(),
+            LocalNumericPhysical::AddChain(chain) => chain.native_entry_count(),
+        }
     }
 
     #[cfg(test)]
