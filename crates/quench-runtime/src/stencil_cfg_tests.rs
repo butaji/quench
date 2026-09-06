@@ -180,6 +180,21 @@ fn region_plan_retains_external_exits_without_admitting_external_entries() {
 }
 
 #[test]
+fn region_plan_retains_coincident_conditional_exits() {
+    let entries = entries(&[
+        crate::ir::Instruction::jump_if_false(0, 1),
+        crate::ir::Instruction::ret(0),
+    ]);
+    let facts = ControlFlowFacts::new(&entries, &[None; 2]);
+    let plan = facts.region_control(0, 1).expect("conditional region");
+    assert_eq!(
+        plan.edges(),
+        [RegionEdge { from: 0, to: 1 }, RegionEdge { from: 0, to: 1 }]
+    );
+    assert_eq!(plan.terminal_conditional_exits(), Some((1, 1)));
+}
+
+#[test]
 fn region_plan_rejects_block_budget_overflow() {
     let mut instructions = (0..8)
         .map(|_| crate::ir::Instruction::jump_if_false(0, 8))

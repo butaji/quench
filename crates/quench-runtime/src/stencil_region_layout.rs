@@ -24,6 +24,20 @@ pub(crate) fn validate_selected_control(
         .ok_or(LayoutError::MissingSuccessor)
 }
 
+pub(crate) fn validate_compare_branch_control(
+    view: PhysicalStencilView,
+    control: &crate::stencil_cfg::RegionControlPlan,
+) -> Result<(), LayoutError> {
+    let operations = view.record.operations;
+    if operations != [crate::ir::Opcode::Binary, crate::ir::Opcode::JumpIfFalse]
+        || control.terminal_conditional_exits().is_none()
+        || control.has_backedge()
+    {
+        return Err(LayoutError::RelocationContract);
+    }
+    Ok(())
+}
+
 pub(crate) fn compose_selected_region<const N: usize>(
     view: PhysicalStencilView,
     values: &PatchValues<'_, N>,
@@ -163,5 +177,36 @@ mod tests {
             validate_selected_control(view, &short),
             Err(LayoutError::RelocationContract)
         );
+    }
+
+    #[test]
+    fn compare_branch_control_requires_two_terminal_exits() {
+        let instructions = [
+            crate::ir::Instruction::binary_operator(0, crate::ops::BinaryOp::LessThan, 1, 2),
+            crate::ir::Instruction::jump_if_false(0, 3),
+            crate::ir::Instruction::ret(0),
+            crate::ir::Instruction::ret(1),
+        ];
+        let entries: Vec<_> = instructions.iter().copied().map(baseline_entry).collect();
+        let facts = crate::stencil_cfg::ControlFlowFacts::new(&entries, &[None; 4]);
+        let control = facts.region_control(0, 2).expect("branch control");
+        let view = crate::stencil_select::select_physical(
+            crate::stencil_select::compare_less_branch_region_key(),
+        )
+        .expect("compare branch view");
+        assert_eq!(validate_compare_branch_control(view, &control), Ok(()));
+        let linear = crate::stencil_cfg::RegionControlPlan::linear(0, 2).unwrap();
+        assert_eq!(
+            validate_compare_branch_control(view, &linear),
+            Err(LayoutError::RelocationContract)
+        );
+    }
+
+    fn baseline_entry(instruction: crate::ir::Instruction) -> crate::machine::BaselineEntry {
+        crate::machine::BaselineEntry {
+            instruction,
+            handler: instruction.opcode.handler(),
+            control: instruction.opcode.control_operands(instruction),
+        }
     }
 }
