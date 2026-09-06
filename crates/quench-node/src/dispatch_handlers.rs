@@ -4197,6 +4197,18 @@ pub fn internal_binding(
             ),
         ]));
     }
+    if name == "block_list" {
+        // `internal/socketaddress` uses this native constructor to create a
+        // compact address handle before wrapping it in InternalSocketAddress.
+        return Ok(crate::host::namespace_object_from_pairs(vec![
+            (
+                "SocketAddress".into(),
+                crate::host::capability(crate::registry::SPEC_NET_SOCKET_ADDRESS_CONSTRUCT),
+            ),
+            ("AF_INET".into(), Value::Number(2.0)),
+            ("AF_INET6".into(), Value::Number(10.0)),
+        ]));
+    }
     if name == "http2" {
         return Ok(crate::modules::http2_util::binding());
     }
