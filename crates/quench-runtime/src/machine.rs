@@ -5707,18 +5707,19 @@ fn select_local_numeric(
             graph.select(operation, live)
         }
     })?;
-    extend_local_numeric_store(entries, cfg, pc, selection).or(Some(selection))
+    extend_local_store(entries, cfg, pc, selection).or(Some(selection))
 }
 
-fn extend_local_numeric_store(
+fn extend_local_store<T: crate::stencil_plan::LocalStoreSelection>(
     entries: &[BaselineEntry],
     cfg: &ControlFlowFacts,
     pc: usize,
-    selection: crate::stencil_plan::LocalBinarySelection,
-) -> Option<crate::stencil_plan::LocalBinarySelection> {
-    let store_pc = pc.checked_add(usize::from(selection.span))?;
+    selection: T,
+) -> Option<T> {
+    let store_pc = pc.checked_add(usize::from(selection.span()))?;
     let store = entries.get(store_pc)?.instruction;
-    (store.opcode == crate::ir::Opcode::StoreLocal && store.b == selection.output).then_some(())?;
+    (store.opcode == crate::ir::Opcode::StoreLocal && store.b == selection.output())
+        .then_some(())?;
     cfg.region_control(pc, store_pc.checked_add(1)?)?;
     selection.with_store(store.a)
 }
@@ -5729,9 +5730,10 @@ fn select_local_property(
     cfg: &ControlFlowFacts,
     pc: usize,
 ) -> Option<crate::stencil_plan::LocalPropertySelection> {
-    select_value_window(code, entries, cfg, pc, |_, graph, operation, live| {
+    let selection = select_value_window(code, entries, cfg, pc, |_, graph, operation, live| {
         graph.select_property(operation, live)
-    })
+    })?;
+    extend_local_store(entries, cfg, pc, selection).or(Some(selection))
 }
 
 fn select_value_window<T: crate::stencil_plan::RankedSelection>(
