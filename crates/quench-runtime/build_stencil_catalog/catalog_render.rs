@@ -9,6 +9,7 @@ fn generate_stencil_catalog(declarations: &[RegionDeclaration]) {
 
 struct CatalogParts {
     accessors: String,
+    lookup_arms: String,
     rows: String,
     bytes: String,
     holes: String,
@@ -21,6 +22,7 @@ impl CatalogParts {
     fn derive(declarations: &[RegionDeclaration]) -> Self {
         Self {
             accessors: render_accessors(declarations),
+            lookup_arms: render_lookup_arms(declarations),
             rows: render_region_rows(declarations),
             bytes: render_declarations(declarations, byte_decl),
             holes: render_declarations(declarations, hole_decl),
@@ -29,6 +31,20 @@ impl CatalogParts {
             numeric_keys: render_numeric_keys(declarations),
         }
     }
+}
+
+fn render_lookup_arms(declarations: &[RegionDeclaration]) -> String {
+    declarations
+        .iter()
+        .enumerate()
+        .map(|(index, declaration)| {
+            format!(
+                "        CANONICAL_{}_KEY => Some({index}),",
+                key_name(declaration.name)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn render_accessors(declarations: &[RegionDeclaration]) -> String {
@@ -200,11 +216,15 @@ static CANONICAL_REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
 "#,
     );
     generated.push_str(&parts.rows);
+    generated.push_str("\n];\nfn canonical_region_index(key: crate::stencil_fact::RegionKey) -> Option<usize> {\n    match key {\n");
+    generated.push_str(&parts.lookup_arms);
     generated.push_str(
         r#"
-];
+        _ => None,
+    }
+}
 fn canonical_region_lookup(key: crate::stencil_fact::RegionKey) -> Option<&'static crate::stencil_select::RegionRecord> {
-    CANONICAL_REGION_TABLE.iter().find(|record| record.key == key)
+    canonical_region_index(key).map(|index| &CANONICAL_REGION_TABLE[index])
 }
 "#,
     );
