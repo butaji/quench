@@ -151,6 +151,41 @@ fn advanced_clone_inner(value: Value, seen: &mut HashMap<u64, Value>) -> Value {
         }
     }
     match &value {
+        Value::Uint8Array(view) => {
+            // V8's advanced serializer classifies byte views by the source
+            // value's effective constructor, then rehydrates a fresh view.
+            // Returning the original Rc here leaks a Buffer's prototype (and
+            // any user reassignment of `.constructor`) across the IPC
+            // boundary, so a Buffer relabelled as Uint8Array is still seen as
+            // a Buffer by the child.  Copy the bytes and choose the ordinary
+            // typed-array prototype from that one semantic fact.
+            let length = view.logical_len();
+            let Some(buffer) = quench_runtime::value::ArrayBufferData::try_new(length) else {
+                return Value::Undefined;
+            };
+            let source = view.buffer.bytes.borrow();
+            let start = view.byte_offset.min(source.len());
+            let end = start.saturating_add(length).min(source.len());
+            if end > start {
+                buffer.bytes.borrow_mut()[..end - start]
+                    .copy_from_slice(&source[start..end]);
+            }
+            let cloned = Value::Uint8Array(Rc::new(
+                quench_runtime::value::Uint8ArrayData::new(Rc::new(buffer), 0, length),
+            ));
+            let global = quench_runtime::vm::current_global_object();
+            let constructor = quench_runtime::execute::get_property(&value, "constructor");
+            let buffer_constructor = quench_runtime::execute::get_property(&global, "Buffer");
+            let prototype = if quench_runtime::execute::same_value(
+                &constructor,
+                &buffer_constructor,
+            ) {
+                crate::modules::buffer_proto::buffer_prototype()
+            } else {
+                Value::Builtin(quench_runtime::ops::Builtin::Uint8ArrayPrototype)
+            };
+            quench_runtime::execute::set_prototype_of(&cloned, &prototype).unwrap_or(cloned)
+        }
         Value::Object(_) => {
             let identity = value.object_identity().unwrap_or(0);
             if identity != 0 {
