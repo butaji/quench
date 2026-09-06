@@ -10,6 +10,7 @@
   [bounded region composition](region-composition-architecture.md), and
   [observability](observability-architecture.md).
 - [Performance lanes](performance-lanes.md) and [benchmark integrity](benchmark-integrity.md): measurement rules.
+- [Repository cleanup ADR](repository-cleanup-adr.md) and [archived benchmark evidence](evidence/README.md): generated-output and historical-evidence policy.
 - [Execution-contract tests](execution-contract-tests.md): proposed JS-fixture DSL for semantic outcomes, bounded work and memory ownership.
 - [Micros manual](../quench-bench/micros/README.md): diagnostic corpus and qualification.
 - [V8_v7 runner](v8_v7.md): end-to-end measurement and limitations.
