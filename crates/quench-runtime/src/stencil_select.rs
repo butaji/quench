@@ -258,12 +258,6 @@ pub struct PhysicalStencilView {
 }
 
 impl PhysicalStencilView {
-    /// Return the unique relative fixup associated with this view's successor.
-    pub fn fallthrough_fixup_offset(self) -> Option<u16> {
-        let fallthrough = self.fallthrough?;
-        Some(fallthrough.fixup_offset)
-    }
-
     /// Rebuild the semantic contract with the selected physical boundary.
     /// Operation effects remain borrowed from the canonical record; physical
     /// ABI/layout facts come only from this view.
@@ -440,15 +434,21 @@ fn artifact_fallthrough_matches(
     artifact: &BuildStencilArtifact,
     fallthrough: PhysicalFallthrough,
 ) -> bool {
-    let offset = crate::stencil_physical::unique_relative_target_offset(
-        artifact.relocations,
-        fallthrough.target,
-    );
-    !fallthrough.target.is_empty()
-        && offset == Some(artifact.fallthrough_fixup_offset)
-        && offset == Some(fallthrough.fixup_offset)
-        && offset
-            == crate::stencil_physical::unique_relative_hole_offset(artifact.stencil.holes)
+    let is_relative = |relocation: &&PhysicalRelocation| {
+        matches!(
+            relocation.kind,
+            crate::stencil_fact::HoleKind::Branch26 | crate::stencil_fact::HoleKind::Rel32
+        )
+    };
+    let relative_count = artifact.relocations.iter().filter(is_relative).count();
+    artifact.fallthrough_fixup_offset == fallthrough.fixup_offset
+        && !fallthrough.target.is_empty()
+        && relative_count > 0
+        && artifact
+            .relocations
+            .iter()
+            .filter(is_relative)
+            .all(|relocation| relocation.target == fallthrough.target)
 }
 
 fn relocations_match(stencil: Stencil, relocations: &[PhysicalRelocation]) -> bool {
