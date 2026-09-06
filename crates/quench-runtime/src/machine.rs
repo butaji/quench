@@ -5494,7 +5494,8 @@ fn select_local_numeric(
         _ => return None,
     };
     region_entry_is_legal(entries, pc, end).then_some(())?;
-    crate::stencil_plan::select_local_add_const(load, operation, bits, liveness.get(pc + 1)?)
+    let producer = numeric_producer(code, load)?;
+    crate::stencil_plan::select_source_add_const(producer, operation, bits, liveness.get(pc + 1)?)
 }
 
 fn select_numeric_producers(

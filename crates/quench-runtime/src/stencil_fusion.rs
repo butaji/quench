@@ -25,7 +25,7 @@ impl LocalNumericExecution {
 
 pub(crate) struct NativeLocalBinaryPlan {
     selection: LocalBinarySelection,
-    binary: NativeBinaryPlan,
+    binary: Option<NativeBinaryPlan>,
     #[cfg(test)]
     local_read_count: u64,
 }
@@ -36,7 +36,17 @@ impl NativeLocalBinaryPlan {
         policy: crate::stencil_policy::ExecutionPolicy,
         arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
     ) -> Option<Self> {
-        let binary = NativeBinaryPlan::new_with_shared(selection.operation, policy, arena)?;
+        if !policy.native_leaves {
+            return None;
+        }
+        let binary = match selection.inputs {
+            LocalNumericInputs::Folded { .. } => None,
+            _ => Some(NativeBinaryPlan::new_with_shared(
+                selection.operation,
+                policy,
+                arena,
+            )?),
+        };
         Some(Self {
             selection,
             binary,
@@ -54,7 +64,10 @@ impl NativeLocalBinaryPlan {
         lhs: f64,
         rhs: f64,
     ) -> Result<f64, crate::stencil_arena::ArenaError> {
-        self.binary.execute(lhs, rhs)
+        self.binary
+            .as_mut()
+            .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?
+            .execute(lhs, rhs)
     }
 
     fn read_number(
@@ -73,8 +86,13 @@ impl NativeLocalBinaryPlan {
         &mut self,
         environment: &crate::environment::Environment,
     ) -> Option<LocalNumericExecution> {
-        let (lhs, rhs) = self.operands(environment)?;
-        let result = self.execute(lhs, rhs).ok()?;
+        let result = match self.selection.inputs {
+            LocalNumericInputs::Folded { bits } => f64::from_bits(bits),
+            _ => {
+                let (lhs, rhs) = self.operands(environment)?;
+                self.execute(lhs, rhs).ok()?
+            }
+        };
         Some(LocalNumericExecution {
             output: self.selection.output,
             value: result,
@@ -89,6 +107,7 @@ impl NativeLocalBinaryPlan {
             LocalNumericInputs::SlotConstant { slot, bits } => {
                 Some((self.read_number(environment, slot)?, f64::from_bits(bits)))
             }
+            LocalNumericInputs::Folded { .. } => None,
         }
     }
 
@@ -120,7 +139,9 @@ impl NativeLocalBinaryPlan {
 
     #[cfg(test)]
     pub(crate) fn native_entry_count(&self) -> u64 {
-        self.binary.native_entry_count()
+        self.binary
+            .as_ref()
+            .map_or(0, NativeBinaryPlan::native_entry_count)
     }
 
     #[cfg(test)]
