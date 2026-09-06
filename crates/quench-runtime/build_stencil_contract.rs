@@ -29,77 +29,80 @@ pub(crate) enum DeclAbi {
     PropertyWriteGuard,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DeclOp {
-    Unknown,
-    Add,
-    Sub,
-    Mul,
-    Div,
-    AddConst,
-    Return,
-}
-
-fn parse_decl_op(name: &str) -> DeclOp {
-    match name {
-        "Add" => DeclOp::Add,
-        "Sub" => DeclOp::Sub,
-        "Mul" => DeclOp::Mul,
-        "Div" => DeclOp::Div,
-        "AddConst" => DeclOp::AddConst,
-        "Return" => DeclOp::Return,
-        _ => DeclOp::Unknown,
-    }
-}
-
 macro_rules! rust_leaf_catalog {
-    ($( $variant:ident { ops: [$($op:ident),+], params: $params:literal, expression: $expression:literal } ),+ $(,)?) => {
-        #[derive(Clone, Copy)]
+    ($( $variant:ident {
+        name: $name:literal, abi: $abi:ident, ops: [$($op:literal),+],
+        params: $params:literal, result: $result:literal, body: $body:literal
+    } ),+ $(,)?) => {
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
         pub(crate) enum RustLeafRecipe { $( $variant ),+ }
 
         impl RustLeafRecipe {
             pub(crate) const fn expression(self) -> &'static str {
-                match self { $( Self::$variant => $expression ),+ }
+                match self { $( Self::$variant => $body ),+ }
             }
 
             pub(crate) const fn parameters(self) -> &'static str {
                 match self { $( Self::$variant => $params ),+ }
             }
-        }
 
-        fn recipe_for_ops(ops: &[DeclOp]) -> Option<RustLeafRecipe> {
-            match ops {
-                $( [$(DeclOp::$op),+] => Some(RustLeafRecipe::$variant), )+
-                _ => None,
+            pub(crate) const fn result(self) -> &'static str {
+                match self { $( Self::$variant => $result ),+ }
+            }
+
+            const fn name(self) -> &'static str {
+                match self { $( Self::$variant => $name ),+ }
+            }
+
+            const fn abi(self) -> DeclAbi {
+                match self { $( Self::$variant => DeclAbi::$abi ),+ }
+            }
+
+            const fn operations(self) -> &'static [&'static str] {
+                match self { $( Self::$variant => &[$($op),+]),+ }
+            }
+
+            fn matches(self, declaration: &RegionDeclaration) -> bool {
+                self.name() == declaration.name
+                    && self.abi() == declaration.abi
+                    && self.operations() == declaration.operations
             }
         }
+
+        const RUST_LEAF_RECIPES: &[RustLeafRecipe] = &[$(RustLeafRecipe::$variant),+];
     };
 }
 
 rust_leaf_catalog! {
-    Add { ops: [Add, Return], params: "a: f64, b: f64", expression: "a + b" },
-    Sub { ops: [Sub, Return], params: "a: f64, b: f64", expression: "a - b" },
-    Mul { ops: [Mul, Return], params: "a: f64, b: f64", expression: "a * b" },
-    Div { ops: [Div, Return], params: "a: f64, b: f64", expression: "a / b" },
-    AddConst { ops: [AddConst, Return], params: "a: f64, b: f64", expression: "a + b" },
-    AddChain { ops: [Add, Add], params: "a: f64, b: f64, c: f64", expression: "(a + b) + c" },
-}
-
-fn typed_decl_ops(operations: &[&str]) -> Option<[DeclOp; 4]> {
-    if operations.len() > 4 {
-        return None;
-    }
-    let mut typed = [DeclOp::Unknown; 4];
-    for (index, operation) in operations.iter().enumerate() {
-        typed[index] = parse_decl_op(operation);
-    }
-    Some(typed)
+    Add { name: "loop", abi: Scalar, ops: ["Add", "Return"], params: "a: f64, b: f64", result: "f64", body: "a + b" },
+    Sub { name: "subtract", abi: Scalar, ops: ["Sub", "Return"], params: "a: f64, b: f64", result: "f64", body: "a - b" },
+    Mul { name: "multiply", abi: Scalar, ops: ["Mul", "Return"], params: "a: f64, b: f64", result: "f64", body: "a * b" },
+    Div { name: "divide", abi: Scalar, ops: ["Div", "Return"], params: "a: f64, b: f64", result: "f64", body: "a / b" },
+    AddConst { name: "add_const", abi: Scalar, ops: ["AddConst", "Return"], params: "a: f64, b: f64", result: "f64", body: "a + b" },
+    AddChain { name: "add_chain", abi: Scalar, ops: ["Add", "Add"], params: "a: f64, b: f64, c: f64", result: "f64", body: "(a + b) + c" },
+    Negate { name: "negate", abi: Scalar, ops: ["Unary", "Return"], params: "a: f64", result: "f64", body: "-a" },
+    Increment { name: "increment", abi: Scalar, ops: ["IncI", "Return"], params: "a: f64", result: "f64", body: "a + 1.0" },
+    Equal { name: "compare_equal", abi: ScalarBool, ops: ["Binary", "Return"], params: "a: f64, b: f64", result: "bool", body: "a == b" },
+    NotEqual { name: "compare_not_equal", abi: ScalarBool, ops: ["Binary", "Return"], params: "a: f64, b: f64", result: "bool", body: "a != b" },
+    Less { name: "compare_less", abi: ScalarBool, ops: ["Binary", "Return"], params: "a: f64, b: f64", result: "bool", body: "a < b" },
+    LessEqual { name: "compare_less_equal", abi: ScalarBool, ops: ["Binary", "Return"], params: "a: f64, b: f64", result: "bool", body: "a <= b" },
+    Greater { name: "compare_greater", abi: ScalarBool, ops: ["Binary", "Return"], params: "a: f64, b: f64", result: "bool", body: "a > b" },
+    GreaterEqual { name: "compare_greater_equal", abi: ScalarBool, ops: ["Binary", "Return"], params: "a: f64, b: f64", result: "bool", body: "a >= b" },
+    WordEqual { name: "compare_equal_word", abi: ScalarWordPairBool, ops: ["Binary", "Return"], params: "a: u64, b: u64", result: "bool", body: "a == b" },
+    WordNotEqual { name: "compare_not_equal_word", abi: ScalarWordPairBool, ops: ["Binary", "Return"], params: "a: u64, b: u64", result: "bool", body: "a != b" },
+    BitAnd { name: "bitwise_and", abi: ScalarI32, ops: ["Binary", "Return"], params: "a: i32, b: i32", result: "i32", body: "a & b" },
+    BitOr { name: "bitwise_or", abi: ScalarI32, ops: ["Binary", "Return"], params: "a: i32, b: i32", result: "i32", body: "a | b" },
+    BitXor { name: "bitwise_xor", abi: ScalarI32, ops: ["Binary", "Return"], params: "a: i32, b: i32", result: "i32", body: "a ^ b" },
+    ShiftLeft { name: "shift_left", abi: ScalarI32, ops: ["Binary", "Return"], params: "a: i32, b: i32", result: "i32", body: "a.wrapping_shl((b as u32) & 31)" },
+    ShiftRight { name: "shift_right", abi: ScalarI32, ops: ["Binary", "Return"], params: "a: i32, b: i32", result: "i32", body: "a >> ((b as u32) & 31)" },
+    ShiftRightZero { name: "shift_right_zero", abi: ScalarU32, ops: ["Binary", "Return"], params: "a: i32, b: i32", result: "u32", body: "(a as u32) >> ((b as u32) & 31)" },
+    BitNot { name: "bitwise_not", abi: ScalarI32, ops: ["Unary", "Return"], params: "a: i32", result: "i32", body: "!a" },
+    TruthyNumber { name: "truthy_number", abi: ScalarBool, ops: ["JumpIfFalse"], params: "a: f64", result: "bool", body: "a != 0.0 && !a.is_nan()" },
 }
 
 pub(crate) fn rust_leaf_recipe(declaration: &RegionDeclaration) -> Option<RustLeafRecipe> {
-    if declaration.abi != DeclAbi::Scalar {
-        return None;
-    }
-    let typed = typed_decl_ops(declaration.operations)?;
-    recipe_for_ops(&typed[..declaration.operations.len()])
+    RUST_LEAF_RECIPES
+        .iter()
+        .copied()
+        .find(|recipe| recipe.matches(declaration))
 }
