@@ -28,6 +28,21 @@
       "plan": [
         "060"
       ]
+    },
+    "simplification": {
+      "goal": "Reduce unreachable source, duplicated declarations and repeated lifecycle code without changing JavaScript or Node semantics.",
+      "plan": [
+        "076",
+        "077",
+        "078",
+        "079",
+        "080",
+        "081",
+        "082",
+        "083",
+        "084",
+        "085"
+      ]
     }
   },
   "items": [
@@ -56,6 +71,86 @@
       "theme": "deferred_host_api",
       "status": "deferred",
       "depends_on": []
+    },
+    {
+      "id": "076",
+      "file": "076.md",
+      "title": "Remove orphaned js_runtime host tree",
+      "theme": "simplification",
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "id": "077",
+      "file": "077.md",
+      "title": "Purge inactive polyfill history fragments",
+      "theme": "simplification",
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "id": "078",
+      "file": "078.md",
+      "title": "Generate Node dispatch from the registry",
+      "theme": "simplification",
+      "status": "pending",
+      "depends_on": ["076"]
+    },
+    {
+      "id": "079",
+      "file": "079.md",
+      "title": "Generate mechanical dispatch trampolines",
+      "theme": "simplification",
+      "status": "pending",
+      "depends_on": ["078"]
+    },
+    {
+      "id": "080",
+      "file": "080.md",
+      "title": "Collapse identity MIR into HIR",
+      "theme": "simplification",
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "id": "081",
+      "file": "081.md",
+      "title": "Unify native plan lifecycle state",
+      "theme": "simplification",
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "id": "082",
+      "file": "082.md",
+      "title": "Factor stencil render and eviction paths",
+      "theme": "simplification",
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "id": "083",
+      "file": "083.md",
+      "title": "Partition HostState by ownership domain",
+      "theme": "simplification",
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "id": "084",
+      "file": "084.md",
+      "title": "Remove or gate unused direct-call polyfill API",
+      "theme": "simplification",
+      "status": "pending",
+      "depends_on": ["077"]
+    },
+    {
+      "id": "085",
+      "file": "085.md",
+      "title": "Prune warning-backed dead code",
+      "theme": "simplification",
+      "status": "pending",
+      "depends_on": ["076", "077", "078", "079", "080", "081", "082", "083", "084"]
     }
   ]
 }
