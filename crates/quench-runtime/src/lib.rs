@@ -150,6 +150,8 @@ mod stencil_fusion_store_tests;
 #[cfg(test)]
 mod stencil_fusion_tests;
 #[cfg(test)]
+mod stencil_move_integration_tests;
+#[cfg(test)]
 mod stencil_property_store_tests;
 #[cfg(test)]
 mod stencil_bridge_tests;
