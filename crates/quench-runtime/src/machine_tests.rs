@@ -2441,17 +2441,22 @@ fn native_add_chain_executes_two_ops_with_one_entry() {
             inputs: [0, 1, 2],
             output: 3,
         },
+        control: crate::stencil_cfg::RegionControlPlan::linear(0, 2).expect("linear control"),
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
         installed: super::InstalledF64x3Entry::Unpublished,
         last_native_view: None,
         native_entry_count: 0,
     };
     assert_eq!(plan.execute(1.5, 2.25, 4.0), Ok(7.75));
-    assert!(matches!(plan.installed, super::InstalledF64x3Entry::Local(_)));
+    assert!(matches!(
+        plan.installed,
+        super::InstalledF64x3Entry::Local(_)
+    ));
     assert_eq!(plan.native_entry_count(), 1);
     let used = plan.arena.as_ref().expect("rendered chain").used();
-    let view = crate::stencil_select::select_physical(crate::stencil_select::add_chain_region_key())
-        .expect("selected chain");
+    let view =
+        crate::stencil_select::select_physical(crate::stencil_select::add_chain_region_key())
+            .expect("selected chain");
     let tail = view.fallthrough.expect("declared native successor");
     assert_eq!(used, view.stencil.bytes.len() + tail.stencil.bytes.len());
     assert_eq!(plan.execute(-2.0, 3.0, 5.0), Ok(6.0));
@@ -2501,16 +2506,45 @@ fn native_add_chain_shared_entry_reuses_owner_after_eviction() {
         inputs: [0, 1, 2],
         output: 3,
     };
-    let mut plan = super::NativeAddChainPlan::new_with_arena(policy, shared.clone(), bindings)
-        .expect("shared add chain");
+    let control = crate::stencil_cfg::RegionControlPlan::linear(0, 2).expect("linear control");
+    let mut plan =
+        super::NativeAddChainPlan::new_with_arena(policy, shared.clone(), bindings, control)
+            .expect("shared add chain");
     assert_eq!(plan.execute(1.0, 2.0, 3.0), Ok(6.0));
     let used = shared.borrow().used();
-    assert!(matches!(plan.installed, super::InstalledF64x3Entry::Shared(_)));
+    assert!(matches!(
+        plan.installed,
+        super::InstalledF64x3Entry::Shared(_)
+    ));
     assert_eq!(plan.execute(2.0, 4.0, 8.0), Ok(14.0));
     assert_eq!(shared.borrow().used(), used);
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert_eq!(plan.execute(2.0, 4.0, 8.0), Ok(14.0));
-    assert!(matches!(plan.installed, super::InstalledF64x3Entry::Shared(_)));
+    assert!(matches!(
+        plan.installed,
+        super::InstalledF64x3Entry::Shared(_)
+    ));
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn native_add_chain_rejects_mismatched_control_before_render() {
+    let shared = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("slab"),
+    ));
+    let bindings = crate::stencil_plan::F64x3Bindings {
+        inputs: [0, 1, 2],
+        output: 3,
+    };
+    let control = crate::stencil_cfg::RegionControlPlan::linear(0, 1).expect("short control");
+    let plan = super::NativeAddChainPlan::new_with_arena(
+        crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        shared.clone(),
+        bindings,
+        control,
+    );
+    assert!(plan.is_none());
+    assert_eq!(shared.borrow().used(), 0);
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
