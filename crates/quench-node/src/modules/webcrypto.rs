@@ -1657,6 +1657,10 @@ fn usage_error(message: &str) -> VmError {
     error(Builtin::Error, None, message)
 }
 
+fn syntax_error(message: &str) -> VmError {
+    error(Builtin::SyntaxError, None, message)
+}
+
 fn key_metadata(value: Value, key_type: &str, format: &str) -> Value {
     let metadata = execute::get_property(&value, KEY_META_PROP);
     let _ = execute::set_property_in_place(&metadata, "type", Value::String(key_type.into()));
@@ -2194,12 +2198,12 @@ pub fn get_public_key(
     if !all_usage_names(&requested).is_empty() {
         let (private, public) = match asymmetric_usages(&name, &requested) {
             Ok(usages) => usages,
-            Err(error) => return Ok(settled(Err(error))),
+            Err(_) => return Ok(settled(Err(syntax_error("Unsupported key usage")))),
         };
         // `asymmetric_usages` partitions the requested values.  Any value
         // that landed on the private side is not a legal public-key usage.
         if !usage_names(&private).is_empty() || usage_names(&public).is_empty() {
-            return Ok(settled(Err(usage_error("Unsupported key usage"))));
+            return Ok(settled(Err(syntax_error("Unsupported key usage"))));
         }
     }
     let data = bytes(&execute::get_property(key_value, KEY_DATA_PROP));
@@ -3161,6 +3165,148 @@ fn algorithm_name(value: &Value) -> String {
         }
         _ => execute::to_js_string(value).unwrap_or_default(),
     }
+}
+
+/// Rust-owned implementation of `SubtleCrypto.supports`.
+///
+/// The bootstrap surface must not decide algorithm support: that is an
+/// observable compatibility fact shared by the internal crypto registry and
+/// the WebCrypto methods.  Keep the operation classification here so callers
+/// get the same answer regardless of whether they reach the constructor or
+/// the global `crypto.subtle` object.
+pub fn supports(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let operation = execute::to_js_string(args.first().unwrap_or(&Value::Undefined))
+        .unwrap_or_default();
+    let name = algorithm_name(args.get(1).unwrap_or(&Value::Undefined));
+    let upper = name.to_ascii_uppercase();
+    let supported = match operation.as_str() {
+        "getPublicKey" => matches!(
+            upper.as_str(),
+            value if value.starts_with("RSA-")
+                || value.starts_with("RSASSA-")
+                || value == "ECDH"
+                || value == "ECDSA"
+                || value.starts_with("ED")
+                || value == "X25519"
+                || value == "X448"
+        ),
+        "exportKey" => matches!(
+            upper.as_str(),
+            "AES-CBC"
+                | "AES-CTR"
+                | "AES-GCM"
+                | "AES-KW"
+                | "AES-OCB"
+                | "CHACHA20-POLY1305"
+                | "ECDH"
+                | "ECDSA"
+                | "ED25519"
+                | "ED448"
+                | "HMAC"
+                | "KMAC128"
+                | "KMAC256"
+                | "ML-DSA-44"
+                | "ML-DSA-65"
+                | "ML-DSA-87"
+                | "ML-KEM-512"
+                | "ML-KEM-768"
+                | "ML-KEM-1024"
+                | "RSA-OAEP"
+                | "RSA-PSS"
+                | "RSASSA-PKCS1-V1_5"
+                | "X25519"
+                | "X448"
+        ),
+        "digest" => matches!(
+            upper.as_str(),
+            "SHA-1"
+                | "SHA-224"
+                | "SHA-256"
+                | "SHA-384"
+                | "SHA-512"
+                | "SHA3-256"
+                | "SHA3-384"
+                | "SHA3-512"
+        ),
+        "generateKey" => matches!(
+            upper.as_str(),
+            "AES-CBC"
+                | "AES-CTR"
+                | "AES-GCM"
+                | "AES-KW"
+                | "AES-OCB"
+                | "CHACHA20-POLY1305"
+                | "ECDH"
+                | "ECDSA"
+                | "ED25519"
+                | "ED448"
+                | "HMAC"
+                | "KMAC128"
+                | "KMAC256"
+                | "RSA-OAEP"
+                | "RSA-PSS"
+                | "RSASSA-PKCS1-V1_5"
+                | "X25519"
+                | "X448"
+        ),
+        "importKey" => matches!(
+            upper.as_str(),
+            "AES-CBC"
+                | "AES-CTR"
+                | "AES-GCM"
+                | "AES-KW"
+                | "AES-OCB"
+                | "CHACHA20-POLY1305"
+                | "ECDH"
+                | "ECDSA"
+                | "ED25519"
+                | "ED448"
+                | "HKDF"
+                | "HMAC"
+                | "KMAC128"
+                | "KMAC256"
+                | "ML-DSA-44"
+                | "ML-DSA-65"
+                | "ML-DSA-87"
+                | "ML-KEM-512"
+                | "ML-KEM-768"
+                | "ML-KEM-1024"
+                | "PBKDF2"
+                | "RSA-OAEP"
+                | "RSA-PSS"
+                | "RSASSA-PKCS1-V1_5"
+                | "X25519"
+                | "X448"
+        ),
+        "deriveBits" | "deriveKey" => {
+            matches!(upper.as_str(), "HKDF" | "PBKDF2" | "ECDH" | "X25519" | "X448")
+        }
+        "encrypt" | "decrypt" => matches!(
+            upper.as_str(),
+            "AES-CBC" | "AES-CTR" | "AES-GCM" | "AES-OCB" | "CHACHA20-POLY1305" | "RSA-OAEP"
+        ),
+        "sign" | "verify" => matches!(
+            upper.as_str(),
+            "HMAC"
+                | "KMAC128"
+                | "KMAC256"
+                | "ECDSA"
+                | "ED25519"
+                | "ED448"
+                | "RSA-PSS"
+                | "RSASSA-PKCS1-V1_5"
+        ),
+        "wrapKey" | "unwrapKey" => matches!(
+            upper.as_str(),
+            "AES-KW" | "AES-GCM" | "AES-CBC" | "AES-CTR" | "AES-OCB" | "RSA-OAEP"
+        ),
+        _ => false,
+    };
+    Ok(Value::Boolean(supported))
 }
 
 fn algorithm_hash(value: &Value) -> Option<String> {
@@ -4219,6 +4365,40 @@ pub fn build() -> (Value, Value) {
     }
     KEY_PROTOTYPE.with(|stored| *stored.borrow_mut() = Some(instance_prototype));
     (crypto, constructor)
+}
+
+/// Build the public constructor used by the Rust-installed WebCrypto global.
+/// Keeping this constructor beside the `crypto.subtle` capabilities makes the
+/// static support table and the callable method surface share one host-owned
+/// definition instead of relying on a bootstrap approximation.
+pub fn subtle_crypto_constructor() -> Value {
+    let constructor = crate::host::capability(crate::registry::SPEC_WEBCRYPTO_KEY_CONSTRUCT);
+    let prototype = host_api::object(Vec::new());
+    let methods = [
+        ("digest", crate::registry::SPEC_WEBCRYPTO_DIGEST),
+        ("importKey", crate::registry::SPEC_WEBCRYPTO_IMPORT_KEY),
+        ("exportKey", crate::registry::SPEC_WEBCRYPTO_EXPORT_KEY),
+        ("generateKey", crate::registry::SPEC_WEBCRYPTO_GENERATE_KEY),
+        ("encrypt", crate::registry::SPEC_WEBCRYPTO_ENCRYPT),
+        ("decrypt", crate::registry::SPEC_WEBCRYPTO_DECRYPT),
+        ("deriveBits", crate::registry::SPEC_WEBCRYPTO_DERIVE_BITS),
+        ("deriveKey", crate::registry::SPEC_WEBCRYPTO_DERIVE_KEY),
+        ("sign", crate::registry::SPEC_WEBCRYPTO_SIGN),
+        ("verify", crate::registry::SPEC_WEBCRYPTO_VERIFY),
+        ("getPublicKey", crate::registry::SPEC_WEBCRYPTO_GET_PUBLIC_KEY),
+    ];
+    for (name, spec) in methods {
+        let _ = execute::set_property_in_place(&prototype, name, crate::host::capability(spec));
+    }
+    let _ = execute::set_property_in_place(&prototype, "constructor", constructor.clone());
+    let _ = execute::set_callable_property(&constructor, "name", Value::String("SubtleCrypto".into()));
+    let _ = execute::set_callable_property(&constructor, "prototype", prototype);
+    let _ = execute::set_callable_property(
+        &constructor,
+        "supports",
+        crate::host::capability(crate::registry::SPEC_WEBCRYPTO_SUPPORTS),
+    );
+    constructor
 }
 
 #[cfg(test)]
