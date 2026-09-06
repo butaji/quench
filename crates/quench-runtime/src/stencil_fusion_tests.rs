@@ -187,6 +187,47 @@ fn exercise_constant_left_source_view(view: CodeView<'_>) -> bool {
     true
 }
 
+fn exercise_constant_left_add_view(view: CodeView<'_>) -> bool {
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let plan = BaselinePlan::compile_for_test(view, policy);
+    let Some(pc) = constant_local_admission(&plan, view, crate::ir::Opcode::Add) else {
+        return false;
+    };
+    let numeric = execute_case(view, &plan, pc, [Value::Number(-0.0), Value::Undefined]);
+    assert_eq!(numeric, (Completion::Return(Value::Number(2.5)), 1, 1));
+    let hostile = execute_case(
+        view,
+        &plan,
+        pc,
+        [Value::String("x".into()), Value::Undefined],
+    );
+    assert_eq!(
+        hostile,
+        (Completion::Return(Value::String("2.5x".into())), 1, 2)
+    );
+    true
+}
+
+fn constant_local_admission(
+    plan: &BaselinePlan,
+    view: CodeView<'_>,
+    opcode: crate::ir::Opcode,
+) -> Option<usize> {
+    (0..view.len()).find(|pc| {
+        plan.native_local_binary_at(*pc).is_some_and(|native| {
+            let selection = native.borrow().selection();
+            selection.operation.opcode == opcode
+                && matches!(
+                    selection.inputs,
+                    crate::stencil_plan::LocalNumericInputs::Sources([
+                        crate::stencil_plan::NumericSource::Constant(_),
+                        crate::stencil_plan::NumericSource::Local(_),
+                    ])
+                )
+        })
+    })
+}
+
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
 fn ordinary_source_fuses_two_local_loads_with_numeric_operation() {
@@ -221,6 +262,18 @@ fn ordinary_source_fuses_local_load_with_numeric_constant() {
         executed |= exercise_constant_source_view(view);
     });
     assert!(executed, "source must execute the constant physical entry");
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn ordinary_source_fuses_constant_left_add_without_changing_coercion_order() {
+    let program = crate::reduce::reduce_source("function f(x){return 2.5+x} f(1)")
+        .expect("ordinary source lowers");
+    let mut executed = false;
+    visit_views(program.code(), &mut |view| {
+        executed |= exercise_constant_left_add_view(view);
+    });
+    assert!(executed, "source must execute the constant-left Add entry");
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
