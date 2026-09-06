@@ -1562,7 +1562,8 @@ fn imported_algorithm_metadata(algorithm: Value, format: &str, data: Option<&[u8
             if matches!(value, Value::Object(_) | Value::ObjectAlias(_))
                 && matches!(execute::get_property(&value, "length"), Value::Undefined) =>
         {
-            execute::set_property(value, "length", Value::Number(length as f64))
+            let _ = execute::set_property_in_place(&value, "length", Value::Number(length as f64));
+            value
         }
         value => value,
     }
@@ -2363,6 +2364,18 @@ pub fn export_key(
             execute::set_property(value, "name", Value::String("InvalidAccessError".into()));
         return Ok(settled(Err(VmError::Thrown(value))));
     }
+    let key_type = execute::to_js_string(&key_slot(key, "type")).unwrap_or_default();
+    let format_matches_type = match format.as_str() {
+        "spki" | "raw-public" => key_type == "public",
+        "pkcs8" | "raw-seed" => key_type == "private",
+        "raw-secret" => key_type == "secret",
+        _ => true,
+    };
+    if !format_matches_type {
+        return Ok(settled(Err(not_supported(
+            "The requested key format is incompatible with the key type",
+        ))));
+    }
     let data = bytes(&execute::get_property(key, KEY_DATA_PROP)).unwrap_or_default();
     let result = match format.as_str() {
         "raw" | "raw-secret" | "raw-public" | "raw-seed" | "spki" | "pkcs8" => {
@@ -2508,6 +2521,9 @@ pub fn wrap_key(
         usage_array(&["encrypt".to_string()]),
         bytes(&execute::get_property(wrapping_key, KEY_DATA_PROP)),
     );
+    let wrapping_type = execute::to_js_string(&key_slot(wrapping_key, "type"))
+        .unwrap_or_else(|_| "secret".into());
+    let encrypt_key = key_metadata(encrypt_key, &wrapping_type, "raw");
     let encrypted = encrypt(
         state,
         receiver,
@@ -2546,6 +2562,9 @@ pub fn unwrap_key(
         usage_array(&["decrypt".to_string()]),
         bytes(&execute::get_property(unwrapping_key, KEY_DATA_PROP)),
     );
+    let unwrapping_type = execute::to_js_string(&key_slot(unwrapping_key, "type"))
+        .unwrap_or_else(|_| "secret".into());
+    let decrypt_key = key_metadata(decrypt_key, &unwrapping_type, "raw");
     let decrypted = decrypt(
         state,
         receiver,
@@ -2593,7 +2612,7 @@ pub fn unwrap_key(
         state,
         receiver,
         &[
-            Value::String(format),
+            Value::String(format.clone()),
             key_data,
             args.get(4).cloned().unwrap_or(Value::Undefined),
             args.get(5).cloned().unwrap_or(Value::Boolean(false)),
@@ -4248,7 +4267,7 @@ fn validate_key_use(
     let key_algorithm =
         execute::to_js_string(&execute::get_property(&key_algorithm_value, "name")).ok()?;
     if !requested.eq_ignore_ascii_case(&key_algorithm) {
-        return Some(operation_error("Key algorithm mismatch"));
+        return Some(invalid_access_error("Key algorithm mismatch"));
     }
     let usages_value = execute::get_property(key, "usages");
     let usages = if matches!(usages_value, Value::Undefined) {
