@@ -61,6 +61,7 @@ pub(crate) fn shell_output(command: &str, options: Option<&Value>) -> std::io::R
             process.env_clear().envs(env);
         }
     }
+    clear_worker_markers(&mut process);
     if uses_host_exec {
         process.env("QUENCH_CHILD_RUNNER", "1");
         process.env("QUENCH_PARENT_PID", std::process::id().to_string());
@@ -100,6 +101,15 @@ pub(crate) fn needs_shell(command: &str) -> bool {
     command
         .chars()
         .any(|character| matches!(character, '<' | '>' | '|' | '&' | ';'))
+}
+
+/// Worker launch markers are private host facts. They identify an actual
+/// `worker_threads` bootstrap and must not leak into ordinary child
+/// processes, otherwise a child recursively re-enters worker mode.
+pub(crate) fn clear_worker_markers(command: &mut Command) {
+    for key in ["QUENCH_WORKER", "QUENCH_WORKER_DATA", "QUENCH_WORKER_MESSAGE"] {
+        command.env_remove(key);
+    }
 }
 
 /// `child_process.spawnSync(command[, args][, options])`. Returns a
@@ -572,6 +582,7 @@ pub fn spawn_sync(
 
     // Re-exec children need the same process identity relation Node exposes;
     // pass the parent as an explicit fact after option.env has been applied.
+    clear_worker_markers(&mut cmd);
     if is_host_exec {
         cmd.env("QUENCH_CHILD_RUNNER", "1");
         cmd.env("QUENCH_PARENT_PID", std::process::id().to_string());
@@ -734,6 +745,7 @@ fn run_compat_test_child(args: &[String], options: Option<&Value>) -> Result<Val
         .ok_or_else(|| VmError::EvalError("compatibility runner is unavailable".into()))?;
     let mut command = std::process::Command::new(executable);
     command.arg(fixture).args(args.iter().skip(index + 1));
+    clear_worker_markers(&mut command);
     command.env("QUENCH_CHILD_RUNNER", "1");
     let output = command
         .output()

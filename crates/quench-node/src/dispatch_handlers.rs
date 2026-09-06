@@ -8753,6 +8753,7 @@ fn cp_run_host_child(
             .or(Some(path))
     })?;
     let mut process = std::process::Command::new(executable);
+    crate::modules::child_process::clear_worker_markers(&mut process);
     process.args(&args).env("QUENCH_CHILD_RUNNER", "1");
     if let Value::String(cwd) = execute::get_property(options, "cwd") {
         process.current_dir(cwd);
@@ -8760,6 +8761,12 @@ fn cp_run_host_child(
     if matches!(env, Value::Object(_) | Value::ObjectAlias(_)) {
         let mut values = Vec::new();
         for key in execute::own_enumerable_keys(&env) {
+            if matches!(
+                key.as_str(),
+                "QUENCH_WORKER" | "QUENCH_WORKER_DATA" | "QUENCH_WORKER_MESSAGE"
+            ) {
+                continue;
+            }
             let value = execute::get_property(&env, &key);
             if !matches!(value, Value::Undefined | Value::Null) {
                 if let Ok(value) = execute::to_js_string(&value) {

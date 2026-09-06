@@ -84,6 +84,10 @@ pub fn build(state: &Rc<std::cell::RefCell<HostState>>) -> Result<Value, VmError
     } else {
         std::env::var("QUENCH_WORKER_DATA")
             .ok()
+            .or_else(|| {
+                std::env::args()
+                    .find_map(|arg| arg.strip_prefix("--quench-worker-data=").map(str::to_owned))
+            })
             .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
             .map(from_json)
             .unwrap_or(Value::Null)
