@@ -128,7 +128,7 @@ fn selected_chain_matches(view: crate::stencil_select::PhysicalStencilView) -> b
 fn generated_chain_relocation_is_declared(
     view: &crate::stencil_select::PhysicalStencilView,
 ) -> bool {
-    let Some((_, _offset)) = view.fallthrough else {
+    let Some(_fallthrough) = view.fallthrough else {
         return false;
     };
     let expected_kind = if cfg!(target_arch = "aarch64") {
@@ -1123,7 +1123,9 @@ impl StencilArena {
                 abi: view.abi,
                 entry: view.entry,
                 byte_len: view.stencil.bytes.len()
-                    + view.fallthrough.map_or(0, |(tail, _)| tail.bytes.len()),
+                    + view
+                        .fallthrough
+                        .map_or(0, |item| item.stencil.bytes.len()),
             }));
     }
 
@@ -1614,7 +1616,7 @@ impl StencilArena {
         view: crate::stencil_select::PhysicalStencilView,
         values: &PatchValues<'_, N>,
     ) -> Result<usize, ArenaError> {
-        let Some((tail, branch_offset)) = view.fallthrough else {
+        let Some(fallthrough) = view.fallthrough else {
             return self.render_selected_view(cache, view, values);
         };
         if !selected_chain_matches(view) {
@@ -1627,9 +1629,9 @@ impl StencilArena {
         let mut bytes = Vec::new();
         compose_fallthrough(
             view.stencil,
-            tail,
+            fallthrough.stencil,
             values,
-            branch_offset,
+            fallthrough.fixup_offset,
             fallthrough_fixup_kind(),
             &mut bytes,
         )
@@ -3392,8 +3394,8 @@ mod tests {
             arena.render_selected_f64(&mut cache, key, &values, 10.25, 2.5, || Ok(0.0)),
             Ok(12.75)
         );
-        let (tail, _) = view.fallthrough.expect("fallthrough tail");
-        assert_eq!(arena.used(), view.stencil.bytes.len() + tail.bytes.len());
+        let tail = view.fallthrough.expect("fallthrough tail");
+        assert_eq!(arena.used(), view.stencil.bytes.len() + tail.stencil.bytes.len());
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -3496,8 +3498,8 @@ mod tests {
         assert_eq!(arena.used(), used);
         assert_eq!(cache.len(), 1);
         if view.generated {
-            let (tail, branch_offset) = view.fallthrough.expect("generated successor");
-            assert_eq!(arena.used(), view.stencil.bytes.len() + tail.bytes.len());
+            let tail = view.fallthrough.expect("generated successor");
+            assert_eq!(arena.used(), view.stencil.bytes.len() + tail.stencil.bytes.len());
             assert_eq!(view.relocations.len(), 2);
             assert!(view.relocations.iter().all(|relocation| {
                 relocation.kind == HoleKind::Branch26 && relocation.target == "q_fallthrough_tail"
@@ -3505,7 +3507,7 @@ mod tests {
             assert!(view
                 .relocations
                 .iter()
-                .any(|relocation| relocation.offset == branch_offset));
+                .any(|relocation| relocation.offset == tail.fixup_offset));
             assert!(view
                 .relocations
                 .iter()
@@ -3523,7 +3525,10 @@ mod tests {
         assert_eq!(witness.entry, view.entry);
         assert_eq!(
             witness.byte_len,
-            view.stencil.bytes.len() + view.fallthrough.map_or(0, |(tail, _)| tail.bytes.len())
+            view.stencil.bytes.len()
+                + view
+                    .fallthrough
+                    .map_or(0, |item| item.stencil.bytes.len())
         );
         #[cfg(quench_generated_stencil_artifacts)]
         assert!(witness.generated);
@@ -3539,9 +3544,12 @@ mod tests {
         };
         let key = crate::stencil_select::fallthrough_region_key();
         let view = crate::stencil_select::select_physical(key).expect("fallthrough view");
-        let (tail, branch_offset) = view.fallthrough.expect("declared successor");
+        let tail = view.fallthrough.expect("declared successor");
         let bad_view = crate::stencil_select::PhysicalStencilView {
-            fallthrough: Some((&BAD_TAIL, branch_offset)),
+            fallthrough: Some(crate::stencil_select::PhysicalFallthrough {
+                stencil: &BAD_TAIL,
+                fixup_offset: tail.fixup_offset,
+            }),
             ..view
         };
         let mut arena = StencilArena::new(4096).expect("arena");
@@ -3552,7 +3560,7 @@ mod tests {
         assert_eq!(result, Err(ArenaError::ProtectionFailed));
         assert_eq!(arena.used(), 0);
         assert_eq!(cache.len(), 0);
-        assert_eq!(tail.bytes, view.fallthrough.unwrap().0.bytes);
+        assert_eq!(tail.stencil.bytes, view.fallthrough.unwrap().stencil.bytes);
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -3597,10 +3605,10 @@ mod tests {
             .relocations
             .iter()
             .all(|relocation| relocation.target == "q_fallthrough_tail"));
-        let (tail, entry) = view.fallthrough.expect("generated tail");
-        assert_eq!(entry, 4);
-        assert_eq!(tail.bytes, &[0xc0, 0x03, 0x5f, 0xd6]);
-        assert!(tail.holes.is_empty());
+        let tail = view.fallthrough.expect("generated tail");
+        assert_eq!(tail.fixup_offset, 4);
+        assert_eq!(tail.stencil.bytes, &[0xc0, 0x03, 0x5f, 0xd6]);
+        assert!(tail.stencil.holes.is_empty());
     }
 
     #[cfg(all(quench_generated_stencil_artifacts, target_arch = "aarch64"))]
@@ -3657,7 +3665,10 @@ mod tests {
         assert_eq!(arena.used(), 0);
         assert_eq!(cache.len(), 0);
         let bad_fallthrough = crate::stencil_select::PhysicalStencilView {
-            fallthrough: Some((&BAD_TAIL, 0)),
+            fallthrough: Some(crate::stencil_select::PhysicalFallthrough {
+                stencil: &BAD_TAIL,
+                fixup_offset: 0,
+            }),
             ..view
         };
         assert_eq!(
@@ -3742,10 +3753,10 @@ mod tests {
         let view = crate::stencil_select::select_physical(key).expect("generated chain view");
         assert!(view.generated, "chain must use generated artifact");
         assert_eq!(view.abi, crate::stencil_select::RegionAbi::ScalarF64x3);
-        let (tail, branch_offset) = view.fallthrough.expect("generated chain tail");
-        assert_eq!(branch_offset, 4);
+        let tail = view.fallthrough.expect("generated chain tail");
+        assert_eq!(tail.fixup_offset, 4);
         assert_eq!(view.relocations.len(), 1);
-        assert_eq!(view.relocations[0].offset, branch_offset);
+        assert_eq!(view.relocations[0].offset, tail.fixup_offset);
         assert_eq!(view.relocations[0].target, "q_add_chain_tail");
         assert_eq!(view.relocations[0].addend, 0);
         assert_eq!(view.entry, 0);
@@ -3763,7 +3774,7 @@ mod tests {
         assert_eq!(witness.abi, view.abi);
         assert_eq!(
             witness.byte_len,
-            view.stencil.bytes.len() + tail.bytes.len()
+            view.stencil.bytes.len() + tail.stencil.bytes.len()
         );
         assert_eq!(arena.used(), witness.byte_len);
     }
