@@ -94,10 +94,10 @@ fn render_region_row(index: usize, declaration: &RegionDeclaration) -> String {
     let name = key_name(declaration.name);
     let fallthrough = match recipe_composition(declaration) {
         RecipeComposition::FallthroughReturn => {
-            "Some(crate::stencil_select::PhysicalFallthrough { stencil: &FALLTHROUGH_TAIL, fixup_offset: if cfg!(target_arch = \"aarch64\") { 4 } else { 5 } })"
+            "Some(crate::stencil_select::PhysicalFallthrough { stencil: &FALLTHROUGH_TAIL, fixup_offset: if cfg!(target_arch = \"aarch64\") { 4 } else { 5 }, target: \"q_fallthrough_tail\" })"
         }
         RecipeComposition::AddChain => {
-            "Some(crate::stencil_select::PhysicalFallthrough { stencil: &ADD_CHAIN_TAIL, fixup_offset: if cfg!(target_arch = \"aarch64\") { 4 } else { 5 } })"
+            "Some(crate::stencil_select::PhysicalFallthrough { stencil: &ADD_CHAIN_TAIL, fixup_offset: if cfg!(target_arch = \"aarch64\") { 4 } else { 5 }, target: \"q_add_chain_tail\" })"
         }
         RecipeComposition::Whole => "None",
     };
