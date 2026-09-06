@@ -14,6 +14,14 @@ use aes_gcm::{
 use base64::Engine;
 use chacha20poly1305::ChaCha20Poly1305;
 use cipher::{generic_array::GenericArray, BlockDecrypt, BlockEncrypt};
+use ed25519_dalek::{
+    Signature as Ed25519Signature, SigningKey as Ed25519SigningKey,
+    VerifyingKey as Ed25519VerifyingKey,
+};
+use ed448_goldilocks_plus::{
+    SecretKey as Ed448SecretKey, Signature as Ed448Signature,
+    SigningKey as Ed448SigningKey, VerifyingKey as Ed448VerifyingKey,
+};
 use hmac::{Hmac, Mac};
 use openssl::{bn::BigNum, pkey::PKey, rsa::Rsa};
 use p256::elliptic_curve::sec1::ToEncodedPoint as P256ToEncodedPoint;
@@ -3900,7 +3908,18 @@ pub fn export_key(
     }
     let data = bytes(&execute::get_property(key, KEY_DATA_PROP)).unwrap_or_default();
     let result = match format.as_str() {
-        "raw" | "raw-secret" | "raw-public" | "raw-seed" | "spki" | "pkcs8" => array_buffer(&data),
+        "raw" | "raw-secret" | "raw-public" | "raw-seed" | "spki" | "pkcs8" => {
+            let algorithm = execute::get_property(&metadata, "algorithm");
+            let name = algorithm_name(&algorithm).to_ascii_uppercase();
+            let data = if matches!(format.as_str(), "spki" | "pkcs8")
+                && matches!(name.as_str(), "ED25519" | "ED448" | "X25519" | "X448")
+            {
+                okp_der_export(&name, &format, &data).unwrap_or(data)
+            } else {
+                data
+            };
+            array_buffer(&data)
+        }
         "jwk" => {
             let algorithm = execute::get_property(&metadata, "algorithm");
             let hash_value = execute::get_property(&algorithm, "hash");
@@ -4394,6 +4413,9 @@ pub fn generate_key(
             Ok(usages) => usages,
             Err(error) => return Ok(settled(Err(error))),
         };
+        if !usage_names(&public_usages).is_empty() && usage_names(&private_usages).is_empty() {
+            return Ok(settled(Err(usage_error("Usages cannot be empty"))));
+        }
         let extractable = matches!(args.get(1), Some(Value::Boolean(true)));
         let (private_data, public_data) = match name.as_str() {
             "X25519" => {
@@ -4412,6 +4434,24 @@ pub fn generate_key(
                 base[0] = 5;
                 rand::thread_rng().fill_bytes(&mut private);
                 (Some(private.to_vec()), Some(x448(&private, &base).to_vec()))
+            }
+            "ED25519" => {
+                let mut seed = [0_u8; 32];
+                rand::thread_rng().fill_bytes(&mut seed);
+                let signing = Ed25519SigningKey::from_bytes(&seed);
+                (
+                    Some(seed.to_vec()),
+                    Some(signing.verifying_key().to_bytes().to_vec()),
+                )
+            }
+            "ED448" => {
+                let mut seed = [0_u8; 57];
+                rand::thread_rng().fill_bytes(&mut seed);
+                let signing = Ed448SigningKey::from_bytes(&Ed448SecretKey::from(seed));
+                (
+                    Some(seed.to_vec()),
+                    Some(signing.verifying_key().to_bytes().to_vec()),
+                )
             }
             "RSA-OAEP" | "RSA-PSS" | "RSASSA-PKCS1-V1_5" => {
                 let modulus = match execute::get_property(&algorithm, "modulusLength") {
@@ -4528,8 +4568,16 @@ pub fn generate_key(
         } else {
             None
         };
-        let private_value = match (&private_data, &rsa_jwk, &ec_jwk) {
-            (Some(data), Some((private, _)), _) => key_with_jwk(
+        let okp_jwk = if matches!(name.as_str(), "ED25519" | "ED448" | "X25519" | "X448") {
+            match (private_data.as_deref(), public_data.as_deref()) {
+                (Some(private), Some(public)) => okp_jwk_pair(&name, private, public),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let private_value = match (&private_data, &rsa_jwk, &ec_jwk, &okp_jwk) {
+            (Some(data), Some((private, _)), _, _) => key_with_jwk(
                 &prototype,
                 algorithm.clone(),
                 extractable,
@@ -4537,7 +4585,15 @@ pub fn generate_key(
                 Some(data.clone()),
                 Some(private),
             ),
-            (Some(data), _, Some((private, _))) => key_with_jwk(
+            (Some(data), _, Some((private, _)), _) => key_with_jwk(
+                &prototype,
+                algorithm.clone(),
+                extractable,
+                private_usages,
+                Some(data.clone()),
+                Some(private),
+            ),
+            (Some(data), _, _, Some((private, _))) => key_with_jwk(
                 &prototype,
                 algorithm.clone(),
                 extractable,
@@ -4554,8 +4610,8 @@ pub fn generate_key(
             ),
         };
         let private_key = key_metadata(private_value, "private", "pkcs8");
-        let public_value = match (&public_data, &rsa_jwk, &ec_jwk) {
-            (Some(data), Some((_, public)), _) => key_with_jwk(
+        let public_value = match (&public_data, &rsa_jwk, &ec_jwk, &okp_jwk) {
+            (Some(data), Some((_, public)), _, _) => key_with_jwk(
                 &prototype,
                 algorithm.clone(),
                 extractable,
@@ -4563,7 +4619,15 @@ pub fn generate_key(
                 Some(data.clone()),
                 Some(public),
             ),
-            (Some(data), _, Some((_, public))) => key_with_jwk(
+            (Some(data), _, Some((_, public)), _) => key_with_jwk(
+                &prototype,
+                algorithm.clone(),
+                extractable,
+                public_usages,
+                Some(data.clone()),
+                Some(public),
+            ),
+            (Some(data), _, _, Some((_, public))) => key_with_jwk(
                 &prototype,
                 algorithm.clone(),
                 extractable,
@@ -5263,6 +5327,12 @@ pub fn sign(
     };
     let output = match algorithm_name(algorithm).to_ascii_uppercase().as_str() {
         "RSA-PSS" | "RSASSA-PKCS1-V1_5" => rsa_signature(algorithm, key, &data),
+        "ED25519" => ed25519_private_key(key).map(|signing| {
+            ed25519_dalek::Signer::sign(&signing, &data)
+                .to_bytes()
+                .to_vec()
+        }),
+        "ED448" => ed448_sign(algorithm, key, &data),
         _ => signature_bytes(algorithm, key, &data),
     };
     Ok(settled(output.map(|value| array_buffer(&value))))
@@ -5295,6 +5365,18 @@ pub fn verify(
     if algorithm_name(algorithm).eq_ignore_ascii_case("ECDSA") {
         return Ok(settled(ecdsa_verify(algorithm, key, &signature, &data)
             .map(Value::Boolean)));
+    }
+    if algorithm_name(algorithm).eq_ignore_ascii_case("ED25519") {
+        let verified = ed25519_public_key(key).map(|public| {
+            let Ok(signature) = Ed25519Signature::from_slice(&signature) else {
+                return false;
+            };
+            ed25519_dalek::Verifier::verify(&public, &data, &signature).is_ok()
+        });
+        return Ok(settled(verified.map(Value::Boolean)));
+    }
+    if algorithm_name(algorithm).eq_ignore_ascii_case("ED448") {
+        return Ok(settled(ed448_verify(algorithm, key, &signature, &data).map(Value::Boolean)));
     }
     let expected = signature_bytes(algorithm, key, &data);
     Ok(settled(
@@ -5393,6 +5475,17 @@ fn signature_bytes(algorithm: &Value, key: &Value, data: &[u8]) -> Result<Vec<u8
     if name.eq_ignore_ascii_case("ECDSA") {
         return ecdsa_sign(algorithm, key, data);
     }
+    if name.eq_ignore_ascii_case("ED25519") {
+        let signing = ed25519_private_key(key)?;
+        return Ok(
+            ed25519_dalek::Signer::sign(&signing, data)
+                .to_bytes()
+                .to_vec(),
+        );
+    }
+    if name.eq_ignore_ascii_case("ED448") {
+        return ed448_sign(algorithm, key, data);
+    }
     Ok(crate::modules::crypto::digest_bytes(
         "sha256",
         &[name.as_bytes(), data].concat(),
@@ -5469,6 +5562,180 @@ fn ec_material(key: &Value, private: bool, size: usize) -> Option<Vec<u8>> {
     point.extend(x);
     point.extend(y);
     Some(point)
+}
+
+/// Recover the canonical raw material for an RFC 8410 key slot.  Generated
+/// keys keep the seed/point directly; imported PKCS#8 and SPKI keys retain
+/// their DER input so export can preserve the requested representation.
+fn okp_material(key: &Value, private: bool) -> Option<Vec<u8>> {
+    let name = algorithm_name(&key_slot(key, "algorithm")).to_ascii_uppercase();
+    let (_, size) = okp_facts(&name)?;
+    let data = bytes(&execute::get_property(key, KEY_DATA_PROP))?;
+    if data.len() == size {
+        return Some(data);
+    }
+    let format = execute::to_js_string(&execute::get_property(key, KEY_FORMAT_PROP))
+        .unwrap_or_default();
+    let mut outer = DerReader::new(&data);
+    let sequence = outer.take(0x30)?;
+    if outer.offset != data.len() {
+        return None;
+    }
+    let mut body = DerReader::new(sequence);
+    let raw = if private && format == "pkcs8" {
+        body.take(0x02)?;
+        body.take(0x30)?;
+        let wrapped = body.take(0x04)?;
+        let mut private = DerReader::new(wrapped);
+        private.take(0x04)?.to_vec()
+    } else if !private && format == "spki" {
+        body.take(0x30)?;
+        let bits = body.take(0x03)?;
+        (bits.first() == Some(&0)).then(|| bits[1..].to_vec())?
+    } else {
+        let field = if private { "d" } else { "x" };
+        let jwk = execute::get_property(key, KEY_JWK_PROP);
+        let encoded = execute::to_js_string(&execute::get_property(&jwk, field)).ok()?;
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(encoded)
+            .ok()?
+    };
+    (raw.len() == size).then_some(raw)
+}
+
+fn okp_jwk_pair(name: &str, private: &[u8], public: &[u8]) -> Option<(Value, Value)> {
+    let (_, size) = okp_facts(name)?;
+    if private.len() != size || public.len() != size {
+        return None;
+    }
+    let crv = match name {
+        "ED25519" => "Ed25519",
+        "ED448" => "Ed448",
+        "X25519" => "X25519",
+        "X448" => "X448",
+        _ => return None,
+    };
+    let encode = |value: &[u8]| {
+        Value::String(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(value))
+    };
+    let public = host_api::object(vec![
+        ("kty".into(), Value::String("OKP".into())),
+        ("crv".into(), Value::String(crv.into())),
+        ("x".into(), encode(public)),
+    ]);
+    let private = host_api::object(vec![
+        ("kty".into(), Value::String("OKP".into())),
+        ("crv".into(), Value::String(crv.into())),
+        ("x".into(), execute::get_property(&public, "x")),
+        ("d".into(), encode(private)),
+    ]);
+    Some((private, public))
+}
+
+fn okp_der_export(name: &str, format: &str, data: &[u8]) -> Option<Vec<u8>> {
+    let (oid, size) = okp_facts(name)?;
+    if data.len() != size {
+        return None;
+    }
+    let algorithm = der_tlv(0x30, &der_tlv(0x06, oid));
+    match format {
+        "spki" => {
+            let mut bits = Vec::with_capacity(size + 1);
+            bits.push(0);
+            bits.extend_from_slice(data);
+            let bits = der_tlv(0x03, &bits);
+            let mut content = algorithm;
+            content.extend(bits);
+            Some(der_tlv(0x30, &content))
+        }
+        "pkcs8" => {
+            let version = der_tlv(0x02, &[0]);
+            let private = der_tlv(0x04, &der_tlv(0x04, data));
+            let mut content = version;
+            content.extend(algorithm);
+            content.extend(private);
+            Some(der_tlv(0x30, &content))
+        }
+        _ => None,
+    }
+}
+
+fn ed25519_private_key(key: &Value) -> Result<Ed25519SigningKey, VmError> {
+    let seed = okp_material(key, true).ok_or_else(|| operation_error("Invalid private key data"))?;
+    let seed: [u8; 32] = seed
+        .try_into()
+        .map_err(|_| operation_error("Invalid private key data"))?;
+    Ok(Ed25519SigningKey::from_bytes(&seed))
+}
+
+fn ed25519_public_key(key: &Value) -> Result<Ed25519VerifyingKey, VmError> {
+    let public = okp_material(key, false).ok_or_else(|| operation_error("Invalid public key data"))?;
+    let public: [u8; 32] = public
+        .try_into()
+        .map_err(|_| operation_error("Invalid public key data"))?;
+    Ed25519VerifyingKey::from_bytes(&public)
+        .map_err(|_| operation_error("Invalid public key data"))
+}
+
+fn ed448_private_key(key: &Value) -> Result<Ed448SigningKey, VmError> {
+    let seed = okp_material(key, true).ok_or_else(|| operation_error("Invalid private key data"))?;
+    let seed: [u8; 57] = seed
+        .try_into()
+        .map_err(|_| operation_error("Invalid private key data"))?;
+    Ok(Ed448SigningKey::from_bytes(&Ed448SecretKey::from(seed)))
+}
+
+fn ed448_public_key(key: &Value) -> Result<Ed448VerifyingKey, VmError> {
+    let public = okp_material(key, false).ok_or_else(|| operation_error("Invalid public key data"))?;
+    let public: [u8; 57] = public
+        .try_into()
+        .map_err(|_| operation_error("Invalid public key data"))?;
+    Ed448VerifyingKey::from_bytes(&public)
+        .map_err(|_| operation_error("Invalid public key data"))
+}
+
+fn ed448_context(algorithm: &Value) -> Result<Option<Vec<u8>>, VmError> {
+    let context = execute::get_property(algorithm, "context");
+    if matches!(context, Value::Undefined) {
+        return Ok(None);
+    }
+    let context = bytes(&context)
+        .ok_or_else(|| error(Builtin::TypeError, Some("ERR_INVALID_ARG_TYPE"), "context must be an ArrayBuffer or a view"))?;
+    if context.len() > 255 {
+        return Err(operation_error("ContextParams.context must be at most 255 bytes"));
+    }
+    Ok(Some(context))
+}
+
+fn ed448_sign(algorithm: &Value, key: &Value, data: &[u8]) -> Result<Vec<u8>, VmError> {
+    let signing = ed448_private_key(key)?;
+    let signature = match ed448_context(algorithm)? {
+        Some(context) => signing
+            .sign_ctx(&context, data)
+            .map_err(|_| operation_error("The operation failed"))?,
+        None => signing.sign_raw(data),
+    };
+    Ok(signature.to_bytes().to_vec())
+}
+
+fn ed448_verify(
+    algorithm: &Value,
+    key: &Value,
+    signature: &[u8],
+    data: &[u8],
+) -> Result<bool, VmError> {
+    let signature_bytes: [u8; 114] = match signature.try_into() {
+        Ok(bytes) => bytes,
+        Err(_) => return Ok(false),
+    };
+    let Ok(signature) = Ed448Signature::from_bytes(&signature_bytes) else {
+        return Ok(false);
+    };
+    let public = ed448_public_key(key)?;
+    match ed448_context(algorithm)? {
+        Some(context) => Ok(public.verify_ctx(&signature, &context, data).is_ok()),
+        None => Ok(public.verify_raw(&signature, data).is_ok()),
+    }
 }
 
 fn ecdsa_sign(algorithm: &Value, key: &Value, data: &[u8]) -> Result<Vec<u8>, VmError> {
@@ -5650,6 +5917,33 @@ pub fn supports(
     }
     let name = algorithm_name(args.get(1).unwrap_or(&Value::Undefined));
     let upper = name.to_ascii_uppercase();
+    let algorithm = args.get(1).unwrap_or(&Value::Undefined);
+    // The support query performs the same dictionary conversion boundary as
+    // the operation itself.  Algorithms with operation-specific required
+    // members therefore cannot be answered from their `name` alone (for
+    // example, a string `AES-CBC` lacks the required `iv`).
+    let object_algorithm = matches!(algorithm, Value::Object(_) | Value::ObjectAlias(_));
+    let required_member = |member: &str| {
+        object_algorithm
+            && !matches!(execute::get_property(algorithm, member), Value::Undefined)
+    };
+    let shape_supported = match (operation.as_str(), upper.as_str()) {
+        ("encrypt" | "decrypt", "AES-CBC" | "AES-GCM") => required_member("iv"),
+        ("encrypt" | "decrypt", "AES-CTR") => {
+            required_member("counter") && required_member("length")
+        }
+        ("sign" | "verify", "ECDSA") => required_member("hash"),
+        ("sign" | "verify", "RSA-PSS") => required_member("saltLength"),
+        ("encrypt" | "decrypt", "RSA-OAEP") => {
+            !object_algorithm
+                || !quench_runtime::execute::has_own_property(algorithm, "label")
+                || !matches!(execute::get_property(algorithm, "label"), Value::Null)
+        }
+        _ => true,
+    };
+    if !shape_supported {
+        return Ok(Value::Boolean(false));
+    }
     let supported = match operation.as_str() {
         "getPublicKey" => matches!(
             upper.as_str(),
