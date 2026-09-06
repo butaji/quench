@@ -57,9 +57,44 @@ fn code_store_drops_after_nested_function_owner_is_released() {
         mapped_arguments: false,
         source: None,
     }]);
+    let code = owner.code().expect("owner code");
+    let crate::ops::Op::MakeFunctionWithKind { body, .. } = code.cold_at(0).expect("nested op")
+    else {
+        panic!("expected nested function op");
+    };
+    assert!(body.has_internal_store_link(), "nested body retained its owner");
     let weak = std::rc::Rc::downgrade(&owner.store().expect("nested code store"));
     drop(owner);
     assert!(weak.upgrade().is_none(), "nested code store retained a cycle");
+}
+
+#[test]
+fn escaped_nested_function_clone_retains_code_store() {
+    let nested = super::FunctionCode::pending(vec![super::Op::Return { src: 0 }]);
+    let owner = super::FunctionCode::from_ops(vec![super::Op::MakeFunctionWithKind {
+        dst: 0,
+        body: nested,
+        params: 0,
+        length: 0,
+        captures: 0,
+        kind: crate::ops::FunctionKind::Ordinary,
+        strictness: crate::ops::FunctionStrictness::Sloppy,
+        is_async: false,
+        mapped_arguments: false,
+        source: None,
+    }]);
+    let code = owner.code().expect("owner code");
+    let crate::ops::Op::MakeFunctionWithKind { body, .. } = code.cold_at(0).expect("nested op")
+    else {
+        panic!("expected nested function op");
+    };
+    let escaped = body.clone();
+    let weak = std::rc::Rc::downgrade(&owner.store().expect("nested code store"));
+    drop(owner);
+    assert!(escaped.store().is_some(), "escaped body lost its code owner");
+    assert!(weak.upgrade().is_some(), "escaped body did not retain its store");
+    drop(escaped);
+    assert!(weak.upgrade().is_none(), "escaped store was not reclaimable");
 }
 
 #[test]
@@ -2522,7 +2557,7 @@ fn linked_nested_bodies_share_one_immutable_code_store() {
     else {
         panic!("iterator binding");
     };
-    assert!(std::rc::Rc::ptr_eq(&root.store, &body.store));
+    assert!(root.store.same_store(&body.store));
 }
 
 #[test]
