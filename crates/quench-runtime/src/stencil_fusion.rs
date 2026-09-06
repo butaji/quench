@@ -79,6 +79,9 @@ impl NativeLocalPropertyPlan {
         environment: &crate::environment::Environment,
         invoke: impl FnOnce(&mut NativePropertyPlan, &crate::value::Value) -> Option<u64>,
     ) -> Option<LocalPropertyExecution> {
+        if environment.is_deleted_slot(self.selection.receiver_slot) {
+            return None;
+        }
         let receiver = environment.get(self.selection.receiver_slot);
         #[cfg(test)]
         {
