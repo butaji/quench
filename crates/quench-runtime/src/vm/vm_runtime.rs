@@ -1778,18 +1778,18 @@ pub(crate) fn execute_optimized_code_step_from(
     let _decode_guard = crate::execution_trace::compact(instruction.opcode);
     crate::execution_trace::compact_site(code, start);
     crate::execution_trace::operands(instruction);
-    if let Some(native) = entry.native_local_truthiness() {
+    if let Some(native) = entry.native_local_predicate() {
         let next = crate::locals::with_current_ref(|environment| {
-            crate::stencil_fusion::execute_local_truthiness(native, environment?)
+            crate::stencil_fusion::execute_local_predicate(native, environment?)
         })
-        .map(|result| result.commit(registers));
+        .and_then(|result| result.commit(registers));
         if let Some(next) = next {
-            crate::execution_trace::stencil_observation(code, start, "local_truthiness", true);
+            crate::execution_trace::stencil_observation(code, start, "local_predicate", true);
             crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
             return Ok((crate::completion::Completion::Normal, next));
         }
-        crate::execution_trace::stencil_observation(code, start, "local_truthiness", false);
-        crate::execution_trace::leaf_rejection("optimizing_native_local_truthiness");
+        crate::execution_trace::stencil_observation(code, start, "local_predicate", false);
+        crate::execution_trace::leaf_rejection("optimizing_native_local_predicate");
     }
     if let Some(native) = entry.native_local_property() {
         let property_pc = start + native.borrow().operation_offset();
@@ -2346,23 +2346,23 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
             continue;
         }
         if let (Some(environment), Some(native)) =
-            (environment, plan.native_local_truthiness_at(pc))
+            (environment, plan.native_local_predicate_at(pc))
         {
-            if let Some(next) = crate::stencil_fusion::execute_local_truthiness(native, environment)
-                .map(|result| result.commit(registers))
+            if let Some(next) = crate::stencil_fusion::execute_local_predicate(native, environment)
+                .and_then(|result| result.commit(registers))
             {
                 crate::execution_trace::stencil_observation(
                     code,
                     pc,
-                    "local_truthiness",
+                    "local_predicate",
                     true,
                 );
                 crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
                 pc = next;
                 continue;
             }
-            crate::execution_trace::stencil_observation(code, pc, "local_truthiness", false);
-            crate::execution_trace::leaf_rejection("native_local_truthiness");
+            crate::execution_trace::stencil_observation(code, pc, "local_predicate", false);
+            crate::execution_trace::leaf_rejection("native_local_predicate");
         }
         if let (Some(environment), Some(native)) = (environment, plan.native_local_property_at(pc))
         {
