@@ -468,6 +468,15 @@ pub fn method_emit(
         );
     let capture_rejections = emitter.borrow().capture_rejections && !capture_suppressed;
     let snapshot = emitter.borrow().listeners_for_scope(&event, process_scope);
+    if event == "listening" {
+        if let Some(worker) = args.get(1) {
+            let _ = execute::set_property_in_place(
+                worker,
+                "state",
+                Value::String("listening".into()),
+            );
+        }
+    }
     if snapshot.is_empty() {
         if event == "error" {
             if CAPTURE_SUPPRESSION_DEPTH.with(|depth| depth.get() > 0)
