@@ -5371,7 +5371,11 @@ pub fn verify(
             let Ok(signature) = Ed25519Signature::from_slice(&signature) else {
                 return false;
             };
-            ed25519_dalek::Verifier::verify(&public, &data, &signature).is_ok()
+            // Node's Ed25519 verifier rejects weak (small-order) public keys
+            // and R points.  Dalek's compatibility verifier follows ZIP-215
+            // and intentionally accepts those encodings; strict verification
+            // is the shared operation that carries the WebCrypto contract.
+            public.verify_strict(&data, &signature).is_ok()
         });
         return Ok(settled(verified.map(Value::Boolean)));
     }
@@ -5704,7 +5708,29 @@ fn ed448_context(algorithm: &Value) -> Result<Option<Vec<u8>>, VmError> {
     if context.len() > 255 {
         return Err(operation_error("ContextParams.context must be at most 255 bytes"));
     }
+    if !openssl_version_at_least(3, 2) && !context.is_empty() {
+        return Err(not_supported("Ed448 context is not supported by this OpenSSL"));
+    }
     Ok(Some(context))
+}
+
+fn openssl_version_at_least(major: u32, minor: u32) -> bool {
+    let Some(version) = crate::modules::process::versions_props()
+        .into_iter()
+        .find_map(|(name, value)| (name == "openssl").then_some(value))
+        .and_then(|value| match value {
+            Value::String(value) => Some(value),
+            _ => None,
+        })
+    else {
+        return false;
+    };
+    let mut parts = version.split('.').filter_map(|part| part.parse::<u32>().ok());
+    let Some(found_major) = parts.next() else {
+        return false;
+    };
+    let found_minor = parts.next().unwrap_or(0);
+    found_major > major || (found_major == major && found_minor >= minor)
 }
 
 fn ed448_sign(algorithm: &Value, key: &Value, data: &[u8]) -> Result<Vec<u8>, VmError> {
@@ -5724,6 +5750,10 @@ fn ed448_verify(
     signature: &[u8],
     data: &[u8],
 ) -> Result<bool, VmError> {
+    // Validate operation-wide context capability before inspecting the
+    // signature bytes.  WebCrypto rejects an unsupported Ed448 context even
+    // when the supplied signature would otherwise simply verify false.
+    let context = ed448_context(algorithm)?;
     let signature_bytes: [u8; 114] = match signature.try_into() {
         Ok(bytes) => bytes,
         Err(_) => return Ok(false),
@@ -5732,7 +5762,7 @@ fn ed448_verify(
         return Ok(false);
     };
     let public = ed448_public_key(key)?;
-    match ed448_context(algorithm)? {
+    match context {
         Some(context) => Ok(public.verify_ctx(&signature, &context, data).is_ok()),
         None => Ok(public.verify_raw(&signature, data).is_ok()),
     }
