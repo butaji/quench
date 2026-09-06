@@ -803,6 +803,27 @@ mod tests {
         })
     }
 
+    fn suspended_promise_cycle() -> (
+        Rc<crate::value::PromiseData>,
+        Weak<crate::value::GeneratorData>,
+        Weak<crate::value::PromiseData>,
+    ) {
+        let awaited = crate::value::PromiseData::allocate(crate::value::PromiseState::Pending);
+        let result = crate::value::PromiseData::allocate(crate::value::PromiseState::Pending);
+        let generator = generator_with_register(Value::Promise(Rc::clone(&awaited)));
+        track_generator(&generator);
+        awaited.continuations.borrow_mut().push(
+            crate::value::PromiseContinuation::AsyncGenerator {
+                generator: Rc::clone(&generator),
+                result: Rc::clone(&result),
+                async_function: true,
+            },
+        );
+        let weak_generator = Rc::downgrade(&generator);
+        let weak_result = Rc::downgrade(&result);
+        (awaited, weak_generator, weak_result)
+    }
+
     #[test]
     fn trial_deletion_breaks_unreachable_object_cycle() {
         let left = Rc::new(ObjectData::new(vec![("peer".into(), Value::Undefined)]));
@@ -940,27 +961,32 @@ mod tests {
 
     #[test]
     fn promise_graph_roots_then_reclaims_suspended_generator_cycle() {
-        let awaited = crate::value::PromiseData::allocate(crate::value::PromiseState::Pending);
-        let result = crate::value::PromiseData::allocate(crate::value::PromiseState::Pending);
-        let generator = generator_with_register(Value::Promise(Rc::clone(&awaited)));
-        track_generator(&generator);
-        awaited.continuations.borrow_mut().push(
-            crate::value::PromiseContinuation::AsyncGenerator {
-                generator: Rc::clone(&generator),
-                result: Rc::clone(&result),
-                async_function: true,
-            },
-        );
+        let (awaited, weak_generator, weak_result) = suspended_promise_cycle();
         let weak_awaited = Rc::downgrade(&awaited);
-        let weak_generator = Rc::downgrade(&generator);
-        let weak_result = Rc::downgrade(&result);
-        drop(result);
-        drop(generator);
         collect_cycles();
         assert!(weak_awaited.upgrade().is_some());
         assert!(weak_generator.upgrade().is_some());
         assert!(weak_result.upgrade().is_some());
         drop(awaited);
+        collect_cycles();
+        assert!(weak_awaited.upgrade().is_none());
+        assert!(weak_generator.upgrade().is_none());
+        assert!(weak_result.upgrade().is_none());
+    }
+
+    #[test]
+    fn active_frame_transfers_suspended_promise_graph_root() {
+        let (awaited, weak_generator, weak_result) = suspended_promise_cycle();
+        let weak_awaited = Rc::downgrade(&awaited);
+        let registers =
+            crate::register_file::RegisterFile::from_values(vec![Value::Promise(awaited)]);
+        let environment = Environment::new();
+        let guard = protect_frame(&registers, &environment);
+        collect_cycles();
+        assert!(weak_generator.upgrade().is_some());
+        assert!(weak_result.upgrade().is_some());
+        drop(guard);
+        drop(registers);
         collect_cycles();
         assert!(weak_awaited.upgrade().is_none());
         assert!(weak_generator.upgrade().is_none());
