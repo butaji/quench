@@ -5,21 +5,32 @@ pub(crate) fn execute(
     registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<Completion, VmError> {
-    let Op::Try {
-        body,
-        handler,
-        finalizer,
-        catch_slot,
-        dst,
-        finally_dst,
-    } = op
-    else {
+    let Op::Try { body, .. } = op else {
         return Err(VmError::MissingReturn);
     };
     let body_completion = execute_try_body(body, registers)?;
     if body_completion.is_suspension() {
         return Ok(body_completion);
     }
+    finish_try_completion(registers, op, body_completion)
+}
+
+pub(crate) fn finish_try_completion(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+    body_completion: Completion,
+) -> Result<Completion, VmError> {
+    let Op::Try {
+        handler,
+        finalizer,
+        catch_slot,
+        dst,
+        finally_dst,
+        ..
+    } = op
+    else {
+        return Err(VmError::MissingReturn);
+    };
     let completion = match body_completion {
         Completion::Throw(value) => match handler {
             Some(ops) => {
@@ -94,3 +105,7 @@ fn bind_caught(
     }
     None
 }
+
+#[cfg(test)]
+#[path = "stencil_exception_boundary_tests.rs"]
+mod boundary_tests;
