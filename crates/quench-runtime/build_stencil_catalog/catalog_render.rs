@@ -7,41 +7,6 @@ fn generate_stencil_catalog(declarations: &[RegionDeclaration]) {
     emit_catalog_rerun_inputs();
 }
 
-fn validate_catalog_declaration(declaration: &RegionDeclaration) {
-    let byte_len = declaration
-        .x86_bytes
-        .len()
-        .max(declaration.aarch64_bytes.len())
-        .max(declaration.portable_bytes.len());
-    validate_holes(declaration, byte_len, declaration.holes, "");
-    validate_holes(
-        declaration,
-        declaration.aarch64_bytes.len(),
-        declaration.aarch64_holes,
-        "AArch64 ",
-    );
-    assert!(
-        has_single_external_entry(declaration.entry, declaration.external_entries),
-        "stencil {} has an external edge into its interior",
-        declaration.name
-    );
-}
-
-fn validate_holes(
-    declaration: &RegionDeclaration,
-    byte_len: usize,
-    holes: &[(u16, usize, &'static str)],
-    target: &str,
-) {
-    for (offset, width, _) in holes {
-        assert!(
-            usize::from(*offset) + *width <= byte_len,
-            "stencil {} has an out-of-range {target}hole",
-            declaration.name
-        );
-    }
-}
-
 struct CatalogParts {
     accessors: String,
     rows: String,
@@ -269,22 +234,6 @@ fn emit_catalog_rerun_inputs() {
     println!("cargo:rerun-if-changed=src/ir.rs");
 }
 
-fn stable_region_id(name: &str) -> u32 {
-    name.bytes().fold(0x811c_9dc5, |hash, byte| {
-        (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
-    })
-}
-
-fn assert_unique_region_ids(declarations: &[RegionDeclaration]) {
-    let mut ids = std::collections::BTreeMap::new();
-    for declaration in declarations {
-        let id = stable_region_id(declaration.name);
-        if let Some(previous) = ids.insert(id, declaration.name) {
-            panic!("region ID collision: {previous} and {}", declaration.name);
-        }
-    }
-}
-
 fn is_numeric_scalar_leaf(declaration: &RegionDeclaration) -> bool {
     declaration.abi == DeclAbi::ScalarF64Binary
         && declaration.operations.last() == Some(&"Return")
@@ -299,10 +248,6 @@ fn is_numeric_scalar_leaf(declaration: &RegionDeclaration) -> bool {
 /// semantic Rust boundary, while raw/scalar rows remain leaf execution.
 fn target_template_calls_helper(declaration: &RegionDeclaration) -> bool {
     matches!(declaration.abi, DeclAbi::Bridge)
-}
-
-fn has_single_external_entry(entry: u32, external_entries: &[u32]) -> bool {
-    external_entries.len() == 1 && external_entries[0] == entry
 }
 
 fn accessor_name(name: &str) -> String {
