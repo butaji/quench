@@ -3333,6 +3333,27 @@ pub(crate) fn http2_module_value() -> Value {
             "sensitiveHeaders".into(),
             crate::modules::http2_util::sensitive_headers(),
         ),
+        (
+            "getDefaultSettings".into(),
+            quench_runtime::host_api::bound_capability_with_arguments(
+                crate::host::capability_ref(crate::registry::SPEC_INTERNAL_HTTP2_UTIL),
+                vec![Value::String("defaultSettings".into())],
+            ),
+        ),
+        (
+            "getPackedSettings".into(),
+            quench_runtime::host_api::bound_capability_with_arguments(
+                crate::host::capability_ref(crate::registry::SPEC_INTERNAL_HTTP2_UTIL),
+                vec![Value::String("packedSettings".into())],
+            ),
+        ),
+        (
+            "getUnpackedSettings".into(),
+            quench_runtime::host_api::bound_capability_with_arguments(
+                crate::host::capability_ref(crate::registry::SPEC_INTERNAL_HTTP2_UTIL),
+                vec![Value::String("unpackedSettings".into())],
+            ),
+        ),
     ])
 }
 
