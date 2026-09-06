@@ -258,9 +258,7 @@ impl Completion {
         )
     }
 
-    pub(crate) fn suspension_point(
-        &self,
-    ) -> Option<&crate::continuation::SuspensionPoint> {
+    pub(crate) fn suspension_point(&self) -> Option<&crate::continuation::SuspensionPoint> {
         match self {
             Self::SuspendAt(_, point) => Some(point),
             Self::YieldAt(_, point) => Some(point),

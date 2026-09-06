@@ -6325,7 +6325,7 @@ pub enum Frame {
         phase: BranchPhase,
         branch_resume: CodeRange,
         resume: CodeRange,
-        dst: u16,
+        dst: Option<u16>,
         yield_dst: u16,
     },
     Private {
@@ -6340,11 +6340,13 @@ pub enum Frame {
         body: CodeRange,
         test: CodeRange,
         update: CodeRange,
-        body_resume: CodeRange,
+        phase: crate::continuation::LoopPhase,
+        phase_resume: CodeRange,
         resume: CodeRange,
         dst: u16,
         yield_dst: u16,
         post_test: bool,
+        per_iteration: Rc<[u16]>,
     },
 }
 

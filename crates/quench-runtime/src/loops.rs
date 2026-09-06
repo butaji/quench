@@ -730,30 +730,42 @@ fn execute_loop_body_step_with_owner(
     body: crate::machine::CodeView<'_>,
     owner: &crate::machine::FunctionCode,
 ) -> Result<(crate::completion::LoopTransition, usize, Option<u16>), crate::execute::VmError> {
-    let mut pc = 0;
+    let step = execute_loop_fragment_step_with_owner(registers, body, owner, 0)?;
+    let slot = suspension_slot(body, &step);
+    Ok((step.completion.into_loop_transition(label), step.next, slot))
+}
+
+fn execute_loop_fragment_step_with_owner(
+    registers: &mut crate::register_file::RegisterFile,
+    body: crate::machine::CodeView<'_>,
+    owner: &crate::machine::FunctionCode,
+    start: usize,
+) -> Result<crate::vm::CompletionStep, crate::execute::VmError> {
+    let mut pc = start;
     loop {
-        let suspension_slot = body.cold_at(pc).and_then(|op| match op {
-            crate::ops::Op::Await { dst, .. } | crate::ops::Op::Yield { src: dst } => Some(*dst),
-            _ => None,
-        });
         let step = crate::vm::execute_code_completion_step_with_owner(body, owner, pc, registers)?;
         pc = step.next;
         match step.completion {
             crate::completion::Completion::Call(continuation) => {
                 crate::vm::vm_ops::execute_call_continuation(registers, continuation)?;
             }
-            completion => {
-                return Ok((
-                    crate::completion::Completion::into_loop_transition(completion, label),
-                    pc,
-                    step.suspended_pc.and_then(|pc| body.cold_at(pc)).and_then(|op| match op {
-                        crate::ops::Op::Await { dst, .. } | crate::ops::Op::Yield { src: dst } => Some(*dst),
-                        _ => None,
-                    }).or(suspension_slot),
-                ));
-            }
+            completion => return Ok(crate::vm::CompletionStep {
+                completion,
+                next: pc,
+                suspended_pc: step.suspended_pc,
+            }),
         }
     }
+}
+
+fn suspension_slot(
+    body: crate::machine::CodeView<'_>,
+    step: &crate::vm::CompletionStep,
+) -> Option<u16> {
+    step.suspended_pc.and_then(|pc| body.cold_at(pc)).and_then(|op| match op {
+        crate::ops::Op::Await { dst, .. } | crate::ops::Op::Yield { src: dst } => Some(*dst),
+        _ => None,
+    })
 }
 
 include!("loops_run.rs");

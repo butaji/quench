@@ -98,15 +98,21 @@ pub(crate) fn physical_cache_signature<const N: usize>(
     values: &PatchValues<'_, N>,
 ) -> u64 {
     let mut hash = cache_signature(view.stencil, values).wrapping_add(0xcbf2_9ce4_8422_2325);
-    for byte in view.artifact_id.as_bytes().iter().chain(
-        view.fingerprint
-            .unwrap_or_default()
-            .as_bytes()
-            .iter(),
-    ) {
-        hash = hash.wrapping_mul(0x1000_0000_01b3).wrapping_add(u64::from(*byte));
+    for byte in view
+        .artifact_id
+        .as_bytes()
+        .iter()
+        .chain(view.fingerprint.unwrap_or_default().as_bytes().iter())
+    {
+        hash = hash
+            .wrapping_mul(0x1000_0000_01b3)
+            .wrapping_add(u64::from(*byte));
     }
-    if hash == 0 { 1 } else { hash }
+    if hash == 0 {
+        1
+    } else {
+        hash
+    }
 }
 
 fn selected_chain_matches(
@@ -149,7 +155,10 @@ fn generated_chain_relocation_is_declared(
                     && relocation.target == "q_fallthrough_tail"
             })
         })
-        && view.relocations.iter().all(|relocation| relocation.kind == expected_kind)
+        && view
+            .relocations
+            .iter()
+            .all(|relocation| relocation.kind == expected_kind)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -215,10 +224,7 @@ pub(crate) struct AllocationLease {
 }
 
 impl AllocationLease {
-    pub(crate) fn invoke_dispatch(
-        self,
-        context: *mut std::ffi::c_void,
-    ) -> Result<u64, ArenaError> {
+    pub(crate) fn invoke_dispatch(self, context: *mut std::ffi::c_void) -> Result<u64, ArenaError> {
         if context.is_null() {
             return Err(ArenaError::ProtectionFailed);
         }
@@ -234,14 +240,10 @@ impl AllocationLease {
     }
 
     pub(crate) fn invoke<R>(self, invoke: impl FnOnce() -> R) -> Result<R, ArenaError> {
-        let valid = self
-            .owner
-            .try_borrow()
-            .ok()
-            .is_some_and(|pool| {
-                pool.validate_address(self.address, self.owner_id, self.abi)
-                    .is_ok()
-            });
+        let valid = self.owner.try_borrow().ok().is_some_and(|pool| {
+            pool.validate_address(self.address, self.owner_id, self.abi)
+                .is_ok()
+        });
         if !valid {
             return Err(ArenaError::ProtectionFailed);
         }
@@ -271,13 +273,18 @@ impl<F: Copy> OwnedLease<F> {
 
 macro_rules! typed_owned_entry {
     ($name:ident, $entry:ident, $ty:ty, $abi:expr) => {
-        pub(crate) fn $name(
-            &self,
-            address: usize,
-        ) -> Result<EntryToken<$ty>, ArenaError> {
+        pub(crate) fn $name(&self, address: usize) -> Result<EntryToken<$ty>, ArenaError> {
             let entry = self.$entry(address)?;
-            let owner = self.owner_for(address).ok_or(ArenaError::ProtectionFailed)?;
-            Ok(EntryToken { address, entry_address: entry as usize, owner, abi: $abi, entry })
+            let owner = self
+                .owner_for(address)
+                .ok_or(ArenaError::ProtectionFailed)?;
+            Ok(EntryToken {
+                address,
+                entry_address: entry as usize,
+                owner,
+                abi: $abi,
+                entry,
+            })
         }
     };
 }
@@ -401,20 +408,13 @@ impl SharedStencilSlab {
     }
 
     fn reclaim_for(&mut self, additional: usize, cache: &mut RenderedRegionCache) -> bool {
-        if self
-            .total_capacity()
-            .saturating_add(additional)
-            <= MAX_SHARED_SLAB_BYTES
-        {
+        if self.total_capacity().saturating_add(additional) <= MAX_SHARED_SLAB_BYTES {
             return true;
         }
         if self.active_dispatches.get() != 0 || self.active_leases() != 0 {
             return false;
         }
-        while self
-            .total_capacity()
-            .saturating_add(additional)
-            > MAX_SHARED_SLAB_BYTES
+        while self.total_capacity().saturating_add(additional) > MAX_SHARED_SLAB_BYTES
             && self.slabs.len() > 1
         {
             let owner = self.slabs[0].id();
@@ -585,24 +585,81 @@ impl SharedStencilSlab {
             pool.validate_token(token)?;
         }
         let allocation = Self::acquire_lease(owner, token.address, token.owner, token.abi)?;
-        Ok(OwnedLease {
-            allocation,
-            token,
-        })
+        Ok(OwnedLease { allocation, token })
     }
 
-    typed_owned_entry!(owned_f64_entry, f64_entry, extern "C" fn(f64, f64) -> f64, crate::stencil_select::RegionAbi::Scalar);
-    typed_owned_entry!(owned_f64x3_entry, f64x3_entry, extern "C" fn(f64, f64, f64) -> f64, crate::stencil_select::RegionAbi::Scalar);
-    typed_owned_entry!(owned_bool_entry, bool_entry, extern "C" fn(f64, f64) -> u64, crate::stencil_select::RegionAbi::ScalarBool);
-    typed_owned_entry!(owned_i32_entry, i32_entry, extern "C" fn(i32, i32) -> i32, crate::stencil_select::RegionAbi::ScalarI32);
-    typed_owned_entry!(owned_u32_entry, u32_entry, extern "C" fn(u32, u32) -> u32, crate::stencil_select::RegionAbi::ScalarU32);
-    typed_owned_entry!(owned_f64_unary_entry, f64_unary_entry, extern "C" fn(f64) -> f64, crate::stencil_select::RegionAbi::Scalar);
-    typed_owned_entry!(owned_i32_unary_entry, i32_unary_entry, extern "C" fn(i32) -> i32, crate::stencil_select::RegionAbi::ScalarI32);
-    typed_owned_entry!(owned_bool_unary_entry, bool_unary_entry, extern "C" fn(f64) -> u64, crate::stencil_select::RegionAbi::ScalarBool);
-    typed_owned_entry!(owned_word_bool_entry, word_bool_entry, extern "C" fn(u64) -> u64, crate::stencil_select::RegionAbi::ScalarWordBool);
-    typed_owned_entry!(owned_word_pair_bool_entry, word_pair_bool_entry, extern "C" fn(u64, u64) -> u64, crate::stencil_select::RegionAbi::ScalarWordPairBool);
-    typed_owned_entry!(owned_constant_word_entry, constant_word_entry, extern "C" fn() -> u64, crate::stencil_select::RegionAbi::ConstantWord);
-    typed_owned_entry!(owned_tagged_word_entry, tagged_word_entry, extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64, crate::stencil_select::RegionAbi::TaggedWord);
+    typed_owned_entry!(
+        owned_f64_entry,
+        f64_entry,
+        extern "C" fn(f64, f64) -> f64,
+        crate::stencil_select::RegionAbi::Scalar
+    );
+    typed_owned_entry!(
+        owned_f64x3_entry,
+        f64x3_entry,
+        extern "C" fn(f64, f64, f64) -> f64,
+        crate::stencil_select::RegionAbi::Scalar
+    );
+    typed_owned_entry!(
+        owned_bool_entry,
+        bool_entry,
+        extern "C" fn(f64, f64) -> u64,
+        crate::stencil_select::RegionAbi::ScalarBool
+    );
+    typed_owned_entry!(
+        owned_i32_entry,
+        i32_entry,
+        extern "C" fn(i32, i32) -> i32,
+        crate::stencil_select::RegionAbi::ScalarI32
+    );
+    typed_owned_entry!(
+        owned_u32_entry,
+        u32_entry,
+        extern "C" fn(u32, u32) -> u32,
+        crate::stencil_select::RegionAbi::ScalarU32
+    );
+    typed_owned_entry!(
+        owned_f64_unary_entry,
+        f64_unary_entry,
+        extern "C" fn(f64) -> f64,
+        crate::stencil_select::RegionAbi::Scalar
+    );
+    typed_owned_entry!(
+        owned_i32_unary_entry,
+        i32_unary_entry,
+        extern "C" fn(i32) -> i32,
+        crate::stencil_select::RegionAbi::ScalarI32
+    );
+    typed_owned_entry!(
+        owned_bool_unary_entry,
+        bool_unary_entry,
+        extern "C" fn(f64) -> u64,
+        crate::stencil_select::RegionAbi::ScalarBool
+    );
+    typed_owned_entry!(
+        owned_word_bool_entry,
+        word_bool_entry,
+        extern "C" fn(u64) -> u64,
+        crate::stencil_select::RegionAbi::ScalarWordBool
+    );
+    typed_owned_entry!(
+        owned_word_pair_bool_entry,
+        word_pair_bool_entry,
+        extern "C" fn(u64, u64) -> u64,
+        crate::stencil_select::RegionAbi::ScalarWordPairBool
+    );
+    typed_owned_entry!(
+        owned_constant_word_entry,
+        constant_word_entry,
+        extern "C" fn() -> u64,
+        crate::stencil_select::RegionAbi::ConstantWord
+    );
+    typed_owned_entry!(
+        owned_tagged_word_entry,
+        tagged_word_entry,
+        extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64,
+        crate::stencil_select::RegionAbi::TaggedWord
+    );
 
     pub(crate) fn with_owned<F: Copy, R>(
         &self,
@@ -752,11 +809,7 @@ impl SharedStencilSlab {
         address: usize,
         context: *mut std::ffi::c_void,
     ) -> Result<u64, ArenaError> {
-        self.execute_dispatch_with_abi(
-            address,
-            context,
-            crate::stencil_select::RegionAbi::Bridge,
-        )
+        self.execute_dispatch_with_abi(address, context, crate::stencil_select::RegionAbi::Bridge)
     }
 
     pub(crate) fn execute_dispatch_with_abi(
@@ -977,7 +1030,10 @@ impl StencilArena {
         &self,
         address: usize,
     ) -> Result<extern "C" fn(u64, u64) -> u64, ArenaError> {
-        self.require_abi(address, crate::stencil_select::RegionAbi::ScalarWordPairBool)?;
+        self.require_abi(
+            address,
+            crate::stencil_select::RegionAbi::ScalarWordPairBool,
+        )?;
         let base = self.ptr as usize;
         let end = base.saturating_add(self.cursor);
         if !self.executable || address < base || address >= end {
@@ -1148,11 +1204,7 @@ impl StencilArena {
         address: usize,
         context: *mut std::ffi::c_void,
     ) -> Result<u64, ArenaError> {
-        self.execute_dispatch_with_abi(
-            address,
-            context,
-            crate::stencil_select::RegionAbi::Bridge,
-        )
+        self.execute_dispatch_with_abi(address, context, crate::stencil_select::RegionAbi::Bridge)
     }
 
     pub fn execute_dispatch_with_abi(
@@ -1487,10 +1539,7 @@ impl StencilArena {
             return fallback();
         }
         let entry_rhs = if key == crate::stencil_select::add_const_region_key() {
-            values
-                .constant_bits()
-                .map(f64::from_bits)
-                .unwrap_or(rhs)
+            values.constant_bits().map(f64::from_bits).unwrap_or(rhs)
         } else {
             rhs
         };
@@ -1514,7 +1563,8 @@ impl StencilArena {
         lhs: f64,
         rhs: f64,
     ) -> Result<bool, ArenaError> {
-        let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.executable) else {
+        let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.executable)
+        else {
             return Err(ArenaError::ProtectionFailed);
         };
         if view.contract().abi != crate::stencil_select::RegionAbi::ScalarBool
@@ -1546,7 +1596,8 @@ impl StencilArena {
         lhs: i32,
         rhs: i32,
     ) -> Result<i32, ArenaError> {
-        let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.executable) else {
+        let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.executable)
+        else {
             return Err(ArenaError::ProtectionFailed);
         };
         if view.contract().abi != crate::stencil_select::RegionAbi::ScalarI32
@@ -1578,7 +1629,8 @@ impl StencilArena {
         lhs: u32,
         rhs: u32,
     ) -> Result<u32, ArenaError> {
-        let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.executable) else {
+        let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.executable)
+        else {
             return Err(ArenaError::ProtectionFailed);
         };
         if view.contract().abi != crate::stencil_select::RegionAbi::ScalarU32
@@ -1635,7 +1687,8 @@ impl StencilArena {
         rhs: f64,
         third: f64,
     ) -> Result<f64, ArenaError> {
-        let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.executable) else {
+        let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.executable)
+        else {
             return Err(ArenaError::ProtectionFailed);
         };
         // A fused chain is emitted as one complete stencil and therefore must
@@ -2001,13 +2054,29 @@ mod tests {
         let mut cache = RenderedRegionCache::new();
         let site = QuickeningSite::<2>::new(Opcode::GetProperty);
         let values = PatchValues::from_site(&site);
-        let first = Stencil { bytes: &[1, 2, 3], holes: &[] };
-        let second = Stencil { bytes: &[4, 5, 6, 7], holes: &[] };
+        let first = Stencil {
+            bytes: &[1, 2, 3],
+            holes: &[],
+        };
+        let second = Stencil {
+            bytes: &[4, 5, 6, 7],
+            holes: &[],
+        };
         arena
-            .render_or_get(&mut cache, crate::stencil_fact::RegionKey(201), &first, &values)
+            .render_or_get(
+                &mut cache,
+                crate::stencil_fact::RegionKey(201),
+                &first,
+                &values,
+            )
             .unwrap();
         let address = arena
-            .render_or_get(&mut cache, crate::stencil_fact::RegionKey(202), &second, &values)
+            .render_or_get(
+                &mut cache,
+                crate::stencil_fact::RegionKey(202),
+                &second,
+                &values,
+            )
             .unwrap();
         assert_eq!(address % STENCIL_ALIGNMENT, 0);
     }
@@ -2212,7 +2281,10 @@ mod tests {
         let site = QuickeningSite::<2>::new(Opcode::Add);
         let values = PatchValues::from_site(&site);
         static BYTES: [u8; 4096] = [0; 4096];
-        let stencil = Stencil { bytes: &BYTES, holes: &[] };
+        let stencil = Stencil {
+            bytes: &BYTES,
+            holes: &[],
+        };
         let first_key = crate::stencil_fact::RegionKey(107);
         let second_key = crate::stencil_fact::RegionKey(108);
         let first = pool
@@ -2277,8 +2349,14 @@ mod tests {
             .borrow_mut()
             .render_or_get(&mut cache, key, &record.stencil, &values)
             .expect("render");
-        shared.borrow_mut().make_executable(address).expect("publish");
-        let token = shared.borrow().owned_f64_entry(address).expect("typed token");
+        shared
+            .borrow_mut()
+            .make_executable(address)
+            .expect("publish");
+        let token = shared
+            .borrow()
+            .owned_f64_entry(address)
+            .expect("typed token");
         let lease = SharedStencilSlab::acquire_owned(&shared, token).expect("lease");
         let result = lease
             .invoke(|entry| {
@@ -2321,7 +2399,10 @@ mod tests {
             .borrow_mut()
             .render_or_get(&mut cache, key, &record.stencil, &values)
             .expect("render");
-        shared.borrow_mut().make_executable(address).expect("publish");
+        shared
+            .borrow_mut()
+            .make_executable(address)
+            .expect("publish");
         let lease = SharedStencilSlab::acquire_address_lease(
             &shared,
             address,
@@ -2355,8 +2436,14 @@ mod tests {
             .borrow_mut()
             .render_or_get(&mut cache, key, &record.stencil, &values)
             .expect("render");
-        shared.borrow_mut().make_executable(address).expect("publish");
-        let token = shared.borrow().owned_f64_entry(address).expect("typed token");
+        shared
+            .borrow_mut()
+            .make_executable(address)
+            .expect("publish");
+        let token = shared
+            .borrow()
+            .owned_f64_entry(address)
+            .expect("typed token");
         let lease = SharedStencilSlab::acquire_owned(&shared, token).expect("lease");
         static FULL_SLAB: [u8; MAX_ARENA_BYTES] = [0; MAX_ARENA_BYTES];
         for raw_key in 0..3 {
@@ -2409,7 +2496,9 @@ mod tests {
                 );
                 pool.active_dispatches.set(0);
             }
-            let address = pool.render_or_get(&mut cache, key, &stencil, &values).unwrap();
+            let address = pool
+                .render_or_get(&mut cache, key, &stencil, &values)
+                .unwrap();
             if raw_key == 0 {
                 first_owner = pool.owner_for(address);
             }
@@ -2490,7 +2579,10 @@ mod tests {
                 &PatchValues::from_site(&site),
             )
             .expect("render");
-        shared.borrow_mut().make_executable(address).expect("publish");
+        shared
+            .borrow_mut()
+            .make_executable(address)
+            .expect("publish");
         let owner = shared.borrow().owner_for(address).expect("owner");
         let state = std::rc::Rc::new(LeaseState {
             active: Cell::new(1),
@@ -2517,7 +2609,9 @@ mod tests {
         let values = PatchValues::from_site(&site);
         let mut pool = SharedStencilSlab::new(4096).unwrap();
         let mut cache = RenderedRegionCache::new();
-        let first = pool.render_or_get(&mut cache, key, &record.stencil, &values).unwrap();
+        let first = pool
+            .render_or_get(&mut cache, key, &record.stencil, &values)
+            .unwrap();
         pool.make_executable(first).unwrap();
         let second_key = crate::stencil_fact::RegionKey(key.value().wrapping_add(1));
         let second = pool
@@ -2525,7 +2619,10 @@ mod tests {
             .unwrap();
         pool.make_executable(second).unwrap();
         let first_token = pool.owned_f64_entry(first).unwrap();
-        let forged = EntryToken { address: second, ..first_token };
+        let forged = EntryToken {
+            address: second,
+            ..first_token
+        };
         assert!(pool
             .with_owned(forged, |_| panic!("mismatched entry was invoked"))
             .is_err());
@@ -2591,7 +2688,11 @@ mod tests {
         let context = (&mut marker as *mut u8).cast::<std::ffi::c_void>();
         assert_eq!(pool.execute_dispatch(address, context).unwrap(), 0xA11B);
         assert!(pool
-            .execute_dispatch_with_abi(address, context, crate::stencil_select::RegionAbi::ArrayKernel)
+            .execute_dispatch_with_abi(
+                address,
+                context,
+                crate::stencil_select::RegionAbi::ArrayKernel
+            )
             .is_err());
         assert!(pool
             .execute_dispatch_with_abi(address + 1, context, record.abi)
@@ -2639,7 +2740,10 @@ mod tests {
             .unwrap();
         arena.make_executable().unwrap();
         let entry = arena.constant_word_entry(address).unwrap();
-        assert_eq!(entry(), crate::tagged_value::TaggedValue::number(42.5).bits());
+        assert_eq!(
+            entry(),
+            crate::tagged_value::TaggedValue::number(42.5).bits()
+        );
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -2651,9 +2755,14 @@ mod tests {
         let values = PatchValues::from_site(&site);
         let mut arena = StencilArena::new(4096).unwrap();
         let mut cache = RenderedRegionCache::new();
-        let address = arena.render_or_get(&mut cache, key, &record.stencil, &values).unwrap();
+        let address = arena
+            .render_or_get(&mut cache, key, &record.stencil, &values)
+            .unwrap();
         arena.make_executable().unwrap();
-        assert!(arena.bool_entry(address).is_err(), "scalar bytes cannot be called as bool ABI");
+        assert!(
+            arena.bool_entry(address).is_err(),
+            "scalar bytes cannot be called as bool ABI"
+        );
         assert!(arena.f64_entry(address).is_ok());
     }
 
@@ -2698,9 +2807,18 @@ mod tests {
         arena.make_executable().unwrap();
         let entry = arena.word_bool_entry(address).unwrap();
         assert!(entry(crate::tagged_value::TaggedValue::bool(true).bits()) != 0);
-        assert_eq!(entry(crate::tagged_value::TaggedValue::bool(false).bits()) != 0, false);
-        assert_eq!(entry(crate::tagged_value::TaggedValue::null().bits()) != 0, false);
-        assert_eq!(entry(crate::tagged_value::TaggedValue::undefined().bits()) != 0, false);
+        assert_eq!(
+            entry(crate::tagged_value::TaggedValue::bool(false).bits()) != 0,
+            false
+        );
+        assert_eq!(
+            entry(crate::tagged_value::TaggedValue::null().bits()) != 0,
+            false
+        );
+        assert_eq!(
+            entry(crate::tagged_value::TaggedValue::undefined().bits()) != 0,
+            false
+        );
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -2761,8 +2879,8 @@ mod tests {
         assert!(entry(null_bits, null_bits) != 0);
 
         let not_equal_key = crate::stencil_select::compare_not_equal_word_region_key();
-        let not_equal_record = crate::stencil_select::select_region(not_equal_key)
-            .expect("word inequality row");
+        let not_equal_record =
+            crate::stencil_select::select_region(not_equal_key).expect("word inequality row");
         let mut not_equal_arena = StencilArena::new(4096).unwrap();
         let mut not_equal_cache = RenderedRegionCache::new();
         let not_equal_address = not_equal_arena
@@ -2788,13 +2906,24 @@ mod tests {
         let values = PatchValues::from_site(&site);
         let cases = [
             (crate::stencil_select::compare_less_region_key(), 1.0, 2.0),
-            (crate::stencil_select::compare_less_equal_region_key(), 2.0, 2.0),
-            (crate::stencil_select::compare_greater_region_key(), 2.0, 1.0),
-            (crate::stencil_select::compare_greater_equal_region_key(), 2.0, 2.0),
+            (
+                crate::stencil_select::compare_less_equal_region_key(),
+                2.0,
+                2.0,
+            ),
+            (
+                crate::stencil_select::compare_greater_region_key(),
+                2.0,
+                1.0,
+            ),
+            (
+                crate::stencil_select::compare_greater_equal_region_key(),
+                2.0,
+                2.0,
+            ),
         ];
         for (key, lhs, rhs) in cases {
-            let record = crate::stencil_select::select_region(key)
-                .expect("comparison declaration");
+            let record = crate::stencil_select::select_region(key).expect("comparison declaration");
             let mut arena = StencilArena::new(4096).unwrap();
             let mut cache = RenderedRegionCache::new();
             let address = arena
@@ -2812,9 +2941,21 @@ mod tests {
         let site = QuickeningSite::<2>::new(Opcode::Binary);
         let values = PatchValues::from_site(&site);
         let cases = [
-            (crate::stencil_select::bitwise_and_region_key(), 0xF0F0_i32, 0x0FF0_i32),
-            (crate::stencil_select::bitwise_or_region_key(), 0xF000_i32, 0x00F0_i32),
-            (crate::stencil_select::bitwise_xor_region_key(), -1_i32, 0x0F0F_i32),
+            (
+                crate::stencil_select::bitwise_and_region_key(),
+                0xF0F0_i32,
+                0x0FF0_i32,
+            ),
+            (
+                crate::stencil_select::bitwise_or_region_key(),
+                0xF000_i32,
+                0x00F0_i32,
+            ),
+            (
+                crate::stencil_select::bitwise_xor_region_key(),
+                -1_i32,
+                0x0F0F_i32,
+            ),
         ];
         for (key, lhs, rhs) in cases {
             let record = crate::stencil_select::select_region(key).expect("bitwise declaration");
@@ -2839,8 +2980,18 @@ mod tests {
         let site = QuickeningSite::<2>::new(Opcode::Binary);
         let values = PatchValues::from_site(&site);
         for (key, lhs, rhs, expected) in [
-            (crate::stencil_select::shift_left_region_key(), 1_i32, 32_i32, 1_i32),
-            (crate::stencil_select::shift_right_region_key(), -8_i32, 1_i32, -4_i32),
+            (
+                crate::stencil_select::shift_left_region_key(),
+                1_i32,
+                32_i32,
+                1_i32,
+            ),
+            (
+                crate::stencil_select::shift_right_region_key(),
+                -8_i32,
+                1_i32,
+                -4_i32,
+            ),
         ] {
             let record = crate::stencil_select::select_region(key).expect("shift declaration");
             let mut arena = StencilArena::new(4096).unwrap();
@@ -2964,14 +3115,16 @@ mod tests {
             assert_eq!(arena.used(), view.stencil.bytes.len() + tail.bytes.len());
             assert_eq!(view.relocations.len(), 2);
             assert!(view.relocations.iter().all(|relocation| {
-                relocation.kind == HoleKind::Branch26
-                    && relocation.target == "q_fallthrough_tail"
+                relocation.kind == HoleKind::Branch26 && relocation.target == "q_fallthrough_tail"
             }));
             assert!(view
                 .relocations
                 .iter()
                 .any(|relocation| relocation.offset == branch_offset));
-            assert!(view.relocations.iter().any(|relocation| relocation.offset == 8));
+            assert!(view
+                .relocations
+                .iter()
+                .any(|relocation| relocation.offset == 8));
         }
         let witness = arena
             .last_physical_execution()
@@ -3150,7 +3303,9 @@ mod tests {
         assert_eq!(view.abi, crate::stencil_select::RegionAbi::Scalar);
         assert_eq!(view.key, key);
         assert!(view.target.is_some_and(|target| !target.is_empty()));
-        assert!(view.fingerprint.is_some_and(|fingerprint| !fingerprint.is_empty()));
+        assert!(view
+            .fingerprint
+            .is_some_and(|fingerprint| !fingerprint.is_empty()));
         assert_ne!(view.stencil.bytes, view.record.stencil.bytes);
         assert_eq!(
             arena.render_selected_f64(&mut cache, key, &values, 3.5, 2.25, || Ok(0.0)),
@@ -3237,7 +3392,11 @@ mod tests {
                 .expect("nested native entry");
             assert_eq!(nested_result, 5.0);
             let mut pool = state.pool.borrow_mut();
-            assert_eq!(pool.active_leases(), 1, "outer lease survives nested return");
+            assert_eq!(
+                pool.active_leases(),
+                1,
+                "outer lease survives nested return"
+            );
             let fresh = Stencil {
                 bytes: &[0, 0, 0, 0],
                 holes: &[],
@@ -3260,11 +3419,15 @@ mod tests {
         let key = crate::stencil_select::dispatch_region_key();
         let record = crate::stencil_select::select_region(key).unwrap();
         let site = QuickeningSite::<2>::new(Opcode::Move);
-        let values = PatchValues::from_site(&site)
-            .with_pointer_bits(helper as *const () as usize);
+        let values = PatchValues::from_site(&site).with_pointer_bits(helper as *const () as usize);
         let address = shared
             .borrow_mut()
-            .render_or_get(&mut RenderedRegionCache::new(), key, &record.stencil, &values)
+            .render_or_get(
+                &mut RenderedRegionCache::new(),
+                key,
+                &record.stencil,
+                &values,
+            )
             .unwrap();
         shared.borrow_mut().make_executable(address).unwrap();
         let nested_key = crate::stencil_select::numeric_region_key(Opcode::Add).unwrap();

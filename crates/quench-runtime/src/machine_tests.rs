@@ -2933,7 +2933,7 @@ fn frame_continuation_register_contract_uses_integer_ids() {
         phase: super::BranchPhase::Body,
         branch_resume: range,
         resume: range,
-        dst: 2,
+        dst: Some(2),
         yield_dst: 4,
     };
     assert_eq!(frame.register_ids(), vec![2, 4]);

@@ -114,9 +114,7 @@ pub(crate) fn retain_active_environment(environment: &Rc<crate::environment::Env
     ENV_ROOTS.with(|roots| roots.borrow_mut().push(Rc::clone(environment)));
 }
 
-pub(crate) fn retain_suspended_generator(
-    generator: &Rc<crate::value::GeneratorData>,
-) {
+pub(crate) fn retain_suspended_generator(generator: &Rc<crate::value::GeneratorData>) {
     SUSPENDED_GENERATORS.with(|roots| {
         roots
             .borrow_mut()
@@ -124,9 +122,7 @@ pub(crate) fn retain_suspended_generator(
     });
 }
 
-pub(crate) fn release_suspended_generator(
-    generator: &Rc<crate::value::GeneratorData>,
-) {
+pub(crate) fn release_suspended_generator(generator: &Rc<crate::value::GeneratorData>) {
     let key = Rc::as_ptr(generator) as usize;
     SUSPENDED_GENERATORS.with(|roots| {
         roots.borrow_mut().remove(&key);
@@ -452,10 +448,7 @@ pub(crate) fn collect_cycles() {
     });
 }
 
-fn root_suspended_generators(
-    ids: &HashMap<usize, usize>,
-    external: &mut [bool],
-) {
+fn root_suspended_generators(ids: &HashMap<usize, usize>, external: &mut [bool]) {
     SUSPENDED_GENERATORS.with(|roots| {
         let mut roots = roots.borrow_mut();
         roots.retain(|_, entry| {
@@ -530,7 +523,11 @@ fn append_generator_edges(
     ids: &HashMap<usize, usize>,
     output: &mut Vec<usize>,
 ) {
-    append_edges(&Value::Function(Rc::clone(&generator.function)), ids, output);
+    append_edges(
+        &Value::Function(Rc::clone(&generator.function)),
+        ids,
+        output,
+    );
     append_edges(&generator.receiver, ids, output);
     for value in &generator.arguments {
         append_edges(value, ids, output);
@@ -870,11 +867,8 @@ mod tests {
         });
         track_function(&function);
         environment.set(0, Value::Function(Rc::clone(&function)));
-        let mut machine = crate::machine::Machine::with_function(
-            &code,
-            crate::machine::EnvironmentRef(0),
-            1,
-        );
+        let mut machine =
+            crate::machine::Machine::with_function(&code, crate::machine::EnvironmentRef(0), 1);
         machine.install_environment(Rc::clone(&environment));
         let generator = Rc::new(crate::value::GeneratorData {
             function: Rc::clone(&function),
@@ -892,13 +886,19 @@ mod tests {
         retain_suspended_generator(&generator);
         drop(function);
         collect_cycles();
-        assert!(weak.upgrade().is_some(), "pending continuation lost its root");
+        assert!(
+            weak.upgrade().is_some(),
+            "pending continuation lost its root"
+        );
 
         release_suspended_generator(&generator);
         drop(generator);
         drop(environment);
         collect_cycles();
-        assert!(weak.upgrade().is_none(), "released continuation retained a cycle");
+        assert!(
+            weak.upgrade().is_none(),
+            "released continuation retained a cycle"
+        );
     }
 
     #[test]
@@ -921,11 +921,8 @@ mod tests {
         });
         track_function(&function);
         environment.set(0, Value::Function(Rc::clone(&function)));
-        let machine = crate::machine::Machine::with_function(
-            &code,
-            crate::machine::EnvironmentRef(0),
-            1,
-        );
+        let machine =
+            crate::machine::Machine::with_function(&code, crate::machine::EnvironmentRef(0), 1);
         let generator = Rc::new(crate::value::GeneratorData {
             function: Rc::clone(&function),
             machine: crate::value::ExecutionCell::new(machine),
@@ -938,9 +935,10 @@ mod tests {
             running: RefCell::new(false),
             async_next_queue: RefCell::new(std::collections::VecDeque::new()),
         });
-        let holder = Rc::new(ObjectData::new(vec![
-            ("generator".into(), Value::Generator(Rc::clone(&generator))),
-        ]));
+        let holder = Rc::new(ObjectData::new(vec![(
+            "generator".into(),
+            Value::Generator(Rc::clone(&generator)),
+        )]));
         track_object(&holder);
         let holder_root = Rc::clone(&holder);
         let weak_function = Rc::downgrade(&function);
@@ -948,12 +946,21 @@ mod tests {
         drop(function);
         drop(generator);
         collect_cycles();
-        assert!(weak_function.upgrade().is_some(), "live generator lost its function");
+        assert!(
+            weak_function.upgrade().is_some(),
+            "live generator lost its function"
+        );
         drop(holder_root);
         drop(holder);
         drop(environment);
         collect_cycles();
-        assert!(weak_generator.upgrade().is_none(), "abandoned generator stayed registered");
-        assert!(weak_function.upgrade().is_none(), "abandoned generator retained its function");
+        assert!(
+            weak_generator.upgrade().is_none(),
+            "abandoned generator stayed registered"
+        );
+        assert!(
+            weak_function.upgrade().is_none(),
+            "abandoned generator retained its function"
+        );
     }
 }
