@@ -18,6 +18,8 @@ use crate::{
 };
 use std::{cell::RefCell, collections::BTreeSet, rc::Rc, sync::OnceLock};
 
+use crate::stencil_cfg::{register_liveness, region_entry_is_legal};
+
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn invoke_f64x2_entry(entry: extern "C" fn(f64, f64) -> f64, lhs: f64, rhs: f64) -> f64 {
@@ -5236,104 +5238,6 @@ impl PartialEq for BaselineEntry {
 }
 
 impl Eq for BaselineEntry {}
-
-fn successor_pcs(entries: &[BaselineEntry], pc: usize) -> Vec<usize> {
-    let Some(entry) = entries.get(pc) else {
-        return Vec::new();
-    };
-    match entry.control {
-        crate::ir::ControlOperands::Next if pc + 1 < entries.len() => vec![pc + 1],
-        crate::ir::ControlOperands::Branch { target, .. } => {
-            let mut successors = vec![usize::from(target)];
-            if pc + 1 < entries.len() && !successors.contains(&(pc + 1)) {
-                successors.push(pc + 1);
-            }
-            successors
-        }
-        crate::ir::ControlOperands::Jump { target } => vec![usize::from(target)],
-        _ => Vec::new(),
-    }
-}
-
-fn register_liveness(
-    entries: &[BaselineEntry],
-    operand_windows: &[Option<&[u16]>],
-) -> Vec<BTreeSet<u16>> {
-    let mut live_in = vec![BTreeSet::new(); entries.len()];
-    let mut live_out = vec![BTreeSet::new(); entries.len()];
-    let conservative = all_register_uses(entries, operand_windows);
-    let mut changed = true;
-    let mut rounds = 0;
-    while changed && rounds <= entries.len().saturating_mul(2) {
-        changed = false;
-        rounds += 1;
-        for pc in (0..entries.len()).rev() {
-            let mut out = BTreeSet::new();
-            for successor in successor_pcs(entries, pc) {
-                if let Some(input) = live_in.get(successor) {
-                    out.extend(input.iter().copied());
-                }
-            }
-            let flow = entries[pc].instruction.register_flow();
-            let window = operand_windows.get(pc).copied().flatten();
-            let input = live_input(&out, flow, window, &conservative);
-            changed |= live_out[pc] != out || live_in[pc] != input;
-            live_out[pc] = out;
-            live_in[pc] = input;
-        }
-    }
-    live_out
-}
-
-fn all_register_uses(
-    entries: &[BaselineEntry],
-    operand_windows: &[Option<&[u16]>],
-) -> BTreeSet<u16> {
-    let mut uses = entries
-        .iter()
-        .flat_map(|entry| entry.instruction.register_flow().uses)
-        .flatten()
-        .collect::<BTreeSet<_>>();
-    uses.extend(
-        operand_windows
-            .iter()
-            .flatten()
-            .flat_map(|window| window.iter().copied()),
-    );
-    uses
-}
-
-fn live_input(
-    output: &BTreeSet<u16>,
-    flow: crate::ir::RegisterFlow,
-    window: Option<&[u16]>,
-    conservative: &BTreeSet<u16>,
-) -> BTreeSet<u16> {
-    let mut input = if flow.complete {
-        output.clone()
-    } else {
-        conservative.clone()
-    };
-    if let Some(definition) = flow.definition {
-        input.remove(&definition);
-    }
-    input.extend(flow.uses.into_iter().flatten());
-    input.extend(window.into_iter().flatten().copied());
-    input
-}
-
-fn region_entry_is_legal(entries: &[BaselineEntry], start: usize, end: usize) -> bool {
-    for predecessor in 0..entries.len() {
-        for successor in successor_pcs(entries, predecessor) {
-            let enters_interior = successor > start && successor < end;
-            let predecessor_is_outside = predecessor < start || predecessor >= end;
-            if enters_interior && predecessor_is_outside {
-                return false;
-            }
-        }
-    }
-    true
-}
 
 /// Admission-time view of the generated region contract.  This keeps static
 /// shape checks out of the hot driver: execution still revalidates the live
