@@ -138,10 +138,44 @@ fn finish(
     facts.scope_count = totals.0;
     facts.symbol_count = totals.1;
     let local_slots = state.local_slots();
-    Ok(ResidualProgram::new(
+    let frame_register_count = state.frame_register_count();
+    Ok(ResidualProgram::with_frame_register_count(
         facts,
         crate::reduce_support::finish_program(state.ops, last)?,
+        frame_register_count,
         module_metadata,
         local_slots,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{reduce_script_sources, ScriptSource};
+
+    #[test]
+    fn script_sequence_freezes_shared_reducer_frame_width() {
+        let declarations = (0..96)
+            .map(|index| format!("var value{index} = {index};"))
+            .collect::<String>();
+        let wide = format!("function nested(){{{declarations}}}");
+        let reduce = |first: &str| {
+            reduce_script_sources(&[
+                ScriptSource {
+                    source: first,
+                    strict: false,
+                },
+                ScriptSource {
+                    source: "var result = 1 + 2; result",
+                    strict: false,
+                },
+            ])
+            .expect("script sequence")
+        };
+        let small = reduce("function nested(){}");
+        let large = reduce(&wide);
+        assert_eq!(
+            large.code().frame_register_count(),
+            small.code().frame_register_count()
+        );
+    }
 }

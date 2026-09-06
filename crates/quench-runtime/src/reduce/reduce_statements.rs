@@ -39,21 +39,7 @@ pub struct ResidualProgram {
 }
 
 impl ResidualProgram {
-    pub(crate) fn new(
-        facts: ProgramDb,
-        ops: Vec<Op>,
-        module_metadata: Option<crate::reduce::ModuleMetadata>,
-        local_slots: HashMap<String, u16>,
-    ) -> Self {
-        Self {
-            facts,
-            code: crate::machine::ExecutableCode::from_ops(ops),
-            module_metadata,
-            local_slots,
-        }
-    }
-
-    fn with_frame_register_count(
+    pub(super) fn with_frame_register_count(
         facts: ProgramDb,
         ops: Vec<Op>,
         frame_register_count: u16,

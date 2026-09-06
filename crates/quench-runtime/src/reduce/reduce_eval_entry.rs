@@ -200,16 +200,23 @@ mod tests {
             .map(|index| format!("var value{index} = {index};"))
             .collect::<String>();
         let source = format!("function wide(){{{body}}} external + 1");
-        let program = super::reduce_eval_source(
-            &source,
-            false,
-            true,
-            true,
-            &[("external".to_string(), 80)],
-            &[],
-        )
-        .expect("eval reduction");
-        let width = program.code().frame_register_count();
-        assert!((81..128).contains(&width), "unexpected eval width {width}");
+        let reduce = |source: &str| {
+            super::reduce_eval_source(
+                source,
+                false,
+                true,
+                true,
+                &[("external".to_string(), 80)],
+                &[],
+            )
+            .expect("eval reduction")
+        };
+        let baseline = reduce("function wide(){} external + 1");
+        let with_nested_function = reduce(&source);
+        assert_eq!(
+            with_nested_function.code().frame_register_count(),
+            baseline.code().frame_register_count()
+        );
+        assert!(baseline.code().frame_register_count() >= 81);
     }
 }
