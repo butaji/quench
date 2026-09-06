@@ -952,6 +952,14 @@ impl RegisterFile {
         release(std::mem::replace(&mut self.words[index], encode(value)));
     }
 
+    pub(crate) fn clear_word(&mut self, index: usize) -> bool {
+        let Some(word) = self.words.get_mut(index) else {
+            return false;
+        };
+        release(std::mem::replace(word, TaggedValue::undefined()));
+        true
+    }
+
     #[inline(always)]
     pub(crate) fn write_owned(&mut self, index: usize, value: &OwnedWord) {
         self.resize_undefined(index + 1);
