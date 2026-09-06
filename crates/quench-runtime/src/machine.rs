@@ -4308,6 +4308,8 @@ pub(crate) struct NativeRegionPlan {
     /// selected through the canonical Rust bridge is deliberately not counted
     /// as native execution.
     last_native_execution: bool,
+    #[cfg(test)]
+    last_native_view: Option<crate::stencil_select::PhysicalStencilView>,
 }
 
 /// Validate the complete residual window before a physical entry is
@@ -4550,11 +4552,20 @@ impl NativeRegionPlan {
             key,
             operations: record.operations,
             last_native_execution: false,
+            #[cfg(test)]
+            last_native_view: None,
         })
     }
 
     pub(crate) fn last_native_execution(&self) -> bool {
         self.last_native_execution
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_native_view_for_test(
+        &self,
+    ) -> Option<crate::stencil_select::PhysicalStencilView> {
+        self.last_native_view
     }
 
     #[cfg(test)]
@@ -4578,6 +4589,10 @@ impl NativeRegionPlan {
         context: &crate::vm::VmContext,
     ) -> Result<crate::vm::DispatchTransition, NativeDispatchError> {
         self.last_native_execution = false;
+        #[cfg(test)]
+        {
+            self.last_native_view = None;
+        }
         let values = crate::stencil_fact::PatchValues::from_site(&self.site)
             .with_pointer_bits(crate::vm::native_region_bridge as *const () as usize);
         let key = self.key;
@@ -4686,6 +4701,10 @@ impl NativeRegionPlan {
                         lease.invoke_dispatch(raw)
                     });
                     self.last_native_execution |= region.native_entered;
+                    #[cfg(test)]
+                    if region.native_entered {
+                        self.last_native_view = Some(view);
+                    }
                     if let Some(result) = physical? {
                         return Ok(result);
                     }
@@ -4705,6 +4724,10 @@ impl NativeRegionPlan {
                             lease.invoke_dispatch(raw)
                         });
                     self.last_native_execution |= region.native_entered;
+                    #[cfg(test)]
+                    if region.native_entered {
+                        self.last_native_view = Some(view);
+                    }
                     if let Some(result) = physical? {
                         return Ok(result);
                     }
