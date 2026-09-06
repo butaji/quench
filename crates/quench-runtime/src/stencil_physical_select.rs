@@ -14,9 +14,7 @@ pub fn select_physical_for_abi(key: RegionKey, abi: RegionAbi) -> Option<Physica
 }
 
 pub fn select_physical(key: RegionKey) -> Option<PhysicalStencilView> {
-    let record = CANONICAL_REGION_TABLE
-        .iter()
-        .find(|record| record.key == key)?;
+    let record = canonical_region_lookup(key)?;
     let artifact = match unique_artifact(BUILD_STENCIL_ARTIFACTS, key, record.name) {
         Ok(Some(artifact)) => artifact,
         Ok(None) => return Some(legacy_physical_view(key, record)),

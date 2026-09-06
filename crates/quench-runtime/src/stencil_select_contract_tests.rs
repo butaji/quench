@@ -188,6 +188,20 @@ fn generated_contracts_reuse_opcode_effects_and_entry_rules() {
 }
 
 #[test]
+fn generated_region_index_is_total_and_identity_preserving() {
+    for (expected, record) in CANONICAL_REGION_TABLE.iter().enumerate() {
+        assert_eq!(canonical_region_index(record.key), Some(expected));
+        assert!(std::ptr::eq(
+            canonical_region_lookup(record.key).expect("declared region"),
+            record
+        ));
+    }
+    let unknown = crate::stencil_fact::RegionKey(u64::MAX);
+    assert_eq!(canonical_region_index(unknown), None);
+    assert!(select_physical(unknown).is_none());
+}
+
+#[test]
 fn abi_contracts_keep_scalar_bridge_and_raw_entries_distinct() {
     for abi in [
         RegionAbi::ScalarF64Binary,
