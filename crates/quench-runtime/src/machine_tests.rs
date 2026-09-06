@@ -2441,6 +2441,7 @@ fn native_add_chain_executes_two_ops_with_one_entry() {
         },
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
         installed: super::InstalledF64x3Entry::Unpublished,
+        last_native_view: None,
         native_entry_count: 0,
     };
     assert_eq!(plan.execute(1.5, 2.25, 4.0), Ok(7.75));
