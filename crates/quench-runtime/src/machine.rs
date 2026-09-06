@@ -2535,8 +2535,7 @@ pub(crate) struct NativeTruthinessPlan {
     key: crate::stencil_fact::RegionKey,
     word_key: crate::stencil_fact::RegionKey,
     pointer_key: crate::stencil_fact::RegionKey,
-    arena: Option<crate::stencil_arena::StencilArena>,
-    shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
+    storage: PhysicalStorage,
     physical: PhysicalState,
     site: crate::quickening::QuickeningSite<2>,
     installed: InstalledTruthinessEntry,
@@ -2564,7 +2563,7 @@ impl NativeTruthinessPlan {
         shared: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
     ) -> Option<Self> {
         let mut plan = Self::new(instruction, policy)?;
-        plan.shared_arena = Some(shared);
+        plan.storage = PhysicalStorage::Shared(shared);
         Some(plan)
     }
 
@@ -2599,8 +2598,7 @@ impl NativeTruthinessPlan {
             key,
             word_key,
             pointer_key,
-            arena: None,
-            shared_arena: None,
+            storage: PhysicalStorage::Local(None),
             physical: PhysicalState::new(),
             site: crate::quickening::QuickeningSite::new(instruction.opcode),
             installed: InstalledTruthinessEntry::Unpublished,
@@ -2612,7 +2610,7 @@ impl NativeTruthinessPlan {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn execute(&mut self, value: f64) -> Result<bool, crate::stencil_arena::ArenaError> {
         let values = crate::stencil_fact::PatchValues::from_site(&self.site);
-        if let Some(shared) = self.shared_arena.clone() {
+        if let Some(shared) = self.storage.shared() {
             if let InstalledTruthinessEntry::NumberShared(owned) = self.installed {
                 if let Ok(result) = invoke_shared_entry!(shared, owned, |entry| entry(value)) {
                     #[cfg(test)]
@@ -2653,7 +2651,7 @@ impl NativeTruthinessPlan {
             };
         }
         if let InstalledTruthinessEntry::NumberLocal(address) = self.installed {
-            if let Some(arena) = self.arena.as_ref() {
+            if let Some(arena) = self.storage.local() {
                 if let Ok(entry) = arena.bool_unary_entry(address) {
                     #[cfg(test)]
                     {
@@ -2664,14 +2662,8 @@ impl NativeTruthinessPlan {
             }
             self.installed = InstalledTruthinessEntry::Unpublished;
         }
-        if self.arena.is_none() {
-            self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
-        }
         let values = crate::stencil_fact::PatchValues::from_site(&self.site);
-        let arena = self
-            .arena
-            .as_mut()
-            .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
+        let arena = self.storage.local_mut()?;
         let view = crate::stencil_select::select_physical_for_abi(
             self.key,
             crate::stencil_select::RegionAbi::ScalarBool,
@@ -2695,7 +2687,7 @@ impl NativeTruthinessPlan {
     ) -> Result<bool, crate::stencil_arena::ArenaError> {
         let values = crate::stencil_fact::PatchValues::from_site(&self.site)
             .with_constant_bits(crate::tagged_value::TaggedValue::bool(true).bits());
-        if let Some(shared) = self.shared_arena.clone() {
+        if let Some(shared) = self.storage.shared() {
             if let InstalledTruthinessEntry::WordShared(owned) = self.installed {
                 if let Ok(result) = invoke_shared_entry!(shared, owned, |entry| entry(value)) {
                     #[cfg(test)]
@@ -2733,7 +2725,7 @@ impl NativeTruthinessPlan {
             return Ok(result != 0);
         }
         if let InstalledTruthinessEntry::WordLocal(address) = self.installed {
-            if let Some(arena) = self.arena.as_ref() {
+            if let Some(arena) = self.storage.local() {
                 if let Ok(entry) = arena.word_bool_entry(address) {
                     #[cfg(test)]
                     {
@@ -2744,13 +2736,7 @@ impl NativeTruthinessPlan {
             }
             self.installed = InstalledTruthinessEntry::Unpublished;
         }
-        if self.arena.is_none() {
-            self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
-        }
-        let arena = self
-            .arena
-            .as_mut()
-            .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
+        let arena = self.storage.local_mut()?;
         let view = crate::stencil_select::select_physical_for_abi(
             self.word_key,
             crate::stencil_select::RegionAbi::ScalarWordBool,
@@ -2773,7 +2759,7 @@ impl NativeTruthinessPlan {
         value: u64,
     ) -> Result<bool, crate::stencil_arena::ArenaError> {
         let values = crate::stencil_fact::PatchValues::from_site(&self.site);
-        if let Some(shared) = self.shared_arena.clone() {
+        if let Some(shared) = self.storage.shared() {
             if let InstalledTruthinessEntry::PointerShared(owned) = self.installed {
                 if let Ok(result) = invoke_shared_entry!(shared, owned, |entry| entry(value)) {
                     self.note_entry();
@@ -2805,7 +2791,7 @@ impl NativeTruthinessPlan {
             return Ok(result != 0);
         }
         if let InstalledTruthinessEntry::PointerLocal(address) = self.installed {
-            if let Some(arena) = self.arena.as_ref() {
+            if let Some(arena) = self.storage.local() {
                 if let Ok(entry) = arena.word_bool_entry(address) {
                     self.note_entry();
                     return Ok(entry(value) != 0);
@@ -2813,13 +2799,7 @@ impl NativeTruthinessPlan {
             }
             self.installed = InstalledTruthinessEntry::Unpublished;
         }
-        if self.arena.is_none() {
-            self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
-        }
-        let arena = self
-            .arena
-            .as_mut()
-            .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
+        let arena = self.storage.local_mut()?;
         let view = crate::stencil_select::select_physical_for_abi(
             self.pointer_key,
             crate::stencil_select::RegionAbi::ScalarWordBool,
