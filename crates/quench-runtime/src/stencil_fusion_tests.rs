@@ -37,6 +37,17 @@ fn execute_case(
     let mut registers = crate::register_file::RegisterFile::with_undefined(
         usize::from(view.register_count()).max(8),
     );
+    let stale_roots: Vec<_> = selection
+        .discarded
+        .into_iter()
+        .flatten()
+        .map(|register| {
+            let owner = std::rc::Rc::new(crate::value::ObjectData::new(vec![]));
+            let weak = std::rc::Rc::downgrade(&owner);
+            registers.write(usize::from(register), Value::Object(owner));
+            weak
+        })
+        .collect();
     let (completion, _) = crate::vm::execute_baseline_code_from(
         view,
         plan,
@@ -46,6 +57,7 @@ fn execute_case(
         environment,
     )
     .expect("local binary execution");
+    assert!(stale_roots.iter().all(|root| root.upgrade().is_none()));
     let native = native.borrow();
     (
         completion,
