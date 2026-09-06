@@ -1227,7 +1227,10 @@ fn named_import_error(name: &str, message: &str) -> VmError {
 }
 
 fn rsa_jwk_algorithm(name: &str, hash: &Value) -> Option<String> {
-    let hash = execute::to_js_string(&execute::get_property(hash, "name")).ok()?;
+    let hash = match hash {
+        Value::String(value) => value.clone(),
+        _ => execute::to_js_string(&execute::get_property(hash, "name")).ok()?,
+    };
     let hash = hash.to_ascii_uppercase();
     let suffix = hash.strip_prefix("SHA-")?;
     match name {
