@@ -60,11 +60,11 @@ fn key_prototype() -> Value {
 }
 
 fn settled(result: Result<Value, VmError>) -> Value {
-    Value::Promise(Rc::new(PromiseData::new(match result {
+    Value::Promise(PromiseData::allocate(match result {
         Ok(value) => PromiseState::Fulfilled(value),
         Err(VmError::Thrown(value)) => PromiseState::Rejected(value),
         Err(_) => PromiseState::Rejected(Value::String("Operation failed".into())),
-    })))
+    }))
 }
 
 fn invalid_subtle_this(receiver: Option<&Value>) -> Option<Value> {

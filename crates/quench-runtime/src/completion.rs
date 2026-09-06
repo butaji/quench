@@ -222,6 +222,24 @@ pub(crate) enum LoopTransition {
 }
 
 impl Completion {
+    pub(crate) fn visit_values(&self, mut visit: impl FnMut(&Value)) {
+        match self {
+            Self::Normal => {}
+            Self::Return(value)
+            | Self::Throw(value)
+            | Self::Yield(value)
+            | Self::YieldAt(value, _) => visit(value),
+            Self::Break { value, .. } | Self::Continue { value, .. } => {
+                value.iter().for_each(&mut visit)
+            }
+            Self::Call(call) => visit_call_values(call, &mut visit),
+            Self::TailCall(call) => visit_tail_call_values(call, &mut visit),
+            Self::Suspend(promise) | Self::SuspendAt(promise, _) => {
+                visit(&Value::Promise(Rc::clone(promise)))
+            }
+        }
+    }
+
     pub(crate) fn into_loop_transition(self, label: &Option<String>) -> LoopTransition {
         match self {
             Self::Normal => LoopTransition::Continue(None),
@@ -307,6 +325,19 @@ impl Completion {
             )),
         }
     }
+}
+
+fn visit_call_values(call: &CallContinuation, visit: &mut impl FnMut(&Value)) {
+    visit(&call.callee);
+    visit(&call.receiver);
+    call.arguments.iter().for_each(&mut *visit);
+    call.caller_registers.visit_values(|value| visit(&value));
+}
+
+fn visit_tail_call_values(call: &TailCallRequest, visit: &mut impl FnMut(&Value)) {
+    visit(&call.callee);
+    visit(&call.receiver);
+    call.arguments.iter().for_each(visit);
 }
 
 #[cfg(test)]
