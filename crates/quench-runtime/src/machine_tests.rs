@@ -911,6 +911,7 @@ fn non_x86_native_execution_rejects_before_mapping() {
         semantic: super::BinarySemantic::Numeric {
             returns_boolean: false,
         },
+        compare_branch: None,
         installed: super::InstalledBinaryEntry::Unpublished,
         native_entry_count: 0,
         last_native_view: None,
@@ -933,6 +934,7 @@ fn native_numeric_entry_pointer_is_cached_after_first_render() {
         semantic: super::BinarySemantic::Numeric {
             returns_boolean: false,
         },
+        compare_branch: None,
         installed: super::InstalledBinaryEntry::Unpublished,
         native_entry_count: 0,
         last_native_view: None,

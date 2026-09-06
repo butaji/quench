@@ -2116,7 +2116,11 @@ pub(crate) fn execute_optimized_code_step_from(
                 crate::execution_trace::stencil_observation(code, start, "binary_word", true);
                 crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
                 write_value(registers, instruction.a, Value::Boolean(result));
-                return Ok((crate::completion::Completion::Normal, start + 1));
+                let next = native
+                    .borrow()
+                    .compare_branch_next(start, result)
+                    .unwrap_or(start + 1);
+                return Ok((crate::completion::Completion::Normal, next));
             }
         }
     }
@@ -2154,14 +2158,18 @@ pub(crate) fn execute_optimized_code_step_from(
                     },
                     true,
                 );
-                let value = if returns_boolean {
-                    Value::Boolean(result != 0.0)
+                let boolean = returns_boolean.then_some(result != 0.0);
+                let value = if let Some(value) = boolean {
+                    Value::Boolean(value)
                 } else {
                     Value::Number(result)
                 };
                 write_value(registers, instruction.a, value);
                 crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
-                return Ok((crate::completion::Completion::Normal, start + 1));
+                let next = boolean
+                    .and_then(|value| native.borrow().compare_branch_next(start, value))
+                    .unwrap_or(start + 1);
+                return Ok((crate::completion::Completion::Normal, next));
             }
         }
         crate::execution_trace::stencil_observation(
@@ -2686,7 +2694,10 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                     crate::execution_trace::stencil_observation(code, pc, "binary_word", true);
                     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
                     registers.write_boolean(usize::from(instruction.a), result);
-                    pc += 1;
+                    pc = native
+                        .borrow()
+                        .compare_branch_next(pc, result)
+                        .unwrap_or(pc + 1);
                     continue;
                 }
             }
@@ -2728,13 +2739,16 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                         true,
                     );
                     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
-                    let value = if returns_boolean {
-                        Value::Boolean(result != 0.0)
+                    let boolean = returns_boolean.then_some(result != 0.0);
+                    let value = if let Some(value) = boolean {
+                        Value::Boolean(value)
                     } else {
                         Value::Number(result)
                     };
                     write_value(registers, instruction.a, value);
-                    pc += 1;
+                    pc = boolean
+                        .and_then(|value| native.borrow().compare_branch_next(pc, value))
+                        .unwrap_or(pc + 1);
                     continue;
                 }
                 crate::execution_trace::stencil_observation(
