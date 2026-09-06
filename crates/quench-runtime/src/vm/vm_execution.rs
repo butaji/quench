@@ -823,6 +823,27 @@ mod tests {
     }
 
     #[test]
+    fn switch_cases_match_numbers_before_default() {
+        run_source(
+            r#"
+                function select(value) {
+                    switch (value) {
+                        case 0: return 3;
+                        case 1: return 7;
+                        case 2: return -1;
+                        default: return 2;
+                    }
+                }
+                if (select(0) !== 3 || select(1) !== 7 ||
+                    select(2) !== -1 || select(3) !== 2) {
+                    throw "switch selected the wrong case";
+                }
+            "#,
+            "numeric switch cases run",
+        );
+    }
+
+    #[test]
     fn array_slice_interleaves_gets_and_species_definitions() {
         let source = r#"
             var log = [];

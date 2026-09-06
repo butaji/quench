@@ -147,7 +147,7 @@ fn reduce_cases(
     let (tests, bodies): (Vec<_>, Vec<_>) = cases.into_iter().unzip();
     let tests = tests
         .into_iter()
-        .map(|test| test.map(crate::machine::FunctionCode::from_ops))
+        .map(|test| test.map(crate::machine::FunctionCode::pending))
         .collect::<Vec<_>>();
     let stores = crate::machine::FunctionCode::pending_many(bodies);
     Ok(tests.into_iter().zip(stores).collect())
