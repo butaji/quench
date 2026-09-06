@@ -1558,6 +1558,12 @@ enum BinarySemantic {
     },
 }
 
+#[derive(Clone, Copy, Debug)]
+struct CompareBranch {
+    false_target: u16,
+    span: u8,
+}
+
 pub(crate) struct NativeBinaryPlan {
     // Mapping is lazy: compiling a baseline plan only records the admitted
     // leaf.  The disposable executable arena is created on first proven
@@ -1574,6 +1580,7 @@ pub(crate) struct NativeBinaryPlan {
     key: crate::stencil_fact::RegionKey,
     tagged_key: Option<crate::stencil_fact::RegionKey>,
     semantic: BinarySemantic,
+    compare_branch: Option<CompareBranch>,
     /// Once the first render has passed all arena and fact checks, retain the
     /// typed entry pointer. Numeric stencil bytes have no mutable VM state;
     /// re-running lifecycle, cache, mprotect, and address checks on every
@@ -1746,6 +1753,7 @@ impl NativeBinaryPlan {
             key,
             tagged_key,
             semantic,
+            compare_branch: None,
             installed: InstalledBinaryEntry::Unpublished,
             #[cfg(test)]
             native_entry_count: 0,
@@ -1785,6 +1793,7 @@ impl NativeBinaryPlan {
             key,
             tagged_key: None,
             semantic: BinarySemantic::Integer { operator, unsigned },
+            compare_branch: None,
             installed: InstalledBinaryEntry::Unpublished,
             #[cfg(test)]
             native_entry_count: 0,
@@ -2314,6 +2323,31 @@ impl NativeBinaryPlan {
             }
         )
     }
+
+    fn install_compare_branch(&mut self, branch: CompareBranch) {
+        if self.returns_boolean() {
+            self.compare_branch = Some(branch);
+        }
+    }
+
+    pub(crate) fn compare_branch_next(&self, pc: usize, value: bool) -> Option<usize> {
+        let branch = self.compare_branch?;
+        Some(if value {
+            pc.checked_add(usize::from(branch.span))?
+        } else {
+            usize::from(branch.false_target)
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_compare_branch(&self) -> bool {
+        self.compare_branch.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn compare_branch_span(&self) -> Option<usize> {
+        self.compare_branch.map(|branch| usize::from(branch.span))
+    }
 }
 
 impl std::fmt::Debug for NativeBinaryPlan {
@@ -2670,6 +2704,11 @@ impl NativeTruthinessPlan {
         _value: f64,
     ) -> Result<bool, crate::stencil_arena::ArenaError> {
         Err(crate::stencil_arena::ArenaError::ProtectionFailed)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn native_entry_count(&self) -> u64 {
+        self.native_entry_count
     }
 }
 
@@ -5351,6 +5390,8 @@ type SharedStencilPool = Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>;
 
 fn collect_numeric_admissions(
     builder: &mut AdmissionBuilder<NativeAdmission>,
+    entries: &[BaselineEntry],
+    liveness: &[BTreeSet<u16>],
     pc: usize,
     entry: BaselineEntry,
     code: CodeView<'_>,
@@ -5358,13 +5399,16 @@ fn collect_numeric_admissions(
     arena: &SharedStencilPool,
 ) {
     let instruction = entry.instruction;
-    builder.push_optional(
-        pc,
-        native_admission!(
-            Binary,
-            NativeBinaryPlan::new_with_shared(instruction, policy, Rc::clone(arena))
-        ),
-    );
+    let binary =
+        NativeBinaryPlan::new_with_shared(instruction, policy, Rc::clone(arena)).map(|mut plan| {
+            if plan.returns_boolean() {
+                if let Some(branch) = compare_branch(entries, liveness, pc, instruction) {
+                    plan.install_compare_branch(branch);
+                }
+            }
+            plan
+        });
+    builder.push_optional(pc, native_admission!(Binary, binary));
     let constant = (instruction.opcode == crate::ir::Opcode::LoadConst)
         .then(|| code.constant(instruction.b).and_then(constant_word_bits))
         .flatten();
@@ -5400,6 +5444,52 @@ fn collect_numeric_admissions(
             NativeUnaryPlan::new_with_shared(instruction, policy, Rc::clone(arena))
         ),
     );
+}
+
+fn compare_branch(
+    entries: &[BaselineEntry],
+    liveness: &[BTreeSet<u16>],
+    pc: usize,
+    comparison: crate::ir::Instruction,
+) -> Option<CompareBranch> {
+    for offset in 1..crate::stencil_plan::MAX_BLOCK_VALUES {
+        let branch_pc = pc.checked_add(offset)?;
+        let entry = entries.get(branch_pc)?;
+        if entry.instruction.opcode == crate::ir::Opcode::JumpIfFalse {
+            return compare_branch_at(entries, pc, branch_pc, comparison, entry.instruction);
+        }
+        if !dead_pure_definition(entry, liveness.get(branch_pc)?) {
+            return None;
+        }
+    }
+    None
+}
+
+fn compare_branch_at(
+    entries: &[BaselineEntry],
+    start: usize,
+    branch_pc: usize,
+    comparison: crate::ir::Instruction,
+    branch: crate::ir::Instruction,
+) -> Option<CompareBranch> {
+    if branch.a != comparison.a {
+        return None;
+    }
+    let end = branch_pc.checked_add(1)?;
+    region_entry_is_legal(entries, start, end).then_some(CompareBranch {
+        false_target: branch.b,
+        span: u8::try_from(end.checked_sub(start)?).ok()?,
+    })
+}
+
+fn dead_pure_definition(entry: &BaselineEntry, live_after: &BTreeSet<u16>) -> bool {
+    let flow = entry.instruction.register_flow();
+    entry.control == crate::ir::ControlOperands::Next
+        && entry.instruction.opcode.effects() == &[crate::facts::OperationEffect::Pure]
+        && flow.complete
+        && flow
+            .definition
+            .is_some_and(|definition| !live_after.contains(&definition))
 }
 
 fn move_admission(
@@ -5663,7 +5753,7 @@ fn collect_admissions_at(
     arena: &SharedStencilPool,
 ) {
     let entry = entries[pc];
-    collect_numeric_admissions(builder, pc, entry, code, policy, arena);
+    collect_numeric_admissions(builder, entries, liveness, pc, entry, code, policy, arena);
     builder.push_optional(
         pc,
         add_chain_admission(entries, liveness, pc, policy, arena),
