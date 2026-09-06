@@ -5,9 +5,11 @@
 //! partially rendered region.
 
 use crate::stencil_fact::{PatchValues, Stencil};
-use crate::stencil_layout::{compose_fallthrough, FixupKind};
 use crate::stencil_patch::{apply_holes, PatchError};
+use crate::stencil_region_layout::compose_selected_region;
 use crate::stencil_select::RenderedRegionCache;
+#[cfg(test)]
+use crate::stencil_layout::FixupKind;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -114,51 +116,6 @@ pub(crate) fn physical_cache_signature<const N: usize>(
     } else {
         hash
     }
-}
-
-fn selected_chain_matches(view: crate::stencil_select::PhysicalStencilView) -> bool {
-    let Some(selected) = crate::stencil_select::select_physical_for_abi(view.key, view.abi) else {
-        return false;
-    };
-    view.matches(&selected)
-        && view.fallthrough.is_some()
-        && (!view.generated || generated_chain_relocation_is_declared(&view))
-}
-
-fn generated_chain_relocation_is_declared(
-    view: &crate::stencil_select::PhysicalStencilView,
-) -> bool {
-    let expected_kind = if cfg!(target_arch = "aarch64") {
-        crate::stencil_fact::HoleKind::Branch26
-    } else {
-        crate::stencil_fact::HoleKind::Rel32
-    };
-    let Some(fallthrough) = view.fallthrough else {
-        return false;
-    };
-    view.relocations.len() == view.stencil.holes.len()
-        && view.relocations.iter().all(|relocation| {
-            view.stencil.holes.iter().any(|hole| {
-                hole.offset == relocation.offset
-                    && hole.kind == relocation.kind
-                    && relocation.target == fallthrough.target
-                    && relocation.addend == 0
-            })
-        })
-        && view
-            .relocations
-            .iter()
-            .all(|relocation| relocation.kind == expected_kind)
-}
-
-#[cfg(target_arch = "x86_64")]
-const fn fallthrough_fixup_kind() -> FixupKind {
-    FixupKind::X86Rel32
-}
-
-#[cfg(target_arch = "aarch64")]
-const fn fallthrough_fixup_kind() -> FixupKind {
-    FixupKind::Aarch64Branch26
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1610,25 +1567,16 @@ impl StencilArena {
         view: crate::stencil_select::PhysicalStencilView,
         values: &PatchValues<'_, N>,
     ) -> Result<usize, ArenaError> {
-        let Some(fallthrough) = view.fallthrough else {
+        if view.fallthrough.is_none() {
             return self.render_selected_view(cache, view, values);
-        };
-        if !selected_chain_matches(view) {
-            return Err(ArenaError::ProtectionFailed);
         }
         let signature = physical_cache_signature(view, values);
         if let Some(address) = self.cached_executable(cache, view.key, signature) {
             return Ok(address);
         }
         let mut bytes = Vec::new();
-        compose_fallthrough(
-            view.stencil,
-            fallthrough.stencil,
-            values,
-            fallthrough_fixup_kind(),
-            &mut bytes,
-        )
-        .map_err(|_| ArenaError::ProtectionFailed)?;
+        compose_selected_region(view, values, &mut bytes)
+            .map_err(|_| ArenaError::ProtectionFailed)?;
         self.publish_composed(cache, view.key, signature, &bytes, view.abi)
     }
 

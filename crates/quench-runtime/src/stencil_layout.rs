@@ -61,6 +61,8 @@ pub(crate) enum LayoutError {
     MissingFixup(u8, u16),
     DuplicateFixup(u8, u16),
     UnexpectedFixup(u8, u16),
+    MissingSuccessor,
+    RelocationContract,
     Patch(PatchError),
 }
 
@@ -199,29 +201,6 @@ fn eliminate_fallthrough_branch(
     if kind == FixupKind::Aarch64Branch26 && target == range.end {
         bytes[range].copy_from_slice(&AARCH64_NOP);
     }
-}
-
-pub(crate) fn compose_fallthrough<const N: usize>(
-    head: &Stencil,
-    tail: &Stencil,
-    values: &PatchValues<'_, N>,
-    kind: FixupKind,
-    output: &mut Vec<u8>,
-) -> Result<(), LayoutError> {
-    let fragments = [
-        StencilFragment {
-            label: LabelId(0),
-            stencil: head,
-            values: *values,
-        },
-        StencilFragment {
-            label: LabelId(1),
-            stencil: tail,
-            values: *values,
-        },
-    ];
-    let fixups = chain_fixups(head, kind);
-    compose_region(&fragments, &fixups, output)
 }
 
 pub(crate) fn compose_region<const N: usize>(
@@ -387,23 +366,6 @@ fn fragments_from_bytes<'a, const N: usize>(
         .map(|(fragment, bytes)| Fragment {
             label: fragment.label,
             bytes,
-        })
-        .collect()
-}
-
-fn chain_fixups(head: &Stencil, kind: FixupKind) -> Vec<Fixup> {
-    let Some(expected) = hole_kind(kind) else {
-        return Vec::new();
-    };
-    head.holes
-        .iter()
-        .filter(|hole| hole.kind == expected)
-        .map(|hole| Fixup {
-            fragment: 0,
-            offset: hole.offset,
-            target: LabelId(1),
-            addend: 0,
-            kind,
         })
         .collect()
 }
