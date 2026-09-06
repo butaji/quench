@@ -784,10 +784,34 @@ pub fn module_set_source_maps_support(args: &[Value]) -> Result<Value, VmError> 
 /// object rather than a second cache implementation.
 pub fn module_enable_compile_cache(args: &[Value]) -> Result<Value, VmError> {
     if let Some(options) = args.first() {
+        // Node accepts the cache directory as a legacy string shorthand as
+        // well as the options object.  The Rust engine intentionally does
+        // not persist V8 bytecode, but a supported argument must still be a
+        // no-op rather than an argument-type failure.
+        if matches!(options, Value::String(_)) && !execute::is_symbol(options) {
+            return Ok(host_api::object(vec![(
+                "status".into(),
+                Value::Number(3.0),
+            )]));
+        }
         if matches!(
             options,
             Value::Undefined | Value::Object(_) | Value::ObjectAlias(_)
         ) {
+            if matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
+                let directory = execute::get_property(options, "directory");
+                if !matches!(directory, Value::Undefined | Value::String(_)) {
+                    let error = quench_runtime::builtins::error(
+                        quench_runtime::ops::Builtin::TypeError,
+                        &[Value::String("cacheDir should be a string".into())],
+                    );
+                    return Err(VmError::Thrown(execute::set_property(
+                        error,
+                        "code",
+                        Value::String("ERR_INVALID_ARG_TYPE".into()),
+                    )));
+                }
+            }
             return Ok(host_api::object(vec![(
                 "status".into(),
                 Value::Number(3.0),
