@@ -234,10 +234,31 @@ pub(crate) fn compose_region<const N: usize>(
     output: &mut Vec<u8>,
 ) -> Result<(), LayoutError> {
     validate_composition_budget(fragments, fixups)?;
+    validate_composition_labels(fragments, fixups)?;
     validate_stencil_fixups(fragments, fixups)?;
     let patched = patch_stencil_fragments(fragments)?;
     let physical = fragments_from_bytes(fragments, &patched);
     StencilLayout::new(&physical, fixups).finalize_into(output)
+}
+
+fn validate_composition_labels<const N: usize>(
+    fragments: &[StencilFragment<'_, '_, N>],
+    fixups: &[Fixup],
+) -> Result<(), LayoutError> {
+    for (index, fragment) in fragments.iter().enumerate() {
+        if fragments[..index]
+            .iter()
+            .any(|prior| prior.label == fragment.label)
+        {
+            return Err(LayoutError::DuplicateLabel(fragment.label));
+        }
+    }
+    for fixup in fixups {
+        if !fragments.iter().any(|item| item.label == fixup.target) {
+            return Err(LayoutError::UndefinedLabel(fixup.target));
+        }
+    }
+    Ok(())
 }
 
 fn validate_composition_budget<const N: usize>(
