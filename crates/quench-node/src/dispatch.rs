@@ -699,7 +699,6 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_MODULE_CREATE_REQUIRE => module_create_require,
         CAP_MODULE_CREATED_REQUIRE => module_created_require,
         CAP_MODULE_CREATED_RESOLVE => module_created_resolve,
-        CAP_MODULE_CREATED_RESOLVE => module_created_resolve,
         CAP_MODULE_STAT => module_stat,
         CAP_MODULE_SET_SOURCEMAPS_SUPPORT => module_set_source_maps_support,
         CAP_MODULE_ENABLE_COMPILE_CACHE => module_enable_compile_cache,
