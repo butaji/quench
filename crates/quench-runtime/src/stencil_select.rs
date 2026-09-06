@@ -112,7 +112,7 @@ pub struct RegionRecord {
     /// All legal external entry offsets, generated from the declaration.
     /// Runtime admission may enter only at one of these boundaries.
     pub external_entries: &'static [u16],
-    pub fallthrough: Option<(&'static Stencil, u16)>,
+    pub fallthrough: Option<PhysicalFallthrough>,
     pub abi: RegionAbi,
     /// Canonical semantic-boundary fact for the selected template. Runtime
     /// validation still checks physical instructions fail-closed; a branch is
@@ -122,6 +122,12 @@ pub struct RegionRecord {
     /// executable semantic leaf.  Those rows remain selectable for auditing,
     /// but the renderer must use the canonical fallback for them.
     pub executable: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PhysicalFallthrough {
+    pub stencil: &'static Stencil,
+    pub fixup_offset: u16,
 }
 
 /// The mechanical semantic contract of a generated region row.  The row's
@@ -243,7 +249,7 @@ pub struct PhysicalStencilView {
     pub abi: RegionAbi,
     pub entry: u16,
     pub external_entries: &'static [u16],
-    pub fallthrough: Option<(&'static Stencil, u16)>,
+    pub fallthrough: Option<PhysicalFallthrough>,
     pub executable: bool,
     pub template_calls_helper: bool,
     pub target: Option<&'static str>,
@@ -277,13 +283,12 @@ impl PhysicalStencilView {
             && self.external_entries == other.external_entries
             && self.stencil.bytes == other.stencil.bytes
             && self.stencil.holes == other.stencil.holes
-            && self.fallthrough.map(|(_, entry)| entry) == other.fallthrough.map(|(_, entry)| entry)
-            && self
-                .fallthrough
-                .zip(other.fallthrough)
-                .is_none_or(|((left, _), (right, _))| {
-                    left.bytes == right.bytes && left.holes == right.holes
-                })
+            && self.fallthrough.map(|item| item.fixup_offset)
+                == other.fallthrough.map(|item| item.fixup_offset)
+            && self.fallthrough.zip(other.fallthrough).is_none_or(|(left, right)| {
+                left.stencil.bytes == right.stencil.bytes
+                    && left.stencil.holes == right.stencil.holes
+            })
             && self.executable == other.executable
             && self.template_calls_helper == other.template_calls_helper
             && self.target == other.target
@@ -375,10 +380,10 @@ fn generated_physical_view(
     record: &'static RegionRecord,
     artifact: &'static BuildStencilArtifact,
 ) -> Option<PhysicalStencilView> {
-    let fallthrough = artifact
-        .fallthrough
-        .as_ref()
-        .map(|stencil| (stencil, artifact.fallthrough_entry));
+    let fallthrough = artifact.fallthrough.as_ref().map(|stencil| PhysicalFallthrough {
+        stencil,
+        fixup_offset: artifact.fallthrough_fixup_offset,
+    });
     let metadata_matches = artifact.name == record.name
         && artifact_identity_matches(artifact, record)
         && artifact.key == key
@@ -395,7 +400,7 @@ fn generated_physical_view(
             .is_none_or(|_| record.fallthrough.is_some())
         && record
             .fallthrough
-            .is_none_or(|(_, entry)| artifact.fallthrough_entry == entry);
+            .is_none_or(|item| artifact.fallthrough_fixup_offset == item.fixup_offset);
     let effects_match = artifact.executable == record.executable
         && artifact.template_calls_helper == record.template_calls_helper;
     if !metadata_matches
@@ -1304,7 +1309,7 @@ mod tests {
                 holes: &[],
             },
             fallthrough: None,
-            fallthrough_entry: 0,
+            fallthrough_fixup_offset: 0,
         };
         static BAD_ENTRIES: BuildStencilArtifact = BuildStencilArtifact {
             name: "add_const",
@@ -1327,7 +1332,7 @@ mod tests {
                 holes: &[],
             },
             fallthrough: None,
-            fallthrough_entry: 0,
+            fallthrough_fixup_offset: 0,
         };
         static BAD_LAYOUT: BuildStencilArtifact = BuildStencilArtifact {
             name: "add_const",
@@ -1350,7 +1355,7 @@ mod tests {
                 holes: &[],
             },
             fallthrough: None,
-            fallthrough_entry: 9,
+            fallthrough_fixup_offset: 9,
         };
         static BAD_ABI: BuildStencilArtifact = BuildStencilArtifact {
             name: "add_const",
@@ -1373,7 +1378,7 @@ mod tests {
                 holes: &[],
             },
             fallthrough: None,
-            fallthrough_entry: 0,
+            fallthrough_fixup_offset: 0,
         };
         static BAD_RELOCATION: BuildStencilArtifact = BuildStencilArtifact {
             name: "add_const",
@@ -1401,7 +1406,7 @@ mod tests {
                 holes: &[],
             },
             fallthrough: None,
-            fallthrough_entry: 0,
+            fallthrough_fixup_offset: 0,
         };
         let record = CANONICAL_REGION_TABLE
             .iter()
@@ -1435,7 +1440,7 @@ mod tests {
                 holes: &[],
             },
             fallthrough: None,
-            fallthrough_entry: 0,
+            fallthrough_fixup_offset: 0,
         };
         assert!(generated_physical_view(record.key, record, &BAD_TARGET).is_none());
     }
