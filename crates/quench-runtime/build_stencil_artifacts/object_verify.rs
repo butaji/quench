@@ -135,7 +135,7 @@ fn parse_object_range(
     );
     let mut holes = expected_holes.to_vec();
     holes.extend(relocations.iter().map(|relocation| ExtractedHole {
-        offset: relocation.offset,
+        offset: u16::try_from(relocation.offset).expect("relocation hole offset"),
         kind: relocation.kind,
     }));
     holes.sort_by_key(|hole| hole.offset);
@@ -197,153 +197,129 @@ fn validate_fragment_relocations(
     file: &object::File<'_>,
     expected: &[ExpectedRelocation],
     context: &str,
-) -> Vec<ExtractedRelocation> {
-    let mut records = Vec::new();
-    if let object::File::MachO64(macho) = file {
-        let mut relocation_count = 0;
-        let mut consumed = vec![false; expected.len()];
-        for section in macho.sections() {
-            let text_section = section.kind() == SectionKind::Text;
-            for relocation in section
-                .macho_relocations()
-                .expect("read Mach-O fragment relocations")
-            {
-                assert!(
-                    text_section,
-                    "Mach-O fragment relocation targets non-text data"
-                );
-                let info = relocation.info(Endianness::Little);
-                assert!(
-                    info.r_address <= u32::from(u16::MAX),
-                    "Mach-O relocation offset is outside the declared range"
-                );
-                let target = macho
-                    .symbol_by_index(object::SymbolIndex(info.r_symbolnum as usize))
-                    .expect("Mach-O fragment relocation symbol")
-                    .name()
-                    .expect("Mach-O fragment relocation name")
-                    .trim_start_matches('_');
-                assert!(
-                    info.r_extern,
-                    "Mach-O fragment relocation must name a symbol"
-                );
-                let expected_index = expected_relocation_index(
-                    expected,
-                    &consumed,
-                    section.kind(),
-                    u64::from(info.r_address),
-                    "Branch26",
-                    target,
-                )
-                .expect("undeclared or duplicate Mach-O fragment relocation");
-                let item = expected[expected_index];
-                assert_eq!(item.addend, 0, "Mach-O branch addend must be zero");
-                assert_eq!(item.width, 4, "Mach-O branch hole width must be four bytes");
-                assert_eq!(info.r_type, object::macho::ARM64_RELOC_BRANCH26);
-                assert!(info.r_pcrel && info.r_length == 2);
-                let bytes = section
-                    .uncompressed_data()
-                    .expect("read Mach-O relocation section");
-                let start = usize::try_from(info.r_address).expect("nonnegative relocation offset");
-                let instruction = bytes
-                    .get(start..start + 4)
-                    .and_then(|slice| slice.try_into().ok())
-                    .map(u32::from_le_bytes)
-                    .expect("Mach-O branch relocation lies within text");
-                assert_eq!(
-                    instruction & 0x03ff_ffff,
-                    0,
-                    "Mach-O Branch26 implicit addend must be zero"
-                );
-                consumed[expected_index] = true;
-                records.push(ExtractedRelocation {
-                    offset: item.offset,
-                    kind: item.kind,
-                    target: item.target,
-                    addend: item.addend,
-                });
-                relocation_count += 1;
-            }
+) -> Vec<DeclaredRelocation> {
+    let observed = match file {
+        object::File::MachO64(macho) => observe_macho_relocations(macho),
+        _ => observe_generic_relocations(file, context),
+    };
+    match_relocation_observations(expected, &observed)
+        .unwrap_or_else(|error| panic!("{context} relocation contract failed: {error:?}"))
+}
+
+fn observe_macho_relocations(
+    file: &object::read::macho::MachOFile64<'_>,
+) -> Vec<ObservedRelocation> {
+    let mut observed = Vec::new();
+    for section in file.sections() {
+        for (offset, relocation) in section.relocations() {
+            observed.push(observe_macho_relocation(file, &section, offset, relocation));
         }
-        assert_eq!(
-            relocation_count,
-            expected.len(),
-            "{context} relocation count mismatch"
-        );
-        assert!(
-            consumed.into_iter().all(|matched| matched),
-            "{context} missing relocation"
-        );
-        records.sort_by_key(|relocation| relocation.offset);
-        return records;
     }
+    observed
+}
+
+fn observe_macho_relocation(
+    file: &object::read::macho::MachOFile64<'_>,
+    section: &object::read::macho::MachOSection64<'_, '_>,
+    offset: u64,
+    relocation: object::read::Relocation,
+) -> ObservedRelocation {
+    assert_eq!(
+        section.kind(),
+        SectionKind::Text,
+        "Mach-O relocation outside text"
+    );
+    assert_macho_branch_flags(relocation.flags());
+    assert_eq!(relocation.kind(), RelocationKind::PltRelative);
+    assert_eq!(relocation.encoding(), RelocationEncoding::AArch64Call);
+    assert_eq!(relocation.size(), 26);
+    assert_macho_zero_branch_addend(section, offset);
+    let RelocationTarget::Symbol(index) = relocation.target() else {
+        panic!("Mach-O relocation must name a symbol")
+    };
+    let symbol = file.symbol_by_index(index).expect("relocation symbol");
+    ObservedRelocation {
+        section: SectionKind::Text,
+        offset,
+        width: 4,
+        kind: "Branch26",
+        target: symbol
+            .name()
+            .expect("relocation name")
+            .trim_start_matches('_')
+            .to_owned(),
+        addend: relocation.addend(),
+    }
+}
+
+fn assert_macho_branch_flags(flags: RelocationFlags) {
+    let RelocationFlags::MachO {
+        r_type,
+        r_pcrel,
+        r_length,
+    } = flags
+    else {
+        panic!("fragment relocation lacks Mach-O flags")
+    };
+    assert_eq!(r_type, object::macho::ARM64_RELOC_BRANCH26);
+    assert!(r_pcrel && r_length == 2);
+}
+
+fn assert_macho_zero_branch_addend(
+    section: &object::read::macho::MachOSection64<'_, '_>,
+    offset: u64,
+) {
+    let bytes = section
+        .uncompressed_data()
+        .expect("read relocation section");
+    let start = usize::try_from(offset).expect("relocation offset");
+    let instruction = bytes
+        .get(start..start + 4)
+        .and_then(|slice| slice.try_into().ok())
+        .map(u32::from_le_bytes)
+        .expect("branch relocation lies within text");
+    assert_eq!(instruction & 0x03ff_ffff, 0, "nonzero implicit addend");
+}
+
+fn observe_generic_relocations(file: &object::File<'_>, context: &str) -> Vec<ObservedRelocation> {
     let text_index = file
         .sections()
         .find(|section| section.kind() == SectionKind::Text)
         .map(|section| section.index());
-    let mut consumed = vec![false; expected.len()];
-    for (relocation_section, offset, relocation) in file.sections().flat_map(|section| {
-        section
-            .relocations()
-            .map(move |(offset, relocation)| (section.index(), offset, relocation))
-    }) {
-        let Some(text_section) = text_index else {
-            panic!("{context} relocation has no text section")
-        };
-        assert_eq!(
-            relocation_section, text_section,
-            "fragment relocation section mismatch"
-        );
-        let target_name = match relocation.target() {
-            RelocationTarget::Symbol(index) => file
-                .symbol_by_index(index)
-                .expect("fragment relocation symbol")
-                .name()
-                .expect("fragment relocation symbol name")
-                .trim_start_matches('_')
-                .to_owned(),
-            _ => panic!("{context} relocation does not name a declared symbol"),
-        };
-        let expected_index = expected_relocation_index(
-            expected,
-            &consumed,
-            SectionKind::Text,
-            offset,
-            "Branch26",
-            &target_name,
-        )
-        .unwrap_or_else(|| panic!("{context} relocation at {offset:#x} is undeclared"));
-        let item = expected[expected_index];
-        consumed[expected_index] = true;
-        assert_eq!(item.kind, "Branch26");
-        assert_eq!(item.width, 4, "branch hole width must be four bytes");
-        assert_eq!(item.addend, relocation.addend());
-        assert_eq!(u64::from(item.offset), offset);
-        assert_eq!(relocation.kind(), RelocationKind::PltRelative);
-        assert_eq!(relocation.encoding(), RelocationEncoding::AArch64Call);
-        assert_eq!(relocation.size(), 26);
-        records.push(ExtractedRelocation {
-            offset: item.offset,
-            kind: item.kind,
-            target: item.target,
-            addend: item.addend,
-        });
-    }
-    let relocation_count = file
-        .sections()
-        .map(|section| section.relocations().count())
-        .sum::<usize>();
-    assert_eq!(
-        relocation_count,
-        expected.len(),
-        "{context} relocation count mismatch"
-    );
-    assert!(
-        consumed.into_iter().all(|matched| matched),
-        "{context} missing relocation"
-    );
-    records.sort_by_key(|relocation| relocation.offset);
-    records
+    file.sections()
+        .flat_map(|section| {
+            section
+                .relocations()
+                .map(move |(offset, relocation)| (section.index(), offset, relocation))
+        })
+        .map(|(section, offset, relocation)| {
+            let Some(text_section) = text_index else {
+                panic!("{context} relocation has no text section")
+            };
+            assert_eq!(section, text_section, "fragment relocation outside text");
+            let target = match relocation.target() {
+                RelocationTarget::Symbol(index) => file
+                    .symbol_by_index(index)
+                    .expect("fragment relocation symbol")
+                    .name()
+                    .expect("fragment relocation symbol name")
+                    .trim_start_matches('_')
+                    .to_owned(),
+                _ => panic!("{context} relocation does not name a declared symbol"),
+            };
+            assert_eq!(relocation.kind(), RelocationKind::PltRelative);
+            assert_eq!(relocation.encoding(), RelocationEncoding::AArch64Call);
+            assert_eq!(relocation.size(), 26);
+            ObservedRelocation {
+                section: SectionKind::Text,
+                offset,
+                width: 4,
+                kind: "Branch26",
+                target,
+                addend: relocation.addend(),
+            }
+        })
+        .collect()
 }
 
 fn find_text_symbol<'data>(

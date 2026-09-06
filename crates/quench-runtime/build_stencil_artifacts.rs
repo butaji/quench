@@ -10,10 +10,12 @@ use std::{
     process::Command,
 };
 
-use object::endian::Endianness;
 use object::read::{Object, ObjectSection, ObjectSymbol};
 use object::SymbolSection;
-use object::{BinaryFormat, RelocationEncoding, RelocationKind, RelocationTarget, SectionKind};
+use object::{
+    BinaryFormat, RelocationEncoding, RelocationFlags, RelocationKind, RelocationTarget,
+    SectionKind,
+};
 
 use super::RegionDeclaration;
 
@@ -43,6 +45,7 @@ include!("build_stencil_artifacts/model.rs");
 include!("build_stencil_artifacts/public_verify.rs");
 include!("build_stencil_artifacts/pipeline.rs");
 include!("build_stencil_artifacts/compiler.rs");
+include!("build_stencil_artifacts/relocation_contract.rs");
 include!("build_stencil_artifacts/object_verify.rs");
 include!("build_stencil_artifacts/render.rs");
 include!("build_stencil_artifacts/process.rs");
