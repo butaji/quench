@@ -11,16 +11,16 @@ mod build_stencil_contract;
 mod build_stencil_templates;
 
 use build_stencil_contract::{
-    region_key_name, rust_assembly_recipe, DeclAbi, PhysicalBinding, PhysicalBindingValue,
-    PhysicalOperand, PhysicalOperandField, PhysicalOutput, PhysicalOutputDestination,
-    PhysicalOutputValue, RecipeComposition, RegionDeclaration, RustAssemblyRecipe,
+    equal, operand, region_key_name, value, AssemblyContinuation, DeclAbi, PhysicalBinding,
+    PhysicalBindingValue, PhysicalOperand, PhysicalOperandField, PhysicalOutput,
+    PhysicalOutputDestination, PhysicalOutputValue, RecipeComposition, RegionDeclaration,
 };
 
 include!("build_stencil_catalog/encoding_common.rs");
 include!("build_stencil_catalog/encoding_x86.rs");
 include!("build_stencil_catalog/encoding_aarch64.rs");
 include!("build_stencil_catalog/declarations_rust_leaf.rs");
-include!("build_stencil_catalog/declarations_leaf.rs");
+include!("build_stencil_catalog/declarations_rust_assembly.rs");
 include!("build_stencil_catalog/declarations_composed.rs");
 include!("build_stencil_catalog/declarations_tagged.rs");
 include!("build_stencil_catalog/driver.rs");

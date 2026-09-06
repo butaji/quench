@@ -133,15 +133,18 @@ impl PhysicalOutput {
     }
 }
 
-const fn operand(operation: u8, field: PhysicalOperandField) -> PhysicalOperand {
+pub(crate) const fn operand(operation: u8, field: PhysicalOperandField) -> PhysicalOperand {
     PhysicalOperand { operation, field }
 }
 
-const fn value(operation: u8, field: PhysicalOperandField) -> PhysicalBindingValue {
+pub(crate) const fn value(operation: u8, field: PhysicalOperandField) -> PhysicalBindingValue {
     PhysicalBindingValue::Operand(operand(operation, field))
 }
 
-const fn equal(left: PhysicalBindingValue, right: PhysicalBindingValue) -> PhysicalBinding {
+pub(crate) const fn equal(
+    left: PhysicalBindingValue,
+    right: PhysicalBindingValue,
+) -> PhysicalBinding {
     PhysicalBinding::Equal(left, right)
 }
 
@@ -227,7 +230,8 @@ macro_rules! rust_leaf_catalog {
 macro_rules! rust_assembly_catalog {
     ($( $variant:ident {
         name: $name:literal, abi: $abi:ident, ops: [$($op:literal),+],
-        holes: [$($hole:expr),*]
+        x86: $x86:expr, aarch64: $aarch64:expr,
+        x86_holes: $x86_holes:expr, aarch64_holes: $aarch64_holes:expr
         $(, bindings: $bindings:expr)?
         $(, outputs: $outputs:expr)?
         $(, continuation: { head: $head:literal, tail: $tail:literal, target: $target:literal })?
@@ -265,18 +269,24 @@ macro_rules! rust_assembly_catalog {
                 }
             }
 
-            fn matches(self, declaration: &RegionDeclaration) -> bool {
-                match self {
-                    $( Self::$variant => declaration.name == $name
-                        && declaration.abi == DeclAbi::$abi
-                        && declaration.operations == &[$($op),+]
-                        && declaration.aarch64_holes == &[$($hole),*], )+
-                }
-            }
         }
 
         const RUST_ASSEMBLY_RECIPES: &[RustAssemblyRecipe] =
             &[$(RustAssemblyRecipe::$variant),+];
+        const RUST_ASSEMBLY_DECLARATIONS: &[RegionDeclaration] = &[$(
+            RegionDeclaration {
+                name: $name,
+                operations: &[$($op),+],
+                abi: DeclAbi::$abi,
+                x86_bytes: $x86,
+                aarch64_bytes: $aarch64,
+                portable_bytes: &[0xC3],
+                holes: $x86_holes,
+                aarch64_holes: $aarch64_holes,
+                entry: 0,
+                external_entries: &[0],
+            }
+        ),+];
     };
 }
 
@@ -296,115 +306,4 @@ macro_rules! rust_assembly_outputs {
     ($outputs:expr) => {
         $outputs
     };
-}
-
-rust_assembly_catalog! {
-    Fallthrough {
-        name: "fallthrough", abi: ScalarF64Binary,
-        ops: ["Add", "Return"], holes: [(4, 4, "Branch26"), (8, 4, "Branch26")],
-        continuation: { head: "fallthrough_head", tail: "fallthrough_tail", target: "q_fallthrough_tail" },
-        composition: LinkedFragments
-    },
-    AddChain {
-        name: "add_chain", abi: ScalarF64x3,
-        ops: ["Add", "Add"], holes: [(4, 4, "Branch26")],
-        continuation: { head: "add_chain_head", tail: "add_chain_tail", target: "q_add_chain_tail" },
-        composition: LinkedFragments
-    },
-    CompareEqualBranch {
-        name: "compare_equal_branch", abi: CompareBranch,
-        ops: ["Binary", "JumpIfFalse"], holes: []
-    },
-    CompareNotEqualBranch {
-        name: "compare_not_equal_branch", abi: CompareBranch,
-        ops: ["Binary", "JumpIfFalse"], holes: []
-    },
-    CompareLessBranch {
-        name: "compare_less_branch", abi: CompareBranch,
-        ops: ["Binary", "JumpIfFalse"], holes: []
-    },
-    CompareLessEqualBranch {
-        name: "compare_less_equal_branch", abi: CompareBranch,
-        ops: ["Binary", "JumpIfFalse"], holes: []
-    },
-    CompareGreaterBranch {
-        name: "compare_greater_branch", abi: CompareBranch,
-        ops: ["Binary", "JumpIfFalse"], holes: []
-    },
-    CompareGreaterEqualBranch {
-        name: "compare_greater_equal_branch", abi: CompareBranch,
-        ops: ["Binary", "JumpIfFalse"], holes: []
-    },
-    ArrayNumericLoop {
-        name: "array_numeric_loop", abi: ArrayNumericLoop,
-        ops: ["LoadLocal", "LoadConst", "Binary", "JumpIfFalse", "LoadLocal",
-            "Move", "LoadLocal", "Move", "LoadLocal", "Slow", "LoadLocal",
-            "AGetI", "AddConst", "ASetI", "Move", "LoadLocal", "AddConst",
-            "StoreLocal", "Jump"], holes: [],
-        bindings: &ARRAY_NUMERIC_LOOP_BINDINGS,
-        outputs: &ARRAY_NUMERIC_LOOP_OUTPUTS
-    },
-    Property { name: "property", abi: PropertyGuard, ops: ["GetN"], holes: [] },
-    PrototypeProperty { name: "prototype_property", abi: PropertyGuard, ops: ["GetN"], holes: [] },
-    StoreProperty { name: "store_property", abi: PropertyWriteGuard, ops: ["SetN"], holes: [] },
-    ArrayGetNumber { name: "array_get_number", abi: ArrayKernel, ops: ["AGetI"], holes: [], outputs: &ARRAY_GET_OUTPUTS },
-    ArraySetNumber { name: "array_set_number", abi: ArrayKernel, ops: ["ASetI"], holes: [] },
-    ArrayGetIncNumber { name: "array_get_inc_number", abi: ArrayKernel, ops: ["AGetIInc"], holes: [], outputs: &ARRAY_GET_INC_OUTPUTS },
-    ArrayNumericUpdate { name: "array_numeric_update", abi: ArrayKernel, ops: ["AGetI", "Add", "ASetI"], holes: [], outputs: &ARRAY_UPDATE_OUTPUTS },
-    ArrayNumericUpdateConst { name: "array_numeric_update_const", abi: ArrayKernel, ops: ["AGetI", "AddConst", "ASetI"], holes: [], outputs: &ARRAY_UPDATE_OUTPUTS },
-    ArrayLoopBody { name: "array_loop_body", abi: ArrayKernel, ops: ["LoadLocalChecked", "AGetI", "Add", "ASetI", "Return"], holes: [], outputs: &ARRAY_LOOP_BODY_OUTPUTS },
-    Move { name: "move", abi: TaggedWord, ops: ["Move"], holes: [] },
-    LoadLocal { name: "load_local", abi: TaggedWord, ops: ["LoadLocal"], holes: [] },
-    StoreLocal { name: "store_local", abi: TaggedWord, ops: ["StoreLocal"], holes: [] },
-    TruthyPointer { name: "truthy_pointer_word", abi: ScalarWordBool, ops: ["JumpIfFalse"], holes: [] },
-    LoadConst { name: "load_const", abi: ConstantWord, ops: ["LoadConst", "Return"], holes: [(8, 8, "Literal64")] },
-    NullishWord { name: "nullish_word", abi: ScalarWordBool, ops: ["Unary", "Return"], holes: [(24, 8, "Literal64")] },
-    TruthyWord { name: "truthy_word", abi: ScalarWordBool, ops: ["JumpIfFalse"], holes: [(16, 8, "Literal64")] },
-}
-
-use PhysicalBindingValue::{RegionEnd, RegionStart};
-use PhysicalOperandField::{A, B, C};
-
-const ARRAY_NUMERIC_LOOP_DISTINCT: &[PhysicalOperand] = &[
-    operand(0, A),
-    operand(1, A),
-    operand(4, A),
-    operand(6, A),
-    operand(8, A),
-    operand(10, A),
-    operand(11, A),
-    operand(12, A),
-    operand(15, A),
-    operand(16, A),
-];
-
-const ARRAY_NUMERIC_LOOP_BINDINGS: &[PhysicalBinding] = &[
-    equal(value(2, A), value(3, A)),
-    equal(value(2, B), value(0, A)),
-    equal(value(2, C), value(1, A)),
-    equal(value(3, B), RegionEnd),
-    equal(value(18, A), RegionStart),
-    equal(value(4, B), value(8, B)),
-    equal(value(8, A), value(11, B)),
-    equal(value(6, B), value(15, B)),
-    equal(value(6, B), value(10, B)),
-    equal(value(0, A), value(17, A)),
-    equal(value(16, B), value(15, A)),
-    equal(value(17, B), value(16, A)),
-    equal(value(7, A), value(13, A)),
-    equal(value(11, A), value(12, B)),
-    equal(value(12, A), value(13, C)),
-    equal(value(14, B), value(12, A)),
-    equal(value(5, B), value(4, A)),
-    equal(value(7, B), value(5, A)),
-    PhysicalBinding::AllDistinct(ARRAY_NUMERIC_LOOP_DISTINCT),
-];
-
-include!("build_stencil_outputs.rs");
-
-pub(crate) fn rust_assembly_recipe(declaration: &RegionDeclaration) -> Option<RustAssemblyRecipe> {
-    RUST_ASSEMBLY_RECIPES
-        .iter()
-        .copied()
-        .find(|recipe| recipe.matches(declaration))
 }

@@ -15,9 +15,9 @@ fn aarch64_add_chain_tail() -> &'static str {
 }
 
 pub(crate) fn fragment_sources(
-    recipe: crate::build_stencil_contract::RustAssemblyRecipe,
+    recipe: super::RustAssemblyRecipe,
 ) -> Option<(&'static str, &'static str)> {
-    use crate::build_stencil_contract::RustAssemblyRecipe::{AddChain, Fallthrough};
+    use super::RustAssemblyRecipe::{AddChain, Fallthrough};
     match recipe {
         Fallthrough => Some((aarch64_head(), aarch64_tail())),
         AddChain => Some((aarch64_add_chain_head(), aarch64_add_chain_tail())),
@@ -280,8 +280,8 @@ fn nullish_word_source(name: &str) -> String {
     )
 }
 
-pub(crate) fn assembly_source(recipe: crate::build_stencil_contract::RustAssemblyRecipe) -> String {
-    use crate::build_stencil_contract::RustAssemblyRecipe::*;
+pub(crate) fn assembly_source(recipe: super::RustAssemblyRecipe) -> String {
+    use super::RustAssemblyRecipe::*;
     match recipe {
         Fallthrough | AddChain => fragment_sources(recipe)
             .map(|(head, tail)| head.to_owned() + tail)
