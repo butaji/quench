@@ -141,6 +141,75 @@ fn code_view_register_width_comes_from_lowered_operands() {
     assert_eq!(function.code().expect("compact code").register_count(), 3);
 }
 
+fn lowered_named_call(args: Vec<u16>) -> super::FunctionCode {
+    super::FunctionCode::from_ops(vec![
+        super::Op::GetProperty {
+            dst: 4,
+            object: 2,
+            key: "method".into(),
+        },
+        super::Op::CallMethod {
+            dst: 3,
+            object: 2,
+            key: "method".into(),
+            callee: Some(4),
+            spreads: vec![false; args.len()],
+            args,
+        },
+        super::Op::Return { src: 3 },
+    ])
+}
+
+#[test]
+fn lowered_named_call_width_uses_real_argument_operands() {
+    let zero = lowered_named_call(Vec::new());
+    let one = lowered_named_call(vec![9]);
+    let many = lowered_named_call(vec![5, 7, 11]);
+    assert_eq!(zero.code().unwrap().instruction(0).unwrap().opcode, crate::ir::Opcode::CallN);
+    assert_eq!(zero.required_register_count(), 4);
+    assert_eq!(one.required_register_count(), 10);
+    assert_eq!(many.required_register_count(), 12);
+}
+
+fn source_call_frame(source: &str, argc: u8) -> (u16, Option<Vec<u16>>) {
+    let program = crate::reduce::reduce_source(source).expect("call source lowers");
+    let mut found = None;
+    crate::stencil_test_support::visit_code_views(program.code(), &mut |code| {
+        for pc in 0..code.len() {
+            let Some(instruction) = code.instruction(pc) else {
+                continue;
+            };
+            if instruction.opcode == crate::ir::Opcode::CallN && instruction.flags == argc {
+                found = Some((
+                    code.frame_register_count(),
+                    code.operand_window_at(pc).map(<[u16]>::to_vec),
+                ));
+            }
+        }
+    });
+    found.expect("named call instruction")
+}
+
+#[test]
+fn ordinary_source_call_frames_use_declared_argument_windows() {
+    let zero_source = "function f(o){return o.m()} if(f({m(){return 1}})!==1)throw 0";
+    let many_source = concat!(
+        "function f(o){return o.m(1,2,3)} ",
+        "if(f({m(a,b,c){return a+b+c}})!==6)throw 0"
+    );
+    let zero = source_call_frame(zero_source, 0);
+    let many = source_call_frame(many_source, 3);
+    assert!(zero.0 < 32, "zero-argument sentinel widened frame");
+    assert_eq!(zero.1, None);
+    assert_eq!(many.1.as_deref(), Some([2, 3, 4].as_slice()));
+    assert!(many.0 < 32, "fixed argument window widened frame");
+    for source in [zero_source, many_source] {
+        let program = crate::reduce::reduce_source(source).expect("call source reduces");
+        crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default())
+            .expect("call source executes");
+    }
+}
+
 #[test]
 fn nested_function_registers_do_not_widen_the_caller_frame() {
     let nested = super::FunctionCode::pending(vec![
