@@ -155,6 +155,17 @@ fn copy_slice(
     end: isize,
     species: Option<Value>,
 ) -> Result<Value, crate::execute::VmError> {
+    let Some(target) = species else {
+        return copy_default_slice(this, start, end);
+    };
+    copy_species_slice(this, start, end, target)
+}
+
+fn copy_default_slice(
+    this: &Value,
+    start: isize,
+    end: isize,
+) -> Result<Value, crate::execute::VmError> {
     let mut elements = Vec::new();
     let mut holes = Vec::new();
     for key in start..end {
@@ -166,35 +177,36 @@ fn copy_slice(
             elements.push(Value::Undefined);
         }
     }
-    apply_slice(elements, holes, species)
+    let mut data = crate::value::ArrayData::new(elements);
+    for index in holes {
+        data.delete_property(&index.to_string());
+    }
+    Ok(Value::Array(std::rc::Rc::new(data)))
 }
 
-fn apply_slice(
-    elements: Vec<Value>,
-    holes: Vec<usize>,
-    species: Option<Value>,
+fn copy_species_slice(
+    this: &Value,
+    start: isize,
+    end: isize,
+    target: Value,
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(target) = species else {
-        let mut data = crate::value::ArrayData::new(elements);
-        for index in holes {
-            data.delete_property(&index.to_string());
-        }
-        return Ok(Value::Array(std::rc::Rc::new(data)));
-    };
     let mut target = crate::locals::resolved_replacement(target);
-    let length = elements.len();
-    for (index, value) in elements.into_iter().enumerate() {
-        if !holes.contains(&index) {
+    let mut destination = 0usize;
+    for source in start..end {
+        let key = source.to_string();
+        if crate::with_scope::has_property(this, &key)? {
+            let value = crate::execute::get_property_result(this, &key)?;
             target = crate::builtins::create_data_property_or_throw(
                 target,
-                &index.to_string(),
+                &destination.to_string(),
                 value,
             )?;
         }
+        destination = destination.saturating_add(1);
     }
-    Ok(crate::builtins::set_property(
-        target,
+    crate::properties::assign_set_property(
+        &target,
         "length",
-        Value::Number(length as f64),
-    ))
+        Value::Number(destination as f64),
+    )
 }
