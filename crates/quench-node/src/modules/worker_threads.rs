@@ -722,6 +722,7 @@ fn worker_complete(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Val
     let output = args.get(1).cloned().unwrap_or(Value::Undefined);
     let shared = execute::get_property(worker, "\0worker-state");
     execute::set_property_in_place(&shared, "destroyed", Value::Boolean(false));
+    let status = execute::get_property(&output, "status");
     let stdout = execute::get_property(&output, "stdout");
     let stderr = execute::get_property(&output, "stderr");
     let stdout_obj = execute::get_property(worker, "stdout");
@@ -737,7 +738,7 @@ fn worker_complete(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Val
         );
         parse_messages(state, worker, &text);
     }
-    if let Value::String(text) = stderr {
+    if let Value::String(text) = stderr.clone() {
         let _ = crate::modules::events::method_emit(
             state,
             Some(&stderr_obj),
@@ -757,7 +758,29 @@ fn worker_complete(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Val
         Some(&stderr_obj),
         &[Value::String("end".into())],
     );
-    let status = execute::get_property(&output, "status");
+    // A worker that terminates with an uncaught exception emits `error` on
+    // its Worker object. With no listener Node propagates that unhandled
+    // error to the parent process (and therefore exits non-zero); listeners
+    // may consume it and allow the parent to continue. Preserve that
+    // lifecycle fact from the Rust child result instead of silently turning
+    // every worker failure into a successful parent evaluation.
+    if matches!(&status, Value::Number(code) if *code != 0.0)
+        && matches!(&stderr, Value::String(text) if !text.is_empty())
+    {
+        let message = match stderr {
+            Value::String(text) => text.trim().to_string(),
+            _ => String::new(),
+        };
+        let error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String(message)],
+        );
+        crate::modules::events::method_emit(
+            state,
+            Some(worker),
+            &[Value::String("error".into()), error],
+        )?;
+    }
     let _ =
         crate::modules::events::method_emit(state, Some(worker), &[Value::String("online".into())]);
     let _ = crate::modules::events::method_emit(
