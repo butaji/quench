@@ -1,6 +1,31 @@
 use crate::completion::Completion;
-use crate::ops::{BinaryOp, Op};
+use crate::ops::{BinaryOp, HostCapabilityKind, HostCapabilityRef, Op, RealmId};
 use crate::value::Value;
+use crate::vm::{Host, VmError};
+use std::cell::Cell;
+
+const ROOT_CHECK: HostCapabilityKind = HostCapabilityKind::Custom(0x752);
+
+struct RootCheckingHost {
+    root: std::rc::Weak<crate::value::FunctionValue>,
+    effects: Cell<u32>,
+}
+
+impl Host for RootCheckingHost {
+    fn call(
+        &self,
+        capability: HostCapabilityRef,
+        _receiver: Option<&Value>,
+        _arguments: &[Value],
+    ) -> Result<Value, VmError> {
+        assert_eq!(capability.kind, ROOT_CHECK);
+        self.effects.set(self.effects.get() + 1);
+        crate::cycle_collector::collect_cycles();
+        let root = self.root.upgrade().expect("pending throw root survives");
+        assert!(matches!(root.captures.get(0), Value::Function(_)));
+        Ok(Value::Undefined)
+    }
+}
 
 struct BoundaryFixture {
     body: crate::machine::FunctionCode,
@@ -101,4 +126,36 @@ fn failed_numeric_guard_falls_back_before_throw_and_finally() {
     let completion = finish(&mut fixture, completion);
     assert_eq!(completion, Completion::Throw(Value::String("boom".into())));
     assert_eq!(fixture.registers.read(4), Some(Value::Number(1.0)));
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn pending_throw_roots_value_across_allocating_finalizer_boundary() {
+    let (root, weak) = crate::stencil_test_support::cyclic_function_root();
+    let mut fixture = fixture(Value::Number(2.0), Value::Number(3.0));
+    fixture.registers.write(3, root);
+    fixture
+        .registers
+        .write(7, crate::host_api::custom_function(RealmId::ROOT, 0x752));
+    let Op::Try { finalizer, .. } = &mut fixture.try_op else {
+        unreachable!()
+    };
+    *finalizer = Some(crate::machine::FunctionCode::from_ops(vec![Op::Call {
+        dst: 8,
+        callee: 7,
+        receiver: None,
+        args: Vec::new(),
+        spreads: Vec::new(),
+    }]));
+    let (completion, plan) = execute_body(&mut fixture);
+    fixture.registers.write(3, Value::Undefined);
+    let host = std::rc::Rc::new(RootCheckingHost {
+        root: weak,
+        effects: Cell::new(0),
+    });
+    let context = crate::vm::VmContext::default().with_host(host.clone());
+    let completion = crate::vm::with_current_context(&context, || finish(&mut fixture, completion));
+    assert!(matches!(completion, Completion::Throw(Value::Function(_))));
+    assert_eq!(native_entries(&plan), 1);
+    assert_eq!(host.effects.get(), 1);
 }

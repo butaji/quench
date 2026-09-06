@@ -111,28 +111,6 @@ fn assert_root_survives(root: &Weak<FunctionValue>) -> Result<(), VmError> {
     }
 }
 
-fn cyclic_function_root() -> (Value, Weak<FunctionValue>) {
-    let captures = crate::environment::Environment::new();
-    let function = Rc::new(FunctionValue {
-        code: crate::machine::FunctionCode::from_ops(vec![Op::Return { src: 0 }]),
-        params: 0,
-        captures: Rc::clone(&captures),
-        with_captures: Vec::new(),
-        properties: Rc::new(RefCell::new(Vec::new())),
-        private_slots: Rc::new(RefCell::new(Vec::new())),
-        private_environment: Default::default(),
-        instance_fields: Rc::new(RefCell::new(Vec::new())),
-        kind: crate::ops::FunctionKind::Ordinary,
-        strictness: crate::ops::FunctionStrictness::Sloppy,
-        is_async: false,
-        mapped_arguments: false,
-    });
-    crate::cycle_collector::track_function(&function);
-    captures.set(0, Value::Function(Rc::clone(&function)));
-    let weak = Rc::downgrade(&function);
-    (Value::Function(function), weak)
-}
-
 fn bridge_fixture(
     fail: bool,
 ) -> (
@@ -155,7 +133,7 @@ fn bridge_fixture(
         executable.code(),
         crate::stencil_policy::ExecutionPolicy::bridge_opt_in_for_test(),
     );
-    let (root, weak) = cyclic_function_root();
+    let (root, weak) = crate::stencil_test_support::cyclic_function_root();
     let host = Rc::new(ReentrantHost {
         pool: plan.shared_stencil_pool_for_test(),
         root: weak,
@@ -188,8 +166,8 @@ fn argument_boundary_fixture() -> (
         executable.code(),
         crate::stencil_policy::ExecutionPolicy::bridge_opt_in_for_test(),
     );
-    let (receiver, receiver_root) = cyclic_function_root();
-    let (argument, argument_root) = cyclic_function_root();
+    let (receiver, receiver_root) = crate::stencil_test_support::cyclic_function_root();
+    let (argument, argument_root) = crate::stencil_test_support::cyclic_function_root();
     let host = Rc::new(ArgumentRootHost {
         roots: [receiver_root, argument_root],
         effects: Cell::new(0),
