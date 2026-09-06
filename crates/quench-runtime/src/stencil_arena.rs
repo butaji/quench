@@ -2527,6 +2527,37 @@ mod tests {
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
+    fn lease_retains_pool_after_last_external_owner_until_return() {
+        let shared = std::rc::Rc::new(std::cell::RefCell::new(
+            SharedStencilSlab::new(4096).unwrap(),
+        ));
+        let key = crate::stencil_select::numeric_region_key(Opcode::Add).unwrap();
+        let record = crate::stencil_select::select_region(key).unwrap();
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let address = shared
+            .borrow_mut()
+            .render_or_get(
+                &mut RenderedRegionCache::new(),
+                key,
+                &record.stencil,
+                &PatchValues::from_site(&site),
+            )
+            .unwrap();
+        shared.borrow_mut().make_executable(address).unwrap();
+        let token = shared.borrow().owned_f64_entry(address).unwrap();
+        let lease = SharedStencilSlab::acquire_owned(&shared, token).unwrap();
+        let weak = std::rc::Rc::downgrade(&shared);
+        drop(shared);
+        let retained = weak.upgrade().expect("lease retains executable pool");
+        assert_eq!(retained.borrow().capacity(), 4096);
+        assert_eq!(retained.borrow().active_leases(), 1);
+        drop(retained);
+        assert_eq!(lease.invoke(|entry| entry(3.0, 6.0)), Ok(9.0));
+        assert!(weak.upgrade().is_none(), "last lease releases the pool");
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
     fn raw_allocation_lease_protects_region_dispatch() {
         let shared = std::rc::Rc::new(std::cell::RefCell::new(
             SharedStencilSlab::new(4096).expect("slab"),
