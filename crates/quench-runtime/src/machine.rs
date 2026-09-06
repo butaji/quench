@@ -3288,6 +3288,7 @@ pub(crate) struct NativeAddChainPlan {
     arena: Option<crate::stencil_arena::StencilArena>,
     shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
     physical: PhysicalState,
+    bindings: crate::stencil_plan::F64x3Bindings,
     site: crate::quickening::QuickeningSite<4>,
     installed: InstalledF64x3Entry,
     #[cfg(test)]
@@ -3303,13 +3304,17 @@ impl NativeAddChainPlan {
     fn new_with_arena(
         policy: crate::stencil_policy::ExecutionPolicy,
         shared_arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
+        bindings: crate::stencil_plan::F64x3Bindings,
     ) -> Option<Self> {
-        let mut plan = Self::new(policy)?;
+        let mut plan = Self::new(policy, bindings)?;
         plan.shared_arena = Some(shared_arena);
         Some(plan)
     }
 
-    fn new(policy: crate::stencil_policy::ExecutionPolicy) -> Option<Self> {
+    fn new(
+        policy: crate::stencil_policy::ExecutionPolicy,
+        bindings: crate::stencil_plan::F64x3Bindings,
+    ) -> Option<Self> {
         if !policy.native_leaves {
             return None;
         }
@@ -3320,6 +3325,7 @@ impl NativeAddChainPlan {
             arena: None,
             shared_arena: None,
             physical: PhysicalState::new(),
+            bindings,
             site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
             installed: InstalledF64x3Entry::Unpublished,
             #[cfg(test)]
@@ -3330,6 +3336,10 @@ impl NativeAddChainPlan {
     #[cfg(test)]
     pub(crate) fn native_entry_count(&self) -> u64 {
         self.native_entry_count
+    }
+
+    pub(crate) const fn bindings(&self) -> crate::stencil_plan::F64x3Bindings {
+        self.bindings
     }
 
     #[inline]
@@ -5317,14 +5327,13 @@ fn add_chain_admission(
 ) -> Option<NativeAdmission> {
     let entry = entries.get(pc)?;
     let next = entries.get(pc + 1)?;
-    let first_result_is_live = liveness
-        .get(pc + 1)
-        .is_some_and(|live| live.contains(&entry.instruction.a));
-    (entry.instruction.opcode == crate::ir::Opcode::Add
-        && next.instruction.opcode == crate::ir::Opcode::Add
-        && !first_result_is_live)
-        .then(|| NativeAddChainPlan::new_with_arena(policy, Rc::clone(arena)))
-        .flatten()
+    let live_after = liveness.get(pc + 1)?;
+    let selection = crate::stencil_plan::select_add_chain(
+        entry.instruction,
+        next.instruction,
+        live_after,
+    )?;
+    NativeAddChainPlan::new_with_arena(policy, Rc::clone(arena), selection.bindings)
         .map(|plan| NativeAdmission::AddChain(Rc::new(RefCell::new(plan))))
 }
 
