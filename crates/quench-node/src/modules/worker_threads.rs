@@ -34,6 +34,7 @@ const BROADCAST_CHANNEL: u16 = 2508;
 const BROADCAST_CHANNEL_CLOSE: u16 = 2509;
 const BROADCAST_CHANNEL_INSPECT: u16 = 2510;
 const BROADCAST_CHANNEL_ID: &str = "\0quench:broadcast-channel";
+const SHARE_ENV_PROP: &str = "\0quench:worker-share-env";
 
 thread_local! {
     static ENVIRONMENT_DATA: RefCell<Vec<(String, Value)>> = const { RefCell::new(Vec::new()) };
@@ -151,6 +152,17 @@ pub fn build(state: &Rc<std::cell::RefCell<HostState>>) -> Result<Value, VmError
     crate::modules::event_target::set_message_port_prototype(message_port_prototype);
     let worker = cap(WORKER_CONSTRUCT);
     let broadcast_channel = cap(BROADCAST_CHANNEL);
+    let share_env = host_api::object(Vec::new());
+    let _ = execute::define_property(
+        share_env.clone(),
+        SHARE_ENV_PROP,
+        host_api::object(vec![
+            ("value".into(), Value::Boolean(true)),
+            ("writable".into(), Value::Boolean(false)),
+            ("enumerable".into(), Value::Boolean(false)),
+            ("configurable".into(), Value::Boolean(false)),
+        ]),
+    );
     Ok(host_api::object(vec![
         ("isMainThread".into(), Value::Boolean(main)),
         (
@@ -164,7 +176,7 @@ pub fn build(state: &Rc<std::cell::RefCell<HostState>>) -> Result<Value, VmError
         ("BroadcastChannel".into(), broadcast_channel),
         ("Worker".into(), worker),
         ("receiveMessageOnPort".into(), cap(RECEIVE_MESSAGE)),
-        ("SHARE_ENV".into(), host_api::object(Vec::new())),
+        ("SHARE_ENV".into(), share_env),
         ("markAsUncloneable".into(), cap(WORKER_NOOP)),
         ("markAsUntransferable".into(), cap(WORKER_NOOP)),
         ("setEnvironmentData".into(), cap(SET_ENVIRONMENT)),
@@ -210,6 +222,44 @@ pub fn message_port_construct_handler(
     _args: &[Value],
 ) -> Result<Value, VmError> {
     message_port_construct(state, _args)
+}
+
+fn worker_environment_snapshot(options: &Value) -> Value {
+    let requested = execute::get_property(options, "env");
+    let share_env = matches!(
+        execute::get_property(&requested, SHARE_ENV_PROP),
+        Value::Boolean(true)
+    );
+    let source = if matches!(requested, Value::Object(_) | Value::ObjectAlias(_)) && !share_env {
+        requested
+    } else {
+        let global = quench_runtime::vm::current_global_object();
+        execute::get_property(&execute::get_property(&global, "process"), "env")
+    };
+    let pairs = execute::own_enumerable_keys(&source)
+        .into_iter()
+        .filter(|key| !key.starts_with('\0'))
+        .filter_map(|key| {
+            let value = execute::get_property(&source, &key);
+            (!matches!(value, Value::Undefined | Value::Null))
+                .then(|| execute::to_js_string(&value).ok().map(|value| (key, Value::String(value))))
+                .flatten()
+        })
+        .collect();
+    let snapshot = host_api::object(pairs);
+    if share_env {
+        let _ = execute::define_property(
+            snapshot.clone(),
+            SHARE_ENV_PROP,
+            host_api::object(vec![
+                ("value".into(), Value::Boolean(true)),
+                ("writable".into(), Value::Boolean(false)),
+                ("enumerable".into(), Value::Boolean(false)),
+                ("configurable".into(), Value::Boolean(false)),
+            ]),
+        );
+    }
+    snapshot
 }
 
 pub fn worker_construct_handler(
@@ -367,12 +417,21 @@ fn worker_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, V
             env,
             Value::Undefined | Value::Null | Value::Object(_) | Value::ObjectAlias(_)
         ) {
-            return Err(type_error(
-                "The \"options.env\" property must be of type object",
-            ));
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                (
+                    "message".into(),
+                    Value::String(format!(
+                        "The \"options.env\" property must be of type object or one of undefined, null, or worker_threads.SHARE_ENV.{}",
+                        crate::modules::buffer_enc::invalid_arg_received(&env)
+                    )),
+                ),
+            ])));
         }
     }
     let data = execute::get_property(&options, "workerData");
+    let env_snapshot = worker_environment_snapshot(&options);
     let transfer_list = execute::get_property(&options, "transferList");
     if contains_port(&data, state) && !transfer_contains(&transfer_list, state, &data) {
         return Err(quench_runtime::execute::VmError::Thrown(
@@ -424,6 +483,7 @@ fn worker_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, V
     ] {
         execute::set_property_in_place(&worker, name, value);
     }
+    execute::set_property_in_place(&worker, "\0worker-env", env_snapshot);
     let stdout = crate::modules::events::new_emitter_object(state)?;
     let stderr = crate::modules::events::new_emitter_object(state)?;
     execute::set_property_in_place(&worker, "stdout", stdout);
@@ -513,7 +573,8 @@ fn worker_start(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
     let filename = execute::get_property(worker, "_worker-filename");
     let options = execute::get_property(worker, "_worker-options");
     let message = args.get(1).cloned().unwrap_or(Value::Undefined);
-    let output = launch(filename, options, message, state)?;
+    let env_snapshot = execute::get_property(worker, "\0worker-env");
+    let output = launch(filename, options, message, env_snapshot, state)?;
     state
         .borrow_mut()
         .event_loop
@@ -532,6 +593,7 @@ fn launch(
     filename: Value,
     options: Value,
     message: Value,
+    env_snapshot: Value,
     state: &Rc<RefCell<HostState>>,
 ) -> Result<Value, VmError> {
     // Worker resources are created in the parent process before the child is
@@ -569,6 +631,31 @@ fn launch(
         "--quench-worker",
         &format!("--quench-worker-data={encoded}"),
     ]);
+    // Worker subprocesses inherit the logical process environment, including
+    // JavaScript-side `process.env` mutations.  The host process environment
+    // is only the startup snapshot, so explicitly materialize the current
+    // enumerable string map before launching the child. Hidden Rust metadata
+    // properties stay inside the VM and are never exported to the OS.
+    let share_env = matches!(
+        execute::get_property(&env_snapshot, SHARE_ENV_PROP),
+        Value::Boolean(true)
+    );
+    let source_env = if share_env {
+        let global = quench_runtime::vm::current_global_object();
+        execute::get_property(&execute::get_property(&global, "process"), "env")
+    } else {
+        env_snapshot
+    };
+    command.env_clear();
+    for key in execute::own_enumerable_keys(&source_env) {
+        if key.starts_with('\0') {
+            continue;
+        }
+        let value = execute::get_property(&source_env, &key);
+        if let Ok(value) = execute::to_js_string(&value) {
+            command.env(&key, value);
+        }
+    }
     command
         .env("QUENCH_WORKER", "1")
         .env("QUENCH_CHILD_RUNNER", "1");
@@ -868,6 +955,9 @@ fn type_error(message: &str) -> VmError {
 }
 
 fn to_json(value: &Value) -> serde_json::Value {
+    if let Some(wire) = crate::modules::crypto::key_object_to_wire(value) {
+        return wire;
+    }
     match value {
         Value::Undefined => serde_json::Value::Null,
         Value::Null => serde_json::Value::Null,
@@ -916,6 +1006,9 @@ fn from_json(value: serde_json::Value) -> Value {
             host_api::array(values.into_iter().map(from_json).collect())
         }
         serde_json::Value::Object(values) => {
+            if let Some(key) = crate::modules::crypto::key_object_from_wire(&values) {
+                return key;
+            }
             if values
                 .get("__quench_typed_array")
                 .and_then(serde_json::Value::as_str)
