@@ -323,61 +323,37 @@ fn selected_points() -> [RegionPoint; 2] {
 }
 
 fn selected_transfers(view: PhysicalStencilView) -> Result<Vec<PlannedTransfer>, LayoutError> {
-    selected_fixups(view)?
-        .into_iter()
-        .map(|fixup| selected_transfer(fixup))
-        .collect()
-}
-
-fn selected_transfer(fixup: Fixup) -> Result<PlannedTransfer, LayoutError> {
-    let points = selected_points();
-    let source = points
-        .get(usize::from(fixup.fragment))
-        .copied()
-        .ok_or(LayoutError::RelocationContract)?;
-    let target = match fixup.target {
-        ENTRY_LABEL => points[0],
-        FALLTHROUGH_LABEL => points[1],
-        _ => return Err(LayoutError::RelocationContract),
-    };
-    Ok(PlannedTransfer {
-        source,
-        offset: fixup.offset,
-        target,
-        addend: fixup.addend,
-        kind: fixup.kind,
-    })
-}
-
-fn selected_fixups(view: PhysicalStencilView) -> Result<Vec<Fixup>, LayoutError> {
     let tail = view.fallthrough.ok_or(LayoutError::MissingSuccessor)?;
     if view.generated {
-        return generated_fixups(view, tail.target);
+        return generated_transfers(view, tail.target);
     }
     view.stencil
         .holes
         .iter()
         .copied()
         .filter(|hole| relative_kind(hole.kind).is_some())
-        .map(|hole| physical_fixup(hole.offset, hole.kind, 0))
+        .map(|hole| physical_transfer(hole.offset, hole.kind, 0))
         .collect()
 }
 
-fn generated_fixups(view: PhysicalStencilView, target: &str) -> Result<Vec<Fixup>, LayoutError> {
+fn generated_transfers(
+    view: PhysicalStencilView,
+    target: &str,
+) -> Result<Vec<PlannedTransfer>, LayoutError> {
     if view.relocations.len() != view.stencil.holes.len() {
         return Err(LayoutError::RelocationContract);
     }
     view.relocations
         .iter()
-        .map(|relocation| generated_fixup(view, relocation, target))
+        .map(|relocation| generated_transfer(view, relocation, target))
         .collect()
 }
 
-fn generated_fixup(
+fn generated_transfer(
     view: PhysicalStencilView,
     relocation: &PhysicalRelocation,
     target: &str,
-) -> Result<Fixup, LayoutError> {
+) -> Result<PlannedTransfer, LayoutError> {
     let declared = view
         .stencil
         .holes
@@ -387,14 +363,18 @@ fn generated_fixup(
         return Err(LayoutError::RelocationContract);
     }
     let addend = i32::try_from(relocation.addend).map_err(|_| LayoutError::RelocationContract)?;
-    physical_fixup(relocation.offset, relocation.kind, addend)
+    physical_transfer(relocation.offset, relocation.kind, addend)
 }
 
-fn physical_fixup(offset: u16, kind: HoleKind, addend: i32) -> Result<Fixup, LayoutError> {
-    Ok(Fixup {
-        fragment: 0,
+fn physical_transfer(
+    offset: u16,
+    kind: HoleKind,
+    addend: i32,
+) -> Result<PlannedTransfer, LayoutError> {
+    Ok(PlannedTransfer {
+        source: RegionPoint::Operation(0),
         offset,
-        target: FALLTHROUGH_LABEL,
+        target: RegionPoint::Operation(1),
         addend,
         kind: relative_kind(kind).ok_or(LayoutError::RelocationContract)?,
     })
