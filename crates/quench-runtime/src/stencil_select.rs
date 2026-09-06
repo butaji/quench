@@ -304,7 +304,7 @@ pub struct PhysicalRelocation {
 /// independent of workload identity, source paths, and hotness thresholds.
 #[derive(Clone, Debug)]
 pub struct RenderedRegionCache {
-    entries: [Option<RenderedRegion>; MAX_RENDERED_REGIONS],
+    entries: Vec<RenderedRegion>,
     next: usize,
 }
 
@@ -317,7 +317,7 @@ impl Default for RenderedRegionCache {
 impl RenderedRegionCache {
     pub const fn new() -> Self {
         Self {
-            entries: [None; MAX_RENDERED_REGIONS],
+            entries: Vec::new(),
             next: 0,
         }
     }
@@ -325,7 +325,6 @@ impl RenderedRegionCache {
     pub fn get(&self, key: RegionKey, signature: u64) -> Option<usize> {
         self.entries
             .iter()
-            .flatten()
             .find(|entry| entry.key == key && entry.signature == signature)
             .map(|entry| entry.address)
     }
@@ -333,7 +332,6 @@ impl RenderedRegionCache {
     pub fn get_owned(&self, key: RegionKey, signature: u64, owner: u64) -> Option<usize> {
         self.entries
             .iter()
-            .flatten()
             .find(|entry| entry.key == key && entry.signature == signature && entry.owner == owner)
             .map(|entry| entry.address)
     }
@@ -349,22 +347,25 @@ impl RenderedRegionCache {
         address: usize,
         owner: u64,
     ) -> usize {
-        if let Some(entry) =
-            self.entries.iter_mut().flatten().find(|entry| {
-                entry.key == key && entry.signature == signature && entry.owner == owner
-            })
+        if let Some(entry) = self.entries.iter_mut().find(|entry| {
+            entry.key == key && entry.signature == signature && entry.owner == owner
+        })
         {
             entry.address = address;
             return address;
         }
-        let index = self.next;
-        self.entries[index] = Some(RenderedRegion {
+        let entry = RenderedRegion {
             key,
             signature,
             address,
             owner,
-        });
-        self.next = (self.next + 1) % MAX_RENDERED_REGIONS;
+        };
+        if self.entries.len() < MAX_RENDERED_REGIONS {
+            self.entries.push(entry);
+        } else {
+            self.entries[self.next] = entry;
+            self.next = (self.next + 1) % MAX_RENDERED_REGIONS;
+        }
         address
     }
 
@@ -373,13 +374,11 @@ impl RenderedRegionCache {
     /// reusable executable entry when that edge fails.
     pub fn remove(&mut self, key: RegionKey, signature: u64, address: usize) -> bool {
         let Some(index) = self.entries.iter().position(|entry| {
-            entry.is_some_and(|entry| {
-                entry.key == key && entry.signature == signature && entry.address == address
-            })
+            entry.key == key && entry.signature == signature && entry.address == address
         }) else {
             return false;
         };
-        self.entries[index] = None;
+        self.entries.remove(index);
         true
     }
 
@@ -388,26 +387,33 @@ impl RenderedRegionCache {
     /// keeps stale generations from consuming the bounded table or being
     /// mistaken for a rebuild hit.
     pub(crate) fn remove_owner(&mut self, owner: u64) -> usize {
-        let mut removed = 0;
-        for entry in &mut self.entries {
-            if entry.is_some_and(|rendered| rendered.owner == owner) {
-                *entry = None;
-                removed += 1;
-            }
-        }
-        removed
+        let before = self.entries.len();
+        self.entries.retain(|entry| entry.owner != owner);
+        before - self.entries.len()
     }
 
     pub fn len(&self) -> usize {
-        self.entries.iter().flatten().count()
+        self.entries.len()
     }
     pub const fn capacity(&self) -> usize {
         MAX_RENDERED_REGIONS
     }
 
     pub fn clear(&mut self) {
-        self.entries.fill(None);
+        self.entries = Vec::new();
         self.next = 0;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn allocated_entries(&self) -> usize {
+        self.entries.capacity()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn allocated_bytes(&self) -> usize {
+        self.entries
+            .capacity()
+            .saturating_mul(std::mem::size_of::<RenderedRegion>())
     }
 }
 
@@ -1223,6 +1229,12 @@ mod tests {
     #[test]
     fn rendered_region_memo_is_fixed_capacity() {
         let mut cache = RenderedRegionCache::new();
+        assert_eq!(cache.allocated_entries(), 0);
+        assert_eq!(cache.allocated_bytes(), 0);
+        assert!(
+            std::mem::size_of::<RenderedRegionCache>()
+                < std::mem::size_of::<[Option<RenderedRegion>; MAX_RENDERED_REGIONS]>()
+        );
         for index in 0..(MAX_RENDERED_REGIONS + 1) {
             cache.insert(RegionKey(index as u64), 0, index);
         }
@@ -1232,6 +1244,14 @@ mod tests {
             cache.get(RegionKey(MAX_RENDERED_REGIONS as u64), 0),
             Some(MAX_RENDERED_REGIONS)
         );
+        assert!(cache.allocated_entries() <= MAX_RENDERED_REGIONS);
+        assert!(
+            cache.allocated_bytes()
+                <= MAX_RENDERED_REGIONS * std::mem::size_of::<RenderedRegion>()
+        );
+        cache.clear();
+        assert_eq!(cache.allocated_entries(), 0);
+        assert_eq!(cache.allocated_bytes(), 0);
     }
 
     #[test]
