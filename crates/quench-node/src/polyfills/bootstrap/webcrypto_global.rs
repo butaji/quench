@@ -65,21 +65,10 @@ if (typeof globalThis.SubtleCrypto !== "function") {
       error.code = "ERR_INVALID_THIS";
       throw error;
     }
-    // getPublicKey has no length parameter.  Its support is determined by
-    // the asymmetric key algorithms implemented by the Rust key path.
-    if (operation === "getPublicKey") {
-      const name = String(algorithm?.name || algorithm).toUpperCase();
-      return ["ECDH", "ECDSA", "RSA-OAEP", "RSA-PSS",
-              "RSASSA-PKCS1-V1_5", "ED25519", "ED448", "X25519", "X448"]
-        .includes(name);
-    }
-    if (length !== undefined &&
-        (!Number.isInteger(length) || length < 0 || length > 0x7fffffff)) {
-      const error = new TypeError("The requested length is outside the supported range");
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
-    }
-    return true;
+    // Algorithm support is a host fact shared with the WebCrypto operation
+    // implementations. Keep this constructor surface as the observable
+    // receiver/argument boundary, then delegate classification to Rust.
+    return globalThis.__quench_subtle_supports(operation, algorithm, length);
   };
   for (const name of ["encrypt", "decrypt", "sign", "verify", "digest", "generateKey", "deriveKey", "deriveBits", "importKey", "exportKey", "wrapKey", "unwrapKey", "getPublicKey"]) {
     SubtleCrypto.prototype[name] = function() {
