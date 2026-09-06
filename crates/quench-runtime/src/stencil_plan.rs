@@ -52,6 +52,7 @@ pub(crate) struct AddChainSelection {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum LocalNumericInputs {
     Slots([u16; 2]),
+    RepeatedSlot(u16),
     SlotConstant { slot: u16, bits: u64 },
 }
 
@@ -99,8 +100,13 @@ pub(crate) fn select_local_binary(
     if lost_live_value || !FusionCost::LOCAL_BINARY.profitable() {
         return None;
     }
+    let inputs = if slots[0] == slots[1] {
+        LocalNumericInputs::RepeatedSlot(slots[0])
+    } else {
+        LocalNumericInputs::Slots(slots)
+    };
     Some(LocalBinarySelection {
-        inputs: LocalNumericInputs::Slots(slots),
+        inputs,
         output: operation.a,
         operation,
         span: 3,
@@ -222,6 +228,17 @@ mod tests {
             select_local_binary(loads, Instruction::add(1, 7, 4), &BTreeSet::from([4])).is_none()
         );
         assert!(select_local_binary(loads, Instruction::add(1, 7, 8), &BTreeSet::new()).is_none());
+    }
+
+    #[test]
+    fn local_binary_selection_numbers_repeated_slot_once() {
+        let selected = select_local_binary(
+            [Instruction::load_local(4, 9), Instruction::load_local(7, 9)],
+            Instruction::add(1, 4, 7),
+            &BTreeSet::new(),
+        )
+        .unwrap();
+        assert_eq!(selected.inputs, LocalNumericInputs::RepeatedSlot(9));
     }
 
     #[test]
