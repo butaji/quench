@@ -142,6 +142,66 @@ fn code_view_register_width_comes_from_lowered_operands() {
 }
 
 #[test]
+fn nested_function_registers_do_not_widen_the_caller_frame() {
+    let nested = super::FunctionCode::pending(vec![
+        super::Op::Move { dst: 200, src: 199 },
+        super::Op::Return { src: 200 },
+    ]);
+    let owner = super::FunctionCode::from_ops(vec![super::Op::MakeFunctionWithKind {
+        dst: 0,
+        body: nested,
+        params: 0,
+        length: 0,
+        captures: 0,
+        kind: crate::ops::FunctionKind::Ordinary,
+        strictness: crate::ops::FunctionStrictness::Sloppy,
+        is_async: false,
+        mapped_arguments: false,
+        source: None,
+    }]);
+    let code = owner.code().expect("owner code");
+    let crate::ops::Op::MakeFunctionWithKind { body, .. } = code.cold_at(0).expect("function op")
+    else { panic!("expected nested function") };
+    let store = owner.store().expect("shared code store");
+    assert_eq!(store.frame_register_count(owner.code_id()), Some(1));
+    assert_eq!(store.frame_register_count(body.code_id()), Some(201));
+    assert_eq!(owner.required_register_count(), 1);
+}
+
+#[test]
+fn structured_fragment_registers_are_frozen_into_the_shared_frame() {
+    let body = super::FunctionCode::pending(vec![
+        super::Op::Move { dst: 50, src: 49 },
+        super::Op::Return { src: 50 },
+    ]);
+    let owner = super::FunctionCode::from_ops(vec![super::Op::Label {
+        name: "shared".into(),
+        body,
+    }]);
+    assert_eq!(owner.required_register_count(), 51);
+    assert_eq!(owner.code().expect("owner code").register_count(), 1);
+}
+
+#[test]
+fn static_block_callable_does_not_widen_the_enclosing_frame() {
+    let body = super::FunctionCode::pending(vec![
+        super::Op::Move { dst: 80, src: 79 },
+        super::Op::Return { src: 80 },
+    ]);
+    let owner = super::FunctionCode::from_ops(vec![super::Op::StaticBlock {
+        constructor: 0,
+        captures: 0,
+        body,
+    }]);
+    assert_eq!(owner.required_register_count(), 1);
+    let code = owner.code().expect("owner code");
+    let crate::ops::Op::StaticBlock { body, .. } = code.cold_at(0).expect("static block")
+    else { panic!("expected static block") };
+    let store = owner.store().expect("shared code store");
+    assert_eq!(store.frame_register_count(body.code_id()), Some(81));
+}
+
+#[test]
 fn baseline_region_admission_respects_declared_abi() {
     let function = super::FunctionCode::from_ops(vec![
         super::Op::Binary {
@@ -490,6 +550,7 @@ fn hot_back_edge_osr_transfers_live_frame_into_baseline() {
         .into(),
         metadata: vec![vec![super::InstructionMeta::empty(); 4]].into(),
         register_counts: vec![1].into(),
+        frame_register_counts: vec![1].into(),
         quickening_sites: vec![Vec::<
             std::cell::RefCell<crate::quickening::QuickeningSite<4>>,
         >::new()
