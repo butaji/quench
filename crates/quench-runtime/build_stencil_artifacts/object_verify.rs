@@ -154,18 +154,14 @@ fn expected_holes(declaration: &RegionDeclaration, target: &str) -> Vec<Extracte
     };
     holes
         .iter()
-        .map(|(offset, width, kind)| {
-            assert_eq!(
-                (*width, *kind),
-                (8, "Literal64"),
-                "unsupported assembly hole"
-            );
-            ExtractedHole {
-                offset: *offset,
-                kind: *kind,
-            }
-        })
+        .map(|(offset, width, kind)| expected_hole(*offset, *width, kind))
         .collect()
+}
+
+fn expected_hole(offset: u16, width: usize, kind: &'static str) -> ExtractedHole {
+    let supported = matches!((width, kind), (8, "Literal64") | (4, "CondBranch19"));
+    assert!(supported, "unsupported assembly hole");
+    ExtractedHole { offset, kind }
 }
 
 fn validate_fragment_holes(
@@ -179,18 +175,37 @@ fn validate_fragment_holes(
     for (index, hole) in holes.iter().enumerate() {
         let symbol = format!("{}_hole_{index}", entry_name.trim_start_matches('_'));
         let (hole_section, address) = find_text_symbol(file, &symbol);
-        assert_eq!(hole_section, Some(section), "literal hole crosses sections");
+        assert_eq!(hole_section, Some(section), "physical hole crosses sections");
         assert_eq!(
             address.checked_sub(start),
             Some(u64::from(hole.offset)),
-            "literal hole offset drift"
+            "physical hole offset drift"
         );
         let offset = usize::from(hole.offset);
-        let slot = bytes
-            .get(offset..offset + 8)
-            .expect("literal hole exceeds fragment bounds");
-        assert_eq!(slot, &[0; 8], "literal hole is not zeroed");
+        validate_hole_bytes(bytes, offset, hole.kind);
     }
+}
+
+fn validate_hole_bytes(bytes: &[u8], offset: usize, kind: &str) {
+    match kind {
+        "Literal64" => {
+            let slot = bytes.get(offset..offset + 8).expect("literal hole bounds");
+            assert_eq!(slot, &[0; 8], "literal hole is not zeroed");
+        }
+        "CondBranch19" => validate_cond_branch_hole(bytes, offset),
+        _ => panic!("unsupported physical hole kind {kind}"),
+    }
+}
+
+fn validate_cond_branch_hole(bytes: &[u8], offset: usize) {
+    let slot: [u8; 4] = bytes
+        .get(offset..offset + 4)
+        .expect("conditional branch hole bounds")
+        .try_into()
+        .expect("conditional branch width");
+    let word = u32::from_le_bytes(slot);
+    assert_eq!(word & 0xff00_0010, 0x5400_0000, "invalid B.cond hole");
+    assert_eq!(word & 0x00ff_ffe0, 0, "B.cond hole is prepatched");
 }
 
 fn validate_fragment_relocations(
