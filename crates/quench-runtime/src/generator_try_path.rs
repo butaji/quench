@@ -14,16 +14,6 @@ struct InitialTryPath {
     continuation: crate::machine::CodeRange,
 }
 
-fn push_initial_try_frames(generator: &GeneratorData) -> Result<bool, VmError> {
-    let Some(code) = generator.function.code.code() else {
-        return Ok(false);
-    };
-    let Some(path) = initial_try_path(code, generator.function.code.range) else {
-        return Ok(false);
-    };
-    push_initial_try_path(generator, path)
-}
-
 fn push_try_frames_for_point(
     generator: &GeneratorData,
     point: &crate::continuation::SuspensionPoint,
@@ -34,12 +24,10 @@ fn push_try_frames_for_point(
     let Some(code) = generator.function.code.code() else {
         return Ok(false);
     };
-    let Some(path) = initial_try_path_to_range(
-        code,
-        generator.function.code.range,
-        target,
-        suspension_destination(point).unwrap_or(0),
-    ) else {
+    let yield_dst = suspension_destination(point).ok_or(VmError::MissingReturn)?;
+    let Some(path) =
+        initial_try_path_to_range(code, generator.function.code.range, target, yield_dst)
+    else {
         return Ok(false);
     };
     push_initial_try_path(generator, path)
@@ -220,82 +208,4 @@ fn complete_parent_path(
 
 fn range_contains(outer: crate::machine::CodeRange, inner: crate::machine::CodeRange) -> bool {
     outer.code == inner.code && inner.start >= outer.start && inner.end <= outer.end
-}
-
-fn initial_try_path(
-    code: crate::machine::CodeView<'_>,
-    range: crate::machine::CodeRange,
-) -> Option<InitialTryPath> {
-    code.cold_ops().find_map(|(index, op)| {
-        direct_suspension_path(range, index, op)
-            .or_else(|| legacy_nested_path(range, index, op))
-            .or_else(|| legacy_try_path(range, index, op))
-    })
-}
-
-fn direct_suspension_path(
-    range: crate::machine::CodeRange,
-    index: usize,
-    op: &Op,
-) -> Option<InitialTryPath> {
-    let src = match op {
-        Op::Yield { src } | Op::Await { dst: src, .. } => *src,
-        _ => return None,
-    };
-    Some(InitialTryPath {
-        frames: Vec::new(),
-        yield_dst: src,
-        continuation: after_op(range, index),
-    })
-}
-
-fn legacy_nested_path(
-    range: crate::machine::CodeRange,
-    index: usize,
-    op: &Op,
-) -> Option<InitialTryPath> {
-    let nested = match op {
-        Op::Loop { body, .. } | Op::ForOf { body, .. } | Op::ForIn { body, .. } => body,
-        _ => return None,
-    };
-    let mut path = initial_try_path(nested.code()?, nested.range)?;
-    path.continuation = after_op(range, index);
-    Some(path)
-}
-
-fn legacy_try_path(
-    range: crate::machine::CodeRange,
-    index: usize,
-    op: &Op,
-) -> Option<InitialTryPath> {
-    let Op::Try {
-        body,
-        handler,
-        finalizer,
-        catch_slot,
-        ..
-    } = op
-    else {
-        return None;
-    };
-    for (branch, phase) in try_branches(body, handler.as_ref(), finalizer.as_ref()) {
-        let Some(mut path) = initial_try_path(branch.code()?, branch.range) else {
-            continue;
-        };
-        path.frames.insert(
-            0,
-            try_frame(op, phase, path.continuation, path.yield_dst, *catch_slot),
-        );
-        path.continuation = after_op(range, index);
-        return Some(path);
-    }
-    None
-}
-
-fn after_op(range: crate::machine::CodeRange, index: usize) -> crate::machine::CodeRange {
-    crate::machine::CodeRange {
-        code: range.code,
-        start: range.start.saturating_add(index as u32 + 1),
-        end: range.end,
-    }
 }

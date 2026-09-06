@@ -52,7 +52,8 @@ fn run_generator_code_steps(
     while next < code.len() {
         let instruction = code.instruction(next).ok_or(VmError::MissingReturn)?;
         if let Some(op @ Op::YieldStar { .. }) = code.cold(instruction) {
-            if let Some(step) = run_yield_star_step(registers, op, &resume, next)? {
+            let point = code_resume(code.range(), next);
+            if let Some(step) = run_yield_star_step(registers, op, &resume, next, Some(point))? {
                 return Ok(step);
             }
             next += 1;
@@ -93,20 +94,17 @@ fn run_generator_code_steps(
                 continue;
             }
             crate::vm::flush_global_declaration_batch(registers);
-            let suspension = completion
-                .suspension_point()
-                .cloned()
-                .or_else(|| {
-                    code.cold(instruction).and_then(|op| {
-                        matches!(
-                            completion,
-                            crate::completion::Completion::Yield(_)
-                                | crate::completion::Completion::Suspend(_)
-                        )
-                            .then(|| direct_suspension(op, next))
-                            .flatten()
-                    })
-                });
+            let suspension = completion.suspension_point().cloned().or_else(|| {
+                code.cold(instruction).and_then(|op| {
+                    matches!(
+                        completion,
+                        crate::completion::Completion::Yield(_)
+                            | crate::completion::Completion::Suspend(_)
+                    )
+                    .then(|| direct_suspension(op, Some(code_resume(code.range(), next_pc))))
+                    .flatten()
+                })
+            });
             return Ok(GeneratorStep {
                 completion,
                 pc: next_pc,
@@ -142,7 +140,7 @@ fn run_generator_steps(
     }
     for (offset, op) in ops[pc..].iter().enumerate() {
         if matches!(op, Op::YieldStar { .. }) {
-            let maybe = run_yield_star_step(registers, op, &resume, pc + offset)?;
+            let maybe = run_yield_star_step(registers, op, &resume, pc + offset, None)?;
             if let Some(result) = maybe {
                 return Ok(result);
             }
@@ -173,6 +171,7 @@ fn run_yield_star_step(
     op: &Op,
     resume: &crate::completion::Completion,
     next: usize,
+    point_resume: Option<crate::machine::CodeRange>,
 ) -> Result<Option<GeneratorStep>, VmError> {
     let completion = match crate::generator::execute_yield_star(registers, op, resume.clone()) {
         Ok(Some(completion)) => completion,
@@ -191,12 +190,15 @@ fn run_yield_star_step(
         matches!(completion, crate::completion::Completion::Yield(_)).then(|| match op {
             Op::YieldStar { dst, iterator, .. } => {
                 crate::continuation::SuspensionPoint::YieldStar {
-                    pc: next,
+                    resume: point_resume,
                     dst: *dst,
                     iterator: *iterator,
                 }
             }
-            _ => crate::continuation::SuspensionPoint::Yield { pc: next, src: 0 },
+            _ => crate::continuation::SuspensionPoint::Yield {
+                resume: point_resume,
+                src: 0,
+            },
         });
     Ok(Some(GeneratorStep {
         completion,
@@ -226,18 +228,14 @@ fn run_generator_op(
     }
     if let Some(completion) = result {
         crate::vm::flush_global_declaration_batch(registers);
-        let suspension = completion
-            .suspension_point()
-            .cloned()
-            .or_else(|| {
-                matches!(
-                    completion,
-                    crate::completion::Completion::Yield(_)
-                        | crate::completion::Completion::Suspend(_)
-                )
-                    .then(|| direct_suspension(op, next))
-                    .flatten()
-            });
+        let suspension = completion.suspension_point().cloned().or_else(|| {
+            matches!(
+                completion,
+                crate::completion::Completion::Yield(_) | crate::completion::Completion::Suspend(_)
+            )
+            .then(|| direct_suspension(op, None))
+            .flatten()
+        });
         return Ok(Some(GeneratorStep {
             completion,
             pc: next + 1,
@@ -247,18 +245,29 @@ fn run_generator_op(
     Ok(None)
 }
 
-fn direct_suspension(op: &Op, pc: usize) -> Option<crate::continuation::SuspensionPoint> {
+fn direct_suspension(
+    op: &Op,
+    resume: Option<crate::machine::CodeRange>,
+) -> Option<crate::continuation::SuspensionPoint> {
     match op {
-        Op::Yield { src } => Some(crate::continuation::SuspensionPoint::Yield { pc, src: *src }),
+        Op::Yield { src } => {
+            Some(crate::continuation::SuspensionPoint::Yield { resume, src: *src })
+        }
         // Await uses the same internal resume-slot shape as a yield.  It is
         // never exposed as a generator yield; the marker lets a structured
         // loop retain its body suffix until the promise resumes.
         Op::Await { dst, .. } => {
-            Some(crate::continuation::SuspensionPoint::Yield { pc, src: *dst })
+            Some(crate::continuation::SuspensionPoint::Yield { resume, src: *dst })
         }
-        Op::Loop {
-            ..
-        } => None,
+        Op::Loop { .. } => None,
         _ => None,
+    }
+}
+
+fn code_resume(range: crate::machine::CodeRange, relative_pc: usize) -> crate::machine::CodeRange {
+    crate::machine::CodeRange {
+        code: range.code,
+        start: range.start.saturating_add(relative_pc as u32),
+        end: range.end,
     }
 }
