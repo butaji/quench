@@ -407,6 +407,33 @@ mod tests {
     }
 
     #[test]
+    fn stencil_composition_rejects_invalid_labels_before_patching() {
+        let site = crate::quickening::QuickeningSite::<1>::new(crate::ir::Opcode::Jump);
+        let values = patch_values(&site);
+        let fragment = StencilFragment {
+            label: START,
+            stencil: &RETURN_STENCIL,
+            values,
+        };
+        let mut output = vec![0xA5];
+        assert_eq!(
+            compose_region(&[fragment, fragment], &[], &mut output),
+            Err(LayoutError::DuplicateLabel(START))
+        );
+
+        let jump = StencilFragment {
+            label: START,
+            stencil: &JUMP_STENCIL,
+            values,
+        };
+        assert_eq!(
+            compose_region(&[jump], &[x86_fixup(0, END)], &mut output),
+            Err(LayoutError::UndefinedLabel(END))
+        );
+        assert_eq!(output, [0xA5]);
+    }
+
+    #[test]
     fn stencil_composition_enforces_budgets_before_copying() {
         let site = crate::quickening::QuickeningSite::<1>::new(crate::ir::Opcode::Jump);
         let values = patch_values(&site);
