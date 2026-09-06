@@ -98,23 +98,24 @@ pub(crate) fn write_cond_branch19(
     offset: usize,
     displacement: i64,
 ) -> Result<(), PatchError> {
+    validate_cond_branch19(dst, offset, displacement)?;
     let slot = dst
         .get_mut(offset..offset.saturating_add(4))
         .ok_or(PatchError::OutOfBounds)?;
-    if offset % 4 != 0 || displacement % 4 != 0 {
-        return Err(PatchError::UnsupportedOffset);
-    }
     let words = displacement / 4;
-    if !(-(1_i64 << 18)..(1_i64 << 18)).contains(&words) {
-        return Err(PatchError::UnsupportedOffset);
-    }
     let mut instruction = u32::from_le_bytes(slot.try_into().expect("validated width"));
-    if instruction & 0xff00_0010 != 0x5400_0000 {
-        return Err(PatchError::UnsupportedOffset);
-    }
     instruction = (instruction & !0x00ff_ffe0) | ((words as u32 & 0x7_ffff) << 5);
     slot.copy_from_slice(&instruction.to_le_bytes());
     Ok(())
+}
+
+pub(crate) fn write_cond_branch19_value<const N: usize>(
+    dst: &mut [u8],
+    offset: u16,
+    values: &PatchValues<'_, N>,
+) -> Result<(), PatchError> {
+    let displacement = values.value_for(HoleKind::CondBranch19) as i64;
+    write_cond_branch19(dst, usize::from(offset), displacement)
 }
 
 pub fn apply_holes<const N: usize>(
@@ -131,6 +132,7 @@ pub fn apply_holes<const N: usize>(
             HoleKind::Disp32 => write_disp32(dst, hole.offset, values)?,
             HoleKind::Rel32 => write_rel32(dst, hole.offset, values)?,
             HoleKind::Branch26 => write_branch26(dst, hole.offset, values)?,
+            HoleKind::CondBranch19 => write_cond_branch19_value(dst, hole.offset, values)?,
             HoleKind::Literal64 => write_literal64(dst, hole.offset, values)?,
             HoleKind::Ptr64 => write_ptr64(dst, hole.offset, values)?,
         }
@@ -144,15 +146,40 @@ fn validate_hole<const N: usize>(
     values: &PatchValues<'_, N>,
 ) -> Result<(), PatchError> {
     let width = match hole.kind {
-        HoleKind::Imm32 | HoleKind::Disp32 | HoleKind::Rel32 | HoleKind::Branch26 => 4,
+        HoleKind::Imm32
+        | HoleKind::Disp32
+        | HoleKind::Rel32
+        | HoleKind::Branch26
+        | HoleKind::CondBranch19 => 4,
         HoleKind::Literal64 | HoleKind::Ptr64 => 8,
     };
     let start = usize::from(hole.offset);
     if dst.get(start..start + width).is_none() {
         return Err(PatchError::OutOfBounds);
     }
-    if matches!(hole.kind, HoleKind::Branch26) {
-        validate_branch26(dst, hole.offset, values)?;
+    match hole.kind {
+        HoleKind::Branch26 => validate_branch26(dst, hole.offset, values)?,
+        HoleKind::CondBranch19 => {
+            let displacement = values.value_for(HoleKind::CondBranch19) as i64;
+            validate_cond_branch19(dst, usize::from(hole.offset), displacement)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn validate_cond_branch19(dst: &[u8], offset: usize, displacement: i64) -> Result<(), PatchError> {
+    let slot = dst
+        .get(offset..offset.saturating_add(4))
+        .ok_or(PatchError::OutOfBounds)?;
+    if offset % 4 != 0 || displacement % 4 != 0 {
+        return Err(PatchError::UnsupportedOffset);
+    }
+    let words = displacement / 4;
+    let instruction = u32::from_le_bytes(slot.try_into().expect("validated width"));
+    if !(-(1_i64 << 18)..(1_i64 << 18)).contains(&words) || instruction & 0xff00_0010 != 0x5400_0000
+    {
+        return Err(PatchError::UnsupportedOffset);
     }
     Ok(())
 }
