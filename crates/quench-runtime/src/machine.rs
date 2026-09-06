@@ -4735,10 +4735,9 @@ pub(crate) struct NativeRegionPlan {
 fn validate_region_window(
     code: CodeView<'_>,
     pc: usize,
-    record: &crate::stencil_select::RegionRecord,
-    stencil: &crate::stencil_fact::Stencil,
+    view: crate::stencil_select::PhysicalStencilView,
 ) -> Result<(), NativeDispatchError> {
-    let contract = record.contract();
+    let contract = view.contract();
     if !contract.executable
         || !contract.has_single_entry()
         || !contract.legal_external_entry(0)
@@ -4748,7 +4747,7 @@ fn validate_region_window(
             "native region contract has no legal entry".into(),
         ));
     }
-    validate_physical_view(record, stencil).map_err(NativeDispatchError::Physical)?;
+    validate_physical_view(view.record, view.stencil).map_err(NativeDispatchError::Physical)?;
     let end = pc
         .checked_add(contract.operations.len())
         .ok_or_else(|| NativeDispatchError::Physical("native region pc overflow".into()))?;
@@ -4797,19 +4796,19 @@ fn validate_region_window(
 }
 
 fn validate_admitted_region_control(
-    record: &crate::stencil_select::RegionRecord,
+    view: crate::stencil_select::PhysicalStencilView,
     pc: usize,
     control: &crate::stencil_cfg::RegionControlPlan,
 ) -> Result<(), NativeDispatchError> {
     let expected_end = pc
-        .checked_add(record.operations.len())
+        .checked_add(view.record.operations.len())
         .ok_or_else(|| NativeDispatchError::Physical("native region pc overflow".into()))?;
     if control.start() != pc || control.end() != expected_end {
         return Err(NativeDispatchError::Physical(
             "native region control contract changed before entry".into(),
         ));
     }
-    if !control.matches_operations(record.operations) {
+    if !control.matches_operations(view.record.operations) {
         return Err(NativeDispatchError::Physical(
             "native region control shape disagrees with its operation facts".into(),
         ));
@@ -5045,25 +5044,21 @@ impl NativeRegionPlan {
         // publishing executable bytes.  A stale/quickened opcode is therefore
         // a cheap RejectBeforeEntry and cannot consume slab capacity or leave
         // a physical mapping behind for a region that was never legal.
-        let Some(record) = crate::stencil_select::select_region(key) else {
-            return Err(NativeDispatchError::Physical(
-                "native fused region stencil missing".into(),
-            ));
-        };
         let Some(view) = crate::stencil_select::select_physical(key) else {
             return Err(NativeDispatchError::Physical(
                 "native fused region physical view rejected".into(),
             ));
         };
+        let record = view.record;
         if record.operations != operations {
             return Err(NativeDispatchError::Physical(
                 "native fused region operation contract changed".into(),
             ));
         }
         if let Some(control) = self.admitted_control {
-            validate_admitted_region_control(record, pc, &control)?;
+            validate_admitted_region_control(view, pc, &control)?;
         }
-        validate_region_window(code, pc, record, view.stencil)?;
+        validate_region_window(code, pc, view)?;
         if !record.executable
             || self.physical.lifecycle.observe_site(&self.site, key, true)
                 == crate::stencil_lifecycle::StencilState::Retired
