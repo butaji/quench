@@ -2129,6 +2129,13 @@ pub fn encrypt(
         return Ok(settled(Err(error)));
     }
     let requested_name = args.first().map(algorithm_name).unwrap_or_default();
+    if requested_name.eq_ignore_ascii_case("AES-GCM")
+        && !aes_gcm_tag_length_is_valid(args.first())
+    {
+        return Ok(settled(Err(operation_error(
+            "algorithm.tagLength is not a valid AES-GCM tag length",
+        ))));
+    }
     if requested_name.eq_ignore_ascii_case("ChaCha20-Poly1305") {
         let tag_length =
             match execute::get_property(args.first().unwrap_or(&Value::Undefined), "tagLength") {
@@ -2226,6 +2233,13 @@ pub fn decrypt(
         return Ok(settled(Err(error)));
     }
     let requested_name = args.first().map(algorithm_name).unwrap_or_default();
+    if requested_name.eq_ignore_ascii_case("AES-GCM")
+        && !aes_gcm_tag_length_is_valid(args.first())
+    {
+        return Ok(settled(Err(operation_error(
+            "algorithm.tagLength is not a valid AES-GCM tag length",
+        ))));
+    }
     if requested_name.eq_ignore_ascii_case("ChaCha20-Poly1305") {
         let tag_length =
             match execute::get_property(args.first().unwrap_or(&Value::Undefined), "tagLength") {
@@ -2438,6 +2452,18 @@ fn aes_gcm_algorithm(value: &Value) -> Option<(Vec<u8>, Vec<u8>, usize)> {
         _ => return None,
     };
     (matches!(tag_length, 32 | 64 | 96 | 104 | 112 | 120 | 128)).then_some((iv, aad, tag_length))
+}
+
+fn aes_gcm_tag_length_is_valid(value: Option<&Value>) -> bool {
+    let Some(value) = value else { return false };
+    match execute::get_property(value, "tagLength") {
+        Value::Undefined => true,
+        Value::Number(length) if length.is_finite() && length.fract() == 0.0 => {
+            matches!(length as usize, 32 | 64 | 96 | 104 | 112 | 120 | 128)
+                && length >= 0.0
+        }
+        _ => false,
+    }
 }
 
 fn aes_ocb_algorithm(value: &Value) -> Result<(Vec<u8>, Vec<u8>, usize), VmError> {
@@ -2823,8 +2849,13 @@ fn cipher_block(key: &[u8], block: &mut [u8; 16], encrypt: bool) -> bool {
 }
 
 fn aes_cbc(key: &[u8], iv: &[u8], input: &[u8], encrypt: bool) -> Result<Vec<u8>, VmError> {
-    if iv.len() != 16 || !matches!(key.len(), 16 | 24 | 32) {
-        return Err(operation_error("Invalid AES-CBC key or IV length"));
+    if iv.len() != 16 {
+        return Err(operation_error(
+            "algorithm.iv must contain exactly 16 bytes",
+        ));
+    }
+    if !matches!(key.len(), 16 | 24 | 32) {
+        return Err(operation_error("Invalid AES-CBC key length"));
     }
     if encrypt {
         let padding = 16 - input.len() % 16;
