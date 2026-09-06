@@ -393,11 +393,9 @@ impl SharedStencilSlab {
             self.lease_state.forget(owner);
             return false;
         };
-        let released = self.slabs[index].capacity();
         self.slabs.remove(index);
         self.cache.remove_owner(owner);
         self.lease_state.forget(owner);
-        release_global_bytes(released);
         true
     }
 
@@ -408,8 +406,7 @@ impl SharedStencilSlab {
         if self.active_dispatches.get() != 0 {
             return 0;
         }
-        let (owners, released) = self.remove_idle_owners(retain);
-        release_global_bytes(released);
+        let owners = self.remove_idle_owners(retain);
         for owner in &owners {
             self.cache.remove_owner(*owner);
         }
@@ -428,8 +425,7 @@ impl SharedStencilSlab {
         if self.active_dispatches.get() != 0 {
             return 0;
         }
-        let (owners, released) = self.remove_idle_owners(retain);
-        release_global_bytes(released);
+        let owners = self.remove_idle_owners(retain);
         for owner in &owners {
             self.cache.remove_owner(*owner);
             cache.remove_owner(*owner);
@@ -437,7 +433,7 @@ impl SharedStencilSlab {
         owners.len()
     }
 
-    fn remove_idle_owners(&mut self, retain: usize) -> (Vec<u64>, usize) {
+    fn remove_idle_owners(&mut self, retain: usize) -> Vec<u64> {
         let remove = self.slabs.len().saturating_sub(retain);
         let mut owners = Vec::with_capacity(remove);
         let state = &self.lease_state;
@@ -448,8 +444,7 @@ impl SharedStencilSlab {
             }
             !evict
         });
-        let released = owners.len().saturating_mul(self.slab_capacity);
-        (owners, released)
+        owners
     }
 
     fn reclaim_for(&mut self, additional: usize, cache: &mut RenderedRegionCache) -> bool {
@@ -470,9 +465,7 @@ impl SharedStencilSlab {
                 return false;
             };
             let owner = self.slabs[index].id();
-            let released = self.slabs[index].capacity();
             self.slabs.remove(index);
-            release_global_bytes(released);
             self.cache.remove_owner(owner);
             cache.remove_owner(owner);
         }
@@ -506,22 +499,10 @@ impl SharedStencilSlab {
         if !self.reclaim_for(self.slab_capacity, cache) {
             return Err(ArenaError::Exhausted);
         }
-        if !reserve_global_bytes(self.slab_capacity) {
-            return Err(ArenaError::Exhausted);
-        }
-        let mut slab = match StencilArena::new_unaccounted(self.slab_capacity) {
-            Ok(slab) => slab,
-            Err(error) => {
-                release_global_bytes(self.slab_capacity);
-                return Err(error);
-            }
-        };
+        let mut slab = StencilArena::new(self.slab_capacity)?;
         let address = match slab.render_or_get(&mut self.cache, key, stencil, values) {
             Ok(address) => address,
-            Err(error) => {
-                release_global_bytes(self.slab_capacity);
-                return Err(error);
-            }
+            Err(error) => return Err(error),
         };
         cache.insert_owned(key, signature, address, slab.id());
         self.slabs.push(slab);
@@ -602,23 +583,11 @@ impl SharedStencilSlab {
         if !self.reclaim_for(self.slab_capacity, cache) {
             return Err(ArenaError::Exhausted);
         }
-        if !reserve_global_bytes(self.slab_capacity) {
-            return Err(ArenaError::Exhausted);
-        }
-        let mut slab = match StencilArena::new_unaccounted(self.slab_capacity) {
-            Ok(slab) => slab,
-            Err(error) => {
-                release_global_bytes(self.slab_capacity);
-                return Err(error);
-            }
-        };
+        let mut slab = StencilArena::new(self.slab_capacity)?;
         let address = match render_arena_physical(&mut slab, &mut self.cache, view, values, control)
         {
             Ok(address) => address,
-            Err(error) => {
-                release_global_bytes(self.slab_capacity);
-                return Err(error);
-            }
+            Err(error) => return Err(error),
         };
         cache.insert_owned(view.key, signature, address, slab.id());
         self.slabs.push(slab);
@@ -1055,12 +1024,6 @@ impl std::fmt::Debug for SharedStencilSlab {
     }
 }
 
-impl Drop for SharedStencilSlab {
-    fn drop(&mut self) {
-        release_global_bytes(self.total_capacity());
-    }
-}
-
 fn render_arena_physical<const N: usize>(
     arena: &mut StencilArena,
     cache: &mut RenderedRegionCache,
@@ -1076,14 +1039,6 @@ fn render_arena_physical<const N: usize>(
 
 impl StencilArena {
     pub fn new(capacity: usize) -> Result<Self, ArenaError> {
-        Self::new_with_accounting(capacity, true)
-    }
-
-    fn new_unaccounted(capacity: usize) -> Result<Self, ArenaError> {
-        Self::new_with_accounting(capacity, false)
-    }
-
-    fn new_with_accounting(capacity: usize, account_globally: bool) -> Result<Self, ArenaError> {
         if capacity == 0 || capacity > MAX_ARENA_BYTES {
             return Err(ArenaError::InvalidCapacity);
         }
@@ -1091,7 +1046,7 @@ impl StencilArena {
             .checked_add(PAGE - 1)
             .ok_or(ArenaError::InvalidCapacity)?
             & !(PAGE - 1);
-        if account_globally && !reserve_global_bytes(capacity) {
+        if !reserve_global_bytes(capacity) {
             return Err(ArenaError::Exhausted);
         }
         let ptr = unsafe {
@@ -1105,9 +1060,7 @@ impl StencilArena {
             )
         };
         if ptr == libc::MAP_FAILED {
-            if account_globally {
-                release_global_bytes(capacity);
-            }
+            release_global_bytes(capacity);
             return Err(ArenaError::MappingFailed);
         }
         Ok(Self {
@@ -1118,7 +1071,7 @@ impl StencilArena {
             id: NEXT_ARENA_ID.fetch_add(1, Ordering::Relaxed),
             published_abis: RefCell::new(HashMap::new()),
             last_physical_execution: Cell::new(None),
-            global_charge: account_globally.then_some(capacity).unwrap_or(0),
+            global_charge: capacity,
         })
     }
 

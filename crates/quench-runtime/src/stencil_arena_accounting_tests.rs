@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn direct_and_shared_arenas_have_one_aggregate_charge_authority() {
+fn every_mapping_owns_exactly_one_aggregate_charge() {
     let direct = StencilArena::new(1).expect("direct arena");
     assert_eq!(direct.capacity, PAGE);
     assert_eq!(direct.global_charge, PAGE);
@@ -22,5 +22,5 @@ fn direct_and_shared_arenas_have_one_aggregate_charge_authority() {
         )
         .expect("shared render");
     assert_eq!(shared.total_capacity(), PAGE);
-    assert_eq!(shared.slabs[0].global_charge, 0);
+    assert_eq!(shared.slabs[0].global_charge, PAGE);
 }
