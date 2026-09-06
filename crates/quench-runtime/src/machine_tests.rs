@@ -2558,8 +2558,7 @@ fn native_add_chain_rejects_mismatched_control_before_render() {
 #[test]
 fn native_move_uses_rendered_address_without_remapping() {
     let mut plan = super::NativeMovePlan {
-        arena: None,
-        shared_arena: None,
+        storage: super::PhysicalStorage::Local(None),
         physical: super::PhysicalState::new(),
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Move),
         opcode: crate::ir::Opcode::Move,
@@ -2571,10 +2570,10 @@ fn native_move_uses_rendered_address_without_remapping() {
     assert_eq!(plan.execute(&source), Ok(source.bits()));
     #[cfg(quench_generated_stencil_artifacts)]
     assert!(plan.last_native_view.expect("invoked move view").generated);
-    let used = plan.arena.as_ref().expect("rendered arena").used();
+    let used = plan.storage.used();
     assert!(used > 0);
     assert_eq!(plan.execute(&source), Ok(source.bits()));
-    assert_eq!(plan.arena.as_ref().expect("cached arena").used(), used);
+    assert_eq!(plan.storage.used(), used);
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
