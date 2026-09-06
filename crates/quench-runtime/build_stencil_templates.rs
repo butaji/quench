@@ -200,12 +200,56 @@ q_store_property_end:
 "#);
 "##;
 
-pub(crate) fn whole_region(name: &str) -> Option<&'static str> {
-    match name {
-        "array_numeric_loop" => Some(AARCH64_ARRAY_LOOP),
-        "property" => Some(AARCH64_PROPERTY_READ),
-        "prototype_property" => Some(AARCH64_PROTOTYPE_PROPERTY),
-        "store_property" => Some(AARCH64_PROPERTY_WRITE),
-        _ => None,
+fn tagged_word_source(name: &str) -> String {
+    format!(
+        "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_{name}\nq_{name}:\n  ldr x0, [x0]\n  ret\nq_{name}_end:\n\"#);\n"
+    )
+}
+
+fn truthy_pointer_source(name: &str) -> String {
+    format!(
+        "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_{name}\nq_{name}:\n  mov w0, #1\n  ret\nq_{name}_end:\n\"#);\n"
+    )
+}
+
+fn array_get_source(name: &str) -> String {
+    format!(
+        "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_{name}\nq_{name}:\n  ldr x1, [x0]\n  ldr d0, [x1]\n  str d0, [x0, #8]\n  mov w0, #1\n  ret\nq_{name}_end:\n\"#);\n"
+    )
+}
+
+fn array_set_source(name: &str) -> String {
+    format!(
+        "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_{name}\nq_{name}:\n  ldr x1, [x0]\n  ldr d0, [x0, #8]\n  str d0, [x1]\n  mov w0, #1\n  ret\nq_{name}_end:\n\"#);\n"
+    )
+}
+
+fn array_get_inc_source(name: &str) -> String {
+    format!(
+        "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_{name}\nq_{name}:\n  ldr x1, [x0]\n  ldr d0, [x1]\n  str d0, [x0, #8]\n  ldr x1, [x0, #16]\n  add x1, x1, #1\n  str x1, [x0, #24]\n  mov w0, #1\n  ret\nq_{name}_end:\n\"#);\n"
+    )
+}
+
+fn array_update_source(name: &str) -> String {
+    format!(
+        "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_{name}\nq_{name}:\n  ldr x1, [x0]\n  ldr x2, [x0, #8]\n  ldr x3, [x0, #16]\n  add x4, x1, x3, lsl #3\n  ldr d0, [x4]\n  ldr d1, [x0, #24]\n  fadd d0, d0, d1\n  str d0, [x4]\n  str d0, [x0, #32]\n  mov w0, #1\n  ret\nq_{name}_end:\n\"#);\n"
+    )
+}
+
+pub(crate) fn assembly_source(recipe: crate::build_stencil_contract::RustAssemblyRecipe) -> String {
+    use crate::build_stencil_contract::RustAssemblyRecipe::*;
+    match recipe {
+        ArrayNumericLoop => AARCH64_ARRAY_LOOP.to_owned(),
+        Property => AARCH64_PROPERTY_READ.to_owned(),
+        PrototypeProperty => AARCH64_PROTOTYPE_PROPERTY.to_owned(),
+        StoreProperty => AARCH64_PROPERTY_WRITE.to_owned(),
+        ArrayGetNumber => array_get_source(recipe.name()),
+        ArraySetNumber => array_set_source(recipe.name()),
+        ArrayGetIncNumber => array_get_inc_source(recipe.name()),
+        ArrayNumericUpdate | ArrayNumericUpdateConst | ArrayLoopBody => {
+            array_update_source(recipe.name())
+        }
+        Move | LoadLocal | StoreLocal => tagged_word_source(recipe.name()),
+        TruthyPointer => truthy_pointer_source(recipe.name()),
     }
 }
