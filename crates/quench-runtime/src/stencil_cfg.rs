@@ -12,6 +12,7 @@ use std::collections::BTreeSet;
 /// Admission consumers share this value so liveness and predecessor edges are
 /// computed once per baseline plan rather than rediscovered per candidate.
 pub(crate) struct ControlFlowFacts {
+    live_in: Vec<BTreeSet<u16>>,
     live_out: Vec<BTreeSet<u16>>,
     predecessors: Vec<Vec<usize>>,
     malformed_edges: BTreeSet<usize>,
@@ -39,13 +40,12 @@ impl Successors {
 }
 
 impl ControlFlowFacts {
-    pub(crate) fn new(
-        entries: &[BaselineEntry],
-        operand_windows: &[Option<&[u16]>],
-    ) -> Self {
+    pub(crate) fn new(entries: &[BaselineEntry], operand_windows: &[Option<&[u16]>]) -> Self {
         let successors = successor_table(entries);
+        let live_out = register_liveness(entries, operand_windows, &successors);
         Self {
-            live_out: register_liveness(entries, operand_windows, &successors),
+            live_in: live_inputs(entries, operand_windows, &live_out),
+            live_out,
             predecessors: predecessor_pcs(entries.len(), &successors),
             malformed_edges: malformed_edges(&successors),
         }
@@ -53,6 +53,10 @@ impl ControlFlowFacts {
 
     pub(crate) fn live_out(&self) -> &[BTreeSet<u16>] {
         &self.live_out
+    }
+
+    pub(crate) fn live_in_at(&self, pc: usize) -> Option<&BTreeSet<u16>> {
+        self.live_in.get(pc)
     }
 
     pub(crate) fn region_entry_is_legal(&self, start: usize, end: usize) -> bool {
@@ -81,9 +85,35 @@ impl ControlFlowFacts {
             && end <= entries.len()
             && self.region_entry_is_legal(start, end)
             && operations.iter().enumerate().all(|(offset, opcode)| {
-                entry_matches_region(&entries[start + offset], *opcode, start, end, start + offset)
+                entry_matches_region(
+                    &entries[start + offset],
+                    *opcode,
+                    start,
+                    end,
+                    start + offset,
+                )
             })
     }
+}
+
+fn live_inputs(
+    entries: &[BaselineEntry],
+    windows: &[Option<&[u16]>],
+    live_out: &[BTreeSet<u16>],
+) -> Vec<BTreeSet<u16>> {
+    let conservative = all_register_uses(entries, windows);
+    entries
+        .iter()
+        .enumerate()
+        .map(|(pc, entry)| {
+            live_input(
+                &live_out[pc],
+                entry.instruction.register_flow(),
+                windows.get(pc).copied().flatten(),
+                &conservative,
+            )
+        })
+        .collect()
 }
 
 fn entry_matches_region(
@@ -139,7 +169,9 @@ fn successors(entries: &[BaselineEntry], pc: usize) -> Successors {
 }
 
 fn successor_table(entries: &[BaselineEntry]) -> Vec<Successors> {
-    (0..entries.len()).map(|pc| successors(entries, pc)).collect()
+    (0..entries.len())
+        .map(|pc| successors(entries, pc))
+        .collect()
 }
 
 fn predecessor_pcs(len: usize, successors: &[Successors]) -> Vec<Vec<usize>> {
@@ -221,7 +253,12 @@ fn liveness_round(
     for pc in (0..entries.len()).rev() {
         let output = successor_input_union(&successors[pc], live_in);
         let flow = entries[pc].instruction.register_flow();
-        let input = live_input(&output, flow, windows.get(pc).copied().flatten(), conservative);
+        let input = live_input(
+            &output,
+            flow,
+            windows.get(pc).copied().flatten(),
+            conservative,
+        );
         changed |= live_out[pc] != output || live_in[pc] != input;
         live_out[pc] = output;
         live_in[pc] = input;
@@ -229,10 +266,7 @@ fn liveness_round(
     changed
 }
 
-fn successor_input_union(
-    successors: &Successors,
-    live_in: &[BTreeSet<u16>],
-) -> BTreeSet<u16> {
+fn successor_input_union(successors: &Successors, live_in: &[BTreeSet<u16>]) -> BTreeSet<u16> {
     let mut output = BTreeSet::new();
     for successor in successors.iter() {
         if let Some(input) = live_in.get(successor) {
@@ -305,6 +339,17 @@ mod tests {
         let successors = successor_table(&entries);
         let live = register_liveness(&entries, &[None, None, None], &successors);
         assert_eq!(live[0], BTreeSet::from([1, 2]));
+    }
+
+    #[test]
+    fn live_inputs_distinguish_region_exit_from_internal_definition() {
+        let entries = entries(&[
+            crate::ir::Instruction::move_(2, 1),
+            crate::ir::Instruction::ret(2),
+        ]);
+        let facts = ControlFlowFacts::new(&entries, &[None, None]);
+        assert_eq!(facts.live_in_at(0), Some(&BTreeSet::from([1])));
+        assert_eq!(facts.live_in_at(1), Some(&BTreeSet::from([2])));
     }
 
     #[test]

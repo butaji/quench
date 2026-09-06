@@ -6,7 +6,8 @@
 
 use crate::facts::OperationEffect;
 pub use crate::stencil_binding::{
-    PhysicalBinding, PhysicalBindingValue, PhysicalOperand, PhysicalOperandField,
+    PhysicalBinding, PhysicalBindingValue, PhysicalOperand, PhysicalOperandField, PhysicalOutput,
+    PhysicalOutputDestination, PhysicalOutputValue,
 };
 pub use crate::stencil_cache::{RenderedRegion, RenderedRegionCache, MAX_RENDERED_REGIONS};
 use crate::stencil_fact::{FactState, RegionId, RegionKey, Stencil};
@@ -112,6 +113,8 @@ pub struct RegionRecord {
     /// Physical operand relationships generated from the recipe declaration.
     /// These constrain wiring only; opcode semantics remain canonical IR facts.
     pub bindings: &'static [PhysicalBinding],
+    /// Exact VM locations reconstructed from the native context at exit.
+    pub outputs: &'static [PhysicalOutput],
     pub entry: u16,
     /// All legal external entry offsets, generated from the declaration.
     /// Runtime admission may enter only at one of these boundaries.

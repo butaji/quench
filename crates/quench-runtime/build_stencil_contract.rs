@@ -65,6 +65,26 @@ pub(crate) enum PhysicalBinding {
     AllDistinct(&'static [PhysicalOperand]),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PhysicalOutputValue {
+    Array,
+    Element,
+    Index,
+    Result,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PhysicalOutputDestination {
+    Register(PhysicalOperand),
+    LocalSlot(PhysicalOperand),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PhysicalOutput {
+    pub(crate) value: PhysicalOutputValue,
+    pub(crate) destination: PhysicalOutputDestination,
+}
+
 impl PhysicalBinding {
     pub(crate) const fn valid_for(self, operation_count: usize) -> bool {
         match self {
@@ -94,6 +114,16 @@ impl PhysicalBindingValue {
             Self::Operand(operand) => (operand.operation as usize) < operation_count,
             Self::RegionStart | Self::RegionEnd => true,
         }
+    }
+}
+
+impl PhysicalOutput {
+    pub(crate) const fn valid_for(self, operation_count: usize) -> bool {
+        let operand = match self.destination {
+            PhysicalOutputDestination::Register(operand)
+            | PhysicalOutputDestination::LocalSlot(operand) => operand,
+        };
+        (operand.operation as usize) < operation_count
     }
 }
 
@@ -227,6 +257,7 @@ macro_rules! rust_assembly_catalog {
         name: $name:literal, abi: $abi:ident, ops: [$($op:literal),+],
         holes: [$($hole:expr),*]
         $(, bindings: $bindings:expr)?
+        $(, outputs: $outputs:expr)?
         $(, continuation: { head: $head:literal, tail: $tail:literal, target: $target:literal })?
         $(, composition: $composition:ident)?
     } ),+ $(,)?) => {
@@ -256,6 +287,12 @@ macro_rules! rust_assembly_catalog {
                 }
             }
 
+            pub(crate) const fn outputs(self) -> &'static [PhysicalOutput] {
+                match self {
+                    $( Self::$variant => rust_assembly_outputs!($($outputs)?), )+
+                }
+            }
+
             fn matches(self, declaration: &RegionDeclaration) -> bool {
                 match self {
                     $( Self::$variant => declaration.name == $name
@@ -277,6 +314,15 @@ macro_rules! rust_assembly_bindings {
     };
     ($bindings:expr) => {
         $bindings
+    };
+}
+
+macro_rules! rust_assembly_outputs {
+    () => {
+        &[]
+    };
+    ($outputs:expr) => {
+        $outputs
     };
 }
 
@@ -323,17 +369,18 @@ rust_assembly_catalog! {
             "Move", "LoadLocal", "Move", "LoadLocal", "Slow", "LoadLocal",
             "AGetI", "AddConst", "ASetI", "Move", "LoadLocal", "AddConst",
             "StoreLocal", "Jump"], holes: [],
-        bindings: &ARRAY_NUMERIC_LOOP_BINDINGS
+        bindings: &ARRAY_NUMERIC_LOOP_BINDINGS,
+        outputs: &ARRAY_NUMERIC_LOOP_OUTPUTS
     },
     Property { name: "property", abi: PropertyGuard, ops: ["GetN"], holes: [] },
     PrototypeProperty { name: "prototype_property", abi: PropertyGuard, ops: ["GetN"], holes: [] },
     StoreProperty { name: "store_property", abi: PropertyWriteGuard, ops: ["SetN"], holes: [] },
-    ArrayGetNumber { name: "array_get_number", abi: ArrayKernel, ops: ["AGetI"], holes: [] },
+    ArrayGetNumber { name: "array_get_number", abi: ArrayKernel, ops: ["AGetI"], holes: [], outputs: &ARRAY_GET_OUTPUTS },
     ArraySetNumber { name: "array_set_number", abi: ArrayKernel, ops: ["ASetI"], holes: [] },
-    ArrayGetIncNumber { name: "array_get_inc_number", abi: ArrayKernel, ops: ["AGetIInc"], holes: [] },
-    ArrayNumericUpdate { name: "array_numeric_update", abi: ArrayKernel, ops: ["AGetI", "Add", "ASetI"], holes: [] },
-    ArrayNumericUpdateConst { name: "array_numeric_update_const", abi: ArrayKernel, ops: ["AGetI", "AddConst", "ASetI"], holes: [] },
-    ArrayLoopBody { name: "array_loop_body", abi: ArrayKernel, ops: ["LoadLocalChecked", "AGetI", "Add", "ASetI", "Return"], holes: [] },
+    ArrayGetIncNumber { name: "array_get_inc_number", abi: ArrayKernel, ops: ["AGetIInc"], holes: [], outputs: &ARRAY_GET_INC_OUTPUTS },
+    ArrayNumericUpdate { name: "array_numeric_update", abi: ArrayKernel, ops: ["AGetI", "Add", "ASetI"], holes: [], outputs: &ARRAY_UPDATE_OUTPUTS },
+    ArrayNumericUpdateConst { name: "array_numeric_update_const", abi: ArrayKernel, ops: ["AGetI", "AddConst", "ASetI"], holes: [], outputs: &ARRAY_UPDATE_OUTPUTS },
+    ArrayLoopBody { name: "array_loop_body", abi: ArrayKernel, ops: ["LoadLocalChecked", "AGetI", "Add", "ASetI", "Return"], holes: [], outputs: &ARRAY_LOOP_BODY_OUTPUTS },
     Move { name: "move", abi: TaggedWord, ops: ["Move"], holes: [] },
     LoadLocal { name: "load_local", abi: TaggedWord, ops: ["LoadLocal"], holes: [] },
     StoreLocal { name: "store_local", abi: TaggedWord, ops: ["StoreLocal"], holes: [] },
@@ -380,6 +427,8 @@ const ARRAY_NUMERIC_LOOP_BINDINGS: &[PhysicalBinding] = &[
     equal(value(7, B), value(5, A)),
     PhysicalBinding::AllDistinct(ARRAY_NUMERIC_LOOP_DISTINCT),
 ];
+
+include!("build_stencil_outputs.rs");
 
 pub(crate) fn rust_assembly_recipe(declaration: &RegionDeclaration) -> Option<RustAssemblyRecipe> {
     RUST_ASSEMBLY_RECIPES

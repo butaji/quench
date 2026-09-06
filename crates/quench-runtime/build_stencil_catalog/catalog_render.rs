@@ -67,67 +67,11 @@ fn render_region_row(index: usize, declaration: &RegionDeclaration) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let bindings = render_physical_bindings(declaration);
+    let outputs = render_physical_outputs(declaration);
     format!(
-        "    crate::stencil_select::RegionRecord {{ name: {declaration_name:?}, key: CANONICAL_{name}_KEY, stencil: crate::stencil_fact::Stencil {{ bytes: CANONICAL_{name}_BYTES, holes: CANONICAL_{name}_HOLES }}, operations: CANONICAL_{name}_OPS, bindings: {bindings}, entry: {entry}, external_entries: &[{external_entries}], fallthrough: {fallthrough}, abi: {abi}, template_calls_helper: {template_calls_helper}, executable: {executable} }}, // declaration {index}",
+        "    crate::stencil_select::RegionRecord {{ name: {declaration_name:?}, key: CANONICAL_{name}_KEY, stencil: crate::stencil_fact::Stencil {{ bytes: CANONICAL_{name}_BYTES, holes: CANONICAL_{name}_HOLES }}, operations: CANONICAL_{name}_OPS, bindings: {bindings}, outputs: {outputs}, entry: {entry}, external_entries: &[{external_entries}], fallthrough: {fallthrough}, abi: {abi}, template_calls_helper: {template_calls_helper}, executable: {executable} }}, // declaration {index}",
         entry = declaration.entry,
         template_calls_helper = target_template_calls_helper(declaration),
-    )
-}
-
-fn render_physical_bindings(declaration: &RegionDeclaration) -> String {
-    let Some(recipe) = rust_assembly_recipe(declaration) else {
-        return "&[]".to_owned();
-    };
-    let bindings = recipe
-        .bindings()
-        .iter()
-        .map(render_binding)
-        .collect::<Vec<_>>();
-    format!("&[{}]", bindings.join(", "))
-}
-
-fn render_binding(binding: &PhysicalBinding) -> String {
-    match binding {
-        PhysicalBinding::Equal(left, right) => format!(
-            "crate::stencil_select::PhysicalBinding::Equal({}, {})",
-            render_binding_value(*left),
-            render_binding_value(*right)
-        ),
-        PhysicalBinding::AllDistinct(operands) => format!(
-            "crate::stencil_select::PhysicalBinding::AllDistinct(&[{}])",
-            operands
-                .iter()
-                .map(|operand| render_operand(*operand))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    }
-}
-
-fn render_binding_value(value: PhysicalBindingValue) -> String {
-    match value {
-        PhysicalBindingValue::Operand(operand) => format!(
-            "crate::stencil_select::PhysicalBindingValue::Operand({})",
-            render_operand(operand)
-        ),
-        PhysicalBindingValue::RegionStart => {
-            "crate::stencil_select::PhysicalBindingValue::RegionStart".to_owned()
-        }
-        PhysicalBindingValue::RegionEnd => {
-            "crate::stencil_select::PhysicalBindingValue::RegionEnd".to_owned()
-        }
-    }
-}
-
-fn render_operand(operand: PhysicalOperand) -> String {
-    let field = match operand.field {
-        PhysicalOperandField::A => "A",
-        PhysicalOperandField::B => "B",
-        PhysicalOperandField::C => "C",
-    };
-    format!(
-        "crate::stencil_select::PhysicalOperand {{ operation: {}, field: crate::stencil_select::PhysicalOperandField::{field} }}",
-        operand.operation
     )
 }
 
@@ -273,6 +217,7 @@ fn emit_catalog_rerun_inputs() {
     println!("cargo:rerun-if-changed=build.rs");
     for input in [
         "catalog_render.rs",
+        "catalog_physical.rs",
         "catalog_validate.rs",
         "declarations_composed.rs",
         "declarations_leaf.rs",
@@ -288,6 +233,7 @@ fn emit_catalog_rerun_inputs() {
     println!("cargo:rerun-if-changed=build_stencil_artifacts.rs");
     println!("cargo:rerun-if-changed=build_stencil_artifacts");
     println!("cargo:rerun-if-changed=build_stencil_contract.rs");
+    println!("cargo:rerun-if-changed=build_stencil_outputs.rs");
     println!("cargo:rerun-if-changed=build_stencil_templates.rs");
     println!("cargo:rerun-if-changed=src/ir.rs");
 }
