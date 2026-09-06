@@ -192,13 +192,22 @@ mod tests {
             bootstrap,
             vec![
                 "globals-extra",
+                "fetch",
+                "externalizable-strings",
+                "report",
+                "performance",
                 "support",
+                "punycode",
                 "dns",
                 "dgram-head",
                 "dgram",
                 "dgram-tail",
                 "membership",
+                "async-resource",
                 "web-streams",
+                "webcrypto-global",
+                "vfs-head",
+                "vfs",
             ]
         );
         let post_bootstrap = super::post_bootstrap::ABILITIES

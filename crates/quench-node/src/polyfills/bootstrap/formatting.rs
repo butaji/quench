@@ -111,6 +111,16 @@ pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__nodeUtil = {
         .map((key) => `${key}: URL {}`)
         .join(", ")} }`;
     }
+    if (value && typeof value === "object" && value[Symbol.toStringTag] === "Blob") {
+      if (options.depth < 0) return "[Blob]";
+      return `Blob { size: ${value.size}, type: '${value.type}' }`;
+    }
+    const cryptoKeyMarker = String.fromCharCode(0) + "quench:webcrypto:key";
+    const cryptoKeyMeta = String.fromCharCode(0) + "quench:webcrypto:key-meta";
+    if (value && typeof value === "object" && value[cryptoKeyMarker] === true) {
+      const metadata = value[cryptoKeyMeta] || {};
+      return `CryptoKey { type: '${metadata.type}', extractable: ${metadata.extractable}, algorithm: ${__nodeUtil.inspect(metadata.algorithm, { ...options, depth: (options.depth ?? 2) - 1 })}, usages: ${__nodeUtil.inspect(metadata.usages, { ...options, depth: (options.depth ?? 2) - 1 })} }`;
+    }
     if (options.depth === 0 && value && typeof value === "object") {
       return `{ ${Object.keys(value)
         .map(

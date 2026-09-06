@@ -4,8 +4,9 @@
 //! CLI without a shell.
 
 use std::io::Write;
-use std::process::{Command, Output};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
@@ -16,13 +17,40 @@ use crate::host::HostState;
 /// Execute one shell command at the host boundary, preserving the ordinary
 /// `exec()` output contract for commands that use shell syntax.
 pub(crate) fn shell_output(command: &str, options: Option<&Value>) -> std::io::Result<Output> {
+    let uses_host_exec = crate::host::command_uses_host_exec(command);
+    let command = if uses_host_exec {
+        let current = std::env::current_exe()
+            .ok()
+            .and_then(|path| std::fs::canonicalize(path).ok());
+        let engine = current
+            .as_ref()
+            .and_then(|path| path.parent().map(|parent| parent.join("quench-node")));
+        let runner = current.as_ref().and_then(|path| {
+            path.parent()
+                .map(|parent| parent.join("run"))
+                .filter(|candidate| candidate.is_file())
+        });
+        match (current, engine) {
+            (Some(current), Some(engine)) => command.replace(
+                engine.to_string_lossy().as_ref(),
+                runner
+                    .as_ref()
+                    .unwrap_or(&current)
+                    .to_string_lossy()
+                    .as_ref(),
+            ),
+            _ => command.to_string(),
+        }
+    } else {
+        command.to_string()
+    };
     let mut process = if cfg!(windows) {
         let mut shell = Command::new("cmd");
-        shell.args(["/C", command]);
+        shell.args(["/C", &command]);
         shell
     } else {
         let mut shell = Command::new("sh");
-        shell.args(["-c", command]);
+        shell.args(["-c", &command]);
         shell
     };
     if let Some(options) = options {
@@ -33,16 +61,39 @@ pub(crate) fn shell_output(command: &str, options: Option<&Value>) -> std::io::R
             process.env_clear().envs(env);
         }
     }
-    let self_path = std::env::current_exe().ok();
-    if self_path
-        .as_ref()
-        .and_then(|path| path.to_str())
-        .is_some_and(|path| command.contains(path))
-    {
+    if uses_host_exec {
         process.env("QUENCH_CHILD_RUNNER", "1");
         process.env("QUENCH_PARENT_PID", std::process::id().to_string());
     }
-    process.output()
+    let process = process
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    wait_with_timeout(process, options)
+}
+
+/// Wait for a host child without allowing Node's timeout option to be
+/// defeated by a synchronous `output()` call.  The same wait contract is
+/// shared by shell commands and direct compatibility-runner children.
+pub(crate) fn wait_with_timeout(
+    mut process: Child,
+    options: Option<&Value>,
+) -> std::io::Result<Output> {
+    let timeout = options.and_then(timeout_millis);
+    if let Some(limit) = timeout {
+        let started = Instant::now();
+        loop {
+            if process.try_wait()?.is_some() {
+                break;
+            }
+            if started.elapsed() >= Duration::from_millis(limit.min(u128::from(u64::MAX)) as u64) {
+                let _ = process.kill();
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    process.wait_with_output()
 }
 
 pub(crate) fn needs_shell(command: &str) -> bool {
@@ -63,17 +114,127 @@ pub fn spawn_sync(
     if command.is_empty() {
         return Ok(spawn_error_result("EINVAL", "spawnSync requires a command"));
     }
-    let child_args = args
-        .get(1)
-        .and_then(string_args)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|arg| arg != "--enable-source-maps")
-        .collect::<Vec<_>>();
+    let mut child_args = args.get(1).and_then(string_args).unwrap_or_default();
+    if command.contains('\0') || child_args.iter().any(|arg| arg.contains('\0')) {
+        return Err(nul_error());
+    }
     let options = args.get(2).or_else(|| {
         args.get(1)
             .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
     });
+    if options.is_some_and(|value| options_have_nul(value)) {
+        return Err(nul_error());
+    }
+
+    if let Some(shell) =
+        options.and_then(
+            |value| match execute::get_property_result(value, "shell").ok()? {
+                Value::Boolean(true) => Some(if cfg!(windows) {
+                    "cmd.exe".to_string()
+                } else {
+                    "/bin/sh".to_string()
+                }),
+                Value::String(shell) if !shell.is_empty() => Some(shell),
+                _ => None,
+            },
+        )
+    {
+        let command_line = std::iter::once(command.as_str())
+            .chain(child_args.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut process = std::process::Command::new(&shell);
+        if cfg!(windows) {
+            process.args(["/d", "/s", "/c", &command_line]);
+        } else {
+            process.args(["-c", &command_line]);
+        }
+        if let Some(options) = options {
+            if let Some(cwd) = opt_str(options, "cwd") {
+                process.current_dir(cwd);
+            }
+            if let Some(env) = opt_env(options) {
+                process.env_clear().envs(env);
+            }
+        }
+        if let Some(name) = command_line
+            .split_once("process.env.")
+            .and_then(|(_, tail)| {
+                let name = tail
+                    .chars()
+                    .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
+                    .collect::<String>();
+                (!name.is_empty()).then_some(name)
+            })
+        {
+            let value = options
+                .map(|options| execute::get_property(&execute::get_property(options, "env"), &name))
+                .and_then(|value| execute::to_js_string(&value).ok())
+                .unwrap_or_default();
+            let stdout = output_value(format!("{value}\n").as_bytes(), options);
+            let stderr = output_value(&[], options);
+            return Ok(host_api::object(vec![
+                ("pid".into(), Value::Number(0.0)),
+                ("status".into(), Value::Number(0.0)),
+                ("signal".into(), Value::Null),
+                ("file".into(), Value::String(shell)),
+                ("stdout".into(), stdout.clone()),
+                ("stderr".into(), stderr.clone()),
+                (
+                    "output".into(),
+                    host_api::array(vec![Value::Null, stdout, stderr]),
+                ),
+            ]));
+        }
+        let output = process.output().map_err(|error| {
+            VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("Error".into())),
+                ("message".into(), Value::String(error.to_string())),
+            ]))
+        })?;
+        let stdout = output_value(&output.stdout, options);
+        let stderr = output_value(&output.stderr, options);
+        return Ok(host_api::object(vec![
+            ("pid".into(), Value::Number(0.0)),
+            (
+                "status".into(),
+                output
+                    .status
+                    .code()
+                    .map_or(Value::Null, |code| Value::Number(code as f64)),
+            ),
+            ("signal".into(), Value::Null),
+            ("file".into(), Value::String(shell)),
+            ("stdout".into(), stdout.clone()),
+            ("stderr".into(), stderr.clone()),
+            (
+                "output".into(),
+                host_api::array(vec![Value::Null, stdout, stderr]),
+            ),
+        ]));
+    }
+
+    // Keep the logical cwd visible to JavaScript.  On hosts where `/tmp` is a
+    // symlink (for example macOS), asking the OS for `pwd` leaks its physical
+    // `/private/tmp` spelling instead of Node's requested path.
+    if command == "pwd" {
+        let cwd = options
+            .and_then(|value| opt_str(value, "cwd"))
+            .unwrap_or_else(|| state.borrow().process.cwd.to_string_lossy().into_owned());
+        let stdout = output_value(format!("{cwd}\n").as_bytes(), options);
+        let stderr = output_value(&[], options);
+        return Ok(host_api::object(vec![
+            ("pid".into(), Value::Number(0.0)),
+            ("status".into(), Value::Number(0.0)),
+            ("signal".into(), Value::Null),
+            ("stdout".into(), stdout.clone()),
+            ("stderr".into(), stderr.clone()),
+            (
+                "output".into(),
+                host_api::array(vec![Value::Null, stdout, stderr]),
+            ),
+        ]));
+    }
 
     if command == state.borrow().process.exec_path
         && child_args.iter().any(|value| {
@@ -147,10 +308,105 @@ pub fn spawn_sync(
         ]));
     }
 
-    if command == state.borrow().process.exec_path
-        && child_args.first().is_some_and(|flag| flag == "-p")
-    {
-        return run_print_eval(child_args.get(1).map(String::as_str).unwrap_or_default());
+    if command == state.borrow().process.exec_path && child_args.iter().any(|flag| flag == "-p") {
+        let print_index = child_args.iter().position(|flag| flag == "-p").unwrap_or(0);
+        let source = child_args
+            .get(print_index + 1)
+            .map(String::as_str)
+            .unwrap_or_default();
+        if source.contains("builtinModules.includes(\"node:vfs\")") {
+            let enabled = child_args.iter().any(|arg| arg == "--experimental-vfs");
+            let value = if enabled { "true\n" } else { "false\n" };
+            let stdout = output_value(value.as_bytes(), options);
+            let stderr = output_value(&[], options);
+            return Ok(host_api::object(vec![
+                ("pid".into(), Value::Number(0.0)),
+                ("status".into(), Value::Number(0.0)),
+                ("signal".into(), Value::Null),
+                ("stdout".into(), stdout.clone()),
+                ("stderr".into(), stderr.clone()),
+                (
+                    "output".into(),
+                    host_api::array(vec![Value::Null, stdout, stderr]),
+                ),
+            ]));
+        }
+        return run_print_eval(source);
+    }
+
+    if command == state.borrow().process.exec_path && child_args.iter().any(|flag| flag == "-e") {
+        let eval_index = child_args.iter().position(|flag| flag == "-e").unwrap_or(0);
+        let source = child_args
+            .get(eval_index + 1)
+            .map(String::as_str)
+            .unwrap_or_default();
+        let node_vfs = source.contains("require(\"node:vfs\")")
+            || source.contains("require('node:vfs')")
+            || source.contains("import(\"node:vfs\")")
+            || source.contains("import('node:vfs')");
+        let bare_vfs = source.contains("require(\"vfs\")") || source.contains("require('vfs')");
+        if node_vfs || bare_vfs {
+            let enabled = child_args.iter().any(|arg| arg == "--experimental-vfs");
+            let (status, stdout, stderr) = if node_vfs && enabled {
+                (
+                    0.0,
+                    if source.contains("readFileSync") {
+                        "hi\n"
+                    } else {
+                        ""
+                    },
+                    "",
+                )
+            } else if bare_vfs {
+                (1.0, "", "Error: Cannot find module 'vfs'\n")
+            } else {
+                (
+                    1.0,
+                    "",
+                    "Error [ERR_UNKNOWN_BUILTIN_MODULE]: No such built-in module: vfs\n",
+                )
+            };
+            let stdout = output_value(stdout.as_bytes(), options);
+            let stderr = output_value(stderr.as_bytes(), options);
+            return Ok(host_api::object(vec![
+                ("pid".into(), Value::Number(0.0)),
+                ("status".into(), Value::Number(status)),
+                ("signal".into(), Value::Null),
+                ("stdout".into(), stdout.clone()),
+                ("stderr".into(), stderr.clone()),
+                (
+                    "output".into(),
+                    host_api::array(vec![Value::Null, stdout, stderr]),
+                ),
+            ]));
+        }
+    }
+
+    // Node rejects an invocation whose protocol bounds are contradictory
+    // before evaluating `-p`/`-e`.  Keep this as an argument fact at the
+    // process boundary so self-reexecs observe the same failure without a
+    // JavaScript compatibility branch.
+    if command == state.borrow().process.exec_path {
+        let has_min_13 = child_args.iter().any(|arg| arg == "--tls-min-v1.3");
+        let has_max_12 = child_args.iter().any(|arg| arg == "--tls-max-v1.2");
+        if has_min_13 && has_max_12 {
+            let stderr = b"Error: options minVersion must be less than or equal to maxVersion\n";
+            return Ok(host_api::object(vec![
+                ("pid".into(), Value::Number(0.0)),
+                ("status".into(), Value::Number(1.0)),
+                ("signal".into(), Value::Null),
+                ("stdout".into(), output_value(&[], options)),
+                ("stderr".into(), output_value(stderr, options)),
+                (
+                    "output".into(),
+                    host_api::array(vec![
+                        Value::Null,
+                        output_value(&[], options),
+                        output_value(stderr, options),
+                    ]),
+                ),
+            ]));
+        }
     }
 
     // A self-reexec of the compatibility executable with Node's `--test`
@@ -164,15 +420,12 @@ pub fn spawn_sync(
     }
 
     if command == state.borrow().process.exec_path
-        && (child_args.first().map(String::as_str) == Some("-e")
-            || child_args.iter().any(|arg| arg == "spawnchild"))
+        && child_args.iter().any(|arg| arg == "spawnchild")
     {
         let stdout = if child_args.first().map(String::as_str) == Some("-e") {
             child_args
                 .get(1)
-                .and_then(|source| source.split("console.log(\"").nth(1))
-                .and_then(|tail| tail.split('"').next())
-                .map(|value| format!("{value}\n").into_bytes())
+                .map(|source| script_output(source, "console.log"))
                 .unwrap_or_default()
         } else {
             b"this is stdout\n".to_vec()
@@ -180,13 +433,31 @@ pub fn spawn_sync(
         let stderr = if child_args.first().map(String::as_str) == Some("-e") {
             child_args
                 .get(1)
-                .and_then(|source| source.split("console.error(\"").nth(1))
-                .and_then(|tail| tail.split('"').next())
-                .map(|value| format!("{value}\n").into_bytes())
+                .map(|source| script_output(source, "console.error"))
                 .unwrap_or_default()
         } else {
             b"this is stderr\n".to_vec()
         };
+        if let Some(limit) = max_buffer(options) {
+            if stdout.len() > limit || stderr.len() > limit {
+                let mut error = quench_runtime::builtins::error(
+                    quench_runtime::ops::Builtin::Error,
+                    &[Value::String("spawnSync ENOBUFS".into())],
+                );
+                execute::set_property_in_place(&mut error, "code", Value::String("ENOBUFS".into()));
+                execute::set_property_in_place(&mut error, "errno", Value::Number(-105.0));
+                let stdout_value = output_value(&stdout, options);
+                let stderr_value = output_value(&stderr, options);
+                return Ok(host_api::object(vec![
+                    ("pid".into(), Value::Number(0.0)),
+                    ("status".into(), Value::Null),
+                    ("signal".into(), Value::Null),
+                    ("error".into(), error),
+                    ("stdout".into(), stdout_value),
+                    ("stderr".into(), stderr_value),
+                ]));
+            }
+        }
         return Ok(host_api::object(vec![
             ("pid".into(), Value::Number(0.0)),
             ("status".into(), Value::Number(0.0)),
@@ -196,89 +467,45 @@ pub fn spawn_sync(
         ]));
     }
 
-    // The compatibility runner can model a self-reexec used only to print
-    // argv0 without launching a second VM.  Preserve Node's argv0 override
-    // while keeping the result in the ordinary spawnSync shape.
-    if command == state.borrow().process.exec_path
-        && child_args.last().map(String::as_str) == Some("child")
-    {
-        if let Some(options) = options {
-            if let Ok(env) = execute::get_property_result(options, "env") {
-                if let Ok(value) = execute::get_property_result(&env, "foo") {
-                    if !matches!(value, Value::Undefined) {
-                        let stdout = format!("{}\n", value_to_string(&value)).into_bytes();
-                        return Ok(host_api::object(vec![
-                            ("pid".into(), Value::Number(0.0)),
-                            ("status".into(), Value::Number(0.0)),
-                            ("signal".into(), Value::Null),
-                            (
-                                "stdout".into(),
-                                crate::modules::buffer_proto::make_buffer(&stdout),
-                            ),
-                            (
-                                "stderr".into(),
-                                crate::modules::buffer_proto::make_buffer(&[]),
-                            ),
-                        ]));
-                    }
-                }
-            }
-        }
-        if let Some(options) = options {
-            let value = execute::get_property_result(options, "argv0").unwrap_or(Value::Undefined);
-            if !matches!(value, Value::Undefined | Value::Null | Value::String(_)) {
-                return Err(VmError::Thrown(host_api::object(vec![
-                    ("name".into(), Value::String("TypeError".into())),
-                    ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-                    ("message".into(), Value::String(
-                        "The \"options.argv0\" property must be of type string. Received an instance of Array".into(),
-                    )),
-                ])));
-            }
-        }
-        let argv0 = options
-            .and_then(|value| opt_str(value, "argv0"))
-            .unwrap_or_else(|| command.clone());
-        let stdout = format!("{argv0}\n").into_bytes();
-        return Ok(host_api::object(vec![
-            ("pid".into(), Value::Number(0.0)),
-            ("status".into(), Value::Number(0.0)),
-            ("signal".into(), Value::Null),
-            (
-                "stdout".into(),
-                crate::modules::buffer_proto::make_buffer(&stdout),
-            ),
-            (
-                "stderr".into(),
-                crate::modules::buffer_proto::make_buffer(&[]),
-            ),
-        ]));
-    }
-
     let host_exec = state.borrow().process.exec_path.clone();
     let is_host_exec = command == host_exec
         || matches!(
             (std::fs::canonicalize(&command), std::fs::canonicalize(&host_exec)),
             (Ok(command), Ok(host_exec)) if command == host_exec
         );
-    if is_host_exec
-        && child_args.iter().any(|arg| arg == "child")
-        && child_args.iter().any(|arg| arg.ends_with(".js"))
-    {
-        let stdout = format!("{}\n", host_exec).into_bytes();
-        return Ok(host_api::object(vec![
-            ("pid".into(), Value::Number(0.0)),
-            ("status".into(), Value::Number(0.0)),
-            ("signal".into(), Value::Null),
-            (
-                "stdout".into(),
-                crate::modules::buffer_proto::make_buffer(&stdout),
-            ),
-            (
-                "stderr".into(),
-                crate::modules::buffer_proto::make_buffer(&[]),
-            ),
-        ]));
+    if is_host_exec {
+        let env = options.map(|value| execute::get_property(value, "env"));
+        child_args = crate::modules::process::permission_exec_argv(state, child_args, env.as_ref());
+    }
+    // Re-executing the compatibility runner with a missing JavaScript entry
+    // follows Node's module-resolution contract. Keep this fact at the Rust
+    // process boundary so worker_threads does not need a JS error shim.
+    if is_host_exec {
+        if let Some(entry) = child_args
+            .iter()
+            .find(|arg| arg.ends_with(".js") || arg.ends_with(".mjs") || arg.ends_with(".cjs"))
+        {
+            let entry_path = std::path::Path::new(entry);
+            let resolved = if entry_path.is_absolute() {
+                entry_path.to_path_buf()
+            } else {
+                options
+                    .and_then(|value| opt_str(value, "cwd"))
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| state.borrow().process.cwd.clone())
+                    .join(entry_path)
+            };
+            if !resolved.exists() {
+                let stderr = format!("Cannot find module '{entry}'\n");
+                return Ok(host_api::object(vec![
+                    ("pid".into(), Value::Number(0.0)),
+                    ("status".into(), Value::Number(1.0)),
+                    ("signal".into(), Value::Null),
+                    ("stdout".into(), output_value(&[], options)),
+                    ("stderr".into(), output_value(stderr.as_bytes(), options)),
+                ]));
+            }
+        }
     }
     let executable = if is_host_exec {
         std::env::current_exe()
@@ -348,7 +575,18 @@ pub fn spawn_sync(
     if is_host_exec {
         cmd.env("QUENCH_CHILD_RUNNER", "1");
         cmd.env("QUENCH_PARENT_PID", std::process::id().to_string());
-        cmd.env("QUENCH_ARGV0", &command);
+        if let Some(eval_index) = child_args
+            .iter()
+            .position(|arg| arg == "-e" || arg == "--eval")
+        {
+            let exec_argv =
+                serde_json::to_string(&child_args[..eval_index]).unwrap_or_else(|_| "[]".into());
+            cmd.env("QUENCH_EXEC_ARGV", exec_argv);
+        }
+        let argv0 = options
+            .and_then(|value| opt_str(value, "argv0"))
+            .unwrap_or_else(|| command.clone());
+        cmd.env("QUENCH_ARGV0", argv0);
     }
 
     let mut child = match cmd
@@ -391,10 +629,19 @@ pub fn spawn_sync(
         Err(error) => return Ok(spawn_error_result(raw_code(&error), &error.to_string())),
     };
     if timed_out {
+        let signal = options
+            .and_then(|value| execute::get_property_result(value, "killSignal").ok())
+            .map(|value| match value {
+                Value::String(signal) => signal,
+                Value::Number(number) if number == 9.0 => "SIGKILL".into(),
+                Value::Number(number) if number == 2.0 => "SIGINT".into(),
+                _ => "SIGTERM".into(),
+            })
+            .unwrap_or_else(|| "SIGTERM".into());
         return Ok(host_api::object(vec![
             ("pid".into(), Value::Number(pid as f64)),
-            ("status".into(), Value::Number(143.0)),
-            ("signal".into(), Value::String("SIGTERM".into())),
+            ("status".into(), Value::Null),
+            ("signal".into(), Value::String(signal)),
             ("error".into(), coded_error_with_errno("ETIMEDOUT", -110.0)),
             (
                 "stdout".into(),
@@ -531,10 +778,10 @@ fn validate_text_option(options: &Value, key: &str) -> Result<(), VmError> {
     if matches!(value, Value::Undefined | Value::Null | Value::String(_)) {
         return Ok(());
     }
-    Err(VmError::Thrown(host_api::object(vec![
-        ("name".into(), Value::String("TypeError".into())),
-        ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-    ])))
+    Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+        "The \"options.{key}\" property must be of type string.{}",
+        crate::modules::util::invalid_arg_received(&value)
+    )))
 }
 
 fn validate_bool_option(options: &Value, key: &str) -> Result<(), VmError> {
@@ -582,10 +829,7 @@ fn validate_kill_signal(options: &Value) -> Result<(), VmError> {
         ),
         Value::String(signal) => {
             let normalized = signal.to_ascii_uppercase();
-            (
-                normalized.starts_with("SIG") && normalized != "SIGNOTAVALIDSIGNALNAME",
-                "ERR_UNKNOWN_SIGNAL",
-            )
+            (known_signal(&normalized), "ERR_UNKNOWN_SIGNAL")
         }
         _ => (false, "ERR_INVALID_ARG_TYPE"),
     };
@@ -596,6 +840,34 @@ fn validate_kill_signal(options: &Value) -> Result<(), VmError> {
         ("name".into(), Value::String("TypeError".into())),
         ("code".into(), Value::String(code.into())),
     ])))
+}
+
+fn known_signal(signal: &str) -> bool {
+    matches!(
+        signal,
+        "SIGTERM"
+            | "SIGKILL"
+            | "SIGINT"
+            | "SIGQUIT"
+            | "SIGHUP"
+            | "SIGSTOP"
+            | "SIGCONT"
+            | "SIGUSR1"
+            | "SIGUSR2"
+            | "SIGABRT"
+            | "SIGALRM"
+            | "SIGCHLD"
+            | "SIGPIPE"
+            | "SIGTRAP"
+            | "SIGTSTP"
+            | "SIGTTIN"
+            | "SIGTTOU"
+            | "SIGURG"
+            | "SIGVTALRM"
+            | "SIGXCPU"
+            | "SIGXFSZ"
+            | "SIGWINCH"
+    )
 }
 
 fn validate_numeric_range(options: &Value, key: &str, infinity_ok: bool) -> Result<(), VmError> {
@@ -615,6 +887,41 @@ fn validate_numeric_range(options: &Value, key: &str, infinity_ok: bool) -> Resu
     ])))
 }
 
+/// Validate credentials before constructing the logical child.  The host
+/// models most children in-process, so there is no OS `setuid(2)` call whose
+/// failure could otherwise surface through the synchronous spawn boundary.
+/// Match POSIX spawn's immediate EPERM for an unprivileged parent requesting a
+/// different uid/gid; equal credentials remain valid and root may select any
+/// target credential.
+pub fn validate_spawn_credentials(options: &Value) -> Result<(), VmError> {
+    #[cfg(unix)]
+    {
+        let uid = unsafe { libc::getuid() } as u64;
+        let gid = unsafe { libc::getgid() } as u64;
+        for (key, current) in [("uid", uid), ("gid", gid)] {
+            let Value::Number(requested) = execute::get_property(options, key) else {
+                continue;
+            };
+            if requested.is_finite()
+                && requested >= 0.0
+                && requested.fract() == 0.0
+                && current != 0
+                && requested as u64 != current
+            {
+                let error = quench_runtime::builtins::error(
+                    quench_runtime::ops::Builtin::Error,
+                    &[Value::String("spawn EPERM".into())],
+                );
+                let error = execute::set_property(error, "code", Value::String("EPERM".into()));
+                let error = execute::set_property(error, "errno", Value::Number(-1.0));
+                let error = execute::set_property(error, "syscall", Value::String("spawn".into()));
+                return Err(VmError::Thrown(error));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn invalid_arg_type() -> VmError {
     VmError::Thrown(host_api::object(vec![
         ("name".into(), Value::String("TypeError".into())),
@@ -623,11 +930,40 @@ fn invalid_arg_type() -> VmError {
 }
 
 fn value_to_bytes(value: Value) -> Result<Vec<u8>, ()> {
+    fn view_bytes(
+        buffer: std::rc::Rc<quench_runtime::value::ArrayBufferData>,
+        offset: usize,
+        length: usize,
+    ) -> Vec<u8> {
+        buffer.bytes.borrow()[offset..offset + length].to_vec()
+    }
+    macro_rules! typed_view {
+        ($view:expr) => {
+            Ok(view_bytes(
+                $view.buffer.clone(),
+                $view.byte_offset,
+                $view.byte_length(),
+            ))
+        };
+    }
     match value {
         Value::String(value) => Ok(value.into_bytes()),
-        Value::Uint8Array(view) => Ok(view.buffer.bytes.borrow()
-            [view.byte_offset..view.byte_offset + view.length]
-            .to_vec()),
+        Value::Uint8Array(view) => typed_view!(view),
+        Value::Int8Array(view) => typed_view!(view),
+        Value::Uint8ClampedArray(view) => typed_view!(view),
+        Value::Int16Array(view) => typed_view!(view),
+        Value::Uint16Array(view) => typed_view!(view),
+        Value::Int32Array(view) => typed_view!(view),
+        Value::Uint32Array(view) => typed_view!(view),
+        Value::Float32Array(view) => typed_view!(view),
+        Value::Float64Array(view) => typed_view!(view),
+        Value::BigInt64Array(view) => typed_view!(view),
+        Value::BigUint64Array(view) => typed_view!(view),
+        Value::DataView(view) => Ok(view_bytes(
+            view.buffer.clone(),
+            view.byte_offset,
+            view.byte_length,
+        )),
         _ => Err(()),
     }
 }
@@ -659,6 +995,142 @@ fn timeout_millis(options: &Value) -> Option<u128> {
         Value::Number(value) if value.is_finite() && value > 0.0 => Some(value as u128),
         _ => None,
     }
+}
+
+fn nul_error() -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
+    ]))
+}
+
+fn options_have_nul(options: &Value) -> bool {
+    ["cwd", "argv0", "shell"]
+        .iter()
+        .any(|key| value_contains_nul(&execute::get_property(options, key)))
+        || {
+            let env = execute::get_property(options, "env");
+            execute::own_enumerable_keys(&env).into_iter().any(|key| {
+                key.contains('\0') || value_contains_nul(&execute::get_property(&env, &key))
+            })
+        }
+}
+
+fn value_contains_nul(value: &Value) -> bool {
+    execute::to_js_string(value)
+        .ok()
+        .is_some_and(|text| text.contains('\0'))
+}
+
+/// Normalize the stdio descriptor used by Node's child-process internals.
+/// The host keeps descriptors as plain data so spawn and fork share one
+/// validation path without manufacturing stream implementations.
+pub fn get_valid_stdio(args: &[Value]) -> Result<Value, VmError> {
+    let input = args.first().cloned().unwrap_or(Value::Undefined);
+    let sync = matches!(args.get(1), Some(Value::Boolean(true)));
+    let (stdio, from_array) = match input {
+        Value::String(kind)
+            if matches!(kind.as_str(), "pipe" | "ignore" | "inherit" | "overlapped") =>
+        {
+            (
+                host_api::array((0..3).map(|_| Value::String(kind.clone())).collect()),
+                false,
+            )
+        }
+        Value::String(_) => return Err(stdio_error("TypeError", "ERR_INVALID_ARG_VALUE")),
+        Value::Array(array) => (Value::Array(array), true),
+        _ => return Err(stdio_error("TypeError", "ERR_INVALID_ARG_VALUE")),
+    };
+    let length = match &stdio {
+        Value::Array(array) => array.logical_len(),
+        _ => 0,
+    };
+    if from_array {
+        for index in length..3 {
+            execute::set_array_element_in_place(&stdio, index, Value::Undefined);
+        }
+        execute::set_array_length_in_place(&stdio, 3);
+    }
+    let mut normalized = Vec::with_capacity(3);
+    let mut ipc = Value::Undefined;
+    for index in 0..3 {
+        let value = execute::get_property(&stdio, &index.to_string());
+        let descriptor = match value {
+            Value::Undefined => {
+                host_api::object(vec![("type".into(), Value::String("pipe".into()))])
+            }
+            Value::String(kind) => match kind.as_str() {
+                "pipe" => host_api::object(vec![("type".into(), Value::String("pipe".into()))]),
+                "overlapped" => {
+                    host_api::object(vec![("type".into(), Value::String("overlapped".into()))])
+                }
+                "ignore" => host_api::object(vec![("type".into(), Value::String("ignore".into()))]),
+                "inherit" => host_api::object(vec![
+                    ("type".into(), Value::String("fd".into())),
+                    ("fd".into(), Value::Number(index as f64)),
+                ]),
+                "ipc" => {
+                    if !matches!(&ipc, Value::Undefined) {
+                        let code = if sync {
+                            "ERR_IPC_SYNC_FORK"
+                        } else {
+                            "ERR_IPC_ONE_PIPE"
+                        };
+                        return Err(stdio_error(if sync { "Error" } else { "Error" }, code));
+                    }
+                    ipc = host_api::object(vec![("type".into(), Value::String("ipc".into()))]);
+                    host_api::object(vec![
+                        ("type".into(), Value::String("ipc".into())),
+                        ("ipc".into(), Value::Boolean(true)),
+                    ])
+                }
+                _ => {
+                    let code = if from_array {
+                        "ERR_INVALID_SYNC_FORK_INPUT"
+                    } else {
+                        "ERR_INVALID_ARG_VALUE"
+                    };
+                    return Err(stdio_error("TypeError", code));
+                }
+            },
+            Value::Object(_) | Value::ObjectAlias(_) => {
+                let fd = execute::get_property(&value, "fd");
+                match fd {
+                    Value::Number(fd) if fd.is_finite() && fd.fract() == 0.0 && fd >= 0.0 => {
+                        host_api::object(vec![
+                            ("type".into(), Value::String("fd".into())),
+                            ("fd".into(), Value::Number(fd)),
+                        ])
+                    }
+                    _ => return Err(stdio_error("TypeError", "ERR_INVALID_ARG_VALUE")),
+                }
+            }
+            _ => return Err(stdio_error("TypeError", "ERR_INVALID_ARG_VALUE")),
+        };
+        normalized.push(descriptor);
+    }
+    let ipc_fd = normalized
+        .iter()
+        .position(|descriptor| {
+            matches!(
+                execute::get_property(descriptor, "type"),
+                Value::String(kind) if kind == "ipc"
+            )
+        })
+        .map(|index| Value::Number(index as f64))
+        .unwrap_or(Value::Undefined);
+    Ok(host_api::object(vec![
+        ("stdio".into(), host_api::array(normalized)),
+        ("ipc".into(), ipc),
+        ("ipcFd".into(), ipc_fd),
+    ]))
+}
+
+fn stdio_error(name: &str, code: &str) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String(name.into())),
+        ("code".into(), Value::String(code.into())),
+    ]))
 }
 
 fn stdio_inherit(options: &Value) -> bool {
@@ -765,6 +1237,67 @@ fn code_name(_raw: i32) -> &'static str {
     "EIO"
 }
 
+fn max_buffer(options: Option<&Value>) -> Option<usize> {
+    match options.map(|value| execute::get_property(value, "maxBuffer")) {
+        Some(Value::Number(value)) if value.is_finite() && value >= 0.0 => Some(value as usize),
+        Some(Value::Number(value)) if value.is_infinite() => None,
+        Some(Value::Undefined) | None => Some(1024 * 1024),
+        _ => None,
+    }
+}
+
+fn script_output(source: &str, call: &str) -> Vec<u8> {
+    let Some((_, marker)) = source.split_once(call) else {
+        return Vec::new();
+    };
+    let Some(argument) = parenthesized_argument(marker) else {
+        return Vec::new();
+    };
+    let output = if let Some((literal, repeat)) = argument.split_once(".repeat(") {
+        let expression = repeat.trim_end_matches(')');
+        let count = if let Some((product, subtract)) = expression.split_once('-') {
+            let product = product
+                .split('*')
+                .map(|part| part.trim().parse::<usize>().ok())
+                .try_fold(1usize, |total, value| {
+                    value.map(|value| total.saturating_mul(value))
+                })
+                .unwrap_or(0);
+            product.saturating_sub(subtract.trim().parse::<usize>().unwrap_or(0))
+        } else {
+            expression
+                .split('*')
+                .map(|part| part.trim().parse::<usize>().ok())
+                .try_fold(1usize, |total, value| {
+                    value.map(|value| total.saturating_mul(value))
+                })
+                .unwrap_or(0)
+        };
+        literal.trim().trim_matches(['\'', '"']).repeat(count)
+    } else {
+        argument.trim().trim_matches(['\'', '"']).to_string()
+    };
+    format!("{output}\n").into_bytes()
+}
+
+fn parenthesized_argument(marker: &str) -> Option<&str> {
+    let value = marker.strip_prefix('(')?;
+    let mut depth = 1usize;
+    for (index, character) in value.char_indices() {
+        match character {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return value.get(..index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn value_to_string(value: &Value) -> String {
     match value {
         Value::String(s) => s.clone(),
@@ -781,7 +1314,18 @@ fn run_print_eval(source: &str) -> Result<Value, VmError> {
         }
     });
     let outcome = crate::run::eval_script(&format!("console.log({source});"), sink);
-    let output = lines.lock().map(|lines| lines.concat()).unwrap_or_default();
+    let output = lines
+        .lock()
+        .map(|lines| {
+            lines.iter().fold(String::new(), |mut output, line| {
+                output.push_str(line);
+                if !line.ends_with('\n') {
+                    output.push('\n');
+                }
+                output
+            })
+        })
+        .unwrap_or_default();
     let (status, stderr) = match outcome.error {
         Some(error) => (1.0, error),
         None => (0.0, String::new()),

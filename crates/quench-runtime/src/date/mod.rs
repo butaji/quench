@@ -16,6 +16,9 @@ use crate::value::Value;
 pub fn set_mock_now(value: Option<f64>) {
     chrono_utils::set_mock_now(value);
 }
+pub fn set_local_timezone(name: Option<&str>) {
+    chrono_utils::set_local_timezone(name);
+}
 pub fn current_time_ms() -> f64 {
     chrono_utils::current_time_ms()
 }

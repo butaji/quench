@@ -1,6 +1,7 @@
 //! Polyfill: `module-surface-14-tail`
 
 pub const JS: &str = quench_js_check::checked_js!(r#"class __quenchKeyObject {
+  toString() { return "[object KeyObject]"; }
   get type() {
     if (!__quenchCryptoKeyObjectBrand.has(this)) {
       __quenchCryptoKeyObjectInvalidThis();
@@ -22,6 +23,10 @@ pub const JS: &str = quench_js_check::checked_js!(r#"class __quenchKeyObject {
   }
 }
 class __quenchAsymmetricKeyObject extends __quenchKeyObject {}
+Object.defineProperty(__quenchKeyObject.prototype, "Symbol.toStringTag", {
+  configurable: true,
+  value: "KeyObject"
+});
 Object.defineProperties(__quenchKeyObject.prototype, {
   source: {
     configurable: true,
@@ -97,6 +102,7 @@ const __quenchCreateKeyObject = (type, source, exportValue) => {
     asymmetricType: type === "private" || type === "public" ? "rsa" : undefined,
     details: type === "private" || type === "public" ? {} : undefined
   });
+  key.toString = () => "[object KeyObject]";
   __quenchCryptoKeyObjectBrand.add(key);
   return key;
 };
@@ -155,8 +161,12 @@ const __quenchEncodedPair = (options = {}, algorithm = "rsa") => {
   };
 };
 const __quenchCryptoKeyObjectFallback = (result) => {
-  result.KeyObject ||= __quenchKeyObject;
-  result.createSecretKey = (key) => __quenchCreateKeyObject("secret", key, key);
+  if (typeof result.KeyObject !== "function") result.KeyObject = __quenchKeyObject;
+  if (result.KeyObject.prototype === undefined && typeof result.createSecretKey === "function") {
+    result.KeyObject.prototype = Object.getPrototypeOf(result.createSecretKey(NodeBuffer.alloc(0)));
+  }
+  if (typeof result.createSecretKey !== "function")
+    result.createSecretKey = (key) => __quenchCreateKeyObject("secret", key, key);
   const createPrivate = result.createPrivateKey;
   const createPublic = result.createPublicKey;
   const validateRawKeyInput = (descriptor, targetType) => {
@@ -188,24 +198,16 @@ const __quenchCryptoKeyObjectFallback = (result) => {
     }
     return descriptor;
   };
-  if (createPrivate) {
+  if (createPrivate && typeof result.createPrivateKey !== "function") {
     result.createPrivateKey = (key) =>
-      __quenchCreateKeyObject(
-        "private",
-        key,
-        createPrivate(validateRawKeyInput(key, "private"))
-      );
+      createPrivate(validateRawKeyInput(key, "private"));
   }
-  if (createPublic) {
+  if (createPublic && typeof result.createPublicKey !== "function") {
     result.createPublicKey = (key) =>
-      __quenchCreateKeyObject(
-        "public",
-        key,
-        createPublic(validateRawKeyInput(key, "public"))
-      );
+      createPublic(validateRawKeyInput(key, "public"));
   }
   const generatePair = result.generateKeyPairSync;
-  if (generatePair) {
+  if (generatePair && typeof result.generateKeyPairSync !== "function") {
     result.generateKeyPairSync = (algorithm, options) => {
       const requestedOptions = options && {
         ...options,

@@ -138,6 +138,10 @@ pub fn enqueue_job(job: Rc<dyn Fn()>) {
     crate::promise::enqueue_job(job);
 }
 
+pub fn reject_promise(promise: &Rc<crate::value::PromiseData>, reason: Value) {
+    crate::promise::reject_promise(promise, reason);
+}
+
 const MODULE_NAMESPACE: &str = "\0quench:module_namespace";
 
 pub fn mark_namespace(properties: &mut Vec<(String, Value)>) {

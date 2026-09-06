@@ -89,6 +89,54 @@ pub fn current_context() -> Rc<VmContext> {
     current_context_or_default()
 }
 
+pub fn execute_code_isolated_in_context(
+    code: crate::machine::CodeView<'_>,
+    context: &VmContext,
+) -> Result<Value, VmError> {
+    let mut registers = crate::register_file::RegisterFile::new();
+    execute_code_in_place_context(code, &mut registers, context)
+}
+
+pub fn execute_script_in_sandbox(
+    source: &str,
+    sandbox: Option<&Value>,
+    filename: Option<&str>,
+) -> Result<Value, VmError> {
+    let program = crate::reduce::reduce_global_script_source(source)
+        .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
+    let mut context = current_context().as_ref().clone();
+    if let Some(sandbox) = sandbox {
+        for key in crate::execute::own_enumerable_keys(sandbox) {
+            let value = crate::execute::get_property_result(sandbox, &key)?;
+            context = context.with_host_value(key, value);
+        }
+    }
+    if let Some(filename) = filename {
+        context = context.with_source_name(filename);
+    }
+    execute_code_isolated_in_context(program.code(), &context)
+}
+
+pub fn execute_script_in_current_context(
+    source: &str,
+    filename: Option<&str>,
+) -> Result<Value, VmError> {
+    execute_script_in_sandbox(source, None, filename)
+}
+
+pub fn create_script_context(context: Value) -> Result<Value, VmError> {
+    if !matches!(context, Value::Object(_) | Value::ObjectAlias(_) | Value::Array(_)) {
+        return Err(crate::execute::type_error("context must be an object"));
+    }
+    let updated = crate::execute::set_property(context.clone(), "\0vmContext", Value::Boolean(true));
+    crate::execute::replace_value(&context, &updated);
+    Ok(context)
+}
+
+pub fn is_script_context(value: &Value) -> bool {
+    matches!(crate::execute::get_property(value, "\0vmContext"), Value::Boolean(true))
+}
+
 /// Call a function value from host code through the current context.
 pub fn call_value(target: &Value, receiver: &Value, arguments: &[Value]) -> Result<Value, VmError> {
     crate::functions::execute_target(target, receiver, arguments)

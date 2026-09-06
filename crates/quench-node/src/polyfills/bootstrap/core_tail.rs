@@ -8,7 +8,7 @@ pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__quench_require
       : normalizedName,
   );
   if (base !== undefined) return base;
-  if (name === "http") return globalThis.__nodeHttp || __quenchHttpModule;
+  if (name === "http") return globalThis.__quenchNativeRequire?.("http");
   if (name === "child_process") {
     return globalThis.__nodeRequireChildProcess || __quenchChildProcessModule();
   }

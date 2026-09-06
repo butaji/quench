@@ -7,6 +7,33 @@ impl QuenchNodeHost {
     ) -> Option<Result<Value, VmError>> {
         let result = (|| -> Result<Value, VmError> {
             match capability.kind {
+            HostCapabilityKind::Custom(CapabilityName::CryptoKeyObjectConstructor) => {
+                return crate::modules::crypto::key_object_constructor(&self.state, receiver, arguments);
+                /*
+                let kind = match arguments.first() {
+                    Some(Value::String(value)) => value.clone(),
+                    Some(value) => return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", &format!("The type argument must be of type string. Received {}", crate::modules::util::inspect(value))))),
+                    None => return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "The type argument must be of type string. Received undefined"))),
+                };
+                if !matches!(kind.as_str(), "secret" | "public" | "private") {
+                    return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_VALUE", &format!("The argument 'type' is invalid. Received '{kind}'"))));
+                }
+                let handle = arguments.get(1).unwrap_or(&Value::Undefined);
+                if !matches!(handle, Value::Object(_) | Value::ObjectAlias(_) | Value::Undefined) {
+                    return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", &format!("The handle argument must be of type object. Received {}", crate::modules::util::inspect(handle)))));
+                }
+                Ok(Value::object(vec![("type".into(), Value::String(kind))])) */
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoKeyObjectFrom) => {
+                return crate::modules::crypto::key_object_from(
+                    &self.state,
+                    receiver,
+                    arguments,
+                );
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoKeyObjectToString) => {
+                Ok(Value::String("[object KeyObject]".into()))
+            }
             HostCapabilityKind::Custom(CapabilityName::CryptoCertificateConstructor) => {
                 let value = Value::object(vec![
                     (
@@ -70,6 +97,21 @@ impl QuenchNodeHost {
                 Ok(node_buffer(b"this-is-a-challenge"))
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoCertificateExportPublicKey) => {
+                let source = receiver
+                    .and_then(|value| quench_runtime::execute::get_property(value, "\0keySource").into())
+                    .or_else(|| NODE_KEY_SOURCE.with(|source| source.borrow().clone()))
+                    .unwrap_or(Value::Undefined);
+                let format = arguments.first().and_then(|options| quench_runtime::execute::get_property(options, "format").ok()).and_then(|value| match value { Value::String(value) => Some(value.to_ascii_lowercase()), _ => None });
+                if format.as_deref() == Some("jwk") {
+                    let raw = string_or_bytes(Some(&source)).unwrap_or_default();
+                    let public = openssl::rsa::Rsa::public_key_from_pem(&raw).or_else(|_| openssl::rsa::Rsa::public_key_from_der(&raw));
+                    if let Ok(rsa) = public {
+                        let enc = |value: &openssl::bn::BigNumRef| Value::String(base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, value.to_vec()));
+                        return Ok(Value::object(vec![("kty".into(), Value::String("RSA".into())), ("n".into(), enc(rsa.n())), ("e".into(), enc(rsa.e()))]));
+                    }
+                }
+                return Ok(source);
+                /*
                 if let Some(receiver) = receiver {
                     if let Ok(source) =
                         quench_runtime::execute::get_property_result(receiver, "\0keySource")
@@ -83,6 +125,7 @@ impl QuenchNodeHost {
                 Ok(Value::String(
                     "-----BEGIN PUBLIC KEY-----\n-----END PUBLIC KEY-----".into(),
                 ))
+                */
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoCertificateHasInstance) => {
                 Ok(Value::Boolean(true))
@@ -90,8 +133,19 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(
                 CapabilityName::CryptoCreatePrivateKey | CapabilityName::CryptoCreatePublicKey,
             ) => {
+                return if capability.kind == HostCapabilityKind::Custom(CapabilityName::CryptoCreatePrivateKey) {
+                    crate::modules::crypto::create_private_key(&self.state, receiver, arguments)
+                } else {
+                    crate::modules::crypto::create_public_key(&self.state, receiver, arguments)
+                };
+                /*
+                let key_type = if capability.kind == HostCapabilityKind::Custom(CapabilityName::CryptoCreatePrivateKey) { "private" } else { "public" };
                 NODE_KEY_SOURCE.with(|source| *source.borrow_mut() = arguments.first().cloned());
                 Ok(Value::object(vec![
+                    ("type".into(), Value::String(key_type.into())),
+                    ("asymmetricKeyType".into(), Value::String("rsa".into())),
+                    ("Symbol.toStringTag".into(), Value::String("KeyObject".into())),
+                    ("toString".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoKeyObjectToString))),
                     (
                         "export".into(),
                         capability_function(HostCapabilityKind::Custom(
@@ -114,9 +168,11 @@ impl QuenchNodeHost {
                         "\0keySource".into(),
                         arguments.first().cloned().unwrap_or(Value::Undefined),
                     ),
-                ]))
+                ])) */
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoGenerateKeyPairSync) => {
+                return crate::modules::crypto::generate_key_pair_sync(&self.state, receiver, arguments);
+                /*
                 if let Some(options) = arguments.get(1) {
                     let public_encoding =
                         quench_runtime::execute::get_property_result(options, "publicKeyEncoding")
@@ -244,7 +300,7 @@ impl QuenchNodeHost {
                             ("export".into(), export),
                         ]),
                     ),
-                ]))
+                ])) */
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoGenerateKeySync) => {
                 if let Some(Value::String(algorithm)) = arguments.first() {
@@ -461,7 +517,7 @@ impl QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::BufferInspect) => buffer_inspect(receiver),
             HostCapabilityKind::Custom(CapabilityName::InternalBinding) => {
-                internal_binding(arguments)
+                crate::dispatch_handlers::internal_binding(&self.state, receiver, arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::InternalOsGetHomeDirectory) => {
                 Ok(Value::Undefined)

@@ -69,7 +69,7 @@ const __quenchCryptoKdfFallbacks = (result) => {
     }
     return undefined;
   };
-  result.hkdfSync ||= (hash, ikm, salt, info, length) => {
+  if (typeof result.hkdfSync !== "function") result.hkdfSync = (hash, ikm, salt, info, length) => {
     if (typeof hash !== "string") {
       const error = new TypeError(
         'The "digest" argument must be of type string'
@@ -208,7 +208,7 @@ const __quenchCryptoWebFallbacks = (result) => {
 };
 const __quenchCryptoFallbacks = (result) => {
   const source = result;
-  result = Object.assign({}, source);
+  result = source;
   for (const name of ["pseudoRandomBytes", "prng", "rng"]) {
     const descriptor = Object.getOwnPropertyDescriptor(source, name);
     if (descriptor) Object.defineProperty(result, name, descriptor);

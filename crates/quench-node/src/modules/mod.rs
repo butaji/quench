@@ -1,6 +1,7 @@
-//! Node API modules. Each module is implemented as pure Rust
-//! objects installed via the runtime's host contract. There is no
-//! self-hosted JavaScript builtin layer.
+//! Node API modules. Observable host behavior and state machines are Rust
+//! objects installed through the runtime's host contract. A few modules still
+//! use explicit bridge fragments to assemble object/prototype shape; those
+//! fragments delegate to Rust capabilities and do not implement a VM.
 
 pub mod assert;
 pub mod assert_validate;
@@ -17,6 +18,9 @@ pub mod clone;
 pub mod cluster;
 pub mod compat_extra;
 pub mod console;
+pub mod crypto;
+pub mod crypto_cipher;
+pub mod crypto_dh;
 pub mod deep_equal;
 pub mod diagnostics_channel;
 pub mod dns;
@@ -32,10 +36,14 @@ pub mod fs_promises;
 pub mod fs_stats;
 pub mod fs_sync;
 pub mod http;
+mod http2_asserts;
+mod http2_facts;
+pub mod http2_util;
 pub mod http_client;
 pub mod http_res;
 pub mod inspector;
 pub mod net;
+pub mod npm;
 pub mod os;
 pub mod path;
 pub mod path_glob;
@@ -53,11 +61,15 @@ pub mod readline;
 pub mod repl;
 pub mod require;
 pub mod stream;
+pub mod stream_consumers;
 pub mod string_decoder;
 pub mod test;
 pub mod text_decoder;
 pub mod text_encoder;
 pub mod timers;
+pub mod timers_promises;
+pub mod tls;
+pub mod trace_events;
 pub mod tty;
 pub mod url;
 pub mod url_file;
@@ -66,6 +78,9 @@ pub mod util;
 pub mod util_inherits;
 pub mod util_strip;
 pub mod util_style_text;
-pub mod vm;
+pub mod v8;
+pub mod vm_api;
 pub mod wasi;
+pub mod webcrypto;
+pub mod worker_threads;
 pub mod zlib;

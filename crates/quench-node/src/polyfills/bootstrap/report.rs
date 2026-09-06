@@ -1,6 +1,9 @@
 //! Polyfill: `report`
 
 pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithProcessReport = globalThis.require;
+const __quenchReportProcess = globalThis.process;
+const __quenchReportLibuv = [];
+__quenchReportLibuv.filter ||= () => [];
 if (globalThis.process && !globalThis.process.report) {
   globalThis.process.report = {
     directory: "",
@@ -13,12 +16,12 @@ if (globalThis.process && !globalThis.process.report) {
     getReport: () => ({
       header: {
         event: "JavaScript API",
-        pid: globalThis.process.pid,
-        commandLine: globalThis.process.argv,
+        pid: __quenchReportProcess && __quenchReportProcess.pid || 0,
+        commandLine: __quenchReportProcess && __quenchReportProcess.argv || [],
       },
       javascriptStack: { message: "" },
       resourceUsage: {},
-      libuv: [],
+      libuv: __quenchReportLibuv,
       sharedObjects: [],
     }),
     writeReport: () => undefined,

@@ -42,6 +42,7 @@ globalThis.__quenchDgramUDPClass = class UDP {
   }
 };
 globalThis.__quenchInternalBindingCore = (binding) => {
+  if (binding === "http2") return globalThis.__quenchHttp2Binding;
   if (binding === "buffer") {
     return {
       fill: (buffer, offset, end, value, encoding) => {

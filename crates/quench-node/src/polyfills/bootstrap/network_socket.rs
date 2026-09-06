@@ -4,12 +4,26 @@ pub const JS: &str = quench_js_check::checked_js!(
     r#"const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
   constructor(options = {}) {
     super();
+    if (options && typeof options === "object" && options.fd !== undefined) {
+      if (typeof options.fd !== "number") {
+        throw Object.assign(new TypeError('The "fd" argument must be of type number'), {
+          code: "ERR_INVALID_ARG_TYPE",
+        });
+      }
+      if (!Number.isInteger(options.fd) || options.fd < 0) {
+        throw Object.assign(new RangeError('The value of "fd" is out of range'), {
+          code: "ERR_OUT_OF_RANGE",
+        });
+      }
+    }
     this.readable = true;
     this.writable = true;
     this.readyState = "open";
     this.allowHalfOpen = false;
     this.destroyed = false;
     this._bufferSize = 0;
+    this.writableHighWaterMark =
+      typeof options?.highWaterMark === "number" ? options.highWaterMark : 16 * 1024;
     this.bytesRead = 0;
     this.bytesWritten = 0;
     this._handle = options?.handle || null;
@@ -23,6 +37,8 @@ pub const JS: &str = quench_js_check::checked_js!(
     this._nativeId = 0;
     this._nativeConnected = false;
     this.connecting = false;
+    // Node retains the legacy `_connecting` spelling as an observable alias.
+    this._connecting = false;
     this._nativeEnded = false;
     this._readableEnded = false;
     this._endPending = false;
@@ -173,7 +189,7 @@ pub const JS: &str = quench_js_check::checked_js!(
     }
     return this;
   }
-  destroy() {
+  destroy(error) {
     if (this.destroyed) return this;
     const peer = this._peer;
     this.destroyed = true;
@@ -195,6 +211,9 @@ pub const JS: &str = quench_js_check::checked_js!(
       }
     }
     if (peer && !peer.destroyed) peer.destroy();
+    if (error !== undefined && error !== null) {
+      queueMicrotask(() => this.emit("error", error));
+    }
     queueMicrotask(() => this.emit("close"));
     return this;
   }
@@ -271,6 +290,7 @@ pub const JS: &str = quench_js_check::checked_js!(
       return this;
     }
     this.connecting = true;
+    this._connecting = true;
     if (this._boundPort) {
       this.localPort = this._boundPort;
       this.localAddress = this._boundHost;
@@ -290,6 +310,7 @@ pub const JS: &str = quench_js_check::checked_js!(
     queueMicrotask(() => {
       queueMicrotask(() => {
         this.connecting = false;
+        this._connecting = false;
         this.emit("connect");
         this.emit("ready");
         queueMicrotask(() => {
@@ -426,7 +447,7 @@ pub const JS: &str = quench_js_check::checked_js!(
     } else {
       if (typeof callback === "function") queueMicrotask(callback);
     }
-    return true;
+    return this._bufferSize < this.writableHighWaterMark;
   }
   end(_data, callback) {
     if (typeof _data === "function") {

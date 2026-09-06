@@ -350,6 +350,16 @@ globalThis.MessageChannel ||= class MessageChannel {
     this.port2._peer = this.port1;
   }
 };
+for (const name of ["MessageChannel", "MessagePort"]) {
+  if (name in globalThis) {
+    Object.defineProperty(globalThis, name, {
+      configurable: true,
+      enumerable: false,
+      writable: true,
+      value: globalThis[name],
+    });
+  }
+}
 const __quenchEventTargetAdd = EventTarget.prototype.addEventListener;
 const __quenchEventTargetRemove = EventTarget.prototype.removeEventListener;
 const __quenchEventTargetDispatch = EventTarget.prototype.dispatchEvent;

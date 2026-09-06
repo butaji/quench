@@ -20,8 +20,4 @@ pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__validateOpendi
     throw Object.assign(new RangeError('The value of "bufferSize" is out of range'), { code: "ERR_OUT_OF_RANGE" });
   }
 };
-globalThis.__nodeFs.opendirSync = (value, options) => {
-  globalThis.__validateOpendirOptions(options);
-  return new globalThis.__nodeFs.Dir(nodeFsPath(value));
-};
 "#);

@@ -19,19 +19,20 @@ fn main() -> ExitCode {
         print_usage();
         return ExitCode::SUCCESS;
     }
-    let Some(script) = args.first() else {
-        print_usage();
-        return ExitCode::from(64);
-    };
-    if script == "-e" || script == "--eval" {
+    if args.first().is_some_and(|arg| arg == "-e" || arg == "--eval") {
         let source = args.get(1).cloned().unwrap_or_default();
         let outcome =
-            quench_node::run::eval_script(&source, std::sync::Arc::new(|chunk| print!("{chunk}")));
+            quench_node::run::eval_script(&source, std::sync::Arc::new(|line| println!("{line}")));
         if let Some(error) = &outcome.error {
             eprintln!("{error}");
         }
         return ExitCode::from(outcome.exit_code.clamp(0, 255) as u8);
     }
+    let Some(script_index) = args.iter().position(|arg| !arg.starts_with('-')) else {
+        print_usage();
+        return ExitCode::from(64);
+    };
+    let script = &args[script_index];
     let path = Path::new(script);
     let source = match std::fs::read_to_string(path) {
         Ok(source) => source,
@@ -40,7 +41,13 @@ fn main() -> ExitCode {
             return ExitCode::from(66);
         }
     };
-    let outcome = quench_node::run::run_script(path, &args[1..], &source);
+    let outcome = quench_node::run::run_script_with_exec_argv(
+        path,
+        &args[script_index + 1..],
+        &args[..script_index],
+        &source,
+        std::sync::Arc::new(|line| println!("{line}")),
+    );
     if let Some(error) = &outcome.error {
         eprintln!("{error}");
     }

@@ -90,7 +90,8 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
         let support_source = format!(
             "var DOMException = globalThis.DOMException;\n{}",
             format!(
-                "{}\n{}",
+                "{}\n{}\n{}",
+                crate::polyfills::bootstrap::lookup("web-streams").unwrap_or(""),
                 crate::polyfills::bootstrap::lookup("globals-extra").unwrap_or(""),
                 crate::polyfills::bootstrap::lookup("support").unwrap_or("")
             )
@@ -188,6 +189,7 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
                 HostCapabilityKind::Custom(CapabilityName::FsAccessAsync),
                 HostCapabilityKind::Custom(CapabilityName::FsExistsSync),
                 HostCapabilityKind::Custom(CapabilityName::ChildExecFile),
+                HostCapabilityKind::Custom(CapabilityName::ChildGetValidStdio),
                 HostCapabilityKind::Custom(CapabilityName::ChildFork),
                 HostCapabilityKind::Custom(CapabilityName::ChildEmit),
                 HostCapabilityKind::Custom(CapabilityName::ChildSend),
@@ -237,6 +239,15 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
         )
         .with_host(Rc::new(QuenchNodeHost::default()))
         .with_host_capability("require", capability)
+        // Bootstrap's compatibility loader is JavaScript, but native-owned
+        // modules retain an explicit Rust require capability so their public
+        // entry points do not accidentally resolve to a legacy polyfill.
+        .with_host_value(
+            "__quenchNativeRequire",
+            quench_runtime::host_api::capability_function(
+                HostCapabilityKind::Custom(CapabilityName::Require),
+            ),
+        )
         .with_host_capability(
             "console",
             HostCapabilityRef {

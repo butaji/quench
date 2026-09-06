@@ -40,6 +40,11 @@ pub fn build() -> Vec<(String, Value)> {
 
 pub fn build_value() -> Value {
     let mut module = quench_runtime::host_api::object(build());
+    if let Ok(create_task) = eval_function(
+        r#"(name) => ({ name: String(name || ""), run: (callback, ...args) => callback(...args) })"#,
+    ) {
+        module = quench_runtime::execute::set_property(module, "createTask", create_task);
+    }
     if let Ok(console) = eval_function(CONSOLE_CLASS) {
         if let Ok(prototype) = quench_runtime::execute::get_property_result(&console, "prototype") {
             let _ = quench_runtime::execute::set_prototype_of(&module, &prototype);
@@ -62,10 +67,24 @@ pub fn build_value() -> Value {
                 "dirxml",
                 "error",
                 "groupCollapsed",
+                "_format",
             ] {
                 if let Ok(method) = quench_runtime::execute::get_property_result(&prototype, name) {
                     module = quench_runtime::execute::set_property(module, name, method);
                 }
+            }
+            for (name, spec) in [
+                ("log", crate::registry::SPEC_CONSOLE_LOG),
+                ("info", crate::registry::SPEC_CONSOLE_INFO),
+                ("debug", crate::registry::SPEC_CONSOLE_DEBUG),
+                ("warn", crate::registry::SPEC_CONSOLE_WARN),
+                ("error", crate::registry::SPEC_CONSOLE_ERROR),
+            ] {
+                module = quench_runtime::execute::set_property(
+                    module,
+                    name,
+                    crate::host::capability(spec),
+                );
             }
         }
         module = quench_runtime::execute::set_property(module, "Console", console);
@@ -73,51 +92,60 @@ pub fn build_value() -> Value {
     module
 }
 
-const CONSOLE_CLASS: &str = r#"(const __quenchConsoleReceiver = (receiver) =>
-  receiver !== null &&
-  (typeof receiver === "object" || typeof receiver === "function")
-    ? receiver
-    : globalThis.console;
-class Console {
+const CONSOLE_CLASS: &str = r#"(class Console {
   constructor(stdout, stderr) {
     const options = stdout && typeof stdout === "object" &&
       (stdout.stdout || stdout.stderr) ? stdout : null;
     this._stdout = options ? options.stdout : stdout;
     this._stderr = options ? options.stderr : stderr;
+    this._inspectOptions = options ? options.inspectOptions : undefined;
     if (!this._stdout) this._stdout = globalThis?.process?.stdout;
     if (!this._stderr) this._stderr = globalThis?.process?.stderr;
   }
+  _format(output, args) {
+    const util = (typeof require === "function"
+        ? require("util")
+        : undefined);
+    const format = util?.format;
+    const formatWithOptions = util?.formatWithOptions;
+    const configured = this._inspectOptions &&
+      typeof this._inspectOptions.get === "function"
+      ? this._inspectOptions.get(output)
+      : this._inspectOptions;
+    if (configured && typeof formatWithOptions === "function") {
+      return formatWithOptions(configured, ...args);
+    }
+    return typeof format === "function" ? format(...args) : args.join(" ");
+  }
   log(...args) {
-    const receiver = __quenchConsoleReceiver(this);
-    const output = receiver?._stdout || globalThis.process?.stdout;
-    if (output && typeof output.write === "function") output.write(`${args.join(" ")}\n`);
-    if (!receiver._tickPending) {
-      receiver._tickPending = true;
+    const output = this._stdout || process?.stdout;
+    if (output && typeof output.write === "function") output.write(`${this._format(output, args)}\n`);
+    if (!this._tickPending) {
+      this._tickPending = true;
       const tick = globalThis?.process?.nextTick;
-      if (typeof tick === "function") tick(() => { receiver._tickPending = false; });
+      if (typeof tick === "function") tick(() => { this._tickPending = false; });
     }
   }
-  info(...args) { return Console.prototype.log.call(__quenchConsoleReceiver(this), ...args); }
-  dir(...args) { return Console.prototype.log.call(__quenchConsoleReceiver(this), ...args); }
-  time(label = "default") { const receiver = __quenchConsoleReceiver(this); receiver._times ||= new Map(); if (!receiver._times.has(label)) receiver._times.set(label, Date.now()); }
-  timeEnd(label = "default") { __quenchConsoleReceiver(this)._times?.delete(label); }
-  timeLog(label = "default", ...args) { return Console.prototype.log.call(__quenchConsoleReceiver(this), ...args); }
+  info(...args) { this.log(...args); }
+  dir(...args) { this.log(...args); }
+  time(label = "default") { if (typeof label === "symbol") throw new TypeError("Invalid console label"); this._times ||= new Map(); if (!this._times.has(label)) this._times.set(label, Date.now()); }
+  timeEnd(label = "default") { if (typeof label === "symbol") throw new TypeError("Invalid console label"); this._times?.delete(label); }
+  timeLog(label = "default", ...args) { this.log(...args); }
   warn(...args) {
-    const receiver = __quenchConsoleReceiver(this);
-    const output = receiver?._stderr || globalThis.process?.stderr;
-    if (output && typeof output.write === "function") output.write(`${args.join(" ")}\n`);
+    const output = this._stderr || process?.stderr;
+    if (output && typeof output.write === "function") output.write(`${this._format(output, args)}\n`);
   }
-  error(...args) { return Console.prototype.warn.call(__quenchConsoleReceiver(this), ...args); }
-  trace(...args) { return Console.prototype.warn.call(__quenchConsoleReceiver(this), ...args); }
-  assert(condition, ...args) { if (!condition) Console.prototype.warn.call(__quenchConsoleReceiver(this), ...args); }
+  error(...args) { this.warn(...args); }
+  trace(...args) { this.error(...args); }
+  assert(condition, ...args) { if (!condition) this.error(...args); }
   clear() {}
-  count(label = "default") { const receiver = __quenchConsoleReceiver(this); receiver._counts ||= new Map(); receiver._counts.set(label, (receiver._counts.get(label) || 0) + 1); }
-  countReset(label = "default") { __quenchConsoleReceiver(this)._counts?.delete(label); }
+  count(label = "default") { this._counts ||= new Map(); this._counts.set(label, (this._counts.get(label) || 0) + 1); }
+  countReset(label = "default") { this._counts?.delete(label); }
   group() {}
   groupEnd() {}
-  table(...args) { return Console.prototype.log.call(__quenchConsoleReceiver(this), ...args); }
-  debug(...args) { return Console.prototype.log.call(__quenchConsoleReceiver(this), ...args); }
-  dirxml(...args) { return Console.prototype.log.call(__quenchConsoleReceiver(this), ...args); }
+  table(...args) { this.log(...args); }
+  debug(...args) { this.log(...args); }
+  dirxml(...args) { this.log(...args); }
   groupCollapsed() {}
 })"#;
 
@@ -126,12 +154,53 @@ pub fn log(
     args: &[Value],
     is_error: bool,
 ) -> Result<Value, quench_runtime::execute::VmError> {
+    log_named(
+        state,
+        args,
+        is_error,
+        if is_error {
+            "console.error"
+        } else {
+            "console.log"
+        },
+    )
+}
+
+pub fn log_named(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+    is_error: bool,
+    channel_name: &str,
+) -> Result<Value, quench_runtime::execute::VmError> {
+    // Console callbacks can be invoked from inside an EventEmitter dispatch
+    // that still owns a HostState borrow. Diagnostics publication is
+    // best-effort in that re-entrant window; defer it rather than panicking
+    // before the console's primary output side effect.
+    if state.try_borrow_mut().is_ok() {
+        let channel = crate::modules::diagnostics_channel::channel(
+            state,
+            None,
+            &[Value::String(channel_name.into())],
+        )?;
+        let message = quench_runtime::host_api::array(args.to_vec());
+        crate::modules::diagnostics_channel::publish(state, Some(&channel), &[message])?;
+    }
     let line = format_args(args);
-    let state = state.borrow();
-    if is_error {
+    let process = state
+        .borrow()
+        .process_module
+        .clone()
+        .unwrap_or_else(|| quench_runtime::vm::current_global_object());
+    let stream_name = if is_error { "stderr" } else { "stdout" };
+    let stream = quench_runtime::execute::get_property(&process, stream_name);
+    let write = quench_runtime::execute::get_property(&stream, "write");
+    if quench_runtime::is_callable(&write) {
+        let _ =
+            quench_runtime::execute::call(&write, &stream, &[Value::String(format!("{line}\n"))]);
+    } else if is_error {
         eprintln!("{line}");
-    } else if let Some(sink) = &state.output {
-        sink(&format!("{line}\n"));
+    } else if let Some(sink) = &state.borrow().output {
+        sink(&line);
     }
     Ok(Value::Undefined)
 }
@@ -168,7 +237,7 @@ pub fn trace(
     let line = "Trace".to_string();
     let state = state.borrow();
     if let Some(sink) = &state.output {
-        sink(&format!("{line}\n"));
+        sink(&line);
     }
     Ok(Value::Undefined)
 }
@@ -177,17 +246,22 @@ fn format_args(args: &[Value]) -> String {
     if args.is_empty() {
         return String::new();
     }
-    if let Value::String(template) = &args[0] {
-        crate::modules::util::format_template(template, args)
-    } else {
-        let mut out = String::new();
-        for (i, arg) in args.iter().enumerate() {
-            if i > 0 {
-                out.push(' ');
-            }
-            out.push_str(&inspect(arg));
+    match &args[0] {
+        Value::String(template) => crate::modules::util::format_template(template, args),
+        Value::StringUnits(units) => {
+            let template = String::from_utf16_lossy(units);
+            crate::modules::util::format_template(&template, args)
         }
-        out
+        _ => {
+            let mut out = String::new();
+            for (i, arg) in args.iter().enumerate() {
+                if i > 0 {
+                    out.push(' ');
+                }
+                out.push_str(&inspect(arg));
+            }
+            out
+        }
     }
 }
 

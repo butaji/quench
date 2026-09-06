@@ -378,6 +378,10 @@ impl PromiseData {
     pub fn rejection_handled(&self) -> bool {
         self.rejection_handled.get()
     }
+
+    pub fn mark_rejection_handled(&self) {
+        self.rejection_handled.set(true);
+    }
 }
 
 impl Default for PromiseData {

@@ -6,11 +6,16 @@ fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
         )));
     };
     if name == "util" {
-        return Ok(quench_runtime::execute::set_property(
+        let binding = quench_runtime::execute::set_property(
             util_types_module(),
             "getProxyDetails",
             crate::host::capability(crate::registry::SPEC_INTERNAL_GET_PROXY_DETAILS),
-        ));
+        )?;
+        return quench_runtime::execute::set_property(
+            binding,
+            "arrayBufferViewHasBuffer",
+            crate::host::capability(crate::registry::SPEC_INTERNAL_VIEW_HAS_BUFFER),
+        );
     }
     if name == "os" {
         let binding = quench_runtime::host_api::object(vec![(
@@ -54,13 +59,23 @@ fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
             ),
         ]));
     }
+    if name == "fs" {
+        return Ok(quench_runtime::host_api::object(vec![(
+            "openFileHandle".into(),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::InternalFsOpenFileHandle,
+            )),
+        )]));
+    }
     if name == "tcp_wrap" {
-        let prototype = quench_runtime::host_api::object(vec![
-            ("setNoDelay".into(), crate::host::capability(crate::registry::SPEC_CLUSTER_DISCONNECT)),
-        ]);
-        return Ok(quench_runtime::host_api::object(vec![
-            ("TCPWrap".into(), quench_runtime::host_api::object(vec![("prototype".into(), prototype)])),
-        ]));
+        let prototype = quench_runtime::host_api::object(vec![(
+            "setNoDelay".into(),
+            crate::host::capability(crate::registry::SPEC_CLUSTER_DISCONNECT),
+        )]);
+        return Ok(quench_runtime::host_api::object(vec![(
+            "TCPWrap".into(),
+            quench_runtime::host_api::object(vec![("prototype".into(), prototype)]),
+        )]));
     }
     if name == "tty_wrap" {
         let mut tty = quench_runtime::host_api::object(Vec::new());
@@ -78,6 +93,27 @@ fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
         }
         return Ok(quench_runtime::host_api::object(vec![("TTY".into(), tty)]));
     }
+    if name == "stream_wrap" {
+        return Ok(quench_runtime::host_api::object(vec![
+            (
+                "streamBaseState".into(),
+                quench_runtime::host_api::object(Vec::new()),
+            ),
+            (
+                "kReadBytesOrError".into(),
+                Value::String("kReadBytesOrError".into()),
+            ),
+        ]));
+    }
+    if name == "uv" {
+        return Ok(quench_runtime::host_api::object(vec![(
+            "UV_EOF".into(),
+            Value::Number(-4095.0),
+        )]));
+    }
+    if name == "http2" {
+        return Ok(crate::modules::http2_util::binding());
+    }
     if [
         "buffer",
         "cares_wrap",
@@ -92,7 +128,6 @@ fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
         "os",
         "pipe_wrap",
         "spawn_sync",
-        "stream_wrap",
         "tcp_wrap",
         "tls_wrap",
         "tty_wrap",
@@ -109,7 +144,6 @@ fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
         "Unknown internal builtin module",
     )))
 }
-
 
 pub(crate) fn util_types_module() -> Value {
     crate::modules::util::types_object()

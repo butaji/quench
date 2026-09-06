@@ -334,6 +334,10 @@ impl ArrayData {
         self.kind.get().is_packed()
     }
 
+    pub fn packed_values(&self) -> Option<Vec<Value>> {
+        self.is_packed().then(|| self.snapshot())
+    }
+
     pub fn logical_len(&self) -> usize {
         self.argument_live.as_ref().map_or_else(
             || {
@@ -1231,7 +1235,7 @@ impl ArrayData {
         self.values.materialize_values().get_mut(index)
     }
 
-    pub(crate) fn has_index(&self, index: usize) -> bool {
+    pub fn has_index(&self, index: usize) -> bool {
         if let Some(live) = &self.argument_live {
             let live = live.borrow();
             return (index < live.length
@@ -1376,7 +1380,7 @@ impl ArrayData {
         self.descriptors.push((key.to_string(), descriptor));
     }
 
-    pub(crate) fn descriptor_keys(&self) -> Vec<String> {
+    pub fn descriptor_keys(&self) -> Vec<String> {
         self.descriptors
             .iter()
             .map(|(key, _)| key.clone())
@@ -1390,7 +1394,7 @@ impl ArrayData {
             .find_map(|(name, value)| (name == key).then(|| value.clone()))
     }
 
-    pub(crate) fn property_keys(&self) -> Vec<String> {
+    pub fn property_keys(&self) -> Vec<String> {
         self.properties.iter().map(|(key, _)| key.clone()).collect()
     }
 

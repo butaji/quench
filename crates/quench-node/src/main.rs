@@ -46,6 +46,10 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
             println!("quench-node [-e CODE|SCRIPT]");
             Ok(())
         }
+        Some("--version") | Some("-v") => {
+            println!("v22.0.0");
+            Ok(())
+        }
         Some("-e") | Some("--eval") => {
             let source = args.get(mode_index + 1).map_or("", String::as_str);
             let sink: OutputSink = std::sync::Arc::new(|chunk| print!("{chunk}"));
@@ -77,8 +81,6 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
 fn run_file(path: &Path, script_args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let source = fs::read_to_string(path)?;
     let sink: OutputSink = std::sync::Arc::new(|chunk| print!("{chunk}"));
-    // File execution uses the canonical CJS/event-loop runner.  Evaluating the
-    // source directly skips timer pumping and module completion propagation.
     let outcome = run_script_with_sink(path, script_args, &source, sink);
     match outcome.error {
         Some(error) => Err(error.into()),

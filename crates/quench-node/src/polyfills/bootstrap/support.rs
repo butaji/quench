@@ -1,14 +1,47 @@
 //! Polyfill: `support`
 
-pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.gc ||= function () { return undefined; };
-globalThis.__nodeCommon = {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeCommonMutationProxies = new WeakMap();
+const __nodeCommonMustNotMutateObjectDeep = (original) => {
+  if (original === null || typeof original !== "object") return original;
+  const cached = __nodeCommonMutationProxies.get(original);
+  if (cached) return cached;
+  const fail = (operation) => {
+    const error = new Error(`Expected no side effects (${operation})`);
+    error.name = "AssertionError";
+    error.code = "ERR_ASSERTION";
+    throw error;
+  };
+  const handler = {
+    __proto__: null,
+    defineProperty() { fail("defineProperty"); },
+    deleteProperty() { fail("deleteProperty"); },
+    get(target, property, receiver) {
+      return __nodeCommonMustNotMutateObjectDeep(Reflect.get(target, property, receiver));
+    },
+    preventExtensions() { fail("preventExtensions"); },
+    set() { fail("set"); },
+    setPrototypeOf() { fail("setPrototypeOf"); },
+  };
+  const proxy = new Proxy(original, handler);
+  __nodeCommonMutationProxies.set(original, proxy);
+  return proxy;
+};
+globalThis.gc ||= (typeof gc === "function" ? gc : function () { return undefined; });
+Object.defineProperty(globalThis, "__nodeCallChecks", {
+  value: [],
+  writable: true,
+  configurable: true,
+});
+Object.defineProperty(globalThis, "__nodeCommon", { value: {
   mustCall: (fn = () => {}, exact = 1) => {
     if (typeof fn === "number") {
       exact = fn;
       fn = () => {};
     }
     let calls = 0;
-    const wrapped = function (...args) {
+    const wrapped = function () {
+      "use strict";
+      const args = Array.from(arguments);
       calls++;
       wrapped.calls = calls;
       try {
@@ -20,7 +53,8 @@ globalThis.__nodeCommon = {
     wrapped.calls = 0;
     wrapped.expected = exact;
     wrapped.__quench_index = (globalThis.__nodeCallChecks ||= []).length;
-    globalThis.__nodeCallChecks.push(wrapped);
+    const checks = globalThis.__nodeCallChecks ||= [];
+    checks[checks.length] = wrapped;
     return wrapped;
   },
   mustCallAtLeast: (fn, minimum = 1) => {
@@ -36,6 +70,10 @@ globalThis.__nodeCommon = {
   mustNotCall: (message = "Unexpected call") => () => {
     throw new Error(message);
   },
+  // Keep the invalid-descriptor probe deterministic for the Rust fs host.
+  // The high descriptor is accepted by Node's range validator but is not
+  // tracked by Quench, yielding the observable EBADF path.
+  runWithInvalidFD: (fn) => fn(1 << 30),
   noop: () => {},
   spawnPromisified: (...args) => {
     const child = globalThis.require("child_process").spawn(...args);
@@ -62,6 +100,20 @@ globalThis.__nodeCommon = {
         }));
     });
   },
+  childShouldThrowAndAbort: () => {
+    const escapedArgs = globalThis.__nodeCommon.escapePOSIXShell`"${process.argv[0]}" --abort-on-uncaught-exception "${process.argv[1]}" child`;
+    if (process.platform !== "win32") {
+      escapedArgs[0] = `ulimit -c 0 && ${escapedArgs[0]}`;
+    }
+    const child = globalThis.require("child_process").exec(...escapedArgs);
+    child.on("exit", (exitCode, signal) => {
+      if (!globalThis.__nodeCommon.nodeProcessAborted(exitCode, signal)) {
+        throw new Error(
+          `Test should have aborted but instead exited with exit code ${exitCode} and signal ${signal}`,
+        );
+      }
+    });
+  },
   platformTimeout: (milliseconds) => milliseconds,
   pwdCommand: ["pwd", []],
   escapePOSIXShell: (parts, ...values) => {
@@ -80,9 +132,31 @@ globalThis.__nodeCommon = {
     globalThis.__quench_node_pids = alive;
     return alive.has(pid);
   },
+  nodeProcessAborted: (exitCode, signal) =>
+    ['SIGILL', 'SIGTRAP', 'SIGABRT'].includes(signal) ||
+    [2, 132, 133, 134].includes(exitCode),
   printSkipMessage: (message) => console.log(`# SKIP: ${message}`),
   skipIfInspectorDisabled: () =>
     globalThis.__nodeCommon.skip("inspector disabled"),
+  skipIf32Bits: () => {
+    if (process.arch === "ia32" || process.arch === "arm") {
+      globalThis.__nodeCommon.skip("32-bit platform");
+    }
+  },
+  skipIfEslintMissing: () => {
+    const fs = globalThis.require("fs");
+    const path = globalThis.require("path");
+    const eslint = path.join(
+      process.cwd(),
+      "tests",
+      "node",
+      "tools",
+      "eslint",
+      "node_modules",
+      "eslint",
+    );
+    if (!fs.existsSync(eslint)) globalThis.__nodeCommon.skip("missing ESLint");
+  },
   skip: (message = "") => {
     console.log(`1..0 # Skipped: ${message}`);
     process.exit(0);
@@ -91,9 +165,41 @@ globalThis.__nodeCommon = {
   localhostIPv4: "127.0.0.1",
   localhostIPv6: "::1",
   hasIPv6: true,
-  expectsError: (_expected) => (error) => {
-    if (!error) throw new Error("Expected filesystem error");
+  // `common.getTTYfd` is a test-helper fact, not a second Node runtime.  Keep
+  // the probe on the Rust-owned tty/fs capabilities so every common import
+  // observes the same host result.
+  getTTYfd: () => {
+    const tty = globalThis.require("tty");
+    for (const fd of [0, 1, 2]) {
+      if (tty.isatty(fd)) return fd;
+    }
+    try {
+      return globalThis.require("fs").openSync("/dev/tty");
+    } catch (_) {
+      return -1;
+    }
   },
+  // Keep the socket fixture name in the shared helper object so every
+  // `require('../common')` spelling observes the same path fact.
+  PIPE: `node-test.${process.pid}.sock`,
+  expectsError: (expected, exact = 1) => globalThis.__nodeCommon.mustCall((error) => {
+    if (!error) throw new Error("Expected filesystem error");
+    if (typeof expected === "function") {
+      const result = expected(error);
+      if (result === false) throw new Error("Error validation failed");
+      return true;
+    }
+    if (expected && typeof expected === "object") {
+      for (const key of Object.keys(expected)) {
+        const wanted = expected[key];
+        const actual = error[key];
+        if (wanted instanceof RegExp ? !wanted.test(actual) : actual !== wanted) {
+          throw new Error(`Unexpected error ${key}`);
+        }
+      }
+    }
+    return true;
+  }, exact),
   invalidArgTypeHelper: (input) => {
     if (input == null) return ` Received ${input}`;
     if (typeof input === "string") return ` Received type string ('${input}')`;
@@ -101,6 +207,9 @@ globalThis.__nodeCommon = {
       return ` Received function ${input.name}`;
     }
     if (typeof input === "object") {
+      if (Object.getPrototypeOf(input) === null) {
+        return " Received [Object: null prototype] {}";
+      }
       return ` Received an instance of ${input.constructor?.name || "Object"}`;
     }
     let rendered;
@@ -114,7 +223,7 @@ globalThis.__nodeCommon = {
     return ` Received type ${typeof input} (${rendered})`;
   },
   expectWarning: (_type, _message) => {},
-  mustNotMutateObjectDeep: (value) => value,
+  mustNotMutateObjectDeep: __nodeCommonMustNotMutateObjectDeep,
   isLinux: process.platform === "linux",
   hasIntl: typeof Intl !== "undefined",
   isDebug: false,
@@ -124,11 +233,22 @@ globalThis.__nodeCommon = {
   isFreeBSD: false,
   enoughTestMem: true,
   canCreateSymLink: () => process.platform !== "win32",
-  getArrayBufferViews: (buffer) => [
-    buffer,
-    new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength),
-    new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength),
-  ],
+  // Keep the view order shared with getBufferSources.  The test helper uses
+  // the same index to verify every binary view handed to a stream callback.
+  getArrayBufferViews: (buffer) => {
+    const bytes = buffer instanceof ArrayBuffer
+      ? new Uint8Array(buffer)
+      : new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+    const start = bytes.byteOffset;
+    const length = bytes.byteLength;
+    const source = bytes.buffer;
+    return [
+      new Int8Array(source, start, length),
+      new Uint8Array(source, start, length),
+      new Uint8ClampedArray(source, start, length),
+      new DataView(source, start, length),
+    ];
+  },
   getBufferSources: (buffer) => {
     const bytes = buffer instanceof ArrayBuffer
       ? new Uint8Array(buffer)
@@ -144,8 +264,8 @@ globalThis.__nodeCommon = {
       source.slice(start, start + length),
     ];
   },
-};
-globalThis.__quench_verify_calls = () => {
+}, configurable: true });
+Object.defineProperty(globalThis, "__quench_verify_calls", { value: () => {
   for (const callback of globalThis.__nodeCallChecks || []) {
     if (
       callback.__quench_at_least
@@ -157,8 +277,8 @@ globalThis.__quench_verify_calls = () => {
       );
     }
   }
-};
-globalThis.__nodeTmpdir = {
+}, configurable: true });
+Object.defineProperty(globalThis, "__nodeTmpdir", { value: {
   path: `/tmp/quench-node-${process.pid}`,
   hasEnoughSpace: (_bytes) => false,
   refresh: () => {
@@ -166,18 +286,15 @@ globalThis.__nodeTmpdir = {
       globalThis.__quench_fs_mkdir(globalThis.__nodeTmpdir.path);
     } catch (_) {}
   },
-  resolve: (name = "") =>
-    globalThis.__nodePath.join(globalThis.__nodeTmpdir.path, String(name)),
-  fileURL: (name = "") =>
+  resolve: (...names) =>
+    globalThis.__nodePath.resolve(globalThis.__nodeTmpdir.path, ...names),
+  fileURL: (...names) =>
     new globalThis.__nodeURL(
       `file://${
-        globalThis.__nodePath.join(
-          globalThis.__nodeTmpdir.path,
-          String(name),
-        )
+        globalThis.__nodePath.resolve(globalThis.__nodeTmpdir.path, ...names)
       }`,
     ),
-};
+}, configurable: true });
 class NodeEventEmitter {
   constructor(options = {}) {
     this._events = Object.create(null);
@@ -301,6 +418,9 @@ class NodeEventEmitter {
   }
 }
 NodeEventEmitter.captureRejectionSymbol = Symbol.for("nodejs.rejection");
-globalThis.__nodeEventEmitter = NodeEventEmitter;
+Object.defineProperty(globalThis, "__nodeEventEmitter", {
+  value: NodeEventEmitter,
+  configurable: true,
+});
 globalThis.process._events = Object.create(null);
 "#);

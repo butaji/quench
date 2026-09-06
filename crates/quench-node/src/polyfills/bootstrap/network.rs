@@ -63,6 +63,20 @@ const __quenchNetModule = {
             queueMicrotask(() => socket.emit("error", error));
             return;
           }
+          // With the default single-address lookup contract, Node requires a
+          // string result. An array is only valid when `all`/auto-selection
+          // was requested; reject it asynchronously without invoking the
+          // connect callback.
+          const invalidArray = Array.isArray(value) &&
+            (!autoSelect || value.some((entry) =>
+              !entry || typeof entry !== "object" || typeof entry.address !== "string"
+            ));
+          if (invalidArray) {
+            const invalid = new Error("Invalid IP address: lookup returned an array");
+            invalid.code = "ERR_INVALID_IP_ADDRESS";
+            queueMicrotask(() => socket.emit("error", invalid));
+            return;
+          }
           const addresses = Array.isArray(value) ? value : [{
             address: value,
             family,
@@ -274,6 +288,7 @@ const __quenchNetModule = {
     server.keepAlive = options?.keepAlive;
     server.keepAliveInitialDelay = options?.keepAliveInitialDelay;
     server._allowHalfOpen = options?.allowHalfOpen === true;
+    server.__quench_cluster_worker_id = globalThis.__quench_cluster_worker_id;
     server.address = () => {
       if (!server.listening) return null;
       if (server._path !== undefined) return server._path;
@@ -454,7 +469,10 @@ globalThis.__quench_require_part_01 = (name, specifier) => {
   if (name === "net") return __quenchNetModule;
   if (name === "net/promises") return globalThis.__quenchNetPromisesModule;
   if (name === "internal/net") {
-    return { normalizedArgsSymbol: __quenchNetNormalizedArgsSymbol };
+    return {
+      normalizedArgsSymbol: __quenchNetNormalizedArgsSymbol,
+      isLoopback: globalThis.__quenchNativeRequire?.("internal/net")?.isLoopback,
+    };
   }
 };
 "#);
