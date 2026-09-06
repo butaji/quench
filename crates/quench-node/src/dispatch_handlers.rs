@@ -3089,9 +3089,9 @@ pub fn internal_crypto_aes_cipher(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let iv = args
-        .get(2)
-        .and_then(crate::modules::crypto::bytes_from_value);
+    let iv = args.get(3).and_then(|algorithm| {
+        crate::modules::crypto::bytes_from_value(&execute::get_property(algorithm, "iv"))
+    });
     let promise = if matches!(iv.as_deref(), Some(value) if value.len() != 16) {
         let cause = quench_runtime::builtins::error(
             quench_runtime::ops::Builtin::Error,
@@ -4238,6 +4238,31 @@ pub fn internal_binding(
         execute::set_property_in_place(&prototype, "_external", Value::Undefined);
         execute::set_property_in_place(&secure_context, "prototype", prototype);
         return Ok(crate::host::namespace_object_from_pairs(vec![
+            (
+                "HashJob".to_string(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_CRYPTO_HASH_JOB_CONSTRUCT),
+            ),
+            (
+                "SecretKeyGenJob".to_string(),
+                crate::host::capability(
+                    crate::registry::SPEC_INTERNAL_CRYPTO_SECRET_KEY_GEN_JOB_CONSTRUCT,
+                ),
+            ),
+            (
+                "EcKeyPairGenJob".to_string(),
+                crate::host::capability(
+                    crate::registry::SPEC_INTERNAL_CRYPTO_EC_KEY_PAIR_GEN_JOB_CONSTRUCT,
+                ),
+            ),
+            (
+                "AESCipherJob".to_string(),
+                crate::host::capability(
+                    crate::registry::SPEC_INTERNAL_CRYPTO_AES_CIPHER_JOB_CONSTRUCT,
+                ),
+            ),
+            ("kCryptoJobWebCrypto".to_string(), Value::Number(1.0)),
+            ("kKeyVariantAES_CBC_128".to_string(), Value::Number(1.0)),
+            ("kWebCryptoCipherEncrypt".to_string(), Value::Number(1.0)),
             (
                 "testFipsCrypto".to_string(),
                 crate::host::capability(crate::registry::SPEC_CRYPTO_TEST_FIPS),

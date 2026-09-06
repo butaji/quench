@@ -829,6 +829,16 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_INTERNAL_CRYPTO_WEBIDL_AEAD => internal_crypto_webidl_aead,
         CAP_INTERNAL_CRYPTO_WEBIDL_AES_CTR => internal_crypto_webidl_aes_ctr,
         CAP_INTERNAL_CRYPTO_WEBIDL_ECDH => internal_crypto_webidl_ecdh,
+        CAP_INTERNAL_CRYPTO_HASH_JOB_RUN => crate::modules::webcrypto::hash_job_run,
+        CAP_INTERNAL_CRYPTO_SECRET_KEY_GEN_JOB_RUN => {
+            crate::modules::webcrypto::secret_key_gen_job_run
+        }
+        CAP_INTERNAL_CRYPTO_EC_KEY_PAIR_GEN_JOB_RUN => {
+            crate::modules::webcrypto::ec_key_pair_gen_job_run
+        }
+        CAP_INTERNAL_CRYPTO_AES_CIPHER_JOB_RUN => {
+            crate::modules::webcrypto::aes_cipher_job_run
+        }
         CAP_INTERNAL_UTIL_WEAK_REFERENCE_GET => internal_util_weak_reference_get,
         CAP_OS_GET_PRIORITY => os_get_priority,
         CAP_OS_SET_PRIORITY => os_set_priority,
@@ -1777,6 +1787,16 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_FS_CREATE_READSTREAM | CAP_FS_READSTREAM => crate::modules::fs::construct_read_stream,
         CAP_BUFFER_NEW => buffer_new_construct,
         CAP_WEBCRYPTO_KEY_CONSTRUCT => crate::modules::webcrypto::illegal_constructor,
+        CAP_INTERNAL_CRYPTO_HASH_JOB_CONSTRUCT => crate::modules::webcrypto::hash_job_construct,
+        CAP_INTERNAL_CRYPTO_SECRET_KEY_GEN_JOB_CONSTRUCT => {
+            crate::modules::webcrypto::secret_key_gen_job_construct
+        }
+        CAP_INTERNAL_CRYPTO_EC_KEY_PAIR_GEN_JOB_CONSTRUCT => {
+            crate::modules::webcrypto::ec_key_pair_gen_job_construct
+        }
+        CAP_INTERNAL_CRYPTO_AES_CIPHER_JOB_CONSTRUCT => {
+            crate::modules::webcrypto::aes_cipher_job_construct
+        }
         CAP_CRYPTO_KEY_OBJECT_CONSTRUCTOR => crate::modules::crypto::key_object_construct,
         CAP_CRYPTO_X509_CONSTRUCTOR => crate::modules::crypto::x509_constructor_construct,
         CAP_CRYPTO_CERTIFICATE_CONSTRUCTOR => {
