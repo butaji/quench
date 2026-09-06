@@ -5,7 +5,11 @@ use crate::value::Value;
 fn execute_source_add_chain(
     view: CodeView<'_>,
     inputs: [Value; 3],
-) -> Option<(Completion, u64)> {
+) -> Option<(
+    Completion,
+    u64,
+    Option<crate::stencil_select::PhysicalStencilView>,
+)> {
     let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
     let plan = BaselinePlan::compile_for_test(view, policy);
     let pc = (0..view.len()).find(|pc| has_add_tree(&plan, *pc))?;
@@ -28,7 +32,8 @@ fn execute_source_add_chain(
     )
     .ok()?;
     let entries = native.borrow().native_entry_count();
-    Some((completion, entries))
+    let physical = native.borrow().last_native_view();
+    Some((completion, entries, physical))
 }
 
 fn has_add_tree(plan: &BaselinePlan, pc: usize) -> bool {
@@ -63,14 +68,32 @@ fn ordinary_source_add_tree_executes_native_and_guarded_fallback() {
         let Some(numeric) = execute_source_add_chain(view, numeric_inputs()) else {
             return;
         };
-        assert_eq!(numeric, (Completion::Return(Value::Number(7.0)), 1));
+        assert_eq!(numeric.0, Completion::Return(Value::Number(7.0)));
+        assert_eq!(numeric.1, 1);
+        #[cfg(quench_generated_stencil_artifacts)]
+        assert_generated_add_chain(numeric.2);
         let ordered = execute_source_add_chain(view, overflow_inputs()).expect("overflow case");
-        assert_eq!(ordered, (Completion::Return(Value::Number(f64::INFINITY)), 1));
+        assert_eq!(ordered.0, Completion::Return(Value::Number(f64::INFINITY)));
+        assert_eq!(ordered.1, 1);
         let fallback = execute_source_add_chain(view, string_inputs()).expect("guard fallback");
-        assert_eq!(fallback, (Completion::Return(Value::String("x23".into())), 0));
+        assert_eq!(fallback.0, Completion::Return(Value::String("x23".into())));
+        assert_eq!(fallback.1, 0);
+        assert!(fallback.2.is_none());
         checked = true;
     });
-    assert!(checked, "lowered add tree must reach normal native admission");
+    assert!(
+        checked,
+        "lowered add tree must reach normal native admission"
+    );
+}
+
+#[cfg(quench_generated_stencil_artifacts)]
+fn assert_generated_add_chain(view: Option<crate::stencil_select::PhysicalStencilView>) {
+    let view = view.expect("normal driver must retain the invoked physical view");
+    assert!(view.generated);
+    assert_eq!(view.key, crate::stencil_select::add_chain_region_key());
+    assert_eq!(view.abi, crate::stencil_select::RegionAbi::ScalarF64x3);
+    assert!(view.fallthrough.is_some());
 }
 
 fn numeric_inputs() -> [Value; 3] {
@@ -78,9 +101,17 @@ fn numeric_inputs() -> [Value; 3] {
 }
 
 fn overflow_inputs() -> [Value; 3] {
-    [Value::Number(f64::MAX), Value::Number(f64::MAX), Value::Number(-f64::MAX)]
+    [
+        Value::Number(f64::MAX),
+        Value::Number(f64::MAX),
+        Value::Number(-f64::MAX),
+    ]
 }
 
 fn string_inputs() -> [Value; 3] {
-    [Value::String("x".into()), Value::Number(2.0), Value::Number(3.0)]
+    [
+        Value::String("x".into()),
+        Value::Number(2.0),
+        Value::Number(3.0),
+    ]
 }
