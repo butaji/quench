@@ -142,6 +142,7 @@ pub struct SharedStencilSlab {
     active_dispatches: Cell<usize>,
     peak_dispatches: Cell<usize>,
     lease_state: std::rc::Rc<LeaseState>,
+    budget: &'static AtomicBudget,
 }
 
 struct LeaseState {
@@ -299,6 +300,13 @@ impl Drop for ActiveUse<'_> {
 
 impl SharedStencilSlab {
     pub fn new(slab_capacity: usize) -> Result<Self, ArenaError> {
+        Self::new_in_budget(slab_capacity, &GLOBAL_EXECUTABLE_BUDGET)
+    }
+
+    fn new_in_budget(
+        slab_capacity: usize,
+        budget: &'static AtomicBudget,
+    ) -> Result<Self, ArenaError> {
         if slab_capacity == 0 || slab_capacity > MAX_ARENA_BYTES {
             return Err(ArenaError::InvalidCapacity);
         }
@@ -318,6 +326,7 @@ impl SharedStencilSlab {
                 owners: RefCell::new(HashMap::new()),
                 retired: RefCell::new(HashSet::new()),
             }),
+            budget,
         })
     }
 
@@ -491,7 +500,7 @@ impl SharedStencilSlab {
         if !self.reclaim_for(self.slab_capacity, cache) {
             return Err(ArenaError::Exhausted);
         }
-        let mut slab = StencilArena::new(self.slab_capacity)?;
+        let mut slab = StencilArena::new_in_budget(self.slab_capacity, self.budget)?;
         let address = match slab.render_or_get(&mut self.cache, key, stencil, values) {
             Ok(address) => address,
             Err(error) => return Err(error),
@@ -575,7 +584,7 @@ impl SharedStencilSlab {
         if !self.reclaim_for(self.slab_capacity, cache) {
             return Err(ArenaError::Exhausted);
         }
-        let mut slab = StencilArena::new(self.slab_capacity)?;
+        let mut slab = StencilArena::new_in_budget(self.slab_capacity, self.budget)?;
         let address = match render_arena_physical(&mut slab, &mut self.cache, view, values, control)
         {
             Ok(address) => address,
@@ -1031,6 +1040,13 @@ fn render_arena_physical<const N: usize>(
 
 impl StencilArena {
     pub fn new(capacity: usize) -> Result<Self, ArenaError> {
+        Self::new_in_budget(capacity, &GLOBAL_EXECUTABLE_BUDGET)
+    }
+
+    fn new_in_budget(
+        capacity: usize,
+        budget: &'static AtomicBudget,
+    ) -> Result<Self, ArenaError> {
         if capacity == 0 || capacity > MAX_ARENA_BYTES {
             return Err(ArenaError::InvalidCapacity);
         }
@@ -1038,7 +1054,7 @@ impl StencilArena {
             .checked_add(PAGE - 1)
             .ok_or(ArenaError::InvalidCapacity)?
             & !(PAGE - 1);
-        let global_charge = GLOBAL_EXECUTABLE_BUDGET
+        let global_charge = budget
             .reserve(capacity)
             .ok_or(ArenaError::Exhausted)?;
         let ptr = unsafe {

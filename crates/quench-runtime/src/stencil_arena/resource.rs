@@ -47,6 +47,9 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
+    static TEST_EXECUTABLE_BUDGET: crate::bounded_resource::AtomicBudget =
+        crate::bounded_resource::AtomicBudget::new(8192);
+
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn retired_live_accounting_follows_the_retaining_lease() {
@@ -75,18 +78,55 @@ mod tests {
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn aggregate_budget_is_shared_across_independent_owners() {
+        assert_eq!(TEST_EXECUTABLE_BUDGET.used(), 0);
+        let first = test_pool();
+        let second = test_pool();
+        let third = test_pool();
+        let key = crate::stencil_select::numeric_region_key(Opcode::Add).unwrap();
+        let view = crate::stencil_select::select_physical(key).unwrap();
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let values = PatchValues::from_site(&site);
+
+        render(&first, &mut RenderedRegionCache::new(), view, &values);
+        render(&second, &mut RenderedRegionCache::new(), view, &values);
+        let result = try_render(&third, &mut RenderedRegionCache::new(), view, &values);
+        assert_eq!(result, Err(super::super::ArenaError::Exhausted));
+        assert_eq!(TEST_EXECUTABLE_BUDGET.used(), 8192);
+
+        drop(first);
+        render(&third, &mut RenderedRegionCache::new(), view, &values);
+        drop((second, third));
+        assert_eq!(TEST_EXECUTABLE_BUDGET.used(), 0);
+    }
+
+    fn test_pool() -> Rc<RefCell<SharedStencilSlab>> {
+        Rc::new(RefCell::new(
+            SharedStencilSlab::new_in_budget(4096, &TEST_EXECUTABLE_BUDGET).unwrap(),
+        ))
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn render(
         pool: &Rc<RefCell<SharedStencilSlab>>,
         cache: &mut RenderedRegionCache,
         view: crate::stencil_select::PhysicalStencilView,
         values: &PatchValues<'_, 2>,
     ) -> usize {
-        let address = pool
-            .borrow_mut()
-            .render_physical_view_or_get(cache, view, values)
-            .unwrap();
+        let address = try_render(pool, cache, view, values).unwrap();
         pool.borrow_mut().make_executable(address).unwrap();
         address
+    }
+
+    fn try_render(
+        pool: &Rc<RefCell<SharedStencilSlab>>,
+        cache: &mut RenderedRegionCache,
+        view: crate::stencil_select::PhysicalStencilView,
+        values: &PatchValues<'_, 2>,
+    ) -> Result<usize, super::super::ArenaError> {
+        pool.borrow_mut()
+            .render_physical_view_or_get(cache, view, values)
     }
 
     fn assert_retired(snapshot: ExecutableResourceSnapshot) {
