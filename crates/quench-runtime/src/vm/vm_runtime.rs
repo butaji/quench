@@ -1801,13 +1801,12 @@ pub(crate) fn execute_optimized_code_step_from(
         crate::execution_trace::leaf_rejection("optimizing_native_local_property");
     }
     if let Some(native) = entry.native_local_binary() {
-        let result = crate::locals::with_current_ref(|environment| {
-            environment.and_then(|environment| {
-                crate::stencil_fusion::execute_local_binary(native, environment)
-            })
+        let span = crate::locals::with_current_ref(|environment| {
+            let environment = environment?;
+            crate::stencil_fusion::execute_local_binary(native, environment)?
+                .commit(registers, environment)
         });
-        if let Some(result) = result {
-            let span = result.commit(registers);
+        if let Some(span) = span {
             crate::execution_trace::stencil_observation(code, start, "local_binary", true);
             crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
             return Ok((crate::completion::Completion::Normal, start + span));
@@ -2354,13 +2353,10 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
             crate::execution_trace::stencil_observation(code, pc, "local_property", false);
             crate::execution_trace::leaf_rejection("native_local_property");
         }
-        if let (Some(environment), Some(native)) =
-            (environment, plan.native_local_binary_at(pc))
-        {
-            if let Some(result) =
-                crate::stencil_fusion::execute_local_binary(native, environment)
+        if let (Some(environment), Some(native)) = (environment, plan.native_local_binary_at(pc)) {
+            if let Some(span) = crate::stencil_fusion::execute_local_binary(native, environment)
+                .and_then(|result| result.commit(registers, environment))
             {
-                let span = result.commit(registers);
                 crate::execution_trace::stencil_observation(code, pc, "local_binary", true);
                 crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
                 pc += span;

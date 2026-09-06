@@ -311,6 +311,7 @@ impl BlockValueGraph {
             output: operation.a,
             operation,
             span: u8::try_from(self.len() + 1).ok()?,
+            store_slot: None,
             discarded: self.discarded_registers(operation.a),
             cost,
         })
@@ -356,6 +357,7 @@ impl BlockValueGraph {
             output: operation.a,
             operation,
             span: u8::try_from(self.len() + 1).ok()?,
+            store_slot: None,
             discarded: self.discarded_registers(operation.a),
             cost,
         })

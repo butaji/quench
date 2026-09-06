@@ -143,6 +143,8 @@ pub mod stencil_patch;
 mod stencil_physical;
 mod stencil_fusion;
 #[cfg(test)]
+mod stencil_fusion_store_tests;
+#[cfg(test)]
 mod stencil_fusion_tests;
 #[cfg(test)]
 mod stencil_bridge_tests;
