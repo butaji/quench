@@ -202,7 +202,7 @@ fn execute_nullish_case(
     view: CodeView<'_>,
     plan: &BaselinePlan,
     pc: usize,
-    environment: &crate::environment::Environment,
+    environment: &std::rc::Rc<crate::environment::Environment>,
     slot: u16,
     value: Value,
 ) -> Completion {
