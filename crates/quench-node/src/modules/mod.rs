@@ -71,4 +71,5 @@ pub mod util_strip;
 pub mod util_style_text;
 pub mod vm_api;
 pub mod wasi;
+pub mod web_locks;
 pub mod zlib;
