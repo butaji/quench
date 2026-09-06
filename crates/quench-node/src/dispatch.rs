@@ -1437,6 +1437,8 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_HTTP_OUTGOING_WRITE => handlers::http_outgoing_write,
         CAP_HTTP_OUTGOING_END => handlers::http_outgoing_end,
         CAP_HTTP_OUTGOING_DESTROY => handlers::http_outgoing_destroy,
+        CAP_HTTP_OUTGOING_ASSIGN_SOCKET => handlers::http_outgoing_assign_socket,
+        CAP_HTTP_OUTGOING_DETACH_SOCKET => handlers::http_outgoing_detach_socket,
         CAP_NET_CONNECT => net_connect,
         CAP_NET_PIPE_BIND => crate::modules::net::pipe_bind,
         CAP_NET_BOUND_SOCKET_ADDRESS => crate::modules::net::bound_socket_address,
