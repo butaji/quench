@@ -210,6 +210,14 @@ pub(crate) struct EntryToken<F: Copy> {
     entry: F,
 }
 
+impl<F: Copy> EntryToken<F> {
+    pub(crate) const fn address(self) -> usize {
+        self.address
+    }
+}
+
+pub(crate) type DispatchEntry = extern "C" fn(*mut std::ffi::c_void) -> u64;
+
 struct ActiveUse<'a> {
     owner: &'a SharedStencilSlab,
 }
@@ -274,6 +282,25 @@ macro_rules! typed_owned_entry {
     ($name:ident, $entry:ident, $ty:ty, $abi:expr) => {
         pub(crate) fn $name(&self, address: usize) -> Result<EntryToken<$ty>, ArenaError> {
             let entry = self.$entry(address)?;
+            let owner = self
+                .owner_for(address)
+                .ok_or(ArenaError::ProtectionFailed)?;
+            self.validate_address(address, owner, $abi)?;
+            Ok(EntryToken {
+                address,
+                entry_address: entry as usize,
+                owner,
+                abi: $abi,
+                entry,
+            })
+        }
+    };
+}
+
+macro_rules! typed_dispatch_entry {
+    ($name:ident, $abi:expr) => {
+        pub(crate) fn $name(&self, address: usize) -> Result<EntryToken<DispatchEntry>, ArenaError> {
+            let entry = self.dispatch_entry_with_abi(address, $abi)?;
             let owner = self
                 .owner_for(address)
                 .ok_or(ArenaError::ProtectionFailed)?;
@@ -680,6 +707,10 @@ impl SharedStencilSlab {
         self.validate_address(owned.address, owned.owner, owned.abi)
     }
 
+    pub(crate) fn entry_token_is_live<F: Copy>(&self, token: EntryToken<F>) -> bool {
+        self.validate_token(token).is_ok()
+    }
+
     pub(crate) fn acquire_lease(
         owner: &std::rc::Rc<std::cell::RefCell<Self>>,
         address: usize,
@@ -816,6 +847,15 @@ impl SharedStencilSlab {
         compare_branch_entry,
         extern "C" fn(*mut crate::native_control::NativeCompareBranchContext) -> u32,
         crate::stencil_select::RegionAbi::CompareBranch
+    );
+    typed_dispatch_entry!(owned_bridge_entry, crate::stencil_select::RegionAbi::Bridge);
+    typed_dispatch_entry!(
+        owned_array_kernel_entry,
+        crate::stencil_select::RegionAbi::ArrayKernel
+    );
+    typed_dispatch_entry!(
+        owned_array_numeric_loop_entry,
+        crate::stencil_select::RegionAbi::ArrayNumericLoop
     );
 
     pub(crate) fn with_owned<F: Copy, R>(

@@ -642,23 +642,29 @@ fn composed_plan_retires_cached_bytes_after_committed_failure() {
         super::NativeRegionPlan::new_for_test(crate::stencil_select::array_loop_body_region_key())
             .expect("array region plan");
     plan.physical
+        .state
         .cache
         .insert(crate::stencil_fact::RegionKey(900), 0, 0x1000);
     let committed: Result<crate::vm::DispatchTransition, super::NativeDispatchError> =
         Err(super::NativeDispatchError::committed(0, "post-entry"));
-    plan.physical.apply_dispatch_outcome(&committed, None);
+    plan.physical.apply_dispatch_outcome(
+        &committed,
+        None,
+        super::InstalledRegionEntry::Unpublished,
+    );
     assert_eq!(
-        plan.physical.cache.len(),
+        plan.physical.state.cache.len(),
         0,
         "committed bytes must not remain callable"
     );
     assert_eq!(
-        plan.physical.lifecycle.state(),
+        plan.physical.state.lifecycle.state(),
         crate::stencil_lifecycle::StencilState::Retired,
         "committed failure must not reset admission history"
     );
 
     plan.physical
+        .state
         .cache
         .insert(crate::stencil_fact::RegionKey(901), 0, 0x2000);
     let semantic: Result<crate::vm::DispatchTransition, super::NativeDispatchError> =
@@ -666,9 +672,13 @@ fn composed_plan_retires_cached_bytes_after_committed_failure() {
             pc: 0,
             error: crate::vm::VmError::EvalError("ordinary throw".into()),
         });
-    plan.physical.apply_dispatch_outcome(&semantic, None);
+    plan.physical.apply_dispatch_outcome(
+        &semantic,
+        None,
+        super::InstalledRegionEntry::Unpublished,
+    );
     assert_eq!(
-        plan.physical.cache.len(),
+        plan.physical.state.cache.len(),
         1,
         "semantic errors do not invalidate physical code"
     );
