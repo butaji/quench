@@ -193,6 +193,7 @@ const CAP_NET_LOOKUP_CALLBACK: u16 = 0x1016;
 const CAP_NET_ISIP: u16 = 0x1002;
 const CAP_NET_ISIPV4: u16 = 0x1003;
 const CAP_NET_ISIPV6: u16 = 0x1004;
+const CAP_NET_NORMALIZE_ARGS: u16 = 0x1035;
 const CAP_INTERNAL_NET_IS_LOOPBACK: u16 = crate::registry::SPEC_INTERNAL_NET_IS_LOOPBACK.cap;
 const CAP_REQUIRE: u16 = 0x1200;
 const CAP_REQUIRE_RESOLVE: u16 = 0x1201;
@@ -1501,6 +1502,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_NET_ISIP => net_is_ip,
         CAP_NET_ISIPV4 => net_is_ipv4,
         CAP_NET_ISIPV6 => net_is_ipv6,
+        CAP_NET_NORMALIZE_ARGS => net_normalize_args,
         CAP_INTERNAL_NET_IS_LOOPBACK => internal_net_is_loopback,
         CAP_NET_GET_ASF_TIMEOUT => net_get_asf_timeout,
         CAP_NET_SET_ASF_TIMEOUT => net_set_asf_timeout,

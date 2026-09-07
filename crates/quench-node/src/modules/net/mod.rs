@@ -1163,6 +1163,37 @@ pub fn is_ipv6(args: &[Value]) -> bool {
     parse_ipv6(&s).is_some()
 }
 
+/// Normalize the internal connection argument tuple while preserving the
+/// identity marker Node uses to avoid repeating the conversion.
+pub(crate) fn normalized_args_symbol() -> String {
+    match execute::get_property(
+        &quench_runtime::vm::current_global_object(),
+        "__quenchNetNormalizedArgsSymbol",
+    ) {
+        Value::String(symbol) => symbol,
+        _ => "Symbol(normalizedArgs)\0quench".into(),
+    }
+}
+
+pub fn normalize_args(args: &[Value]) -> Value {
+    let input = args.first().cloned().unwrap_or(Value::Undefined);
+    let symbol = normalized_args_symbol();
+    if matches!(execute::get_property(&input, &symbol), Value::Boolean(true)) {
+        return input;
+    }
+    let first = match execute::get_property(&input, "0") {
+        Value::Undefined | Value::Null => host_api::object(Vec::new()),
+        value => value,
+    };
+    let second = match execute::get_property(&input, "1") {
+        Value::Undefined => Value::Null,
+        value => value,
+    };
+    let result = host_api::array(vec![first, second]);
+    let _ = execute::set_property_in_place(&result, &symbol, Value::Boolean(true));
+    result
+}
+
 /// Node's internal/net predicate accepts host spellings used by connection
 /// options, including bracketed IPv6 literals and the localhost alias.
 pub fn is_loopback(args: &[Value]) -> bool {

@@ -1033,6 +1033,32 @@ fn connect_with_receiver(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    // Socket.connect receives the tuple returned by _normalizeArgs as one
+    // array argument. Unpack only the marker-bearing tuple; a plain array is
+    // the invalid legacy form and must report the standard missing-args code.
+    let normalized_args = args.first().and_then(|value| {
+        if !matches!(value, Value::Array(_)) {
+            return None;
+        }
+        let symbol = super::normalized_args_symbol();
+        if !matches!(execute::get_property(value, &symbol), Value::Boolean(true)) {
+            return Some(Err(missing_connect_args()));
+        }
+        Some(Ok(vec![
+            execute::get_property(value, "0"),
+            execute::get_property(value, "1"),
+        ]))
+    });
+    let normalized_args = match normalized_args {
+        Some(Ok(args)) => args,
+        Some(Err(error)) => return Err(error),
+        None => Vec::new(),
+    };
+    let args = if normalized_args.is_empty() {
+        args
+    } else {
+        &normalized_args
+    };
     // Capture the bridge while the initiating VM frame is active.  Later
     // delivery runs from the host pump, where `current_global_object()` is
     // intentionally unavailable.
