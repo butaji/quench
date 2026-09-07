@@ -52,6 +52,10 @@ impl NativeLocalPredicatePlan {
         entries: &[crate::machine::BaselineEntry],
         branch_pc: usize,
     ) -> Option<Self> {
+        if !policy.local_fusions {
+            return None;
+        }
+        let policy = policy.with_leaf_dependencies();
         let physical =
             predicate_physical(selection, branch, policy, arena, code, entries, branch_pc)?;
         Some(Self {
