@@ -233,7 +233,7 @@ impl StencilArena {
             .get_owned(identity.key, identity.cache_signature, self.id)
             .filter(|address| self.owns_address(*address))
         {
-            self.require_publication(address, identity, image.bytes().len())?;
+            self.require_region_image(address, image)?;
             self.make_executable()?;
             return Ok(address);
         }
