@@ -106,29 +106,69 @@ pub(crate) fn compose_linear_chain<const N: usize>(
     repetitions: u8,
     values: &PatchValues<'_, N>,
 ) -> Result<VerifiedRegionImage, LayoutError> {
-    let operations = linear_operations(view, repetitions)?;
+    validate_linear_view(view, repetitions)?;
+    let views = vec![view; usize::from(repetitions)];
+    compose_fragment_chain(&views, values)
+}
+
+pub(crate) fn compose_fragment_chain<const N: usize>(
+    views: &[PhysicalStencilView],
+    values: &PatchValues<'_, N>,
+) -> Result<VerifiedRegionImage, LayoutError> {
+    validate_fragment_chain(views)?;
+    let operations = chain_operations(views)?;
     let control = crate::stencil_cfg::RegionControlPlan::linear(0, operations.len())
         .ok_or(LayoutError::RelocationContract)?;
-    let fragments = linear_fragments(view, repetitions, *values)?;
-    let transfers = linear_transfers(view, repetitions)?;
+    let fragments = chain_fragments(views, *values)?;
+    let transfers = chain_transfers(views)?;
     let mut bytes = Vec::new();
     compose_planned_region(&control, &operations, &fragments, &transfers, &mut bytes)?;
     let identity = RegionImageIdentity {
         key: RegionKey::from_opcodes(LINEAR_COMPOSITION_ID, &operations),
-        cache_signature: view.cache_signature(values),
-        abi: view.abi,
+        cache_signature: chain_signature(views, values),
+        abi: views[0].abi,
     };
     Ok(VerifiedRegionImage::from_composed(identity, bytes))
 }
 
-fn linear_operations(
-    view: PhysicalStencilView,
-    repetitions: u8,
-) -> Result<Vec<crate::ir::Opcode>, LayoutError> {
-    validate_linear_view(view, repetitions)?;
-    let mut operations = vec![view.record.operations[0]; usize::from(repetitions)];
-    operations.push(view.record.operations[1]);
+fn chain_operations(views: &[PhysicalStencilView]) -> Result<Vec<crate::ir::Opcode>, LayoutError> {
+    let mut operations = views
+        .iter()
+        .map(|view| view.record.operations[0])
+        .collect::<Vec<_>>();
+    operations.push(
+        *views
+            .last()
+            .and_then(|view| view.record.operations.get(1))
+            .ok_or(LayoutError::RelocationContract)?,
+    );
     Ok(operations)
+}
+
+fn validate_fragment_chain(views: &[PhysicalStencilView]) -> Result<(), LayoutError> {
+    let first = views.first().ok_or(LayoutError::RelocationContract)?;
+    if views.len() >= crate::stencil_layout::MAX_LAYOUT_FRAGMENTS {
+        return Err(LayoutError::RelocationContract);
+    }
+    views
+        .iter()
+        .all(|view| compatible_fragment(*first, *view))
+        .then_some(())
+        .ok_or(LayoutError::RelocationContract)
+}
+
+fn compatible_fragment(first: PhysicalStencilView, view: PhysicalStencilView) -> bool {
+    let contract = view.contract();
+    contract.operations.len() == 2
+        && contract.has_single_entry()
+        && contract.abi_is_well_formed()
+        && contract.executable
+        && !contract.template_calls_helper
+        && view.abi == first.abi
+        && view.continuation_abi == first.continuation_abi
+        && view.continuation_abi != crate::stencil_select::ContinuationAbi::None
+        && view.stencil.validate()
+        && view.fallthrough.is_some_and(|tail| tail.stencil.validate())
 }
 
 fn validate_linear_view(view: PhysicalStencilView, repetitions: u8) -> Result<(), LayoutError> {
@@ -144,22 +184,24 @@ fn validate_linear_view(view: PhysicalStencilView, repetitions: u8) -> Result<()
     valid.then_some(()).ok_or(LayoutError::RelocationContract)
 }
 
-fn linear_fragments<'values, const N: usize>(
-    view: PhysicalStencilView,
-    repetitions: u8,
+fn chain_fragments<'values, const N: usize>(
+    views: &[PhysicalStencilView],
     values: PatchValues<'values, N>,
 ) -> Result<Vec<PlannedFragment<'static, 'values, N>>, LayoutError> {
-    let mut fragments = Vec::with_capacity(usize::from(repetitions) + 1);
-    for operation in 0..repetitions {
+    let mut fragments = Vec::with_capacity(views.len() + 1);
+    for (operation, view) in views.iter().enumerate() {
         fragments.push(PlannedFragment {
-            point: RegionPoint::Operation(operation),
+            point: RegionPoint::Operation(operation_index(operation)?),
             stencil: view.stencil,
             values,
         });
     }
+    let exit = operation_index(views.len())?;
     fragments.push(PlannedFragment {
-        point: RegionPoint::Operation(repetitions),
-        stencil: view
+        point: RegionPoint::Operation(exit),
+        stencil: views
+            .last()
+            .ok_or(LayoutError::MissingSuccessor)?
             .fallthrough
             .ok_or(LayoutError::MissingSuccessor)?
             .stencil,
@@ -168,19 +210,33 @@ fn linear_fragments<'values, const N: usize>(
     Ok(fragments)
 }
 
-fn linear_transfers(
-    view: PhysicalStencilView,
-    repetitions: u8,
+fn chain_transfers(
+    views: &[PhysicalStencilView],
 ) -> Result<Vec<crate::stencil_region_layout::PlannedTransfer>, LayoutError> {
     let mut transfers = Vec::new();
-    for operation in 0..repetitions {
+    for (operation, view) in views.iter().enumerate() {
+        let operation = operation_index(operation)?;
         transfers.extend(selected_transfers_between(
-            view,
+            *view,
             RegionPoint::Operation(operation),
             RegionPoint::Operation(operation + 1),
         )?);
     }
     Ok(transfers)
+}
+
+fn chain_signature<const N: usize>(
+    views: &[PhysicalStencilView],
+    values: &PatchValues<'_, N>,
+) -> u64 {
+    views.iter().fold(0xcbf2_9ce4_8422_2325, |hash, view| {
+        hash.wrapping_mul(0x1000_0000_01b3)
+            .wrapping_add(view.cache_signature(values))
+    })
+}
+
+fn operation_index(index: usize) -> Result<u8, LayoutError> {
+    u8::try_from(index).map_err(|_| LayoutError::RelocationContract)
 }
 
 #[cfg(test)]
@@ -200,6 +256,20 @@ mod tests {
         let two = compose_linear_chain(view, 2, &values).expect("two operations");
         assert_ne!(one.identity().key, two.identity().key);
         assert!(two.bytes().len() > one.bytes().len());
+    }
+
+    #[test]
+    fn fragment_chain_is_the_single_linear_composition_path() {
+        let view =
+            crate::stencil_select::select_physical(crate::stencil_select::fallthrough_region_key())
+                .expect("fallthrough view");
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let values = PatchValues::from_site(&site);
+        let declared = compose_fragment_chain(&[view, view, view], &values).expect("view chain");
+        let repeated = compose_linear_chain(view, 3, &values).expect("repeat adapter");
+        assert_eq!(declared.identity(), repeated.identity());
+        assert_eq!(declared.bytes(), repeated.bytes());
+        assert!(compose_fragment_chain(&[], &values).is_err());
     }
 
     #[test]
