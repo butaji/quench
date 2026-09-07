@@ -130,4 +130,19 @@ impl<I: Copy> PhysicalInstallation<I> {
         self.installed = unpublished;
         self.state.clear();
     }
+
+    pub(crate) fn apply_dispatch_outcome<T>(
+        &mut self,
+        result: &Result<T, NativeDispatchError>,
+        published: Option<(&Rc<RefCell<SharedStencilSlab>>, usize)>,
+        unpublished: I,
+    ) {
+        if matches!(
+            result,
+            Err(NativeDispatchError::Physical(_) | NativeDispatchError::Committed { .. })
+        ) {
+            self.installed = unpublished;
+        }
+        self.state.apply_dispatch_outcome(result, published);
+    }
 }
