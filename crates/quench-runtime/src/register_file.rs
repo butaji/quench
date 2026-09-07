@@ -12,6 +12,7 @@ fn encode(value: Value) -> TaggedValue {
     match value {
         Value::Object(value) => TaggedValue::object_ptr(Rc::into_raw(value) as usize),
         Value::Array(value) => TaggedValue::array_ptr(Rc::into_raw(value) as usize),
+        Value::Function(value) => TaggedValue::function_ptr(Rc::into_raw(value) as usize),
         value => value.to_tagged().or_else(|| {
             let pointer = Rc::into_raw(Rc::new(AlignedValue(value))) as usize;
             TaggedValue::heap_ptr(pointer)
