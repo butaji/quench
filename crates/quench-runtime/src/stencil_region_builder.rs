@@ -34,6 +34,7 @@ impl NativeLinearF64Plan {
     pub(crate) fn repeated_add(
         policy: crate::stencil_policy::ExecutionPolicy,
         owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
+        repetitions: u8,
     ) -> Option<Self> {
         policy.native_leaves.then_some(())?;
         let view = crate::stencil_select::select_physical_for_abi(
@@ -42,7 +43,7 @@ impl NativeLinearF64Plan {
         )?;
         let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::Add);
         let values = PatchValues::from_site(&site);
-        let image = compose_linear_chain(view, 2, &values).ok()?;
+        let image = compose_linear_chain(view, repetitions, &values).ok()?;
         Some(Self {
             owner,
             image,

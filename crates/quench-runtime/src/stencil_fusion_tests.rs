@@ -37,6 +37,13 @@ fn execute_case(
                 }
             }
         }
+        crate::stencil_plan::LocalNumericInputs::RepeatedAdd { sources, .. } => {
+            for (index, source) in sources.into_iter().enumerate() {
+                if let crate::stencil_plan::NumericSource::Local(slot) = source {
+                    environment.set(slot, values[index].clone());
+                }
+            }
+        }
         crate::stencil_plan::LocalNumericInputs::Folded { .. } => {}
     }
     let mut registers = crate::register_file::RegisterFile::with_undefined(

@@ -15,8 +15,12 @@ fn execute_source_add_chain(
     let pc = (0..view.len()).find(|pc| has_add_tree(&plan, *pc))?;
     let native = plan.native_local_binary_at(pc)?;
     let selection = native.borrow().selection();
-    let crate::stencil_plan::LocalNumericInputs::AddChain { sources, .. } = selection.inputs else {
-        return None;
+    let sources = match selection.inputs {
+        crate::stencil_plan::LocalNumericInputs::AddChain { sources, .. } => sources,
+        crate::stencil_plan::LocalNumericInputs::RepeatedAdd { sources, .. } => {
+            [sources[0], sources[1], sources[1]]
+        }
+        _ => return None,
     };
     let environment = add_chain_environment(sources, inputs)?;
     let mut registers = crate::register_file::RegisterFile::with_undefined(
@@ -41,6 +45,7 @@ fn has_add_tree(plan: &BaselinePlan, pc: usize) -> bool {
         matches!(
             native.borrow().selection().inputs,
             crate::stencil_plan::LocalNumericInputs::AddChain { .. }
+                | crate::stencil_plan::LocalNumericInputs::RepeatedAdd { .. }
         )
     })
 }
@@ -127,6 +132,45 @@ fn ordinary_source_repeated_add_uses_composed_fragment_image() {
         checked = true;
     });
     assert!(checked, "ordinary source must reach fragment composition");
+}
+
+#[test]
+fn ordinary_source_repeated_add_depth_is_data_not_a_new_plan() {
+    let source = "function f(a,b){return (((a+b)+b)+b)+b} f(1,2)";
+    let program = crate::reduce::reduce_source(source).expect("ordinary source lowers");
+    let mut checked = false;
+    crate::stencil_test_support::visit_code_views(program.code(), &mut |view| {
+        let Some((completion, entries, physical)) = execute_source_add_chain(
+            view,
+            [Value::Number(1.0), Value::Number(2.0), Value::Number(2.0)],
+        ) else {
+            return;
+        };
+        assert_eq!(completion, Completion::Return(Value::Number(9.0)));
+        assert_eq!(entries, 1);
+        assert_eq!(
+            physical.expect("composed view").key,
+            crate::stencil_select::fallthrough_region_key()
+        );
+        let negative_zero = execute_source_add_chain(
+            view,
+            [
+                Value::Number(-0.0),
+                Value::Number(-0.0),
+                Value::Number(-0.0),
+            ],
+        )
+        .expect("ordered signed-zero execution");
+        let Completion::Return(Value::Number(value)) = negative_zero.0 else {
+            panic!("numeric completion");
+        };
+        assert_eq!(value.to_bits(), (-0.0_f64).to_bits());
+        checked = true;
+    });
+    assert!(
+        checked,
+        "ordinary source must admit variable-depth composition"
+    );
 }
 
 #[cfg(quench_generated_stencil_artifacts)]
