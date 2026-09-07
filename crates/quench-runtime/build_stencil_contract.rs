@@ -43,6 +43,7 @@ pub(crate) enum DeclAbi {
 pub(crate) enum RecipeComposition {
     Whole,
     LinkedFragments,
+    ControlFragment,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -50,6 +51,7 @@ pub(crate) enum DeclContinuationAbi {
     None,
     F64AccumulatorD0AddD1,
     F64AccumulatorD0ThenD2,
+    WordX0,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -175,6 +177,15 @@ pub(crate) struct AssemblySuccessor {
     pub(crate) role: AssemblySuccessorRole,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct AssemblyControlLink {
+    pub(crate) offset: u16,
+    pub(crate) width: usize,
+    pub(crate) kind: &'static str,
+    pub(crate) target: &'static str,
+    pub(crate) role: AssemblySuccessorRole,
+}
+
 macro_rules! assembly_continuation {
     () => {
         None
@@ -264,6 +275,7 @@ macro_rules! rust_assembly_catalog {
         $(, bindings: $bindings:expr)?
         $(, outputs: $outputs:expr)?
         $(, continuation: { head: $head:literal, tail: $tail:literal, target: $target:literal })?
+        $(, control_links: $control_links:expr)?
         $(, internal_abi: $internal_abi:ident)?
         $(, composition: $composition:ident)?
     } ),+ $(,)?) => {
@@ -295,7 +307,13 @@ macro_rules! rust_assembly_catalog {
 
             pub(crate) const fn successors(self) -> &'static [AssemblySuccessor] {
                 match self {
-                    $( Self::$variant => assembly_successors!($($target)?) ),+
+                    $( Self::$variant => assembly_successors!($($target)?;) ),+
+                }
+            }
+
+            pub(crate) const fn control_links(self) -> &'static [AssemblyControlLink] {
+                match self {
+                    $( Self::$variant => rust_assembly_control_links!($($control_links)?), )+
                 }
             }
 
@@ -332,11 +350,20 @@ macro_rules! rust_assembly_catalog {
     };
 }
 
-macro_rules! assembly_successors {
+macro_rules! rust_assembly_control_links {
     () => {
         &[]
     };
-    ($target:literal) => {
+    ($links:expr) => {
+        $links
+    };
+}
+
+macro_rules! assembly_successors {
+    (;) => {
+        &[]
+    };
+    ($target:literal;) => {
         &[AssemblySuccessor {
             target: $target,
             role: AssemblySuccessorRole::Next,

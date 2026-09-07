@@ -69,11 +69,12 @@ fn render_region_row(index: usize, declaration: &RegionDeclaration) -> String {
 }
 
 fn continuation_abi_expr(declaration: &RegionDeclaration) -> &'static str {
-    use DeclContinuationAbi::{F64AccumulatorD0AddD1, F64AccumulatorD0ThenD2, None};
+    use DeclContinuationAbi::{F64AccumulatorD0AddD1, F64AccumulatorD0ThenD2, None, WordX0};
     match rust_assembly_recipe(declaration).map_or(None, |recipe| recipe.internal_abi()) {
         None => "crate::stencil_select::ContinuationAbi::None",
         F64AccumulatorD0AddD1 => "crate::stencil_select::ContinuationAbi::F64AccumulatorD0AddD1",
         F64AccumulatorD0ThenD2 => "crate::stencil_select::ContinuationAbi::F64AccumulatorD0ThenD2",
+        WordX0 => "crate::stencil_select::ContinuationAbi::WordX0",
     }
 }
 

@@ -42,6 +42,12 @@ pub(crate) fn fragment_sources(
     }
 }
 
+pub(crate) fn control_fragment_source(recipe: super::RustAssemblyRecipe) -> Option<&'static str> {
+    (recipe == super::RustAssemblyRecipe::BoolBranch).then_some(
+        "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_bool_branch\nq_bool_branch:\n  cbnz w0, 1f\n  b q_bool_branch_false\n1:\n  b q_bool_branch_true\nq_bool_branch_end:\n\"#);\n",
+    )
+}
+
 const AARCH64_ARRAY_LOOP: &str = r##"#![no_std]
 use core::arch::global_asm;
 global_asm!(r#"
@@ -305,6 +311,9 @@ pub(crate) fn assembly_source(recipe: super::RustAssemblyRecipe) -> String {
                 .map(|(head, tail)| head.to_owned() + tail)
                 .expect("declared fragment pair")
         }
+        BoolBranch => control_fragment_source(recipe)
+            .expect("declared control fragment")
+            .to_owned(),
         CompareEqualBranch => compare_branch_source(recipe.name(), "eq", false),
         CompareNotEqualBranch => compare_branch_source(recipe.name(), "ne", true),
         CompareLessBranch => compare_branch_source(recipe.name(), "lt", false),

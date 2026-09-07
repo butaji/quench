@@ -57,6 +57,7 @@ pub enum ContinuationAbi {
     None,
     F64AccumulatorD0AddD1,
     F64AccumulatorD0ThenD2,
+    WordX0,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -36,6 +36,23 @@ const ARRAY_NUMERIC_LOOP_BINDINGS: &[PhysicalBinding] = &[
     PhysicalBinding::AllDistinct(ARRAY_NUMERIC_LOOP_DISTINCT),
 ];
 
+const BOOL_BRANCH_LINKS: &[AssemblyControlLink] = &[
+    AssemblyControlLink {
+        offset: 4,
+        width: 4,
+        kind: "Branch26",
+        target: "q_bool_branch_false",
+        role: AssemblySuccessorRole::False,
+    },
+    AssemblyControlLink {
+        offset: 8,
+        width: 4,
+        kind: "Branch26",
+        target: "q_bool_branch_true",
+        role: AssemblySuccessorRole::True,
+    },
+];
+
 include!("../build_stencil_outputs.rs");
 
 rust_assembly_catalog! {
@@ -79,6 +96,14 @@ rust_assembly_catalog! {
         continuation: { head: "add_chain_head", tail: "add_chain_tail", target: "q_add_chain_tail" },
         internal_abi: F64AccumulatorD0ThenD2,
         composition: LinkedFragments
+    },
+    BoolBranch {
+        name: "bool_branch", abi: TaggedWord, ops: ["JumpIfFalse"],
+        x86: &[], aarch64: &[],
+        x86_holes: &[], aarch64_holes: &[],
+        control_links: BOOL_BRANCH_LINKS,
+        internal_abi: WordX0,
+        composition: ControlFragment
     },
     CompareEqualBranch {
         name: "compare_equal_branch", abi: CompareBranch, ops: ["Binary", "JumpIfFalse"],
