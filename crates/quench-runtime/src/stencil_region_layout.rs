@@ -47,6 +47,10 @@ impl VerifiedRegionImage {
         self.identity
     }
 
+    pub(crate) fn from_composed(identity: RegionImageIdentity, bytes: Vec<u8>) -> Self {
+        Self { identity, bytes }
+    }
+
     #[cfg(test)]
     pub(crate) fn from_test_parts(
         view: PhysicalStencilView,
@@ -379,29 +383,39 @@ fn selected_points() -> [RegionPoint; 2] {
 }
 
 fn selected_transfers(view: PhysicalStencilView) -> Result<Vec<PlannedTransfer>, LayoutError> {
+    selected_transfers_between(view, RegionPoint::Operation(0), RegionPoint::Operation(1))
+}
+
+pub(crate) fn selected_transfers_between(
+    view: PhysicalStencilView,
+    source: RegionPoint,
+    target: RegionPoint,
+) -> Result<Vec<PlannedTransfer>, LayoutError> {
     let tail = view.fallthrough.ok_or(LayoutError::MissingSuccessor)?;
     if view.generated {
-        return generated_transfers(view, tail.target);
+        return generated_transfers(view, tail.target, source, target);
     }
     view.stencil
         .holes
         .iter()
         .copied()
         .filter(|hole| relative_kind(hole.kind).is_some())
-        .map(|hole| physical_transfer(hole.offset, hole.kind, 0))
+        .map(|hole| physical_transfer(hole.offset, hole.kind, 0, source, target))
         .collect()
 }
 
 fn generated_transfers(
     view: PhysicalStencilView,
     target: &str,
+    source: RegionPoint,
+    destination: RegionPoint,
 ) -> Result<Vec<PlannedTransfer>, LayoutError> {
     if view.relocations.len() != view.stencil.holes.len() {
         return Err(LayoutError::RelocationContract);
     }
     view.relocations
         .iter()
-        .map(|relocation| generated_transfer(view, relocation, target))
+        .map(|relocation| generated_transfer(view, relocation, target, source, destination))
         .collect()
 }
 
@@ -409,6 +423,8 @@ fn generated_transfer(
     view: PhysicalStencilView,
     relocation: &PhysicalRelocation,
     target: &str,
+    source: RegionPoint,
+    destination: RegionPoint,
 ) -> Result<PlannedTransfer, LayoutError> {
     let declared = view
         .stencil
@@ -419,18 +435,26 @@ fn generated_transfer(
         return Err(LayoutError::RelocationContract);
     }
     let addend = i32::try_from(relocation.addend).map_err(|_| LayoutError::RelocationContract)?;
-    physical_transfer(relocation.offset, relocation.kind, addend)
+    physical_transfer(
+        relocation.offset,
+        relocation.kind,
+        addend,
+        source,
+        destination,
+    )
 }
 
 fn physical_transfer(
     offset: u16,
     kind: HoleKind,
     addend: i32,
+    source: RegionPoint,
+    target: RegionPoint,
 ) -> Result<PlannedTransfer, LayoutError> {
     Ok(PlannedTransfer {
-        source: RegionPoint::Operation(0),
+        source,
         offset,
-        target: RegionPoint::Operation(1),
+        target,
         addend,
         kind: relative_kind(kind).ok_or(LayoutError::RelocationContract)?,
     })
