@@ -1669,7 +1669,7 @@ pub fn block_list_clear(
 ) -> Result<Value, VmError> {
     let Some(receiver) = receiver else { return Err(blocklist_error("TypeError", "ERR_INVALID_THIS", "Illegal invocation")); };
     for key in ["\0quench:blocklist:addresses", "\0quench:blocklist:ranges", "\0quench:blocklist:subnets", "rules"] {
-        let _ = execute::set_property_in_place(receiver, key, host_api::array(Vec::new()));
+        replace_blocklist_entries(receiver, key, Vec::new());
     }
     let _ = execute::set_property_in_place(receiver, "size", Value::Number(0.0));
     Ok(Value::Undefined)
@@ -1763,7 +1763,7 @@ pub fn block_list_remove_range(
         let Ok(a) = parse_blocklist_ip(&a) else { return true; }; let Ok(b) = parse_blocklist_ip(&b) else { return true; };
         !(a == start && b == end && requested.is_none_or(|family| family == blocklist_ip_family(a)))
     });
-    let _ = execute::set_property_in_place(receiver, "\0quench:blocklist:ranges", host_api::array(values));
+    replace_blocklist_entries(receiver, "\0quench:blocklist:ranges", values);
     rebuild_blocklist_rules(receiver);
     Ok(Value::Undefined)
 }
@@ -1781,7 +1781,7 @@ pub fn block_list_remove_subnet(
             || execute::get_property(entry, "prefix") != Value::Number(*prefix)
             || requested.is_some_and(|family| execute::get_property(entry, "family") != Value::String(family.into()))
     });
-    let _ = execute::set_property_in_place(receiver, "\0quench:blocklist:subnets", host_api::array(values));
+    replace_blocklist_entries(receiver, "\0quench:blocklist:subnets", values);
     rebuild_blocklist_rules(receiver);
     Ok(Value::Undefined)
 }
@@ -1863,7 +1863,7 @@ fn rebuild_blocklist_rules(receiver: &Value) {
             rules.push(Value::String(format!("Subnet: {} {network}/{prefix}", blocklist_family_label(&family))));
         }
     }
-    let _ = execute::set_property_in_place(receiver, "rules", host_api::array(rules.clone()));
+    replace_blocklist_entries(receiver, "rules", rules.clone());
     let _ = execute::set_property_in_place(receiver, "size", Value::Number(rules.len() as f64));
 }
 
@@ -1953,9 +1953,15 @@ fn blocklist_entries(receiver: &Value, key: &str) -> Vec<Value> {
 }
 
 fn append_blocklist_entry(receiver: &Value, key: &str, entry: Value) {
-    let mut values = blocklist_entries(receiver, key);
-    values.push(entry);
-    let _ = execute::set_property_in_place(receiver, key, host_api::array(values));
+    let values = blocklist_entries(receiver, key);
+    let list = execute::get_property(receiver, key);
+    if let Value::Array(_) = list {
+        let index = values.len();
+        let _ = execute::set_array_element_in_place(&list, index, entry);
+        let _ = execute::set_array_length_in_place(&list, index + 1);
+    } else {
+        let _ = execute::set_property_in_place(receiver, key, host_api::array(vec![entry]));
+    }
 }
 
 fn append_blocklist_rule(receiver: &Value, rule: String) {
@@ -2038,4 +2044,18 @@ fn blocklist_match_subnet(entry: &Value, query: IpAddr, family: &str) -> bool {
         return false;
     }
     prefix == 0 || (query >> (bits - prefix)) == (network >> (bits - prefix))
+}
+
+/// Replace a rule collection in place so BlockList wrappers that share the
+/// native rule set continue to observe removals and clears.
+fn replace_blocklist_entries(receiver: &Value, key: &str, values: Vec<Value>) {
+    let list = execute::get_property(receiver, key);
+    if let Value::Array(_) = list {
+        for (index, value) in values.iter().cloned().enumerate() {
+            let _ = execute::set_array_element_in_place(&list, index, value);
+        }
+        let _ = execute::set_array_length_in_place(&list, values.len());
+    } else {
+        let _ = execute::set_property_in_place(receiver, key, host_api::array(values));
+    }
 }

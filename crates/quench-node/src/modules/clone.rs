@@ -136,6 +136,19 @@ pub fn deep_clone(value: Value) -> Value {
     }
     match value {
         Value::Object(_) => {
+            // BlockList keeps its matching rules in host-owned, non-enumerable
+            // slots.  They are semantic state, not implementation details:
+            // omitting them turns a cloned list into an empty list while the
+            // copied methods continue to look valid.  Preserve those slots
+            // after cloning the ordinary enumerable surface so this applies
+            // to every MessagePort/structured-clone boundary.
+            let is_block_list = matches!(
+                quench_runtime::execute::get_property(
+                    &value,
+                    "\0quench:blocklist:marker"
+                ),
+                Value::Boolean(true)
+            );
             let pairs = quench_runtime::execute::own_enumerable_keys(&value)
                 .into_iter()
                 .map(|name| {
@@ -143,7 +156,28 @@ pub fn deep_clone(value: Value) -> Value {
                     (name, deep_clone(item))
                 })
                 .collect();
-            host_api::object(pairs)
+            let clone = host_api::object(pairs);
+            if is_block_list {
+                for name in [
+                    "\0quench:blocklist:marker",
+                    "\0quench:blocklist:addresses",
+                    "\0quench:blocklist:ranges",
+                    "\0quench:blocklist:subnets",
+                    "rules",
+                ] {
+                    let item = quench_runtime::execute::get_property(&value, name);
+                    quench_runtime::execute::set_property_in_place(
+                        &clone,
+                        name,
+                        // BlockList wraps one native rule set.  Node's clone
+                        // creates a distinct wrapper around that same set,
+                        // so mutations made through either wrapper remain
+                        // visible to the other.
+                        item,
+                    );
+                }
+            }
+            clone
         }
         Value::Array(_) => {
             let mut items = Vec::new();
