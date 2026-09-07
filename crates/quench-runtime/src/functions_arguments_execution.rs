@@ -84,11 +84,134 @@ pub(crate) fn try_execute_specialized(
             completion, generator,
         )));
     }
+    try_execute_physical(function, arguments)
+}
+
+fn try_execute_physical(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    arguments: &[crate::value::Value],
+) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
+    if let Some(fact) = function.code.numeric_affine_named_loop() {
+        match execute_numeric_affine_named_loop(function, arguments, &fact) {
+            Ok(value) => {
+                crate::execution_trace::kernel("PrecompiledAffineNamedLoop", false);
+                #[cfg(test)]
+                AFFINE_NAMED_LOOP_HITS.set(AFFINE_NAMED_LOOP_HITS.get().saturating_add(1));
+                return Ok(Some(crate::value::Value::Number(f64::from(value))));
+            }
+            Err(rejection) => crate::execution_trace::leaf_rejection(rejection.trace_name()),
+        }
+    }
     if let Some(value) = try_execute_numeric_affine(function, arguments) {
         crate::execution_trace::kernel("PrecompiledAffineI32", false);
         return Ok(Some(crate::value::Value::Number(f64::from(value))));
     }
     Ok(None)
+}
+
+#[cfg(test)]
+thread_local! {
+    static AFFINE_NAMED_LOOP_HITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn take_affine_named_loop_hits() -> u64 {
+    AFFINE_NAMED_LOOP_HITS.replace(0)
+}
+
+const MAX_PRECOMPILED_LOOP_ITERATIONS: i32 = 4096;
+
+#[derive(Clone, Copy)]
+enum AffineNamedLoopRejection {
+    Parameter,
+    Argument,
+    Object,
+    Seed,
+    Bound,
+    Range,
+    Method,
+    Callee,
+}
+
+impl AffineNamedLoopRejection {
+    const fn trace_name(self) -> &'static str {
+        match self {
+            Self::Parameter => "affine_named_parameter",
+            Self::Argument => "affine_named_argument",
+            Self::Object => "affine_named_object",
+            Self::Seed => "affine_named_seed",
+            Self::Bound => "affine_named_bound",
+            Self::Range => "affine_named_range",
+            Self::Method => "affine_named_method",
+            Self::Callee => "affine_named_callee",
+        }
+    }
+}
+
+fn execute_numeric_affine_named_loop(
+    function: &crate::value::FunctionValue,
+    arguments: &[crate::value::Value],
+    fact: &crate::function_physical::NumericAffineNamedLoop,
+) -> Result<i32, AffineNamedLoopRejection> {
+    if usize::from(fact.parameter_slot) != function.captures.len() {
+        return Err(AffineNamedLoopRejection::Parameter);
+    }
+    let Some(crate::value::Value::Object(receiver)) = arguments.first() else {
+        return Err(AffineNamedLoopRejection::Argument);
+    };
+    guarded_loop_object(receiver).ok_or(AffineNamedLoopRejection::Object)?;
+    let mut value = own_i32(receiver, &fact.seed_key).ok_or(AffineNamedLoopRejection::Seed)?;
+    let end = own_i32(receiver, &fact.bound_key).ok_or(AffineNamedLoopRejection::Bound)?;
+    if !(0..=MAX_PRECOMPILED_LOOP_ITERATIONS).contains(&end) {
+        return Err(AffineNamedLoopRejection::Range);
+    }
+    if end == 0 {
+        return Ok(value);
+    }
+    let callee =
+        own_function(receiver, &fact.method_key).ok_or(AffineNamedLoopRejection::Method)?;
+    let affine = guarded_affine_callee(&callee).ok_or(AffineNamedLoopRejection::Callee)?;
+    for _ in 0..end {
+        value = affine
+            .execute(f64::from(value))
+            .ok_or(AffineNamedLoopRejection::Callee)?;
+    }
+    Ok(value)
+}
+
+fn guarded_loop_object(object: &crate::value::ObjectData) -> Option<()> {
+    (!object.has_replacement()
+        && !object.is_dictionary()
+        && !object.is_realm_global()
+        && !object.is_script_global_view()
+        && !object.has_regexp_internal_slot())
+    .then_some(())
+}
+
+fn own_i32(object: &crate::value::ObjectData, key: &str) -> Option<i32> {
+    let crate::value::Value::Number(value) = crate::vm::proven_own_word(object, key)?.load() else {
+        return None;
+    };
+    (value.is_finite() && value >= i32::MIN as f64 && value <= i32::MAX as f64)
+        .then(|| value as i32)
+        .filter(|integer| f64::from(*integer) == value)
+}
+
+fn own_function(
+    object: &crate::value::ObjectData,
+    key: &str,
+) -> Option<std::rc::Rc<crate::value::FunctionValue>> {
+    let pointer = crate::vm::proven_own_word(object, key)?.function_ptr()?;
+    unsafe { std::rc::Rc::increment_strong_count(pointer) };
+    Some(unsafe { std::rc::Rc::from_raw(pointer) })
+}
+
+fn guarded_affine_callee(
+    function: &crate::value::FunctionValue,
+) -> Option<crate::function_physical::NumericAffineI32> {
+    (function.params == 1 && crate::functions::direct_call_eligible(function)).then_some(())?;
+    let fact = function.code.numeric_affine_i32()?;
+    (usize::from(fact.parameter_slot) == function.captures.len()).then_some(fact)
 }
 
 fn try_execute_numeric_affine(
@@ -122,15 +245,18 @@ pub(crate) fn direct_call_eligible(function: &crate::value::FunctionValue) -> bo
 }
 
 /// Enter a function whose ordinary synchronous shape has already been
-/// established by a call-site guard. This preserves the same bounded stack
-/// reserve and interpreter completion driver as the generic gateway while
-/// avoiding a second specialized-function admission pass.
+/// established by a call-site guard. Physical body selection remains shared
+/// with cold calls; only the already-proven semantic call classification is
+/// skipped before the canonical interpreter fallback.
 #[inline(never)]
 pub(crate) fn execute_direct(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     this_value: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
+    if let Some(value) = try_execute_physical(function, arguments)? {
+        return Ok(value);
+    }
     stacker::maybe_grow(64 * 1024 * 1024, 256 * 1024 * 1024, || {
         execute_interpreter(function, this_value, arguments)
     })

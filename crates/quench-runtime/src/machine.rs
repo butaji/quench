@@ -6728,6 +6728,8 @@ pub struct FunctionCode {
     capture_slots: Rc<[u16]>,
     facts: Rc<crate::facts::FunctionFacts>,
     numeric_affine_i32: Rc<OnceLock<Option<crate::function_physical::NumericAffineI32>>>,
+    numeric_affine_named_loop:
+        Rc<OnceLock<Option<Rc<crate::function_physical::NumericAffineNamedLoop>>>>,
     tier: Rc<RefCell<TierState>>,
 }
 
@@ -6741,6 +6743,7 @@ impl Clone for FunctionCode {
             capture_slots: self.capture_slots.clone(),
             facts: self.facts.clone(),
             numeric_affine_i32: self.numeric_affine_i32.clone(),
+            numeric_affine_named_loop: self.numeric_affine_named_loop.clone(),
             tier: self.tier.clone(),
         }
     }
@@ -6758,6 +6761,7 @@ impl FunctionCode {
             capture_slots,
             facts: Rc::default(),
             numeric_affine_i32: Rc::default(),
+            numeric_affine_named_loop: Rc::default(),
             tier: Rc::new(RefCell::new(TierState::new())),
         }
     }
@@ -6773,6 +6777,7 @@ impl FunctionCode {
             capture_slots,
             facts: Rc::default(),
             numeric_affine_i32: Rc::default(),
+            numeric_affine_named_loop: Rc::default(),
             tier: Rc::new(RefCell::new(TierState::new())),
         }
     }
@@ -6802,6 +6807,7 @@ impl FunctionCode {
             capture_slots,
             facts: Rc::default(),
             numeric_affine_i32: Rc::default(),
+            numeric_affine_named_loop: Rc::default(),
             tier: Rc::new(RefCell::new(TierState::new())),
         }
     }
@@ -6834,6 +6840,7 @@ impl FunctionCode {
                 capture_slots,
                 facts: Rc::default(),
                 numeric_affine_i32: Rc::default(),
+                numeric_affine_named_loop: Rc::default(),
                 tier: Rc::new(RefCell::new(TierState::new())),
             })
             .collect()
@@ -6850,6 +6857,7 @@ impl FunctionCode {
             capture_slots: Rc::from([u16::MAX]),
             facts: Rc::default(),
             numeric_affine_i32: Rc::default(),
+            numeric_affine_named_loop: Rc::default(),
             tier: Rc::new(RefCell::new(TierState::new())),
         }
     }
@@ -6875,6 +6883,18 @@ impl FunctionCode {
             self.code()
                 .and_then(crate::function_physical::numeric_affine_i32)
         })
+    }
+
+    pub(crate) fn numeric_affine_named_loop(
+        &self,
+    ) -> Option<Rc<crate::function_physical::NumericAffineNamedLoop>> {
+        self.numeric_affine_named_loop
+            .get_or_init(|| {
+                self.code()
+                    .and_then(crate::function_physical::numeric_affine_named_loop)
+                    .map(Rc::new)
+            })
+            .clone()
     }
 
     /// Account one function entry and compile the baseline plan when prior
