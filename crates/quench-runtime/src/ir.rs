@@ -437,6 +437,16 @@ impl Opcode {
     pub const fn is_slow(self) -> bool {
         matches!(self, Self::Slow)
     }
+
+    pub(crate) fn matches_physical_contract(self, actual: Self) -> bool {
+        self == actual
+            || matches!(
+                (self, actual),
+                (Self::GetProperty, Self::GetPropertyQuickened)
+                    | (Self::GetN, Self::GetNQuickened)
+                    | (Self::AGetI, Self::AGetIQuickened)
+            )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

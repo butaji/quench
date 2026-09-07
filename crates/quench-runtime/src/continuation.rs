@@ -115,7 +115,10 @@ pub(crate) fn attach_executed_suspension(
 ) -> Result<crate::vm::CompletionStep, crate::execute::VmError> {
     use crate::completion::Completion;
 
-    if !matches!(step.completion, Completion::Yield(_) | Completion::Suspend(_)) {
+    if !matches!(
+        step.completion,
+        Completion::Yield(_) | Completion::Suspend(_)
+    ) {
         return Ok(step);
     }
     let pc = step

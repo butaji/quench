@@ -222,10 +222,7 @@ pub(crate) enum LoopTransition {
 }
 
 impl Completion {
-    pub(crate) fn nest_suspension(
-        self,
-        outer: crate::continuation::SuspensionPoint,
-    ) -> Self {
+    pub(crate) fn nest_suspension(self, outer: crate::continuation::SuspensionPoint) -> Self {
         match self {
             Self::Suspend(value) => Self::SuspendAt(value, outer),
             Self::Yield(value) => Self::YieldAt(value, outer),

@@ -597,8 +597,8 @@ pub(crate) fn repeat(
     // The lossy display form of StringUnits can have the same unit length as
     // the exact source while containing replacement characters.  Only the
     // UTF-8-owned variant can use String::repeat without changing units.
-    let compact_utf8 = total_units <= SHORT_STRING_MAX_UNITS
-        || encoding_of(&source) == StringEncoding::Latin1;
+    let compact_utf8 =
+        total_units <= SHORT_STRING_MAX_UNITS || encoding_of(&source) == StringEncoding::Latin1;
     if matches!(receiver, Some(Value::String(_))) && compact_utf8 {
         return Ok(Value::String(value.repeat(count)));
     }

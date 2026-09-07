@@ -299,14 +299,12 @@ fn run_control_op(
         Yield { src } => read_register(registers, *src)
             .map(Completion::Yield)
             .map(Some),
-        YieldStar { .. } => match crate::generator::execute_yield_star(
-            registers,
-            op,
-            Completion::Normal,
-        )? {
-            Some(completion) => Ok(Some(completion)),
-            None => Ok(None),
-        },
+        YieldStar { .. } => {
+            match crate::generator::execute_yield_star(registers, op, Completion::Normal)? {
+                Some(completion) => Ok(Some(completion)),
+                None => Ok(None),
+            }
+        }
         _ => Ok(None),
     }
 }
@@ -381,11 +379,6 @@ fn run_make_object(
                     ),
                 ));
                 crate::execute::write_value(registers, dst, value);
-            }
-        }
-        if let Value::Object(object) = read_register(registers, dst)? {
-            if !is_global_view {
-                realm::initialize_current_global(object);
             }
         }
     }
@@ -738,11 +731,8 @@ fn number_property(_value: f64, key: &str) -> Value {
 
 fn boolean_property(_value: bool, key: &str) -> Value {
     match key {
-        "toString" => crate::builtins::read_descriptor_value(
-            Builtin::BooleanPrototype,
-            key,
-        )
-        .unwrap_or(Value::Builtin(Builtin::BooleanToString)),
+        "toString" => crate::builtins::read_descriptor_value(Builtin::BooleanPrototype, key)
+            .unwrap_or(Value::Builtin(Builtin::BooleanToString)),
         "valueOf" => Value::Builtin(Builtin::BooleanValueOf),
         _ => Value::Undefined,
     }
@@ -793,5 +783,26 @@ mod dispatcher_tests {
             context: &context,
         };
         assert!(!record.is_well_formed());
+    }
+
+    #[test]
+    fn ordinary_object_literal_is_not_registered_as_realm_global() {
+        crate::vm::reset_global_object();
+        let global = std::rc::Rc::new(crate::value::ObjectData::new(Vec::new()));
+        crate::vm::initialize_global_object(&crate::value::Value::Object(global));
+        let mut registers = crate::register_file::RegisterFile::new();
+        super::run_make_object(
+            &mut registers,
+            &Op::MakeObject {
+                dst: 0,
+                properties: Vec::new(),
+            },
+        )
+        .expect("ordinary object creation");
+        let crate::value::Value::Object(object) = registers.read(0).unwrap() else {
+            panic!("ordinary object result");
+        };
+        assert!(!object.is_realm_global());
+        crate::vm::reset_global_object();
     }
 }
