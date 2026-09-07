@@ -4013,9 +4013,15 @@ fn is_encrypted_private_key(bytes: &[u8]) -> bool {
             .windows(b"Proc-Type".len())
             .any(|window| window == b"Proc-Type")
         // PBES2 encrypted PKCS#8 DER: id-PBES2 1.2.840.113549.1.5.13.
+        // Match the complete OID (including the final 05 0d arcs): the
+        // shorter prefix is also present in ordinary RSA PKCS#8 keys.
         || bytes
-            .windows(9)
-            .any(|window| window == [0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01])
+            .windows(11)
+            .any(|window| {
+                window == [
+                    0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x05, 0x0d,
+                ]
+            })
 }
 
 fn raw_key_id(options: Option<&Value>) -> Option<Id> {
