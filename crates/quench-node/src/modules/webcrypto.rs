@@ -4900,7 +4900,7 @@ pub fn generate_key(
             }
             _ => 256,
         };
-        let data = vec![0_u8; bits.div_ceil(8)];
+        let data = generated_symmetric_key_bytes(bits);
         let algorithm = if matches!(algorithm, Value::Object(_) | Value::ObjectAlias(_))
             && matches!(
                 execute::get_property(&algorithm, "length"),
@@ -4992,7 +4992,7 @@ pub fn generate_key(
         } else {
             algorithm
         };
-        let data = vec![0_u8; length / 8];
+        let data = generated_symmetric_key_bytes(length);
         let key = key(&prototype, algorithm, extractable, usages, Some(data));
         return Ok(settled(Ok(key_metadata(key, "secret", "raw"))));
     }
@@ -6635,6 +6635,20 @@ fn hmac_default_length(value: &Value) -> Option<usize> {
         "SHA3-512" => Some(576),
         _ => None,
     }
+}
+
+/// Generate a symmetric key whose declared size is measured in bits.
+/// WebCrypto retains a partial final byte for non-byte-aligned HMAC/KMAC
+/// keys, clearing its unused low bits rather than flooring the byte count.
+fn generated_symmetric_key_bytes(bits: usize) -> Vec<u8> {
+    let mut data = vec![0_u8; bits.div_ceil(8)];
+    rand::thread_rng().fill_bytes(&mut data);
+    if let Some(remainder) = bits.checked_rem(8).filter(|value| *value != 0) {
+        if let Some(last) = data.last_mut() {
+            *last &= 0xff_u8 << (8 - remainder);
+        }
+    }
+    data
 }
 
 fn validate_hkdf_webcrypto(hash: &str, info_len: usize, output_len: usize) -> Option<VmError> {
