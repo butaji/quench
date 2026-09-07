@@ -149,6 +149,27 @@ fn ordinary_source_fuses_local_load_with_truthiness_branch() {
     });
 }
 
+#[cfg(all(target_arch = "aarch64", quench_generated_stencil_artifacts))]
+#[test]
+fn ordinary_source_executes_generated_boolean_constant_region() {
+    with_source_plan(|view, plan, pc| {
+        let native = plan.native_local_predicate_at(pc).unwrap();
+        assert!(native.borrow().composed_identity().is_some());
+        let before = native.borrow().composed_entry_count();
+        let truthy = execute_case(view, plan, pc, Value::Boolean(true));
+        assert_eq!(truthy.0, Completion::Return(Value::Number(11.0)));
+        let warmed = plan.native_storage_for_test();
+        let falsy = execute_case(view, plan, pc, Value::Boolean(false));
+        assert_eq!(falsy.0, Completion::Return(Value::Number(22.0)));
+        assert_eq!(plan.native_storage_for_test(), warmed);
+        assert_eq!(native.borrow().composed_entry_count() - before, 2);
+        let before = native.borrow().composed_entry_count();
+        let fallback = execute_case(view, plan, pc, Value::Number(1.0));
+        assert_eq!(fallback.0, Completion::Return(Value::Number(11.0)));
+        assert_eq!(native.borrow().composed_entry_count(), before);
+    });
+}
+
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
 fn heap_primitive_breaks_fact_and_runs_complete_branch_fallback() {

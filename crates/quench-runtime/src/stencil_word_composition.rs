@@ -6,6 +6,8 @@ use crate::stencil_region_layout::{
     compose_planned_region, PlannedFragment, RegionImageIdentity, RegionPoint, VerifiedRegionImage,
 };
 use crate::stencil_select::PhysicalStencilView;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 const BRANCH_ID: RegionId = RegionId(0x5143_0002);
 const CONSTANT_BRANCH_ID: RegionId = RegionId(0x5143_0003);
@@ -21,6 +23,163 @@ const CONSTANT_BRANCH_OPS: [crate::ir::Opcode; 5] = [
     crate::ir::Opcode::LoadConst,
     crate::ir::Opcode::Return,
 ];
+
+type WordEntry = extern "C" fn(u64) -> u64;
+
+#[derive(Clone, Copy)]
+pub(crate) struct WordConstantArm {
+    pub(crate) register: crate::ir::Register,
+    pub(crate) bits: u64,
+    pub(crate) next: usize,
+}
+
+pub(crate) struct NativeWordConstantBranchPlan {
+    owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
+    image: VerifiedRegionImage,
+    cache: crate::stencil_select::RenderedRegionCache,
+    installed: Option<crate::stencil_arena::EntryToken<WordEntry>>,
+    truthy: WordConstantArm,
+    falsy: WordConstantArm,
+    #[cfg(test)]
+    entries: u64,
+}
+
+impl NativeWordConstantBranchPlan {
+    pub(crate) fn new(
+        code: crate::machine::CodeView<'_>,
+        entries: &[crate::machine::BaselineEntry],
+        branch_pc: usize,
+        true_pc: usize,
+        false_pc: usize,
+        owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
+    ) -> Option<Self> {
+        validate_source_branch(entries, branch_pc, true_pc, false_pc)?;
+        let truthy = constant_arm(code, entries, true_pc)?;
+        let falsy = constant_arm(code, entries, false_pc)?;
+        let control = projected_constant_branch_control()?;
+        let views = generated_truthy_branch_views()?;
+        let site = crate::quickening::QuickeningSite::<2>::new(crate::ir::Opcode::JumpIfFalse);
+        let values = PatchValues::from_site(&site)
+            .with_constant_bits(crate::tagged_value::TaggedValue::bool(true).bits());
+        let image =
+            compose_word_constant_branch(views, &control, &values, truthy.bits, falsy.bits).ok()?;
+        Some(Self {
+            owner,
+            image,
+            cache: crate::stencil_select::RenderedRegionCache::new(),
+            installed: None,
+            truthy,
+            falsy,
+            #[cfg(test)]
+            entries: 0,
+        })
+    }
+
+    pub(crate) fn execute(&mut self, bits: u64) -> Option<WordConstantArm> {
+        let arm = match crate::tagged_value::TaggedValue::from_bits(bits).decode() {
+            crate::tagged_value::DecodedValue::Bool(true) => self.truthy,
+            crate::tagged_value::DecodedValue::Bool(false) => self.falsy,
+            _ => return None,
+        };
+        (self.invoke(bits)? == arm.bits).then_some(())?;
+        #[cfg(test)]
+        {
+            self.entries = self.entries.saturating_add(1);
+        }
+        Some(arm)
+    }
+
+    fn invoke(&mut self, bits: u64) -> Option<u64> {
+        if let Some(entry) = self.installed {
+            if let Some(value) = invoke_word(&self.owner, entry, bits) {
+                return Some(value);
+            }
+            self.installed = None;
+        }
+        let entry = self.entry()?;
+        invoke_word(&self.owner, entry, bits)
+    }
+
+    fn entry(&mut self) -> Option<crate::stencil_arena::EntryToken<WordEntry>> {
+        if let Some(entry) = self.installed {
+            return Some(entry);
+        }
+        let address = self
+            .owner
+            .borrow_mut()
+            .publish_region_image_or_get(&mut self.cache, &self.image)
+            .ok()?;
+        let entry = self.owner.borrow().owned_word_bool_entry(address).ok()?;
+        self.installed = Some(entry);
+        Some(entry)
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn native_entry_count(&self) -> u64 {
+        self.entries
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn identity(&self) -> RegionImageIdentity {
+        self.image.identity()
+    }
+}
+
+fn invoke_word(
+    owner: &Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
+    entry: crate::stencil_arena::EntryToken<WordEntry>,
+    bits: u64,
+) -> Option<u64> {
+    let lease = crate::stencil_arena::SharedStencilSlab::acquire_owned(owner, entry).ok()?;
+    lease.invoke(|call| call(bits)).ok()
+}
+
+fn validate_source_branch(
+    entries: &[crate::machine::BaselineEntry],
+    branch_pc: usize,
+    true_pc: usize,
+    false_pc: usize,
+) -> Option<()> {
+    let branch = entries.get(branch_pc)?.instruction;
+    (branch.opcode == crate::ir::Opcode::JumpIfFalse
+        && true_pc == branch_pc.checked_add(1)?
+        && usize::from(branch.b) == false_pc)
+        .then_some(())
+}
+
+fn projected_constant_branch_control() -> Option<crate::stencil_cfg::RegionControlPlan> {
+    crate::stencil_cfg::RegionControlPlan::from_relative_edges(5, &[(0, 1), (0, 3)])
+}
+
+fn constant_arm(
+    code: crate::machine::CodeView<'_>,
+    entries: &[crate::machine::BaselineEntry],
+    pc: usize,
+) -> Option<WordConstantArm> {
+    let (register, constant) = code.constant_at(pc)?;
+    let ret = entries.get(pc.checked_add(1)?)?.instruction;
+    (ret.opcode == crate::ir::Opcode::Return && ret.a == register).then_some(())?;
+    Some(WordConstantArm {
+        register,
+        bits: crate::machine::constant_word_bits(constant)?,
+        next: pc + 1,
+    })
+}
+
+fn generated_truthy_branch_views() -> Option<[PhysicalStencilView; 3]> {
+    let select = |key| {
+        crate::stencil_select::select_physical_for_abi(
+            key,
+            crate::stencil_select::RegionAbi::ScalarWordBool,
+        )
+    };
+    let views = [
+        select(crate::stencil_select::truthy_bool_branch_region_key())?,
+        select(crate::stencil_select::word_const_fragment_region_key())?,
+        select(crate::stencil_select::return_word_region_key())?,
+    ];
+    views.iter().all(|view| view.generated).then_some(views)
+}
 
 pub(crate) fn compose_word_branch<const N: usize>(
     branch: PhysicalStencilView,
