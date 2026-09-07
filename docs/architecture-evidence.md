@@ -1,12 +1,17 @@
 # Task 075 — current completion matrix
 
 Status: **gate PASSED at `ecb00540c5`**. Subsequent default-runtime correctness
-at `975fb5d04d` is 988 passed/1 ignored and host correctness is 16/16. Its current
-production binary is SHA-256
+at `975fb5d04d` is 988 passed/1 ignored and host correctness is 16/16. The
+current measured source is `be866df1f7`; its production binary is SHA-256
 `1d584403ebf8d86d7b99db3d043b801abeb163e1b66a730519020e6f17b46910`.
 Generated-object configuration must still be rerun at the final task-073 revision.
 Task 073 may now measure the frozen corpus; passing this gate is not a speedup or
 production-default claim.
+
+Current uninstrumented evidence: 372/372 all-size micro scenarios pass, and one
+complete V8_v7 pass scores 78.82 geometric mean. These are current correctness
+and prioritization observations; repeated variability, reserved/lifecycle lanes
+and final generated-object validation remain open in task 073.
 
 ## Infrastructure
 
