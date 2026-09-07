@@ -6,6 +6,12 @@ pub fn numeric_region_key(opcode: crate::ir::Opcode) -> Option<RegionKey> {
         .find_map(|(candidate, key)| (*candidate == opcode).then_some(*key))
 }
 
+pub(crate) fn continuation_region_key(opcode: crate::ir::Opcode) -> Option<RegionKey> {
+    CONTINUATION_REGION_KEYS
+        .iter()
+        .find_map(|(candidate, key)| (*candidate == opcode).then_some(*key))
+}
+
 /// A region block's incoming edges are represented by IDs.  `external_entry`
 /// is precomputed by the build-time CFG pass and is not re-derived at runtime.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

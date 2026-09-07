@@ -31,19 +31,20 @@ pub(crate) struct NativeLinearF64Plan {
 }
 
 impl NativeLinearF64Plan {
-    pub(crate) fn repeated_add(
+    pub(crate) fn binary_series(
         policy: crate::stencil_policy::ExecutionPolicy,
         owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
-        repetitions: u8,
+        series: crate::stencil_plan::NumericSeries,
     ) -> Option<Self> {
         policy.native_leaves.then_some(())?;
-        let view = crate::stencil_select::select_physical_for_abi(
-            crate::stencil_select::fallthrough_region_key(),
-            crate::stencil_select::RegionAbi::ScalarF64Binary,
-        )?;
+        let views = series
+            .operations()
+            .map(series_view)
+            .collect::<Option<Vec<_>>>()?;
+        let view = *views.first()?;
         let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::Add);
         let values = PatchValues::from_site(&site);
-        let image = compose_linear_chain(view, repetitions, &values).ok()?;
+        let image = compose_fragment_chain(&views, &values).ok()?;
         Some(Self {
             owner,
             image,
@@ -99,6 +100,19 @@ impl NativeLinearF64Plan {
     pub(crate) fn last_native_view(&self) -> Option<PhysicalStencilView> {
         self.last_entered.then_some(self.view)
     }
+}
+
+fn series_view(operator: crate::ops::BinaryOp) -> Option<PhysicalStencilView> {
+    let opcode = match operator {
+        crate::ops::BinaryOp::Add => crate::ir::Opcode::Add,
+        crate::ops::BinaryOp::Subtract => crate::ir::Opcode::Sub,
+        _ => return None,
+    };
+    let key = crate::stencil_select::continuation_region_key(opcode)?;
+    crate::stencil_select::select_physical_for_abi(
+        key,
+        crate::stencil_select::RegionAbi::ScalarF64Binary,
+    )
 }
 
 pub(crate) fn compose_linear_chain<const N: usize>(

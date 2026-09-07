@@ -50,7 +50,7 @@ enum LocalNumericPhysical {
     Folded,
     Binary(NativeBinaryPlan),
     AddChain(crate::machine::NativeAddChainPlan),
-    RepeatedAdd(crate::stencil_region_builder::NativeLinearF64Plan),
+    BinarySeries(crate::stencil_region_builder::NativeLinearF64Plan),
 }
 
 pub(crate) struct LocalPropertyExecution {
@@ -259,15 +259,11 @@ impl NativeLocalBinaryPlan {
         }
         let physical = match selection.inputs {
             LocalNumericInputs::Folded { .. } => LocalNumericPhysical::Folded,
-            LocalNumericInputs::RepeatedAdd { repetitions, .. } => {
-                LocalNumericPhysical::RepeatedAdd(
-                    crate::stencil_region_builder::NativeLinearF64Plan::repeated_add(
-                        policy,
-                        arena,
-                        repetitions,
-                    )?,
-                )
-            }
+            LocalNumericInputs::BinarySeries { series, .. } => LocalNumericPhysical::BinarySeries(
+                crate::stencil_region_builder::NativeLinearF64Plan::binary_series(
+                    policy, arena, series,
+                )?,
+            ),
             LocalNumericInputs::AddChain { bindings, .. } => LocalNumericPhysical::AddChain(
                 crate::machine::NativeAddChainPlan::new_embedded_with_arena(
                     policy, arena, bindings,
@@ -335,13 +331,13 @@ impl NativeLocalBinaryPlan {
                 let [lhs, rhs, third] = self.read_three_sources(environment, sources)?;
                 match &mut self.physical {
                     LocalNumericPhysical::AddChain(chain) => chain.execute(lhs, rhs, third).ok()?,
-                    LocalNumericPhysical::RepeatedAdd(chain) => chain.execute(lhs, rhs)?,
+                    LocalNumericPhysical::BinarySeries(chain) => chain.execute(lhs, rhs)?,
                     _ => return None,
                 }
             }
-            LocalNumericInputs::RepeatedAdd { sources, .. } => {
+            LocalNumericInputs::BinarySeries { sources, .. } => {
                 let (lhs, rhs) = self.read_sources(environment, sources)?;
-                let LocalNumericPhysical::RepeatedAdd(chain) = &mut self.physical else {
+                let LocalNumericPhysical::BinarySeries(chain) = &mut self.physical else {
                     return None;
                 };
                 chain.execute(lhs, rhs)?
@@ -366,7 +362,7 @@ impl NativeLocalBinaryPlan {
                 Some((self.read_number(environment, slot)?, f64::from_bits(bits)))
             }
             LocalNumericInputs::Folded { .. } => None,
-            LocalNumericInputs::AddChain { .. } | LocalNumericInputs::RepeatedAdd { .. } => None,
+            LocalNumericInputs::AddChain { .. } | LocalNumericInputs::BinarySeries { .. } => None,
         }
     }
 
@@ -421,7 +417,7 @@ impl NativeLocalBinaryPlan {
             LocalNumericPhysical::Folded => 0,
             LocalNumericPhysical::Binary(binary) => binary.native_entry_count(),
             LocalNumericPhysical::AddChain(chain) => chain.native_entry_count(),
-            LocalNumericPhysical::RepeatedAdd(chain) => chain.native_entry_count(),
+            LocalNumericPhysical::BinarySeries(chain) => chain.native_entry_count(),
         }
     }
 
@@ -429,7 +425,7 @@ impl NativeLocalBinaryPlan {
     pub(crate) fn last_native_view(&self) -> Option<crate::stencil_select::PhysicalStencilView> {
         match &self.physical {
             LocalNumericPhysical::AddChain(chain) => chain.last_native_view(),
-            LocalNumericPhysical::RepeatedAdd(chain) => chain.last_native_view(),
+            LocalNumericPhysical::BinarySeries(chain) => chain.last_native_view(),
             _ => None,
         }
     }
