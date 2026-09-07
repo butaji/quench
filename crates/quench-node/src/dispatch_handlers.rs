@@ -11108,6 +11108,7 @@ pub fn cp_send(
     // Keep the backlog as one hidden state fact and acknowledge callbacks on
     // the drain edge; ordinary fork routing below remains unchanged.
     let generic_ipc = !from_fork_process
+        && !to_fork_process
         && (matches!(
             execute::get_property(receiver, "\0childIpc"),
             Value::Boolean(true)
@@ -11223,11 +11224,38 @@ pub fn cp_send(
         }
         let previous_scope = state.borrow().cluster.process_scope();
         let previous_event_scope = state.borrow().event_loop.process_scope();
+        // The forked source runs in the shared realm, so its `process` object
+        // is restored to the parent view when `fork()` returns.  A message
+        // delivered later must nevertheless execute with the child IPC
+        // sender installed: handlers commonly answer by calling
+        // `process.send()` themselves.  Reinstall the scoped sender only for
+        // this synchronous child event and restore the parent view
+        // afterwards, keeping process identity as an explicit lifecycle fact.
+        let previous_send = execute::get_property(&child_process, "send");
+        let previous_disconnect = execute::get_property(&child_process, "disconnect");
+        let previous_connected = execute::get_property(&child_process, "connected");
+        let previous_fork_child = execute::get_property(&child_process, "\0forkChild");
         if let Value::Number(scope) = execute::get_property(receiver, "\0forkScope") {
             state.borrow_mut().cluster.set_process_scope(scope as u64);
             state.borrow().event_loop.set_process_scope(scope as u64);
         }
+        execute::set_property_in_place(
+            &child_process,
+            "send",
+            crate::host::capability(crate::registry::SPEC_CP_SEND),
+        );
+        execute::set_property_in_place(
+            &child_process,
+            "disconnect",
+            crate::host::capability(crate::registry::SPEC_CP_DISCONNECT),
+        );
+        execute::set_property_in_place(&child_process, "connected", Value::Boolean(true));
+        execute::set_property_in_place(&child_process, "\0forkChild", receiver.clone());
         let result = crate::modules::process::emit(state, &process_args);
+        execute::set_property_in_place(&child_process, "send", previous_send);
+        execute::set_property_in_place(&child_process, "disconnect", previous_disconnect);
+        execute::set_property_in_place(&child_process, "connected", previous_connected);
+        execute::set_property_in_place(&child_process, "\0forkChild", previous_fork_child);
         state.borrow_mut().cluster.set_process_scope(previous_scope);
         state
             .borrow()
@@ -12801,6 +12829,19 @@ fn cp_spawn_script_requires_in_process(args: &Value) -> bool {
                     || source.contains("setTimeout")
                     || source.contains("child.unref")
             })
+    })
+}
+
+fn cp_spawn_script_has_persistent_handle(args: &Value) -> bool {
+    let Value::Array(array) = args else {
+        return false;
+    };
+    (0..array.logical_len()).any(|index| {
+        execute::get_property_result(args, &index.to_string())
+            .ok()
+            .and_then(|value| execute::to_js_string(&value).ok())
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .is_some_and(|source| source.contains("setInterval"))
     })
 }
 
