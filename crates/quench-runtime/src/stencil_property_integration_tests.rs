@@ -112,6 +112,21 @@ fn assert_generated_prototype_entry(plan: &BaselinePlan, pc: usize) {
 #[cfg(not(quench_generated_stencil_artifacts))]
 fn assert_generated_prototype_entry(_plan: &BaselinePlan, _pc: usize) {}
 
+#[cfg(quench_generated_stencil_artifacts)]
+fn assert_generated_own_entry(plan: &BaselinePlan, pc: usize) {
+    let expected =
+        crate::stencil_select::select_physical(crate::stencil_select::property_region_key())
+            .expect("generated own-property view");
+    let witness = plan
+        .native_property_at(pc)
+        .and_then(|native| native.borrow().last_native_view())
+        .expect("invoked own-property view");
+    assert!(expected.generated && witness.generated && witness.matches(&expected));
+}
+
+#[cfg(not(quench_generated_stencil_artifacts))]
+fn assert_generated_own_entry(_plan: &BaselinePlan, _pc: usize) {}
+
 fn source_plan() -> (FunctionCode, BaselinePlan, usize) {
     let program = crate::reduce::reduce_source("function read(o){return o.value}")
         .expect("ordinary prototype get lowers");
@@ -279,6 +294,35 @@ fn ordinary_source_prototype_get_executes_native_and_invalidates_chain() {
         native_count(&plan, pc),
         2,
         "native guard observes chain mutation"
+    );
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn ordinary_source_own_get_executes_native_and_rejects_accessor() {
+    let (body, plan, pc) = source_plan();
+    let code = body.code().unwrap();
+    let receiver = Rc::new(ObjectData::new(vec![("value".into(), Value::Number(19.0))]));
+    assert_eq!(run_get(code, &plan, pc, &receiver), Value::Number(19.0));
+    assert_eq!(run_get(code, &plan, pc, &receiver), Value::Number(19.0));
+    let before = native_count(&plan, pc);
+    assert!(before > 0, "warm own-data lookup must execute native bytes");
+    assert_generated_own_entry(&plan, pc);
+    let descriptor = Value::Object(Rc::new(ObjectData::new(vec![(
+        "get".into(),
+        Value::Undefined,
+    )])));
+    let value = Value::Object(Rc::clone(&receiver));
+    assert!(crate::execute::set_property_in_place(
+        &value,
+        &crate::builtins::descriptor_key("value"),
+        descriptor,
+    ));
+    assert_eq!(run_get(code, &plan, pc, &receiver), Value::Undefined);
+    assert_eq!(
+        native_count(&plan, pc),
+        before,
+        "accessor must reject entry"
     );
 }
 

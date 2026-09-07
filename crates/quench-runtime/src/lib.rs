@@ -17,8 +17,8 @@ pub mod interp;
 pub mod layer;
 pub mod mir;
 pub mod native;
-mod native_property;
 mod native_control;
+mod native_property;
 pub mod shape_cache;
 pub mod slot;
 pub mod unwind;
@@ -42,10 +42,10 @@ mod classes;
 mod collections;
 pub mod completion;
 mod conditional;
-#[cfg(test)]
-mod continuation_contract_tests;
 mod construct;
 mod continuation;
+#[cfg(test)]
+mod continuation_contract_tests;
 mod control_flow;
 mod conversion;
 mod cycle_collector;
@@ -129,45 +129,47 @@ mod sequences;
 mod special;
 mod statement_control;
 mod statements;
-pub mod stencil_arena;
-mod stencil_binding;
-mod stencil_admission;
-mod stencil_admission_budget;
 #[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
 mod stencil_add_tree_tests;
+mod stencil_admission;
+mod stencil_admission_budget;
+pub mod stencil_arena;
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
+mod stencil_arithmetic_integration_tests;
+mod stencil_binding;
 #[cfg(test)]
 mod stencil_bitwise_fusion_tests;
+#[cfg(test)]
+mod stencil_bridge_tests;
 mod stencil_cache;
 mod stencil_cfg;
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
+mod stencil_compare_branch_tests;
 pub mod stencil_fact;
-pub mod stencil_lifecycle;
-mod stencil_layout;
-pub mod stencil_patch;
-mod stencil_physical;
 mod stencil_fusion;
 #[cfg(test)]
 mod stencil_fusion_store_tests;
 #[cfg(test)]
 mod stencil_fusion_tests;
+mod stencil_layout;
+pub mod stencil_lifecycle;
 #[cfg(test)]
 mod stencil_move_integration_tests;
-#[cfg(test)]
-mod stencil_property_store_tests;
-#[cfg(test)]
-mod stencil_bridge_tests;
-#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
-mod stencil_compare_branch_tests;
-#[cfg(test)]
-mod stencil_property_integration_tests;
+pub mod stencil_patch;
+mod stencil_physical;
 mod stencil_plan;
 mod stencil_policy;
-mod stencil_region_layout;
-mod stencil_value_graph;
 #[cfg(test)]
-mod stencil_test_support;
+mod stencil_property_integration_tests;
+#[cfg(test)]
+mod stencil_property_store_tests;
+mod stencil_region_layout;
 pub mod stencil_select;
 #[cfg(test)]
+mod stencil_test_support;
+#[cfg(test)]
 mod stencil_truthiness_fusion_tests;
+mod stencil_value_graph;
 
 #[cfg(test)]
 mod architecture_invariants;
