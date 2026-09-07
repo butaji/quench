@@ -28,18 +28,40 @@ fn plain_own_property(
     if has_special_descriptor_semantics(properties) {
         return None;
     }
-    if properties.has_deleted_key(key) {
-        return Some(PlainOwnProperty::Missing);
+    let (own, metadata) = own_and_metadata_slots(properties, key);
+    if let Some(slot) = metadata {
+        return properties
+            .hot_properties()
+            .slot_value(slot)
+            .as_ref()
+            .and_then(descriptor_kind);
     }
-    let metadata = crate::builtins::descriptor_metadata(properties, key);
-    if let Some(value) = metadata {
-        return descriptor_kind(&value);
-    }
-    Some(if properties.hot_properties().position_rev(key).is_some() {
+    Some(if own {
         PlainOwnProperty::Data { writable: true }
     } else {
         PlainOwnProperty::Missing
     })
+}
+
+fn own_and_metadata_slots(
+    properties: &crate::value::ObjectData,
+    key: &str,
+) -> (bool, Option<usize>) {
+    let mut own = false;
+    let mut metadata = None;
+    for (slot, name) in properties.hot_properties().names().enumerate().rev() {
+        if crate::builtins::is_deleted_key_for(name, key) {
+            return (false, None);
+        }
+        own |= name == key;
+        if metadata.is_none() && crate::builtins::is_descriptor_key_for(name, key) {
+            metadata = Some(slot);
+        }
+        if own && metadata.is_some() {
+            break;
+        }
+    }
+    (own, metadata)
 }
 
 fn has_special_descriptor_semantics(properties: &crate::value::ObjectData) -> bool {
@@ -68,7 +90,18 @@ fn descriptor_kind(value: &crate::value::Value) -> Option<PlainOwnProperty> {
 }
 
 fn plain_writable_own_data(properties: &crate::value::ObjectData, key: &str) -> bool {
-    plain_own_property(properties, key).is_some_and(PlainOwnProperty::is_writable_data)
+    let (own, metadata) = own_and_metadata_slots(properties, key);
+    if !own {
+        return false;
+    }
+    metadata.is_none_or(|slot| {
+        properties
+            .hot_properties()
+            .slot_value(slot)
+            .as_ref()
+            .and_then(descriptor_kind)
+            .is_some_and(PlainOwnProperty::is_writable_data)
+    })
 }
 
 #[cfg(test)]
