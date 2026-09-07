@@ -2573,6 +2573,28 @@ pub fn file_handle_fd(
         .ok_or(VmError::NotCallable)
 }
 
+/// Resolve the canonical descriptor carried by a `fs.promises.FileHandle`.
+///
+/// Promise APIs accept either a path or this host-owned object.  Keep the
+/// hidden descriptor as the single identity fact so ordinary objects that
+/// merely expose a public `fd` property are not silently treated as handles.
+pub(crate) fn file_handle_descriptor(value: &Value) -> Result<Option<i32>, VmError> {
+    if matches!(value, Value::Number(_)) {
+        return descriptor_arg(Some(value)).map(Some);
+    }
+    if !matches!(
+        value,
+        Value::Object(_) | Value::ObjectAlias(_) | Value::Proxy(_)
+    ) {
+        return Ok(None);
+    }
+    let fd = execute::get_property(value, FILE_HANDLE_FD_KEY);
+    if matches!(fd, Value::Undefined) {
+        return Ok(None);
+    }
+    descriptor_arg(Some(&fd)).map(Some)
+}
+
 pub fn promises_open(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,

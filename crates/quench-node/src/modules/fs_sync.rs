@@ -20,6 +20,13 @@ fn split(args: &[Value]) -> Result<(String, FsOptions), VmError> {
     Ok((path, options))
 }
 
+fn file_handle_fd(value: Option<&Value>) -> Result<Option<i32>, VmError> {
+    value
+        .map(super::fs::file_handle_descriptor)
+        .transpose()
+        .map(Option::flatten)
+}
+
 fn string_data(data: &Value, encoding: Option<&str>) -> Result<Vec<u8>, VmError> {
     if execute::is_symbol(data) {
         return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
@@ -283,8 +290,7 @@ pub fn read_file_sync(
     _r: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if matches!(args.first(), Some(Value::Number(_))) {
-        let fd = super::fs::descriptor_arg(args.first())?;
+    if let Some(fd) = file_handle_fd(args.first())? {
         let options = parse_options(args.get(1))?;
         let bytes = {
             let mut host = state.borrow_mut();
@@ -332,8 +338,7 @@ pub fn write_file_sync(
     _r: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if matches!(args.first(), Some(Value::Number(_))) {
-        let fd = super::fs::descriptor_arg(args.first())?;
+    if let Some(fd) = file_handle_fd(args.first())? {
         let options = parse_options(args.get(2))?;
         let bytes = string_data(
             args.get(1).unwrap_or(&Value::Undefined),
@@ -408,8 +413,7 @@ pub fn append_file_sync(
     _r: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if matches!(args.first(), Some(Value::Number(_))) {
-        let fd = super::fs::descriptor_arg(args.first())?;
+    if let Some(fd) = file_handle_fd(args.first())? {
         let options = parse_options(args.get(2))?;
         let bytes = string_data(
             args.get(1).unwrap_or(&Value::Undefined),
