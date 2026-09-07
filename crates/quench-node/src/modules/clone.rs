@@ -348,7 +348,18 @@ fn clone_x509(value: &Value) -> Option<Value> {
         .into_iter()
         .map(|name| {
             let item = quench_runtime::vm::get_property(value, &name);
-            (name, deep_clone(item))
+            // X509Certificate.raw is specified as a Buffer even though the
+            // generic structured-clone rule rehydrates byte views as plain
+            // Uint8Arrays. Preserve that API-owned representation while
+            // retaining the generic rule for ordinary typed-array values.
+            let item = if name == "raw" {
+                crate::modules::crypto::bytes_from_value(&item)
+                    .map(|bytes| crate::modules::buffer_proto::make_buffer(&bytes))
+                    .unwrap_or_else(|| deep_clone(item))
+            } else {
+                deep_clone(item)
+            };
+            (name, item)
         })
         .collect();
     let clone = host_api::object(pairs);

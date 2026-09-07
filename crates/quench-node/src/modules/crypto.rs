@@ -293,6 +293,49 @@ pub fn x509_constructor(
     Ok(execute::set_prototype_of(&value, &proto).unwrap_or(value))
 }
 
+/// Structured-clone representation for X509Certificate values.  The
+/// certificate's hidden DER/PEM input is the single semantic source; the
+/// receiver is reconstructed through the ordinary constructor on the other
+/// side so its public properties and Buffer-valued `raw` remain branded.
+pub(crate) fn x509_to_wire(value: &Value) -> Option<serde_json::Value> {
+    if !matches!(
+        execute::get_property(value, KEY_MARKER_PROP),
+        Value::Boolean(true)
+    ) {
+        return None;
+    }
+    let data = bytes_from_value(&execute::get_property(value, X509_DATA_PROP))?;
+    Some(serde_json::json!({
+        "__quench_x509_certificate": true,
+        "data": data,
+    }))
+}
+
+pub(crate) fn x509_from_wire(
+    values: &serde_json::Map<String, serde_json::Value>,
+    state: &Rc<RefCell<HostState>>,
+) -> Option<Value> {
+    if values
+        .get("__quench_x509_certificate")
+        .and_then(serde_json::Value::as_bool)
+        != Some(true)
+    {
+        return None;
+    }
+    let data = values.get("data")?.as_array()?.iter().map(|value| {
+        value
+            .as_u64()
+            .and_then(|value| u8::try_from(value).ok())
+    });
+    let data = data.collect::<Option<Vec<_>>>()?;
+    x509_constructor(
+        state,
+        None,
+        &[crate::modules::buffer_proto::make_buffer(&data)],
+    )
+    .ok()
+}
+
 pub fn x509_public_key(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
