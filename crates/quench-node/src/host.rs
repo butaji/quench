@@ -108,6 +108,10 @@ pub struct HostState {
     pub tcp_binding: Option<Value>,
     /// Composite AbortSignals keyed by each source target identity.
     pub abort_composites: std::collections::HashMap<u64, Vec<quench_runtime::value::WeakObject>>,
+    /// Observed composite AbortSignals, kept separately so the exposed
+    /// dependant-set size does not count unobserved weak edges.
+    pub abort_active_composites:
+        std::collections::HashMap<u64, Vec<quench_runtime::value::WeakObject>>,
     /// Weak handles for source signals whose dependent-set metadata is
     /// updated after host-side GC pruning.
     pub abort_signal_refs: std::collections::HashMap<u64, quench_runtime::value::WeakObject>,
@@ -186,6 +190,7 @@ impl NodeHost {
             cares_binding: None,
             tcp_binding: None,
             abort_composites: std::collections::HashMap::new(),
+            abort_active_composites: std::collections::HashMap::new(),
             abort_signal_refs: std::collections::HashMap::new(),
             identity_roots: Vec::new(),
             child_process_prototype: None,

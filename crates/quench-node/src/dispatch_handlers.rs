@@ -85,10 +85,11 @@ fn weak_abort_signal(value: &Value) -> Option<quench_runtime::value::WeakObject>
     }
 }
 
-/// Promote a composite's pending source edges once user code observes it with
-/// an abort listener. Composites without observers are intentionally absent
-/// from the dependency graph, so retaining them in an array cannot inflate a
-/// source signal's `kDependantSignals` set.
+/// Mark a composite's pending source edges as observed once user code attaches
+/// an abort listener. The host always keeps the edges as weak handles so an
+/// otherwise-unobserved composite still transitions when it is alive at the
+/// time its source aborts; only observed composites contribute to the visible
+/// `kDependantSignals` size.
 pub(crate) fn activate_abort_composite(state: &Rc<RefCell<HostState>>, composite: &Value) {
     // Listener insertion can be observed repeatedly (for example through
     // `addEventListener` and `onabort`).  Promote a composite only once;
@@ -117,9 +118,12 @@ pub(crate) fn activate_abort_composite(state: &Rc<RefCell<HostState>>, composite
         }
         let identity = identity as u64;
         let mut host = state.borrow_mut();
-        let list = host.abort_composites.entry(identity).or_default();
-        list.push(composite_weak.clone());
-        let size = list.len();
+        // The weak propagation edge is installed when `AbortSignal.any()` is
+        // created. Activation only updates the observed projection, keeping
+        // this hot path O(1) even for a long-lived source with many children.
+        let active = host.abort_active_composites.entry(identity).or_default();
+        active.push(composite_weak.clone());
+        let size = active.len();
         let source = host
             .abort_signal_refs
             .get(&identity)
@@ -4702,10 +4706,8 @@ pub fn internal_js_stream_call(
     args: &[Value],
 ) -> Result<Value, VmError> {
     if let Some(resource) = args.first().filter(|value| {
-        matches!(
-            execute::get_property(value, "type"),
-            Value::String(_)
-        ) && matches!(execute::get_property(value, "handle"), Value::Object(_))
+        matches!(execute::get_property(value, "type"), Value::String(_))
+            && matches!(execute::get_property(value, "handle"), Value::Object(_))
     }) {
         crate::modules::async_hooks::attach_resource(state, resource.clone(), "ReusedHandle")?;
     }
@@ -6443,7 +6445,10 @@ pub fn process_permission_has(
         )));
     }
     let permission = permission_diagnostic_name(&scope);
-    let resource = args.get(1).cloned().unwrap_or_else(|| Value::String("".into()));
+    let resource = args
+        .get(1)
+        .cloned()
+        .unwrap_or_else(|| Value::String("".into()));
     if !matches!(resource, Value::String(_)) {
         return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
             "The \"reference\" argument must be of type string.{}",
@@ -6455,9 +6460,8 @@ pub fn process_permission_has(
         _ => "",
     };
     let allowed = match scope_name {
-        "fs.read" | "fs.write" | "child" | "net" | "worker" | "wasi"
-        | "inspector" | "addon" | "ffi" | "openssl.store" =>
-            crate::modules::process::permission_allows(state, scope_name),
+        "fs.read" | "fs.write" | "child" | "net" | "worker" | "wasi" | "inspector" | "addon"
+        | "ffi" | "openssl.store" => crate::modules::process::permission_allows(state, scope_name),
         _ => false,
     };
     // `permission.has()` publishes denied probes whenever the permission
@@ -6472,7 +6476,10 @@ pub fn process_permission_has(
         ]);
         crate::modules::diagnostics_channel::publish_named(
             state,
-            &format!("node:permission-model:{}", permission_channel_suffix(&scope)),
+            &format!(
+                "node:permission-model:{}",
+                permission_channel_suffix(&scope)
+            ),
             message,
         )?;
     }
@@ -6510,7 +6517,10 @@ pub fn process_permission_drop(
     ]);
     crate::modules::diagnostics_channel::publish_named(
         state,
-        &format!("node:permission-model:{}", permission_channel_suffix(&scope)),
+        &format!(
+            "node:permission-model:{}",
+            permission_channel_suffix(&scope)
+        ),
         message,
     )?;
     if let Value::String(scope) = scope {
@@ -7182,7 +7192,10 @@ pub fn http_outgoing_assign_socket(
     if execute::same_value(&current, receiver) {
         return Err(VmError::Thrown(host_api::object(vec![
             ("name".into(), Value::String("Error".into())),
-            ("code".into(), Value::String("ERR_HTTP_SOCKET_ASSIGNED".into())),
+            (
+                "code".into(),
+                Value::String("ERR_HTTP_SOCKET_ASSIGNED".into()),
+            ),
         ])));
     }
     execute::set_property_in_place(&socket, "_httpMessage", receiver.clone());
@@ -7251,7 +7264,9 @@ pub fn http_outgoing_end(
         let _ = crate::modules::net::socket_write(
             state,
             Some(&socket),
-            &[Value::String("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n\r\n".into())],
+            &[Value::String(
+                "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n\r\n".into(),
+            )],
         );
         let _ = crate::modules::net::socket_end(state, Some(&socket), &[]);
         execute::set_property_in_place(&socket, "_httpMessage", Value::Null);
@@ -7880,11 +7895,7 @@ fn ensure_child_process_permission(
             "permission",
             Value::String("ChildProcess".into()),
         );
-        execute::set_property_in_place(
-            &mut error,
-            "resource",
-            Value::String(command.into()),
-        );
+        execute::set_property_in_place(&mut error, "resource", Value::String(command.into()));
         return Err(VmError::Thrown(error));
     }
     Ok(())
@@ -8464,10 +8475,12 @@ pub fn cp_spawn(
         execute::get_property(&options, "\0quench:forkIpc"),
         Value::Boolean(true)
     );
-    let direct_eacces = !virtual_fork && !matches!(
-        execute::get_property(&options, "shell"),
-        Value::Boolean(true)
-    ) && cp_spawn_path_is_non_executable(&command, &options);
+    let direct_eacces = !virtual_fork
+        && !matches!(
+            execute::get_property(&options, "shell"),
+            Value::Boolean(true)
+        )
+        && cp_spawn_path_is_non_executable(&command, &options);
     if direct_eacces {
         execute::set_property_in_place(&child, "pid", Value::Undefined);
         let error = host_api::object(vec![
@@ -8772,10 +8785,7 @@ fn cp_run_host_child(
         (arg.ends_with(".js") || arg.ends_with(".mjs") || arg.ends_with(".cjs"))
             && std::path::Path::new(arg).is_file()
     });
-    if !has_entry
-        && !version_probe
-        && !args.iter().any(|arg| arg == "-e" || arg == "--eval")
-    {
+    if !has_entry && !version_probe && !args.iter().any(|arg| arg == "-e" || arg == "--eval") {
         return None;
     }
     // `process.execPath` points at the compatibility runner selected by the
@@ -8834,8 +8844,7 @@ fn cp_run_host_child(
             let _ = stdin.write_all(input.as_bytes());
         }
     }
-    let output = crate::modules::child_process::wait_with_timeout(process, Some(options))
-        .ok()?;
+    let output = crate::modules::child_process::wait_with_timeout(process, Some(options)).ok()?;
     Some((
         output.stdout,
         output.stderr,
@@ -8954,9 +8963,8 @@ pub fn cp_spawn_output_emit(
         && (matches!(
             execute::get_property(child, "\0childSpawnIpc"),
             Value::Boolean(true)
-        )
-            || (cp_spawn_script_stdout(&child_args).is_some()
-                && !cp_spawn_script_has_runtime_branch(&child_args))
+        ) || (cp_spawn_script_stdout(&child_args).is_some()
+            && !cp_spawn_script_has_runtime_branch(&child_args))
             || cp_spawn_script_requires_in_process(&child_args)
             || cp_spawn_script_uses_stdin(&child_args)
             || cp_spawn_eval_requires_in_process(&child_args));
@@ -9388,7 +9396,8 @@ pub fn cp_spawn_output_emit(
     if matches!(
         execute::get_property(child, "\0childForkIpc"),
         Value::Boolean(true)
-    ) || spawn_ipc_live {
+    ) || spawn_ipc_live
+    {
         // An IPC child remains alive after startup; its exit/close pair is
         // tied to the channel disconnect or the last referenced child handle
         // rather than the bootstrap callback.
@@ -9589,11 +9598,7 @@ pub fn cp_stdin_write(
         let child = execute::get_property(receiver, "\0childStdinProcess");
         let stdout = execute::get_property(&child, "stdout");
         if !text.is_empty() {
-            execute::set_property_in_place(
-                receiver,
-                "\0childCatStreamed",
-                Value::Boolean(true),
-            );
+            execute::set_property_in_place(receiver, "\0childCatStreamed", Value::Boolean(true));
             cp_inherit_write(&child, 1, &text)?;
             cp_pipe_write(state, &stdout, Value::String(text.clone()))?;
             crate::modules::events::method_emit(
@@ -9689,17 +9694,17 @@ pub fn cp_stdin_write(
             ) {
                 return Ok(Value::Boolean(true));
             }
-            let limit = execute::to_js_string(&execute::get_property(
-                receiver,
-                "\0childFilterArg",
-            ))
-            .ok()
-            .and_then(|value| value.strip_prefix("-n").unwrap_or(&value).parse::<usize>().ok())
-            .unwrap_or(10);
-            let output = text
-                .split_inclusive('\n')
-                .take(limit)
-                .collect::<String>();
+            let limit = execute::to_js_string(&execute::get_property(receiver, "\0childFilterArg"))
+                .ok()
+                .and_then(|value| {
+                    value
+                        .strip_prefix("-n")
+                        .unwrap_or(&value)
+                        .parse::<usize>()
+                        .ok()
+                })
+                .unwrap_or(10);
+            let output = text.split_inclusive('\n').take(limit).collect::<String>();
             if !output.is_empty() {
                 execute::set_property_in_place(
                     receiver,
@@ -10105,11 +10110,7 @@ pub fn cp_fork(
         Value::Object(_) | Value::ObjectAlias(_) => {
             let href = execute::get_property(&script, "href");
             if let Value::String(href) = href {
-                crate::modules::url_file::file_url_to_path(
-                    state,
-                    None,
-                    &[Value::String(href)],
-                )?
+                crate::modules::url_file::file_url_to_path(state, None, &[Value::String(href)])?
             } else {
                 script.clone()
             }
@@ -10172,8 +10173,10 @@ pub fn cp_fork(
     // semantic fact before the shared spawn machinery derives stream
     // identities, so silent children cannot leak their output to the parent
     // while still retaining ordinary IPC behavior.
-    if matches!(execute::get_property(&options, "silent"), Value::Boolean(true))
-        && matches!(execute::get_property(&options, "stdio"), Value::Undefined)
+    if matches!(
+        execute::get_property(&options, "silent"),
+        Value::Boolean(true)
+    ) && matches!(execute::get_property(&options, "stdio"), Value::Undefined)
     {
         options = execute::set_property(
             options,
@@ -11675,11 +11678,7 @@ pub fn cp_async(
                     quench_runtime::ops::Builtin::Error,
                     &[Value::String(format!("Command failed: {command_text}"))],
                 );
-                execute::set_property_in_place(
-                    &mut error,
-                    "code",
-                    Value::Number(*status as f64),
-                );
+                execute::set_property_in_place(&mut error, "code", Value::Number(*status as f64));
                 callback_error = error;
             }
             stdout.clone()
@@ -12521,9 +12520,9 @@ fn cp_spawn_path_is_non_executable(command: &str, options: &Value) -> bool {
                 .map(|cwd| cwd.join(path))
                 .unwrap_or_else(|_| path.to_path_buf())
         };
-        return std::fs::metadata(path)
-            .ok()
-            .is_some_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 == 0);
+        return std::fs::metadata(path).ok().is_some_and(|metadata| {
+            metadata.is_file() && metadata.permissions().mode() & 0o111 == 0
+        });
     }
     #[cfg(not(unix))]
     {
@@ -13073,6 +13072,18 @@ pub fn gc(
     }
     for (source, size) in updates {
         set_abort_dependant_size(&source, size);
+    }
+    // Node's asynchronous GC mode returns a promise after the collection
+    // boundary has completed. The collector work above is synchronous in the
+    // Rust host, so a fulfilled promise preserves the observable completion
+    // contract without inventing a second collector or retaining callbacks.
+    if args.first().is_some_and(|options| {
+        matches!(
+            execute::get_property(options, "execution"),
+            Value::String(ref execution) if execution == "async"
+        )
+    }) {
+        return Ok(quench_runtime::promise_resolve(&[Value::Undefined]));
     }
     Ok(Value::Undefined)
 }
@@ -13736,6 +13747,7 @@ fn propagate_abort_composites(
         .abort_composites
         .remove(&identity)
         .unwrap_or_default();
+    state.borrow_mut().abort_active_composites.remove(&identity);
     set_abort_dependant_size(source, 0);
     let reason = execute::get_property(source, "reason");
     let mut nested = Vec::new();
@@ -13763,6 +13775,49 @@ fn propagate_abort_composites(
     Ok(Value::Undefined)
 }
 
+/// Flatten a composite's source graph into the source identities that can
+/// directly abort it. Keeping the flattened identities on every composite
+/// makes the observable dependant set include transitive composites while
+/// retaining only weak host edges. The visited set also bounds malformed or
+/// user-mutated private graphs.
+fn collect_abort_source_ids(
+    state: &Rc<RefCell<HostState>>,
+    source: &Value,
+    seen: &mut HashSet<u64>,
+    out: &mut Vec<u64>,
+) {
+    let Some(identity) = crate::modules::event_target::target_identity(source) else {
+        return;
+    };
+    if !seen.insert(identity) {
+        return;
+    }
+    out.push(identity);
+    let pending = execute::get_property(source, "\0quench:abort:sources");
+    let nested_ids: Vec<u64> = match pending {
+        Value::Array(ref values) => (0..values.logical_len())
+            .filter_map(
+                |index| match execute::get_property(&pending, &index.to_string()) {
+                    Value::Number(value) if value.is_finite() && value >= 0.0 => Some(value as u64),
+                    _ => None,
+                },
+            )
+            .collect(),
+        _ => Vec::new(),
+    };
+    for nested_id in nested_ids {
+        let nested = state
+            .borrow()
+            .abort_signal_refs
+            .get(&nested_id)
+            .and_then(|weak| weak.upgrade())
+            .map(Value::Object);
+        if let Some(nested) = nested {
+            collect_abort_source_ids(state, &nested, seen, out);
+        }
+    }
+}
+
 pub fn abort_signal_any(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let list = args.first().ok_or_else(|| {
         crate::modules::buffer_enc::invalid_arg_type(
@@ -13782,6 +13837,8 @@ pub fn abort_signal_any(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
         Value::Boolean(true),
     );
     mark_abort_signal(&composite);
+    let composite_weak = weak_abort_signal(&composite);
+    let mut registered_sources = HashSet::new();
     for (index, source) in signals.iter().enumerate() {
         if !matches!(source, Value::Object(_))
             || !matches!(
@@ -13805,15 +13862,27 @@ pub fn abort_signal_any(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
             );
             return Ok(composite);
         }
-        if let Some(identity) = crate::modules::event_target::target_identity(&source) {
-            let Some(source_weak) = weak_abort_signal(source) else {
+        let mut source_ids = Vec::new();
+        collect_abort_source_ids(state, source, &mut registered_sources, &mut source_ids);
+        for identity in source_ids {
+            let source_weak = signals
+                .iter()
+                .find(|candidate| {
+                    crate::modules::event_target::target_identity(candidate) == Some(identity)
+                })
+                .and_then(weak_abort_signal)
+                .or_else(|| state.borrow().abort_signal_refs.get(&identity).cloned());
+            let Some(source_weak) = source_weak else {
                 continue;
             };
-            state
-                .borrow_mut()
-                .abort_signal_refs
+            let mut host = state.borrow_mut();
+            host.abort_signal_refs
                 .entry(identity)
                 .or_insert(source_weak);
+            if let Some(composite_weak) = composite_weak.as_ref() {
+                let list = host.abort_composites.entry(identity).or_default();
+                list.push(composite_weak.clone());
+            }
             pending_sources.push(Value::Number(identity as f64));
         }
     }
@@ -13839,6 +13908,13 @@ pub fn process_on(
     args: &[Value],
 ) -> Result<Value, VmError> {
     crate::modules::process::on(state, args)
+}
+pub fn process_prepend(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::process::prepend(state, args)
 }
 pub fn process_once(
     state: &Rc<RefCell<HostState>>,
