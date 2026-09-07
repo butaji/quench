@@ -94,7 +94,14 @@ impl NativeLocalPropertyPlan {
         policy: crate::stencil_policy::ExecutionPolicy,
         arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
     ) -> Option<Self> {
-        let property = NativePropertyPlan::new_with_arena(selection.operation, policy, arena)?;
+        if !policy.local_fusions {
+            return None;
+        }
+        let property = NativePropertyPlan::new_with_arena(
+            selection.operation,
+            policy.with_leaf_dependencies(),
+            arena,
+        )?;
         Some(Self {
             selection,
             property,
@@ -156,9 +163,10 @@ impl NativeLocalBinaryPlan {
         policy: crate::stencil_policy::ExecutionPolicy,
         arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
     ) -> Option<Self> {
-        if !policy.native_leaves {
+        if !policy.local_fusions {
             return None;
         }
+        let policy = policy.with_leaf_dependencies();
         let physical = match selection.inputs {
             LocalNumericInputs::Folded { .. } => LocalNumericPhysical::Folded,
             LocalNumericInputs::BinarySeries { series, .. } => LocalNumericPhysical::BinarySeries(

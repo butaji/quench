@@ -18,6 +18,7 @@ enum Architecture {
 enum ArmMode {
     Disabled,
     Leaves,
+    Fusion,
     Composed,
     All,
 }
@@ -26,6 +27,7 @@ impl ArmMode {
     fn from_environment() -> Self {
         match std::env::var("QUENCH_AARCH64_STENCIL_MODE").as_deref() {
             Ok("leaves") => Self::Leaves,
+            Ok("fusion") => Self::Fusion,
             Ok("composed") => Self::Composed,
             Ok("all") => Self::All,
             Ok(_) => Self::Disabled,
@@ -60,6 +62,7 @@ const fn architecture() -> Architecture {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ExecutionPolicy {
     pub(crate) native_leaves: bool,
+    pub(crate) local_fusions: bool,
     pub(crate) native_dispatch: bool,
     pub(crate) fused_regions: bool,
     /// Narrow set of regions with a physical composed executor. ARM exposes
@@ -70,7 +73,18 @@ pub(crate) struct ExecutionPolicy {
 
 impl ExecutionPolicy {
     pub(crate) const fn allows_admission(self) -> bool {
-        self.native_leaves || self.native_dispatch || self.fused_regions || self.composed_regions
+        self.native_leaves
+            || self.local_fusions
+            || self.native_dispatch
+            || self.fused_regions
+            || self.composed_regions
+    }
+
+    /// Local fusions use leaf templates as implementation components without
+    /// admitting the same templates as one-operation entries.
+    pub(crate) const fn with_leaf_dependencies(mut self) -> Self {
+        self.native_leaves = true;
+        self
     }
 
     #[cfg(test)]
@@ -84,6 +98,7 @@ impl ExecutionPolicy {
     pub(crate) fn bridge_opt_in_for_test() -> Self {
         Self {
             native_leaves: false,
+            local_fusions: false,
             native_dispatch: false,
             fused_regions: true,
             composed_regions: false,
@@ -104,6 +119,7 @@ impl ExecutionPolicy {
         match arch {
             Architecture::X86_64 => Self {
                 native_leaves: true,
+                local_fusions: true,
                 native_dispatch: true,
                 fused_regions: true,
                 composed_regions: true,
@@ -111,6 +127,7 @@ impl ExecutionPolicy {
             },
             Architecture::Aarch64 => Self {
                 native_leaves: matches!(arm_mode, ArmMode::Leaves | ArmMode::All),
+                local_fusions: matches!(arm_mode, ArmMode::Fusion | ArmMode::All),
                 native_dispatch: false,
                 fused_regions: false,
                 composed_regions: matches!(arm_mode, ArmMode::Composed | ArmMode::All),
@@ -124,6 +141,7 @@ impl ExecutionPolicy {
             },
             Architecture::Other => Self {
                 native_leaves: false,
+                local_fusions: false,
                 native_dispatch: false,
                 fused_regions: false,
                 composed_regions: false,
@@ -153,6 +171,7 @@ mod tests {
             ExecutionPolicy::from_architecture(Architecture::X86_64, false),
             ExecutionPolicy {
                 native_leaves: true,
+                local_fusions: true,
                 native_dispatch: true,
                 fused_regions: true,
                 composed_regions: true,
@@ -163,6 +182,7 @@ mod tests {
             ExecutionPolicy::from_architecture(Architecture::Aarch64, false),
             ExecutionPolicy {
                 native_leaves: false,
+                local_fusions: false,
                 native_dispatch: false,
                 fused_regions: false,
                 composed_regions: false,
@@ -173,6 +193,7 @@ mod tests {
             ExecutionPolicy::from_architecture(Architecture::Aarch64, true),
             ExecutionPolicy {
                 native_leaves: true,
+                local_fusions: true,
                 native_dispatch: false,
                 fused_regions: false,
                 composed_regions: true,
@@ -196,13 +217,19 @@ mod tests {
             ArmMode::Composed,
         );
         assert!(leaves.native_leaves && !leaves.composed_regions);
+        assert!(!leaves.local_fusions);
+        let fusion = ExecutionPolicy::from_architecture_and_mode(
+            Architecture::Aarch64,
+            ArmMode::Fusion,
+        );
+        assert!(fusion.local_fusions && !fusion.native_leaves);
         assert!(!composed.native_leaves && composed.composed_regions);
         let all = ExecutionPolicy::from_architecture_and_mode(
             Architecture::Aarch64,
             ArmMode::All,
         );
         assert!(!leaves.optimizing_view && !composed.optimizing_view);
-        assert!(all.native_leaves && all.composed_regions);
+        assert!(all.native_leaves && all.local_fusions && all.composed_regions);
         assert!(!all.optimizing_view);
     }
 }
