@@ -363,21 +363,30 @@ fn physical_identity_hash(view: PhysicalStencilView, patch: u64) -> u64 {
     hash = hash_u64(hash, continuation_tag(view.continuation_abi));
     hash = hash_u64(hash, u64::from(view.executable));
     hash = hash_u64(hash, u64::from(view.template_calls_helper));
+    hash = hash_u64(hash, view.external_entries.len() as u64);
     for entry in view.external_entries {
         hash = hash_u64(hash, u64::from(*entry));
     }
+    hash = hash_u64(hash, view.stencil.holes.len() as u64);
     for hole in view.stencil.holes {
         hash = hash_hole(hash, *hole);
     }
+    hash = hash_u64(hash, view.relocations.len() as u64);
     for relocation in view.relocations {
         hash = hash_relocation(hash, *relocation);
     }
+    hash = hash_u64(hash, view.links.len() as u64);
     for link in view.links {
         hash = hash_physical_link(hash, *link);
     }
+    hash = hash_u64(hash, u64::from(view.fallthrough.is_some()));
     if let Some(fallthrough) = view.fallthrough {
         hash = hash_bytes(hash, fallthrough.target.as_bytes());
         hash = hash_bytes(hash, fallthrough.stencil.bytes);
+        hash = hash_u64(hash, fallthrough.stencil.holes.len() as u64);
+        for hole in fallthrough.stencil.holes {
+            hash = hash_hole(hash, *hole);
+        }
     }
     hash.max(1)
 }
