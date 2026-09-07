@@ -767,10 +767,8 @@ pub(crate) fn set_property_from_host(
 }
 
 fn own_data_property(target: &crate::value::Value, key: &str) -> bool {
-    if let crate::value::Value::Object(properties) = target {
-        if let Some(kind) = plain_own_property(properties, key) {
-            return kind.is_data();
-        }
+    if let Some(kind) = plain_own_property_value(target, key) {
+        return kind.is_data();
     }
     observable_own_data_property(target, key)
 }
@@ -1231,9 +1229,12 @@ mod named_write_cache_tests {
     use crate::{
         machine,
         register_file::RegisterFile,
-        value::{BindingCell, ObjectData, Value},
+        value::{BindingCell, ObjectAliasValue, ObjectData, Value},
     };
-    use std::{cell::Cell, rc::Rc};
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
 
     #[test]
     fn cached_write_does_not_replace_a_binding_cell() {
@@ -1316,6 +1317,29 @@ mod named_write_cache_tests {
         assert_eq!(
             second.hot_properties().slot_value(1),
             Some(Value::Number(20.0))
+        );
+    }
+
+    #[test]
+    fn receiver_alias_writes_the_canonical_plain_slot() {
+        let owner = Rc::new(ObjectData::new(vec![(
+            "field".to_owned(),
+            Value::Number(1.0),
+        )]));
+        let alias = Value::ObjectAlias(ObjectAliasValue(Rc::new(RefCell::new(Rc::downgrade(
+            &owner,
+        )))));
+
+        assert!(super::set_with_receiver(
+            &alias,
+            "field",
+            &Value::Number(7.0),
+            &alias,
+        )
+        .expect("alias write"));
+        assert_eq!(
+            owner.hot_properties().slot_value(0),
+            Some(Value::Number(7.0))
         );
     }
 }

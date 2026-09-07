@@ -43,6 +43,19 @@ fn plain_own_property(
     })
 }
 
+fn plain_own_property_value(
+    value: &crate::value::Value,
+    key: &str,
+) -> Option<PlainOwnProperty> {
+    match value {
+        crate::value::Value::Object(properties) => plain_own_property(properties, key),
+        crate::value::Value::ObjectAlias(alias) => {
+            plain_own_property(alias.target()?.as_ref(), key)
+        }
+        _ => None,
+    }
+}
+
 fn own_and_metadata_slots(
     properties: &crate::value::ObjectData,
     key: &str,
@@ -104,10 +117,35 @@ fn plain_writable_own_data(properties: &crate::value::ObjectData, key: &str) -> 
     })
 }
 
+fn store_plain_writable_own_data(
+    properties: &crate::value::ObjectData,
+    key: &str,
+    value: &crate::value::Value,
+) -> bool {
+    if !plain_writable_own_data(properties, key) {
+        return false;
+    }
+    let Some(slot) = properties.hot_properties().position_rev(key) else {
+        return false;
+    };
+    if let Some(crate::value::Value::BindingCell(cell)) =
+        properties.hot_properties().slot_value(slot)
+    {
+        cell.store(value.clone());
+        return true;
+    }
+    properties.hot_properties().store_slot(slot, value.clone());
+    true
+}
+
 #[cfg(test)]
 mod own_data_tests {
-    use super::{plain_own_property, plain_writable_own_data, PlainOwnProperty};
-    use crate::value::{ObjectData, Value};
+    use super::{
+        plain_own_property, plain_own_property_value, plain_writable_own_data,
+        store_plain_writable_own_data, PlainOwnProperty,
+    };
+    use crate::value::{ObjectAliasValue, ObjectData, Value};
+    use std::{cell::RefCell, rc::Rc};
 
     fn object(metadata: Option<Value>) -> ObjectData {
         let mut entries = vec![("field".into(), Value::Number(1.0))];
@@ -137,6 +175,25 @@ mod own_data_tests {
             plain_own_property(&object(Some(readonly)), "field"),
             Some(PlainOwnProperty::Data { writable: false })
         );
+    }
+
+    #[test]
+    fn alias_view_uses_the_same_fact_and_slot_store() {
+        let owner = Rc::new(object(None));
+        let alias = Value::ObjectAlias(ObjectAliasValue(Rc::new(RefCell::new(Rc::downgrade(
+            &owner,
+        )))));
+
+        assert_eq!(
+            plain_own_property_value(&alias, "field"),
+            Some(PlainOwnProperty::Data { writable: true })
+        );
+        assert!(store_plain_writable_own_data(
+            &owner,
+            "field",
+            &Value::Number(9.0)
+        ));
+        assert_eq!(owner.hot_properties().slot_value(0), Some(Value::Number(9.0)));
     }
 
     #[test]
