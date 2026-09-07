@@ -565,6 +565,11 @@ const CAP_WORKER_BOOT_MESSAGE: u16 = SPEC_WORKER_BOOT_MESSAGE.cap;
 const CAP_BROADCAST_CHANNEL: u16 = SPEC_BROADCAST_CHANNEL.cap;
 const CAP_BROADCAST_CHANNEL_CLOSE: u16 = SPEC_BROADCAST_CHANNEL_CLOSE.cap;
 const CAP_BROADCAST_CHANNEL_INSPECT: u16 = SPEC_BROADCAST_CHANNEL_INSPECT.cap;
+const CAP_BROADCAST_CHANNEL_POST: u16 = 0x7FE7;
+const CAP_BROADCAST_CHANNEL_REF: u16 = 0x7FE8;
+const CAP_BROADCAST_CHANNEL_UNREF: u16 = 0x7FE9;
+const CAP_BROADCAST_CHANNEL_HAS_REF: u16 = 0x7FEA;
+const CAP_BROADCAST_CHANNEL_NAME: u16 = 0x7FEB;
 const CAP_STREAM_IS_READABLE: u16 = SPEC_STREAM_IS_READABLE.cap;
 const CAP_STREAM_IS_WRITABLE: u16 = SPEC_STREAM_IS_WRITABLE.cap;
 const CAP_STREAM_IS_ERRORED: u16 = SPEC_STREAM_IS_ERRORED.cap;
@@ -672,6 +677,19 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         }
         CAP_BROADCAST_CHANNEL_INSPECT => {
             crate::modules::worker_threads::broadcast_channel_inspect_handler
+        }
+        CAP_BROADCAST_CHANNEL_POST => {
+            crate::modules::worker_threads::broadcast_channel_post_handler
+        }
+        CAP_BROADCAST_CHANNEL_REF => crate::modules::worker_threads::broadcast_channel_ref_handler,
+        CAP_BROADCAST_CHANNEL_UNREF => {
+            crate::modules::worker_threads::broadcast_channel_unref_handler
+        }
+        CAP_BROADCAST_CHANNEL_HAS_REF => {
+            crate::modules::worker_threads::broadcast_channel_has_ref_handler
+        }
+        CAP_BROADCAST_CHANNEL_NAME => {
+            crate::modules::worker_threads::broadcast_channel_name_handler
         }
         CAP_STREAM_IS_READABLE => crate::modules::stream::is_readable,
         CAP_STREAM_IS_WRITABLE => crate::modules::stream::is_writable,

@@ -6,6 +6,21 @@ fn set_object_alias_property(
     let Some(properties) = alias.0.borrow().upgrade() else {
         return Value::ObjectAlias(alias);
     };
+    let host_mutable = properties.iter().any(|(name, value)| {
+        (name == "\0quench:async_hooks:mutable" || name == "\0quench:host:mutable")
+            && matches!(value, Value::Boolean(true))
+    });
+    if host_mutable {
+        // Object aliases are the COW representation used after a prototype
+        // transition. Identity-bearing host objects still require ordinary
+        // JavaScript writes to update the canonical record, just like direct
+        // Object values do in builtins::set_property.
+        unsafe {
+            (&mut *(Rc::as_ptr(&properties) as *mut ObjectData))
+                .set_property_in_place(key, value);
+        }
+        return Value::ObjectAlias(alias);
+    }
     let previous = Rc::clone(&properties);
     let result = builtins_cells::set_object_property(properties, key, value);
     retarget_object_alias(&alias, &result);
