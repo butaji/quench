@@ -141,6 +141,36 @@ fn nested_generator_for_of_resumes_source_and_consumer() {
 }
 
 #[test]
+fn promoted_loop_body_retains_executed_suspension_pc() {
+    run_sync(
+        r#"
+        function* values(){for(var i=0;i<64;i++)yield i;}
+        for(var round=0;round<40;round++) {
+          var iterator=values(),step,total=0,count=0;
+          while(!(step=iterator.next()).done){total+=step.value;count++;}
+          if(total!==2016 || count!==64) throw "promoted suspension lost its pc";
+        }
+        "#,
+    );
+}
+
+#[test]
+fn promoted_await_body_retains_executed_suspension_pc() {
+    run_async(
+        r#"
+        async function verify(){
+          for(var round=0;round<40;round++){
+            var total=0;
+            for(var i=0;i<64;i++) total+=await 1;
+            if(total!==64) throw "promoted await lost its pc";
+          }
+        }
+        verify().then(function(){throw "__continuation_contract_done__";});
+        "#,
+    );
+}
+
+#[test]
 fn suspended_generator_keeps_captured_binding_during_collection() {
     run_sync(
         r#"
