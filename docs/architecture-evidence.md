@@ -67,6 +67,17 @@ completed stencil win.  Evidence:
 `target/micros/calls-{direct,all}-hot-specialization-measure-*.json` and
 `target/micros/calls-direct-hot-specialization-diagnostic-1788815600.json`.
 
+The next build-policy ablation found that `composed` execution on an ordinary
+production artifact remained ~313x Bun for `calls/inline`; the identical tree
+built with Rust object generation was 2.27x.  Supported-target builds now emit
+the verified Rust artifact table by default, while
+`QUENCH_DISABLE_STENCIL_OBJECTS=1` retains an explicit empty-artifact fallback
+test configuration.  This changes availability, not runtime admission: ARM64
+composed execution remains policy-disabled until broader measurements justify
+it.  Generated bodies pass 32/32 focused tests and 1,031/1 ignored full runtime;
+the disabled selector boundary passes 4/4.  Evidence:
+`target/micros/calls-inline-{composed,generated-composed}-*-measure-*.json`.
+
 At `94586e4d01`, leaf and composed publication share one transactional finalized
 image carrying exact bytes, identity, ABI and callable-entry offset. A real
 prefixed-entry image executes correctly; invalid entry offsets and cache-image
@@ -85,7 +96,7 @@ Focused lifecycle tests pass and the default runtime is 1000 passed/1 ignored.
 
 | Contract | Implemented code and normal wiring | Executed evidence |
 | --- | --- | --- |
-| One canonical declaration | `rust_leaf_catalog!`, `rust_assembly_catalog!`, `RegionRecord` and opcode facts derive IDs, ABI, operations, effects, recipes, holes, links and tests. `PhysicalStencilView` is the single selected code/data/metadata value; `VerifiedRegionImage` carries finalized identity, bytes and callable-entry offset for both leaves and compositions. No C/Clang/runtime LLVM path exists. | Generated+trace runtime 1010/1 ignored; current default runtime 1000/1 ignored; extractor 15/15. Physical-contract mutation, generated/legacy mismatch, nonzero-entry execution and catalog coverage tests pass. The generated ARM64 table contains 55 emitted artifacts. |
+| One canonical declaration | `rust_leaf_catalog!`, `rust_assembly_catalog!`, `RegionRecord` and opcode facts derive IDs, ABI, operations, effects, recipes, holes, links and tests. `PhysicalStencilView` is the single selected code/data/metadata value; `VerifiedRegionImage` carries finalized identity, bytes and callable-entry offset for both leaves and compositions. Supported-target builds generate this Rust artifact table by default; an explicit disable configuration tests empty-artifact fallback. No C/Clang/runtime LLVM path exists. | Generated bodies 32/32; full generated runtime 1031/1 ignored; disabled selector 4/4; extractor 15/15. Physical-contract mutation, generated/legacy mismatch, nonzero-entry execution and catalog coverage tests pass. |
 | Bounded CFG planning | `stencil_cfg`, `stencil_binding`, `stencil_value_graph`, `stencil_plan`, `stencil_region_links` and the region builders consume existing lowered PCs and derive predecessors, use/def, liveness, aliases, effects, legal entries/exits and symbolic transfers. Folding, value numbering, dead-pure elimination and fusion are disposable bounded selection data, not another semantic IR. | CFG/admission and architecture-invariant tests pass in all runtime configurations. Ordinary-source arithmetic chains, comparison branches, Boolean control and numeric-array loops reach their declared physical images; broken facts remain ordinary. |
 | Typed ABI and continuation | Canonical `RegionAbi`/`ContinuationAbi` facts select closed entry wrappers. `EntryToken` is non-owning; `AllocationLease` retains the exact published generation and releases pool borrows before invocation. `PhysicalInstallation<I>` is the single plan storage/cache/lifecycle authority. Generic caller-supplied render/execute APIs were removed. | ABI crossing, pointer/address forgery, stale generation, reentry, nested native invocation and retirement tests pass. Focused arena tests: 56/56. |
 | Relocation and publication | Rust object extraction preserves exact symbol ranges, code/data and declared relocations. `stencil_layout` resolves typed Branch26/Branch19/Rel32 and literal holes transactionally. Publication records exact identity before one W^X/cache-flush transition; a composed cache signature locates a candidate but exact finalized bytes authorize reuse. Unsupported relocation/control forms reject. | Extractor 15/15; signed limits, alignment, addends, reordered/missing/duplicate holes, transactional failure, wrong ABI, cache relabel/collision, and actual ARM64 successor/backedge execution pass. Current default runtime: 991/1 ignored; generated-object runtime: 1002/1 ignored. |

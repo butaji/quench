@@ -15,6 +15,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=PROFILE");
     println!("cargo:rerun-if-env-changed=QUENCH_VERIFY_STENCIL_ENCODINGS");
     println!("cargo:rerun-if-env-changed=QUENCH_GENERATE_STENCIL_OBJECTS");
+    println!("cargo:rerun-if-env-changed=QUENCH_DISABLE_STENCIL_OBJECTS");
     println!("cargo:rerun-if-env-changed=QUENCH_RUSTC");
     println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_FEATURE");
     println!("cargo:rerun-if-env-changed=CARGO_ENCODED_RUSTFLAGS");
