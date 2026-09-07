@@ -1217,6 +1217,7 @@ node_api! {
     (SPEC_EVENT_GET_PROPERTY, CAP_EVENT_GET_PROPERTY, "Event.property:get", 0x0129),
     (SPEC_CUSTOM_EVENT, CAP_CUSTOM_EVENT, "CustomEvent", 0x0123),
     (SPEC_EVENT_SOURCE, CAP_EVENT_SOURCE, "EventSource", 0x0124),
+    (SPEC_MESSAGE_EVENT, CAP_MESSAGE_EVENT, "MessageEvent", 0x012A),
 }
 
 pub const SPEC_ASSERT_OK: NodeSpec = NodeSpec::new("assert:ok", 0x1420);
@@ -2638,6 +2639,29 @@ pub fn namespace_bindings_with_exec_argv(
         quench_runtime::value::Value::Number(1.0),
     );
     out.push(("CustomEvent".to_string(), custom_event));
+    let message_event = crate::host::capability(crate::registry::SPEC_MESSAGE_EVENT);
+    let message_event_prototype = crate::host::namespace_object_from_pairs(vec![
+        (
+            "constructor".into(),
+            message_event.clone(),
+        ),
+    ]);
+    let message_event_prototype = quench_runtime::execute::set_prototype_of(
+        &message_event_prototype,
+        &event_prototype,
+    )
+    .unwrap_or(message_event_prototype);
+    let _ = quench_runtime::execute::set_callable_property(
+        &message_event,
+        "prototype",
+        message_event_prototype,
+    );
+    let _ = quench_runtime::execute::set_callable_property(
+        &message_event,
+        "length",
+        quench_runtime::value::Value::Number(1.0),
+    );
+    out.push(("MessageEvent".to_string(), message_event));
     out.push((
         "__quench_event_source".to_string(),
         crate::host::capability(crate::registry::SPEC_EVENT_SOURCE),

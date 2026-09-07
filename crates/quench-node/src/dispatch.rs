@@ -1820,6 +1820,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_ABORT_SIGNAL_ANY => abort_signal_any,
         CAP_EVENT => handlers::event_new,
         CAP_CUSTOM_EVENT => handlers::custom_event_new,
+        CAP_MESSAGE_EVENT => handlers::message_event_new,
         CAP_ASSERT_CONSTRUCTOR => crate::modules::assert::constructor_new,
         CAP_ASSERTION_ERROR_CONSTRUCTOR => crate::modules::assert::assertion_error_constructor,
         CAP_FS_DIR => crate::modules::fs::dir_construct,

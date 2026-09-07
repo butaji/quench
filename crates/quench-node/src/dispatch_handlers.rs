@@ -13411,6 +13411,85 @@ pub fn custom_event_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
     )
 }
 
+pub fn message_event_new(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let event = event_new(state, args)?;
+    let options = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let data = match execute::get_property(&options, "data") {
+        Value::Undefined => Value::Null,
+        value => value,
+    };
+    let origin = match execute::get_property(&options, "origin") {
+        Value::Undefined => String::new(),
+        value => message_event_string(&value),
+    };
+    let last_event_id = match execute::get_property(&options, "lastEventId") {
+        Value::Undefined => String::new(),
+        value => message_event_string(&value),
+    };
+    let source = execute::get_property(&options, "source");
+    if !matches!(source, Value::Undefined | Value::Null)
+        && !crate::modules::event_target::is_message_port(state, &source)
+    {
+        return Err(execute::type_error(&format!(
+            "MessageEvent constructor: Expected eventInitDict.source (\"{}\") to be an instance of MessagePort.",
+            message_event_string(&source)
+        )));
+    }
+    let source = if matches!(source, Value::Undefined) {
+        Value::Null
+    } else {
+        source
+    };
+    let ports_value = execute::get_property(&options, "ports");
+    let ports = if matches!(ports_value, Value::Undefined) {
+        Vec::new()
+    } else if let Value::Array(values) = ports_value {
+        let values = values.to_vec();
+        for (index, port) in values.iter().enumerate() {
+            if !crate::modules::event_target::is_message_port(state, port) {
+                return Err(execute::type_error(&format!(
+                    "MessageEvent constructor: Expected eventInitDict.ports[{}] (\"{}\") to be an instance of MessagePort.",
+                    index,
+                    message_event_string(port)
+                )));
+            }
+        }
+        values
+    } else {
+        return Err(execute::type_error(&format!(
+            "MessageEvent constructor: eventInitDict.ports ({}) is not iterable.",
+            message_event_string(&ports_value)
+        )));
+    };
+    let event = execute::set_property(event, "Symbol.toStringTag", Value::String("MessageEvent".into()));
+    let event = execute::set_property(event, "data", data);
+    let event = execute::set_property(event, "origin", Value::String(origin));
+    let event = execute::set_property(event, "lastEventId", Value::String(last_event_id));
+    let event = execute::set_property(event, "source", source);
+    let event = execute::set_property(
+        event,
+        "ports",
+        Value::Array(Rc::new(quench_runtime::value::ArrayData::new(ports))),
+    );
+    let global = quench_runtime::vm::current_global_object();
+    let prototype = execute::get_property(&execute::get_property(&global, "MessageEvent"), "prototype");
+    if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
+        execute::set_prototype_of(&event, &prototype)
+    } else {
+        Ok(event)
+    }
+}
+
+fn message_event_string(value: &Value) -> String {
+    match value {
+        Value::Object(_) | Value::ObjectAlias(_) => "{}".into(),
+        _ => execute::to_js_string(value).unwrap_or_else(|_| value_text(value)),
+    }
+}
+
 pub fn event_source(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
