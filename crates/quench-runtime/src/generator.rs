@@ -410,6 +410,9 @@ fn install_suspension_frames(
     point: crate::continuation::SuspensionPoint,
     parent_resume: crate::machine::CodeRange,
 ) -> Result<(), VmError> {
+    if has_suspension_frame(generator, &point) {
+        return Ok(());
+    }
     match point {
         crate::continuation::SuspensionPoint::Nested { inner, outer } => {
             let child_resume = suspension_child_resume(&outer).unwrap_or(parent_resume);
@@ -478,6 +481,40 @@ fn install_suspension_frames(
             },
         ),
         _ => Ok(()),
+    }
+}
+
+fn has_suspension_frame(
+    generator: &GeneratorData,
+    point: &crate::continuation::SuspensionPoint,
+) -> bool {
+    generator
+        .machine
+        .borrow()
+        .frames
+        .frames
+        .iter()
+        .any(|frame| suspension_frame_matches(frame, point))
+}
+
+fn suspension_frame_matches(
+    frame: &crate::machine::Frame,
+    point: &crate::continuation::SuspensionPoint,
+) -> bool {
+    use crate::continuation::SuspensionPoint;
+    use crate::machine::Frame;
+
+    match (frame, point) {
+        (Frame::Loop { body: left, .. }, SuspensionPoint::Loop { body: right, .. }) => left == right,
+        (Frame::Try { body: left, .. }, SuspensionPoint::Try { body: right, .. }) => left == right,
+        (Frame::Iterator { body: left, .. }, SuspensionPoint::Iterator { body: right, .. }) => {
+            left == right
+        }
+        (
+            Frame::Branch { branch_resume: left, .. },
+            SuspensionPoint::Branch { body_resume: right, .. },
+        ) => left.code == right.code && left.end == right.end,
+        _ => false,
     }
 }
 
