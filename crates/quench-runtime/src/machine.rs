@@ -1519,6 +1519,14 @@ impl CodeStore {
         let (start, end) = self.ranges.get(range.code.0 as usize).copied()?;
         (range.start >= start && range.end <= end).then_some(CodeView { store: self, range })
     }
+
+    pub(crate) fn full_code(&self, code: CodeId) -> Option<CodeView<'_>> {
+        let (start, end) = self.ranges.get(code.0 as usize).copied()?;
+        Some(CodeView {
+            store: self,
+            range: CodeRange { code, start, end },
+        })
+    }
     /// Rare metadata lives out of line from hot instructions.
     pub fn metadata(&self, range: CodeRange) -> Option<&[InstructionMeta]> {
         self.metadata.get(range.code.0 as usize).map(Vec::as_slice)

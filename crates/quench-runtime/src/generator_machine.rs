@@ -77,16 +77,22 @@ fn execute_generator_range(
         .store
         .clone()
         .ok_or(VmError::MissingReturn)?;
-    let ops = store.code(range).ok_or(VmError::MissingReturn)?;
-    execute_with_generator_registers(generator, |registers| {
+    let code = store.full_code(range.code).ok_or(VmError::MissingReturn)?;
+    if range.end != code.range().end {
+        return Err(VmError::MissingReturn);
+    }
+    let entry = range.start.saturating_sub(code.range().start) as usize;
+    let mut step = execute_with_generator_registers(generator, |registers| {
         crate::vm::execute_generator_code_step(
-            ops,
+            code,
             registers,
             machine_environment(generator)?,
-            0,
+            entry,
             completion,
         )
-    })
+    })?;
+    step.pc = step.pc.saturating_sub(entry);
+    Ok(step)
 }
 
 fn update_range_execution(
