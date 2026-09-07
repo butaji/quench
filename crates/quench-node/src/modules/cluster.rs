@@ -136,13 +136,26 @@ pub(crate) fn finish_idle_fork_process(
     if pending_microtask {
         return Ok(false);
     }
-    if crate::modules::net::has_live_scope(state, scope) {
+    if crate::modules::net::has_live_scope(state, scope)
+        || crate::modules::process::has_listener_in_scope(state, "message", scope)
+    {
         return Ok(false);
     }
     let child = state.borrow().cluster.fork_process(scope);
     let Some(child) = child else {
         return Ok(false);
     };
+    // Terminal transitions such as AbortSignal and kill() publish their
+    // exit/close pair directly.  The fork remains registered until the
+    // event-loop poll reaches this lifecycle boundary, so make completion
+    // idempotent instead of manufacturing a second exit(0) pair.
+    if matches!(
+        execute::get_property(&child, "\0childTerminated"),
+        Value::Boolean(true)
+    ) {
+        state.borrow_mut().cluster.take_fork_process(scope);
+        return Ok(false);
+    }
     // A fork can fail during invocation validation before its queued spawn
     // phase runs. Keep the logical child registered until that phase emits
     // the terminal stderr/exit events after fork() returns and listeners can
@@ -524,6 +537,22 @@ pub fn fork(
             "send".into(),
             crate::host::capability(SPEC_CLUSTER_WORKER_PROCESS_SEND),
         ),
+        // Cluster workers expose their IPC channel to worker bootstrap code.
+        // This host keeps the transport in-process, but the handle still
+        // needs the ordinary callable ref/unref surface.
+        (
+            "channel".into(),
+            host_api::object(vec![
+                (
+                    "ref".into(),
+                    crate::host::capability(crate::registry::SPEC_PROCESS_REF),
+                ),
+                (
+                    "unref".into(),
+                    crate::host::capability(crate::registry::SPEC_PROCESS_UNREF),
+                ),
+            ]),
+        ),
         (
             "kill".into(),
             crate::host::capability(SPEC_CLUSTER_WORKER_KILL),
@@ -667,6 +696,9 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
     let previous_process_disconnect = process_value
         .as_ref()
         .map(|process| execute::get_property(process, "disconnect"));
+    let previous_process_channel = process_value
+        .as_ref()
+        .map(|process| execute::get_property(process, "channel"));
     let previous_process_connected = process_value
         .as_ref()
         .map(|process| execute::get_property(process, "connected"));
@@ -698,6 +730,9 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
             "send",
             crate::host::capability(SPEC_CLUSTER_WORKER_PROCESS_SEND),
         );
+        let worker_process = execute::get_property(worker, "process");
+        let worker_channel = execute::get_property(&worker_process, "channel");
+        let _ = execute::set_property_in_place(&process, "channel", worker_channel);
         let _ = execute::set_property_in_place(
             &process,
             "\0clusterProcessSender",
@@ -782,6 +817,7 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
                 "connected",
                 previous_process_connected.unwrap_or(Value::Undefined),
             ),
+            ("channel", previous_process_channel.unwrap_or(Value::Undefined)),
         ] {
             if matches!(value, Value::Undefined) {
                 let _ = execute::delete_property(process.clone(), key);
