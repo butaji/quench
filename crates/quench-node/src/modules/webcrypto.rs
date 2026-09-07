@@ -6387,10 +6387,21 @@ pub fn supports(
             let valid = match length {
                 Value::Undefined => true,
                 Value::Number(value) => {
-                    value.is_finite()
+                    if value.is_finite()
                         && value.fract() == 0.0
                         && *value >= 0.0
                         && *value <= 2_147_483_647.0
+                    {
+                        true
+                    } else if value.is_finite() && *value > 2_147_483_647.0 {
+                        return Err(error(
+                            Builtin::TypeError,
+                            Some("ERR_OUT_OF_RANGE"),
+                            "The requested length is outside the supported range",
+                        ));
+                    } else {
+                        false
+                    }
                 }
                 _ => false,
             };
