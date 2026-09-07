@@ -328,5 +328,10 @@ mod tests {
         assert!(compose_linear_chain(add, 2, &values).is_err());
         assert!(compose_linear_chain(bridge, 2, &values).is_err());
         assert!(compose_linear_chain(incompatible, 2, &values).is_err());
+        let mut detached_links =
+            crate::stencil_select::select_physical(crate::stencil_select::fallthrough_region_key())
+                .expect("linked view");
+        detached_links.links = &[];
+        assert!(compose_linear_chain(detached_links, 2, &values).is_err());
     }
 }
