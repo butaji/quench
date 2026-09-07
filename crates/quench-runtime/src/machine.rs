@@ -4728,6 +4728,18 @@ impl InstalledRegionEntry {
         }
     }
 
+    fn dispatch_token(
+        self,
+    ) -> Option<crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>> {
+        match self {
+            Self::Bridge(token)
+            | Self::ArrayKernel(token)
+            | Self::ArrayNumericLoop(token)
+            | Self::AffineI32Loop(token) => Some(token),
+            Self::Unpublished => None,
+        }
+    }
+
     fn abi(self) -> Option<crate::stencil_select::RegionAbi> {
         match self {
             Self::Unpublished => None,
@@ -5030,6 +5042,25 @@ impl NativeRegionPlan {
         Ok(installed)
     }
 
+    fn invoke_raw_entry(
+        &mut self,
+        view: crate::stencil_select::PhysicalStencilView,
+        values: &crate::stencil_fact::PatchValues<'_>,
+        arena: &std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
+        raw: *mut std::ffi::c_void,
+    ) -> Result<u64, NativeDispatchError> {
+        let token = self
+            .prepare_entry(view, values)?
+            .dispatch_token()
+            .ok_or_else(|| NativeDispatchError::Physical("region entry unavailable".into()))?;
+        let lease = crate::stencil_arena::SharedStencilSlab::acquire_owned(arena, token).map_err(
+            |error| NativeDispatchError::Physical(format!("region lease failed: {error:?}")),
+        )?;
+        lease.invoke(|entry| entry(raw)).map_err(|error| {
+            NativeDispatchError::Physical(format!("region invocation failed: {error:?}"))
+        })
+    }
+
     fn new_with_arena(
         key: crate::stencil_fact::RegionKey,
         policy: crate::stencil_policy::ExecutionPolicy,
@@ -5113,6 +5144,11 @@ impl NativeRegionPlan {
     }
 
     #[cfg(test)]
+    pub(crate) fn physical_is_published_for_test(&self) -> bool {
+        self.physical.installed().address().is_some()
+    }
+
+    #[cfg(test)]
     pub(crate) fn new_for_test(key: crate::stencil_fact::RegionKey) -> Option<Self> {
         let arena = std::rc::Rc::new(std::cell::RefCell::new(
             crate::stencil_arena::SharedStencilSlab::new(4096).ok()?,
@@ -5169,10 +5205,6 @@ impl NativeRegionPlan {
                 "native fused region unavailable".into(),
             ));
         }
-        let installed = self.prepare_entry(view, &values)?;
-        let address = installed.address().ok_or_else(|| {
-            NativeDispatchError::Physical("native fused region entry unpublished".into())
-        })?;
         let arena = self.physical.storage.shared().ok_or_else(|| {
             NativeDispatchError::Physical("native fused region arena missing".into())
         })?;
@@ -5222,11 +5254,7 @@ impl NativeRegionPlan {
             match view.abi {
                 crate::stencil_select::RegionAbi::ArrayKernel => {
                     let physical = crate::vm::execute_composed_array_kernel(&mut region, |raw| {
-                        let InstalledRegionEntry::ArrayKernel(token) = installed else {
-                            return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
-                        };
-                        crate::stencil_arena::SharedStencilSlab::acquire_owned(&arena, token)?
-                            .invoke(|entry| entry(raw))
+                        self.invoke_raw_entry(view, &values, &arena, raw)
                     });
                     self.last_native_execution |= region.native_entered;
                     #[cfg(test)]
@@ -5244,11 +5272,7 @@ impl NativeRegionPlan {
                 crate::stencil_select::RegionAbi::ArrayNumericLoop => {
                     let physical =
                         crate::vm::execute_composed_array_numeric_loop(&mut region, |raw| {
-                            let InstalledRegionEntry::ArrayNumericLoop(token) = installed else {
-                                return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
-                            };
-                            crate::stencil_arena::SharedStencilSlab::acquire_owned(&arena, token)?
-                                .invoke(|entry| entry(raw))
+                            self.invoke_raw_entry(view, &values, &arena, raw)
                         });
                     self.last_native_execution |= region.native_entered;
                     #[cfg(test)]
@@ -5263,11 +5287,7 @@ impl NativeRegionPlan {
                 crate::stencil_select::RegionAbi::AffineI32Loop => {
                     let physical =
                         crate::vm::execute_composed_affine_i32_loop(&mut region, |raw| {
-                            let InstalledRegionEntry::AffineI32Loop(token) = installed else {
-                                return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
-                            };
-                            crate::stencil_arena::SharedStencilSlab::acquire_owned(&arena, token)?
-                                .invoke(|entry| entry(raw))
+                            self.invoke_raw_entry(view, &values, &arena, raw)
                         });
                     self.last_native_execution |= region.native_entered;
                     #[cfg(test)]
@@ -5340,6 +5360,7 @@ impl NativeRegionPlan {
             }
             let raw =
                 (&mut region as *mut crate::vm::NativeRegionContext<'_>).cast::<std::ffi::c_void>();
+            let installed = self.prepare_entry(view, &values)?;
             let InstalledRegionEntry::Bridge(token) = installed else {
                 return Err(NativeDispatchError::Physical(
                     "native fused region installed ABI mismatch".into(),
@@ -5359,9 +5380,10 @@ impl NativeRegionPlan {
             }
             region.finish(status)
         })();
+        let address = self.physical.installed().address();
         self.physical.apply_dispatch_outcome(
             &result,
-            Some((&arena, address)),
+            address.map(|address| (&arena, address)),
             InstalledRegionEntry::Unpublished,
         );
         result
