@@ -203,9 +203,7 @@ impl DenseElements {
             Self::Numbers(_) => self.set_existing_number(index, number),
             Self::Values(values) => {
                 let mut values = values.borrow_mut();
-                let Some(Value::Number(value)) = values.get_mut(index) else {
-                    return false;
-                };
+                let Some(Value::Number(value)) = values.get_mut(index) else { return false };
                 *value = number;
                 true
             }
@@ -631,7 +629,9 @@ impl ArrayData {
             // An overwrite of a dense packed array cannot introduce a hole or
             // sparse index. Derive the monotonic widening directly from the
             // mutation, avoiding a full backing-store scan on every store.
-            written_number_kind.map_or(ArrayKind::PackedValue, |kind| appended_kind.unwrap_or(kind))
+            written_number_kind.map_or(ArrayKind::PackedValue, |kind| {
+                appended_kind.unwrap_or(kind)
+            })
         } else if previous_kind.is_packed() {
             // The append fast path above already supplied its number kind;
             // this branch is only for a packed array whose structural facts
@@ -1042,8 +1042,8 @@ impl ArrayData {
     /// sparse properties keep the array's monotonic kind at `Sparse`.
     #[inline(always)]
     pub(crate) fn set_proven_existing_f64(&self, index: usize, number: f64) -> bool {
-        let stored =
-            self.has_plain_dense_index(index) && self.values.set_existing_number(index, number);
+        let stored = self.has_plain_dense_index(index)
+            && self.values.set_existing_number(index, number);
         if stored {
             self.kind
                 .set(monotonic_kind(self.kind.get(), number_kind(number)));
@@ -1071,7 +1071,11 @@ impl ArrayData {
     /// structure. Sparse tails use the same single-threaded interior-mutation
     /// rule as ordinary object data properties.
     #[inline(always)]
-    pub(crate) fn set_kernel_existing_f64(array: &Rc<Self>, index: usize, number: f64) -> bool {
+    pub(crate) fn set_kernel_existing_f64(
+        array: &Rc<Self>,
+        index: usize,
+        number: f64,
+    ) -> bool {
         if !array.has_kernel_numeric_index(index) {
             return false;
         }
@@ -1082,22 +1086,13 @@ impl ArrayData {
             // SAFETY: realm execution is single-threaded; admission proved an
             // existing ordinary data property, and this changes only its value.
             let array = unsafe { &mut *(Rc::as_ptr(array) as *mut Self) };
-            match array
-                .properties
-                .iter_mut()
-                .rev()
-                .find(|(name, _)| name == &key)
-            {
-                Some((_, Value::Number(value))) => {
-                    *value = number;
-                    true
-                }
+            match array.properties.iter_mut().rev().find(|(name, _)| name == &key) {
+                Some((_, Value::Number(value))) => { *value = number; true }
                 _ => false,
             }
         };
         if stored {
-            array
-                .kind
+            array.kind
                 .set(monotonic_kind(array.kind.get(), number_kind(number)));
         }
         stored
@@ -1646,42 +1641,22 @@ mod array_data_tests {
     #[test]
     fn plain_dense_index_fact_explains_each_structural_rejection() {
         let dense = ArrayData::new(vec![Value::Number(1.0)]);
-        assert_eq!(
-            dense.plain_dense_index_fact(0),
-            PlainDenseIndexFact::Available
-        );
-        assert_eq!(
-            dense.plain_dense_index_fact(1),
-            PlainDenseIndexFact::BeyondLogicalLength
-        );
-
+        assert_eq!(dense.plain_dense_index_fact(0), PlainDenseIndexFact::Available);
+        assert_eq!(dense.plain_dense_index_fact(1), PlainDenseIndexFact::BeyondLogicalLength);
         let mut hole = dense.clone();
         hole.set_length(2);
-        assert_eq!(
-            hole.plain_dense_index_fact(1),
-            PlainDenseIndexFact::BeyondPhysicalLength
-        );
+        assert_eq!(hole.plain_dense_index_fact(1), PlainDenseIndexFact::BeyondPhysicalLength);
         hole.delete_property("0");
         assert_eq!(hole.plain_dense_index_fact(0), PlainDenseIndexFact::Deleted);
-
         let mut named = dense.clone();
         named.define_descriptor("field", writable_descriptor(true));
-        assert_eq!(
-            named.plain_dense_index_fact(0),
-            PlainDenseIndexFact::NamedDescriptor
-        );
+        assert_eq!(named.plain_dense_index_fact(0), PlainDenseIndexFact::NamedDescriptor);
         let mut indexed = dense.clone();
         indexed.define_descriptor("0", writable_descriptor(true));
-        assert_eq!(
-            indexed.plain_dense_index_fact(0),
-            PlainDenseIndexFact::IndexedDescriptor
-        );
+        assert_eq!(indexed.plain_dense_index_fact(0), PlainDenseIndexFact::IndexedDescriptor);
         let mut length = dense.clone();
         length.define_descriptor("length", writable_descriptor(false));
-        assert_eq!(
-            length.plain_dense_index_fact(0),
-            PlainDenseIndexFact::ReadonlyLength
-        );
+        assert_eq!(length.plain_dense_index_fact(0), PlainDenseIndexFact::ReadonlyLength);
     }
     #[test]
     fn kind_transitions_preserve_monotonic_holes_and_sparse_boundary() {
@@ -1817,10 +1792,7 @@ mod array_data_tests {
         assert!(!data.set_existing_f64(1, 9.5));
         assert!(data.set_existing_f64(0, 9.5));
         assert_eq!(alias.dense_number_at(0), Some(9.5));
-        assert_eq!(
-            alias.get_index(1),
-            Some(Value::String("materialized".into()))
-        );
+        assert_eq!(alias.get_index(1), Some(Value::String("materialized".into())));
     }
 
     #[test]
