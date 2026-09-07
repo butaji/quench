@@ -5036,17 +5036,10 @@ impl NativeRegionPlan {
         arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
         control: crate::stencil_cfg::RegionControlPlan,
     ) -> Option<Self> {
-        let composed = crate::stencil_select::select_region(key).is_some_and(|record| {
-            matches!(
-                record.abi,
-                crate::stencil_select::RegionAbi::ArrayKernel
-                    | crate::stencil_select::RegionAbi::ArrayNumericLoop
-                    | crate::stencil_select::RegionAbi::AffineI32Loop
-            )
-        });
+        let record = crate::stencil_select::select_region(key)?;
         Self::new_inner(
             key,
-            policy.fused_regions || (policy.composed_regions && composed),
+            policy.allows_region_abi(record.abi),
             arena,
             Some(control),
         )
