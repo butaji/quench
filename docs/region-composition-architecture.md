@@ -77,6 +77,21 @@ canonical CFG + operand/effect facts
   -> narrow verified peephole + publication
 ```
 
+Treat this as a reducible physical algebra, not a bytecode-to-stencil table.
+Candidate terms retain representation, location alternatives, guards, effects,
+clobbers and continuation roles until covering. A parent may therefore select a
+load-with-addressing-mode, compare-and-branch or guarded-slot operation instead
+of materializing every child. Delay irreversible byte choice until bounded
+last-use placement assigns fixed ABI registers/spills; then reselect a compatible
+terminal stencil. This provides Cranelift/ISLE-like tiling without introducing
+separate JS, optimizer, stencil and machine semantic IRs.
+
+The graph is derived after canonical residual lowering, not from OXC syntax.
+OXC remains the syntax owner and residual PCs remain the exact fallback/throw
+authority. Interning may provide local CSE only within an effect-valid bounded
+region. Rewrites monotonically strengthen proven physical facts; calls,
+coercions, allocation, mutation and joins explicitly invalidate them.
+
 Prioritize known-fact specialization and dispatch/guard-removing fusion. They can
 remove generic lookup, decoding and materialization; full SSA or global allocation
 would add much more machinery without matching Quench's finite-template problem.

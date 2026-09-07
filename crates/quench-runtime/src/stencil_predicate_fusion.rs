@@ -52,7 +52,7 @@ impl NativeLocalPredicatePlan {
         entries: &[crate::machine::BaselineEntry],
         branch_pc: usize,
     ) -> Option<Self> {
-        if !policy.local_fusions {
+        if !policy.local_fusions.predicate() {
             return None;
         }
         let policy = policy.with_leaf_dependencies();
