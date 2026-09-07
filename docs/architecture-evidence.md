@@ -41,6 +41,17 @@ ignored. The AArch64 catalog now derives every emitted instruction from named
 opcode/condition/register-aware encoders; the refactor caught and fixed a `w0`
 versus `w1` destination error that the non-generated comparison tests exposed.
 
+At `75506ca125`, completed call frames release both their execution guard and
+cycle-collector root before attempting pool admission. On the frozen
+`calls/direct` small/medium/large diagnostic, environment allocations change
+from 2,616/17,400/135,672 to a flat 398/398/398 while all three results still
+match Node. Retired instructions remain effectively flat (within about 0.9%,
+with the large case improving about 0.06%), so allocation removal is real but
+is not the dominant throughput lever. The paired uninstrumented lane remains
+1,889x/972x/898x slower than Bun. The next call work must remove dispatch,
+frame initialization and operand traffic across useful guarded callees rather
+than tune the allocator or native arithmetic leaf.
+
 At `94586e4d01`, leaf and composed publication share one transactional finalized
 image carrying exact bytes, identity, ABI and callable-entry offset. A real
 prefixed-entry image executes correctly; invalid entry offsets and cache-image
