@@ -336,24 +336,27 @@ pub(crate) fn is_short_units(units: &[u16]) -> bool {
 
 /// Convert raw UTF-16 units into the canonical runtime value.
 ///
-/// `Value::String` is the sole well-formed UTF-16 source. Invalid UTF-16
-/// (lone surrogates) cannot be represented by Rust `String`, so the exact
-/// units remain owned by `Value::StringUnits`. Encoding classifications and
-/// compact layouts must be derived from these values, never stored as a
-/// competing semantic buffer.
+/// Short or Latin-1-compatible text uses Rust's UTF-8 `String`. Long wide text
+/// and invalid UTF-16 use `StringUnits`, giving indexed JavaScript operations a
+/// stable code-unit backing without retaining a duplicate representation.
 pub(crate) fn from_units(units: Vec<u16>) -> Value {
-    match String::from_utf16(&units) {
-        Ok(value) => Value::String(value),
-        Err(_) => Value::StringUnits(std::rc::Rc::new(crate::value::StringUnitsData::new(units))),
+    if !units_well_formed(&units) || prefers_utf16_backing(&units) {
+        return Value::StringUnits(std::rc::Rc::new(crate::value::StringUnitsData::new(units)));
     }
+    Value::String(String::from_utf16(&units).expect("validated UTF-16"))
+}
+
+#[inline]
+fn prefers_utf16_backing(units: &[u16]) -> bool {
+    !is_short_units(units) && encoding_of(units) == StringEncoding::Utf16
 }
 
 include!("strings_static.rs");
 
 /// Expand the canonical source into UTF-16 code units at an API boundary.
 ///
-/// `Value::String` remains the sole source for well-formed text and is encoded
-/// only for this operation. `Value::StringUnits` already owns exact units, so
+/// `Value::String` owns compact UTF-8 text and is encoded only for this
+/// operation. `Value::StringUnits` already owns exact units, so
 /// expansion is just a clone of that immutable source. The returned vector is
 /// temporary boundary state: it is never retained by the runtime or attached
 /// to the value. Lone surrogates therefore survive exactly, while a valid
@@ -594,7 +597,9 @@ pub(crate) fn repeat(
     // The lossy display form of StringUnits can have the same unit length as
     // the exact source while containing replacement characters.  Only the
     // UTF-8-owned variant can use String::repeat without changing units.
-    if matches!(receiver, Some(Value::String(_))) && source.len() == value.encode_utf16().count() {
+    let compact_utf8 = total_units <= SHORT_STRING_MAX_UNITS
+        || encoding_of(&source) == StringEncoding::Latin1;
+    if matches!(receiver, Some(Value::String(_))) && compact_utf8 {
         return Ok(Value::String(value.repeat(count)));
     }
     let mut result = Vec::with_capacity(total_units);
@@ -1066,6 +1071,29 @@ mod tests {
             super::units_of(&repeated),
             Some(vec![u16::from(b'x'), 0xd800])
         );
+    }
+
+    #[test]
+    fn repeat_selects_indexable_backing_for_long_wide_text() {
+        let source = Value::String("é😀".to_owned());
+        let repeated = super::repeat(Some(&source), &[Value::Number(64.0)]).unwrap();
+        assert!(matches!(repeated, Value::StringUnits(_)));
+        assert_eq!(
+            super::char_code_at(Some(&repeated), &[Value::Number(1.0)]).unwrap(),
+            Value::Number(0xd83d as f64)
+        );
+        assert!(crate::equality::strict_equal(
+            &repeated,
+            &Value::String("é😀".repeat(64))
+        ));
+    }
+
+    #[test]
+    fn long_latin1_text_keeps_utf8_backing() {
+        let units = "é".repeat(64).encode_utf16().collect::<Vec<_>>();
+        let value = super::from_units(units.clone());
+        assert!(matches!(value, Value::String(_)));
+        assert_eq!(super::units_of(&value), Some(units));
     }
 
     #[test]
