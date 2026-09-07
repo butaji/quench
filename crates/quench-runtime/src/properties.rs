@@ -1320,6 +1320,58 @@ mod named_write_cache_tests {
     }
 }
 
+#[cfg(test)]
+mod array_identity_write_tests {
+    use crate::value::{ArrayData, Value};
+    use std::rc::Rc;
+
+    #[test]
+    fn existing_numeric_write_preserves_current_array_identity() {
+        crate::locals::reset_replacements();
+        let array = Rc::new(ArrayData::new(vec![Value::Number(1.0)]));
+        let value = Value::Array(Rc::clone(&array));
+
+        assert!(super::set_with_receiver(
+            &value,
+            "0",
+            &Value::Number(2.5),
+            &value,
+        )
+        .expect("ordinary dense write"));
+
+        assert!(crate::locals::array_word_is_current(&array));
+        assert!(crate::locals::replacement(&value).is_none());
+        assert_eq!(
+            crate::execute::get_property_result(&value, "0").unwrap(),
+            Value::Number(2.5)
+        );
+        crate::locals::reset_replacements();
+    }
+
+    #[test]
+    fn nonnumeric_write_uses_the_structural_replacement_path() {
+        crate::locals::reset_replacements();
+        let array = Rc::new(ArrayData::new(vec![Value::Number(1.0)]));
+        let value = Value::Array(Rc::clone(&array));
+
+        assert!(super::set_with_receiver(
+            &value,
+            "0",
+            &Value::String("changed".into()),
+            &value,
+        )
+        .expect("representation-changing write"));
+
+        assert!(!crate::locals::array_word_is_current(&array));
+        let current = crate::locals::resolved_replacement(value);
+        assert_eq!(
+            crate::execute::get_property_result(&current, "0").unwrap(),
+            Value::String("changed".into())
+        );
+        crate::locals::reset_replacements();
+    }
+}
+
 include!("properties_delete.rs");
 include!("properties_methods.rs");
 include!("properties_prototype.rs");
