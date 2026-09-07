@@ -2353,6 +2353,7 @@ fn ordinary_source_lowering_executes_fused_indexed_numeric_update() {
             Some(9.0)
         );
         assert!(region.borrow().last_native_execution());
+        assert_holey_indexed_update_falls_back(view, &plan, pc, load, add, store);
         executed = true;
     };
     inspect(program.code());
@@ -2367,6 +2368,43 @@ fn ordinary_source_lowering_executes_fused_indexed_numeric_update() {
         executed,
         "ordinary lowering must expose the fused update shape"
     );
+}
+
+#[cfg(target_arch = "aarch64")]
+fn assert_holey_indexed_update_falls_back(
+    view: crate::machine::CodeView<'_>,
+    plan: &super::BaselinePlan,
+    pc: usize,
+    load: crate::ir::Instruction,
+    add: crate::ir::Instruction,
+    store: crate::ir::Instruction,
+) {
+    let mut data = crate::value::ArrayData::new(vec![crate::value::Value::Number(4.0)]);
+    data.delete_property("0");
+    let array = std::rc::Rc::new(data);
+    let mut registers = crate::register_file::RegisterFile::with_undefined(
+        usize::from(view.register_count()).max(8),
+    );
+    registers.write(usize::from(load.b), crate::value::Value::Array(array.clone()));
+    registers.write(usize::from(load.c), crate::value::Value::Number(0.0));
+    registers.write(usize::from(store.a), crate::value::Value::Array(array.clone()));
+    registers.write(usize::from(store.b), crate::value::Value::Number(0.0));
+    if add.opcode == crate::ir::Opcode::Add {
+        registers.write(usize::from(add.c), crate::value::Value::Number(2.0));
+    }
+    crate::vm::execute_baseline_code_from(
+        view,
+        plan,
+        pc,
+        &mut registers,
+        &crate::vm::current_context_or_default(),
+        crate::environment::Environment::new(),
+    )
+    .expect("holey indexed fallback");
+    let value = crate::vm::get_property_result(&crate::value::Value::Array(array), "0")
+        .expect("ordinary indexed result");
+    assert!(matches!(value, crate::value::Value::Number(number) if number.is_nan()));
+    assert!(!plan.native_region_at(pc).unwrap().borrow().last_native_execution());
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -3284,46 +3322,79 @@ fn execute_generated_property_store(code: crate::machine::CodeView<'_>, pc: usiz
         "value".into(),
         crate::value::Value::Number(1.0),
     )]));
+    let mut registers = property_store_registers(code, instruction, &object);
+    let context = crate::vm::current_context_or_default();
+    run_property_store_and_assert(code, &plan, pc, &mut registers, &context, 5.0);
+    run_property_store_and_assert(code, &plan, pc, &mut registers, &context, 7.0);
+    let native = plan.native_store_property_at(pc).expect("native store plan");
+    assert!(native.borrow().native_entry_count() > 0);
+    #[cfg(quench_generated_stencil_artifacts)]
+    assert_generated_property_store(&native.borrow());
+    assert_readonly_property_store_falls_back(
+        code, &plan, pc, &mut registers, &context, &object, &native,
+    );
+}
+
+#[cfg(target_arch = "aarch64")]
+fn property_store_registers(
+    code: crate::machine::CodeView<'_>,
+    instruction: crate::ir::Instruction,
+    object: &std::rc::Rc<crate::value::ObjectData>,
+) -> crate::register_file::RegisterFile {
     let mut registers = crate::register_file::RegisterFile::with_undefined(
         usize::from(code.register_count()).max(8),
     );
     registers.write(
         usize::from(instruction.a),
-        crate::value::Value::Object(std::rc::Rc::clone(&object)),
+        crate::value::Value::Object(std::rc::Rc::clone(object)),
     );
-    let context = crate::vm::current_context_or_default();
-    run_property_store(
-        code,
-        &plan,
-        pc,
-        &mut registers,
-        &context,
-        instruction.b,
-        5.0,
-    );
+    registers
+}
+
+#[cfg(target_arch = "aarch64")]
+fn run_property_store_and_assert(
+    code: crate::machine::CodeView<'_>,
+    plan: &super::BaselinePlan,
+    pc: usize,
+    registers: &mut crate::register_file::RegisterFile,
+    context: &crate::vm::VmContext,
+    number: f64,
+) {
+    let instruction = code.instruction(pc).expect("SetN instruction");
+    run_property_store(code, plan, pc, registers, context, instruction.b, number);
     assert_eq!(
         named_value(&registers, instruction.a),
-        crate::value::Value::Number(5.0)
+        crate::value::Value::Number(number)
     );
-    run_property_store(
-        code,
-        &plan,
-        pc,
-        &mut registers,
-        &context,
-        instruction.b,
-        7.0,
-    );
-    assert_eq!(
-        named_value(&registers, instruction.a),
-        crate::value::Value::Number(7.0)
-    );
-    let native = plan
-        .native_store_property_at(pc)
-        .expect("native store plan");
-    assert!(native.borrow().native_entry_count() > 0);
-    #[cfg(quench_generated_stencil_artifacts)]
-    assert_generated_property_store(&native.borrow());
+}
+
+#[cfg(target_arch = "aarch64")]
+fn assert_readonly_property_store_falls_back(
+    code: crate::machine::CodeView<'_>,
+    plan: &super::BaselinePlan,
+    pc: usize,
+    registers: &mut crate::register_file::RegisterFile,
+    context: &crate::vm::VmContext,
+    object: &std::rc::Rc<crate::value::ObjectData>,
+    native: &std::cell::RefCell<super::NativePropertyPlan>,
+) {
+    let entries = native.borrow().native_entry_count();
+    let descriptor = crate::value::Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::new(vec![(
+            "writable".into(),
+            crate::value::Value::Boolean(false),
+        )]),
+    ));
+    assert!(crate::execute::set_property_in_place(
+        &crate::value::Value::Object(std::rc::Rc::clone(&object)),
+        &crate::builtins::descriptor_key("value"),
+        descriptor,
+    ));
+    let source = code.instruction(pc).expect("SetN instruction").b;
+    run_property_store(code, plan, pc, registers, context, source, 9.0);
+    let object_register = code.instruction(pc).expect("SetN instruction").a;
+    assert_eq!(named_value(registers, object_register), crate::value::Value::Number(7.0));
+    assert_eq!(native.borrow().native_entry_count(), entries);
 }
 
 #[cfg(target_arch = "aarch64")]
