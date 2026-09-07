@@ -96,6 +96,29 @@ fn successor_role_participates_in_physical_identity() {
     );
 }
 
+#[test]
+fn complete_physical_contract_participates_in_cache_identity() {
+    let view = select_physical(fallthrough_region_key()).expect("continuation view");
+    let site = crate::quickening::QuickeningSite::<2>::new(crate::ir::Opcode::Add);
+    let values = crate::stencil_fact::PatchValues::from_site(&site);
+    let signature = view.cache_signature(&values);
+    let alternate_entry = PhysicalStencilView {
+        entry: view.entry.saturating_add(4),
+        ..view
+    };
+    let alternate_abi = PhysicalStencilView {
+        abi: RegionAbi::TaggedWord,
+        ..view
+    };
+    let alternate_target = PhysicalStencilView {
+        target: Some("different-target"),
+        ..view
+    };
+    for alternate in [alternate_entry, alternate_abi, alternate_target] {
+        assert_ne!(signature, alternate.cache_signature(&values));
+    }
+}
+
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 #[test]
 fn numeric_rows_never_admit_x86_bytes_on_other_isas() {
