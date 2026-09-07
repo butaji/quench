@@ -773,7 +773,7 @@ pub(crate) fn execute_code_frame_completion_with_owner(
     let _global_guard = GlobalObjectGuard::install();
     let pooled = Rc::clone(&environment);
     let _environment_root = crate::cycle_collector::protect_environment(&environment);
-    let environment_guard = crate::locals::EnvironmentGuard::install(environment.clone());
+    let environment_guard = crate::locals::EnvironmentGuard::install(environment);
     let result = if let (Some(optimizing), Some(baseline)) =
         (owner.executable_optimizing_plan(), owner.baseline_plan())
     {
