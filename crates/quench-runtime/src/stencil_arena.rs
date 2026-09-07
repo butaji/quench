@@ -10,7 +10,8 @@ use crate::stencil_fact::{PatchValues, Stencil};
 use crate::stencil_layout::FixupKind;
 use crate::stencil_patch::{apply_holes, PatchError};
 use crate::stencil_region_layout::{
-    compose_selected_controlled_region, compose_selected_region, VerifiedRegionImage,
+    compose_selected_controlled_region, compose_selected_region, RegionImageIdentity,
+    VerifiedRegionImage,
 };
 use crate::stencil_select::RenderedRegionCache;
 use std::cell::{Cell, RefCell};
@@ -116,6 +117,17 @@ struct PublishedEntry {
     signature: u64,
     abi: crate::stencil_select::RegionAbi,
     byte_len: usize,
+}
+
+impl PublishedEntry {
+    const fn from_image(identity: RegionImageIdentity, byte_len: usize) -> Self {
+        Self {
+            key: identity.key,
+            signature: identity.cache_signature,
+            abi: identity.abi,
+            byte_len,
+        }
+    }
 }
 
 /// Bounded collection of immutable-after-publication executable slabs.  Region
@@ -1565,19 +1577,18 @@ impl StencilArena {
             return Err(ArenaError::ProtectionFailed);
         }
         let signature = view.cache_signature(values);
+        let identity = RegionImageIdentity::selected(view, values);
         if let Some(address) = cache
             .get_owned(view.key, signature, self.id)
             .filter(|address| self.owns_address(*address))
         {
-            self.require_publication(address, view, signature, view.stencil.bytes.len())?;
+            self.require_publication(address, identity, view.stencil.bytes.len())?;
             return Ok(address);
         }
         let checkpoint = self.cursor;
         let offset = self.copy_and_patch(view.stencil, values)?;
         let address = self.address(offset).ok_or(ArenaError::Exhausted)?;
-        if let Err(error) =
-            self.record_publication(address, view, signature, view.stencil.bytes.len())
-        {
+        if let Err(error) = self.record_publication(address, identity, view.stencil.bytes.len()) {
             self.cursor = checkpoint;
             return Err(error);
         }
@@ -1657,16 +1668,10 @@ impl StencilArena {
     fn record_publication(
         &self,
         address: usize,
-        view: crate::stencil_select::PhysicalStencilView,
-        signature: u64,
+        identity: RegionImageIdentity,
         byte_len: usize,
     ) -> Result<(), ArenaError> {
-        let entry = PublishedEntry {
-            key: view.key,
-            signature,
-            abi: view.abi,
-            byte_len,
-        };
+        let entry = PublishedEntry::from_image(identity, byte_len);
         let mut published = self.published_entries.borrow_mut();
         match published.get(&address) {
             Some(existing) if *existing != entry => Err(ArenaError::ProtectionFailed),
@@ -1681,16 +1686,10 @@ impl StencilArena {
     fn require_publication(
         &self,
         address: usize,
-        view: crate::stencil_select::PhysicalStencilView,
-        signature: u64,
+        identity: RegionImageIdentity,
         byte_len: usize,
     ) -> Result<(), ArenaError> {
-        let expected = PublishedEntry {
-            key: view.key,
-            signature,
-            abi: view.abi,
-            byte_len,
-        };
+        let expected = PublishedEntry::from_image(identity, byte_len);
         (self.published_entries.borrow().get(&address) == Some(&expected))
             .then_some(())
             .ok_or(ArenaError::ProtectionFailed)
@@ -2013,9 +2012,14 @@ impl StencilArena {
             .filter(|address| self.owns_address(*address))?;
         let byte_len =
             view.stencil.bytes.len() + view.fallthrough.map_or(0, |tail| tail.stencil.bytes.len());
+        let identity = RegionImageIdentity {
+            key: view.key,
+            cache_signature: signature,
+            abi: view.abi,
+        };
         if self.is_executable()
             && self
-                .require_publication(address, view, signature, byte_len)
+                .require_publication(address, identity, byte_len)
                 .is_ok()
         {
             Some(address)
@@ -2031,20 +2035,19 @@ impl StencilArena {
         cache: &mut RenderedRegionCache,
         image: &VerifiedRegionImage,
     ) -> Result<usize, ArenaError> {
-        let view = image.view();
-        let signature = image.cache_signature();
+        let identity = image.identity();
         let bytes = image.bytes();
         let checkpoint = self.cursor;
         let offset = self.alloc_aligned(bytes.len(), STENCIL_ALIGNMENT)?;
         unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.ptr.add(offset), bytes.len()) };
         let address = self.address(offset).ok_or(ArenaError::Exhausted)?;
-        if let Err(error) = self.record_publication(address, view, signature, bytes.len()) {
+        if let Err(error) = self.record_publication(address, identity, bytes.len()) {
             self.cursor = checkpoint;
             return Err(error);
         }
-        cache.insert_owned(view.key, signature, address, self.id);
+        cache.insert_owned(identity.key, identity.cache_signature, address, self.id);
         if let Err(error) = self.make_executable() {
-            cache.remove(view.key, signature, address);
+            cache.remove(identity.key, identity.cache_signature, address);
             self.published_entries.borrow_mut().remove(&address);
             self.cursor = checkpoint;
             return Err(error);
