@@ -1425,12 +1425,12 @@ pub fn req_write(
             }
         }
     } else if !dispatched {
-        // A write on a keep-alive socket must dispatch the request headers and
-        // buffered body immediately; waiting for end deadlocks responses that
-        // are intentionally sent before the caller closes the request.
-        let request = receiver.cloned().unwrap_or(Value::Undefined);
-        req_end(state, Some(&request), &[])?;
-        set_request_property(Some(&request), "finished", Value::Boolean(false));
+        // Keep body writes buffered until `end()` owns the request framing.
+        // Dispatching here used to append the terminating chunk (`0\r\n\r\n`)
+        // before later `write()` calls, so a normal sequence of writes sent
+        // only the first chunk to an HTTP/1.1 peer.  A reserved or pooled
+        // socket remains available through `request.socket`; `req_end`
+        // writes the complete ordered body and terminator exactly once.
     }
     invoke_write_callback(receiver, args)?;
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
