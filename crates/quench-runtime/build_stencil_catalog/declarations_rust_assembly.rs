@@ -45,6 +45,7 @@ rust_assembly_catalog! {
         x86_holes: &[(5, 4, "Rel32")],
         aarch64_holes: &[(4, 4, "Branch26"), (8, 4, "Branch26")],
         continuation: { head: "fallthrough_head", tail: "fallthrough_tail", target: "q_fallthrough_tail" },
+        internal_abi: F64AccumulatorD0AddD1,
         composition: LinkedFragments
     },
     AddChain {
@@ -52,6 +53,7 @@ rust_assembly_catalog! {
         x86: &X86_ADD_CHAIN_BYTES, aarch64: &AARCH64_ADD_CHAIN_BYTES,
         x86_holes: &[(5, 4, "Rel32")], aarch64_holes: &[(4, 4, "Branch26")],
         continuation: { head: "add_chain_head", tail: "add_chain_tail", target: "q_add_chain_tail" },
+        internal_abi: F64AccumulatorD0ThenD2,
         composition: LinkedFragments
     },
     CompareEqualBranch {
