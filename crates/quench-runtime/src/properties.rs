@@ -655,6 +655,7 @@ fn finish_set_property(
     value: crate::value::Value,
     strict: bool,
 ) -> Result<(), crate::execute::VmError> {
+    record_named_set_fact(target, key);
     // A typed-array prototype consumes numeric keys before ordinary accessor
     // lookup.  Route this shape through the receiver-aware path so a setter
     // installed on `%TypedArray%.prototype` cannot observe the write.
