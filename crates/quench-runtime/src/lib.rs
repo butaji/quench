@@ -153,6 +153,7 @@ mod stencil_fusion;
 mod stencil_fusion_store_tests;
 #[cfg(test)]
 mod stencil_fusion_tests;
+mod stencil_installation;
 mod stencil_layout;
 pub mod stencil_lifecycle;
 #[cfg(test)]
