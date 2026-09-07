@@ -3464,8 +3464,28 @@ pub(crate) fn http2_module_value() -> Value {
     };
     crate::host::namespace_object_from_pairs(vec![
         ("connect".into(), connect),
-        ("Http2ServerRequest".into(), constructor("Http2ServerRequest")),
-        ("Http2ServerResponse".into(), constructor("Http2ServerResponse")),
+        (
+            "createServer".into(),
+            quench_runtime::host_api::bound_capability_with_arguments(
+                crate::host::capability_ref(crate::registry::SPEC_INTERNAL_HTTP2_UTIL),
+                vec![Value::String("createServer".into())],
+            ),
+        ),
+        (
+            "createSecureServer".into(),
+            quench_runtime::host_api::bound_capability_with_arguments(
+                crate::host::capability_ref(crate::registry::SPEC_INTERNAL_HTTP2_UTIL),
+                vec![Value::String("createSecureServer".into())],
+            ),
+        ),
+        (
+            "Http2ServerRequest".into(),
+            constructor("Http2ServerRequest"),
+        ),
+        (
+            "Http2ServerResponse".into(),
+            constructor("Http2ServerResponse"),
+        ),
         (
             "sensitiveHeaders".into(),
             crate::modules::http2_util::sensitive_headers(),
