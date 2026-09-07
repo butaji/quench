@@ -2627,6 +2627,30 @@ fn create_asymmetric_key(args: &[Value], key_type: &str) -> Result<Value, VmErro
                     "The \"{label}.key\" property must be of type object"
                 )));
             }
+            if matches!(
+                execute::to_js_string(&execute::get_property(&key, "kty"))
+                    .ok()
+                    .as_deref(),
+                Some("EC")
+            ) {
+                if let Value::String(curve) = execute::get_property(&key, "crv") {
+                    if !matches!(
+                        curve.to_ascii_lowercase().as_str(),
+                        "p-256"
+                            | "prime256v1"
+                            | "secp256k1"
+                            | "p-384"
+                            | "secp384r1"
+                            | "p-521"
+                            | "secp521r1"
+                    ) {
+                        return Err(crypto_error(
+                            "ERR_CRYPTO_INVALID_CURVE",
+                            "Invalid EC curve",
+                        ));
+                    }
+                }
+            }
         }
         let raw_format = matches!(
             format,
@@ -2770,6 +2794,75 @@ fn create_asymmetric_key(args: &[Value], key_type: &str) -> Result<Value, VmErro
                 return None;
             }
             key_bytes(&execute::get_property(descriptor, "key"))
+        })
+        .or_else(|| {
+            let descriptor = descriptor?;
+            if !matches!(descriptor, Value::Object(_) | Value::ObjectAlias(_)) {
+                return None;
+            }
+            if !matches!(
+                execute::get_property(descriptor, "format"),
+                Value::String(ref format) if format == "jwk"
+            ) {
+                return None;
+            }
+            let key = execute::get_property(descriptor, "key");
+            if execute::to_js_string(&execute::get_property(&key, "kty"))
+                .ok()?
+                .as_str()
+                != "EC"
+            {
+                return None;
+            }
+            let curve = execute::to_js_string(&execute::get_property(&key, "crv")).ok()?;
+            let nid = match curve.to_ascii_lowercase().as_str() {
+                "p-256" | "prime256v1" => Nid::X9_62_PRIME256V1,
+                "secp256k1" => Nid::SECP256K1,
+                "p-384" | "secp384r1" => Nid::SECP384R1,
+                "p-521" | "secp521r1" => Nid::SECP521R1,
+                _ => return None,
+            };
+            let decode = |name: &str| {
+                let text = execute::to_js_string(&execute::get_property(&key, name)).ok()?;
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(text)
+                    .ok()
+            };
+            let x = decode("x")?;
+            let y = decode("y")?;
+            let group = EcGroup::from_curve_name(nid).ok()?;
+            let width = ((group.degree() + 7) / 8) as usize;
+            if x.len() != width || y.len() != width {
+                return None;
+            }
+            let mut point_bytes = Vec::with_capacity(1 + x.len() + y.len());
+            point_bytes.push(0x04);
+            point_bytes.extend_from_slice(&x);
+            point_bytes.extend_from_slice(&y);
+            let mut context = BigNumContext::new().ok()?;
+            let point = EcPoint::from_bytes(&group, &point_bytes, &mut context).ok()?;
+            if key_type == "private" {
+                let d = decode("d")?;
+                if d.len() != width {
+                    return None;
+                }
+                let scalar = BigNum::from_slice(&d).ok()?;
+                let mut derived = EcPoint::new(&group).ok()?;
+                derived.mul_generator(&group, &scalar, &mut context).ok()?;
+                let derived_bytes = derived
+                    .to_bytes(&group, PointConversionForm::UNCOMPRESSED, &mut context)
+                    .ok()?;
+                if derived_bytes != point_bytes {
+                    return None;
+                }
+                let ec = EcKey::from_private_components(&group, &scalar, &point).ok()?;
+                let pkey = PKey::from_ec_key(ec).ok()?;
+                pkey.private_key_to_pem_pkcs8().ok()
+            } else {
+                let ec = EcKey::from_public_key(&group, &point).ok()?;
+                let pkey = PKey::from_ec_key(ec).ok()?;
+                pkey.public_key_to_pem().ok()
+            }
         })
         .or_else(|| {
             let descriptor = descriptor?;
@@ -2955,6 +3048,13 @@ fn create_asymmetric_key(args: &[Value], key_type: &str) -> Result<Value, VmErro
     if key_type == "private" && is_encrypted_private_key(&data) {
         match passphrase.as_deref() {
             None => {
+                if data.starts_with(b"-----") {
+                    return Err(VmError::Thrown(native_error(
+                        quench_runtime::ops::Builtin::Error,
+                        "ERR_OSSL_CRYPTO_INTERRUPTED_OR_CANCELLED",
+                        "error:07880109:common libcrypto routines::interrupted or cancelled",
+                    )));
+                }
                 return Err(crypto_error(
                     "ERR_MISSING_PASSPHRASE",
                     "Passphrase required for encrypted key",
@@ -3141,9 +3241,17 @@ fn asymmetric_key_details(data: &[u8], asymmetric_type: &str) -> Value {
     match asymmetric_type {
         "rsa" | "rsa-pss" => {
             if let Ok(rsa) = Rsa::private_key_from_pem(data) {
-                rsa_key_details(&rsa)
+                if asymmetric_type == "rsa-pss" {
+                    rsa_pss_key_details(&rsa, data)
+                } else {
+                    rsa_key_details(&rsa)
+                }
             } else if let Ok(rsa) = Rsa::public_key_from_pem(data) {
-                rsa_key_details(&rsa)
+                if asymmetric_type == "rsa-pss" {
+                    rsa_pss_key_details(&rsa, data)
+                } else {
+                    rsa_key_details(&rsa)
+                }
             } else {
                 host_api::object(Vec::new())
             }
@@ -3202,6 +3310,78 @@ fn rsa_key_details<T: openssl::pkey::HasPublic>(rsa: &openssl::rsa::RsaRef<T>) -
             ),
         ),
     ])
+}
+
+fn rsa_pss_key_details<T: openssl::pkey::HasPublic>(
+    rsa: &openssl::rsa::RsaRef<T>,
+    encoded: &[u8],
+) -> Value {
+    let mut fields = match rsa_key_details(rsa) {
+        Value::Object(_) | Value::ObjectAlias(_) => vec![
+            (
+                "modulusLength".into(),
+                Value::Number(rsa.n().num_bits() as f64),
+            ),
+            (
+                "publicExponent".into(),
+                Value::BigInt(
+                    rsa.e()
+                        .to_dec_str()
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|_| "65537".into()),
+                ),
+            ),
+        ],
+        _ => Vec::new(),
+    };
+    let der = if encoded.starts_with(b"-----BEGIN") {
+        let body = encoded
+            .split(|byte| *byte == b'\n' || *byte == b'\r')
+            .filter(|line| !line.starts_with(b"-----"))
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>();
+        base64::engine::general_purpose::STANDARD
+            .decode(body)
+            .unwrap_or_default()
+    } else {
+        encoded.to_vec()
+    };
+    let sha1 = [0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a];
+    let sha256 = [0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01];
+    let sha512 = [0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03];
+    let mut digests = Vec::new();
+    for (oid, name) in [(&sha1[..], "sha1"), (&sha256[..], "sha256"), (&sha512[..], "sha512")] {
+        let mut offset = 0;
+        while let Some(index) = der[offset..].windows(oid.len()).position(|window| window == oid) {
+            digests.push((offset + index, name));
+            offset += index + oid.len();
+        }
+    }
+    digests.sort_by_key(|(offset, _)| *offset);
+    if digests.len() >= 2 {
+        fields.push(("hashAlgorithm".into(), Value::String(digests[0].1.into())));
+        fields.push(("mgf1HashAlgorithm".into(), Value::String(digests[1].1.into())));
+        if let Some((_, salt)) = der
+            .windows(3)
+            .enumerate()
+            .rev()
+            .find(|(_, bytes)| bytes[0] == 0x02 && bytes[1] == 0x01 && bytes[2] <= 64)
+        {
+            fields.push(("saltLength".into(), Value::Number(salt[2] as f64)));
+        }
+    } else if der
+        .windows(13)
+        .any(|window| window[..11] == [0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a] && window[11..] == [0x30, 0x00])
+    {
+        // An explicitly present, empty RSASSA-PSS-params sequence carries
+        // the RFC defaults (SHA-1, MGF1-SHA-1, 20-byte salt).  A completely
+        // absent params field is intentionally left as the unrestricted form.
+        fields.push(("hashAlgorithm".into(), Value::String("sha1".into())));
+        fields.push(("mgf1HashAlgorithm".into(), Value::String("sha1".into())));
+        fields.push(("saltLength".into(), Value::Number(20.0)));
+    }
+    host_api::object(fields)
 }
 
 fn dsa_key_details<T: openssl::pkey::HasParams>(dsa: &openssl::dsa::DsaRef<T>) -> Value {
@@ -4271,7 +4451,21 @@ pub fn key_export(
     {
         return Err(invalid_option("type", &requested_type));
     }
+    if requested_type_name == "pkcs1"
+        && matches!(asym_type(), Value::String(ref value) if value == "rsa-pss")
+    {
+        return Err(crypto_error(
+            "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS",
+            "The selected key encoding pkcs1 does not support RSA-PSS keys.",
+        ));
+    }
     if format == "jwk" {
+        if matches!(asym_type(), Value::String(ref value) if value == "rsa-pss") {
+            return Err(crypto_error(
+                "ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE",
+                "Unsupported JWK Key Type.",
+            ));
+        }
         if matches!(asym_type(), Value::String(ref value) if value == "dsa") {
             return Err(crypto_error(
                 "ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE",
