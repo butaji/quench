@@ -222,57 +222,32 @@ fn render_failure_uses_complete_fallback() {
             kind: HoleKind::Ptr64,
         }],
     };
-    let result = arena.render_and_execute(
+    let result = arena.render_or_get(
         &mut cache,
         crate::stencil_fact::RegionKey(8),
         &stencil,
         &values,
-        |_| Ok::<_, ()>(99),
-        || Ok::<_, ()>(7),
     );
-    assert_eq!(result, Ok(7));
+    assert!(result.is_err());
     assert_eq!(arena.used(), 0);
 }
 
 #[test]
-fn execution_failure_removes_the_published_cache_entry() {
+fn wrong_typed_entry_rejects_before_publication() {
     let mut arena = StencilArena::new(4096).unwrap();
     let mut cache = crate::stencil_select::RenderedRegionCache::new();
-    let site = QuickeningSite::<2>::new(Opcode::GetProperty);
-    let values = PatchValues::from_site(&site);
-    let stencil = Stencil {
-        bytes: &[0xC3],
-        holes: &[],
-    };
-    let result = arena.render_and_execute(
-        &mut cache,
-        crate::stencil_fact::RegionKey(9),
-        &stencil,
-        &values,
-        |_| Err::<u32, _>(()),
-        || Ok::<_, ()>(23),
-    );
-    assert_eq!(result, Ok(23));
-    assert_eq!(cache.len(), 0);
-    assert_eq!(arena.used(), 1);
-}
-
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-#[test]
-fn modeled_entry_callback_does_not_publish_native_witness() {
-    let mut arena = StencilArena::new(4096).unwrap();
-    let mut cache = RenderedRegionCache::new();
     let site = QuickeningSite::<2>::new(Opcode::Add);
     let values = PatchValues::from_site(&site);
-    let result = arena.render_selected_or_fallback(
+    let result = arena.render_selected_bool(
         &mut cache,
         crate::stencil_select::numeric_region_key(Opcode::Add).unwrap(),
         &values,
-        |_| Ok::<_, ()>(12.0),
-        || Ok::<_, ()>(0.0),
+        1.0,
+        2.0,
     );
-    assert_eq!(result, Ok(12.0));
-    assert!(arena.last_physical_execution().is_none());
+    assert!(matches!(result, Err(ArenaError::ProtectionFailed)));
+    assert_eq!(cache.len(), 0);
+    assert_eq!(arena.used(), 0);
 }
 
 #[test]
@@ -281,17 +256,18 @@ fn data_only_region_returns_to_ordinary_semantics_without_execution() {
     let mut cache = RenderedRegionCache::new();
     let site = QuickeningSite::<2>::new(Opcode::GetProperty);
     let values = PatchValues::from_site(&site);
-    let result = arena.render_selected_or_fallback(
+    let result = arena.render_selected_f64(
         &mut cache,
         crate::stencil_fact::RegionKey::from_opcodes(
             crate::stencil_fact::RegionId(2),
             &[crate::ir::Opcode::GetProperty],
         ),
         &values,
-        |_| Err::<u32, _>(()),
-        || Ok::<_, ()>(17),
+        1.0,
+        2.0,
+        || Ok(17.0),
     );
-    assert_eq!(result, Ok(17));
+    assert_eq!(result, Ok(17.0));
     assert_eq!(cache.len(), 0);
 }
 
@@ -301,13 +277,14 @@ fn unknown_region_never_allocates_before_fallback() {
     let mut cache = RenderedRegionCache::new();
     let site = QuickeningSite::<2>::new(Opcode::GetProperty);
     let values = PatchValues::from_site(&site);
-    let result = arena.render_selected_or_fallback(
+    let result = arena.render_selected_f64(
         &mut cache,
         crate::stencil_fact::RegionKey(0),
         &values,
-        |_| Ok::<_, ()>(99),
-        || Ok::<_, ()>(7),
+        1.0,
+        2.0,
+        || Ok(7.0),
     );
-    assert_eq!(result, Ok(7));
+    assert_eq!(result, Ok(7.0));
     assert_eq!(arena.used(), 0);
 }
