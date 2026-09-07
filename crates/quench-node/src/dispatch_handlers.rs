@@ -11241,6 +11241,11 @@ pub fn cp_send(
     {
         return cp_send_closed(state, receiver, args);
     }
+    // Backpressure is a return-value fact, not a delivery policy: Node still
+    // queues the message when `send()` returns false. Keep the fact separate
+    // so a full queue cannot silently drop a later message (notably a handle
+    // transfer followed by an ordinary message).
+    let mut send_backpressured = false;
     if generic_ipc || spawn_ipc {
         if matches!(
             execute::get_property(receiver, "connected"),
@@ -11259,6 +11264,7 @@ pub fn cp_send(
             _ => 0,
         };
         if count >= 2 {
+            send_backpressured = true;
             let ack = host_api::bound_capability_with_arguments(
                 quench_runtime::ops::HostCapabilityRef {
                     realm: quench_runtime::ops::RealmId::ROOT,
@@ -11266,21 +11272,21 @@ pub fn cp_send(
                         crate::registry::SPEC_CP_SEND_ACK.cap,
                     ),
                 },
-                vec![receiver.clone(), callback.unwrap_or(Value::Undefined)],
+                vec![receiver.clone(), callback.clone().unwrap_or(Value::Undefined)],
             );
             state.borrow().event_loop.queue_immediate(ack, vec![]);
-            return Ok(Value::Boolean(false));
+        } else {
+            execute::set_property_in_place(
+                receiver,
+                "sendCount",
+                Value::Number((count + 1) as f64),
+            );
         }
-        execute::set_property_in_place(
-            receiver,
-            "sendCount",
-            Value::Number((count + 1) as f64),
-        );
         if generic_ipc {
             if let Some(callback) = callback {
                 state.borrow().event_loop.queue_immediate(callback, vec![]);
             }
-            return Ok(Value::Boolean(true));
+            return Ok(Value::Boolean(!send_backpressured));
         }
     }
     // The in-process fork transport still has to honor the selected IPC
@@ -11423,7 +11429,7 @@ pub fn cp_send(
     } else {
         crate::modules::events::method_emit(state, Some(child), &event_args)?;
     }
-    Ok(Value::Boolean(true))
+    Ok(Value::Boolean(!send_backpressured))
 }
 
 fn cp_send_closed(
