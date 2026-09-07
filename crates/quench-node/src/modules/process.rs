@@ -63,6 +63,13 @@ pub struct ProcessState {
     pub permission_audit: bool,
     pub permissions: HashSet<String>,
     pub dropped_permissions: HashSet<String>,
+    /// Invocation-scoped secure-heap facts. OpenSSL's allocator counters are
+    /// not exposed by the embedded backend, so crypto APIs update this small
+    /// process-owned accounting record instead of sharing a global counter
+    /// across logical children.
+    pub secure_heap_total: u64,
+    pub secure_heap_min: u64,
+    pub secure_heap_used: u64,
 }
 
 impl Default for ProcessState {
@@ -117,7 +124,71 @@ impl ProcessState {
             permission_audit: false,
             permissions: HashSet::new(),
             dropped_permissions: HashSet::new(),
+            secure_heap_total: 0,
+            secure_heap_min: 0,
+            secure_heap_used: 0,
         }
+    }
+}
+
+/// Parse Node's secure-heap invocation flags into one process configuration.
+/// The parser is shared by the top-level and child-process boundaries so a
+/// forked logical process receives the same validation as a re-exec'd one.
+pub fn secure_heap_config(exec_argv: &[String]) -> Result<(u64, u64), String> {
+    let mut total = 0;
+    let mut min = 0;
+    let mut errors = Vec::new();
+    let mut index = 0;
+    while index < exec_argv.len() {
+        let flag = &exec_argv[index];
+        let (kind, value) = if let Some(value) = flag.strip_prefix("--secure-heap-min=") {
+            ("--secure-heap-min", Some(value))
+        } else if flag == "--secure-heap-min" {
+            index += 1;
+            ("--secure-heap-min", exec_argv.get(index).map(String::as_str))
+        } else if let Some(value) = flag.strip_prefix("--secure-heap=") {
+            ("--secure-heap", Some(value))
+        } else if flag == "--secure-heap" {
+            index += 1;
+            ("--secure-heap", exec_argv.get(index).map(String::as_str))
+        } else {
+            index += 1;
+            continue;
+        };
+        let parsed = value.and_then(|value| value.parse::<u64>().ok());
+        let valid = parsed.is_some_and(|value| value.is_power_of_two());
+        if !valid {
+            errors.push(format!("{kind} must be a power of 2"));
+        } else if kind == "--secure-heap" {
+            total = parsed.unwrap_or_default();
+        } else {
+            min = parsed.unwrap_or_default();
+        }
+        index += 1;
+    }
+    if errors.is_empty() {
+        Ok((total, min))
+    } else {
+        Err(format!("{}\n", errors.join("\n")))
+    }
+}
+
+/// Install a parsed secure-heap configuration and reset per-process usage.
+pub fn set_secure_heap_config(state: &Rc<RefCell<HostState>>, total: u64, min: u64) {
+    let mut host = state.borrow_mut();
+    host.process.secure_heap_total = total;
+    host.process.secure_heap_min = min;
+    host.process.secure_heap_used = 0;
+}
+
+/// Record native crypto work against the current process's configured heap.
+/// This is deliberately bounded: the API contract only promises a positive
+/// used/utilization value after a secure-heap allocation, not an allocator
+/// implementation or exact byte count.
+pub fn mark_secure_heap_use(state: &Rc<RefCell<HostState>>) {
+    let mut host = state.borrow_mut();
+    if host.process.secure_heap_total > 0 {
+        host.process.secure_heap_used = host.process.secure_heap_used.max(1);
     }
 }
 

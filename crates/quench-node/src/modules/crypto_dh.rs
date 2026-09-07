@@ -585,7 +585,7 @@ pub fn set_public_key(
 }
 
 pub fn generate_keys(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
@@ -632,11 +632,12 @@ pub fn generate_keys(
         );
         hidden(receiver, PUBLIC_STALE, Value::Boolean(false));
     }
-    get_public_key(_state, Some(receiver), &[])
+    crate::modules::process::mark_secure_heap_use(state);
+    get_public_key(state, Some(receiver), &[])
 }
 
 pub fn compute_secret(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
@@ -720,6 +721,7 @@ pub fn compute_secret(
         padded.extend(secret);
         secret = padded;
     }
+    crate::modules::process::mark_secure_heap_use(state);
     Ok(output(secret, args.get(2)))
 }
 

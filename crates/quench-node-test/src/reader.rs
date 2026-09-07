@@ -148,6 +148,10 @@ impl NodeRunner {
             &self.host.state(),
             &fixture.exec_argv,
         );
+        if let Ok((total, min)) = quench_node::modules::process::secure_heap_config(&fixture.exec_argv)
+        {
+            quench_node::modules::process::set_secure_heap_config(&self.host.state(), total, min);
+        }
         quench_node::modules::process::configure_permissions(
             &self.host.state(),
             &fixture.exec_argv,

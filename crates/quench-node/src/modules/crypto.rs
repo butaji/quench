@@ -6071,20 +6071,30 @@ pub fn set_fips(
 /// initial observation.  This preserves the observable API contract without
 /// creating a second allocator or runtime state model.
 pub fn secure_heap_used(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    let used = if SECURE_HEAP_CALLS.fetch_add(1, Ordering::Relaxed) == 0 {
-        0.0
-    } else {
-        1.0
+    let (total, min, used) = {
+        let host = state.borrow();
+        (
+            host.process.secure_heap_total,
+            host.process.secure_heap_min,
+            host.process.secure_heap_used,
+        )
     };
     Ok(host_api::object(vec![
-        ("total".into(), Value::Number(65536.0)),
-        ("used".into(), Value::Number(used)),
-        ("utilization".into(), Value::Number(used / 65536.0)),
-        ("min".into(), Value::Number(4.0)),
+        ("total".into(), Value::Number(total as f64)),
+        ("used".into(), Value::Number(used as f64)),
+        (
+            "utilization".into(),
+            Value::Number(if total == 0 {
+                0.0
+            } else {
+                used as f64 / total as f64
+            }),
+        ),
+        ("min".into(), Value::Number(min as f64)),
     ]))
 }
 
@@ -6569,7 +6579,6 @@ pub fn random_int(
 
 static LAST_UUID_V7_MS: AtomicU64 = AtomicU64::new(0);
 static FIPS_MODE: AtomicU8 = AtomicU8::new(0);
-static SECURE_HEAP_CALLS: AtomicU64 = AtomicU64::new(0);
 
 pub fn random_uuid(
     _state: &Rc<RefCell<HostState>>,

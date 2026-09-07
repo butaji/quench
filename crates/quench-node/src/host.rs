@@ -446,6 +446,9 @@ pub fn install_with_argv_and_title_and_exec_argv(
     quench_runtime::module_bindings::defer_fulfilled_await(true);
     let host = Rc::new(NodeHost::new(realm, argv).with_output_sink(sink));
     host.state.borrow_mut().process.title = title.to_string();
+    if let Ok((total, min)) = crate::modules::process::secure_heap_config(exec_argv) {
+        crate::modules::process::set_secure_heap_config(&host.state, total, min);
+    }
     crate::modules::process::set_abort_on_uncaught_exception(&host.state, exec_argv);
     crate::modules::process::configure_permissions(&host.state, exec_argv);
     crate::modules::process::configure_trace(&host.state, exec_argv);
