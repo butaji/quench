@@ -2030,6 +2030,24 @@ impl StencilArena {
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn publish_region_image_or_get(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        image: &VerifiedRegionImage,
+    ) -> Result<usize, ArenaError> {
+        let identity = image.identity();
+        if let Some(address) = cache
+            .get_owned(identity.key, identity.cache_signature, self.id)
+            .filter(|address| self.owns_address(*address))
+        {
+            self.require_publication(address, identity, image.bytes().len())?;
+            self.make_executable()?;
+            return Ok(address);
+        }
+        self.publish_composed(cache, image)
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn publish_composed(
         &mut self,
         cache: &mut RenderedRegionCache,
@@ -3529,6 +3547,30 @@ mod tests {
         let address = arena.publish_composed(&mut cache, &image).unwrap();
         assert_eq!(arena.execute_f64(address, 1.0, 2.0), Ok(5.0));
         assert_eq!(arena.used(), bytes.len());
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn selected_fragments_form_a_reusable_three_fragment_chain() {
+        let mut arena = StencilArena::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let values = PatchValues::from_site(&site);
+        let view =
+            crate::stencil_select::select_physical(crate::stencil_select::fallthrough_region_key())
+                .expect("linked fragment view");
+        let image = crate::stencil_region_builder::compose_linear_chain(view, 2, &values)
+            .expect("compose two additions and return");
+        let address = arena
+            .publish_region_image_or_get(&mut cache, &image)
+            .expect("publish composed image");
+        assert_eq!(arena.execute_f64(address, 1.5, 2.0), Ok(5.5));
+        let used = arena.used();
+        assert_eq!(
+            arena.publish_region_image_or_get(&mut cache, &image),
+            Ok(address)
+        );
+        assert_eq!(arena.used(), used);
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]

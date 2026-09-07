@@ -163,6 +163,7 @@ mod stencil_policy;
 mod stencil_property_integration_tests;
 #[cfg(test)]
 mod stencil_property_store_tests;
+mod stencil_region_builder;
 mod stencil_region_layout;
 pub mod stencil_select;
 #[cfg(test)]
