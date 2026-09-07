@@ -138,6 +138,7 @@ fn validate_linear_view(view: PhysicalStencilView, repetitions: u8) -> Result<()
         && contract.has_single_entry()
         && contract.abi_is_well_formed()
         && !contract.template_calls_helper
+        && view.continuation_abi == crate::stencil_select::ContinuationAbi::F64AccumulatorD0AddD1
         && view.fallthrough.is_some();
     valid.then_some(()).ok_or(LayoutError::RelocationContract)
 }
@@ -210,7 +211,11 @@ mod tests {
         let bridge =
             crate::stencil_select::select_physical(crate::stencil_select::dispatch_region_key())
                 .expect("bridge view");
+        let incompatible =
+            crate::stencil_select::select_physical(crate::stencil_select::add_chain_region_key())
+                .expect("linked fragment with a different continuation ABI");
         assert!(compose_linear_chain(add, 2, &values).is_err());
         assert!(compose_linear_chain(bridge, 2, &values).is_err());
+        assert!(compose_linear_chain(incompatible, 2, &values).is_err());
     }
 }

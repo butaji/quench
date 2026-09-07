@@ -38,6 +38,7 @@ fn legacy_physical_view(key: RegionKey, record: &'static RegionRecord) -> Physic
         entry: record.entry,
         external_entries: record.external_entries,
         fallthrough: record.fallthrough,
+        continuation_abi: record.continuation_abi,
         executable: record.executable,
         template_calls_helper: record.template_calls_helper,
         target: option_env!("QUENCH_BUILD_TARGET"),
@@ -57,23 +58,7 @@ fn generated_physical_view(
             stencil,
             target: record.fallthrough.map_or("", |item| item.target),
         });
-    let metadata_matches = artifact.name == record.name
-        && artifact_identity_matches(artifact, record)
-        && artifact.key == key
-        && artifact_target_matches_host(artifact.target)
-        && !artifact.compiler.is_empty()
-        && !artifact.fingerprint.is_empty()
-        && artifact.abi == record.abi
-        && artifact.entry == record.entry
-        && artifact.external_entries == record.external_entries
-        && artifact.has_fallthrough == record.fallthrough.is_some()
-        && (artifact.has_fallthrough == fallthrough.is_some())
-        && artifact
-            .fallthrough
-            .is_none_or(|_| record.fallthrough.is_some())
-        && record
-            .fallthrough
-            .is_none_or(|item| artifact_fallthrough_matches(artifact, item));
+    let metadata_matches = generated_contract_matches(key, record, artifact, fallthrough);
     let effects_match = artifact.executable == record.executable
         && artifact.template_calls_helper == record.template_calls_helper;
     if !metadata_matches
@@ -99,11 +84,37 @@ fn generated_physical_view(
         entry: artifact.entry,
         external_entries: artifact.external_entries,
         fallthrough,
+        continuation_abi: artifact.continuation_abi,
         executable: artifact.executable,
         template_calls_helper: artifact.template_calls_helper,
         target: Some(artifact.target),
         fingerprint: Some(artifact.fingerprint),
     })
+}
+
+fn generated_contract_matches(
+    key: RegionKey,
+    record: &RegionRecord,
+    artifact: &BuildStencilArtifact,
+    fallthrough: Option<PhysicalFallthrough>,
+) -> bool {
+    artifact.name == record.name
+        && artifact_identity_matches(artifact, record)
+        && artifact.key == key
+        && artifact_target_matches_host(artifact.target)
+        && !artifact.compiler.is_empty()
+        && !artifact.fingerprint.is_empty()
+        && artifact.abi == record.abi
+        && artifact.continuation_abi == record.continuation_abi
+        && artifact.entry == record.entry
+        && artifact.external_entries == record.external_entries
+        && artifact.has_fallthrough == fallthrough.is_some()
+        && artifact
+            .fallthrough
+            .is_none_or(|_| record.fallthrough.is_some())
+        && record
+            .fallthrough
+            .is_none_or(|item| artifact_fallthrough_matches(artifact, item))
 }
 
 fn artifact_fallthrough_matches(

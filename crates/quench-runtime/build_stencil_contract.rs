@@ -46,6 +46,13 @@ pub(crate) enum RecipeComposition {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DeclContinuationAbi {
+    None,
+    F64AccumulatorD0AddD1,
+    F64AccumulatorD0ThenD2,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PhysicalOperandField {
     A,
     B,
@@ -177,6 +184,15 @@ macro_rules! recipe_composition {
     };
 }
 
+macro_rules! continuation_abi {
+    () => {
+        DeclContinuationAbi::None
+    };
+    ($abi:ident) => {
+        DeclContinuationAbi::$abi
+    };
+}
+
 macro_rules! rust_leaf_catalog {
     ($( $variant:ident {
         name: $name:literal, abi: $abi:ident, ops: [$($op:literal),+],
@@ -235,6 +251,7 @@ macro_rules! rust_assembly_catalog {
         $(, bindings: $bindings:expr)?
         $(, outputs: $outputs:expr)?
         $(, continuation: { head: $head:literal, tail: $tail:literal, target: $target:literal })?
+        $(, internal_abi: $internal_abi:ident)?
         $(, composition: $composition:ident)?
     } ),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -254,6 +271,12 @@ macro_rules! rust_assembly_catalog {
             pub(crate) const fn continuation(self) -> Option<AssemblyContinuation> {
                 match self {
                     $( Self::$variant => assembly_continuation!($(($head, $tail, $target))?) ),+
+                }
+            }
+
+            pub(crate) const fn internal_abi(self) -> DeclContinuationAbi {
+                match self {
+                    $( Self::$variant => continuation_abi!($($internal_abi)?) ),+
                 }
             }
 

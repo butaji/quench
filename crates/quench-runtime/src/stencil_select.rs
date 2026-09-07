@@ -50,6 +50,15 @@ pub struct AbiContract {
     pub root_materialization_required: bool,
 }
 
+/// Register roles at a fragment's internal continuation. Matching external
+/// function ABIs alone never authorize concatenation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContinuationAbi {
+    None,
+    F64AccumulatorD0AddD1,
+    F64AccumulatorD0ThenD2,
+}
+
 macro_rules! region_abi_catalog {
     ($( $name:ident => {
         context: $region_context:expr,
@@ -120,6 +129,7 @@ pub struct RegionRecord {
     /// Runtime admission may enter only at one of these boundaries.
     pub external_entries: &'static [u16],
     pub fallthrough: Option<PhysicalFallthrough>,
+    pub continuation_abi: ContinuationAbi,
     pub abi: RegionAbi,
     /// Canonical semantic-boundary fact for the selected template. Runtime
     /// validation still checks physical instructions fail-closed; a branch is
@@ -257,6 +267,7 @@ pub struct PhysicalStencilView {
     pub entry: u16,
     pub external_entries: &'static [u16],
     pub fallthrough: Option<PhysicalFallthrough>,
+    pub continuation_abi: ContinuationAbi,
     pub executable: bool,
     pub template_calls_helper: bool,
     pub target: Option<&'static str>,
@@ -291,6 +302,7 @@ impl PhysicalStencilView {
             && self.stencil.bytes == other.stencil.bytes
             && self.stencil.holes == other.stencil.holes
             && self.fallthrough == other.fallthrough
+            && self.continuation_abi == other.continuation_abi
             && self.executable == other.executable
             && self.template_calls_helper == other.template_calls_helper
             && self.target == other.target

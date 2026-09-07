@@ -4738,6 +4738,7 @@ mod compact_handler_tests {
             entry: 0,
             external_entries: &[0],
             fallthrough: None,
+            continuation_abi: crate::stencil_select::ContinuationAbi::None,
             abi: crate::stencil_select::RegionAbi::Bridge,
             template_calls_helper: false,
             executable: false,
