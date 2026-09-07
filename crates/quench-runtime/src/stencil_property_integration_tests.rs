@@ -326,6 +326,57 @@ fn ordinary_source_own_get_executes_native_and_rejects_accessor() {
     );
 }
 
+fn shaped_receiver(prefix: usize, value: f64) -> Rc<ObjectData> {
+    let mut properties = (0..prefix)
+        .map(|index| (format!("p{prefix}_{index}"), Value::Number(index as f64)))
+        .collect::<Vec<_>>();
+    properties.push(("value".into(), Value::Number(value)));
+    Rc::new(ObjectData::new(properties))
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn ordinary_source_property_site_degrades_from_native_to_bounded_fallback() {
+    let (body, plan, pc) = source_plan();
+    let code = body.code().unwrap();
+    let receivers = [
+        shaped_receiver(0, 10.0),
+        shaped_receiver(1, 11.0),
+        shaped_receiver(2, 12.0),
+    ];
+    for (index, receiver) in receivers[..2].iter().enumerate() {
+        let expected = Value::Number(10.0 + index as f64);
+        assert_eq!(run_get(code, &plan, pc, receiver), expected);
+        let before = native_count(&plan, pc);
+        assert_eq!(run_get(code, &plan, pc, receiver), expected);
+        assert!(
+            native_count(&plan, pc) > before,
+            "stable shape uses native body"
+        );
+    }
+    assert_eq!(run_get(code, &plan, pc, &receivers[2]), Value::Number(12.0));
+    let site = code.quickening_site(pc).expect("generated property site");
+    assert_eq!(
+        site.borrow().tier(),
+        crate::quickening::QuickeningTier::Megamorphic
+    );
+    let before = native_count(&plan, pc);
+    assert_eq!(run_get(code, &plan, pc, &receivers[2]), Value::Number(12.0));
+    assert_eq!(native_count(&plan, pc), before, "megamorphic site degrades");
+    let descriptor = Value::Object(Rc::new(ObjectData::new(vec![(
+        "get".into(),
+        Value::Undefined,
+    )])));
+    let receiver = Value::Object(Rc::clone(&receivers[2]));
+    assert!(crate::execute::set_property_in_place(
+        &receiver,
+        &crate::builtins::descriptor_key("value"),
+        descriptor,
+    ));
+    assert_eq!(run_get(code, &plan, pc, &receivers[2]), Value::Undefined);
+    assert_eq!(native_count(&plan, pc), before);
+}
+
 #[cfg(target_arch = "aarch64")]
 #[test]
 fn ordinary_source_prototype_shadow_exits_before_native_entry() {
