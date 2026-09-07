@@ -48,6 +48,10 @@ pub struct EventTarget {
     /// consumes this queue synchronously; the event-loop delivery callback
     /// drains one entry when a listener is present.
     pub message_queue: Vec<(Value, Vec<Value>)>,
+    /// BroadcastChannel targets share the same host queue machinery as
+    /// MessagePorts, but are selected by channel name instead of a peer.
+    pub broadcast_channel: bool,
+    pub broadcast_name: Option<String>,
 }
 
 thread_local! {
@@ -79,6 +83,9 @@ impl EventTarget {
 pub struct TargetRegistry {
     next: u64,
     targets: HashMap<TargetId, Rc<RefCell<EventTarget>>>,
+    /// Keep the canonical JS wrapper for each target so queued deliveries
+    /// preserve `event.target` identity across the registry lookup.
+    objects: HashMap<TargetId, Value>,
 }
 
 impl TargetRegistry {
@@ -86,6 +93,7 @@ impl TargetRegistry {
         Self {
             next: 1,
             targets: HashMap::new(),
+            objects: HashMap::new(),
         }
     }
     fn allocate(&mut self) -> TargetId {
@@ -95,6 +103,23 @@ impl TargetRegistry {
     }
     pub fn get(&self, id: TargetId) -> Option<Rc<RefCell<EventTarget>>> {
         self.targets.get(&id).cloned()
+    }
+
+    pub fn broadcast_peers(&self, name: &str, sender: TargetId) -> Vec<Value> {
+        self.targets
+            .iter()
+            .filter_map(|(id, target)| {
+                if *id == sender {
+                    return None;
+                }
+                let target = target.borrow();
+                (target.broadcast_channel
+                    && target.broadcast_name.as_deref() == Some(name)
+                    && !target.message_closed)
+                    .then(|| self.objects.get(id).cloned())
+                    .flatten()
+            })
+            .collect()
     }
 }
 
@@ -111,7 +136,7 @@ pub(crate) fn take_message(state: &Rc<RefCell<HostState>>, port: &Value) -> Opti
     let id = target_id(port)?;
     let target = state.borrow().targets.get(id)?;
     let mut target = target.borrow_mut();
-    if !target.message_port || target.message_queue.is_empty() {
+    if !(target.message_port || target.broadcast_channel) || target.message_queue.is_empty() {
         return None;
     }
     Some(target.message_queue.remove(0).0)
@@ -125,6 +150,12 @@ pub(crate) fn is_message_port(state: &Rc<RefCell<HostState>>, value: &Value) -> 
     target_id(value)
         .and_then(|id| state.borrow().targets.get(id))
         .is_some_and(|target| target.borrow().message_port)
+}
+
+pub(crate) fn is_broadcast_channel(state: &Rc<RefCell<HostState>>, value: &Value) -> bool {
+    target_id(value)
+        .and_then(|id| state.borrow().targets.get(id))
+        .is_some_and(|target| target.borrow().broadcast_channel)
 }
 
 /// Number of listeners of a given type retained by a host EventTarget.
@@ -152,6 +183,16 @@ pub fn new_target(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Val
     allocate_target(state, false)
 }
 
+/// Allocate an identity-bearing EventTarget with its host-owned properties
+/// installed in one object allocation. This avoids publishing intermediate
+/// copy-on-write wrappers while a constructor assembles its API surface.
+pub(crate) fn new_target_with_properties(
+    state: &Rc<RefCell<HostState>>,
+    properties: Vec<(String, Value)>,
+) -> Result<Value, VmError> {
+    allocate_target_with_properties(state, false, properties)
+}
+
 /// Keep the constructor and allocated targets on one prototype fact. Bootstrap
 /// modules can expose the constructor before its host prototype is installed;
 /// repair that derived view once, at the boundary, instead of teaching every
@@ -173,16 +214,26 @@ pub fn new_node_target(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Resul
 }
 
 fn allocate_target(state: &Rc<RefCell<HostState>>, node: bool) -> Result<Value, VmError> {
+    allocate_target_with_properties(state, node, Vec::new())
+}
+
+fn allocate_target_with_properties(
+    state: &Rc<RefCell<HostState>>,
+    node: bool,
+    properties: Vec<(String, Value)>,
+) -> Result<Value, VmError> {
     let id = state.borrow_mut().targets.allocate();
     let target = Rc::new(RefCell::new(EventTarget {
         node,
         ..EventTarget::default()
     }));
     state.borrow_mut().targets.targets.insert(id, target);
-    let object = crate::host::namespace_object_from_pairs(vec![(
+    let mut initial = vec![(
         TARGET_ID_PROP.to_string(),
         Value::Number(id.0 as f64),
-    )]);
+    )];
+    initial.extend(properties);
+    let object = crate::host::namespace_object_from_pairs(initial);
     let prototype = if node {
         NODE_PROTOTYPE
             .with(|slot| slot.borrow().clone())
@@ -197,6 +248,7 @@ fn allocate_target(state: &Rc<RefCell<HostState>>, node: bool) -> Result<Value, 
     } else {
         object
     };
+    state.borrow_mut().targets.objects.insert(id, object.clone());
     Ok(object)
 }
 
@@ -270,6 +322,42 @@ pub fn new_message_port(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError
         }
     }
     Ok(port)
+}
+
+/// Mark an EventTarget wrapper as a BroadcastChannel and retain its channel
+/// name in the canonical target record. Delivery remains owned by this
+/// registry, so listener registration and dispatch follow ordinary
+/// EventTarget semantics.
+pub(crate) fn mark_broadcast_channel(
+    state: &Rc<RefCell<HostState>>,
+    value: &Value,
+    name: String,
+) -> Result<(), VmError> {
+    let Some(id) = target_id(value) else {
+        return Err(invalid_this());
+    };
+    let Some(target) = state.borrow().targets.get(id) else {
+        return Err(invalid_this());
+    };
+    let mut target = target.borrow_mut();
+    target.broadcast_channel = true;
+    target.broadcast_name = Some(name);
+    target.message_closed = false;
+    Ok(())
+}
+
+pub(crate) fn remember_target_object(
+    state: &Rc<RefCell<HostState>>,
+    value: &Value,
+) -> Result<(), VmError> {
+    let Some(id) = target_id(value) else {
+        return Err(invalid_this());
+    };
+    if !state.borrow().targets.targets.contains_key(&id) {
+        return Err(invalid_this());
+    }
+    state.borrow_mut().targets.objects.insert(id, value.clone());
+    Ok(())
 }
 
 pub(crate) fn set_message_port_prototype(prototype: Value) {
@@ -483,16 +571,19 @@ pub fn message_port_deliver(
         ("currentTarget".into(), peer.clone()),
         ("ports".into(), host_api::array(ports)),
     ]);
+    // The `onmessage` slot is an EventTarget listener installed at assignment
+    // time. Invoke it before later addEventListener listeners so registration
+    // order remains observable for channel and port targets alike.
+    let onmessage = execute::get_property(peer, "onmessage");
+    if quench_runtime::is_callable(&onmessage) {
+        execute::call(&onmessage, peer, std::slice::from_ref(&event))?;
+    }
     let _ = dispatch_event(state, Some(peer), std::slice::from_ref(&event))?;
     let _ = crate::modules::events::method_emit(
         state,
         Some(peer),
         &[Value::String("message".into()), data],
     )?;
-    let onmessage = execute::get_property(peer, "onmessage");
-    if quench_runtime::is_callable(&onmessage) {
-        execute::call(&onmessage, peer, &[event])?;
-    }
     Ok(Value::Undefined)
 }
 
