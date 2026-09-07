@@ -44,7 +44,17 @@ fn generated_abi_classification_matches_physical_entry_shape() {
                 assert_ne!(record.stencil.bytes.len(), 76);
             }
             RegionAbi::TaggedWord => {
-                assert_tagged_word_shape(record);
+                assert!(matches!(record.stencil.bytes.len(), 4 | 8));
+                assert!(matches!(
+                    record.operations.first(),
+                    Some(
+                        crate::ir::Opcode::Move
+                            | crate::ir::Opcode::LoadLocal
+                            | crate::ir::Opcode::StoreLocal
+                            | crate::ir::Opcode::GetN
+                            | crate::ir::Opcode::SetN,
+                    )
+                ));
             }
             RegionAbi::PropertyGuard => {
                 assert!(
@@ -77,15 +87,7 @@ fn generated_abi_classification_matches_physical_entry_shape() {
                 }
             }
             RegionAbi::ScalarWordBool => {
-                assert!(matches!(
-                    record.stencil.bytes.len(),
-                    6 | 8 | 20 | 24 | 27 | 32
-                ));
-                assert!(matches!(
-                    record.operations,
-                    [crate::ir::Opcode::Unary, crate::ir::Opcode::Return]
-                        | [crate::ir::Opcode::JumpIfFalse]
-                ));
+                assert_scalar_word_shape(record);
             }
             RegionAbi::ScalarWordPairBool => {
                 assert!(matches!(record.stencil.bytes.len(), 10 | 12));
@@ -129,22 +131,22 @@ fn generated_abi_classification_matches_physical_entry_shape() {
     }
 }
 
-fn assert_tagged_word_shape(record: &RegionRecord) {
+fn assert_scalar_word_shape(record: &RegionRecord) {
     if record.continuation_abi == ContinuationAbi::WordX0 {
         assert!(record.stencil.bytes.is_empty());
-        assert_eq!(record.operations, [crate::ir::Opcode::JumpIfFalse]);
+        assert!(matches!(
+            record.operations,
+            [crate::ir::Opcode::JumpIfFalse] | [crate::ir::Opcode::Return]
+        ));
         return;
     }
-    assert!(matches!(record.stencil.bytes.len(), 4 | 8));
     assert!(matches!(
-        record.operations.first(),
-        Some(
-            crate::ir::Opcode::Move
-                | crate::ir::Opcode::LoadLocal
-                | crate::ir::Opcode::StoreLocal
-                | crate::ir::Opcode::GetN
-                | crate::ir::Opcode::SetN,
-        )
+        record.stencil.bytes.len(),
+        6 | 8 | 20 | 24 | 27 | 32
+    ));
+    assert!(matches!(
+        record.operations,
+        [crate::ir::Opcode::Unary, crate::ir::Opcode::Return] | [crate::ir::Opcode::JumpIfFalse]
     ));
 }
 

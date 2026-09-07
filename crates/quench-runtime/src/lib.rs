@@ -145,6 +145,8 @@ mod stencil_cache;
 mod stencil_cfg;
 #[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
 mod stencil_compare_branch_tests;
+#[cfg(test)]
+mod stencil_control_composition_tests;
 pub mod stencil_fact;
 mod stencil_fusion;
 #[cfg(test)]

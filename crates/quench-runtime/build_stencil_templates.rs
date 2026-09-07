@@ -303,6 +303,12 @@ fn nullish_word_source(name: &str) -> String {
     )
 }
 
+fn return_word_source(name: &str) -> String {
+    format!(
+        "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_{name}\nq_{name}:\n  ret\nq_{name}_end:\n\"#);\n"
+    )
+}
+
 pub(crate) fn assembly_source(recipe: super::RustAssemblyRecipe) -> String {
     use super::RustAssemblyRecipe::*;
     match recipe {
@@ -314,6 +320,7 @@ pub(crate) fn assembly_source(recipe: super::RustAssemblyRecipe) -> String {
         BoolBranch => control_fragment_source(recipe)
             .expect("declared control fragment")
             .to_owned(),
+        ReturnWord => return_word_source(recipe.name()),
         CompareEqualBranch => compare_branch_source(recipe.name(), "eq", false),
         CompareNotEqualBranch => compare_branch_source(recipe.name(), "ne", true),
         CompareLessBranch => compare_branch_source(recipe.name(), "lt", false),

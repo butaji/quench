@@ -200,6 +200,10 @@ fn boolean_control_recipe_owns_both_successor_contracts() {
 
     let declaration = rust_assembly_declaration(RustAssemblyRecipe::BoolBranch);
     let recipe = rust_assembly_recipe(declaration).expect("boolean control recipe");
+    assert_eq!(
+        declaration.abi,
+        build_stencil_contract::DeclAbi::ScalarWordBool
+    );
     assert_eq!(recipe.composition(), RecipeComposition::ControlFragment);
     assert_eq!(recipe.internal_abi(), DeclContinuationAbi::WordX0);
     assert_eq!(recipe.successors(), &[]);
@@ -214,4 +218,11 @@ fn boolean_control_recipe_owns_both_successor_contracts() {
             (8, AssemblySuccessorRole::True, "q_bool_branch_true"),
         ]
     );
+
+    let terminal = rust_assembly_declaration(RustAssemblyRecipe::ReturnWord);
+    assert_eq!(terminal.operations, ["Return"]);
+    assert_eq!(terminal.abi, declaration.abi);
+    let terminal_recipe = rust_assembly_recipe(terminal).expect("return fragment recipe");
+    assert_eq!(terminal_recipe.internal_abi(), DeclContinuationAbi::WordX0);
+    assert_eq!(terminal_recipe.composition(), RecipeComposition::Whole);
 }

@@ -14,6 +14,12 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 const LINEAR_COMPOSITION_ID: RegionId = RegionId(0x5143_0001);
+const BRANCH_COMPOSITION_ID: RegionId = RegionId(0x5143_0002);
+const WORD_BRANCH_OPERATIONS: [crate::ir::Opcode; 3] = [
+    crate::ir::Opcode::JumpIfFalse,
+    crate::ir::Opcode::Return,
+    crate::ir::Opcode::Return,
+];
 
 type F64Entry = extern "C" fn(f64, f64) -> f64;
 
@@ -168,6 +174,95 @@ pub(crate) fn compose_fragment_chain<const N: usize>(
         abi: views[0].abi,
     };
     Ok(VerifiedRegionImage::from_composed(identity, bytes))
+}
+
+pub(crate) fn compose_word_branch<const N: usize>(
+    branch: PhysicalStencilView,
+    terminal: PhysicalStencilView,
+    control: &crate::stencil_cfg::RegionControlPlan,
+    values: &PatchValues<'_, N>,
+) -> Result<VerifiedRegionImage, LayoutError> {
+    validate_word_branch(branch, terminal)?;
+    let fragments = word_branch_fragments(branch, terminal, *values);
+    let successors = [
+        crate::stencil_region_links::SuccessorPlacement {
+            role: crate::stencil_select::SuccessorRole::False,
+            target: RegionPoint::Operation(2),
+        },
+        crate::stencil_region_links::SuccessorPlacement {
+            role: crate::stencil_select::SuccessorRole::True,
+            target: RegionPoint::Operation(1),
+        },
+    ];
+    let transfers = crate::stencil_region_links::selected_transfers_by_role(
+        branch,
+        RegionPoint::Operation(0),
+        &successors,
+    )?;
+    let mut bytes = Vec::new();
+    compose_planned_region(
+        control,
+        &WORD_BRANCH_OPERATIONS,
+        &fragments,
+        &transfers,
+        &mut bytes,
+    )?;
+    Ok(word_branch_image(branch, terminal, values, bytes))
+}
+
+fn validate_word_branch(
+    branch: PhysicalStencilView,
+    terminal: PhysicalStencilView,
+) -> Result<(), LayoutError> {
+    let valid = branch.abi == crate::stencil_select::RegionAbi::ScalarWordBool
+        && terminal.abi == branch.abi
+        && branch.continuation_abi == crate::stencil_select::ContinuationAbi::WordX0
+        && terminal.continuation_abi == branch.continuation_abi
+        && branch.record.operations == [crate::ir::Opcode::JumpIfFalse]
+        && terminal.record.operations == [crate::ir::Opcode::Return]
+        && branch.links.len() == 2
+        && terminal.links.is_empty()
+        && branch.stencil.validate()
+        && terminal.stencil.validate();
+    valid.then_some(()).ok_or(LayoutError::RelocationContract)
+}
+
+fn word_branch_fragments<'values, const N: usize>(
+    branch: PhysicalStencilView,
+    terminal: PhysicalStencilView,
+    values: PatchValues<'values, N>,
+) -> [PlannedFragment<'static, 'values, N>; 3] {
+    [
+        planned_fragment(0, branch.stencil, values),
+        planned_fragment(1, terminal.stencil, values),
+        planned_fragment(2, terminal.stencil, values),
+    ]
+}
+
+fn planned_fragment<'values, const N: usize>(
+    operation: u8,
+    stencil: &'static crate::stencil_fact::Stencil,
+    values: PatchValues<'values, N>,
+) -> PlannedFragment<'static, 'values, N> {
+    PlannedFragment {
+        point: RegionPoint::Operation(operation),
+        stencil,
+        values,
+    }
+}
+
+fn word_branch_image<const N: usize>(
+    branch: PhysicalStencilView,
+    terminal: PhysicalStencilView,
+    values: &PatchValues<'_, N>,
+    bytes: Vec<u8>,
+) -> VerifiedRegionImage {
+    let identity = RegionImageIdentity {
+        key: RegionKey::from_opcodes(BRANCH_COMPOSITION_ID, &WORD_BRANCH_OPERATIONS),
+        cache_signature: chain_signature(&[branch, terminal, terminal], values),
+        abi: branch.abi,
+    };
+    VerifiedRegionImage::from_composed(identity, bytes)
 }
 
 fn chain_operations(views: &[PhysicalStencilView]) -> Result<Vec<crate::ir::Opcode>, LayoutError> {
