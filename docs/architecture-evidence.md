@@ -14,7 +14,7 @@ produce a median-index geomean of 73.83 (MAD 0.20). These are correctness and
 prioritization observations; lifecycle lanes and final generated-object
 validation remain open in task 073.
 
-The current task-073 correction batch has four bounded runtime results. Internal RegExp
+The current task-073 correction batch has five bounded runtime results. Internal RegExp
 descriptor reuse is semantically valid but performance-neutral. Mapping an
 observed intrinsic Array species to the existing fresh ordinary-array path
 removes per-element replacement/descriptor work: an alternating 64x1024 slice
@@ -26,6 +26,20 @@ existing identity-preserving backing for current dense numeric `Reflect.set`
 writes improves a 100,000-write control from 211--218 ms to 199--200 ms. Separate
 Crypto samples remain 15.9--16.2, so none of these results is credited as a
 Crypto or aggregate improvement.
+
+At `da32350972`, an ordinary-source 19-op affine integer loop reaches a generated
+ARM64 region with one entry, 30 native backedge iterations, and no per-iteration
+Rust dispatch. Before the wiring repair the same site recorded 4,095 misses and
+zero hits. A different-name/different-constant clone improves from a 555 ms
+median with native regions disabled to 3 ms in composed mode (Node 11 ms, Bun
+2 ms). Frozen `calls/inline` comparisons improve by 80.0%, 96.65%, and 99.283%
+at small/medium/large sizes, while remaining 158.2x, 12.2x, and 2.30x behind Bun.
+This isolates the remaining cost to cold admission and surrounding call/frame/
+host work rather than the resident ARM64 loop body. Default ARM admission stays
+off. Generated-object tests pass 1,021/1 ignored; default tests pass 1,008/1
+ignored. The AArch64 catalog now derives every emitted instruction from named
+opcode/condition/register-aware encoders; the refactor caught and fixed a `w0`
+versus `w1` destination error that the non-generated comparison tests exposed.
 
 At `94586e4d01`, leaf and composed publication share one transactional finalized
 image carrying exact bytes, identity, ABI and callable-entry offset. A real
