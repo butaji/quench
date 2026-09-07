@@ -10,8 +10,8 @@ use crate::stencil_fact::{PatchValues, Stencil};
 use crate::stencil_layout::FixupKind;
 use crate::stencil_patch::{apply_holes, PatchError};
 use crate::stencil_region_layout::{
-    compose_selected_controlled_region, compose_selected_region, RegionImageIdentity,
-    VerifiedRegionImage,
+    compose_selected_controlled_region, compose_selected_region, finalize_selected_leaf,
+    RegionImageIdentity, VerifiedRegionImage,
 };
 use crate::stencil_select::RenderedRegionCache;
 use std::cell::{Cell, RefCell};
@@ -121,16 +121,22 @@ struct PublishedEntry {
     signature: u64,
     abi: crate::stencil_select::RegionAbi,
     byte_len: usize,
+    entry_offset: usize,
 }
 
 impl PublishedEntry {
-    const fn from_image(identity: RegionImageIdentity, byte_len: usize) -> Self {
+    const fn new(identity: RegionImageIdentity, byte_len: usize, entry_offset: usize) -> Self {
         Self {
             key: identity.key,
             signature: identity.cache_signature,
             abi: identity.abi,
             byte_len,
+            entry_offset,
         }
+    }
+
+    fn from_image(image: &VerifiedRegionImage) -> Self {
+        Self::new(image.identity(), image.bytes().len(), image.entry_offset())
     }
 }
 
