@@ -1,6 +1,4 @@
-//! Bounded disposable value/use graph over canonical residual instructions.
-//!
-//! This module owns no JavaScript semantics and no durable optimizer state.
+//! Bounded disposable value/use graph; it owns neither JS semantics nor durable state.
 
 use crate::ir::{Instruction, Opcode, Register};
 use crate::stencil_plan::{
@@ -467,7 +465,10 @@ fn pure(opcode: Opcode) -> bool {
 fn series_operation(operator: crate::ops::BinaryOp) -> Option<()> {
     matches!(
         operator,
-        crate::ops::BinaryOp::Add | crate::ops::BinaryOp::Subtract
+        crate::ops::BinaryOp::Add
+            | crate::ops::BinaryOp::Subtract
+            | crate::ops::BinaryOp::Multiply
+            | crate::ops::BinaryOp::Divide
     )
     .then_some(())
 }

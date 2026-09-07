@@ -10,6 +10,14 @@ fn aarch64_sub_head() -> &'static str {
     "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_sub_fallthrough_head\nq_sub_fallthrough_head:\n  fsub d0, d0, d1\n  b q_fallthrough_tail\nq_sub_fallthrough_head_end:\n\"#);\n"
 }
 
+fn aarch64_mul_head() -> &'static str {
+    "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_mul_fallthrough_head\nq_mul_fallthrough_head:\n  fmul d0, d0, d1\n  b q_fallthrough_tail\nq_mul_fallthrough_head_end:\n\"#);\n"
+}
+
+fn aarch64_div_head() -> &'static str {
+    "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_div_fallthrough_head\nq_div_fallthrough_head:\n  fdiv d0, d0, d1\n  b q_fallthrough_tail\nq_div_fallthrough_head_end:\n\"#);\n"
+}
+
 fn aarch64_add_chain_head() -> &'static str {
     "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_add_chain_head\nq_add_chain_head:\n  fadd d0, d0, d1\n  b q_add_chain_tail\nq_add_chain_head_end:\n\"#);\n"
 }
@@ -21,10 +29,14 @@ fn aarch64_add_chain_tail() -> &'static str {
 pub(crate) fn fragment_sources(
     recipe: super::RustAssemblyRecipe,
 ) -> Option<(&'static str, &'static str)> {
-    use super::RustAssemblyRecipe::{AddChain, Fallthrough, SubFallthrough};
+    use super::RustAssemblyRecipe::{
+        AddChain, DivFallthrough, Fallthrough, MulFallthrough, SubFallthrough,
+    };
     match recipe {
         Fallthrough => Some((aarch64_head(), aarch64_tail())),
         SubFallthrough => Some((aarch64_sub_head(), aarch64_tail())),
+        MulFallthrough => Some((aarch64_mul_head(), aarch64_tail())),
+        DivFallthrough => Some((aarch64_div_head(), aarch64_tail())),
         AddChain => Some((aarch64_add_chain_head(), aarch64_add_chain_tail())),
         _ => None,
     }
@@ -288,9 +300,11 @@ fn nullish_word_source(name: &str) -> String {
 pub(crate) fn assembly_source(recipe: super::RustAssemblyRecipe) -> String {
     use super::RustAssemblyRecipe::*;
     match recipe {
-        Fallthrough | SubFallthrough | AddChain => fragment_sources(recipe)
-            .map(|(head, tail)| head.to_owned() + tail)
-            .expect("declared fragment pair"),
+        Fallthrough | SubFallthrough | MulFallthrough | DivFallthrough | AddChain => {
+            fragment_sources(recipe)
+                .map(|(head, tail)| head.to_owned() + tail)
+                .expect("declared fragment pair")
+        }
         CompareEqualBranch => compare_branch_source(recipe.name(), "eq", false),
         CompareNotEqualBranch => compare_branch_source(recipe.name(), "ne", true),
         CompareLessBranch => compare_branch_source(recipe.name(), "lt", false),

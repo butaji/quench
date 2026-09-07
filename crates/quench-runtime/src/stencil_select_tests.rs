@@ -55,7 +55,12 @@ fn numeric_add_leaf_never_selects_nonreturning_fallthrough_head() {
 
 #[test]
 fn scalar_leaf_and_continuation_keys_are_distinct() {
-    for opcode in [crate::ir::Opcode::Add, crate::ir::Opcode::Sub] {
+    for opcode in [
+        crate::ir::Opcode::Add,
+        crate::ir::Opcode::Sub,
+        crate::ir::Opcode::Mul,
+        crate::ir::Opcode::Div,
+    ] {
         let leaf = numeric_region_key(opcode).expect("numeric leaf");
         let continuation = continuation_region_key(opcode).expect("numeric continuation");
         assert_ne!(leaf, continuation);

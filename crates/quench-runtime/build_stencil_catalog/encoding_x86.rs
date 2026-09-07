@@ -196,6 +196,14 @@ const X86_SUB_FALLTHROUGH_BYTES: [u8; 9] = {
     let sub = x86_sse2_binary(0x5C, 0, 1);
     [sub[0], sub[1], sub[2], sub[3], 0xE9, 0, 0, 0, 0]
 };
+const X86_MUL_FALLTHROUGH_BYTES: [u8; 9] = {
+    let mul = x86_sse2_binary(0x59, 0, 1);
+    [mul[0], mul[1], mul[2], mul[3], 0xE9, 0, 0, 0, 0]
+};
+const X86_DIV_FALLTHROUGH_BYTES: [u8; 9] = {
+    let div = x86_sse2_binary(0x5E, 0, 1);
+    [div[0], div[1], div[2], div[3], 0xE9, 0, 0, 0, 0]
+};
 const X86_SUBTRACT_BYTES: [u8; 5] = x86_binary_ret(0x5C);
 const X86_MULTIPLY_BYTES: [u8; 5] = x86_binary_ret(0x59);
 const X86_DIVIDE_BYTES: [u8; 5] = x86_binary_ret(0x5E);
