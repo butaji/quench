@@ -58,6 +58,8 @@ pub fn fs_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_FS_WRITE_STREAM_WRITE => crate::modules::fs::write_stream_write,
         CAP_FS_WRITE_STREAM_OPEN => crate::modules::fs::write_stream_open,
         CAP_FS_WRITE_STREAM_CLOSE => crate::modules::fs::write_stream_close,
+        CAP_FS_WRITE_STREAM_AUTO_CLOSE_GET => crate::modules::fs::write_stream_auto_close_get,
+        CAP_FS_WRITE_STREAM_AUTO_CLOSE_SET => crate::modules::fs::write_stream_auto_close_set,
         CAP_FS_DIR_READ_SYNC => crate::modules::fs::dir_read_sync,
         CAP_FS_DIR_READ => crate::modules::fs::dir_read,
         CAP_FS_DIR_CLOSE_SYNC => crate::modules::fs::dir_close_sync,

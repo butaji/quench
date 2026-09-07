@@ -5974,6 +5974,20 @@ fn openssl_version_at_least(major: u32, minor: u32) -> bool {
     found_major > major || (found_major == major && found_minor >= minor)
 }
 
+fn pqc_available() -> bool {
+    if openssl_version_at_least(3, 5) {
+        return true;
+    }
+    matches!(
+        execute::get_property(&crate::modules::process::features(), "openssl_is_boringssl"),
+        Value::Boolean(true)
+    )
+}
+
+fn provider_algorithm_supported(name: &str) -> bool {
+    !name.starts_with("ML-") || pqc_available()
+}
+
 fn ed448_sign(algorithm: &Value, key: &Value, data: &[u8]) -> Result<Vec<u8>, VmError> {
     let signing = ed448_private_key(key)?;
     let signature = match ed448_context(algorithm)? {
@@ -6259,6 +6273,42 @@ fn supports_symmetric_keygen_shape(algorithm: &Value, name: &str) -> bool {
     }
 }
 
+fn supports_import_key_shape(algorithm: &Value) -> bool {
+    let name = algorithm_name(algorithm).to_ascii_uppercase();
+    match name.as_str() {
+        // These algorithms carry a curve dictionary member.  In particular,
+        // an ECDSA/ECDH dictionary cannot name an X25519 curve: that is a
+        // different algorithm family even though both values are strings.
+        "ECDH" | "ECDSA" => {
+            matches!(algorithm, Value::Object(_) | Value::ObjectAlias(_))
+                && matches!(
+                    execute::to_js_string(&execute::get_property(algorithm, "namedCurve"))
+                        .ok()
+                        .as_deref(),
+                    Some("P-256" | "P-384" | "P-521")
+                )
+        }
+        "HMAC" => {
+            if !matches!(algorithm, Value::Object(_) | Value::ObjectAlias(_))
+                || algorithm_hash(algorithm).is_none()
+            {
+                return false;
+            }
+            match execute::get_property(algorithm, "length") {
+                Value::Undefined => true,
+                Value::Number(value) => {
+                    value.is_finite() && value.fract() == 0.0 && value > 0.0
+                }
+                _ => false,
+            }
+        }
+        "RSA-OAEP" | "RSA-PSS" | "RSASSA-PKCS1-V1_5" => {
+            supports_rsa_keygen_shape(algorithm)
+        }
+        _ => true,
+    }
+}
+
 fn supports_ec_keygen_shape(algorithm: &Value) -> bool {
     if !matches!(algorithm, Value::Object(_) | Value::ObjectAlias(_)) {
         return false;
@@ -6433,6 +6483,13 @@ pub fn supports(
         ("encrypt" | "decrypt", "AES-OCB" | "CHACHA20-POLY1305") => {
             supports_aead_shape(algorithm, upper.as_str())
         }
+        ("wrapKey" | "unwrapKey", "AES-CBC" | "AES-GCM") => required_member("iv"),
+        ("wrapKey" | "unwrapKey", "AES-CTR") => {
+            required_member("counter") && required_member("length")
+        }
+        ("wrapKey" | "unwrapKey", "AES-OCB" | "CHACHA20-POLY1305") => {
+            supports_aead_shape(algorithm, upper.as_str())
+        }
         ("sign" | "verify", "ECDSA") => {
             required_member("hash") && algorithm_hash(algorithm).is_some()
         }
@@ -6453,6 +6510,9 @@ pub fn supports(
         ("generateKey", "AES-CBC" | "AES-CTR" | "AES-GCM" | "AES-KW" | "AES-OCB" | "HMAC") => {
             supports_symmetric_keygen_shape(algorithm, upper.as_str())
         }
+        ("importKey", "ECDH" | "ECDSA" | "HMAC" | "RSA-OAEP" | "RSA-PSS" | "RSASSA-PKCS1-V1_5") => {
+            supports_import_key_shape(algorithm)
+        }
         ("deriveBits", "HKDF" | "PBKDF2" | "ECDH" | "X25519" | "X448") => {
             supports_derive_bits_shape(algorithm, upper.as_str(), args.get(2))
         }
@@ -6462,6 +6522,11 @@ pub fn supports(
         }
         ("sign" | "verify", "RSA-PSS") => required_member("saltLength"),
         ("encrypt" | "decrypt", "RSA-OAEP") => {
+            !object_algorithm
+                || !quench_runtime::execute::has_own_property(algorithm, "label")
+                || !matches!(execute::get_property(algorithm, "label"), Value::Null)
+        }
+        ("wrapKey" | "unwrapKey", "RSA-OAEP") => {
             !object_algorithm
                 || !quench_runtime::execute::has_own_property(algorithm, "label")
                 || !matches!(execute::get_property(algorithm, "label"), Value::Null)
@@ -6597,11 +6662,97 @@ pub fn supports(
         ),
         "wrapKey" | "unwrapKey" => matches!(
             upper.as_str(),
-            "AES-KW" | "AES-GCM" | "AES-CBC" | "AES-CTR" | "AES-OCB" | "RSA-OAEP"
+            "AES-KW"
+                | "AES-GCM"
+                | "AES-CBC"
+                | "AES-CTR"
+                | "AES-OCB"
+                | "CHACHA20-POLY1305"
+                | "RSA-OAEP"
         ),
         _ => false,
     };
-    Ok(Value::Boolean(supported))
+    let companion_supported = match operation.as_str() {
+        "wrapKey" => args
+            .get(2)
+            .is_some_and(|value| {
+                supports_export_key_algorithm(value)
+                    && provider_algorithm_supported(&algorithm_name(value).to_ascii_uppercase())
+            }),
+        "unwrapKey" => args
+            .get(2)
+            .is_some_and(|value| {
+                supports_import_key_algorithm(value)
+                    && provider_algorithm_supported(&algorithm_name(value).to_ascii_uppercase())
+            }),
+        _ => true,
+    };
+    Ok(Value::Boolean(
+        supported && companion_supported && provider_algorithm_supported(&upper),
+    ))
+}
+
+fn supports_export_key_algorithm(algorithm: &Value) -> bool {
+    matches!(
+        algorithm_name(algorithm).to_ascii_uppercase().as_str(),
+        "AES-CBC"
+            | "AES-CTR"
+            | "AES-GCM"
+            | "AES-KW"
+            | "AES-OCB"
+            | "CHACHA20-POLY1305"
+            | "ECDH"
+            | "ECDSA"
+            | "ED25519"
+            | "ED448"
+            | "HMAC"
+            | "KMAC128"
+            | "KMAC256"
+            | "ML-DSA-44"
+            | "ML-DSA-65"
+            | "ML-DSA-87"
+            | "ML-KEM-512"
+            | "ML-KEM-768"
+            | "ML-KEM-1024"
+            | "RSA-OAEP"
+            | "RSA-PSS"
+            | "RSASSA-PKCS1-V1_5"
+            | "X25519"
+            | "X448"
+    )
+}
+
+fn supports_import_key_algorithm(algorithm: &Value) -> bool {
+    let name = algorithm_name(algorithm).to_ascii_uppercase();
+    matches!(
+        name.as_str(),
+        "AES-CBC"
+            | "AES-CTR"
+            | "AES-GCM"
+            | "AES-KW"
+            | "AES-OCB"
+            | "CHACHA20-POLY1305"
+            | "ECDH"
+            | "ECDSA"
+            | "ED25519"
+            | "ED448"
+            | "HKDF"
+            | "HMAC"
+            | "KMAC128"
+            | "KMAC256"
+            | "ML-DSA-44"
+            | "ML-DSA-65"
+            | "ML-DSA-87"
+            | "ML-KEM-512"
+            | "ML-KEM-768"
+            | "ML-KEM-1024"
+            | "PBKDF2"
+            | "RSA-OAEP"
+            | "RSA-PSS"
+            | "RSASSA-PKCS1-V1_5"
+            | "X25519"
+            | "X448"
+    ) && supports_import_key_shape(algorithm)
 }
 
 fn algorithm_hash(value: &Value) -> Option<String> {

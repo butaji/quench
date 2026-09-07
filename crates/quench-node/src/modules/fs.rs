@@ -2225,6 +2225,7 @@ const DIR_READING_KEY: &str = "\0quench:fs:dir:reading";
 const DIR_PATH_KEY: &str = "\0quench:fs:dir:path";
 const DIR_PROTO_KEY: &str = "\0quench:fs:dir:prototype";
 const DIRENT_PROTO_KEY: &str = "\0quench:fs:dirent:prototype";
+const WRITE_STREAM_AUTO_CLOSE_KEY: &str = "\0quench:fs:write-stream:auto-close";
 
 fn dir_error(code: &str, message: &str) -> VmError {
     let error = quench_runtime::builtins::error(
@@ -3487,11 +3488,28 @@ pub fn build() -> Value {
     );
     let write_stream = crate::host::capability(SPEC_FS_WRITESTREAM);
     let write_stream_proto = host_api::object(Vec::new());
-    let _ = execute::set_property_in_place(
-        &write_stream_proto,
-        "constructor",
-        write_stream.clone(),
-    );
+    let _ =
+        execute::set_property_in_place(&write_stream_proto, "constructor", write_stream.clone());
+    // Node exposes autoClose as a non-enumerable WriteStream accessor. Keep
+    // its value on each stream while retaining the prototype receiver check.
+    let auto_close_descriptor = host_api::object(vec![
+        (
+            "get".into(),
+            crate::host::capability(SPEC_FS_WRITE_STREAM_AUTO_CLOSE_GET),
+        ),
+        (
+            "set".into(),
+            crate::host::capability(SPEC_FS_WRITE_STREAM_AUTO_CLOSE_SET),
+        ),
+        ("enumerable".into(), Value::Boolean(false)),
+        ("configurable".into(), Value::Boolean(false)),
+    ]);
+    let write_stream_proto = execute::define_property(
+        write_stream_proto,
+        "autoClose",
+        auto_close_descriptor,
+    )
+    .unwrap_or_else(|_| host_api::object(Vec::new()));
     let _ = execute::set_property_in_place(&write_stream, "prototype", write_stream_proto);
     props.extend([
         ("createReadStream", create_read_stream),
@@ -4115,6 +4133,13 @@ pub fn validate_write_stream_options(
         ("fd", fd),
         ("path", Value::String(path)),
         (
+            WRITE_STREAM_AUTO_CLOSE_KEY,
+            Value::Boolean(!matches!(
+                execute::get_property(raw_options, "autoClose"),
+                Value::Boolean(false)
+            )),
+        ),
+        (
             "flush",
             Value::Boolean(matches!(flush, Value::Boolean(true))),
         ),
@@ -4230,6 +4255,51 @@ pub fn write_stream_open(
     let stream = args.first().ok_or(VmError::NotCallable)?;
     let fd = args.get(1).cloned().unwrap_or(Value::Undefined);
     emit_stream_event(state, stream, "open", vec![fd])
+}
+
+pub fn write_stream_auto_close_get(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let stream = receiver.filter(|value| {
+        matches!(value, Value::Object(_) | Value::ObjectAlias(_))
+            && matches!(
+                execute::get_property(value, WRITE_STREAM_AUTO_CLOSE_KEY),
+                Value::Boolean(_)
+            )
+    });
+    let Some(stream) = stream else {
+        return Err(dir_error(
+            "ERR_INVALID_THIS",
+            "Value of \"this\" must be of type WriteStream",
+        ));
+    };
+    Ok(execute::get_property(stream, WRITE_STREAM_AUTO_CLOSE_KEY))
+}
+
+pub fn write_stream_auto_close_set(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let stream = receiver.filter(|value| {
+        matches!(value, Value::Object(_) | Value::ObjectAlias(_))
+            && matches!(
+                execute::get_property(value, WRITE_STREAM_AUTO_CLOSE_KEY),
+                Value::Boolean(_)
+            )
+    });
+    let Some(stream) = stream else {
+        return Err(dir_error(
+            "ERR_INVALID_THIS",
+            "Value of \"this\" must be of type WriteStream",
+        ));
+    };
+    if let Some(value @ Value::Boolean(_)) = args.first() {
+        execute::set_property_in_place(stream, WRITE_STREAM_AUTO_CLOSE_KEY, value.clone());
+    }
+    Ok(Value::Undefined)
 }
 
 pub fn write_stream_close(

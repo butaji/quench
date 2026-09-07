@@ -18,7 +18,8 @@ use crate::registry::{
     SPEC_STREAM_PROMISES_CALLBACK, SPEC_STREAM_PROMISES_FINISHED, SPEC_STREAM_PROMISES_PIPELINE,
     SPEC_STREAM_READABLE, SPEC_STREAM_READABLE_BUFFER, SPEC_STREAM_TRANSFORM,
     SPEC_STREAM_WEB_PIPELINE_COMPLETE, SPEC_STREAM_WEB_PIPELINE_ERROR, SPEC_STREAM_WRITABLE,
-    SPEC_STREAM_WRITABLE_WRITE_ADAPTER,
+    SPEC_STREAM_WRITABLE_WRITE_ADAPTER, SPEC_FS_WRITE_STREAM_AUTO_CLOSE_GET,
+    SPEC_FS_WRITE_STREAM_AUTO_CLOSE_SET,
 };
 
 const PRELUDE: &str = include_str!("stream_prelude.js");
@@ -1559,6 +1560,26 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
             )
         });
         let _ = execute::set_property_in_place(&prototype, "write", adapter);
+    }
+    // fs.WriteStream's bootstrap constructor derives from Writable.prototype.
+    // Install the shared autoClose accessor at that semantic boundary so the
+    // property survives the constructor's prototype replacement.
+    let writable = execute::get_property(&module, "Writable");
+    let writable_prototype = execute::get_property(&writable, "prototype");
+    let auto_close = host_api::object(vec![
+        (
+            "get".into(),
+            crate::host::capability(SPEC_FS_WRITE_STREAM_AUTO_CLOSE_GET),
+        ),
+        (
+            "set".into(),
+            crate::host::capability(SPEC_FS_WRITE_STREAM_AUTO_CLOSE_SET),
+        ),
+        ("enumerable".into(), Value::Boolean(false)),
+        ("configurable".into(), Value::Boolean(false)),
+    ]);
+    if let Ok(updated) = execute::define_property(writable_prototype, "autoClose", auto_close) {
+        let _ = execute::set_property_in_place(&writable, "prototype", updated);
     }
     let readable = execute::get_property(&module, "Readable");
     let readable_prototype = execute::get_property(&readable, "prototype");
