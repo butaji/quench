@@ -528,6 +528,7 @@ pub const SPEC_CP_STDOUT_READ: NodeSpec = NodeSpec::new("child_process:stdout:re
 pub const SPEC_CP_STREAM_SET_ENCODING: NodeSpec =
     NodeSpec::new("child_process:stream:setEncoding", 0x1E13);
 pub const SPEC_CP_EXEC_COMPLETE: NodeSpec = NodeSpec::new("child_process:exec:complete", 0x1E14);
+pub const SPEC_CP_TIMEOUT: NodeSpec = NodeSpec::new("child_process:timeout", 0x1E15);
 pub const SPEC_CP_ABORT: NodeSpec = NodeSpec::new("child_process:abort", 0x1E0B);
 pub const SPEC_CP_ABORT_EMIT: NodeSpec = NodeSpec::new("child_process:abortEmit", 0x1E0C);
 pub const SPEC_CP_FORK: NodeSpec = NodeSpec::new("child_process:fork", 0x1E0D);
