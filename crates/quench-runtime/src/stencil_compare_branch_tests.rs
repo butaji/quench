@@ -65,12 +65,7 @@ fn baseline_entries(instructions: &[crate::ir::Instruction]) -> Vec<crate::machi
 
 #[test]
 fn compare_branch_rejects_live_effectful_and_side_entry_interiors() {
-    let compare = crate::ir::Instruction::binary_operator(
-        2,
-        crate::ops::BinaryOp::LessThan,
-        0,
-        1,
-    );
+    let compare = crate::ir::Instruction::binary_operator(2, crate::ops::BinaryOp::LessThan, 0, 1);
     let dead = crate::ir::Instruction::load_const(3, 0);
     let branch = crate::ir::Instruction::jump_if_false(2, 3);
     let base = baseline_entries(&[compare, dead, branch, crate::ir::Instruction::ret(2)]);
@@ -84,24 +79,14 @@ fn compare_branch_rejects_live_effectful_and_side_entry_interiors() {
     let entries = baseline_entries(&[compare, effectful, branch, crate::ir::Instruction::ret(2)]);
     let cfg = crate::stencil_cfg::ControlFlowFacts::new(&entries, &[None; 4]);
     assert!(crate::machine::compare_branch(&entries, &cfg, 0, compare).is_none());
-    let side_entry = baseline_entries(&[
-        compare,
-        dead,
-        branch,
-        crate::ir::Instruction::jump(1),
-    ]);
+    let side_entry = baseline_entries(&[compare, dead, branch, crate::ir::Instruction::jump(1)]);
     let cfg = crate::stencil_cfg::ControlFlowFacts::new(&side_entry, &[None; 4]);
     assert!(crate::machine::compare_branch(&side_entry, &cfg, 0, compare).is_none());
 }
 
 #[test]
 fn compare_branch_rejects_malformed_or_out_of_range_control() {
-    let compare = crate::ir::Instruction::binary_operator(
-        2,
-        crate::ops::BinaryOp::LessThan,
-        0,
-        1,
-    );
+    let compare = crate::ir::Instruction::binary_operator(2, crate::ops::BinaryOp::LessThan, 0, 1);
     let malformed = crate::ir::Instruction {
         c: 1,
         ..crate::ir::Instruction::jump_if_false(2, 2)
@@ -197,7 +182,13 @@ fn ordinary_source_body_enters_comparison_fusion_from_first_pc() {
             environment,
         );
         assert_eq!(result.unwrap().0, Completion::Return(Value::Number(11.0)));
-        assert_eq!(plan.native_binary_at(pc).unwrap().borrow().native_entry_count(), 1);
+        assert_eq!(
+            plan.native_binary_at(pc)
+                .unwrap()
+                .borrow()
+                .native_entry_count(),
+            1
+        );
         checked = true;
     });
     assert!(checked, "ordinary source body must enter fused comparison");
@@ -215,7 +206,10 @@ fn install_comparison_inputs(
             environment.set(instruction.b, Value::Number(values.next().unwrap()));
         }
     }
-    assert!(values.next().is_none(), "comparison must have two local producers");
+    assert!(
+        values.next().is_none(),
+        "comparison must have two local producers"
+    );
 }
 
 #[test]
@@ -250,9 +244,28 @@ fn run_warm_comparisons(
         run_comparison_once(view, plan, pc, instruction, registers);
         assert_eq!(plan.native_storage_for_test(), storage);
     }
-    assert_eq!(plan.native_binary_at(pc).unwrap().borrow().native_entry_count(), 32);
-    let branch_pc = pc + plan.native_binary_at(pc).unwrap().borrow().compare_branch_span().unwrap() - 1;
-    assert_eq!(plan.native_truthiness_at(branch_pc).unwrap().borrow().native_entry_count(), 0);
+    assert_eq!(
+        plan.native_binary_at(pc)
+            .unwrap()
+            .borrow()
+            .native_entry_count(),
+        32
+    );
+    let branch_pc = pc
+        + plan
+            .native_binary_at(pc)
+            .unwrap()
+            .borrow()
+            .compare_branch_span()
+            .unwrap()
+        - 1;
+    assert_eq!(
+        plan.native_truthiness_at(branch_pc)
+            .unwrap()
+            .borrow()
+            .native_entry_count(),
+        0
+    );
 }
 
 fn run_comparison_once(
@@ -283,7 +296,10 @@ fn assert_branch(result: BranchResult, returned: f64, comparison: bool, native: 
     assert_eq!(result.comparison, Value::Boolean(comparison));
     assert_eq!(result.compare_entries, native);
     assert_eq!(result.truthiness_entries, truthy);
-    assert_eq!(result.generated, native != 0 && cfg!(quench_generated_stencil_artifacts));
+    assert_eq!(
+        result.generated,
+        native != 0 && cfg!(quench_generated_stencil_artifacts)
+    );
 }
 
 #[test]
@@ -305,12 +321,48 @@ fn compare_branch_key_rejects_scalar_entry_routing() {
 #[test]
 fn number_comparison_family_executes_declared_native_branch_bodies() {
     let cases = [
-        ("==", Value::Number(f64::NAN), Value::Number(f64::NAN), false, "compare_equal_branch"),
-        ("!=", Value::Number(f64::NAN), Value::Number(f64::NAN), true, "compare_not_equal_branch"),
-        ("<", Value::Number(-0.0), Value::Number(0.0), false, "compare_less_branch"),
-        ("<=", Value::Number(-0.0), Value::Number(0.0), true, "compare_less_equal_branch"),
-        (">", Value::Number(3.0), Value::Number(2.0), true, "compare_greater_branch"),
-        (">=", Value::Number(f64::NAN), Value::Number(2.0), false, "compare_greater_equal_branch"),
+        (
+            "==",
+            Value::Number(f64::NAN),
+            Value::Number(f64::NAN),
+            false,
+            "compare_equal_branch",
+        ),
+        (
+            "!=",
+            Value::Number(f64::NAN),
+            Value::Number(f64::NAN),
+            true,
+            "compare_not_equal_branch",
+        ),
+        (
+            "<",
+            Value::Number(-0.0),
+            Value::Number(0.0),
+            false,
+            "compare_less_branch",
+        ),
+        (
+            "<=",
+            Value::Number(-0.0),
+            Value::Number(0.0),
+            true,
+            "compare_less_equal_branch",
+        ),
+        (
+            ">",
+            Value::Number(3.0),
+            Value::Number(2.0),
+            true,
+            "compare_greater_branch",
+        ),
+        (
+            ">=",
+            Value::Number(f64::NAN),
+            Value::Number(2.0),
+            false,
+            "compare_greater_equal_branch",
+        ),
     ];
     for (operator, lhs, rhs, expected, identity) in cases {
         assert_number_comparison(operator, lhs, rhs, expected, identity);
@@ -333,7 +385,9 @@ fn assert_number_comparison(
             return;
         };
         assert_eq!(result.comparison, Value::Boolean(expected));
-        assert!(result.artifact_id.is_some_and(|name| name.starts_with(identity)));
+        assert!(result
+            .artifact_id
+            .is_some_and(|name| name.starts_with(identity)));
         assert_eq!(result.compare_entries, 1);
         found = true;
     });

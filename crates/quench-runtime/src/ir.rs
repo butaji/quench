@@ -48,11 +48,19 @@ pub struct RegisterFlow {
 
 impl RegisterFlow {
     pub const fn none() -> Self {
-        Self { uses: [None; 3], definition: None, complete: true }
+        Self {
+            uses: [None; 3],
+            definition: None,
+            complete: true,
+        }
     }
 
     pub const fn unary(definition: Register, source: Register) -> Self {
-        Self { uses: [Some(source), None, None], definition: Some(definition), complete: true }
+        Self {
+            uses: [Some(source), None, None],
+            definition: Some(definition),
+            complete: true,
+        }
     }
 
     pub const fn define(definition: Register) -> Self {
@@ -64,11 +72,19 @@ impl RegisterFlow {
     }
 
     pub const fn binary(definition: Register, left: Register, right: Register) -> Self {
-        Self { uses: [Some(left), Some(right), None], definition: Some(definition), complete: true }
+        Self {
+            uses: [Some(left), Some(right), None],
+            definition: Some(definition),
+            complete: true,
+        }
     }
 
     pub const fn store(source: Register) -> Self {
-        Self { uses: [Some(source), None, None], definition: None, complete: true }
+        Self {
+            uses: [Some(source), None, None],
+            definition: None,
+            complete: true,
+        }
     }
 
     /// Highest VM register referenced by this canonical operand view.
@@ -659,7 +675,11 @@ impl Instruction {
         }
     }
 
-    pub const fn unary_operator(dst: Register, operator: crate::ops::UnaryOp, src: Register) -> Self {
+    pub const fn unary_operator(
+        dst: Register,
+        operator: crate::ops::UnaryOp,
+        src: Register,
+    ) -> Self {
         Self {
             opcode: Opcode::Unary,
             flags: compact_unary_id(operator),
@@ -786,7 +806,11 @@ impl Instruction {
     pub fn register_flow(self) -> RegisterFlow {
         use Opcode::*;
         match self.opcode {
-            LoadConst => RegisterFlow { uses: [None; 3], definition: Some(self.a), complete: true },
+            LoadConst => RegisterFlow {
+                uses: [None; 3],
+                definition: Some(self.a),
+                complete: true,
+            },
             Move if self.flags == 0 => RegisterFlow::unary(self.a, self.b),
             Move | LoadLocal | LoadLocalChecked => RegisterFlow::define(self.a),
             Add | Sub | Mul | Div | Binary => RegisterFlow::binary(self.a, self.b, self.c),
@@ -823,7 +847,11 @@ impl Instruction {
             },
             InitLocal | StoreLocal | StoreLocalChecked => RegisterFlow::store(self.b),
             Jump | Slow => RegisterFlow::none(),
-            ForI => RegisterFlow { uses: [None; 3], definition: None, complete: false },
+            ForI => RegisterFlow {
+                uses: [None; 3],
+                definition: None,
+                complete: false,
+            },
         }
     }
 
@@ -1652,15 +1680,17 @@ mod tests {
             Instruction::move_(5, 4).register_flow().uses,
             [Some(4), None, None]
         );
-        assert!(!Instruction {
-            opcode: Opcode::ForI,
-            flags: 0,
-            a: 0,
-            b: 1,
-            c: 2,
-        }
-        .register_flow()
-        .complete);
+        assert!(
+            !Instruction {
+                opcode: Opcode::ForI,
+                flags: 0,
+                a: 0,
+                b: 1,
+                c: 2,
+            }
+            .register_flow()
+            .complete
+        );
     }
 
     #[test]

@@ -260,8 +260,7 @@ impl BlockValueGraph {
                 } else {
                     [source, NumericSource::Constant(bits)]
                 };
-                fold_numeric_sources(inputs, crate::ops::BinaryOp::Add)
-                    .map(NumericSource::Constant)
+                fold_numeric_sources(inputs, crate::ops::BinaryOp::Add).map(NumericSource::Constant)
             }
             ValueDefinition::Binary { operator, lhs, rhs } => {
                 let inputs = [self.resolve(lhs)?, self.resolve(rhs)?];
@@ -332,7 +331,11 @@ impl BlockValueGraph {
         if operator != crate::ops::BinaryOp::Add {
             return None;
         }
-        let sources = [self.resolve(lhs)?, self.resolve(rhs)?, self.resolve_register(operation.c)?];
+        let sources = [
+            self.resolve(lhs)?,
+            self.resolve(rhs)?,
+            self.resolve_register(operation.c)?,
+        ];
         let bindings = F64x3Bindings {
             inputs: [lhs.register, rhs.register, operation.c],
             output: operation.a,

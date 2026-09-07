@@ -281,7 +281,9 @@ fn block_value_graph_rejects_effects_mismatched_roles_and_live_values() {
     let mut graph = BlockValueGraph::new();
     assert!(!graph.push(Instruction::load_local_checked(2, 20), |_| None));
     assert!(!graph.push(Instruction::jump(4), |_| None));
-    assert!(graph.select(Instruction::ret(2), &BTreeSet::new()).is_none());
+    assert!(graph
+        .select(Instruction::ret(2), &BTreeSet::new())
+        .is_none());
     assert!(!graph.push(Instruction::load_const(2, 7), |_| None));
     assert!(graph.push(Instruction::load_local(3, 20), |_| None));
     assert!(graph.push(Instruction::move_(5, 3), |_| None));

@@ -49,10 +49,7 @@ pub(crate) struct ExecutionPolicy {
 
 impl ExecutionPolicy {
     pub(crate) const fn allows_admission(self) -> bool {
-        self.native_leaves
-            || self.native_dispatch
-            || self.fused_regions
-            || self.composed_regions
+        self.native_leaves || self.native_dispatch || self.fused_regions || self.composed_regions
     }
 
     #[cfg(test)]
@@ -150,9 +147,9 @@ mod tests {
                 optimizing_view: true,
             }
         );
-        assert!(!ExecutionPolicy::from_architecture(Architecture::Aarch64, false)
-            .allows_admission());
-        assert!(ExecutionPolicy::from_architecture(Architecture::Aarch64, true)
-            .allows_admission());
+        assert!(
+            !ExecutionPolicy::from_architecture(Architecture::Aarch64, false).allows_admission()
+        );
+        assert!(ExecutionPolicy::from_architecture(Architecture::Aarch64, true).allows_admission());
     }
 }

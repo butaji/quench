@@ -309,7 +309,10 @@ mod tests {
         let mut forward = [0xa5; 12];
         forward[4..8].copy_from_slice(&0x5400_0001u32.to_le_bytes());
         write_cond_branch19(&mut forward, 4, 4).unwrap();
-        assert_eq!(u32::from_le_bytes(forward[4..8].try_into().unwrap()), 0x5400_0021);
+        assert_eq!(
+            u32::from_le_bytes(forward[4..8].try_into().unwrap()),
+            0x5400_0021
+        );
         assert_eq!(&forward[..4], &[0xa5; 4]);
         assert_eq!(&forward[8..], &[0xa5; 4]);
 
