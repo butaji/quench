@@ -4490,9 +4490,8 @@ impl NativeDispatchPlan {
         if !policy.native_dispatch {
             return None;
         }
-        let key = crate::stencil_select::dispatch_region_key();
-        crate::stencil_select::select_region(key)
-            .filter(|record| record.executable && validate_physical_template(record).is_ok())?;
+        let view = dispatch_physical_view()?;
+        validate_physical_view(view.record, view.stencil).ok()?;
         Some(Self {
             physical: PhysicalInstallation::local(InstalledDispatchEntry::Unpublished),
             site: crate::quickening::QuickeningSite::new(instruction.opcode),
@@ -4508,12 +4507,14 @@ impl NativeDispatchPlan {
         registers: &mut crate::register_file::RegisterFile,
         context: &crate::vm::VmContext,
     ) -> Result<crate::vm::DispatchTransition, NativeDispatchError> {
-        let key = crate::stencil_select::dispatch_region_key();
+        let view = dispatch_physical_view().ok_or_else(|| {
+            NativeDispatchError::Physical("native baseline entry unavailable".into())
+        })?;
+        let key = view.key;
         let values = crate::stencil_fact::PatchValues::from_site(&self.site)
             .with_pointer_bits(crate::vm::native_dispatch_bridge as *const () as usize);
-        if !crate::stencil_select::select_region(key).is_some_and(|record| record.executable)
-            || self.physical.state.lifecycle.observe_site(&self.site, key, true)
-                == crate::stencil_lifecycle::StencilState::Retired
+        if self.physical.state.lifecycle.observe_site(&self.site, key, true)
+            == crate::stencil_lifecycle::StencilState::Retired
         {
             return Err(NativeDispatchError::Physical(
                 "native baseline entry unavailable".into(),
@@ -4536,13 +4537,6 @@ impl NativeDispatchPlan {
             }
             let rendered = (|| {
                 let mut slab = shared.borrow_mut();
-                let view = crate::stencil_select::select_physical_for_abi(
-                    key,
-                    crate::stencil_select::RegionAbi::Bridge,
-                )
-                .ok_or_else(|| {
-                    NativeDispatchError::Physical("native baseline stencil missing".into())
-                })?;
                 let address = slab
                     .render_physical_view_or_get(&mut self.physical.state.cache, view, &values)
                     .map_err(|error| {
@@ -4598,13 +4592,6 @@ impl NativeDispatchPlan {
             let arena = self.physical.storage.local_mut().map_err(|error| {
                 NativeDispatchError::Physical(format!("native baseline mapping failed: {error:?}"))
             })?;
-            let view = crate::stencil_select::select_physical_for_abi(
-                key,
-                crate::stencil_select::RegionAbi::Bridge,
-            )
-            .ok_or_else(|| {
-                NativeDispatchError::Physical("native baseline stencil missing".into())
-            })?;
             let address = arena
                 .render_physical_view_or_get(&mut self.physical.state.cache, view, &values)
                 .map_err(|error| {
@@ -4640,6 +4627,13 @@ impl NativeDispatchPlan {
         );
         result
     }
+}
+
+fn dispatch_physical_view() -> Option<crate::stencil_select::PhysicalStencilView> {
+    crate::stencil_select::select_physical_for_abi(
+        crate::stencil_select::dispatch_region_key(),
+        crate::stencil_select::RegionAbi::Bridge,
+    )
 }
 
 impl std::fmt::Debug for NativeDispatchPlan {
