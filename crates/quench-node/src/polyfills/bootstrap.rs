@@ -8,7 +8,8 @@
 pub mod cluster;
 #[path = "bootstrap/iterators.rs"]
 pub mod iterators;
-
+#[path = "bootstrap/internal_fs_binding.rs"]
+pub mod internal_fs_binding_source;
 abilities!(crate::polyfills::Phase::Bootstrap;
     "globals-extra" => globals_extra,
     "fetch" => fetch,
@@ -18,6 +19,7 @@ abilities!(crate::polyfills::Phase::Bootstrap;
     "support" => support,
     "punycode" => punycode,
     "dns" => dns,
+    "internal-fs-binding" => internal_fs_binding,
     "dgram-head" => dgram_head,
     "dgram" => dgram,
     "dgram-tail" => dgram_tail,
