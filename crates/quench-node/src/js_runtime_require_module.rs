@@ -48,6 +48,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
     if name == "http2" || name == "node:http2" {
         return Ok(crate::modules::require::http2_module_value());
     }
+    if name == "v8" || name == "node:v8" {
+        // Keep the public V8-shaped namespace backed by the Rust serializer
+        // implementation. The engine is not V8, but its observable
+        // serializer/deserializer contract is still a host-owned capability.
+        return Ok(crate::modules::v8::build());
+    }
     if name == "internal/buffer" {
         return Ok(quench_runtime::host_api::object(vec![(
             "utf8Write".into(),
