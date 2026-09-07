@@ -593,6 +593,46 @@ impl SharedStencilSlab {
         Ok(address)
     }
 
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn publish_region_image_or_get(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        image: &VerifiedRegionImage,
+    ) -> Result<usize, ArenaError> {
+        let identity = image.identity();
+        for slab in &mut self.slabs {
+            if self.lease_state.is_retired(slab.id()) {
+                continue;
+            }
+            match slab.publish_region_image_or_get(&mut self.cache, image) {
+                Ok(address) => {
+                    cache.insert_owned(identity.key, identity.cache_signature, address, slab.id());
+                    return Ok(address);
+                }
+                Err(ArenaError::ProtectionFailed | ArenaError::Exhausted) => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        self.allocate_region_image(cache, image)
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn allocate_region_image(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        image: &VerifiedRegionImage,
+    ) -> Result<usize, ArenaError> {
+        if !self.reclaim_for(self.slab_capacity, cache) {
+            return Err(ArenaError::Exhausted);
+        }
+        let identity = image.identity();
+        let mut slab = StencilArena::new_in_budget(self.slab_capacity, self.budget)?;
+        let address = slab.publish_region_image_or_get(&mut self.cache, image)?;
+        cache.insert_owned(identity.key, identity.cache_signature, address, slab.id());
+        self.slabs.push(slab);
+        Ok(address)
+    }
+
     fn slab_for(&self, address: usize) -> Option<&StencilArena> {
         self.slabs.iter().find(|slab| slab.owns_address(address))
     }
