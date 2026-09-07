@@ -210,11 +210,8 @@ impl StencilArena {
             cache_signature: signature,
             abi: view.abi,
         };
-        if self.is_executable()
-            && self
-                .require_publication(address, identity, byte_len)
-                .is_ok()
-        {
+        let published = PublishedEntry::new(identity, byte_len, usize::from(view.entry));
+        if self.is_executable() && self.require_publication(address, published).is_ok() {
             Some(address)
         } else {
             cache.remove(view.key, signature, address);
@@ -247,16 +244,8 @@ impl StencilArena {
         image: &VerifiedRegionImage,
     ) -> Result<usize, ArenaError> {
         let identity = image.identity();
-        let bytes = image.bytes();
         let checkpoint = self.cursor;
-        let offset = self.alloc_aligned(bytes.len(), STENCIL_ALIGNMENT)?;
-        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.ptr.add(offset), bytes.len()) };
-        let address = self.address(offset).ok_or(ArenaError::Exhausted)?;
-        if let Err(error) = self.record_publication(address, identity, bytes.len()) {
-            self.cursor = checkpoint;
-            return Err(error);
-        }
-        cache.insert_owned(identity.key, identity.cache_signature, address, self.id);
+        let address = self.copy_finalized_image(cache, image)?;
         if let Err(error) = self.make_executable() {
             cache.remove(identity.key, identity.cache_signature, address);
             self.published_entries.borrow_mut().remove(&address);

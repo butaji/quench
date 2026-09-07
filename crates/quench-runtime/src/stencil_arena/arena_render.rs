@@ -99,26 +99,40 @@ impl StencilArena {
         view: crate::stencil_select::PhysicalStencilView,
         values: &PatchValues<'_, N>,
     ) -> Result<usize, ArenaError> {
-        if !view.contract().abi_is_well_formed() || !view.stencil.validate() {
-            return Err(ArenaError::ProtectionFailed);
-        }
-        let signature = view.cache_signature(values);
-        let identity = RegionImageIdentity::selected(view, values);
+        let image = finalize_selected_leaf(view, values).map_err(|error| match error {
+            crate::stencil_layout::LayoutError::Patch(error) => ArenaError::Patch(error),
+            _ => ArenaError::ProtectionFailed,
+        })?;
+        let identity = image.identity();
         if let Some(address) = cache
-            .get_owned(view.key, signature, self.id)
+            .get_owned(identity.key, identity.cache_signature, self.id)
             .filter(|address| self.owns_address(*address))
         {
-            self.require_publication(address, identity, view.stencil.bytes.len())?;
+            self.require_region_image(address, &image)?;
             return Ok(address);
         }
+        self.copy_finalized_image(cache, &image)
+    }
+
+    pub(super) fn copy_finalized_image(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        image: &VerifiedRegionImage,
+    ) -> Result<usize, ArenaError> {
         let checkpoint = self.cursor;
-        let offset = self.copy_and_patch(view.stencil, values)?;
-        let address = self.address(offset).ok_or(ArenaError::Exhausted)?;
-        if let Err(error) = self.record_publication(address, identity, view.stencil.bytes.len()) {
+        let bytes = image.bytes();
+        let offset = self.alloc_aligned(bytes.len(), STENCIL_ALIGNMENT)?;
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.ptr.add(offset), bytes.len()) };
+        let entry_offset = offset
+            .checked_add(image.entry_offset())
+            .ok_or(ArenaError::Exhausted)?;
+        let address = self.address(entry_offset).ok_or(ArenaError::Exhausted)?;
+        if let Err(error) = self.record_publication(address, PublishedEntry::from_image(image)) {
             self.cursor = checkpoint;
             return Err(error);
         }
-        Ok(cache.insert_owned(view.key, signature, address, self.id))
+        let identity = image.identity();
+        Ok(cache.insert_owned(identity.key, identity.cache_signature, address, self.id))
     }
 
     pub(super) fn render_selected_physical_view<const N: usize>(
@@ -194,10 +208,8 @@ impl StencilArena {
     pub(super) fn record_publication(
         &self,
         address: usize,
-        identity: RegionImageIdentity,
-        byte_len: usize,
+        entry: PublishedEntry,
     ) -> Result<(), ArenaError> {
-        let entry = PublishedEntry::from_image(identity, byte_len);
         let mut published = self.published_entries.borrow_mut();
         match published.get(&address) {
             Some(existing) if *existing != entry => Err(ArenaError::ProtectionFailed),
@@ -212,10 +224,8 @@ impl StencilArena {
     pub(super) fn require_publication(
         &self,
         address: usize,
-        identity: RegionImageIdentity,
-        byte_len: usize,
+        expected: PublishedEntry,
     ) -> Result<(), ArenaError> {
-        let expected = PublishedEntry::from_image(identity, byte_len);
         (self.published_entries.borrow().get(&address) == Some(&expected))
             .then_some(())
             .ok_or(ArenaError::ProtectionFailed)
@@ -229,8 +239,12 @@ impl StencilArena {
         address: usize,
         image: &VerifiedRegionImage,
     ) -> Result<(), ArenaError> {
-        self.require_publication(address, image.identity(), image.bytes().len())?;
-        let offset = address
+        let published = PublishedEntry::from_image(image);
+        self.require_publication(address, published)?;
+        let base = address
+            .checked_sub(image.entry_offset())
+            .ok_or(ArenaError::ProtectionFailed)?;
+        let offset = base
             .checked_sub(self.ptr as usize)
             .ok_or(ArenaError::ProtectionFailed)?;
         let end = offset
@@ -239,9 +253,8 @@ impl StencilArena {
         if end > self.cursor {
             return Err(ArenaError::ProtectionFailed);
         }
-        let published = unsafe {
-            std::slice::from_raw_parts(self.ptr.add(offset), image.bytes().len())
-        };
+        let published =
+            unsafe { std::slice::from_raw_parts(self.ptr.add(offset), image.bytes().len()) };
         (published == image.bytes())
             .then_some(())
             .ok_or(ArenaError::ProtectionFailed)

@@ -81,6 +81,40 @@ fn composed_cache_hit_requires_the_exact_finalized_image() {
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn published_image_derives_the_callable_address_from_its_entry() {
+    let (mut bytes, entry) = prefixed_three_fragment_layout();
+    let mut arena = StencilArena::new(4096).unwrap();
+    let mut cache = RenderedRegionCache::new();
+    let view = crate::stencil_select::select_physical(crate::stencil_select::multiply_region_key())
+        .expect("binary physical view");
+    let image = VerifiedRegionImage::from_test_parts_at(view, 23, entry, bytes.clone());
+    let address = arena.publish_composed(&mut cache, &image).unwrap();
+    assert_eq!(arena.execute_f64(address, 1.0, 2.0), Ok(5.0));
+    assert_eq!(arena.used(), bytes.len());
+
+    bytes[0] ^= 1;
+    let collision = VerifiedRegionImage::from_test_parts_at(view, 23, entry, bytes);
+    assert_eq!(
+        arena.publish_region_image_or_get(&mut cache, &collision),
+        Err(ArenaError::ProtectionFailed)
+    );
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn prefixed_three_fragment_layout() -> (Vec<u8>, u16) {
+    let body = three_fragment_layout();
+    #[cfg(target_arch = "x86_64")]
+    let prefix = &[0x90][..];
+    #[cfg(target_arch = "aarch64")]
+    let prefix = &0xD503_201Fu32.to_le_bytes()[..];
+    let mut bytes = Vec::with_capacity(prefix.len() + body.len());
+    bytes.extend_from_slice(prefix);
+    bytes.extend_from_slice(&body);
+    (bytes, prefix.len() as u16)
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn three_fragment_layout() -> Vec<u8> {
     use crate::stencil_layout::{Fragment, LabelId, StencilLayout};
 
