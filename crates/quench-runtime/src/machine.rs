@@ -694,7 +694,13 @@ impl CodeArena {
         ternary_dst: Option<u16>,
     ) {
         let mut cursor = 0;
+        let mut source = source;
         while cursor < body.len() {
+            if let Some(next_source) = trace_source(&body[cursor]) {
+                source = Some(next_source);
+                cursor += 1;
+                continue;
+            }
             if let Some(next) = self.try_encode_control(
                 body,
                 cursor,
@@ -8078,6 +8084,35 @@ mod tests {
         assert_eq!(code.len(), 2);
         assert_eq!(code.metadata_at(0).and_then(|meta| meta.source), Some(41));
         assert_eq!(code.metadata_at(1).and_then(|meta| meta.source), Some(41));
+    }
+
+    #[cfg(feature = "execution-trace")]
+    #[test]
+    fn nested_trace_sites_are_metadata_not_slow_operations() {
+        let then_ops = super::FunctionCode::pending(vec![
+            super::Op::TraceSite { source: 42 },
+            super::Op::Move { dst: 1, src: 2 },
+        ]);
+        let else_ops = super::FunctionCode::pending(vec![
+            super::Op::TraceSite { source: 43 },
+            super::Op::Move { dst: 3, src: 4 },
+        ]);
+        let mut arena = super::CodeArena::new();
+        let range = arena.append_slice(&[super::Op::Branch {
+            condition: 0,
+            then_ops,
+            else_ops,
+        }]);
+        let store = arena.freeze();
+        let code = store.code(range).expect("compact code range");
+        assert!((0..code.len()).all(|pc| {
+            code.instruction(pc)
+                .is_some_and(|instruction| instruction.opcode != crate::ir::Opcode::Slow)
+        }));
+        let sources = (0..code.len())
+            .filter_map(|pc| code.metadata_at(pc).and_then(|meta| meta.source))
+            .collect::<Vec<_>>();
+        assert_eq!(sources, vec![42, 43]);
     }
     #[test]
     fn constant_instruction_uses_canonical_pool_without_cold_operation() {
