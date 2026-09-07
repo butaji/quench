@@ -59,6 +59,28 @@ fn selected_fragments_form_a_reusable_three_fragment_chain() {
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn composed_cache_hit_requires_the_exact_finalized_image() {
+    let bytes = three_fragment_layout();
+    let mut arena = StencilArena::new(4096).unwrap();
+    let mut cache = RenderedRegionCache::new();
+    let view = crate::stencil_select::select_physical(crate::stencil_select::multiply_region_key())
+        .expect("binary physical view");
+    let image = VerifiedRegionImage::from_test_parts(view, 17, bytes.clone());
+    arena
+        .publish_region_image_or_get(&mut cache, &image)
+        .expect("first image publishes");
+
+    let mut different = bytes;
+    different[0] ^= 1;
+    let collision = VerifiedRegionImage::from_test_parts(view, 17, different);
+    assert_eq!(
+        arena.publish_region_image_or_get(&mut cache, &collision),
+        Err(ArenaError::ProtectionFailed)
+    );
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn three_fragment_layout() -> Vec<u8> {
     use crate::stencil_layout::{Fragment, LabelId, StencilLayout};
 
