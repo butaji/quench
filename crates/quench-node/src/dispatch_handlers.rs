@@ -4617,6 +4617,56 @@ pub fn internal_binding(
     Err(VmError::Thrown(error))
 }
 
+/// Implement Node's private dgram handle factory at the host boundary.  The
+/// public dgram facade and `internalBinding('udp_wrap')` both expose the
+/// bootstrap UDP constructor; this operation composes that one constructor
+/// with descriptor adoption and bind result semantics instead of maintaining
+/// a fixture-specific JavaScript replacement.
+pub fn internal_dgram_create_socket_handle(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let global = quench_runtime::vm::current_global_object();
+    let udp = execute::get_property(&global, "__quenchDgramUDPClass");
+    if matches!(udp, Value::Undefined) {
+        return Err(VmError::NotCallable);
+    }
+    if let Some(fd) = args.get(3) {
+        let fds = execute::get_property(&global, "__quenchDgramUdpFds");
+        let has = execute::get_property(&fds, "has");
+        let valid = execute::call(&has, &fds, &[fd.clone()])
+            .map(|value| execute::is_truthy(&value))
+            .unwrap_or(false);
+        if !valid {
+            return Ok(Value::Number(-9.0));
+        }
+        let handle = execute::construct_value(&udp, &[])?;
+        execute::set_property_in_place(&handle, "fd", fd.clone());
+        return Ok(handle);
+    }
+
+    let handle = execute::construct_value(&udp, &[])?;
+    let address = args.first().cloned().unwrap_or(Value::Null);
+    if matches!(address, Value::Null | Value::Undefined) {
+        return Ok(handle);
+    }
+    let port = args.get(1).cloned().unwrap_or(Value::Null);
+    let type_name = args
+        .get(2)
+        .and_then(|value| match value {
+            Value::String(value) => Some(value.as_str()),
+            _ => None,
+        })
+        .unwrap_or("udp4");
+    let bind = execute::get_property(&handle, if type_name == "udp6" { "bind6" } else { "bind" });
+    let result = execute::call(&bind, &handle, &[address, port, Value::Number(0.0)])?;
+    match result {
+        Value::Number(code) if code < 0.0 => Ok(Value::Number(code)),
+        _ => Ok(handle),
+    }
+}
+
 /// Record an internal FileHandle allocation so the explicit GC boundary can
 /// report Node's finalizer error when the handle is not closed.
 pub fn internal_fs_open_file_handle(

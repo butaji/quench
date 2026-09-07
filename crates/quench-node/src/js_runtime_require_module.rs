@@ -463,6 +463,17 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 capability_function(HostCapabilityKind::Custom(CapabilityName::InternalBinding)),
             )]));
         }
+        if name == "internal/dgram" || name == "node:internal/dgram" {
+            let global = quench_runtime::vm::current_global_object();
+            let symbol = quench_runtime::execute::get_property(&global, "__quenchDgramStateSymbol");
+            return Ok(quench_runtime::host_api::object(vec![
+                ("kStateSymbol".into(), symbol),
+                (
+                    "_createSocketHandle".into(),
+                    crate::host::capability(crate::registry::SPEC_INTERNAL_DGRAM_CREATE_SOCKET_HANDLE),
+                ),
+            ]));
+        }
         if name == "os" || name == "node:os" {
             return Ok(crate::host::namespace_object_from_pairs(
                 crate::modules::os::build(),

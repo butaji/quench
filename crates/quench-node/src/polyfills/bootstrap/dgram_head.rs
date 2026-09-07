@@ -36,11 +36,14 @@ const __quenchDgramBufferError = (type, code, message) => {
   );
   error.name = "SystemError";
   error.code = "ERR_SOCKET_BUFFER_SIZE";
-  error.info = { errno: undefined, code, message, syscall };
+  // libuv reports the negative platform errno in `info.errno`; preserve that
+  // fact for both the inspect shape and direct property assertions.
+  const errno = code === "EBADF" ? -9 : code === "EINVAL" ? -22 : code === "ENOTSOCK" ? -38 : undefined;
+  error.info = { errno, code, message, syscall };
   let errorErrno;
   Object.defineProperty(error, "errno", {
     enumerable: true,
-    get: () => errorErrno,
+    get: () => errorErrno === undefined ? errno : errorErrno,
     set: (value) => {
       errorErrno = value;
     }
