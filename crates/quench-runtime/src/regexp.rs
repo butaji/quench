@@ -1196,17 +1196,8 @@ fn fast_set_last_index(receiver: &Value, value: &Value) -> bool {
     else {
         return false;
     };
-    let writable = crate::builtins::object::descriptor(
-        Some(receiver),
-        Some(&Value::String("lastIndex".to_string())),
-    )
-    .ok()
-    .is_some_and(|descriptor| match descriptor {
-        Value::Object(properties) => properties
-            .iter()
-            .any(|(name, value)| name == "writable" && matches!(value, Value::Boolean(true))),
-        _ => false,
-    });
+    let writable = crate::builtins::descriptor_flag(receiver, "lastIndex", "writable")
+        == Some(true);
     if writable {
         cell.replace(value.clone());
     }
@@ -1287,8 +1278,50 @@ include!("regexp_tail.rs");
 
 #[cfg(test)]
 mod tests {
-    use super::{compile, has_regexp_internal_slot, replace_with_template};
+    use super::{
+        compile, fast_set_last_index, has_regexp_internal_slot, replace_with_template,
+        set_last_index_value,
+    };
     use crate::value::{ObjectData, Value};
+
+    #[test]
+    fn fast_last_index_write_uses_internal_descriptor_state() {
+        let regexp = regexp_with_last_index(true);
+        assert!(fast_set_last_index(&regexp, &Value::Number(3.0)));
+        assert_eq!(
+            crate::execute::get_property_result(&regexp, "lastIndex"),
+            Ok(Value::Number(3.0))
+        );
+
+        let readonly = regexp_with_last_index(false);
+        assert!(!fast_set_last_index(&readonly, &Value::Number(4.0)));
+        assert_eq!(
+            crate::execute::get_property_result(&readonly, "lastIndex"),
+            Ok(Value::Number(0.0))
+        );
+        assert!(matches!(
+            set_last_index_value(&readonly, Value::Number(4.0)),
+            Err(crate::execute::VmError::Thrown(_))
+        ));
+    }
+
+    fn regexp_with_last_index(writable: bool) -> Value {
+        let mut entries = (0..10)
+            .map(|index| (format!("\0slot{index}"), Value::Undefined))
+            .collect::<Vec<_>>();
+        entries[0] = ("\0regexp".into(), Value::Boolean(true));
+        entries[2] = ("\0regexp_source".into(), Value::String(".".into()));
+        entries[3] = ("\0regexp_flags".into(), Value::String("g".into()));
+        entries[9] = (
+            "lastIndex".into(),
+            Value::BindingCell(crate::value::BindingCell::new(Value::Number(0.0))),
+        );
+        let descriptor = Value::Object(
+            ObjectData::new(vec![("writable".into(), Value::Boolean(writable))]).into(),
+        );
+        entries.push((crate::builtins::descriptor_key("lastIndex"), descriptor));
+        Value::Object(ObjectData::new(entries).into())
+    }
 
     #[test]
     fn regexp_slot_requires_intrinsic_marker() {
