@@ -111,16 +111,18 @@ Quench should preserve the same shape with its smaller Rust-only vocabulary:
 
 | AsmJit concept | Quench representation | Decision |
 | --- | --- | --- |
-| Targeted code holder | `PhysicalStencilView` -> `VerifiedRegionImage` | Keep one selected physical contract; never reselect ABI, bytes or links during publication. |
+| Targeted code holder | `PhysicalStencilView` -> `VerifiedRegionImage` | Keep one selected physical contract; finalize bytes and callable-entry offset once, and never reselect ABI, bytes or links during publication. |
 | Sections and labels | `Stencil`, immutable data and symbolic `PhysicalLink`/`Fixup` records | Keep code bytes in exactly one field and resolve labels transactionally. |
 | Flatten/resolve/relocate | bounded layout validation and typed patching | Preserve pure planning before executable allocation; failure publishes nothing. |
 | Runtime add/release | shared slab publication plus allocation-retaining lease | Keep invocation separate from construction and make retirement generation-aware. |
 | Reusable emitter/compiler | runtime assembler/compiler graph | Reject: offline rustc artifacts and a finite recipe catalog are smaller and reproducible. |
 
-This comparison produced one immediate representation cleanup: generated
-artifacts no longer carry both `bytes` and `stencil.bytes`; `Stencil` is the sole
-code-section authority. A further wrapper or universal instruction API is not
-justified without measured duplication. In particular, do not import AsmJit's
+This comparison produced two representation cleanups: generated artifacts no
+longer carry both `bytes` and `stencil.bytes`, and leaf/composed paths now publish
+the same exact `VerifiedRegionImage` instead of reconstructing entry metadata
+while copying. `Stencil` is the sole source-section authority and the finalized
+image is the publication authority. A further wrapper or universal instruction
+API is not justified without measured duplication. In particular, do not import AsmJit's
 generic compiler, register allocator, zone allocator, logging/error framework or
 instruction database into the VM.
 
