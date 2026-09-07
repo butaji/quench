@@ -146,6 +146,10 @@ reconstruct or relabel identity from parallel arguments. Typed labels and fixups
 remain bounded Rust data and resolution stays transactional. Do not import
 AsmJit's instruction builder, compiler, allocator or runtime dependency: those
 would duplicate the canonical Rust catalog and the existing slab/lease lifecycle.
+The first reusable builder deliberately accepts only repeated fragments sharing
+one declared internal register convention. Equal external ABIs alone do not make
+two arbitrary function bodies composable; additional fragment roles must be
+declared and verified before the builder may mix them.
 
 ### Bounded stencil-selection optimizer
 
