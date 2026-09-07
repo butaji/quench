@@ -11,9 +11,10 @@ mod build_stencil_contract;
 mod build_stencil_templates;
 
 use build_stencil_contract::{
-    equal, operand, region_key_name, value, AssemblyContinuation, DeclAbi, DeclContinuationAbi,
-    PhysicalBinding, PhysicalBindingValue, PhysicalOperand, PhysicalOperandField, PhysicalOutput,
-    PhysicalOutputDestination, PhysicalOutputValue, RecipeComposition, RegionDeclaration,
+    equal, operand, region_key_name, value, AssemblyContinuation, AssemblySuccessor,
+    AssemblySuccessorRole, DeclAbi, DeclContinuationAbi, PhysicalBinding, PhysicalBindingValue,
+    PhysicalOperand, PhysicalOperandField, PhysicalOutput, PhysicalOutputDestination,
+    PhysicalOutputValue, RecipeComposition, RegionDeclaration,
 };
 
 include!("build_stencil_catalog/encoding_common.rs");

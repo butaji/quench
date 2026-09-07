@@ -80,6 +80,22 @@ fn scalar_leaf_and_continuation_keys_are_distinct() {
     }
 }
 
+#[test]
+fn successor_role_participates_in_physical_identity() {
+    let view = select_physical(fallthrough_region_key()).expect("continuation view");
+    let mut altered = view;
+    let mut links = view.links.to_vec();
+    links[0].role = SuccessorRole::False;
+    altered.links = Box::leak(links.into_boxed_slice());
+    let site = crate::quickening::QuickeningSite::<2>::new(crate::ir::Opcode::Add);
+    let values = crate::stencil_fact::PatchValues::from_site(&site);
+    assert!(!view.matches(&altered));
+    assert_ne!(
+        view.cache_signature(&values),
+        altered.cache_signature(&values)
+    );
+}
+
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 #[test]
 fn numeric_rows_never_admit_x86_bytes_on_other_isas() {

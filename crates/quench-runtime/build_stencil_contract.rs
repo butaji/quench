@@ -162,6 +162,19 @@ pub(crate) struct AssemblyContinuation {
     pub(crate) target: &'static str,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AssemblySuccessorRole {
+    Next,
+    True,
+    False,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct AssemblySuccessor {
+    pub(crate) target: &'static str,
+    pub(crate) role: AssemblySuccessorRole,
+}
+
 macro_rules! assembly_continuation {
     () => {
         None
@@ -280,6 +293,12 @@ macro_rules! rust_assembly_catalog {
                 }
             }
 
+            pub(crate) const fn successors(self) -> &'static [AssemblySuccessor] {
+                match self {
+                    $( Self::$variant => assembly_successors!($($target)?) ),+
+                }
+            }
+
             pub(crate) const fn bindings(self) -> &'static [PhysicalBinding] {
                 match self {
                     $( Self::$variant => rust_assembly_bindings!($($bindings)?), )+
@@ -310,6 +329,18 @@ macro_rules! rust_assembly_catalog {
                 external_entries: &[0],
             }
         ),+];
+    };
+}
+
+macro_rules! assembly_successors {
+    () => {
+        &[]
+    };
+    ($target:literal) => {
+        &[AssemblySuccessor {
+            target: $target,
+            role: AssemblySuccessorRole::Next,
+        }]
     };
 }
 

@@ -315,6 +315,7 @@ impl PhysicalStencilView {
             && self.data == other.data
             && self.compiler == other.compiler
             && self.relocations == other.relocations
+            && self.links == other.links
             && self.abi == other.abi
             && self.entry == other.entry
             && self.external_entries == other.external_entries
@@ -356,7 +357,29 @@ fn physical_identity_hash(view: PhysicalStencilView, patch: u64) -> u64 {
             .wrapping_mul(0x1000_0000_01b3)
             .wrapping_add(u64::from(*byte));
     }
+    for link in view.links {
+        hash = hash_physical_link(hash, *link);
+    }
     hash.max(1)
+}
+
+fn hash_physical_link(mut hash: u64, link: PhysicalLink) -> u64 {
+    for byte in link
+        .offset
+        .to_le_bytes()
+        .iter()
+        .chain(link.target.as_bytes())
+    {
+        hash = hash
+            .wrapping_mul(0x1000_0000_01b3)
+            .wrapping_add(u64::from(*byte));
+    }
+    let role = match link.role {
+        SuccessorRole::Next => 1,
+        SuccessorRole::True => 2,
+        SuccessorRole::False => 3,
+    };
+    hash.wrapping_mul(0x1000_0000_01b3).wrapping_add(role)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

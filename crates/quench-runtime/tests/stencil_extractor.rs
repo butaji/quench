@@ -25,9 +25,10 @@ mod leaf_catalog {
 
 mod assembly_catalog {
     use super::build_stencil_contract::{
-        equal, operand, value, AssemblyContinuation, DeclAbi, PhysicalBinding,
-        PhysicalBindingValue, PhysicalOperand, PhysicalOperandField, PhysicalOutput,
-        PhysicalOutputDestination, PhysicalOutputValue, RecipeComposition, RegionDeclaration,
+        equal, operand, value, AssemblyContinuation, AssemblySuccessor, AssemblySuccessorRole,
+        DeclAbi, DeclContinuationAbi, PhysicalBinding, PhysicalBindingValue, PhysicalOperand,
+        PhysicalOperandField, PhysicalOutput, PhysicalOutputDestination, PhysicalOutputValue,
+        RecipeComposition, RegionDeclaration,
     };
 
     include!(concat!(
@@ -53,12 +54,17 @@ mod harness {
         rust_assembly_declaration, rust_assembly_recipe, RustAssemblyRecipe,
     };
     use super::build_stencil_contract::{
-        region_key_name, DeclAbi, RecipeComposition, RegionDeclaration,
+        region_key_name, AssemblySuccessor, AssemblySuccessorRole, DeclAbi, RecipeComposition,
+        RegionDeclaration,
     };
     use super::leaf_catalog::{rust_leaf_recipe, RustLeafRecipe};
 
     fn abi_expr(_: &RegionDeclaration) -> String {
         "crate::stencil_select::RegionAbi::ScalarF64Binary".to_owned()
+    }
+
+    fn continuation_abi_expr(_: &RegionDeclaration) -> String {
+        "crate::stencil_select::ContinuationAbi::None".to_owned()
     }
 
     fn target_template_calls_helper(_: &RegionDeclaration) -> bool {

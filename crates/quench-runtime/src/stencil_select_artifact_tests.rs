@@ -38,6 +38,13 @@ fn extracted_build_artifacts_match_canonical_contracts() {
                 "only zero-addend patches are supported"
             );
         }
+        for link in artifact.links {
+            assert!(artifact.relocations.iter().any(|relocation| {
+                relocation.offset == link.offset
+                    && relocation.kind == link.kind
+                    && relocation.target == link.target
+            }));
+        }
         for hole in artifact.stencil.holes {
             assert!(
                 hole.kind == crate::stencil_fact::HoleKind::Literal64
@@ -86,6 +93,11 @@ fn generated_continuation_abi_mismatch_rejects_the_complete_view() {
         &mismatched,
         record.fallthrough
     ));
+    let selected = generated_physical_view(record.key, record, artifact).expect("selected view");
+    assert_eq!(selected.links, artifact.links);
+    let mut detached = *artifact;
+    detached.links = &[];
+    assert!(generated_physical_view(record.key, record, Box::leak(Box::new(detached))).is_none());
 }
 
 #[test]
@@ -133,6 +145,7 @@ fn physical_view_rejects_layout_mismatch_before_entry() {
         bytes: BYTES,
         data: &[],
         relocations: &[],
+        links: &[],
         stencil: Stencil {
             bytes: BYTES,
             holes: &[],
@@ -156,6 +169,7 @@ fn physical_view_rejects_layout_mismatch_before_entry() {
         bytes: BYTES,
         data: &[],
         relocations: &[],
+        links: &[],
         stencil: Stencil {
             bytes: BYTES,
             holes: &[],
@@ -179,6 +193,7 @@ fn physical_view_rejects_layout_mismatch_before_entry() {
         bytes: BYTES,
         data: &[],
         relocations: &[],
+        links: &[],
         stencil: Stencil {
             bytes: BYTES,
             holes: &[],
@@ -202,6 +217,7 @@ fn physical_view_rejects_layout_mismatch_before_entry() {
         bytes: BYTES,
         data: &[],
         relocations: &[],
+        links: &[],
         stencil: Stencil {
             bytes: BYTES,
             holes: &[],
@@ -230,6 +246,7 @@ fn physical_view_rejects_layout_mismatch_before_entry() {
             target: "q_missing",
             addend: 0,
         }],
+        links: &[],
         stencil: Stencil {
             bytes: BYTES,
             holes: &[],
@@ -264,6 +281,7 @@ fn physical_view_rejects_layout_mismatch_before_entry() {
         bytes: BYTES,
         data: &[],
         relocations: &[],
+        links: &[],
         stencil: Stencil {
             bytes: BYTES,
             holes: &[],
