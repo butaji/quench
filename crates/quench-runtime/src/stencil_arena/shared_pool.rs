@@ -106,14 +106,7 @@ impl SharedStencilSlab {
     /// carries its slab generation, so an evicted address cannot become
     /// callable again if the OS later reuses that address.
     pub fn evict_idle(&mut self, retain: usize) -> usize {
-        if self.active_dispatches.get() != 0 {
-            return 0;
-        }
-        let owners = self.remove_idle_owners(retain);
-        for owner in &owners {
-            self.cache.remove_owner(*owner);
-        }
-        owners.len()
+        self.evict_idle_core(retain, None)
     }
 
     /// Evict idle slabs and prune their derived cache rows in one ownership
@@ -125,13 +118,23 @@ impl SharedStencilSlab {
         cache: &mut RenderedRegionCache,
         retain: usize,
     ) -> usize {
+        self.evict_idle_core(retain, Some(cache))
+    }
+
+    fn evict_idle_core(
+        &mut self,
+        retain: usize,
+        mut external: Option<&mut RenderedRegionCache>,
+    ) -> usize {
         if self.active_dispatches.get() != 0 {
             return 0;
         }
         let owners = self.remove_idle_owners(retain);
         for owner in &owners {
             self.cache.remove_owner(*owner);
-            cache.remove_owner(*owner);
+            if let Some(cache) = external.as_deref_mut() {
+                cache.remove_owner(*owner);
+            }
         }
         owners.len()
     }
