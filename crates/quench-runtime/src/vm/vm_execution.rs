@@ -294,7 +294,9 @@ pub(crate) fn execute_function_code_completion_with_context(
 ) -> Result<crate::completion::Completion, VmError> {
     let _ = owner.enter_invocation();
     if let (Some(optimizing), Some(baseline)) = (owner.executable_optimizing_plan(), owner.baseline_plan()) {
-        drive_code_completion_with_optimizing_plan(code, registers, context, &optimizing, &baseline)
+        drive_code_completion_with_optimizing_plan(
+            code, registers, context, &optimizing, &baseline, 0,
+        )
     } else if let Some(plan) = owner.baseline_plan() {
         drive_code_completion_with_plan(code, registers, context, &plan, Some(owner))
     } else {
@@ -324,7 +326,9 @@ pub(crate) fn execute_code_completion_with_owner(
 ) -> Result<crate::completion::Completion, VmError> {
     let context = current_context_or_default();
     if let (Some(optimizing), Some(baseline)) = (owner.executable_optimizing_plan(), owner.baseline_plan()) {
-        drive_code_completion_with_optimizing_plan(code, registers, &context, &optimizing, &baseline)
+        drive_code_completion_with_optimizing_plan(
+            code, registers, &context, &optimizing, &baseline, 0,
+        )
     } else if let Some(plan) = owner.baseline_plan() {
         drive_code_completion_with_plan(code, registers, &context, &plan, Some(owner))
     } else {
@@ -458,6 +462,7 @@ fn drive_code_completion_with_plan(
                             context,
                             &optimizing,
                             &baseline,
+                            pc,
                         );
                     }
                 }
@@ -483,6 +488,7 @@ fn drive_code_completion_with_plan(
                             context,
                             &optimizing,
                             &baseline,
+                            pc,
                         );
                     }
                 }
@@ -497,8 +503,9 @@ fn drive_code_completion_with_optimizing_plan(
     context: &VmContext,
     optimizing: &crate::machine::OptimizingPlan,
     baseline: &crate::machine::BaselinePlan,
+    start: usize,
 ) -> Result<crate::completion::Completion, VmError> {
-    let mut pc = 0;
+    let mut pc = start;
     loop {
         let (completion, next) = crate::vm::execute_optimized_code_step_from(
             code,
@@ -776,6 +783,7 @@ pub(crate) fn execute_code_frame_completion_with_owner(
             context,
             &optimizing,
             &baseline,
+            0,
         )
     } else if let Some(plan) = owner.baseline_plan() {
         drive_code_completion_with_plan(code, registers, context, &plan, Some(owner))
@@ -842,6 +850,41 @@ mod tests {
         )
         .expect(message);
         assert_eq!(result, Value::Undefined);
+    }
+
+    #[test]
+    fn optimizing_transition_resumes_at_exact_residual_pc() {
+        use crate::ops::{Constant, Op};
+
+        let function = crate::machine::FunctionCode::from_ops(vec![
+            Op::Const { dst: 0, value: Constant::Number(1.0) },
+            Op::StoreLocal { slot: 0, src: 0 },
+            Op::Const { dst: 1, value: Constant::Number(2.0) },
+            Op::StoreLocal { slot: 1, src: 1 },
+            Op::Return { src: 1 },
+        ]);
+        let code = function.code().expect("compact code");
+        let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+        let baseline = crate::machine::BaselinePlan::compile_for_test(code, policy);
+        let optimizing = crate::machine::OptimizingPlan::compile_for_test(&baseline, policy);
+        let environment = crate::environment::Environment::new();
+        environment.set(0, Value::Number(99.0));
+        let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+        let mut registers = crate::register_file::RegisterFile::with_undefined(2);
+        let result = super::drive_code_completion_with_optimizing_plan(
+            code,
+            &mut registers,
+            &crate::vm::VmContext::default(),
+            &optimizing,
+            &baseline,
+            2,
+        );
+        assert_eq!(
+            result,
+            Ok(crate::completion::Completion::Return(Value::Number(2.0)))
+        );
+        assert_eq!(environment.get(0), Value::Number(99.0));
+        assert_eq!(environment.get(1), Value::Number(2.0));
     }
 
     /// Bug reproducer: the replacement log is the forwarding table that
