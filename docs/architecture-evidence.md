@@ -1,17 +1,18 @@
 # Task 075 — current completion matrix
 
 Status: **gate PASSED at `ecb00540c5`**. Subsequent default-runtime correctness
-at `975fb5d04d` is 988 passed/1 ignored and host correctness is 16/16. The
-current measured source is `be866df1f7`; its production binary is SHA-256
-`1d584403ebf8d86d7b99db3d043b801abeb163e1b66a730519020e6f17b46910`.
+at `0dc7a205fe` is 992 passed/1 ignored and host correctness is 16/16. The
+current complete benchmark baseline is `b00f1961b0`; its production binary is
+SHA-256 `88f06a8d46f029e2d825663ac960f19ec1234d5f09e80e3716be14f7158117a2`.
 Generated-object configuration must still be rerun at the final task-073 revision.
 Task 073 may now measure the frozen corpus; passing this gate is not a speedup or
 production-default claim.
 
-Current uninstrumented evidence: 372/372 all-size micro scenarios pass, and one
-complete V8_v7 pass scores 78.82 geometric mean. These are current correctness
-and prioritization observations; repeated variability, reserved/lifecycle lanes
-and final generated-object validation remain open in task 073.
+Current uninstrumented evidence: 372/372 all-size timing scenarios and 844/844
+reserved/all-size/legacy smoke scenarios pass. Three complete V8_v7 repetitions
+produce a median-index geomean of 73.83 (MAD 0.20). These are correctness and
+prioritization observations; lifecycle lanes and final generated-object
+validation remain open in task 073.
 
 ## Infrastructure
 
