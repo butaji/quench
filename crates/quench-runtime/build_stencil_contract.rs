@@ -186,6 +186,13 @@ pub(crate) struct AssemblyControlLink {
     pub(crate) role: AssemblySuccessorRole,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct AssemblyPatchHole {
+    pub(crate) offset: u16,
+    pub(crate) width: usize,
+    pub(crate) kind: &'static str,
+}
+
 macro_rules! assembly_continuation {
     () => {
         None
@@ -276,6 +283,7 @@ macro_rules! rust_assembly_catalog {
         $(, outputs: $outputs:expr)?
         $(, continuation: { head: $head:literal, tail: $tail:literal, target: $target:literal })?
         $(, control_links: $control_links:expr)?
+        $(, patch_holes: $patch_holes:expr)?
         $(, internal_abi: $internal_abi:ident)?
         $(, composition: $composition:ident)?
     } ),+ $(,)?) => {
@@ -314,6 +322,12 @@ macro_rules! rust_assembly_catalog {
             pub(crate) const fn control_links(self) -> &'static [AssemblyControlLink] {
                 match self {
                     $( Self::$variant => rust_assembly_control_links!($($control_links)?), )+
+                }
+            }
+
+            pub(crate) const fn patch_holes(self) -> &'static [AssemblyPatchHole] {
+                match self {
+                    $( Self::$variant => rust_assembly_patch_holes!($($patch_holes)?), )+
                 }
             }
 
@@ -356,6 +370,15 @@ macro_rules! rust_assembly_control_links {
     };
     ($links:expr) => {
         $links
+    };
+}
+
+macro_rules! rust_assembly_patch_holes {
+    () => {
+        &[]
+    };
+    ($holes:expr) => {
+        $holes
     };
 }
 

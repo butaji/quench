@@ -119,6 +119,7 @@ fn compile_control_fragment(
     let source = super::build_stencil_templates::control_fragment_source(recipe)
         .expect("declared control-fragment source");
     let expected = expected_successor_relocations(declaration, recipe);
+    let holes = expected_recipe_holes(recipe);
     let parsed = compile_assembly_fragment(
         root,
         target,
@@ -128,9 +129,17 @@ fn compile_control_fragment(
         declaration.name,
         source,
         &expected,
-        &[],
+        &holes,
     );
     extracted_head(parsed)
+}
+
+fn expected_recipe_holes(recipe: RustAssemblyRecipe) -> Vec<ExtractedHole> {
+    recipe
+        .patch_holes()
+        .iter()
+        .map(|hole| expected_hole(hole.offset, hole.width, hole.kind))
+        .collect()
 }
 
 fn expected_successor_relocations(

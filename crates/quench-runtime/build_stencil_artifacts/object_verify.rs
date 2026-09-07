@@ -175,7 +175,11 @@ fn validate_fragment_holes(
     for (index, hole) in holes.iter().enumerate() {
         let symbol = format!("{}_hole_{index}", entry_name.trim_start_matches('_'));
         let (hole_section, address) = find_text_symbol(file, &symbol);
-        assert_eq!(hole_section, Some(section), "physical hole crosses sections");
+        assert_eq!(
+            hole_section,
+            Some(section),
+            "physical hole crosses sections"
+        );
         assert_eq!(
             address.checked_sub(start),
             Some(u64::from(hole.offset)),
