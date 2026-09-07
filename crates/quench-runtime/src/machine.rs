@@ -4521,15 +4521,18 @@ impl NativeDispatchPlan {
         }
         if let Some(shared) = self.physical.storage.shared() {
             if let InstalledDispatchEntry::Shared(token) = self.physical.installed() {
-                let result = invoke_shared_dispatch(
-                    &shared, token, code, pc, entry, registers, context,
-                );
-                self.physical.apply_dispatch_outcome(
-                    &result,
-                    None,
-                    InstalledDispatchEntry::Unpublished,
-                );
-                return result;
+                if shared.borrow().entry_token_is_live(token) {
+                    let result = invoke_shared_dispatch(
+                        &shared, token, code, pc, entry, registers, context,
+                    );
+                    self.physical.apply_dispatch_outcome(
+                        &result,
+                        None,
+                        InstalledDispatchEntry::Unpublished,
+                    );
+                    return result;
+                }
+                self.physical.clear(InstalledDispatchEntry::Unpublished);
             }
             let rendered = (|| {
                 let mut slab = shared.borrow_mut();
@@ -4573,20 +4576,23 @@ impl NativeDispatchPlan {
             return result;
         }
         if let InstalledDispatchEntry::Local(address) = self.physical.installed() {
-            let result = self
-                .physical
-                .storage
-                .local()
-                .ok_or_else(|| NativeDispatchError::Physical("native arena missing".into()))
-                .and_then(|arena| {
-                    invoke_local_dispatch(arena, address, code, pc, entry, registers, context)
-                });
-            self.physical.apply_dispatch_outcome(
-                &result,
-                None,
-                InstalledDispatchEntry::Unpublished,
-            );
-            return result;
+            if let Some(arena) = self.physical.storage.local() {
+                if arena
+                    .dispatch_entry_with_abi(address, crate::stencil_select::RegionAbi::Bridge)
+                    .is_ok()
+                {
+                    let result = invoke_local_dispatch(
+                        arena, address, code, pc, entry, registers, context,
+                    );
+                    self.physical.apply_dispatch_outcome(
+                        &result,
+                        None,
+                        InstalledDispatchEntry::Unpublished,
+                    );
+                    return result;
+                }
+            }
+            self.physical.clear(InstalledDispatchEntry::Unpublished);
         }
         let result = (|| {
             let arena = self.physical.storage.local_mut().map_err(|error| {
