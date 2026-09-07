@@ -33,6 +33,11 @@ const WORKER_BOOT_MESSAGE: u16 = 2490;
 const BROADCAST_CHANNEL: u16 = 2508;
 const BROADCAST_CHANNEL_CLOSE: u16 = 2509;
 const BROADCAST_CHANNEL_INSPECT: u16 = 2510;
+const BROADCAST_CHANNEL_POST: u16 = 0x7FE7;
+const BROADCAST_CHANNEL_REF: u16 = 0x7FE8;
+const BROADCAST_CHANNEL_UNREF: u16 = 0x7FE9;
+const BROADCAST_CHANNEL_HAS_REF: u16 = 0x7FEA;
+const BROADCAST_CHANNEL_NAME: u16 = 0x7FEB;
 const BROADCAST_CHANNEL_ID: &str = "\0quench:broadcast-channel";
 const SHARE_ENV_PROP: &str = "\0quench:worker-share-env";
 
@@ -61,6 +66,9 @@ fn cap(kind: u16) -> Value {
         BROADCAST_CHANNEL => crate::registry::SPEC_BROADCAST_CHANNEL,
         BROADCAST_CHANNEL_CLOSE => crate::registry::SPEC_BROADCAST_CHANNEL_CLOSE,
         BROADCAST_CHANNEL_INSPECT => crate::registry::SPEC_BROADCAST_CHANNEL_INSPECT,
+        BROADCAST_CHANNEL_POST | BROADCAST_CHANNEL_REF | BROADCAST_CHANNEL_UNREF
+        | BROADCAST_CHANNEL_HAS_REF | BROADCAST_CHANNEL_NAME =>
+            crate::registry::NodeSpec::new("worker_threads:BroadcastChannel:state", kind),
         0x0145 => crate::registry::SPEC_MESSAGE_CHANNEL,
         _ => crate::registry::NodeSpec::new("worker_threads:internal", kind),
     };
@@ -156,6 +164,34 @@ pub fn build(state: &Rc<std::cell::RefCell<HostState>>) -> Result<Value, VmError
     crate::modules::event_target::set_message_port_prototype(message_port_prototype);
     let worker = cap(WORKER_CONSTRUCT);
     let broadcast_channel = cap(BROADCAST_CHANNEL);
+    let broadcast_channel_prototype = host_api::object(vec![
+        ("constructor".into(), broadcast_channel.clone()),
+        ("close".into(), cap(BROADCAST_CHANNEL_CLOSE)),
+        ("postMessage".into(), cap(BROADCAST_CHANNEL_POST)),
+        ("ref".into(), cap(BROADCAST_CHANNEL_REF)),
+        ("unref".into(), cap(BROADCAST_CHANNEL_UNREF)),
+        ("hasRef".into(), cap(BROADCAST_CHANNEL_HAS_REF)),
+    ]);
+    let broadcast_channel_prototype = execute::set_prototype_of(
+        &broadcast_channel_prototype,
+        &event_target_prototype,
+    )
+    .unwrap_or(broadcast_channel_prototype);
+    let broadcast_channel_prototype = execute::define_property(
+        broadcast_channel_prototype,
+        "name",
+        host_api::object(vec![
+            ("get".into(), cap(BROADCAST_CHANNEL_NAME)),
+            ("enumerable".into(), Value::Boolean(false)),
+            ("configurable".into(), Value::Boolean(true)),
+        ]),
+    )
+    .unwrap_or_else(|_| host_api::object(Vec::new()));
+    let _ = execute::set_callable_property(
+        &broadcast_channel,
+        "prototype",
+        broadcast_channel_prototype,
+    );
     let share_env = host_api::object(Vec::new());
     let _ = execute::define_property(
         share_env.clone(),
@@ -212,6 +248,11 @@ handlers! {
     (broadcast_channel_handler, BROADCAST_CHANNEL),
     (broadcast_channel_close_handler, BROADCAST_CHANNEL_CLOSE),
     (broadcast_channel_inspect_handler, BROADCAST_CHANNEL_INSPECT),
+    (broadcast_channel_post_handler, BROADCAST_CHANNEL_POST),
+    (broadcast_channel_ref_handler, BROADCAST_CHANNEL_REF),
+    (broadcast_channel_unref_handler, BROADCAST_CHANNEL_UNREF),
+    (broadcast_channel_has_ref_handler, BROADCAST_CHANNEL_HAS_REF),
+    (broadcast_channel_name_handler, BROADCAST_CHANNEL_NAME),
 }
 
 pub fn message_port_construct(
@@ -281,33 +322,43 @@ pub fn broadcast_channel_construct_handler(
 }
 
 fn broadcast_channel_new(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    // Node applies ECMAScript ToString to the supplied name.  In particular,
+    // all primitive values are accepted (including BigInt and an explicit
+    // `undefined`), while a Symbol must retain ToString's TypeError.  Matching
+    // only Value::String is incorrect because the compact runtime represents
+    // symbol primitives as marked strings; use the canonical symbol predicate
+    // before the conversion instead of making this API invent its own type
+    // model.
     let name = match args.first() {
-        Some(Value::String(name)) => name.clone(),
-        Some(_) => return Err(type_error("The \"name\" argument must be a string")),
-        None => String::new(),
+        None => return Err(missing_args("The \"name\" argument must be specified")),
+        Some(value) => execute::to_js_string(value)?,
     };
-    let object = host_api::object(vec![
-        (BROADCAST_CHANNEL_ID.into(), Value::Boolean(true)),
-        ("name".into(), Value::String(name)),
-        ("active".into(), Value::Boolean(true)),
-    ]);
-    let descriptor = |value| {
-        host_api::object(vec![
-            ("value".into(), value),
-            ("writable".into(), Value::Boolean(true)),
-            ("enumerable".into(), Value::Boolean(false)),
-            ("configurable".into(), Value::Boolean(true)),
-        ])
-    };
-    let object = execute::define_property(object, "close", descriptor(cap(BROADCAST_CHANNEL_CLOSE)))?;
-    let object = execute::define_property(
-        object,
-        "Symbol.for.nodejs.util.inspect.custom\0",
-        descriptor(cap(BROADCAST_CHANNEL_INSPECT)),
+    let object = crate::modules::event_target::new_target_with_properties(
+        state,
+        vec![
+            (
+                crate::modules::event_target::HOST_MUTABLE_PROP.into(),
+                Value::Boolean(true),
+            ),
+            (BROADCAST_CHANNEL_ID.into(), Value::Boolean(true)),
+            ("name".into(), Value::String(name.clone())),
+            ("active".into(), Value::Boolean(true)),
+            ("close".into(), cap(BROADCAST_CHANNEL_CLOSE)),
+            ("postMessage".into(), cap(BROADCAST_CHANNEL_POST)),
+            ("ref".into(), cap(BROADCAST_CHANNEL_REF)),
+            ("unref".into(), cap(BROADCAST_CHANNEL_UNREF)),
+            ("hasRef".into(), cap(BROADCAST_CHANNEL_HAS_REF)),
+            (
+                "Symbol.for.nodejs.util.inspect.custom\0".into(),
+                cap(BROADCAST_CHANNEL_INSPECT),
+            ),
+        ],
     )?;
+    crate::modules::event_target::mark_broadcast_channel(state, &object, name)?;
+    crate::modules::event_target::remember_target_object(state, &object)?;
     Ok(object)
 }
 
@@ -315,25 +366,107 @@ fn broadcast_channel_receiver(receiver: Option<&Value>) -> Result<&Value, VmErro
     let Some(receiver) = receiver else {
         return Err(invalid_this());
     };
-    if !matches!(
-        execute::get_property(receiver, BROADCAST_CHANNEL_ID),
-        Value::Boolean(true)
-    ) {
+    if !matches!(execute::get_property(receiver, BROADCAST_CHANNEL_ID), Value::Boolean(true))
+        || crate::modules::event_target::target_identity(receiver).is_none()
+    {
         return Err(invalid_this());
     }
     Ok(receiver)
 }
 
-fn broadcast_channel_close(receiver: Option<&Value>) -> Result<Value, VmError> {
+fn broadcast_channel_close(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+) -> Result<Value, VmError> {
     let receiver = broadcast_channel_receiver(receiver)?;
     execute::set_property_in_place(receiver, "active", Value::Boolean(false));
+    if let Some(id) = crate::modules::event_target::target_identity(receiver)
+        .map(crate::modules::event_target::TargetId)
+    {
+        if let Some(target) = state.borrow().targets.get(id) {
+            target.borrow_mut().message_closed = true;
+        }
+    }
     Ok(Value::Undefined)
 }
 
-fn broadcast_channel_inspect(
+fn broadcast_channel_post_message(
+    state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    let receiver = broadcast_channel_receiver(receiver)?;
+    let Some(message) = args.first() else {
+        return Err(missing_args("The \"message\" argument must be specified"));
+    };
+    if !matches!(execute::get_property(receiver, "active"), Value::Boolean(true)) {
+        return Err(type_error("BroadcastChannel is closed"));
+    }
+    if contains_port(message, state) {
+        return Err(VmError::Thrown(quench_runtime::builtins::dom_exception(
+            "Object that needs transfer was found in message but not listed in transferList",
+            "DataCloneError",
+        )));
+    }
+    if execute::is_symbol(message) {
+        return Err(VmError::Thrown(quench_runtime::builtins::dom_exception(
+            "Symbol() could not be cloned.",
+            "DataCloneError",
+        )));
+    }
+    if quench_runtime::is_callable(message) {
+        return Err(VmError::Thrown(quench_runtime::builtins::dom_exception(
+            "function could not be cloned.",
+            "DataCloneError",
+        )));
+    }
+    let name = execute::to_js_string(&execute::get_property(receiver, "name"))
+        .unwrap_or_default();
+    let sender = crate::modules::event_target::target_identity(receiver)
+        .map(crate::modules::event_target::TargetId)
+        .ok_or_else(invalid_this)?;
+    let peers = state.borrow().targets.broadcast_peers(&name, sender);
+    for peer in peers {
+        let data = crate::modules::clone::deep_clone(message.clone());
+        if let Some(id) = crate::modules::event_target::target_identity(&peer)
+            .map(crate::modules::event_target::TargetId)
+        {
+            if let Some(target) = state.borrow().targets.get(id) {
+                target.borrow_mut().message_queue.push((data.clone(), Vec::new()));
+            }
+        }
+        state.borrow_mut().event_loop.queue_microtask(
+            crate::host::capability(crate::registry::SPEC_MESSAGE_PORT_DELIVER),
+            vec![peer, data],
+        );
+    }
+    Ok(Value::Undefined)
+}
+
+fn broadcast_channel_ref(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let receiver = broadcast_channel_receiver(receiver)?;
+    Ok(receiver.clone())
+}
+
+fn broadcast_channel_unref(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let receiver = broadcast_channel_receiver(receiver)?;
+    Ok(receiver.clone())
+}
+
+fn broadcast_channel_has_ref(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let receiver = broadcast_channel_receiver(receiver)?;
+    Ok(Value::Boolean(matches!(
+        execute::get_property(receiver, "active"),
+        Value::Boolean(true)
+    )))
+}
+
+fn broadcast_channel_name(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let receiver = broadcast_channel_receiver(receiver)?;
+    Ok(execute::get_property(receiver, "name"))
+}
+
+fn broadcast_channel_inspect(receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
     let receiver = broadcast_channel_receiver(receiver)?;
     let depth = args.first().and_then(|value| match value {
         Value::Number(depth) => Some(*depth),
@@ -393,8 +526,13 @@ fn call(
             Ok(Value::Undefined)
         }
         BROADCAST_CHANNEL => broadcast_channel_new(state, args),
-        BROADCAST_CHANNEL_CLOSE => broadcast_channel_close(receiver),
+        BROADCAST_CHANNEL_CLOSE => broadcast_channel_close(state, receiver),
         BROADCAST_CHANNEL_INSPECT => broadcast_channel_inspect(receiver, args),
+        BROADCAST_CHANNEL_POST => broadcast_channel_post_message(state, receiver, args),
+        BROADCAST_CHANNEL_REF => broadcast_channel_ref(receiver),
+        BROADCAST_CHANNEL_UNREF => broadcast_channel_unref(receiver),
+        BROADCAST_CHANNEL_HAS_REF => broadcast_channel_has_ref(receiver),
+        BROADCAST_CHANNEL_NAME => broadcast_channel_name(receiver),
         WORKER_NOOP => Ok(args.first().cloned().unwrap_or(Value::Undefined)),
         MESSAGE_PORT_CALL | MESSAGE_PORT_CONSTRUCT => message_port_construct(state, args),
         RECEIVE_MESSAGE => receive_message(state, args),
@@ -976,7 +1114,9 @@ fn receive_message(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Val
             "The \"port\" argument must be a MessagePort instance",
         ));
     };
-    if !crate::modules::event_target::is_message_port(state, port) {
+    if !crate::modules::event_target::is_message_port(state, port)
+        && !crate::modules::event_target::is_broadcast_channel(state, port)
+    {
         return Err(type_error(
             "The \"port\" argument must be a MessagePort instance",
         ));
@@ -1016,6 +1156,14 @@ fn type_error(message: &str) -> VmError {
     VmError::Thrown(host_api::object(vec![
         ("name".into(), Value::String("TypeError".into())),
         ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+        ("message".into(), Value::String(message.into())),
+    ]))
+}
+
+fn missing_args(message: &str) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_MISSING_ARGS".into())),
         ("message".into(), Value::String(message.into())),
     ]))
 }
