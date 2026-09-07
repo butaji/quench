@@ -206,6 +206,66 @@ fn assert_mixed_chain_edges(view: crate::machine::CodeView<'_>) {
 }
 
 #[test]
+fn ordinary_source_add_mul_div_uses_one_heterogeneous_chain() {
+    let source = "function f(a,b){return ((a+b)*b)/b} f(1,2)";
+    let program = crate::reduce::reduce_source(source).expect("ordinary source lowers");
+    let mut checked = false;
+    crate::stencil_test_support::visit_code_views(program.code(), &mut |view| {
+        checked |= check_mul_div_chain(view);
+    });
+    assert!(checked, "ordinary source must execute the arithmetic chain");
+}
+
+fn check_mul_div_chain(view: crate::machine::CodeView<'_>) -> bool {
+    let values = [Value::Number(1.0), Value::Number(2.0), Value::Number(2.0)];
+    let Some((completion, entries, _, witness, inputs)) = execute_source_add_chain(view, values)
+    else {
+        return false;
+    };
+    let crate::stencil_plan::LocalNumericInputs::BinarySeries { series, .. } = inputs else {
+        return false;
+    };
+    assert_eq!(
+        series.operations().collect::<Vec<_>>(),
+        [
+            crate::ops::BinaryOp::Add,
+            crate::ops::BinaryOp::Multiply,
+            crate::ops::BinaryOp::Divide,
+        ]
+    );
+    assert_eq!(completion, Completion::Return(Value::Number(3.0)));
+    assert_eq!(entries, 1);
+    let witness = witness.expect("three-fragment arithmetic image");
+    assert_eq!(witness.fragments, 3);
+    #[cfg(quench_generated_stencil_artifacts)]
+    assert_eq!(witness.generated_fragments, 3);
+    assert_mul_div_edges(view);
+    true
+}
+
+fn assert_mul_div_edges(view: crate::machine::CodeView<'_>) {
+    let zero = [Value::Number(1.0), Value::Number(0.0), Value::Number(0.0)];
+    let result = execute_source_add_chain(view, zero).expect("zero divisor remains native");
+    let Completion::Return(Value::Number(value)) = result.0 else {
+        panic!("numeric completion");
+    };
+    assert!(value.is_nan());
+    assert_eq!(result.1, 1);
+    let coercive = [
+        Value::String("x".into()),
+        Value::Number(2.0),
+        Value::Number(2.0),
+    ];
+    let fallback = execute_source_add_chain(view, coercive).expect("coercive fallback");
+    let Completion::Return(Value::Number(value)) = fallback.0 else {
+        panic!("coercive completion");
+    };
+    assert!(value.is_nan());
+    assert_eq!(fallback.1, 0);
+    assert!(fallback.3.is_none());
+}
+
+#[test]
 fn ordinary_source_repeated_add_depth_is_data_not_a_new_plan() {
     let source = "function f(a,b){return (((a+b)+b)+b)+b} f(1,2)";
     let program = crate::reduce::reduce_source(source).expect("ordinary source lowers");

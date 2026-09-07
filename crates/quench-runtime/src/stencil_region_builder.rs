@@ -130,6 +130,8 @@ fn series_view(operator: crate::ops::BinaryOp) -> Option<PhysicalStencilView> {
     let opcode = match operator {
         crate::ops::BinaryOp::Add => crate::ir::Opcode::Add,
         crate::ops::BinaryOp::Subtract => crate::ir::Opcode::Sub,
+        crate::ops::BinaryOp::Multiply => crate::ir::Opcode::Mul,
+        crate::ops::BinaryOp::Divide => crate::ir::Opcode::Div,
         _ => return None,
     };
     let key = crate::stencil_select::continuation_region_key(opcode)?;

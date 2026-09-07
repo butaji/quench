@@ -210,6 +210,8 @@ const AARCH64_ARRAY_GET_INC_NUMBER_BYTES: [u8; 32] = {
 const AARCH64_FALLTHROUGH_BYTES: [u8; 12] =
     aarch64_triple(aarch64_fadd_d(0, 0, 1), aarch64_b(), aarch64_b());
 const AARCH64_SUB_FALLTHROUGH_BYTES: [u8; 8] = aarch64_pair(aarch64_fsub_d(0, 0, 1), aarch64_b());
+const AARCH64_MUL_FALLTHROUGH_BYTES: [u8; 8] = aarch64_pair(aarch64_fmul_d(0, 0, 1), aarch64_b());
+const AARCH64_DIV_FALLTHROUGH_BYTES: [u8; 8] = aarch64_pair(aarch64_fdiv_d(0, 0, 1), aarch64_b());
 const AARCH64_SUBTRACT_BYTES: [u8; 8] = aarch64_pair(aarch64_fsub_d(0, 0, 1), aarch64_ret());
 const AARCH64_MULTIPLY_BYTES: [u8; 8] = aarch64_pair(aarch64_fmul_d(0, 0, 1), aarch64_ret());
 const AARCH64_DIVIDE_BYTES: [u8; 8] = aarch64_pair(aarch64_fdiv_d(0, 0, 1), aarch64_ret());
