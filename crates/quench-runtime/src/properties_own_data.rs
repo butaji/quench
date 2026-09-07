@@ -104,14 +104,27 @@ fn array_set_fact(
             }
         }
         Fact::BeyondPhysicalLength => {
-            if matches!(assigned, crate::value::Value::Number(_)) {
-                "array:index-physical-hole-number"
-            } else {
-                "array:index-physical-hole-other"
-            }
+            physical_hole_set_fact(array, index, assigned)
         }
         Fact::BeyondLogicalLength if index == array.header_length() => "array:index-append",
         Fact::BeyondLogicalLength => "array:index-gap",
+    }
+}
+
+#[cfg(feature = "execution-trace")]
+fn physical_hole_set_fact(
+    array: &crate::value::ArrayData,
+    index: usize,
+    assigned: &crate::value::Value,
+) -> &'static str {
+    use crate::value::SparseOwnIndexFact as Fact;
+    match (array.sparse_own_index_fact(index), assigned) {
+        (Fact::Number, crate::value::Value::Number(_)) => "array:index-sparse-number-to-number",
+        (Fact::Number, _) => "array:index-sparse-number-to-other",
+        (Fact::Other, crate::value::Value::Number(_)) => "array:index-sparse-other-to-number",
+        (Fact::Other, _) => "array:index-sparse-other-to-other",
+        (Fact::Missing, crate::value::Value::Number(_)) => "array:index-hole-to-number",
+        (Fact::Missing, _) => "array:index-hole-to-other",
     }
 }
 
@@ -355,11 +368,16 @@ mod own_data_tests {
         );
         assert_eq!(
             array_set_fact(&array, "2", &number),
-            "array:index-physical-hole-number"
+            "array:index-hole-to-number"
         );
         assert_eq!(
             array_set_fact(&array, "2", &Value::String("x".into())),
-            "array:index-physical-hole-other"
+            "array:index-hole-to-other"
+        );
+        array.set_index(2, Value::Number(3.0));
+        assert_eq!(
+            array_set_fact(&array, "2", &number),
+            "array:index-sparse-number-to-number"
         );
     }
 }

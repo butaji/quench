@@ -21,6 +21,13 @@ pub(crate) enum PlainDenseIndexFact {
     Deleted,
     Mapped,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SparseOwnIndexFact {
+    Missing,
+    Number,
+    Other,
+}
 impl ArrayKind {
     #[inline]
     pub fn is_packed(self) -> bool {
@@ -1432,6 +1439,20 @@ impl ArrayData {
             .find_map(|(name, value)| (name == key).then(|| value.clone()))
     }
 
+    pub(crate) fn sparse_own_index_fact(&self, index: usize) -> SparseOwnIndexFact {
+        let key = index.to_string();
+        match self
+            .properties
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == &key).then_some(value))
+        {
+            Some(Value::Number(_)) => SparseOwnIndexFact::Number,
+            Some(_) => SparseOwnIndexFact::Other,
+            None => SparseOwnIndexFact::Missing,
+        }
+    }
+
     pub fn property_keys(&self) -> Vec<String> {
         self.properties.iter().map(|(key, _)| key.clone()).collect()
     }
@@ -1610,7 +1631,7 @@ fn live_index(live: &ArgumentLive, index: usize) -> Option<Value> {
 
 #[cfg(test)]
 mod array_data_tests {
-    use super::{ArrayData, ArrayKind, PlainDenseIndexFact};
+    use super::{ArrayData, ArrayKind, PlainDenseIndexFact, SparseOwnIndexFact};
     use crate::value::{ObjectData, Value};
     use std::rc::Rc;
 
@@ -1657,6 +1678,17 @@ mod array_data_tests {
         let mut length = dense.clone();
         length.define_descriptor("length", writable_descriptor(false));
         assert_eq!(length.plain_dense_index_fact(0), PlainDenseIndexFact::ReadonlyLength);
+    }
+
+    #[test]
+    fn sparse_own_index_fact_distinguishes_value_from_hole() {
+        let mut sparse = ArrayData::new(Vec::new());
+        sparse.set_length(64);
+        sparse.set_index(7, Value::Number(1.5));
+        sparse.set_index(9, Value::Boolean(true));
+        assert_eq!(sparse.sparse_own_index_fact(7), SparseOwnIndexFact::Number);
+        assert_eq!(sparse.sparse_own_index_fact(8), SparseOwnIndexFact::Missing);
+        assert_eq!(sparse.sparse_own_index_fact(9), SparseOwnIndexFact::Other);
     }
     #[test]
     fn kind_transitions_preserve_monotonic_holes_and_sparse_boundary() {
