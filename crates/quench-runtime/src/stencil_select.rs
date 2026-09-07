@@ -296,6 +296,36 @@ impl PhysicalStencilView {
             && self.target == other.target
             && self.fingerprint == other.fingerprint
     }
+
+    /// Derive the executable-cache identity from this complete physical view.
+    /// Hole-free artifacts are independent of disposable site facts; patched
+    /// artifacts include those facts plus the generated/legacy artifact ID.
+    pub(crate) fn cache_signature<const N: usize>(
+        self,
+        values: &crate::stencil_fact::PatchValues<'_, N>,
+    ) -> u64 {
+        let patch = if self.stencil.holes.is_empty() {
+            0
+        } else {
+            values.signature()
+        };
+        physical_identity_hash(self, patch)
+    }
+}
+
+fn physical_identity_hash(view: PhysicalStencilView, patch: u64) -> u64 {
+    let mut hash = patch.wrapping_add(0xcbf2_9ce4_8422_2325);
+    let identity = view
+        .artifact_id
+        .as_bytes()
+        .iter()
+        .chain(view.fingerprint.unwrap_or_default().as_bytes());
+    for byte in identity {
+        hash = hash
+            .wrapping_mul(0x1000_0000_01b3)
+            .wrapping_add(u64::from(*byte));
+    }
+    hash.max(1)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
