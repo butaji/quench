@@ -603,9 +603,7 @@ impl CodeArena {
                         .or_else(|| crate::ir::lower_compact(op))
                         .unwrap_or_else(|| self.push_cold(op))
                 }
-                _ => crate::ir::lower_compact(op).unwrap_or_else(|| {
-                    self.push_cold(op)
-                }),
+                _ => crate::ir::lower_compact(op).unwrap_or_else(|| self.push_cold(op)),
             };
             self.instructions.push(instruction);
             metadata.push(meta);
@@ -741,9 +739,7 @@ impl CodeArena {
                         .or_else(|| crate::ir::lower_compact(op))
                         .unwrap_or_else(|| self.push_cold(op))
                 }
-                _ => crate::ir::lower_compact(op).unwrap_or_else(|| {
-                    self.push_cold(op)
-                }),
+                _ => crate::ir::lower_compact(op).unwrap_or_else(|| self.push_cold(op)),
             };
             self.instructions.push(instruction);
             metadata.push(meta);
@@ -1292,9 +1288,11 @@ impl CallWindowKind {
             Self::Function { dst, callee } => {
                 crate::ir::Instruction::call_registered_arguments(dst, callee, argc)
             }
-            Self::Method { dst, object, callee } => {
-                crate::ir::Instruction::call_registered_window(dst, object, callee, argc)
-            }
+            Self::Method {
+                dst,
+                object,
+                callee,
+            } => crate::ir::Instruction::call_registered_window(dst, object, callee, argc),
         }
     }
 }
@@ -2368,7 +2366,8 @@ impl NativeBinaryPlan {
             }
         };
         let result = if returns_boolean {
-            arena.render_selected_bool(&mut self.physical.cache, key, &values, lhs, rhs)
+            arena
+                .render_selected_bool(&mut self.physical.cache, key, &values, lhs, rhs)
                 .map(|value| if value { 1.0 } else { 0.0 })
         } else {
             arena.render_selected_f64(&mut self.physical.cache, key, &values, lhs, rhs, || {
@@ -2547,10 +2546,7 @@ impl std::fmt::Debug for NativeBinaryPlan {
             .debug_struct("NativeBinaryPlan")
             .field("opcode", &self.opcode)
             .field("semantic", &self.semantic)
-            .field(
-                "used_bytes",
-                &self.storage.used(),
-            )
+            .field("used_bytes", &self.storage.used())
             .field("cache_len", &self.physical.cache.len())
             .finish()
     }
@@ -3833,10 +3829,7 @@ impl std::fmt::Debug for NativeAddChainPlan {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("NativeAddChainPlan")
-            .field(
-                "used_bytes",
-                &self.storage.used(),
-            )
+            .field("used_bytes", &self.storage.used())
             .field("cache_len", &self.physical.cache.len())
             .finish()
     }
@@ -4082,10 +4075,7 @@ impl std::fmt::Debug for NativeMovePlan {
         formatter
             .debug_struct("NativeMovePlan")
             .field("opcode", &self.opcode)
-            .field(
-                "used_bytes",
-                &self.storage.used(),
-            )
+            .field("used_bytes", &self.storage.used())
             .field("cache_len", &self.physical.cache.len())
             .finish()
     }
@@ -4485,10 +4475,7 @@ impl std::fmt::Debug for NativePropertyPlan {
         formatter
             .debug_struct("NativePropertyPlan")
             .field("opcode", &self.opcode)
-            .field(
-                "used_bytes",
-                &self.storage.used(),
-            )
+            .field("used_bytes", &self.storage.used())
             .field("cache_len", &self.physical.cache.len())
             .finish()
     }
@@ -4515,10 +4502,7 @@ pub(crate) enum NativeDispatchError {
     /// The physical entry was already called and cannot be retried without
     /// risking duplicated effects. This is an invariant failure, not an
     /// admission miss; callers surface it as an internal VM error.
-    Committed {
-        pc: usize,
-        message: String,
-    },
+    Committed { pc: usize, message: String },
     /// A canonical handler failed after region entry. The operation PC is
     /// retained so completion/exception machinery resumes after the exact
     /// failing residual operation rather than at the region start.
@@ -4696,10 +4680,7 @@ impl std::fmt::Debug for NativeDispatchPlan {
         formatter
             .debug_struct("NativeDispatchPlan")
             .field("opcode", &self.opcode)
-            .field(
-                "used_bytes",
-                &self.storage.used(),
-            )
+            .field("used_bytes", &self.storage.used())
             .field("cache_len", &self.physical.cache.len())
             .finish()
     }
@@ -5259,10 +5240,7 @@ impl std::fmt::Debug for NativeRegionPlan {
             .debug_struct("NativeRegionPlan")
             .field("key", &self.key)
             .field("operations", &self.operations)
-            .field(
-                "used_bytes",
-                &self.arena.borrow().used(),
-            )
+            .field("used_bytes", &self.arena.borrow().used())
             .finish()
     }
 }
@@ -6636,10 +6614,7 @@ impl FunctionCode {
         }
     }
 
-    pub(crate) fn from_ops_with_declared_frame(
-        body: Vec<Op>,
-        frame_register_count: u16,
-    ) -> Self {
+    pub(crate) fn from_ops_with_declared_frame(body: Vec<Op>, frame_register_count: u16) -> Self {
         let capture_slots = collect_capture_slots(&body);
         let (_, range, store) = freeze_tree_with_frame_register_count(body, frame_register_count);
         Self {
@@ -6657,10 +6632,7 @@ impl FunctionCode {
         Self::pending_with_frame_register_count(body, None)
     }
 
-    pub(crate) fn pending_with_declared_frame(
-        body: Vec<Op>,
-        frame_register_count: u16,
-    ) -> Self {
+    pub(crate) fn pending_with_declared_frame(body: Vec<Op>, frame_register_count: u16) -> Self {
         Self::pending_with_frame_register_count(body, Some(frame_register_count))
     }
 

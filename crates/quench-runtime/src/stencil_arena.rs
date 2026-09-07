@@ -253,9 +253,7 @@ impl AllocationLease {
 impl Drop for AllocationLease {
     fn drop(&mut self) {
         if self.state.release(self.owner_id) {
-            self.owner
-                .borrow_mut()
-                .reclaim_retired_owner(self.owner_id);
+            self.owner.borrow_mut().reclaim_retired_owner(self.owner_id);
         }
     }
 }
@@ -1043,10 +1041,7 @@ impl StencilArena {
         Self::new_in_budget(capacity, &GLOBAL_EXECUTABLE_BUDGET)
     }
 
-    fn new_in_budget(
-        capacity: usize,
-        budget: &'static AtomicBudget,
-    ) -> Result<Self, ArenaError> {
+    fn new_in_budget(capacity: usize, budget: &'static AtomicBudget) -> Result<Self, ArenaError> {
         if capacity == 0 || capacity > MAX_ARENA_BYTES {
             return Err(ArenaError::InvalidCapacity);
         }
@@ -1054,9 +1049,7 @@ impl StencilArena {
             .checked_add(PAGE - 1)
             .ok_or(ArenaError::InvalidCapacity)?
             & !(PAGE - 1);
-        let global_charge = budget
-            .reserve(capacity)
-            .ok_or(ArenaError::Exhausted)?;
+        let global_charge = budget.reserve(capacity).ok_or(ArenaError::Exhausted)?;
         let ptr = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
@@ -1109,9 +1102,7 @@ impl StencilArena {
                 abi: view.abi,
                 entry: view.entry,
                 byte_len: view.stencil.bytes.len()
-                    + view
-                        .fallthrough
-                        .map_or(0, |item| item.stencil.bytes.len()),
+                    + view.fallthrough.map_or(0, |item| item.stencil.bytes.len()),
             }));
     }
 
@@ -1201,7 +1192,10 @@ impl StencilArena {
         extern "C" fn(*mut crate::native_property::NativePropertyWriteContext) -> u32,
         ArenaError,
     > {
-        self.require_abi(address, crate::stencil_select::RegionAbi::PropertyWriteGuard)?;
+        self.require_abi(
+            address,
+            crate::stencil_select::RegionAbi::PropertyWriteGuard,
+        )?;
         let base = self.ptr as usize;
         let end = base.saturating_add(self.cursor);
         if !self.executable || address < base || address >= end {
@@ -1769,8 +1763,7 @@ impl StencilArena {
             return fallback();
         };
         let contract = view.contract();
-        if !contract.executable
-            || contract.abi != crate::stencil_select::RegionAbi::ScalarF64Binary
+        if !contract.executable || contract.abi != crate::stencil_select::RegionAbi::ScalarF64Binary
         {
             return fallback();
         }
@@ -3036,7 +3029,13 @@ mod tests {
         #[cfg(quench_generated_stencil_artifacts)]
         {
             assert!(view.generated);
-            assert_eq!(view.stencil.holes, &[Hole { offset: 8, kind: HoleKind::Literal64 }]);
+            assert_eq!(
+                view.stencil.holes,
+                &[Hole {
+                    offset: 8,
+                    kind: HoleKind::Literal64
+                }]
+            );
         }
     }
 
@@ -3108,7 +3107,13 @@ mod tests {
         #[cfg(quench_generated_stencil_artifacts)]
         {
             assert!(view.generated);
-            assert_eq!(view.stencil.holes, &[Hole { offset: 16, kind: HoleKind::Literal64 }]);
+            assert_eq!(
+                view.stencil.holes,
+                &[Hole {
+                    offset: 16,
+                    kind: HoleKind::Literal64
+                }]
+            );
         }
     }
 
@@ -3126,12 +3131,24 @@ mod tests {
         arena.make_executable().unwrap();
         let entry = arena.word_bool_entry(address).unwrap();
         assert_ne!(entry(crate::tagged_value::TaggedValue::null().bits()), 0);
-        assert_ne!(entry(crate::tagged_value::TaggedValue::undefined().bits()), 0);
-        assert_eq!(entry(crate::tagged_value::TaggedValue::bool(false).bits()), 0);
+        assert_ne!(
+            entry(crate::tagged_value::TaggedValue::undefined().bits()),
+            0
+        );
+        assert_eq!(
+            entry(crate::tagged_value::TaggedValue::bool(false).bits()),
+            0
+        );
         #[cfg(quench_generated_stencil_artifacts)]
         {
             assert!(view.generated);
-            assert_eq!(view.stencil.holes, &[Hole { offset: 24, kind: HoleKind::Literal64 }]);
+            assert_eq!(
+                view.stencil.holes,
+                &[Hole {
+                    offset: 24,
+                    kind: HoleKind::Literal64
+                }]
+            );
         }
     }
 
@@ -3380,10 +3397,8 @@ mod tests {
             .unwrap();
         arena.make_executable().unwrap();
         assert!(arena.property_guard_entry(address).is_err());
-        let object = crate::value::ObjectData::new(vec![(
-            "value".into(),
-            crate::value::Value::Number(1.0),
-        )]);
+        let object =
+            crate::value::ObjectData::new(vec![("value".into(), crate::value::Value::Number(1.0))]);
         let access = object
             .guarded_plain_slot(object.semantic_layout_id(), 0, "value")
             .expect("plain slot");
@@ -3413,7 +3428,10 @@ mod tests {
             Ok(12.75)
         );
         let tail = view.fallthrough.expect("fallthrough tail");
-        assert_eq!(arena.used(), view.stencil.bytes.len() + tail.stencil.bytes.len());
+        assert_eq!(
+            arena.used(),
+            view.stencil.bytes.len() + tail.stencil.bytes.len()
+        );
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -3517,7 +3535,10 @@ mod tests {
         assert_eq!(cache.len(), 1);
         if view.generated {
             let tail = view.fallthrough.expect("generated successor");
-            assert_eq!(arena.used(), view.stencil.bytes.len() + tail.stencil.bytes.len());
+            assert_eq!(
+                arena.used(),
+                view.stencil.bytes.len() + tail.stencil.bytes.len()
+            );
             assert_eq!(view.relocations.len(), 2);
             assert!(view.relocations.iter().all(|relocation| {
                 relocation.kind == HoleKind::Branch26 && relocation.target == "q_fallthrough_tail"
@@ -3543,10 +3564,7 @@ mod tests {
         assert_eq!(witness.entry, view.entry);
         assert_eq!(
             witness.byte_len,
-            view.stencil.bytes.len()
-                + view
-                    .fallthrough
-                    .map_or(0, |item| item.stencil.bytes.len())
+            view.stencil.bytes.len() + view.fallthrough.map_or(0, |item| item.stencil.bytes.len())
         );
         #[cfg(quench_generated_stencil_artifacts)]
         assert!(witness.generated);
