@@ -484,8 +484,12 @@ fn select_local_property(
     let NumericSource::Local(receiver_slot) = graph.resolve_register(operation.b)? else {
         return None;
     };
+    let required = graph.marked_len(&[operation.b]);
+    if required != graph.len() {
+        return None;
+    }
     let lost_live = graph.has_unsupported_live_out(operation.a, live_after);
-    let cost = FusionCost::property_producers(graph.marked_len(&[operation.b]));
+    let cost = FusionCost::property_producers(required);
     if lost_live || !cost.profitable() {
         return None;
     }

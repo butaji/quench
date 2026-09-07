@@ -114,17 +114,19 @@ and `target/micros/numeric-floating-{default,kernels}-lazy-region.json`.
 RayTrace then exposed an independent correctness boundary in local fusion. Its
 trace is dominated by property/control/local windows (94,850,442 compact
 handlers; zero default stencil entries), while exact catalog region sequences
-do not match those mixed CFG blocks. Family-isolated runs are valid for numeric
-fusion (score 102) and predicate fusion (105), but property fusion immediately
-produces an incorrect scene. Removing its trailing local store, prototype path,
-emitted property bytes and discarded-register clearing did not restore
-correctness, locating the fault in bundle admission/state rather than one leaf.
-Production policies therefore exclude that unproved tile; test policy retains
-direct contract coverage. Safe fusion is valid (104) but remains roughly 1,382x
-behind Bun. The next work is bounded residual-CFG machine-pattern tiling with
-delayed register roles, not more exact opcode-sequence kernels. Evidence:
+do not match those mixed CFG blocks. Family-isolated runs were valid for numeric
+fusion (score 102) and predicate fusion (105), while property fusion initially
+produced an incorrect scene. Four leaf/commit ablations did not help. A synthetic
+clone then showed correct direct values but a missing value in later aggregate
+construction: the property window had admitted an unrelated producer outside
+the receiver dependency cone and skipped its residual load. Requiring a connected
+cover fixes both the clone and unchanged RayTrace; property-inclusive fusion is
+valid at 100. This is a correctness win, not a speedup: it remains about 1,441x
+behind Bun and slightly trails the property-excluded 104 sample. The next work is
+bounded residual-CFG machine-pattern tiling with delayed register roles, not more
+exact opcode-sequence kernels. Evidence:
 `target/v8-raytrace-{fusion-numeric,fusion-property,fusion-predicate}-dirty-run1.json`
-and `target/v8-raytrace-safe-fusion-dirty-run1.json`.
+`target/v8-raytrace-{safe-fusion,connected-property}-dirty-run1.json`.
 
 At `94586e4d01`, leaf and composed publication share one transactional finalized
 image carrying exact bytes, identity, ABI and callable-entry offset. A real

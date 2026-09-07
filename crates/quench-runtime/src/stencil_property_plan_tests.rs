@@ -15,14 +15,23 @@ fn block_value_graph_selects_local_property_through_aliases() {
     let mut graph = BlockValueGraph::new();
     assert!(graph.push(Instruction::load_local(2, 20), |_| None));
     assert!(graph.push(Instruction::move_(3, 2), |_| None));
-    assert!(graph.push(Instruction::load_local(4, 21), |_| None));
     let selected = graph
         .select_property(get_named(3), &BTreeSet::new())
         .unwrap();
     assert_eq!(selected.receiver_slot, 20);
     assert_eq!(selected.result.register, 5);
-    assert_eq!(selected.span, 4);
-    assert_eq!(selected.discarded.iter().flatten().count(), 3);
+    assert_eq!(selected.span, 3);
+    assert_eq!(selected.discarded.iter().flatten().count(), 2);
+}
+
+#[test]
+fn block_value_graph_rejects_unrelated_property_producer() {
+    let mut graph = BlockValueGraph::new();
+    assert!(graph.push(Instruction::load_local(2, 20), |_| None));
+    assert!(graph.push(Instruction::load_local(4, 21), |_| None));
+    assert!(graph
+        .select_property(get_named(2), &BTreeSet::new())
+        .is_none());
 }
 
 #[test]
