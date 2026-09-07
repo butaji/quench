@@ -473,8 +473,63 @@ pub fn dispatch(
         "array" => http2_asserts::array(values),
         "range" => http2_asserts::range(values),
         "sessionName" => session_name(values),
+        "createServer" => create_server(values, false),
+        "createSecureServer" => create_server(values, true),
         _ => Err(VmError::NotCallable),
     }
+}
+
+/// Validate the option boundary shared by the HTTP/2 server constructors.
+/// The protocol transport is intentionally unavailable, but rejecting bad
+/// arguments before reporting that capability boundary preserves the public
+/// API's ordinary error contract without fabricating a server.
+fn create_server(values: &[Value], secure: bool) -> Result<Value, VmError> {
+    let options = values.first().unwrap_or(&Value::Undefined);
+    if !matches!(options, Value::Undefined | Value::Object(_) | Value::ObjectAlias(_)) {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::TypeError,
+            "ERR_INVALID_ARG_TYPE",
+            format!(
+                "The \"options\" argument must be of type object.{}",
+                crate::modules::util::invalid_arg_received(options)
+            ),
+        ));
+    }
+    if matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
+        let settings = execute::get_property(options, "settings");
+        if !matches!(settings, Value::Undefined | Value::Object(_) | Value::ObjectAlias(_)) {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::TypeError,
+                "ERR_INVALID_ARG_TYPE",
+                format!(
+                    "The \"options.settings\" property must be of type object.{}",
+                    crate::modules::util::invalid_arg_received(&settings)
+                ),
+            ));
+        }
+        for name in ["maxSessionInvalidFrames", "maxSessionRejectedStreams"] {
+            let value = execute::get_property(options, name);
+            if let Value::Number(value) = value {
+                if value.is_nan() || value.is_sign_negative() {
+                    return Err(coded_error(
+                        quench_runtime::ops::Builtin::RangeError,
+                        "ERR_OUT_OF_RANGE",
+                        format!("The value of \"options.{name}\" is out of range."),
+                    ));
+                }
+            }
+        }
+    }
+    let operation = if secure {
+        "http2.createSecureServer"
+    } else {
+        "http2.createServer"
+    };
+    Err(coded_error(
+        quench_runtime::ops::Builtin::Error,
+        "ERR_HTTP2_NOT_SUPPORTED",
+        format!("{operation} is not supported by quench-node"),
+    ))
 }
 
 fn session_name(values: &[Value]) -> Result<Value, VmError> {
