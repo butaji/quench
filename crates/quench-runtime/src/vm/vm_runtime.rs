@@ -2767,7 +2767,9 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                     crate::execution_trace::leaf_rejection("native_dispatch");
                     match run_baseline_instruction(code, pc, entry, registers, context) {
                         Ok(transition) => transition,
-                        Err(error) => return completion_step_after_error(registers, error, pc + 1),
+                        Err(error) => {
+                            return completion_step_after_error_at(registers, error, pc + 1, pc)
+                        }
                     }
                 }
                 Err(crate::machine::NativeDispatchError::Committed { pc, message }) => {
@@ -2778,7 +2780,9 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
             },
             None => match run_baseline_instruction(code, pc, entry, registers, context) {
                 Ok(transition) => transition,
-                Err(error) => return completion_step_after_error(registers, error, pc + 1),
+                Err(error) => {
+                    return completion_step_after_error_at(registers, error, pc + 1, pc)
+                }
             },
         };
         let next = match transition.target {
@@ -2789,7 +2793,12 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
             .completion
             .filter(|value| !matches!(value, crate::completion::Completion::Normal))
         {
-            return completion_step_after_transition(registers, completion, next);
+            let suspended = completion.is_suspension();
+            let mut step = completion_step_after_transition(registers, completion, next)?;
+            if suspended {
+                step.suspended_pc = Some(pc);
+            }
+            return Ok(step);
         }
         match transition.target {
             DispatchTarget::Callee(_) => pc = next,
@@ -4342,6 +4351,19 @@ fn completion_step_after_error(
         next,
         suspended_pc: None,
     })
+}
+
+fn completion_step_after_error_at(
+    registers: &mut crate::register_file::RegisterFile,
+    error: VmError,
+    next: usize,
+    fault_pc: usize,
+) -> Result<CompletionStep, VmError> {
+    let mut step = completion_step_after_error(registers, error, next)?;
+    if step.completion.is_suspension() {
+        step.suspended_pc = Some(fault_pc);
+    }
+    Ok(step)
 }
 
 #[cold]
