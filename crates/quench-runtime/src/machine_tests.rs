@@ -2406,6 +2406,13 @@ fn ordinary_source_lowering_executes_fused_indexed_numeric_update() {
         let load = view.instruction(pc).expect("indexed load");
         let add = view.instruction(pc + 1).expect("indexed add");
         let store = view.instruction(pc + 2).expect("indexed store");
+        let cold_plan = super::BaselinePlan::compile_for_test(view, policy);
+        assert_holey_indexed_update_falls_back(view, &cold_plan, pc, load, add, store);
+        assert!(!cold_plan
+            .native_region_at(pc)
+            .expect("cold region")
+            .borrow()
+            .physical_is_published_for_test());
         let plan = super::BaselinePlan::compile_for_test(view, policy);
         let region = plan.native_region_at(pc).expect("fused update admission");
         let expected_key = if add.opcode == crate::ir::Opcode::Add {

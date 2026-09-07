@@ -701,7 +701,7 @@ fn region_exit_pc(region: &NativeRegionContext<'_>) -> Option<usize> {
 #[cfg(target_arch = "aarch64")]
 fn execute_composed_array_get(
     region: &mut NativeRegionContext<'_>,
-    invoke: impl FnOnce(*mut std::ffi::c_void) -> Result<u64, crate::stencil_arena::ArenaError>,
+    invoke: impl FnOnce(*mut std::ffi::c_void) -> Result<u64, crate::machine::NativeDispatchError>,
 ) -> Result<Option<DispatchTransition>, crate::machine::NativeDispatchError> {
     let code = region.code;
     let pc = region.pc;
@@ -771,7 +771,7 @@ fn execute_composed_array_get(
 #[cfg(target_arch = "aarch64")]
 fn execute_composed_array_get_inc(
     region: &mut NativeRegionContext<'_>,
-    invoke: impl FnOnce(*mut std::ffi::c_void) -> Result<u64, crate::stencil_arena::ArenaError>,
+    invoke: impl FnOnce(*mut std::ffi::c_void) -> Result<u64, crate::machine::NativeDispatchError>,
 ) -> Result<Option<DispatchTransition>, crate::machine::NativeDispatchError> {
     let code = region.code;
     let pc = region.pc;
@@ -853,7 +853,7 @@ fn execute_composed_array_get_inc(
 #[cfg(target_arch = "aarch64")]
 fn execute_composed_array_set(
     region: &mut NativeRegionContext<'_>,
-    invoke: impl FnOnce(*mut std::ffi::c_void) -> Result<u64, crate::stencil_arena::ArenaError>,
+    invoke: impl FnOnce(*mut std::ffi::c_void) -> Result<u64, crate::machine::NativeDispatchError>,
 ) -> Result<Option<DispatchTransition>, crate::machine::NativeDispatchError> {
     let code = region.code;
     let pc = region.pc;
@@ -920,7 +920,7 @@ fn execute_composed_array_set(
 #[cfg(target_arch = "aarch64")]
 fn execute_composed_array_update(
     region: &mut NativeRegionContext<'_>,
-    invoke: impl FnOnce(*mut std::ffi::c_void) -> Result<u64, crate::stencil_arena::ArenaError>,
+    invoke: impl FnOnce(*mut std::ffi::c_void) -> Result<u64, crate::machine::NativeDispatchError>,
 ) -> Result<Option<DispatchTransition>, crate::machine::NativeDispatchError> {
     let code = region.code;
     let pc = region.pc;
@@ -1219,7 +1219,7 @@ fn materialize_array_loop_outputs(
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) fn execute_composed_array_kernel(
     region: &mut NativeRegionContext<'_>,
-    invoke: impl FnOnce(*mut std::ffi::c_void) -> Result<u64, crate::stencil_arena::ArenaError>,
+    invoke: impl FnOnce(*mut std::ffi::c_void) -> Result<u64, crate::machine::NativeDispatchError>,
 ) -> Result<Option<DispatchTransition>, crate::machine::NativeDispatchError> {
     #[cfg(target_arch = "aarch64")]
     if region_matches_generated_array_decl(
@@ -1359,15 +1359,10 @@ pub(crate) fn execute_composed_array_kernel(
     if !kernel.is_valid() {
         return Ok(None);
     }
-    region.native_entered = true;
     let status = invoke((&mut kernel as *mut NativeArrayKernelContext).cast());
     drop(words);
-    let status = status.map_err(|error| {
-        crate::machine::NativeDispatchError::committed(
-            committed_pc,
-            format!("array kernel execution failed after entry: {error:?}"),
-        )
-    })?;
+    let status = status?;
+    region.native_entered = true;
     if status != NATIVE_DISPATCH_OK {
         return Err(crate::machine::NativeDispatchError::committed(
             committed_pc,
@@ -1401,7 +1396,7 @@ pub(crate) fn execute_composed_array_kernel(
 #[cfg(target_arch = "aarch64")]
 pub(crate) fn execute_composed_array_numeric_loop(
     region: &mut NativeRegionContext<'_>,
-    invoke: impl FnOnce(*mut std::ffi::c_void) -> Result<u64, crate::stencil_arena::ArenaError>,
+    invoke: impl FnOnce(*mut std::ffi::c_void) -> Result<u64, crate::machine::NativeDispatchError>,
 ) -> Result<Option<DispatchTransition>, crate::machine::NativeDispatchError> {
     let code = region.code;
     let pc = region.pc;
@@ -1506,15 +1501,10 @@ pub(crate) fn execute_composed_array_numeric_loop(
     if !kernel.is_valid() {
         return Ok(None);
     }
-    region.native_entered = true;
     let status = invoke((&mut kernel as *mut NativeArrayLoopContext).cast());
     drop(words);
-    let status = status.map_err(|error| {
-        crate::machine::NativeDispatchError::committed(
-            committed_pc,
-            format!("array loop kernel failed after entry: {error:?}"),
-        )
-    })?;
+    let status = status?;
+    region.native_entered = true;
     if status == NATIVE_DISPATCH_INTERRUPT && kernel.index < end {
         vm_context.clear_interrupt();
         materialize_array_loop_outputs(
@@ -1745,7 +1735,7 @@ fn commit_affine_i32_loop(
 #[cfg(target_arch = "aarch64")]
 pub(crate) fn execute_composed_affine_i32_loop(
     region: &mut NativeRegionContext<'_>,
-    invoke: impl FnOnce(*mut std::ffi::c_void) -> Result<u64, crate::stencil_arena::ArenaError>,
+    invoke: impl FnOnce(*mut std::ffi::c_void) -> Result<u64, crate::machine::NativeDispatchError>,
 ) -> Result<Option<DispatchTransition>, crate::machine::NativeDispatchError> {
     if region.registers.is_null() || region.context.is_null() || region.operations.len() != 19 {
         return Ok(None);
@@ -1757,14 +1747,9 @@ pub(crate) fn execute_composed_affine_i32_loop(
             return Ok(None);
         }
     };
-    region.native_entered = true;
     let raw = (&mut admission.context as *mut NativeAffineI32LoopContext).cast();
-    let status = invoke(raw).map_err(|error| {
-        crate::machine::NativeDispatchError::committed(
-            region.pc + 18,
-            format!("affine loop failed after entry: {error:?}"),
-        )
-    })?;
+    let status = invoke(raw)?;
+    region.native_entered = true;
     let environment = region
         .environment()
         .expect("admission requires a live environment");
@@ -6503,9 +6488,7 @@ mod compact_handler_tests {
             &mut registers,
             &context,
         );
-        let result = super::execute_composed_array_kernel(&mut region, |_raw| {
-            Err(crate::stencil_arena::ArenaError::ProtectionFailed)
-        });
+        let result = super::execute_composed_array_kernel(&mut region, |_raw| Ok(u64::MAX));
         assert!(matches!(
             result,
             Err(crate::machine::NativeDispatchError::Committed { pc: 3, .. })
