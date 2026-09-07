@@ -1241,7 +1241,15 @@ pub fn req_abort(
         });
     set_request_property(receiver, "aborted", Value::Boolean(true));
     set_request_property(receiver, "destroyed", Value::Boolean(true));
-    net::emit(state, &request, "abort", Vec::new())?;
+    // Node delivers the legacy request `abort` event on the next event-loop
+    // turn.  Keep the state transition (aborted/destroyed) synchronous, but
+    // queue the notification so listeners observe caller-side mutations made
+    // immediately after `req.abort()` (for example response byte counters).
+    state
+        .borrow_mut()
+        .net
+        .pending_events
+        .push((request.clone(), "abort".into(), Vec::new()));
     if let Some(socket) = socket {
         let connected = net::net_id(&socket).is_some_and(|socket_id| {
             state

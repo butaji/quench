@@ -4565,7 +4565,15 @@ pub fn internal_binding(
             | "zlib"
     ) {
         if name == "udp_wrap" {
-            let udp = throwing_accessor_constructor(&["fd"])?;
+            // Reuse the dgram handle installed by the shared bootstrap so
+            // public dgram and internalBinding expose one constructor.
+            let global = quench_runtime::vm::current_global_object();
+            let udp = execute::get_property(&global, "__quenchDgramUDPClass");
+            let udp = if matches!(udp, Value::Undefined) {
+                throwing_accessor_constructor(&["fd"])?
+            } else {
+                udp
+            };
             return Ok(crate::host::namespace_object_from_pairs(vec![(
                 "UDP".into(),
                 udp,
