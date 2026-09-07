@@ -317,6 +317,15 @@ impl ProgramDb {
         self.reduction_source = source.to_string();
     }
 
+    /// Project an AST span back to its exact source text. Function values use
+    /// this single parser-owned representation for observable `toString()`;
+    /// native-code rendering is reserved for functions without source.
+    pub(crate) fn source_for_span(&self, span: Span) -> Option<String> {
+        self.reduction_source
+            .get(span.start as usize..span.end as usize)
+            .map(str::to_owned)
+    }
+
     pub(crate) fn is_cover_parenthesized_identifier(&self, span: Span) -> bool {
         let start = usize::try_from(span.start).ok();
         let end = usize::try_from(span.end).ok();

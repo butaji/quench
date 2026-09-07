@@ -518,6 +518,7 @@ pub fn reduce_function_declaration(
         parameter_count,
         captures,
         metadata,
+        facts.source_for_span(function.span),
     ));
     name_function_declaration(ops, register, next_register, identifier.name.as_str());
     ops.push(Op::StoreLocal {
@@ -529,3 +530,14 @@ pub fn reduce_function_declaration(
 }
 
 include!("reduce_function_helpers.rs");
+
+#[cfg(test)]
+mod declaration_source_tests {
+    #[test]
+    fn function_declaration_preserves_observable_source() {
+        let source = "function describeKey(key) { return key; }\nif (describeKey.toString() !== 'function describeKey(key) { return key; }') throw 'lost source';";
+        let program = super::reduce_source(source).expect("function declaration reduces");
+        crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default())
+            .expect("declaration source remains observable");
+    }
+}
