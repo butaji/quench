@@ -4030,7 +4030,11 @@ pub fn export_key(
                     Value::String(match name.to_ascii_uppercase().as_str() {
                         "RSA-PSS" => format!("PS{hash}"),
                         "RSASSA-PKCS1-V1_5" => format!("RS{hash}"),
-                        "RSA-OAEP" => format!("RSA-OAEP-{hash}"),
+                        "RSA-OAEP" => if hash == "1" {
+                            "RSA-OAEP".into()
+                        } else {
+                            format!("RSA-OAEP-{hash}")
+                        },
                         _ => String::new(),
                     })
                 };
