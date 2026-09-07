@@ -36,6 +36,7 @@ fn shared_slab_typed_entry_guard_blocks_eviction_during_call() {
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
 fn retaining_lease_allows_reentrant_pool_access_and_delays_retirement() {
     let shared = std::rc::Rc::new(std::cell::RefCell::new(
         SharedStencilSlab::new(4096).expect("slab"),
