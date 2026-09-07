@@ -48,6 +48,7 @@ const CAP_UTIL_TRANSFERABLE_ABORT_CONTROLLER: u16 =
     crate::registry::SPEC_UTIL_TRANSFERABLE_ABORT_CONTROLLER.cap;
 const CAP_STREAM_ADD_ABORT_SIGNAL_NO_VALIDATE: u16 =
     crate::registry::SPEC_STREAM_ADD_ABORT_SIGNAL_NO_VALIDATE.cap;
+const CAP_STREAM_READABLE_BUFFER: u16 = crate::registry::SPEC_STREAM_READABLE_BUFFER.cap;
 const CAP_UTIL_ABORTED: u16 = 0x0310;
 const CAP_UTIL_ABORTED_RESOLVE: u16 = 0x0311;
 const CAP_UTIL_TO_USV_STRING: u16 = 0x0309;
@@ -698,7 +699,6 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_MODULE_CREATE_REQUIRE => module_create_require,
         CAP_MODULE_CREATED_REQUIRE => module_created_require,
         CAP_MODULE_CREATED_RESOLVE => module_created_resolve,
-        CAP_MODULE_CREATED_RESOLVE => module_created_resolve,
         CAP_MODULE_STAT => module_stat,
         CAP_MODULE_SET_SOURCEMAPS_SUPPORT => module_set_source_maps_support,
         CAP_MODULE_ENABLE_COMPILE_CACHE => module_enable_compile_cache,
@@ -829,6 +829,17 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_INTERNAL_CRYPTO_WEBIDL_AEAD => internal_crypto_webidl_aead,
         CAP_INTERNAL_CRYPTO_WEBIDL_AES_CTR => internal_crypto_webidl_aes_ctr,
         CAP_INTERNAL_CRYPTO_WEBIDL_ECDH => internal_crypto_webidl_ecdh,
+        CAP_INTERNAL_CRYPTO_HASH_JOB_RUN => crate::modules::webcrypto::hash_job_run,
+        CAP_INTERNAL_CRYPTO_SECRET_KEY_GEN_JOB_RUN => {
+            crate::modules::webcrypto::secret_key_gen_job_run
+        }
+        CAP_INTERNAL_CRYPTO_EC_KEY_PAIR_GEN_JOB_RUN => {
+            crate::modules::webcrypto::ec_key_pair_gen_job_run
+        }
+        CAP_INTERNAL_CRYPTO_AES_CIPHER_JOB_RUN => {
+            crate::modules::webcrypto::aes_cipher_job_run
+        }
+        CAP_INTERNAL_CRYPTO_JOB_COMPLETE => crate::modules::webcrypto::crypto_job_complete,
         CAP_INTERNAL_UTIL_WEAK_REFERENCE_GET => internal_util_weak_reference_get,
         CAP_OS_GET_PRIORITY => os_get_priority,
         CAP_OS_SET_PRIORITY => os_set_priority,
@@ -1214,6 +1225,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_STREAM_PROMISES_FINISHED => stream_promises_finished,
         CAP_STREAM_PROMISES_CALLBACK => stream_promises_callback,
         CAP_STREAM_WRITABLE_WRITE_ADAPTER => crate::modules::stream::writable_write_adapter,
+        CAP_STREAM_READABLE_BUFFER => crate::modules::stream::readable_buffer,
         CAP_DNS_LOOKUP => dns_lookup,
         CAP_DNS_RESOLVE4 => dns_resolve4,
         CAP_HTTP_REQUEST => http_request,
@@ -1245,6 +1257,10 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_WEBCRYPTO_SIGN => crate::modules::webcrypto::sign,
         CAP_WEBCRYPTO_VERIFY => crate::modules::webcrypto::verify,
         CAP_WEBCRYPTO_EXPORT_KEY => crate::modules::webcrypto::export_key,
+        CAP_WEBCRYPTO_GET_PUBLIC_KEY => crate::modules::webcrypto::get_public_key,
+        CAP_WEBCRYPTO_SUPPORTS => crate::modules::webcrypto::supports,
+        CAP_WEBCRYPTO_WRAP_KEY => crate::modules::webcrypto::wrap_key,
+        CAP_WEBCRYPTO_UNWRAP_KEY => crate::modules::webcrypto::unwrap_key,
         CAP_CRYPTO_CREATE_SECRET_KEY => crate::modules::crypto::create_secret_key,
         CAP_CRYPTO_CREATE_HASH => crate::modules::crypto::create_hash,
         CAP_CRYPTO_HASH => crate::modules::crypto::hash_one_shot,
@@ -1439,6 +1455,8 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_HTTP_OUTGOING_WRITE => handlers::http_outgoing_write,
         CAP_HTTP_OUTGOING_END => handlers::http_outgoing_end,
         CAP_HTTP_OUTGOING_DESTROY => handlers::http_outgoing_destroy,
+        CAP_HTTP_OUTGOING_ASSIGN_SOCKET => handlers::http_outgoing_assign_socket,
+        CAP_HTTP_OUTGOING_DETACH_SOCKET => handlers::http_outgoing_detach_socket,
         CAP_NET_CONNECT => net_connect,
         CAP_NET_PIPE_BIND => crate::modules::net::pipe_bind,
         CAP_NET_BOUND_SOCKET_ADDRESS => crate::modules::net::bound_socket_address,
@@ -1500,6 +1518,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_NET_BLOCK_LIST_IS => crate::modules::net::block_list_is,
         CAP_NET_BLOCK_LIST_INSPECT => crate::modules::net::block_list_inspect,
         CAP_NET_SOCKET_ADDRESS => crate::modules::net::socket_address,
+        CAP_NET_SOCKET_ADDRESS_CONSTRUCT => crate::modules::net::socket_address_call,
         CAP_NET_SOCKET_SET_NO_DELAY => crate::modules::net::socket_set_no_delay,
         CAP_NET_SOCKET_SET_TOS => crate::modules::net::socket_set_type_of_service,
         CAP_NET_SOCKET_GET_TOS => crate::modules::net::socket_get_type_of_service,
@@ -1773,6 +1792,16 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_FS_CREATE_READSTREAM | CAP_FS_READSTREAM => crate::modules::fs::construct_read_stream,
         CAP_BUFFER_NEW => buffer_new_construct,
         CAP_WEBCRYPTO_KEY_CONSTRUCT => crate::modules::webcrypto::illegal_constructor,
+        CAP_INTERNAL_CRYPTO_HASH_JOB_CONSTRUCT => crate::modules::webcrypto::hash_job_construct,
+        CAP_INTERNAL_CRYPTO_SECRET_KEY_GEN_JOB_CONSTRUCT => {
+            crate::modules::webcrypto::secret_key_gen_job_construct
+        }
+        CAP_INTERNAL_CRYPTO_EC_KEY_PAIR_GEN_JOB_CONSTRUCT => {
+            crate::modules::webcrypto::ec_key_pair_gen_job_construct
+        }
+        CAP_INTERNAL_CRYPTO_AES_CIPHER_JOB_CONSTRUCT => {
+            crate::modules::webcrypto::aes_cipher_job_construct
+        }
         CAP_CRYPTO_KEY_OBJECT_CONSTRUCTOR => crate::modules::crypto::key_object_construct,
         CAP_CRYPTO_X509_CONSTRUCTOR => crate::modules::crypto::x509_constructor_construct,
         CAP_CRYPTO_CERTIFICATE_CONSTRUCTOR => {

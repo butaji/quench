@@ -250,7 +250,7 @@ fn convert_import_spec(spec: &str) -> Option<String> {
             .strip_suffix(".mjs")
             .or_else(|| module.strip_suffix(".js"))
             .unwrap_or(module);
-        return Some(format!("require({module:?});"));
+        return Some(format!("globalThis.require({module:?});"));
     }
     let from_index = rest.rfind(" from ")?;
     let (left, right) = rest.split_at(from_index);
@@ -270,19 +270,19 @@ fn convert_import_spec(spec: &str) -> Option<String> {
         .to_string();
     let left = left.trim();
     if left.is_empty() {
-        return Some(format!("require(\"{module}\");"));
+        return Some(format!("globalThis.require(\"{module}\");"));
     }
     if let Some(inner) = left.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
         let names = parse_import_names(inner);
-        return Some(format!("const {{ {names} }} = require(\"{module}\");"));
+        return Some(format!("const {{ {names} }} = globalThis.require(\"{module}\");"));
     }
     if let Some(rest) = left.strip_prefix("* as ") {
         let local = rest.trim();
-        return Some(format!("const {local} = require(\"{module}\");"));
+        return Some(format!("const {local} = globalThis.require(\"{module}\");"));
     }
     if let Some(rest) = left.strip_prefix("default as ") {
         let local = rest.trim();
-        return Some(format!("const {local} = require(\"{module}\");"));
+        return Some(format!("const {local} = globalThis.require(\"{module}\");"));
     }
     // Combined `default, { named }` / `default, * as ns` form. A bare default
     // import interop-bound to a CJS module is the module object itself, so the
@@ -299,7 +299,8 @@ fn convert_import_spec(spec: &str) -> Option<String> {
         // require result so `Readable === stream.Readable` holds (require is
         // not guaranteed to return a unique object per call). The default
         // binding is the module object itself, matching CJS ESM interop.
-        let mut out = format!("const {default_binding} = require(\"{module}\");\n");
+        let mut out =
+            format!("const {default_binding} = globalThis.require(\"{module}\");\n");
         if let Some(inner) = rest_part.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
             let names = parse_import_names(inner);
             out.push_str(&format!("const {{ {names} }} = {default_binding};"));
@@ -311,7 +312,7 @@ fn convert_import_spec(spec: &str) -> Option<String> {
         }
         return Some(out);
     }
-    Some(format!("const {left} = require(\"{module}\");"))
+    Some(format!("const {left} = globalThis.require(\"{module}\");"))
 }
 
 /// First comma outside of brace/bracket/paren depth and string literals, or
