@@ -155,10 +155,20 @@ pub fn tcp_construct(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<
     let object = bound_socket_construct(state, &[options])?;
     let object = install_methods(
         object,
-        vec![(
-            "bind".into(),
-            crate::host::capability(crate::registry::SPEC_NET_TCP_BIND),
-        )],
+        vec![
+            (
+                "bind".into(),
+                crate::host::capability(crate::registry::SPEC_NET_TCP_BIND),
+            ),
+            (
+                "listen".into(),
+                crate::host::capability(crate::registry::SPEC_NET_TCP_BIND),
+            ),
+            // `internalBinding('tcp_wrap').TCP` exposes both operations on
+            // the same pre-bound handle.  `listen()` is the completion hook
+            // used by fd-type validation; the Rust constructor has already
+            // allocated the listener, so it shares the bind success fact.
+        ],
     )?;
     // Internal TCP handles expose a numeric fd field, unlike the public
     // BoundSocket accessor method.
