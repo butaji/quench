@@ -139,12 +139,13 @@ AsmJit's useful model here is its `CodeHolder`, not its runtime assembler API:
 one target-bound value carries sections, labels, relocations and entry offsets;
 emitters populate it, then flattening and relocation precede one allocation and
 publication step. Quench applies that shape with `PhysicalStencilView` and a
-finalized `VerifiedRegionImage`. The latter retains the selected view, derived
-cache signature and composed bytes, so publication cannot receive independently
-chosen bytes, key, ABI or cache identity. Typed labels and fixups remain bounded
-Rust data and resolution stays transactional. Do not import AsmJit's instruction
-builder, compiler, allocator or runtime dependency: those would duplicate the
-canonical Rust catalog and the existing slab/lease lifecycle.
+finalized `VerifiedRegionImage`. Selection derives one immutable
+`RegionImageIdentity` (key, patched physical signature and ABI); composition
+adds finalized bytes, and publication consumes only that image. The arena cannot
+reconstruct or relabel identity from parallel arguments. Typed labels and fixups
+remain bounded Rust data and resolution stays transactional. Do not import
+AsmJit's instruction builder, compiler, allocator or runtime dependency: those
+would duplicate the canonical Rust catalog and the existing slab/lease lifecycle.
 
 ### Bounded stencil-selection optimizer
 

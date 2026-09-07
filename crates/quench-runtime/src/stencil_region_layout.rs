@@ -14,22 +14,37 @@ const FALLTHROUGH_LABEL: LabelId = LabelId(1);
 /// Finalized code and its selected physical contract travel as one value.
 /// Publication must not reconstruct ABI or identity from parallel arguments.
 pub(crate) struct VerifiedRegionImage {
-    view: PhysicalStencilView,
-    cache_signature: u64,
+    identity: RegionImageIdentity,
     bytes: Vec<u8>,
 }
 
-impl VerifiedRegionImage {
-    pub(crate) fn view(&self) -> PhysicalStencilView {
-        self.view
-    }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RegionImageIdentity {
+    pub(crate) key: crate::stencil_fact::RegionKey,
+    pub(crate) cache_signature: u64,
+    pub(crate) abi: crate::stencil_select::RegionAbi,
+}
 
+impl RegionImageIdentity {
+    pub(crate) fn selected<const N: usize>(
+        view: PhysicalStencilView,
+        values: &PatchValues<'_, N>,
+    ) -> Self {
+        Self {
+            key: view.key,
+            cache_signature: view.cache_signature(values),
+            abi: view.abi,
+        }
+    }
+}
+
+impl VerifiedRegionImage {
     pub(crate) fn bytes(&self) -> &[u8] {
         &self.bytes
     }
 
-    pub(crate) const fn cache_signature(&self) -> u64 {
-        self.cache_signature
+    pub(crate) const fn identity(&self) -> RegionImageIdentity {
+        self.identity
     }
 
     #[cfg(test)]
@@ -39,8 +54,11 @@ impl VerifiedRegionImage {
         bytes: Vec<u8>,
     ) -> Self {
         Self {
-            view,
-            cache_signature,
+            identity: RegionImageIdentity {
+                key: view.key,
+                cache_signature,
+                abi: view.abi,
+            },
             bytes,
         }
     }
@@ -254,8 +272,7 @@ pub(crate) fn compose_selected_controlled_region<const N: usize>(
         &mut bytes,
     )?;
     Ok(VerifiedRegionImage {
-        view,
-        cache_signature: view.cache_signature(values),
+        identity: RegionImageIdentity::selected(view, values),
         bytes,
     })
 }
