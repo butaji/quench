@@ -11,8 +11,94 @@ use crate::stencil_region_layout::{
     RegionPoint, VerifiedRegionImage,
 };
 use crate::stencil_select::PhysicalStencilView;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 const LINEAR_COMPOSITION_ID: RegionId = RegionId(0x5143_0001);
+
+type F64Entry = extern "C" fn(f64, f64) -> f64;
+
+pub(crate) struct NativeLinearF64Plan {
+    owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
+    image: VerifiedRegionImage,
+    cache: crate::stencil_select::RenderedRegionCache,
+    installed: Option<crate::stencil_arena::EntryToken<F64Entry>>,
+    view: PhysicalStencilView,
+    #[cfg(test)]
+    entries: u64,
+    #[cfg(test)]
+    last_entered: bool,
+}
+
+impl NativeLinearF64Plan {
+    pub(crate) fn repeated_add(
+        policy: crate::stencil_policy::ExecutionPolicy,
+        owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
+    ) -> Option<Self> {
+        policy.native_leaves.then_some(())?;
+        let view = crate::stencil_select::select_physical_for_abi(
+            crate::stencil_select::fallthrough_region_key(),
+            crate::stencil_select::RegionAbi::ScalarF64Binary,
+        )?;
+        let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::Add);
+        let values = PatchValues::from_site(&site);
+        let image = compose_linear_chain(view, 2, &values).ok()?;
+        Some(Self {
+            owner,
+            image,
+            cache: crate::stencil_select::RenderedRegionCache::new(),
+            installed: None,
+            view,
+            #[cfg(test)]
+            entries: 0,
+            #[cfg(test)]
+            last_entered: false,
+        })
+    }
+
+    pub(crate) fn execute(&mut self, lhs: f64, rhs: f64) -> Option<f64> {
+        if let Some(entry) = self.installed {
+            if let Ok(value) = self.invoke(entry, lhs, rhs) {
+                return Some(value);
+            }
+            self.installed = None;
+        }
+        let address = self
+            .owner
+            .borrow_mut()
+            .publish_region_image_or_get(&mut self.cache, &self.image)
+            .ok()?;
+        let entry = self.owner.borrow().owned_f64_entry(address).ok()?;
+        self.installed = Some(entry);
+        self.invoke(entry, lhs, rhs).ok()
+    }
+
+    fn invoke(
+        &mut self,
+        entry: crate::stencil_arena::EntryToken<F64Entry>,
+        lhs: f64,
+        rhs: f64,
+    ) -> Result<f64, crate::stencil_arena::ArenaError> {
+        let lease = crate::stencil_arena::SharedStencilSlab::acquire_owned(&self.owner, entry)?;
+        let value = lease.invoke(|call| call(lhs, rhs))?;
+        #[cfg(test)]
+        {
+            self.entries = self.entries.saturating_add(1);
+            self.last_entered = true;
+        }
+        Ok(value)
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn native_entry_count(&self) -> u64 {
+        self.entries
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_native_view(&self) -> Option<PhysicalStencilView> {
+        self.last_entered.then_some(self.view)
+    }
+}
 
 pub(crate) fn compose_linear_chain<const N: usize>(
     view: PhysicalStencilView,

@@ -87,6 +87,48 @@ fn ordinary_source_add_tree_executes_native_and_guarded_fallback() {
     );
 }
 
+#[test]
+fn ordinary_source_repeated_add_uses_composed_fragment_image() {
+    let source = "function f(a,b){return (a+b)+b} f(1,2)";
+    let program = crate::reduce::reduce_source(source).expect("ordinary source lowers");
+    let mut checked = false;
+    crate::stencil_test_support::visit_code_views(program.code(), &mut |view| {
+        let Some((completion, entries, physical)) = execute_source_add_chain(
+            view,
+            [Value::Number(1.0), Value::Number(2.0), Value::Number(2.0)],
+        ) else {
+            return;
+        };
+        assert_eq!(completion, Completion::Return(Value::Number(5.0)));
+        assert_eq!(entries, 1);
+        let physical = physical.expect("composed physical view witness");
+        assert_eq!(
+            physical.key,
+            crate::stencil_select::fallthrough_region_key()
+        );
+        assert_eq!(
+            physical.abi,
+            crate::stencil_select::RegionAbi::ScalarF64Binary
+        );
+        #[cfg(quench_generated_stencil_artifacts)]
+        assert!(physical.generated);
+        let fallback = execute_source_add_chain(
+            view,
+            [
+                Value::String("x".into()),
+                Value::Number(2.0),
+                Value::Number(2.0),
+            ],
+        )
+        .expect("hostile input takes ordinary path");
+        assert_eq!(fallback.0, Completion::Return(Value::String("x22".into())));
+        assert_eq!(fallback.1, 0);
+        assert!(fallback.2.is_none());
+        checked = true;
+    });
+    assert!(checked, "ordinary source must reach fragment composition");
+}
+
 #[cfg(quench_generated_stencil_artifacts)]
 fn assert_generated_add_chain(view: Option<crate::stencil_select::PhysicalStencilView>) {
     let view = view.expect("normal driver must retain the invoked physical view");
