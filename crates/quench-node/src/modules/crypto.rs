@@ -1159,11 +1159,17 @@ pub fn key_object_equals(
     if !matches!(
         execute::get_property(receiver, KEY_TYPE_PROP),
         Value::String(_)
-    ) || !matches!(
+    ) {
+        return Err(key_invalid_this());
+    }
+    if !matches!(
         execute::get_property(other, KEY_TYPE_PROP),
         Value::String(_)
     ) {
-        return Err(key_invalid_this());
+        return Err(invalid_type(&format!(
+            "The \"otherKeyObject\" argument must be an instance of KeyObject.{}",
+            crate::modules::util::invalid_arg_received(other)
+        )));
     }
     let left = bytes_from_value(&execute::get_property(receiver, KEY_DATA_PROP));
     let right = bytes_from_value(&execute::get_property(other, KEY_DATA_PROP));
@@ -1822,19 +1828,13 @@ fn generate_key_pair_sync_mode(
                     )))
                 }
             };
-            let nid = match curve.to_ascii_lowercase().as_str() {
-                "p-256" | "prime256v1" => Nid::X9_62_PRIME256V1,
-                "secp256k1" => Nid::SECP256K1,
-                "p-384" | "secp384r1" => Nid::SECP384R1,
-                "p-521" | "secp521r1" => Nid::SECP521R1,
-                _ => {
-                    return Err(VmError::Thrown(native_error(
-                        quench_runtime::ops::Builtin::TypeError,
-                        "ERR_INVALID_ARG_VALUE",
-                        "Invalid EC curve name",
-                    )))
-                }
-            };
+            let nid = ec_nid_from_name(&curve).ok_or_else(|| {
+                VmError::Thrown(native_error(
+                    quench_runtime::ops::Builtin::TypeError,
+                    "ERR_INVALID_ARG_VALUE",
+                    "Invalid EC curve name",
+                ))
+            })?;
             let group = EcGroup::from_curve_name(nid).map_err(|_| {
                 crypto_error("ERR_CRYPTO_OPERATION_FAILED", "key generation failed")
             })?;
@@ -2276,16 +2276,7 @@ fn validate_keygen_options(kind: &str, options: &Value) -> Result<(), VmError> {
                     crate::modules::util::invalid_arg_received(&value)
                 )));
             };
-            if !matches!(
-                curve.to_ascii_lowercase().as_str(),
-                "p-256"
-                    | "prime256v1"
-                    | "secp256k1"
-                    | "p-384"
-                    | "secp384r1"
-                    | "p-521"
-                    | "secp521r1"
-            ) {
+            if ec_nid_from_name(&curve).is_none() {
                 return Err(VmError::Thrown(native_error(
                     quench_runtime::ops::Builtin::TypeError,
                     "ERR_INVALID_ARG_VALUE",
@@ -2339,6 +2330,20 @@ fn display_number(value: f64) -> String {
     (value == 0.0)
         .then_some("0".into())
         .unwrap_or_else(|| value.to_string())
+}
+
+fn ec_nid_from_name(name: &str) -> Option<Nid> {
+    let name = name.to_ascii_lowercase();
+    // OpenSSL exposes its curve table through numeric NIDs rather than a
+    // reverse name lookup in the Rust bindings. The table is small and this
+    // path is only used during explicit key generation/import validation.
+    (0..=2048).find_map(|raw| {
+        let nid = Nid::from_raw(raw);
+        nid.short_name()
+            .ok()
+            .filter(|short| short.eq_ignore_ascii_case(&name))
+            .map(|_| nid)
+    })
 }
 
 fn incompatible_options(left: &str, right: &str) -> VmError {
@@ -2487,6 +2492,25 @@ fn contains_pqc_algorithm(data: &[u8]) -> bool {
     })
 }
 
+fn contains_rsa_pss_algorithm(data: &[u8]) -> bool {
+    const RSA_PSS_OID: &[u8] =
+        &[0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a];
+    let der = if data.starts_with(b"-----BEGIN") {
+        let body = data
+            .split(|byte| *byte == b'\n' || *byte == b'\r')
+            .filter(|line| !line.starts_with(b"-----"))
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>();
+        base64::engine::general_purpose::STANDARD
+            .decode(body)
+            .unwrap_or_default()
+    } else {
+        data.to_vec()
+    };
+    der.windows(RSA_PSS_OID.len()).any(|window| window == RSA_PSS_OID)
+}
+
 fn openssl_supports_pqc() -> bool {
     // The Node-facing process reports OpenSSL 3.0 and the host has no PQC
     // key-object implementation yet; keep this capability fact explicit
@@ -2559,6 +2583,35 @@ fn create_asymmetric_key(args: &[Value], key_type: &str) -> Result<Value, VmErro
     let descriptor = args
         .first()
         .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)));
+    if let Some(descriptor) = descriptor {
+        let format = execute::get_property(descriptor, "format");
+        if let Value::String(ref format_name) = format {
+            if !matches!(
+                format_name.as_str(),
+                "pem" | "der" | "jwk" | "raw-public" | "raw-private" | "raw-seed"
+            ) {
+                return Err(VmError::Thrown(native_error(
+                    quench_runtime::ops::Builtin::TypeError,
+                    "ERR_INVALID_ARG_VALUE",
+                    &format!(
+                        "The property 'key.format' is invalid. Received '{format_name}'"
+                    ),
+                )));
+            }
+        }
+        if matches!(format, Value::String(ref format_name) if format_name == "pem" || format_name == "der") {
+            let key_encoding_type = execute::get_property(descriptor, "type");
+            if let Value::String(ref type_name) = key_encoding_type {
+                if !matches!(type_name.as_str(), "pkcs1" | "pkcs8" | "sec1" | "spki") {
+                    return Err(VmError::Thrown(native_error(
+                        quench_runtime::ops::Builtin::TypeError,
+                        "ERR_INVALID_ARG_VALUE",
+                        &format!("The property 'key.type' is invalid. Received '{type_name}'"),
+                    )));
+                }
+            }
+        }
+    }
     let url_value = args
         .first()
         .filter(|value| crate::modules::url_whatwg::is_url_instance(value))
@@ -2618,13 +2671,8 @@ fn create_asymmetric_key(args: &[Value], key_type: &str) -> Result<Value, VmErro
         if matches!(format, Value::String(ref value) if value == "jwk") {
             let key = execute::get_property(descriptor, "key");
             if !matches!(key, Value::Object(_) | Value::ObjectAlias(_)) {
-                let label = if key_type == "private" {
-                    "privateKey"
-                } else {
-                    "key"
-                };
                 return Err(invalid_type(&format!(
-                    "The \"{label}.key\" property must be of type object"
+                    "The \"key.key\" property must be of type object"
                 )));
             }
             if matches!(
@@ -3201,8 +3249,10 @@ fn create_asymmetric_key(args: &[Value], key_type: &str) -> Result<Value, VmErro
     let key_id = PKey::private_key_from_pem(&data)
         .map(|pkey| pkey.id())
         .or_else(|_| PKey::public_key_from_pem(&data).map(|pkey| pkey.id()));
-    let asymmetric_type = key_id
-        .map(|id| match id {
+    let asymmetric_type = if contains_rsa_pss_algorithm(&data) {
+        "rsa-pss"
+    } else {
+        key_id.map(|id| match id {
             openssl::pkey::Id::EC => "ec",
             openssl::pkey::Id::ED25519 => "ed25519",
             openssl::pkey::Id::ED448 => "ed448",
@@ -3212,8 +3262,8 @@ fn create_asymmetric_key(args: &[Value], key_type: &str) -> Result<Value, VmErro
             openssl::pkey::Id::DH => "dh",
             openssl::pkey::Id::RSA_PSS => "rsa-pss",
             _ => "rsa",
-        })
-        .unwrap_or("rsa");
+        }).unwrap_or("rsa")
+    };
     let mut key = host_api::object(Vec::new());
     let (_, asym_proto) = key_object_prototypes();
     key = execute::set_prototype_of(&key, &asym_proto).unwrap_or(key);
@@ -3252,6 +3302,14 @@ fn asymmetric_key_details(data: &[u8], asymmetric_type: &str) -> Value {
                 } else {
                     rsa_key_details(&rsa)
                 }
+            } else if let Ok(pkey) = PKey::private_key_from_der(data) {
+                pkey.rsa()
+                    .map(|rsa| rsa_pss_key_details(&rsa, data))
+                    .unwrap_or_else(|_| host_api::object(Vec::new()))
+            } else if let Ok(pkey) = PKey::public_key_from_der(data) {
+                pkey.rsa()
+                    .map(|rsa| rsa_pss_key_details(&rsa, data))
+                    .unwrap_or_else(|_| host_api::object(Vec::new()))
             } else {
                 host_api::object(Vec::new())
             }
@@ -3312,6 +3370,44 @@ fn rsa_key_details<T: openssl::pkey::HasPublic>(rsa: &openssl::rsa::RsaRef<T>) -
     ])
 }
 
+struct PssDerReader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> PssDerReader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn take(&mut self, tag: u8) -> Option<&'a [u8]> {
+        if self.bytes.get(self.offset).copied()? != tag {
+            return None;
+        }
+        self.offset += 1;
+        let first = *self.bytes.get(self.offset)?;
+        self.offset += 1;
+        let length = if first & 0x80 == 0 {
+            usize::from(first)
+        } else {
+            let count = usize::from(first & 0x7f);
+            if count == 0 || count > std::mem::size_of::<usize>() {
+                return None;
+            }
+            let end = self.offset.checked_add(count)?;
+            let encoded = self.bytes.get(self.offset..end)?;
+            self.offset = end;
+            encoded.iter().try_fold(0usize, |value, byte| {
+                value.checked_mul(256)?.checked_add(usize::from(*byte))
+            })?
+        };
+        let end = self.offset.checked_add(length)?;
+        let result = self.bytes.get(self.offset..end)?;
+        self.offset = end;
+        Some(result)
+    }
+}
+
 fn rsa_pss_key_details<T: openssl::pkey::HasPublic>(
     rsa: &openssl::rsa::RsaRef<T>,
     encoded: &[u8],
@@ -3347,38 +3443,87 @@ fn rsa_pss_key_details<T: openssl::pkey::HasPublic>(
     } else {
         encoded.to_vec()
     };
-    let sha1 = [0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a];
-    let sha256 = [0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01];
-    let sha512 = [0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03];
-    let mut digests = Vec::new();
-    for (oid, name) in [(&sha1[..], "sha1"), (&sha256[..], "sha256"), (&sha512[..], "sha512")] {
-        let mut offset = 0;
-        while let Some(index) = der[offset..].windows(oid.len()).position(|window| window == oid) {
-            digests.push((offset + index, name));
-            offset += index + oid.len();
-        }
-    }
-    digests.sort_by_key(|(offset, _)| *offset);
-    if digests.len() >= 2 {
-        fields.push(("hashAlgorithm".into(), Value::String(digests[0].1.into())));
-        fields.push(("mgf1HashAlgorithm".into(), Value::String(digests[1].1.into())));
-        if let Some((_, salt)) = der
-            .windows(3)
-            .enumerate()
-            .rev()
-            .find(|(_, bytes)| bytes[0] == 0x02 && bytes[1] == 0x01 && bytes[2] <= 64)
-        {
-            fields.push(("saltLength".into(), Value::Number(salt[2] as f64)));
-        }
-    } else if der
-        .windows(13)
-        .any(|window| window[..11] == [0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a] && window[11..] == [0x30, 0x00])
-    {
+    const RSA_PSS_OID: &[u8] =
+        &[0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a];
+    const MGF1_OID: &[u8] =
+        &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x08];
+    let digest_name = |oid: &[u8]| match oid {
+        [0x2b, 0x0e, 0x03, 0x02, 0x1a] => Some("sha1"),
+        [0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01] => Some("sha256"),
+        [0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03] => Some("sha512"),
+        _ => None,
+    };
+    let Some(oid_offset) = der.windows(RSA_PSS_OID.len()).position(|window| window == RSA_PSS_OID) else {
+        return host_api::object(fields);
+    };
+    let mut params_reader = PssDerReader::new(&der[oid_offset + RSA_PSS_OID.len()..]);
+    let Some(params) = params_reader.take(0x30) else {
+        return host_api::object(fields);
+    };
+    if params.is_empty() {
         // An explicitly present, empty RSASSA-PSS-params sequence carries
         // the RFC defaults (SHA-1, MGF1-SHA-1, 20-byte salt).  A completely
         // absent params field is intentionally left as the unrestricted form.
         fields.push(("hashAlgorithm".into(), Value::String("sha1".into())));
         fields.push(("mgf1HashAlgorithm".into(), Value::String("sha1".into())));
+        fields.push(("saltLength".into(), Value::Number(20.0)));
+        return host_api::object(fields);
+    }
+    let mut params = PssDerReader::new(params);
+    while params.offset < params.bytes.len() {
+        let tag = params.bytes.get(params.offset).copied();
+        match tag {
+            Some(0xa0) => {
+                if let Some(hash_algorithm) = params.take(0xa0) {
+                    let mut algorithm = PssDerReader::new(hash_algorithm);
+                    if let Some(algorithm) = algorithm.take(0x30) {
+                        let mut algorithm = PssDerReader::new(algorithm);
+                        if let Some(oid) = algorithm.take(0x06).and_then(digest_name) {
+                            fields.push(("hashAlgorithm".into(), Value::String(oid.into())));
+                        }
+                    }
+                }
+            }
+            Some(0xa1) => {
+                if let Some(mgf) = params.take(0xa1) {
+                    let mut mgf = PssDerReader::new(mgf);
+                    if let Some(mgf) = mgf.take(0x30) {
+                        let mut mgf = PssDerReader::new(mgf);
+                        if mgf.take(0x06).is_some_and(|oid| oid == MGF1_OID) {
+                            if let Some(hash) = mgf.take(0x30) {
+                                let mut hash = PssDerReader::new(hash);
+                                if let Some(oid) = hash.take(0x06).and_then(digest_name) {
+                                    fields.push(("mgf1HashAlgorithm".into(), Value::String(oid.into())));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Some(0xa2) => {
+                if let Some(salt) = params.take(0xa2) {
+                    let mut salt = PssDerReader::new(salt);
+                    if let Some(value) = salt.take(0x02) {
+                        let value = value.iter().fold(0_u64, |value, byte| {
+                            value.saturating_mul(256).saturating_add(u64::from(*byte))
+                        });
+                        fields.push(("saltLength".into(), Value::Number(value as f64)));
+                    }
+                }
+            }
+            _ => break,
+        }
+    }
+    // RSASSA-PSS parameters use the RFC defaults for omitted fields.  Keep
+    // those defaults distinct from an absent parameters sequence, which means
+    // an unrestricted RSA-PSS key and intentionally exposes no details.
+    if !fields.iter().any(|(name, _)| name == "hashAlgorithm") {
+        fields.push(("hashAlgorithm".into(), Value::String("sha1".into())));
+    }
+    if !fields.iter().any(|(name, _)| name == "mgf1HashAlgorithm") {
+        fields.push(("mgf1HashAlgorithm".into(), Value::String("sha1".into())));
+    }
+    if !fields.iter().any(|(name, _)| name == "saltLength") {
         fields.push(("saltLength".into(), Value::Number(20.0)));
     }
     host_api::object(fields)
@@ -3561,6 +3706,7 @@ fn sign_impl(
         ));
     }
     validate_rsa_option_values(options.as_ref())?;
+    validate_rsa_pss_salt_length(&pkey, &key, options.as_ref())?;
     let mut signer = Signer::new(digest, &pkey).map_err(openssl_error)?;
     configure_rsa_for_key(
         &mut signer,
@@ -3664,6 +3810,7 @@ fn verify_impl(
         ));
     }
     validate_rsa_option_values(options.as_ref())?;
+    validate_rsa_pss_salt_length(&pkey, &key, options.as_ref())?;
     if p1363 {
         if let Some(width) = dsa_signature_width(&pkey) {
             signature = p1363_to_der(&signature, width).unwrap_or(signature);
@@ -4119,6 +4266,34 @@ where
     configure_rsa(signer, options)
 }
 
+fn validate_rsa_pss_salt_length(
+    pkey: &PKey<impl openssl::pkey::HasPublic>,
+    encoded: &[u8],
+    options: Option<&Value>,
+) -> Result<(), VmError> {
+    let Some(options) = options else {
+        return Ok(());
+    };
+    let Value::Number(requested) = execute::get_property(options, "saltLength") else {
+        return Ok(());
+    };
+    let Ok(rsa) = pkey.rsa() else {
+        return Ok(());
+    };
+    let details = rsa_pss_key_details(&rsa, encoded);
+    let Value::Number(minimum) = execute::get_property(&details, "saltLength") else {
+        return Ok(());
+    };
+    if requested < minimum {
+        return Err(VmError::Thrown(native_error(
+            quench_runtime::ops::Builtin::Error,
+            "ERR_OSSL_EVP_UNSUPPORTED",
+            "pss saltlen too small",
+        )));
+    }
+    Ok(())
+}
+
 trait RsaConfig {
     fn set_padding(&mut self, padding: Padding) -> Result<(), openssl::error::ErrorStack>;
     fn set_salt(&mut self, salt: RsaPssSaltlen) -> Result<(), openssl::error::ErrorStack>;
@@ -4350,6 +4525,20 @@ fn ec_jwk_base<T: HasPublic>(ec: &EcKey<T>) -> Result<(Vec<(String, Value)>, usi
             "invalid EC key",
         ));
     }
+    let curve_name = ec
+        .group()
+        .curve_name()
+        .and_then(|nid| nid.short_name().ok())
+        .unwrap_or("unknown");
+    if !matches!(
+        curve_name.to_ascii_lowercase().as_str(),
+        "prime256v1" | "secp256k1" | "secp384r1" | "secp521r1"
+    ) {
+        return Err(crypto_error(
+            "ERR_CRYPTO_JWK_UNSUPPORTED_CURVE",
+            &format!("Unsupported JWK EC curve: {curve_name}."),
+        ));
+    }
     let crv = match width {
         32 if ec.group().degree() <= 256 => "P-256",
         48 => "P-384",
@@ -4444,6 +4633,16 @@ pub fn key_export(
             "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS",
             "The selected key encoding jwk does not support encryption.",
         ));
+    }
+    if matches!(key_type(), Value::String(ref value) if value == "private")
+        && execute::has_own_property(options, "passphrase")
+        && !execute::has_own_property(options, "cipher")
+    {
+        return Err(VmError::Thrown(native_error(
+            quench_runtime::ops::Builtin::TypeError,
+            "ERR_INVALID_ARG_VALUE",
+            "The property 'options.cipher' is required when a passphrase is specified. Received undefined",
+        )));
     }
     if matches!(key_type(), Value::String(ref value) if value == "public")
         && (matches!(requested_type, Value::String(ref value) if value == "pkcs8")
