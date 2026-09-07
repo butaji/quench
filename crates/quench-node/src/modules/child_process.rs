@@ -61,6 +61,9 @@ pub(crate) fn shell_output(command: &str, options: Option<&Value>) -> std::io::R
             process.env_clear().envs(env);
         }
     }
+    if options.is_none_or(|value| opt_env(value).is_none()) {
+        apply_process_env(&mut process);
+    }
     clear_worker_markers(&mut process);
     if uses_host_exec {
         process.env("QUENCH_CHILD_RUNNER", "1");
@@ -166,6 +169,9 @@ pub fn spawn_sync(
             if let Some(env) = opt_env(options) {
                 process.env_clear().envs(env);
             }
+        }
+        if options.is_none_or(|value| opt_env(value).is_none()) {
+            apply_process_env(&mut process);
         }
         if let Some(name) = command_line
             .split_once("process.env.")
@@ -530,6 +536,9 @@ pub fn spawn_sync(
                 })?);
             }
         }
+    }
+    if options.is_none_or(|value| opt_env(value).is_none()) {
+        apply_process_env(&mut cmd);
     }
 
     // Re-exec children need the same process identity relation Node exposes;
@@ -1357,4 +1366,23 @@ fn opt_env(value: &Value) -> Option<std::collections::HashMap<String, String>> {
         }
     }
     Some(env)
+}
+
+/// Child processes inherit the current JavaScript `process.env` snapshot.
+/// The host's OS environment is only the startup snapshot; reading the
+/// canonical JS object here preserves mutations made by workers or scripts.
+fn apply_process_env(command: &mut std::process::Command) {
+    let global = quench_runtime::vm::current_global_object();
+    let process = execute::get_property(&global, "process");
+    let env = execute::get_property(&process, "env");
+    let values = execute::own_enumerable_keys(&env)
+        .into_iter()
+        .filter(|key| !key.starts_with('\0') && !key.starts_with("QUENCH_"))
+        .filter_map(|key| {
+            execute::to_js_string(&execute::get_property(&env, &key))
+                .ok()
+                .map(|value| (key, value))
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    command.env_clear().envs(values);
 }
