@@ -68,10 +68,38 @@ fn resume_suspended_try(
     let Some((try_op, yield_op, suffix)) = suspended_try(generator, state) else {
         return Ok(None);
     };
+    // The marker is used to select the matching await in a try body.  Once
+    // selection is complete, consume it; a newly encountered await below
+    // will publish its own destination for the next continuation.
+    let _ = crate::generator::take_await_destination();
+    // The first await in a try body is represented by an Await marker.  A
+    // try-aware resume executes the suffix directly (rather than through the
+    // ordinary generator step), so it must consume that marker itself.  If
+    // the suffix reaches another await, install a fresh marker for that
+    // await; otherwise the continuation would resume using the destination
+    // of the first await.  Register allocation is allowed to reuse a
+    // destination register, making that stale marker observable as a lost
+    // fulfilled value.
+    if matches!(
+        generator.machine.borrow().frames.frames.last(),
+        Some(crate::machine::Frame::Await { .. })
+    ) {
+        generator.machine.borrow_mut().pop_await_frame();
+    }
     let completion = execute_with_generator_registers(generator, |registers| {
         resume_suspended_try_op(registers, yield_op, suffix, resume)
     })?;
     if completion.is_suspension() {
+        let destination = crate::generator::peek_await_destination()
+            .unwrap_or_else(|| crate::generator::await_destination(generator));
+        try_push_frame(
+            &mut generator.machine.borrow_mut(),
+            crate::machine::Frame::Await {
+                phase: 0,
+                resume: generator.function.code.range,
+                destination,
+            },
+        )?;
         return Ok(Some(completion));
     }
     let completion = execute_with_generator_registers(generator, |registers| {
