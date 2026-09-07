@@ -7090,6 +7090,14 @@ pub fn net_is_ipv6(
     Ok(Value::Boolean(crate::modules::net::is_ipv6(args)))
 }
 
+pub fn net_normalize_args(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(crate::modules::net::normalize_args(args))
+}
+
 pub fn internal_net_is_loopback(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
