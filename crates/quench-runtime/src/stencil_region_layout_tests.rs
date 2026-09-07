@@ -36,8 +36,8 @@ mod tests {
         let view = crate::stencil_select::select_physical(key).expect("fallthrough view");
         let site = QuickeningSite::<2>::new(Opcode::Add);
         let values = PatchValues::from_site(&site);
-        let mut bytes = Vec::new();
-        compose_selected_region(view, &values, &mut bytes).expect("compose selected view");
+        let image = compose_selected_region(view, &values).expect("compose selected view");
+        let bytes = image.bytes();
         assert_eq!(
             bytes.len(),
             view.stencil.bytes.len() + view.fallthrough.unwrap().stencil.bytes.len()
@@ -62,12 +62,10 @@ mod tests {
         };
         let site = QuickeningSite::<2>::new(Opcode::Add);
         let values = PatchValues::from_site(&site);
-        let mut bytes = vec![1, 2, 3];
         assert_eq!(
-            compose_selected_region(bad_view, &values, &mut bytes),
+            compose_selected_region(bad_view, &values).map(|_| ()),
             Err(LayoutError::RelocationContract)
         );
-        assert_eq!(bytes, [1, 2, 3]);
     }
 
     #[test]
@@ -83,12 +81,10 @@ mod tests {
         );
         let site = QuickeningSite::<2>::new(Opcode::Add);
         let values = PatchValues::from_site(&site);
-        let mut output = vec![9, 8, 7];
         assert_eq!(
-            compose_selected_controlled_region(view, &short, &values, &mut output),
+            compose_selected_controlled_region(view, &short, &values).map(|_| ()),
             Err(LayoutError::RelocationContract)
         );
-        assert_eq!(output, [9, 8, 7]);
     }
 
     #[test]

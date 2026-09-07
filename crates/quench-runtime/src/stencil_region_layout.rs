@@ -11,6 +11,28 @@ use crate::stencil_select::{PhysicalRelocation, PhysicalStencilView};
 const ENTRY_LABEL: LabelId = LabelId(0);
 const FALLTHROUGH_LABEL: LabelId = LabelId(1);
 
+/// Finalized code and its selected physical contract travel as one value.
+/// Publication must not reconstruct ABI or identity from parallel arguments.
+pub(crate) struct VerifiedRegionImage {
+    view: PhysicalStencilView,
+    bytes: Vec<u8>,
+}
+
+impl VerifiedRegionImage {
+    pub(crate) fn view(&self) -> PhysicalStencilView {
+        self.view
+    }
+
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_test_parts(view: PhysicalStencilView, bytes: Vec<u8>) -> Self {
+        Self { view, bytes }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RegionPoint {
     Operation(u8),
@@ -186,19 +208,17 @@ pub(crate) fn validate_compare_branch_control(
 pub(crate) fn compose_selected_region<const N: usize>(
     view: PhysicalStencilView,
     values: &PatchValues<'_, N>,
-    output: &mut Vec<u8>,
-) -> Result<(), LayoutError> {
+) -> Result<VerifiedRegionImage, LayoutError> {
     let control = crate::stencil_cfg::RegionControlPlan::linear(0, view.record.operations.len())
         .ok_or(LayoutError::RelocationContract)?;
-    compose_selected_controlled_region(view, &control, values, output)
+    compose_selected_controlled_region(view, &control, values)
 }
 
 pub(crate) fn compose_selected_controlled_region<const N: usize>(
     view: PhysicalStencilView,
     control: &crate::stencil_cfg::RegionControlPlan,
     values: &PatchValues<'_, N>,
-    output: &mut Vec<u8>,
-) -> Result<(), LayoutError> {
+) -> Result<VerifiedRegionImage, LayoutError> {
     let tail = view.fallthrough.ok_or(LayoutError::MissingSuccessor)?;
     let fragments = [
         PlannedFragment {
@@ -212,13 +232,15 @@ pub(crate) fn compose_selected_controlled_region<const N: usize>(
             values: *values,
         },
     ];
+    let mut bytes = Vec::new();
     compose_planned_region(
         control,
         view.record.operations,
         &fragments,
         &selected_transfers(view)?,
-        output,
-    )
+        &mut bytes,
+    )?;
+    Ok(VerifiedRegionImage { view, bytes })
 }
 
 pub(crate) fn compose_controlled_region<const N: usize>(

@@ -3187,6 +3187,11 @@ impl NativeLoadConstPlan {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn native_entry_count(&self) -> u64 {
+        self.native_entry_count
+    }
+
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn execute(&mut self) -> Result<u64, crate::stencil_arena::ArenaError> {
         if self

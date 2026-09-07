@@ -135,6 +135,17 @@ Keep these responsibilities separate and compose them:
   helpers and completion handling. Keep unsafe conversion and effects here or
   inside the code-store boundary, not spread through opcode dispatch.
 
+AsmJit's useful model here is its `CodeHolder`, not its runtime assembler API:
+one target-bound value carries sections, labels, relocations and entry offsets;
+emitters populate it, then flattening and relocation precede one allocation and
+publication step. Quench applies that shape with `PhysicalStencilView` and a
+finalized `VerifiedRegionImage`. The latter retains the selected view with the
+composed bytes, so publication cannot receive independently chosen bytes, key
+and ABI. Typed labels and fixups remain bounded Rust data and resolution stays
+transactional. Do not import AsmJit's instruction builder, compiler, allocator
+or runtime dependency: those would duplicate the canonical Rust catalog and
+the existing slab/lease lifecycle.
+
 ### Bounded stencil-selection optimizer
 
 Optimize selection from the finite stencil catalog, not arbitrary machine code.
@@ -521,6 +532,8 @@ follow merely from infrastructure tests.
 - [CPython JIT internals](https://github.com/python/cpython/blob/main/InternalDocs/jit.md): compile templates to objects and extract stencil artifacts.
 - [Rust assembly](https://doc.rust-lang.org/reference/inline-assembly.html): labeled target assembly and explicit function-boundary contracts.
 - [rustc code generation](https://doc.rust-lang.org/rustc/codegen-options/index.html) and [Rust function ABIs](https://doc.rust-lang.org/reference/items/functions.html): compiler controls and explicit ABI boundaries.
+- [AsmJit `CodeHolder`](https://asmjit.com/doc/classasmjit_1_1CodeHolder.html): target-bound sections, labels, relocations, flattening and relocation as one code-data container.
+- [AsmJit `JitRuntime`](https://asmjit.com/doc/classasmjit_1_1JitRuntime.html): a distinct allocation/publication/release edge, used here only as an organizational comparison.
 - [ECMAScript ordinary/exotic object behavior](https://tc39.es/ecma262/2024/multipage/ordinary-and-exotic-objects-behaviours.html): observable get/set/receiver semantics.
 
 These inform the design; they establish neither Quench performance nor a required
