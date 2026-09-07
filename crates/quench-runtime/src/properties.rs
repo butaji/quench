@@ -4,6 +4,7 @@ use std::collections::HashMap;
 const NON_EXTENSIBLE: &str = "\0quench:non_extensible";
 include!("properties_optional.rs");
 include!("properties_named_transition.rs");
+include!("properties_own_data.rs");
 pub(crate) fn reduce(
     expression: &Expression<'_>,
     ops: &mut Vec<Op>,
@@ -766,6 +767,15 @@ pub(crate) fn set_property_from_host(
 }
 
 fn own_data_property(target: &crate::value::Value, key: &str) -> bool {
+    if let crate::value::Value::Object(properties) = target {
+        if let Some(kind) = plain_own_property(properties, key) {
+            return kind.is_data();
+        }
+    }
+    observable_own_data_property(target, key)
+}
+
+fn observable_own_data_property(target: &crate::value::Value, key: &str) -> bool {
     if crate::builtins::object::has_own_property(
         Some(target),
         Some(&crate::value::Value::String(key.to_string())),
