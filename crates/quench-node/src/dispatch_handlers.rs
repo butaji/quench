@@ -4216,6 +4216,16 @@ pub fn internal_binding(
     if name == "http2" {
         return Ok(crate::modules::http2_util::binding());
     }
+    // Advanced child-process IPC uses the same Rust-owned codec as the public
+    // v8.deserialize surface. Keep one serializer fact and one dispatch path.
+    if name == "ipc_serdes" {
+        return Ok(crate::host::namespace_object_from_pairs(vec![
+            (
+                "deserialize".to_string(),
+                crate::host::capability(crate::registry::SPEC_V8_DESERIALIZE),
+            ),
+        ]));
+    }
     if name == "async_wrap" {
         let providers = [
             ("PROMISE", 26.0),
