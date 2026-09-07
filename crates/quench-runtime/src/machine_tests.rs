@@ -268,6 +268,27 @@ fn ordinary_counted_numeric_loop_lowers_to_one_cfg_backedge() {
     assert!(matched, "ordinary loop did not expose its canonical CFG");
 }
 
+#[cfg(feature = "execution-trace")]
+#[test]
+fn trace_metadata_does_not_change_counted_loop_lowering() {
+    let source = concat!(
+        "function f(s){var x=17;for(var i=0;i<s.n;i++)x=(x*33+7)|0;return x}",
+        "if(f({n:4})!==20420077)throw new Error('bad loop')"
+    );
+    let program = crate::reduce::reduce_source(source).expect("counted loop lowers");
+    let mut matched = false;
+    crate::stencil_test_support::visit_code_views(program.code(), &mut |code| {
+        let has_mul = (0..code.len()).any(|pc| code.instruction(pc).is_some_and(|instruction| {
+            instruction.opcode == crate::ir::Opcode::Mul
+        }));
+        let has_backedge = (0..code.len()).any(|pc| code.instruction(pc).is_some_and(|instruction| {
+            instruction.opcode == crate::ir::Opcode::Jump && usize::from(instruction.a) <= pc
+        }));
+        matched |= has_mul && has_backedge;
+    });
+    assert!(matched, "trace metadata changed canonical loop shape");
+}
+
 #[test]
 fn ordinary_source_freezes_lowering_frame_width() {
     let mut source = String::from("function f(){");
