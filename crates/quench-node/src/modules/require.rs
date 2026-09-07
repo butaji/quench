@@ -1470,9 +1470,27 @@ fn load_file_module(state: &Rc<RefCell<HostState>>, spec: &str) -> Result<Value,
             );
         if experimental_require {
             let transformed = crate::esm_imports::transform_esm_module(&source);
+            let transformed = transformed
+                .lines()
+                .map(|line| {
+                    if line.trim_start().starts_with("exports.") {
+                        line.replacen("exports.", "__quench_esm_exports.", 1)
+                    } else {
+                        line.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            // `require()` is synchronous, but an ES module can contain
+            // top-level `await`. Run the lowered body in an async IIFE and
+            // let `execute_module` drive its promise to settlement before
+            // returning the namespace object.
+            let transformed = format!(
+                "const __quench_esm_exports = {{}};\nmodule['\\0quench:esm-promise'] = (async () => {{\n{transformed}\n}})().then(() => __quench_esm_exports);"
+            );
             let empty_exports = host_api::object(Vec::new());
             cache_module(state, &path, &empty_exports);
-            let exports = execute_module(state, &path, &transformed)?;
+            let exports = execute_module(state, &path, &transformed, true)?;
             state.borrow_mut().module_cache.insert(key, exports.clone());
             cache_module(state, &path, &exports);
             return Ok(exports);
@@ -1492,7 +1510,7 @@ fn load_file_module(state: &Rc<RefCell<HostState>>, spec: &str) -> Result<Value,
         cache_module(state, &path, &exports);
         return Ok(exports);
     }
-    let exports = match execute_module(state, &path, &source) {
+    let exports = match execute_module(state, &path, &source, false) {
         Ok(exports) => exports,
         Err(error) => {
             clear_cache_entry(state, &path);
@@ -2052,6 +2070,7 @@ fn execute_module(
     state: &Rc<RefCell<HostState>>,
     path: &std::path::Path,
     source: &str,
+    await_module: bool,
 ) -> Result<Value, VmError> {
     let filename = path.to_string_lossy().into_owned();
     let wrapped = wrap_cjs(state, &filename, source);
@@ -2072,6 +2091,27 @@ fn execute_module(
     let mut registers = quench_runtime::register_file::RegisterFile::new();
     quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context)?;
     let module = module.unwrap_or(Value::Undefined);
+    if await_module {
+        let result = quench_runtime::execute::get_property_result(
+            &module,
+            "\0quench:esm-promise",
+        )?;
+        crate::modules::pump::await_promise(state, &result)?;
+        if let Value::Promise(promise) = &result {
+            if let quench_runtime::value::PromiseState::Fulfilled(value) = &*promise.state.borrow() {
+                let value = value.clone();
+                let _ = quench_runtime::execute::delete_property(
+                    module.clone(),
+                    "\0quench:esm-promise",
+                );
+                return Ok(value);
+            }
+        }
+        let _ = quench_runtime::execute::delete_property(
+            module.clone(),
+            "\0quench:esm-promise",
+        );
+    }
     quench_runtime::execute::get_property_result(&module, "exports")
 }
 

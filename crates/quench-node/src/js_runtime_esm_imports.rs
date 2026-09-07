@@ -93,9 +93,21 @@ pub fn transform_esm_imports(source: &str) -> String {
 pub fn transform_esm_module(source: &str) -> String {
     let source = transform_esm_imports(source);
     let mut out = String::with_capacity(source.len() + 64);
+    let mut pending_exports: Option<(Vec<String>, i32, String)> = None;
     for line in source.lines() {
         let trimmed = line.trim_start();
         let indent = &line[..line.len() - trimmed.len()];
+        if let Some((names, depth, export_indent)) = pending_exports.take() {
+            out.push_str(line);
+            out.push('\n');
+            let depth = depth + delimiter_balance(line);
+            if depth > 0 {
+                pending_exports = Some((names, depth, export_indent));
+            } else {
+                append_export_assignments(&mut out, &export_indent, &names);
+            }
+            continue;
+        }
         if let Some(rest) = trimmed.strip_prefix("export default ") {
             out.push_str(indent);
             out.push_str("exports.default = ");
@@ -110,7 +122,7 @@ pub fn transform_esm_module(source: &str) -> String {
             out.push_str(indent);
             out.push_str(declaration);
             out.push('\n');
-            let names = declaration
+            let names: Vec<String> = declaration
                 .split_once('=')
                 .map(|(left, _)| left.trim())
                 .unwrap_or_default()
@@ -119,14 +131,14 @@ pub fn transform_esm_module(source: &str) -> String {
                 .trim_start_matches("var ")
                 .split(',')
                 .filter_map(|name| name.trim().split_whitespace().next())
-                .filter(|name| !name.is_empty());
-            for name in names {
-                out.push_str(indent);
-                out.push_str("exports.");
-                out.push_str(name);
-                out.push_str(" = ");
-                out.push_str(name);
-                out.push_str(";\n");
+                .filter(|name| !name.is_empty())
+                .map(str::to_string)
+                .collect();
+            let depth = delimiter_balance(declaration);
+            if depth > 0 {
+                pending_exports = Some((names, depth, indent.to_string()));
+            } else {
+                append_export_assignments(&mut out, indent, &names);
             }
             continue;
         }
@@ -153,6 +165,42 @@ pub fn transform_esm_module(source: &str) -> String {
         out.push('\n');
     }
     out
+}
+
+fn append_export_assignments(out: &mut String, indent: &str, names: &[String]) {
+    for name in names {
+        out.push_str(indent);
+        out.push_str("exports.");
+        out.push_str(name);
+        out.push_str(" = ");
+        out.push_str(name);
+        out.push_str(";\n");
+    }
+}
+
+fn delimiter_balance(line: &str) -> i32 {
+    let mut balance = 0;
+    let mut quote = None;
+    let mut escaped = false;
+    for ch in line.chars() {
+        if let Some(active) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == active {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '\'' | '"' | '`' => quote = Some(ch),
+            '{' | '[' | '(' => balance += 1,
+            '}' | ']' | ')' => balance -= 1,
+            _ => {}
+        }
+    }
+    balance
 }
 
 fn skip_chars(s: &str, n: usize) -> &str {
@@ -198,6 +246,19 @@ fn split_import_body(body: &str) -> Option<(String, String)> {
             Some(quote) => {
                 if c == quote && (i == 0 || bytes[i - 1] != b'\\') {
                     in_string = None;
+                    // Semicolon-less imports terminate at the module
+                    // specifier's closing quote. Stop there so the scanner
+                    // does not absorb the rest of the module into `require`.
+                    if !in_brace && !in_paren {
+                        let mut ahead = i + 1;
+                        while ahead < len && matches!(bytes[ahead], b' ' | b'\t' | b'\r') {
+                            ahead += 1;
+                        }
+                        if ahead >= len || bytes[ahead] == b';' || bytes[ahead] == b'\n' {
+                            i += 1;
+                            break;
+                        }
+                    }
                 }
             }
             None => match c {
