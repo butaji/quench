@@ -194,6 +194,7 @@ struct Counters {
     descriptor_objects: HashMap<&'static str, u64>,
     descriptor_views_by_op: HashMap<&'static str, u64>,
     named_property_results: HashMap<&'static str, u64>,
+    named_set_facts: HashMap<&'static str, u64>,
     named_property_misses: HashMap<String, u64>,
     loop_shapes: HashMap<u64, (u64, u64, Vec<&'static str>)>,
     value_decode_by_site: HashMap<&'static str, u64>,
@@ -241,6 +242,7 @@ impl Default for Counters {
             descriptor_objects: HashMap::new(),
             descriptor_views_by_op: HashMap::new(),
             named_property_results: HashMap::new(),
+            named_set_facts: HashMap::new(),
             named_property_misses: HashMap::new(),
             loop_shapes: HashMap::new(),
             value_decode_by_site: HashMap::new(),
@@ -888,6 +890,23 @@ pub(crate) fn named_property_result(tier: &'static str, value: &crate::value::Va
         });
     }
 }
+
+#[cfg(feature = "execution-trace")]
+pub(crate) fn named_set_fact(fact: &'static str) {
+    if enabled() {
+        COUNTERS.with(|counters| {
+            *counters
+                .borrow_mut()
+                .named_set_facts
+                .entry(fact)
+                .or_default() += 1;
+        });
+    }
+}
+
+#[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
+pub(crate) fn named_set_fact(_: &'static str) {}
 
 #[cfg(feature = "execution-trace")]
 pub(crate) fn named_call(_key: &str) {}
@@ -2045,6 +2064,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "function_opcode_shapes": function_opcode_shapes,
                 "descriptor_objects": counters.descriptor_objects,
                 "named_property_results": counters.named_property_results,
+                "named_set_facts": counters.named_set_facts,
                 "named_property_misses": top_string_map(&counters.named_property_misses, 32),
                 "loop_shapes": loop_shapes,
                 "lanes": lanes,

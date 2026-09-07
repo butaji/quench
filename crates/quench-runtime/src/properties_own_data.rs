@@ -56,6 +56,44 @@ fn plain_own_property_value(
     }
 }
 
+#[cfg(feature = "execution-trace")]
+fn record_named_set_fact(value: &crate::value::Value, key: &str) {
+    let fact = plain_own_property_value(value, key);
+    let name = match value {
+        crate::value::Value::Object(_) => object_set_fact(fact),
+        crate::value::Value::ObjectAlias(_) => alias_set_fact(fact),
+        crate::value::Value::Array(_) => "array",
+        _ => "other",
+    };
+    crate::execution_trace::named_set_fact(name);
+}
+
+#[cfg(feature = "execution-trace")]
+fn object_set_fact(fact: Option<PlainOwnProperty>) -> &'static str {
+    match fact {
+        Some(PlainOwnProperty::Missing) => "object:missing",
+        Some(PlainOwnProperty::Data { writable: true }) => "object:writable",
+        Some(PlainOwnProperty::Data { writable: false }) => "object:readonly",
+        Some(PlainOwnProperty::Accessor) => "object:accessor",
+        None => "object:special",
+    }
+}
+
+#[cfg(feature = "execution-trace")]
+fn alias_set_fact(fact: Option<PlainOwnProperty>) -> &'static str {
+    match fact {
+        Some(PlainOwnProperty::Missing) => "alias:missing",
+        Some(PlainOwnProperty::Data { writable: true }) => "alias:writable",
+        Some(PlainOwnProperty::Data { writable: false }) => "alias:readonly",
+        Some(PlainOwnProperty::Accessor) => "alias:accessor",
+        None => "alias:special",
+    }
+}
+
+#[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
+fn record_named_set_fact(_: &crate::value::Value, _: &str) {}
+
 fn own_and_metadata_slots(
     properties: &crate::value::ObjectData,
     key: &str,
@@ -144,6 +182,8 @@ mod own_data_tests {
         plain_own_property, plain_own_property_value, plain_writable_own_data,
         store_plain_writable_own_data, PlainOwnProperty,
     };
+    #[cfg(feature = "execution-trace")]
+    use super::{alias_set_fact, object_set_fact};
     use crate::value::{ObjectAliasValue, ObjectData, Value};
     use std::{cell::RefCell, rc::Rc};
 
@@ -213,5 +253,37 @@ mod own_data_tests {
             Some(PlainOwnProperty::Missing)
         );
         assert!(!plain_writable_own_data(&object(None), "missing"));
+    }
+
+    #[cfg(feature = "execution-trace")]
+    #[test]
+    fn named_set_trace_labels_preserve_receiver_and_property_fact() {
+        let facts = [
+            (None, "object:special", "alias:special"),
+            (
+                Some(PlainOwnProperty::Missing),
+                "object:missing",
+                "alias:missing",
+            ),
+            (
+                Some(PlainOwnProperty::Data { writable: true }),
+                "object:writable",
+                "alias:writable",
+            ),
+            (
+                Some(PlainOwnProperty::Data { writable: false }),
+                "object:readonly",
+                "alias:readonly",
+            ),
+            (
+                Some(PlainOwnProperty::Accessor),
+                "object:accessor",
+                "alias:accessor",
+            ),
+        ];
+        for (fact, object, alias) in facts {
+            assert_eq!(object_set_fact(fact), object);
+            assert_eq!(alias_set_fact(fact), alias);
+        }
     }
 }
