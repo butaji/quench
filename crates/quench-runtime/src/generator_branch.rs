@@ -49,7 +49,16 @@ fn resume_branch_frame(
         return Ok(Some(completion));
     }
     generator.machine.borrow_mut().pop_frame();
-    resume_generator_range(generator, state, frame.resume, crate::completion::Completion::Normal).map(Some)
+    // The machine PC already points at the enclosing function's continuation.
+    // Resume through the ordinary generator step so lexical declarations
+    // after the conditional are initialized normally (range execution can
+    // bypass those declaration opcodes after an awaited branch).
+    let step = execute_generator_step(generator, state, crate::completion::Completion::Normal)?;
+    set_machine_pc(generator, step.pc);
+    state.suspension = step.suspension;
+    update_machine_frame(generator, state, &step.completion)?;
+    update_await_frame(generator, state, &step.completion)?;
+    Ok(Some(step.completion))
 }
 
 fn install_branch_frame_input(generator: &GeneratorData, input: &Value) -> bool {
