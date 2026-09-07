@@ -98,12 +98,19 @@ rust_assembly_catalog! {
         composition: LinkedFragments
     },
     BoolBranch {
-        name: "bool_branch", abi: TaggedWord, ops: ["JumpIfFalse"],
+        name: "bool_branch", abi: ScalarWordBool, ops: ["JumpIfFalse"],
         x86: &[], aarch64: &[],
         x86_holes: &[], aarch64_holes: &[],
         control_links: BOOL_BRANCH_LINKS,
         internal_abi: WordX0,
         composition: ControlFragment
+    },
+    ReturnWord {
+        name: "return_word", abi: ScalarWordBool, ops: ["Return"],
+        x86: &[], aarch64: &[],
+        x86_holes: &[], aarch64_holes: &[],
+        internal_abi: WordX0,
+        composition: Whole
     },
     CompareEqualBranch {
         name: "compare_equal_branch", abi: CompareBranch, ops: ["Binary", "JumpIfFalse"],
