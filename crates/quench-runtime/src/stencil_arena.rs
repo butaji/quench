@@ -9,7 +9,9 @@ use crate::stencil_fact::{PatchValues, Stencil};
 #[cfg(test)]
 use crate::stencil_layout::FixupKind;
 use crate::stencil_patch::{apply_holes, PatchError};
-use crate::stencil_region_layout::{compose_selected_controlled_region, compose_selected_region};
+use crate::stencil_region_layout::{
+    compose_selected_controlled_region, compose_selected_region, VerifiedRegionImage,
+};
 use crate::stencil_select::RenderedRegionCache;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -1623,13 +1625,12 @@ impl StencilArena {
         if let Some(address) = self.cached_executable(cache, view.key, signature) {
             return Ok(address);
         }
-        let mut bytes = Vec::new();
-        match control {
-            Some(control) => compose_selected_controlled_region(view, control, values, &mut bytes),
-            None => compose_selected_region(view, values, &mut bytes),
+        let image = match control {
+            Some(control) => compose_selected_controlled_region(view, control, values),
+            None => compose_selected_region(view, values),
         }
         .map_err(|_| ArenaError::ProtectionFailed)?;
-        self.publish_composed(cache, view.key, signature, &bytes, view.abi)
+        self.publish_composed(cache, signature, &image)
     }
 
     pub fn render_physical_view_or_get<const N: usize>(
@@ -1988,19 +1989,19 @@ impl StencilArena {
     fn publish_composed(
         &mut self,
         cache: &mut RenderedRegionCache,
-        key: crate::stencil_fact::RegionKey,
         signature: u64,
-        bytes: &[u8],
-        abi: crate::stencil_select::RegionAbi,
+        image: &VerifiedRegionImage,
     ) -> Result<usize, ArenaError> {
+        let view = image.view();
+        let bytes = image.bytes();
         let checkpoint = self.cursor;
         let offset = self.alloc_aligned(bytes.len(), STENCIL_ALIGNMENT)?;
         unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.ptr.add(offset), bytes.len()) };
         let address = self.address(offset).ok_or(ArenaError::Exhausted)?;
-        self.record_abi(address, abi);
-        cache.insert_owned(key, signature, address, self.id);
+        self.record_abi(address, view.abi);
+        cache.insert_owned(view.key, signature, address, self.id);
         if let Err(error) = self.make_executable() {
-            cache.remove(key, signature, address);
+            cache.remove(view.key, signature, address);
             self.published_abis.borrow_mut().remove(&address);
             self.cursor = checkpoint;
             return Err(error);
@@ -3440,15 +3441,11 @@ mod tests {
         let bytes = three_fragment_layout();
         let mut arena = StencilArena::new(4096).unwrap();
         let mut cache = RenderedRegionCache::new();
-        let address = arena
-            .publish_composed(
-                &mut cache,
-                crate::stencil_fact::RegionKey(45),
-                0,
-                &bytes,
-                crate::stencil_select::RegionAbi::ScalarF64Binary,
-            )
-            .unwrap();
+        let view =
+            crate::stencil_select::select_physical(crate::stencil_select::multiply_region_key())
+                .expect("binary physical view");
+        let image = VerifiedRegionImage::from_test_parts(view, bytes.clone());
+        let address = arena.publish_composed(&mut cache, 0, &image).unwrap();
         assert_eq!(arena.execute_f64(address, 1.0, 2.0), Ok(5.0));
         assert_eq!(arena.used(), bytes.len());
     }
