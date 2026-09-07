@@ -4219,12 +4219,10 @@ pub fn internal_binding(
     // Advanced child-process IPC uses the same Rust-owned codec as the public
     // v8.deserialize surface. Keep one serializer fact and one dispatch path.
     if name == "ipc_serdes" {
-        return Ok(crate::host::namespace_object_from_pairs(vec![
-            (
-                "deserialize".to_string(),
-                crate::host::capability(crate::registry::SPEC_V8_DESERIALIZE),
-            ),
-        ]));
+        return Ok(crate::host::namespace_object_from_pairs(vec![(
+            "deserialize".to_string(),
+            crate::host::capability(crate::registry::SPEC_V8_DESERIALIZE),
+        )]));
     }
     if name == "async_wrap" {
         let providers = [
@@ -11107,6 +11105,11 @@ pub fn cp_send(
     // backlog as a fork, but no shared `process` receiver to deliver into.
     // Keep the backlog as one hidden state fact and acknowledge callbacks on
     // the drain edge; ordinary fork routing below remains unchanged.
+    let spawn_ipc = to_fork_process
+        && matches!(
+            execute::get_property(receiver, "\0childSpawnIpc"),
+            Value::Boolean(true)
+        );
     let generic_ipc = !from_fork_process
         && !to_fork_process
         && (matches!(
@@ -11130,7 +11133,7 @@ pub fn cp_send(
     {
         return cp_send_closed(state, receiver, args);
     }
-    if generic_ipc {
+    if generic_ipc || spawn_ipc {
         if matches!(
             execute::get_property(receiver, "connected"),
             Value::Boolean(false)
@@ -11161,10 +11164,12 @@ pub fn cp_send(
             return Ok(Value::Boolean(false));
         }
         execute::set_property_in_place(receiver, "sendCount", Value::Number((count + 1) as f64));
-        if let Some(callback) = callback {
-            state.borrow().event_loop.queue_immediate(callback, vec![]);
+        if generic_ipc {
+            if let Some(callback) = callback {
+                state.borrow().event_loop.queue_immediate(callback, vec![]);
+            }
+            return Ok(Value::Boolean(true));
         }
-        return Ok(Value::Boolean(true));
     }
     // The in-process fork transport still has to honor the selected IPC
     // serializer.  In particular, `advanced` serializes non-typed-array host
@@ -13292,7 +13297,7 @@ pub fn fetch(
 pub fn gc(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
-    _args: &[Value],
+    args: &[Value],
 ) -> Result<Value, VmError> {
     GC_EPOCH.with(|epoch| epoch.set(epoch.get().wrapping_add(1)));
     quench_runtime::execute::collect_weak_refs();
@@ -13687,10 +13692,7 @@ pub fn custom_event_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
     )
 }
 
-pub fn message_event_new(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
+pub fn message_event_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let event = event_new(state, args)?;
     let options = args.get(1).cloned().unwrap_or(Value::Undefined);
     let data = match execute::get_property(&options, "data") {
@@ -13740,7 +13742,11 @@ pub fn message_event_new(
             message_event_string(&ports_value)
         )));
     };
-    let event = execute::set_property(event, "Symbol.toStringTag", Value::String("MessageEvent".into()));
+    let event = execute::set_property(
+        event,
+        "Symbol.toStringTag",
+        Value::String("MessageEvent".into()),
+    );
     let event = execute::set_property(event, "data", data);
     let event = execute::set_property(event, "origin", Value::String(origin));
     let event = execute::set_property(event, "lastEventId", Value::String(last_event_id));
@@ -13751,7 +13757,8 @@ pub fn message_event_new(
         Value::Array(Rc::new(quench_runtime::value::ArrayData::new(ports))),
     );
     let global = quench_runtime::vm::current_global_object();
-    let prototype = execute::get_property(&execute::get_property(&global, "MessageEvent"), "prototype");
+    let prototype =
+        execute::get_property(&execute::get_property(&global, "MessageEvent"), "prototype");
     if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
         execute::set_prototype_of(&event, &prototype)
     } else {
