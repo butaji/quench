@@ -268,6 +268,34 @@ fn ordinary_counted_numeric_loop_lowers_to_one_cfg_backedge() {
     assert!(matched, "ordinary loop did not expose its canonical CFG");
 }
 
+#[test]
+fn ordinary_call_loop_lowers_to_one_cfg_and_preserves_throw() {
+    let source = concat!(
+        "var calls=0,caught=0;function step(x){calls++;if(calls===3)throw 9;return x+1}",
+        "function run(n){var x=0;try{for(var i=0;i<n;i++)x=step(x)}catch(e){caught=e}return x}",
+        "if(run(5)!==2||calls!==3||caught!==9)throw new Error([calls,caught])"
+    );
+    let program = crate::reduce::reduce_source(source).expect("call loop lowers");
+    let mut matched = false;
+    crate::stencil_test_support::visit_code_views(program.code(), &mut |code| {
+        let has_call = (0..code.len()).any(|pc| {
+            code.instruction(pc).is_some_and(|instruction| {
+                matches!(instruction.opcode, crate::ir::Opcode::Call | crate::ir::Opcode::CallN)
+            })
+        });
+        let has_backedge = (0..code.len()).any(|pc| {
+            code.instruction(pc).is_some_and(|instruction| {
+                instruction.opcode == crate::ir::Opcode::Jump
+                    && usize::from(instruction.a) <= pc
+            })
+        });
+        matched |= has_call && has_backedge;
+    });
+    assert!(matched, "ordinary call loop retained fragment gateway");
+    crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default())
+        .expect("flattened call loop executes");
+}
+
 #[cfg(feature = "execution-trace")]
 #[test]
 fn trace_metadata_does_not_change_counted_loop_lowering() {

@@ -827,11 +827,7 @@ impl CodeArena {
                 if update.is_empty() && init.is_empty() {
                     return None;
                 }
-                if ops_contain_call(init)
-                    || ops_contain_call(test)
-                    || ops_contain_call(loop_body)
-                    || ops_contain_call(update)
-                    || ops_contain_short_circuit(test)
+                if ops_contain_short_circuit(test)
                     || test_always_true(test)
                     || ops_use_arguments(init)
                     || ops_use_arguments(test)
@@ -1193,6 +1189,8 @@ fn ops_are_stitchable_numeric(ops: &[Op]) -> bool {
                     | Op::GetProperty { .. }
                     | Op::GetPropertyDynamic { .. }
                     | Op::SetPropertyDynamic { .. }
+                    | Op::Call { .. }
+                    | Op::CallMethod { .. }
                     | Op::Return { .. }
             )
     })
