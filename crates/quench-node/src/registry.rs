@@ -905,6 +905,10 @@ pub const SPEC_NET_BOUND_SOCKET_CLOSE: NodeSpec = NodeSpec::new("net:BoundSocket
 pub const SPEC_NET_TCP: NodeSpec = NodeSpec::new("net:TCP", 0x1031);
 pub const SPEC_NET_TCP_BIND: NodeSpec = NodeSpec::new("net:TCP.bind", 0x1032);
 pub const SPEC_NET_SERVER_LISTEN2: NodeSpec = NodeSpec::new("net:server:_listen2", 0x1033);
+pub const SPEC_INTERNAL_DGRAM_CREATE_SOCKET_HANDLE: NodeSpec =
+    NodeSpec::new("internal/dgram:_createSocketHandle", 0x1061);
+pub const CAP_INTERNAL_DGRAM_CREATE_SOCKET_HANDLE: CapId =
+    SPEC_INTERNAL_DGRAM_CREATE_SOCKET_HANDLE.cap;
 
 // net socket / server methods (dispatched with the JS receiver).
 pub const SPEC_NET_SERVER_LISTEN: NodeSpec = NodeSpec::new("net:server:listen", 0x1007);
