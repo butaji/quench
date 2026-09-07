@@ -426,7 +426,7 @@ fn options_buffer() -> Value {
 }
 
 pub fn dispatch(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
@@ -473,10 +473,173 @@ pub fn dispatch(
         "array" => http2_asserts::array(values),
         "range" => http2_asserts::range(values),
         "sessionName" => session_name(values),
+        "connect" => connect(state, values),
         "createServer" => create_server(values, false),
         "createSecureServer" => create_server(values, true),
         _ => Err(VmError::NotCallable),
     }
+}
+
+/// Establish the underlying TCP endpoint for an HTTP/2 client session.
+///
+/// The HTTP/2 protocol/session layer is not implemented yet, but endpoint
+/// setup is still a reusable host boundary: it delegates to the canonical
+/// `net.connect` implementation (including user-overridden `net.connect`),
+/// preserves URL/options normalization, and routes callback errors through
+/// the same lifecycle object. Callers that need HTTP/2 framing remain
+/// stopped at that explicit capability boundary.
+fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, VmError> {
+    let authority = values.first().unwrap_or(&Value::Undefined);
+    let extra_options = values.get(1).filter(|value| {
+        matches!(value, Value::Object(_) | Value::ObjectAlias(_))
+    });
+    let callback = values
+        .iter()
+        .skip(1)
+        .find(|value| quench_runtime::is_callable(value))
+        .cloned();
+    let target = connect_target_options(authority, extra_options)?;
+    let create_connection = execute::get_property(&target, "createConnection");
+    if quench_runtime::is_callable(&create_connection) {
+        let socket = execute::call(
+            &create_connection,
+            &Value::Undefined,
+            &[authority.clone(), target.clone()],
+        )?;
+        let write = execute::get_property(&socket, "write");
+        if quench_runtime::is_callable(&write) {
+            let preface = crate::modules::buffer_proto::make_buffer(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+            execute::call(&write, &socket, &[preface])?;
+        }
+        if matches!(execute::get_property(&socket, "close"), Value::Undefined) {
+            let destroy = execute::get_property(&socket, "destroy");
+            if quench_runtime::is_callable(&destroy) {
+                execute::set_property_in_place(&socket, "close", destroy);
+            }
+        }
+        return Ok(socket);
+    }
+    let net = crate::modules::require::require(state, &[Value::String("net".into())])?;
+    let net_connect = execute::get_property(&net, "connect");
+    if !quench_runtime::is_callable(&net_connect) {
+        return Err(VmError::NotCallable);
+    }
+    let mut net_args = vec![target];
+    if let Some(callback) = callback.clone() {
+        net_args.push(callback);
+    }
+    let socket = execute::call(&net_connect, &Value::Undefined, &net_args)?;
+    // A raw net.Socket has `destroy()` rather than the client-session
+    // `close()` spelling. Keep endpoint teardown available to callers that
+    // only need connection lifecycle management; request/session methods
+    // still require the unimplemented HTTP/2 protocol layer.
+    if matches!(execute::get_property(&socket, "close"), Value::Undefined) {
+        let destroy = execute::get_property(&socket, "destroy");
+        if quench_runtime::is_callable(&destroy) {
+            execute::set_property_in_place(&socket, "close", destroy);
+        }
+    }
+    if let Some(callback) = callback {
+        // `net.connect` owns the successful `connect` callback. HTTP/2's
+        // callback also receives endpoint failures, so add the error leg to
+        // the returned socket without introducing a second transport path.
+        let once = execute::get_property(&socket, "once");
+        if quench_runtime::is_callable(&once) {
+            execute::call(
+                &once,
+                &socket,
+                &[Value::String("error".into()), callback],
+            )?;
+        }
+    }
+    Ok(socket)
+}
+
+fn connect_target_options(
+    authority: &Value,
+    extra_options: Option<&Value>,
+) -> Result<Value, VmError> {
+    let mut target = match authority {
+        Value::String(_) | Value::StringUnits(_) => parse_authority(authority)?,
+        Value::Object(_) | Value::ObjectAlias(_) => {
+            let mut target = host_api::object(Vec::new());
+            for key in execute::own_enumerable_keys(authority) {
+                let value = execute::get_property(authority, &key);
+                execute::set_property_in_place(&target, &key, value);
+            }
+            target
+        }
+        _ => {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::TypeError,
+                "ERR_INVALID_ARG_TYPE",
+                "The \"authority\" argument must be a string or an object.".into(),
+            ));
+        }
+    };
+    if let Some(options) = extra_options {
+        for key in execute::own_enumerable_keys(options) {
+            execute::set_property_in_place(&target, &key, execute::get_property(options, &key));
+        }
+    }
+    if matches!(execute::get_property(&target, "host"), Value::Undefined) {
+        let hostname = execute::get_property(&target, "hostname");
+        if !matches!(hostname, Value::Undefined) {
+            execute::set_property_in_place(&target, "host", hostname);
+        }
+    }
+    Ok(target)
+}
+
+fn parse_authority(authority: &Value) -> Result<Value, VmError> {
+    let text = execute::to_js_string(authority)?;
+    let Some((scheme, remainder)) = text.split_once("://") else {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::TypeError,
+            "ERR_INVALID_URL",
+            format!("Invalid URL: {text}"),
+        ));
+    };
+    let authority = remainder.split('/').next().unwrap_or_default();
+    let (host, port) = if let Some(rest) = authority.strip_prefix('[') {
+        let Some(end) = rest.find(']') else {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::TypeError,
+                "ERR_INVALID_URL",
+                format!("Invalid URL: {text}"),
+            ));
+        };
+        let host = &rest[..end];
+        let port = rest[end + 1..].strip_prefix(':');
+        (host, port)
+    } else {
+        match authority.rsplit_once(':') {
+            Some((host, port)) if !host.is_empty() && !port.is_empty() => (host, Some(port)),
+            _ => (authority, None),
+        }
+    };
+    if host.is_empty() {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::TypeError,
+            "ERR_INVALID_URL",
+            format!("Invalid URL: {text}"),
+        ));
+    }
+    let default_port = if scheme.eq_ignore_ascii_case("https") {
+        "443"
+    } else {
+        "80"
+    };
+    Ok(host_api::object(vec![
+        (
+            "host".into(),
+            Value::String(host.trim_matches(['[', ']']).into()),
+        ),
+        (
+            "port".into(),
+            Value::String(port.unwrap_or(default_port).into()),
+        ),
+    ]))
 }
 
 /// Validate the option boundary shared by the HTTP/2 server constructors.
