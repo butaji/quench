@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "stencil_property_plan_tests.rs"]
+mod property_tests;
+
 fn add(dst: Register, lhs: Register, rhs: Register) -> Instruction {
     Instruction::add(dst, lhs, rhs)
 }
@@ -437,9 +440,14 @@ fn value_graph_selects_bounded_ordered_repeated_add() {
     assert_eq!(selected.span, 5);
     assert_eq!(
         selected.inputs,
-        LocalNumericInputs::RepeatedAdd {
+        LocalNumericInputs::BinarySeries {
             sources: [NumericSource::Local(6), NumericSource::Local(7)],
-            repetitions: 3,
+            series: NumericSeries::from_reverse(&[
+                crate::ops::BinaryOp::Add,
+                crate::ops::BinaryOp::Add,
+                crate::ops::BinaryOp::Add,
+            ])
+            .expect("bounded series"),
         }
     );
 }
@@ -476,50 +484,5 @@ fn value_slice_rejects_coercion_effects_control_and_computed_live_outs() {
     assert!(graph.push(Instruction::add(4, 2, 3), |_| None));
     assert!(graph
         .select(Instruction::add(5, 4, 2), &BTreeSet::from([4]))
-        .is_none());
-}
-
-#[test]
-fn block_value_graph_selects_local_property_through_aliases() {
-    let mut graph = BlockValueGraph::new();
-    assert!(graph.push(Instruction::load_local(2, 20), |_| None));
-    assert!(graph.push(Instruction::move_(3, 2), |_| None));
-    assert!(graph.push(Instruction::load_local(4, 21), |_| None));
-    let get = Instruction {
-        opcode: Opcode::GetN,
-        flags: 0,
-        a: 5,
-        b: 3,
-        c: 0,
-    };
-    let selected = graph.select_property(get, &BTreeSet::new()).unwrap();
-    assert_eq!(selected.receiver_slot, 20);
-    assert_eq!(selected.result.register, 5);
-    assert_eq!(selected.span, 4);
-    assert_eq!(selected.discarded.iter().flatten().count(), 3);
-}
-
-#[test]
-fn block_value_graph_rejects_unsafe_property_inputs() {
-    let get = Instruction {
-        opcode: Opcode::GetN,
-        flags: 0,
-        a: 5,
-        b: 2,
-        c: 0,
-    };
-    let mut local_graph = BlockValueGraph::new();
-    assert!(local_graph.push(Instruction::load_local(2, 20), |_| None));
-    assert!(local_graph
-        .select_property(get, &BTreeSet::from([2]))
-        .is_none());
-    assert!(local_graph
-        .select_property(Instruction { flags: 1, ..get }, &BTreeSet::new())
-        .is_none());
-
-    let mut constant_graph = BlockValueGraph::new();
-    assert!(constant_graph.push(Instruction::load_const(2, 7), |_| Some(1.0_f64.to_bits())));
-    assert!(constant_graph
-        .select_property(get, &BTreeSet::new())
         .is_none());
 }

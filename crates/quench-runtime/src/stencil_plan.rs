@@ -11,6 +11,36 @@ pub(crate) const MAX_BLOCK_VALUES: usize = 8;
 pub(crate) type DiscardedRegisters = [Option<Register>; MAX_BLOCK_VALUES];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct NumericSeries {
+    operations: [crate::ops::BinaryOp; MAX_BLOCK_VALUES],
+    len: u8,
+}
+
+impl NumericSeries {
+    pub(crate) fn from_reverse(operations: &[crate::ops::BinaryOp]) -> Option<Self> {
+        if !(2..=MAX_BLOCK_VALUES).contains(&operations.len()) {
+            return None;
+        }
+        let mut ordered = [crate::ops::BinaryOp::Add; MAX_BLOCK_VALUES];
+        for (destination, operation) in ordered.iter_mut().zip(operations.iter().rev()) {
+            *destination = *operation;
+        }
+        Some(Self {
+            operations: ordered,
+            len: u8::try_from(operations.len()).ok()?,
+        })
+    }
+
+    pub(crate) fn operations(self) -> impl Iterator<Item = crate::ops::BinaryOp> {
+        self.operations.into_iter().take(usize::from(self.len))
+    }
+
+    pub(crate) const fn len(self) -> u8 {
+        self.len
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct F64x3Bindings {
     pub inputs: [Register; 3],
     pub output: Register,
@@ -113,9 +143,9 @@ pub(crate) enum LocalNumericInputs {
         sources: [NumericSource; 3],
         bindings: F64x3Bindings,
     },
-    RepeatedAdd {
+    BinarySeries {
         sources: [NumericSource; 2],
-        repetitions: u8,
+        series: NumericSeries,
     },
     Folded {
         bits: u64,

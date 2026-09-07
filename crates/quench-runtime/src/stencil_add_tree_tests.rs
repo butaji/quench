@@ -9,6 +9,7 @@ fn execute_source_add_chain(
     Completion,
     u64,
     Option<crate::stencil_select::PhysicalStencilView>,
+    crate::stencil_plan::LocalNumericInputs,
 )> {
     let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
     let plan = BaselinePlan::compile_for_test(view, policy);
@@ -17,7 +18,7 @@ fn execute_source_add_chain(
     let selection = native.borrow().selection();
     let sources = match selection.inputs {
         crate::stencil_plan::LocalNumericInputs::AddChain { sources, .. } => sources,
-        crate::stencil_plan::LocalNumericInputs::RepeatedAdd { sources, .. } => {
+        crate::stencil_plan::LocalNumericInputs::BinarySeries { sources, .. } => {
             [sources[0], sources[1], sources[1]]
         }
         _ => return None,
@@ -37,7 +38,7 @@ fn execute_source_add_chain(
     .ok()?;
     let entries = native.borrow().native_entry_count();
     let physical = native.borrow().last_native_view();
-    Some((completion, entries, physical))
+    Some((completion, entries, physical, selection.inputs))
 }
 
 fn has_add_tree(plan: &BaselinePlan, pc: usize) -> bool {
@@ -45,7 +46,7 @@ fn has_add_tree(plan: &BaselinePlan, pc: usize) -> bool {
         matches!(
             native.borrow().selection().inputs,
             crate::stencil_plan::LocalNumericInputs::AddChain { .. }
-                | crate::stencil_plan::LocalNumericInputs::RepeatedAdd { .. }
+                | crate::stencil_plan::LocalNumericInputs::BinarySeries { .. }
         )
     })
 }
@@ -98,7 +99,7 @@ fn ordinary_source_repeated_add_uses_composed_fragment_image() {
     let program = crate::reduce::reduce_source(source).expect("ordinary source lowers");
     let mut checked = false;
     crate::stencil_test_support::visit_code_views(program.code(), &mut |view| {
-        let Some((completion, entries, physical)) = execute_source_add_chain(
+        let Some((completion, entries, physical, _)) = execute_source_add_chain(
             view,
             [Value::Number(1.0), Value::Number(2.0), Value::Number(2.0)],
         ) else {
@@ -135,12 +136,78 @@ fn ordinary_source_repeated_add_uses_composed_fragment_image() {
 }
 
 #[test]
+fn ordinary_source_mixed_add_sub_uses_one_heterogeneous_chain() {
+    let source = "function f(a,b){return ((a+b)-b)+b} f(1,2)";
+    let program = crate::reduce::reduce_source(source).expect("ordinary source lowers");
+    let mut checked = false;
+    crate::stencil_test_support::visit_code_views(program.code(), &mut |view| {
+        checked |= check_mixed_chain(view);
+    });
+    assert!(
+        checked,
+        "ordinary source must execute the mixed fragment chain"
+    );
+}
+
+fn check_mixed_chain(view: crate::machine::CodeView<'_>) -> bool {
+    let values = [Value::Number(1.0), Value::Number(2.0), Value::Number(2.0)];
+    let Some((completion, entries, physical, inputs)) = execute_source_add_chain(view, values)
+    else {
+        return false;
+    };
+    let crate::stencil_plan::LocalNumericInputs::BinarySeries { series, .. } = inputs else {
+        return false;
+    };
+    assert_eq!(
+        series.operations().collect::<Vec<_>>(),
+        [
+            crate::ops::BinaryOp::Add,
+            crate::ops::BinaryOp::Subtract,
+            crate::ops::BinaryOp::Add,
+        ]
+    );
+    assert_eq!(completion, Completion::Return(Value::Number(3.0)));
+    assert_eq!(entries, 1);
+    assert!(physical.is_some());
+    assert_mixed_chain_edges(view);
+    true
+}
+
+fn assert_mixed_chain_edges(view: crate::machine::CodeView<'_>) {
+    let fallback = execute_source_add_chain(
+        view,
+        [
+            Value::String("x".into()),
+            Value::Number(2.0),
+            Value::Number(2.0),
+        ],
+    )
+    .expect("observable coercion uses ordinary execution");
+    let Completion::Return(Value::Number(value)) = fallback.0 else {
+        panic!("ordinary numeric completion");
+    };
+    assert!(value.is_nan());
+    assert_eq!(fallback.1, 0);
+    let ordered = execute_source_add_chain(
+        view,
+        [
+            Value::Number(1.0e308),
+            Value::Number(-1.0e308),
+            Value::Number(-1.0e308),
+        ],
+    )
+    .expect("mixed series preserves operation order");
+    assert_eq!(ordered.0, Completion::Return(Value::Number(0.0)));
+    assert_eq!(ordered.1, 1);
+}
+
+#[test]
 fn ordinary_source_repeated_add_depth_is_data_not_a_new_plan() {
     let source = "function f(a,b){return (((a+b)+b)+b)+b} f(1,2)";
     let program = crate::reduce::reduce_source(source).expect("ordinary source lowers");
     let mut checked = false;
     crate::stencil_test_support::visit_code_views(program.code(), &mut |view| {
-        let Some((completion, entries, physical)) = execute_source_add_chain(
+        let Some((completion, entries, physical, _)) = execute_source_add_chain(
             view,
             [Value::Number(1.0), Value::Number(2.0), Value::Number(2.0)],
         ) else {

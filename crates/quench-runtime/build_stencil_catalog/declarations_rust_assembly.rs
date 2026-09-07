@@ -48,6 +48,14 @@ rust_assembly_catalog! {
         internal_abi: F64AccumulatorD0AddD1,
         composition: LinkedFragments
     },
+    SubFallthrough {
+        name: "sub_fallthrough", abi: ScalarF64Binary, ops: ["Sub", "Return"],
+        x86: &X86_SUB_FALLTHROUGH_BYTES, aarch64: &AARCH64_SUB_FALLTHROUGH_BYTES,
+        x86_holes: &[(5, 4, "Rel32")], aarch64_holes: &[(4, 4, "Branch26")],
+        continuation: { head: "sub_fallthrough_head", tail: "fallthrough_tail", target: "q_fallthrough_tail" },
+        internal_abi: F64AccumulatorD0AddD1,
+        composition: LinkedFragments
+    },
     AddChain {
         name: "add_chain", abi: ScalarF64x3, ops: ["Add", "Add"],
         x86: &X86_ADD_CHAIN_BYTES, aarch64: &AARCH64_ADD_CHAIN_BYTES,

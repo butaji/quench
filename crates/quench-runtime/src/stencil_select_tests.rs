@@ -53,6 +53,20 @@ fn numeric_add_leaf_never_selects_nonreturning_fallthrough_head() {
     assert!(fallthrough_region_key() != key);
 }
 
+#[test]
+fn scalar_leaf_and_continuation_keys_are_distinct() {
+    for opcode in [crate::ir::Opcode::Add, crate::ir::Opcode::Sub] {
+        let leaf = numeric_region_key(opcode).expect("numeric leaf");
+        let continuation = continuation_region_key(opcode).expect("numeric continuation");
+        assert_ne!(leaf, continuation);
+        assert!(select_region(leaf).expect("leaf row").fallthrough.is_none());
+        assert!(select_region(continuation)
+            .expect("continuation row")
+            .fallthrough
+            .is_some());
+    }
+}
+
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 #[test]
 fn numeric_rows_never_admit_x86_bytes_on_other_isas() {
