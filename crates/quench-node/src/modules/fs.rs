@@ -4238,11 +4238,25 @@ pub fn write_stream_close(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let stream = receiver.ok_or(VmError::NotCallable)?;
-    let fd = descriptor_arg(execute::get_property_result(stream, "fd").ok().as_ref())?;
-    let flush = truthy(&execute::get_property(stream, "flush"));
     let callback = args
         .first()
         .filter(|value| quench_runtime::is_callable(value));
+    // `close()` is idempotent in Node.  Stream finalization can race an
+    // explicit close, and callers are still entitled to their callback even
+    // after the descriptor has already been released.  Do this check before
+    // descriptor validation because the stream intentionally clears `fd`
+    // after a successful close.
+    let fd_value = execute::get_property(stream, "fd");
+    if matches!(execute::get_property(stream, "closed"), Value::Boolean(true))
+        || matches!(fd_value, Value::Null | Value::Undefined)
+    {
+        if let Some(callback) = callback {
+            defer(state, callback, vec![Value::Null]);
+        }
+        return Ok(stream.clone());
+    }
+    let fd = descriptor_arg(Some(&fd_value))?;
+    let flush = truthy(&execute::get_property(stream, "flush"));
     if flush {
         if let Some(callback) = callback {
             let fs_module = execute::get_property(stream, "__quench_fs_module");
@@ -4258,6 +4272,14 @@ pub fn write_stream_close(
     }
     let result = close_sync(state, None, &[Value::Number(fd as f64)]);
     execute::set_property_in_place(stream, "closed", Value::Boolean(true));
+    if result.is_ok() {
+        execute::set_property_in_place(stream, "fd", Value::Null);
+        // Closing a WriteStream emits exactly one `close` event. Keep the
+        // event on the same host-owned lifecycle edge as descriptor release;
+        // repeated close() calls take the idempotent path above and cannot
+        // emit duplicates.
+        let _ = emit_stream_event(state, stream, "close", Vec::new());
+    }
     if !flush {
         if let Some(callback) = callback {
             defer(state, callback, vec![err_value(&result)]);
