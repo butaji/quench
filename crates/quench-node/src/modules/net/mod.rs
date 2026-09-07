@@ -1430,6 +1430,10 @@ pub fn build_with_state(state: Option<&Rc<RefCell<HostState>>>) -> Value {
             crate::host::capability(crate::registry::SPEC_NET_ISIPV6),
         ),
         (
+            "_normalizeArgs",
+            crate::host::capability(crate::registry::SPEC_NET_NORMALIZE_ARGS),
+        ),
+        (
             "getDefaultAutoSelectFamilyAttemptTimeout",
             crate::host::capability(crate::registry::SPEC_NET_GET_ASF_TIMEOUT),
         ),
