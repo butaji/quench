@@ -38,12 +38,14 @@ const BROADCAST_CHANNEL_REF: u16 = 0x7FE8;
 const BROADCAST_CHANNEL_UNREF: u16 = 0x7FE9;
 const BROADCAST_CHANNEL_HAS_REF: u16 = 0x7FEA;
 const BROADCAST_CHANNEL_NAME: u16 = 0x7FEB;
+const BROADCAST_CHANNEL_DRAIN: u16 = 0x7FEC;
 const BROADCAST_CHANNEL_ID: &str = "\0quench:broadcast-channel";
 const SHARE_ENV_PROP: &str = "\0quench:worker-share-env";
 
 thread_local! {
     static ENVIRONMENT_DATA: RefCell<Vec<(String, Value)>> = const { RefCell::new(Vec::new()) };
     static WORKER_FLAGS: RefCell<HashMap<u64, (bool, bool)>> = RefCell::new(HashMap::new());
+    static BROADCAST_CHANNEL_PROTOTYPE: RefCell<Option<Value>> = const { RefCell::new(None) };
 }
 
 fn cap(kind: u16) -> Value {
@@ -66,9 +68,14 @@ fn cap(kind: u16) -> Value {
         BROADCAST_CHANNEL => crate::registry::SPEC_BROADCAST_CHANNEL,
         BROADCAST_CHANNEL_CLOSE => crate::registry::SPEC_BROADCAST_CHANNEL_CLOSE,
         BROADCAST_CHANNEL_INSPECT => crate::registry::SPEC_BROADCAST_CHANNEL_INSPECT,
-        BROADCAST_CHANNEL_POST | BROADCAST_CHANNEL_REF | BROADCAST_CHANNEL_UNREF
-        | BROADCAST_CHANNEL_HAS_REF | BROADCAST_CHANNEL_NAME =>
-            crate::registry::NodeSpec::new("worker_threads:BroadcastChannel:state", kind),
+        BROADCAST_CHANNEL_POST
+        | BROADCAST_CHANNEL_REF
+        | BROADCAST_CHANNEL_UNREF
+        | BROADCAST_CHANNEL_HAS_REF
+        | BROADCAST_CHANNEL_NAME
+        | BROADCAST_CHANNEL_DRAIN => {
+            crate::registry::NodeSpec::new("worker_threads:BroadcastChannel:state", kind)
+        }
         0x0145 => crate::registry::SPEC_MESSAGE_CHANNEL,
         _ => crate::registry::NodeSpec::new("worker_threads:internal", kind),
     };
@@ -184,11 +191,9 @@ pub fn build(state: &Rc<std::cell::RefCell<HostState>>) -> Result<Value, VmError
         ("unref".into(), cap(BROADCAST_CHANNEL_UNREF)),
         ("hasRef".into(), cap(BROADCAST_CHANNEL_HAS_REF)),
     ]);
-    let broadcast_channel_prototype = execute::set_prototype_of(
-        &broadcast_channel_prototype,
-        &event_target_prototype,
-    )
-    .unwrap_or(broadcast_channel_prototype);
+    let broadcast_channel_prototype =
+        execute::set_prototype_of(&broadcast_channel_prototype, &event_target_prototype)
+            .unwrap_or(broadcast_channel_prototype);
     let broadcast_channel_prototype = execute::define_property(
         broadcast_channel_prototype,
         "name",
@@ -202,8 +207,11 @@ pub fn build(state: &Rc<std::cell::RefCell<HostState>>) -> Result<Value, VmError
     let _ = execute::set_callable_property(
         &broadcast_channel,
         "prototype",
-        broadcast_channel_prototype,
+        broadcast_channel_prototype.clone(),
     );
+    BROADCAST_CHANNEL_PROTOTYPE.with(|slot| {
+        *slot.borrow_mut() = Some(broadcast_channel_prototype);
+    });
     let share_env = host_api::object(Vec::new());
     let _ = execute::define_property(
         share_env.clone(),
@@ -265,6 +273,7 @@ handlers! {
     (broadcast_channel_unref_handler, BROADCAST_CHANNEL_UNREF),
     (broadcast_channel_has_ref_handler, BROADCAST_CHANNEL_HAS_REF),
     (broadcast_channel_name_handler, BROADCAST_CHANNEL_NAME),
+    (broadcast_channel_drain_handler, BROADCAST_CHANNEL_DRAIN),
 }
 
 pub fn message_port_construct(
@@ -380,10 +389,7 @@ pub fn broadcast_channel_construct_handler(
     broadcast_channel_new(state, args)
 }
 
-fn broadcast_channel_new(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
+fn broadcast_channel_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     // Node applies ECMAScript ToString to the supplied name.  In particular,
     // all primitive values are accepted (including BigInt and an explicit
     // `undefined`), while a Symbol must retain ToString's TypeError.  Matching
@@ -405,6 +411,8 @@ fn broadcast_channel_new(
             (BROADCAST_CHANNEL_ID.into(), Value::Boolean(true)),
             ("name".into(), Value::String(name.clone())),
             ("active".into(), Value::Boolean(true)),
+            ("onmessage".into(), Value::Null),
+            ("onmessageerror".into(), Value::Null),
             ("close".into(), cap(BROADCAST_CHANNEL_CLOSE)),
             ("postMessage".into(), cap(BROADCAST_CHANNEL_POST)),
             ("ref".into(), cap(BROADCAST_CHANNEL_REF)),
@@ -416,6 +424,29 @@ fn broadcast_channel_new(
             ),
         ],
     )?;
+    // The generic target allocator starts with EventTarget's prototype.  A
+    // host constructor is subsequently passed through [[Construct]], which
+    // reapplies the public BroadcastChannel prototype.  If we leave that
+    // transition until after registering the target, the runtime's COW
+    // prototype update produces a second wrapper and queued delivery retains
+    // the pre-construction object (losing onmessage).  Install the public
+    // prototype at the host boundary so the generic constructor finalization
+    // is an identity-preserving no-op.
+    let object = {
+        let prototype = BROADCAST_CHANNEL_PROTOTYPE
+            .with(|slot| slot.borrow().clone())
+            .or_else(|| {
+                let global = quench_runtime::vm::current_global_object();
+                let constructor = execute::get_property(&global, "BroadcastChannel");
+                let prototype = execute::get_property(&constructor, "prototype");
+                matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)).then_some(prototype)
+            });
+        if let Some(prototype) = prototype {
+            execute::set_prototype_of(&object, &prototype)?
+        } else {
+            object
+        }
+    };
     crate::modules::event_target::mark_broadcast_channel(state, &object, name)?;
     crate::modules::event_target::remember_target_object(state, &object)?;
     Ok(object)
@@ -425,8 +456,10 @@ fn broadcast_channel_receiver(receiver: Option<&Value>) -> Result<&Value, VmErro
     let Some(receiver) = receiver else {
         return Err(invalid_this());
     };
-    if !matches!(execute::get_property(receiver, BROADCAST_CHANNEL_ID), Value::Boolean(true))
-        || crate::modules::event_target::target_identity(receiver).is_none()
+    if !matches!(
+        execute::get_property(receiver, BROADCAST_CHANNEL_ID),
+        Value::Boolean(true)
+    ) || crate::modules::event_target::target_identity(receiver).is_none()
     {
         return Err(invalid_this());
     }
@@ -458,7 +491,10 @@ fn broadcast_channel_post_message(
     let Some(message) = args.first() else {
         return Err(missing_args("The \"message\" argument must be specified"));
     };
-    if !matches!(execute::get_property(receiver, "active"), Value::Boolean(true)) {
+    if !matches!(
+        execute::get_property(receiver, "active"),
+        Value::Boolean(true)
+    ) {
         return Err(type_error("BroadcastChannel is closed"));
     }
     if contains_port(message, state) {
@@ -479,8 +515,7 @@ fn broadcast_channel_post_message(
             "DataCloneError",
         )));
     }
-    let name = execute::to_js_string(&execute::get_property(receiver, "name"))
-        .unwrap_or_default();
+    let name = execute::to_js_string(&execute::get_property(receiver, "name")).unwrap_or_default();
     let sender = crate::modules::event_target::target_identity(receiver)
         .map(crate::modules::event_target::TargetId)
         .ok_or_else(invalid_this)?;
@@ -491,14 +526,20 @@ fn broadcast_channel_post_message(
             .map(crate::modules::event_target::TargetId)
         {
             if let Some(target) = state.borrow().targets.get(id) {
-                target.borrow_mut().message_queue.push((data.clone(), Vec::new()));
+                target
+                    .borrow_mut()
+                    .message_queue
+                    .push((data.clone(), Vec::new()));
             }
         }
-        state.borrow_mut().event_loop.queue_microtask(
-            crate::host::capability(crate::registry::SPEC_MESSAGE_PORT_DELIVER),
-            vec![peer, data],
-        );
     }
+    // Broadcast delivery is grouped by destination channel.  The host loop
+    // drains destinations in creation order, preserving each destination's
+    // FIFO queue even when several senders post in one turn.
+    state
+        .borrow_mut()
+        .event_loop
+        .queue_microtask(cap(BROADCAST_CHANNEL_DRAIN), Vec::new());
     Ok(Value::Undefined)
 }
 
@@ -592,6 +633,7 @@ fn call(
         BROADCAST_CHANNEL_UNREF => broadcast_channel_unref(receiver),
         BROADCAST_CHANNEL_HAS_REF => broadcast_channel_has_ref(receiver),
         BROADCAST_CHANNEL_NAME => broadcast_channel_name(receiver),
+        BROADCAST_CHANNEL_DRAIN => crate::modules::event_target::broadcast_channel_drain(state),
         WORKER_NOOP => Ok(args.first().cloned().unwrap_or(Value::Undefined)),
         MESSAGE_PORT_CALL | MESSAGE_PORT_CONSTRUCT => message_port_construct(state, args),
         RECEIVE_MESSAGE => receive_message(state, args),
