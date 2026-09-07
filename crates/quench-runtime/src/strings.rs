@@ -1077,11 +1077,17 @@ mod tests {
     fn repeat_selects_indexable_backing_for_long_wide_text() {
         let source = Value::String("é😀".to_owned());
         let repeated = super::repeat(Some(&source), &[Value::Number(64.0)]).unwrap();
-        assert!(matches!(repeated, Value::StringUnits(_)));
+        let Value::StringUnits(backing) = &repeated else {
+            panic!("long wide repeat must have indexed UTF-16 storage");
+        };
+        let identity = std::rc::Rc::as_ptr(backing);
+        let owners = std::rc::Rc::strong_count(backing);
         assert_eq!(
             super::char_code_at(Some(&repeated), &[Value::Number(1.0)]).unwrap(),
             Value::Number(0xd83d as f64)
         );
+        assert_eq!(std::rc::Rc::as_ptr(backing), identity);
+        assert_eq!(std::rc::Rc::strong_count(backing), owners);
         assert!(crate::equality::strict_equal(
             &repeated,
             &Value::String("é😀".repeat(64))
