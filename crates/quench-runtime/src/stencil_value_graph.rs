@@ -6,7 +6,7 @@ use crate::ir::{Instruction, Opcode, Register};
 use crate::stencil_plan::{
     fold_numeric_sources, numeric_operation, DiscardedRegisters, F64x3Bindings, FusionCost,
     LocalBinarySelection, LocalNumericInputs, LocalPropertySelection, NumericDefinition,
-    NumericProducer, NumericSource, MAX_BLOCK_VALUES,
+    NumericProducer, NumericSeries, NumericSource, MAX_BLOCK_VALUES,
 };
 use std::collections::BTreeSet;
 
@@ -99,6 +99,9 @@ impl BlockValueGraph {
             .zip(self.resolve_register(operation.c));
         if let Some((lhs, rhs)) = direct {
             return self.select_resolved(operation, operator, [lhs, rhs], live_after);
+        }
+        if let Some(selection) = self.select_binary_series(operation, operator, live_after) {
+            return Some(selection);
         }
         self.select_add_tree(operation, operator, live_after)
     }
@@ -324,9 +327,6 @@ impl BlockValueGraph {
         if operator != crate::ops::BinaryOp::Add {
             return None;
         }
-        if let Some(selection) = self.select_repeated_add(operation, live_after) {
-            return Some(selection);
-        }
         let inner = self.canonical(self.current(operation.b)?)?;
         let ValueDefinition::Binary { operator, lhs, rhs } = self.node(inner)?.definition else {
             return None;
@@ -346,21 +346,23 @@ impl BlockValueGraph {
         self.select_add_tree_sources(operation, sources, bindings, live_after)
     }
 
-    fn select_repeated_add(
+    fn select_binary_series(
         &self,
         operation: Instruction,
+        operator: crate::ops::BinaryOp,
         live_after: &BTreeSet<Register>,
     ) -> Option<LocalBinarySelection> {
+        series_operation(operator)?;
         let repeated = self.resolve_register(operation.c)?;
-        let (base, repetitions) = self.repeated_add_base(operation.b, repeated)?;
-        if repetitions < 2 || self.has_unsupported_live_out(operation.a, live_after) {
+        let (base, series) = self.binary_series_base(operation.b, repeated, operator)?;
+        if self.has_unsupported_live_out(operation.a, live_after) {
             return None;
         }
         let cost = FusionCost::numeric_producers(self.marked_len(&[operation.b, operation.c]));
         cost.profitable().then_some(LocalBinarySelection {
-            inputs: LocalNumericInputs::RepeatedAdd {
+            inputs: LocalNumericInputs::BinarySeries {
                 sources: [base, repeated],
-                repetitions,
+                series,
             },
             result: crate::stencil_plan::LocalResultBinding::register(operation.a),
             operation,
@@ -370,22 +372,32 @@ impl BlockValueGraph {
         })
     }
 
-    fn repeated_add_base(
+    fn binary_series_base(
         &self,
         register: Register,
         repeated: NumericSource,
-    ) -> Option<(NumericSource, u8)> {
+        final_operator: crate::ops::BinaryOp,
+    ) -> Option<(NumericSource, NumericSeries)> {
         let mut value = self.canonical(self.current(register)?)?;
-        let mut repetitions = 1u8;
+        let mut reversed = [crate::ops::BinaryOp::Add; MAX_BLOCK_VALUES];
+        reversed[0] = final_operator;
+        let mut len = 1usize;
         loop {
             let ValueDefinition::Binary { operator, lhs, rhs } = self.node(value)?.definition
             else {
-                return Some((self.resolve(value)?, repetitions));
+                return Some((
+                    self.resolve(value)?,
+                    NumericSeries::from_reverse(&reversed[..len])?,
+                ));
             };
-            if operator != crate::ops::BinaryOp::Add || self.resolve(rhs)? != repeated {
-                return Some((self.resolve(value)?, repetitions));
+            if series_operation(operator).is_none()
+                || self.resolve(rhs)? != repeated
+                || len == MAX_BLOCK_VALUES
+            {
+                return None;
             }
-            repetitions = repetitions.checked_add(1)?;
+            reversed[len] = operator;
+            len += 1;
             value = self.canonical(lhs)?;
         }
     }
@@ -450,6 +462,14 @@ impl BlockValueGraph {
 
 fn pure(opcode: Opcode) -> bool {
     opcode.effects() == &[crate::facts::OperationEffect::Pure]
+}
+
+fn series_operation(operator: crate::ops::BinaryOp) -> Option<()> {
+    matches!(
+        operator,
+        crate::ops::BinaryOp::Add | crate::ops::BinaryOp::Subtract
+    )
+    .then_some(())
 }
 
 fn select_local_property(
