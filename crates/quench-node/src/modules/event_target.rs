@@ -19,6 +19,9 @@ use crate::modules::emitter::{emitter_id, EmitterId, Listener};
 
 /// Hidden property storing the host-side target id on the JS object.
 const TARGET_ID_PROP: &str = "\0quench:event-target:id";
+/// Marks host-owned identity objects whose JS writes must remain visible to
+/// the canonical object retained by the host registry.
+pub const HOST_MUTABLE_PROP: &str = "\0quench:host:mutable";
 /// Hidden brand marking `AbortSignal` objects; their max-listener
 /// count is always 0 in Node.
 pub const ABORT_SIGNAL_BRAND: &str = "\0quench:abort:signal";
@@ -220,6 +223,7 @@ pub fn new_message_channel(state: &Rc<RefCell<HostState>>) -> Result<Value, VmEr
 /// and `MessageChannel` both lower to this same host representation.
 pub fn new_message_port(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     let mut port = allocate_target(state, false)?;
+    port = execute::set_property(port, HOST_MUTABLE_PROP, Value::Boolean(true));
     if let Some(id) = target_id(&port) {
         if let Some(target) = state.borrow().targets.get(id) {
             let mut target = target.borrow_mut();

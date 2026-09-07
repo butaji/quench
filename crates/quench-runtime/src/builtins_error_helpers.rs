@@ -239,7 +239,7 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
     match target {
         Value::Object(properties)
             if properties.iter().any(|(name, value)| {
-                name == "\0quench:async_hooks:mutable"
+                (name == "\0quench:async_hooks:mutable" || name == "\0quench:host:mutable")
                     && matches!(value, Value::Boolean(true))
             }) =>
         {
