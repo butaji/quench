@@ -49,6 +49,38 @@ fn exercise_stored_property(view: CodeView<'_>) -> bool {
     true
 }
 
+fn exercise_receiver_overwrite(view: CodeView<'_>) -> bool {
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let plan = BaselinePlan::compile_for_test(view, policy);
+    let Some((pc, selection)) = stored_property_selection(view, &plan) else {
+        return false;
+    };
+    if selection.result.store_slot != Some(selection.receiver_slot) {
+        return false;
+    }
+    let environment = crate::environment::Environment::new();
+    let prime_child = Rc::new(ObjectData::new(vec![("value".into(), Value::Number(29.0))]));
+    let prime_receiver = Rc::new(ObjectData::new(vec![(
+        "next".into(),
+        Value::Object(prime_child),
+    )]));
+    environment.set(selection.receiver_slot, Value::Object(prime_receiver));
+    assert_eq!(
+        run_stored_property(view, &plan, pc, Rc::clone(&environment)),
+        Completion::Return(Value::Number(29.0))
+    );
+    let child = Rc::new(ObjectData::new(vec![("value".into(), Value::Number(29.0))]));
+    let child_weak = Rc::downgrade(&child);
+    let receiver = Rc::new(ObjectData::new(vec![("next".into(), Value::Object(child))]));
+    let receiver_weak = Rc::downgrade(&receiver);
+    environment.set(selection.receiver_slot, Value::Object(receiver));
+    let result = run_stored_property(view, &plan, pc, Rc::clone(&environment));
+    assert_eq!(result, Completion::Return(Value::Number(29.0)));
+    assert!(receiver_weak.upgrade().is_none());
+    assert!(child_weak.upgrade().is_some());
+    true
+}
+
 fn assert_property_store_runs(
     view: CodeView<'_>,
     plan: &BaselinePlan,
@@ -123,4 +155,16 @@ fn ordinary_source_fuses_guarded_property_result_into_local_store() {
         executed,
         "ordinary lowering must select property plus store"
     );
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn fused_property_retains_result_before_overwriting_receiver() {
+    let source = "function advance(node){node=node.next;return node.value}";
+    let program = crate::reduce::reduce_source(source).expect("ordinary source lowers");
+    let mut executed = false;
+    crate::stencil_test_support::visit_code_views(program.code(), &mut |view| {
+        executed |= exercise_receiver_overwrite(view);
+    });
+    assert!(executed, "ordinary lowering must fuse receiver overwrite");
 }

@@ -68,12 +68,15 @@ impl LocalPropertyExecution {
         environment: &crate::environment::Environment,
     ) -> Option<usize> {
         registers.word_ptr(usize::from(self.result.register))?;
+        // Retain the loaded word before a fused StoreLocal can release the
+        // receiver's last owning edge (for example `node = node.next`).
+        // The native property context only borrows the slot while loading it.
+        registers.write_tagged_bits(usize::from(self.result.register), self.bits)?;
         if let Some(slot) = self.result.store_slot {
             environment
                 .store_proven_tagged_bits(slot, self.bits)
                 .then_some(())?;
         }
-        registers.write_tagged_bits(usize::from(self.result.register), self.bits)?;
         for register in self.discarded.into_iter().flatten() {
             registers.clear_word(usize::from(register));
         }
@@ -94,7 +97,7 @@ impl NativeLocalPropertyPlan {
         policy: crate::stencil_policy::ExecutionPolicy,
         arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
     ) -> Option<Self> {
-        if !policy.local_fusions {
+        if !policy.local_fusions.property() {
             return None;
         }
         let property = NativePropertyPlan::new_with_arena(
@@ -163,7 +166,7 @@ impl NativeLocalBinaryPlan {
         policy: crate::stencil_policy::ExecutionPolicy,
         arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
     ) -> Option<Self> {
-        if !policy.local_fusions {
+        if !policy.local_fusions.numeric() {
             return None;
         }
         let policy = policy.with_leaf_dependencies();

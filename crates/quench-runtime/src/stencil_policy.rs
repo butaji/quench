@@ -19,6 +19,8 @@ enum ArmMode {
     Disabled,
     Leaves,
     Fusion,
+    FusionNumeric,
+    FusionPredicate,
     Kernels,
     ArrayLoop,
     AffineLoop,
@@ -31,6 +33,8 @@ impl ArmMode {
         match std::env::var("QUENCH_AARCH64_STENCIL_MODE").as_deref() {
             Ok("leaves") => Self::Leaves,
             Ok("fusion") => Self::Fusion,
+            Ok("fusion-numeric") => Self::FusionNumeric,
+            Ok("fusion-predicate") => Self::FusionPredicate,
             Ok("kernels") => Self::Kernels,
             Ok("array-loop") => Self::ArrayLoop,
             Ok("affine-loop") => Self::AffineLoop,
@@ -40,6 +44,46 @@ impl ArmMode {
             Err(_) if std::env::var_os("QUENCH_ENABLE_AARCH64_STENCILS").is_some() => Self::All,
             Err(_) => Self::Disabled,
         }
+    }
+}
+
+const fn local_fusion_policy(mode: ArmMode) -> LocalFusionPolicy {
+    match mode {
+        ArmMode::Fusion | ArmMode::All => LocalFusionPolicy::SAFE,
+        ArmMode::FusionNumeric => LocalFusionPolicy::NUMERIC_ONLY,
+        ArmMode::FusionPredicate => LocalFusionPolicy::PREDICATE_ONLY,
+        _ => LocalFusionPolicy::NONE,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LocalFusionPolicy(u8);
+
+impl LocalFusionPolicy {
+    const NUMERIC: u8 = 1 << 0;
+    const PROPERTY: u8 = 1 << 1;
+    const PREDICATE: u8 = 1 << 2;
+
+    pub(crate) const NONE: Self = Self(0);
+    pub(crate) const ALL: Self = Self(Self::NUMERIC | Self::PROPERTY | Self::PREDICATE);
+    const SAFE: Self = Self(Self::NUMERIC | Self::PREDICATE);
+    const NUMERIC_ONLY: Self = Self(Self::NUMERIC);
+    const PREDICATE_ONLY: Self = Self(Self::PREDICATE);
+
+    pub(crate) const fn any(self) -> bool {
+        self.0 != 0
+    }
+
+    pub(crate) const fn numeric(self) -> bool {
+        self.0 & Self::NUMERIC != 0
+    }
+
+    pub(crate) const fn property(self) -> bool {
+        self.0 & Self::PROPERTY != 0
+    }
+
+    pub(crate) const fn predicate(self) -> bool {
+        self.0 & Self::PREDICATE != 0
     }
 }
 
@@ -68,7 +112,7 @@ const fn architecture() -> Architecture {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ExecutionPolicy {
     pub(crate) native_leaves: bool,
-    pub(crate) local_fusions: bool,
+    pub(crate) local_fusions: LocalFusionPolicy,
     pub(crate) native_dispatch: bool,
     pub(crate) fused_regions: bool,
     pub(crate) array_kernels: bool,
@@ -80,7 +124,7 @@ pub(crate) struct ExecutionPolicy {
 impl ExecutionPolicy {
     pub(crate) const fn allows_admission(self) -> bool {
         self.native_leaves
-            || self.local_fusions
+            || self.local_fusions.any()
             || self.native_dispatch
             || self.fused_regions
             || self.array_kernels
@@ -108,7 +152,9 @@ impl ExecutionPolicy {
 
     #[cfg(test)]
     pub(crate) fn arm_opt_in_for_test() -> Self {
-        Self::from_architecture(Architecture::Aarch64, true)
+        let mut policy = Self::from_architecture(Architecture::Aarch64, true);
+        policy.local_fusions = LocalFusionPolicy::ALL;
+        policy
     }
 
     #[cfg(test)]
@@ -122,7 +168,7 @@ impl ExecutionPolicy {
     pub(crate) fn bridge_opt_in_for_test() -> Self {
         Self {
             native_leaves: false,
-            local_fusions: false,
+            local_fusions: LocalFusionPolicy::NONE,
             native_dispatch: false,
             fused_regions: true,
             array_kernels: false,
@@ -145,7 +191,7 @@ impl ExecutionPolicy {
         match arch {
             Architecture::X86_64 => Self {
                 native_leaves: true,
-                local_fusions: true,
+                local_fusions: LocalFusionPolicy::SAFE,
                 native_dispatch: true,
                 fused_regions: true,
                 array_kernels: true,
@@ -155,7 +201,7 @@ impl ExecutionPolicy {
             },
             Architecture::Aarch64 => Self {
                 native_leaves: matches!(arm_mode, ArmMode::Leaves | ArmMode::All),
-                local_fusions: matches!(arm_mode, ArmMode::Fusion | ArmMode::All),
+                local_fusions: local_fusion_policy(arm_mode),
                 native_dispatch: false,
                 fused_regions: false,
                 array_kernels: matches!(
@@ -180,7 +226,7 @@ impl ExecutionPolicy {
             },
             Architecture::Other => Self {
                 native_leaves: false,
-                local_fusions: false,
+                local_fusions: LocalFusionPolicy::NONE,
                 native_dispatch: false,
                 fused_regions: false,
                 array_kernels: false,
@@ -212,7 +258,7 @@ mod tests {
             ExecutionPolicy::from_architecture(Architecture::X86_64, false),
             ExecutionPolicy {
                 native_leaves: true,
-                local_fusions: true,
+                local_fusions: super::LocalFusionPolicy::SAFE,
                 native_dispatch: true,
                 fused_regions: true,
                 array_kernels: true,
@@ -225,7 +271,7 @@ mod tests {
             ExecutionPolicy::from_architecture(Architecture::Aarch64, false),
             ExecutionPolicy {
                 native_leaves: false,
-                local_fusions: false,
+                local_fusions: super::LocalFusionPolicy::NONE,
                 native_dispatch: false,
                 fused_regions: false,
                 array_kernels: false,
@@ -238,7 +284,7 @@ mod tests {
             ExecutionPolicy::from_architecture(Architecture::Aarch64, true),
             ExecutionPolicy {
                 native_leaves: true,
-                local_fusions: true,
+                local_fusions: super::LocalFusionPolicy::SAFE,
                 native_dispatch: false,
                 fused_regions: false,
                 array_kernels: true,
@@ -260,16 +306,19 @@ mod tests {
         let composed =
             ExecutionPolicy::from_architecture_and_mode(Architecture::Aarch64, ArmMode::Composed);
         assert!(leaves.native_leaves && !leaves.array_kernels);
-        assert!(!leaves.local_fusions);
+        assert!(!leaves.local_fusions.any());
         let fusion =
             ExecutionPolicy::from_architecture_and_mode(Architecture::Aarch64, ArmMode::Fusion);
-        assert!(fusion.local_fusions && !fusion.native_leaves);
+        assert!(fusion.local_fusions.any() && !fusion.native_leaves);
+        assert!(!fusion.local_fusions.property());
+        assert_isolated_fusion_modes();
         assert!(!composed.native_leaves && composed.array_kernels);
         assert!(composed.array_numeric_loops && composed.affine_i32_loops);
         assert_isolated_region_modes();
         let all = ExecutionPolicy::from_architecture_and_mode(Architecture::Aarch64, ArmMode::All);
         assert!(!leaves.optimizing_view && !composed.optimizing_view);
-        assert!(all.native_leaves && all.local_fusions && all.array_kernels);
+        assert!(all.native_leaves && all.local_fusions.any() && all.array_kernels);
+        assert!(!all.local_fusions.property());
         assert!(all.array_numeric_loops && all.affine_i32_loops);
         assert!(!all.optimizing_view);
     }
@@ -290,5 +339,14 @@ mod tests {
         assert!(affine_loop.affine_i32_loops && !affine_loop.array_kernels);
         assert!(affine_loop.allows_region_abi(RegionAbi::AffineI32Loop));
         assert!(!affine_loop.allows_region_abi(RegionAbi::Bridge));
+    }
+
+    fn assert_isolated_fusion_modes() {
+        let policy =
+            |mode| ExecutionPolicy::from_architecture_and_mode(Architecture::Aarch64, mode);
+        let numeric = policy(ArmMode::FusionNumeric).local_fusions;
+        assert!(numeric.numeric() && !numeric.property() && !numeric.predicate());
+        let predicate = policy(ArmMode::FusionPredicate).local_fusions;
+        assert!(!predicate.numeric() && !predicate.property() && predicate.predicate());
     }
 }
