@@ -741,7 +741,7 @@ pub(crate) fn execute_code_frame_completion_with_plan(
     let _context_guard = ContextGuard::install(context);
     let _global_guard = GlobalObjectGuard::install();
     let pooled = std::rc::Rc::clone(&environment);
-    let _environment_root = crate::cycle_collector::protect_environment(&environment);
+    let environment_root = crate::cycle_collector::protect_environment(&environment);
     let environment_guard = crate::locals::EnvironmentGuard::install(environment);
     let result = if let Some(plan) = plan {
         drive_code_completion_with_plan(code, registers, context, &plan, None)
@@ -749,6 +749,7 @@ pub(crate) fn execute_code_frame_completion_with_plan(
         drive_code_completion(code, registers, context)
     };
     drop(environment_guard);
+    drop(environment_root);
     if result
         .as_ref()
         .ok()
@@ -772,7 +773,7 @@ pub(crate) fn execute_code_frame_completion_with_owner(
     let _context_guard = ContextGuard::install(context);
     let _global_guard = GlobalObjectGuard::install();
     let pooled = Rc::clone(&environment);
-    let _environment_root = crate::cycle_collector::protect_environment(&environment);
+    let environment_root = crate::cycle_collector::protect_environment(&environment);
     let environment_guard = crate::locals::EnvironmentGuard::install(environment);
     let result = if let (Some(optimizing), Some(baseline)) =
         (owner.executable_optimizing_plan(), owner.baseline_plan())
@@ -791,6 +792,7 @@ pub(crate) fn execute_code_frame_completion_with_owner(
         drive_code_completion_with_tier(code, registers, context, owner)
     };
     drop(environment_guard);
+    drop(environment_root);
     if result
         .as_ref()
         .ok()
