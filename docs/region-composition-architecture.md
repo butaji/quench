@@ -98,6 +98,32 @@ enable cross-template optimization. Ordinary Rust calls do not promise a custom
 register-preserving or guaranteed tail-call ABI. Require machine-code evidence
 for every supported target contract, not source-level inference.
 
+## AsmJit concepts worth retaining
+
+AsmJit's useful lesson here is its staged data model, not its runtime assembler.
+`CodeHolder` keeps target environment, sections, labels and relocations together;
+layout resolves symbols before relocation, and `JitRuntime` publishes or releases
+the resulting allocation separately. `JitAllocator` likewise treats writable
+construction, executable visibility, cache maintenance and allocation lifetime as
+one explicit transition.
+
+Quench should preserve the same shape with its smaller Rust-only vocabulary:
+
+| AsmJit concept | Quench representation | Decision |
+| --- | --- | --- |
+| Targeted code holder | `PhysicalStencilView` -> `VerifiedRegionImage` | Keep one selected physical contract; never reselect ABI, bytes or links during publication. |
+| Sections and labels | `Stencil`, immutable data and symbolic `PhysicalLink`/`Fixup` records | Keep code bytes in exactly one field and resolve labels transactionally. |
+| Flatten/resolve/relocate | bounded layout validation and typed patching | Preserve pure planning before executable allocation; failure publishes nothing. |
+| Runtime add/release | shared slab publication plus allocation-retaining lease | Keep invocation separate from construction and make retirement generation-aware. |
+| Reusable emitter/compiler | runtime assembler/compiler graph | Reject: offline rustc artifacts and a finite recipe catalog are smaller and reproducible. |
+
+This comparison produced one immediate representation cleanup: generated
+artifacts no longer carry both `bytes` and `stencil.bytes`; `Stencil` is the sole
+code-section authority. A further wrapper or universal instruction API is not
+justified without measured duplication. In particular, do not import AsmJit's
+generic compiler, register allocator, zone allocator, logging/error framework or
+instruction database into the VM.
+
 ## Acceptance and sequencing
 
 ### Cold planning is distinct from retained native storage
@@ -147,6 +173,11 @@ the symbolic assembly ergonomics: labels and typed fixups are resolved from data
 before publication instead of hand-counting branch offsets. Quench keeps its
 Rust-only rustc artifact pipeline and its own fail-closed verifier; it imports
 neither project and does not acquire a second semantic IR.
+
+[AsmJit](https://github.com/asmjit/asmjit) informs the code-holder, transactional
+finalization and allocation-lifetime boundaries. Quench does not adopt AsmJit's
+runtime assembler, compiler or JIT allocator; those solve a broader problem than
+finite build-time stencil selection and would duplicate existing Rust contracts.
 
 [Maglev](https://v8.dev/blog/maglev) uses a bytecode prepass, liveness, fact tracking,
 deoptimization maps and representation selection. It is evidence that these

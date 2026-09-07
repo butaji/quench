@@ -12,7 +12,7 @@ fn extracted_build_artifacts_match_canonical_contracts() {
             .iter()
             .find(|record| record.name == artifact.name)
             .expect("artifact declaration has a catalog row");
-        assert!(!artifact.bytes.is_empty());
+        assert!(!artifact.stencil.bytes.is_empty());
         assert!(artifact.stencil.validate());
         if artifact.has_fallthrough {
             assert!(!artifact.stencil.holes.is_empty());
@@ -64,10 +64,10 @@ fn extracted_build_artifacts_match_canonical_contracts() {
             .iter()
             .find(|record| record.name == "add_chain")
             .expect("fused chain declaration");
-        assert_eq!(chain.bytes, chain_record.stencil.bytes);
+        assert_eq!(chain.stencil.bytes, chain_record.stencil.bytes);
         assert_eq!(
             select_stencil(chain_record.key).map(|view| view.stencil.bytes),
-            Some(chain.bytes),
+            Some(chain.stencil.bytes),
             "normal selection must use the generated chain artifact"
         );
     }
@@ -142,7 +142,6 @@ fn physical_view_rejects_layout_mismatch_before_entry() {
         has_fallthrough: false,
         executable: true,
         template_calls_helper: false,
-        bytes: BYTES,
         data: &[],
         relocations: &[],
         links: &[],
@@ -166,7 +165,6 @@ fn physical_view_rejects_layout_mismatch_before_entry() {
         has_fallthrough: false,
         executable: true,
         template_calls_helper: false,
-        bytes: BYTES,
         data: &[],
         relocations: &[],
         links: &[],
@@ -190,7 +188,6 @@ fn physical_view_rejects_layout_mismatch_before_entry() {
         has_fallthrough: true,
         executable: true,
         template_calls_helper: false,
-        bytes: BYTES,
         data: &[],
         relocations: &[],
         links: &[],
@@ -214,7 +211,6 @@ fn physical_view_rejects_layout_mismatch_before_entry() {
         has_fallthrough: false,
         executable: true,
         template_calls_helper: false,
-        bytes: BYTES,
         data: &[],
         relocations: &[],
         links: &[],
@@ -238,7 +234,6 @@ fn physical_view_rejects_layout_mismatch_before_entry() {
         has_fallthrough: false,
         executable: true,
         template_calls_helper: false,
-        bytes: BYTES,
         data: &[],
         relocations: &[PhysicalRelocation {
             offset: 4,
@@ -278,7 +273,6 @@ fn physical_view_rejects_layout_mismatch_before_entry() {
         has_fallthrough: false,
         executable: true,
         template_calls_helper: false,
-        bytes: BYTES,
         data: &[],
         relocations: &[],
         links: &[],
