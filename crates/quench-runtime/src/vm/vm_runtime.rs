@@ -2322,18 +2322,12 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
             pc += 1;
             continue;
         }
-        if let (Some(environment), Some(native)) =
-            (environment, plan.native_local_predicate_at(pc))
+        if let (Some(environment), Some(native)) = (environment, plan.native_local_predicate_at(pc))
         {
             if let Some(next) = crate::stencil_fusion::execute_local_predicate(native, environment)
                 .and_then(|result| result.commit(registers))
             {
-                crate::execution_trace::stencil_observation(
-                    code,
-                    pc,
-                    "local_predicate",
-                    true,
-                );
+                crate::execution_trace::stencil_observation(code, pc, "local_predicate", true);
                 crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
                 pc = next;
                 continue;
@@ -4737,6 +4731,7 @@ mod compact_handler_tests {
             outputs: &[],
             entry: 0,
             external_entries: &[0],
+            links: &[],
             fallthrough: None,
             continuation_abi: crate::stencil_select::ContinuationAbi::None,
             abi: crate::stencil_select::RegionAbi::Bridge,

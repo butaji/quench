@@ -17,6 +17,7 @@ struct CatalogParts {
     keys: String,
     numeric_keys: String,
     continuation_keys: String,
+    links: String,
 }
 
 impl CatalogParts {
@@ -31,6 +32,7 @@ impl CatalogParts {
             keys: render_keys(declarations),
             numeric_keys: render_numeric_keys(declarations),
             continuation_keys: render_continuation_keys(declarations),
+            links: render_links(declarations),
         }
     }
 }
@@ -60,7 +62,7 @@ fn render_region_row(index: usize, declaration: &RegionDeclaration) -> String {
     let outputs = render_physical_outputs(declaration);
     let continuation_abi = continuation_abi_expr(declaration);
     format!(
-        "    crate::stencil_select::RegionRecord {{ name: {declaration_name:?}, key: CANONICAL_{name}_KEY, stencil: crate::stencil_fact::Stencil {{ bytes: CANONICAL_{name}_BYTES, holes: CANONICAL_{name}_HOLES }}, operations: CANONICAL_{name}_OPS, bindings: {bindings}, outputs: {outputs}, entry: {entry}, external_entries: &[{external_entries}], fallthrough: {fallthrough}, continuation_abi: {continuation_abi}, abi: {abi}, template_calls_helper: {template_calls_helper}, executable: {executable} }}, // declaration {index}",
+        "    crate::stencil_select::RegionRecord {{ name: {declaration_name:?}, key: CANONICAL_{name}_KEY, stencil: crate::stencil_fact::Stencil {{ bytes: CANONICAL_{name}_BYTES, holes: CANONICAL_{name}_HOLES }}, operations: CANONICAL_{name}_OPS, bindings: {bindings}, outputs: {outputs}, entry: {entry}, external_entries: &[{external_entries}], links: CANONICAL_{name}_LINKS, fallthrough: {fallthrough}, continuation_abi: {continuation_abi}, abi: {abi}, template_calls_helper: {template_calls_helper}, executable: {executable} }}, // declaration {index}",
         entry = declaration.entry,
         template_calls_helper = target_template_calls_helper(declaration),
     )
@@ -148,6 +150,8 @@ const DISPATCH_EXECUTABLE: bool = cfg!(target_arch = "x86_64");
     generated.push_str(&parts.operations);
     generated.push('\n');
     generated.push_str(&parts.keys);
+    generated.push('\n');
+    generated.push_str(&parts.links);
     generated.push_str("\nstatic NUMERIC_REGION_KEYS: &[(crate::ir::Opcode, crate::stencil_fact::RegionKey)] = &[\n");
     generated.push_str(&parts.numeric_keys);
     generated.push_str(
@@ -184,6 +188,7 @@ fn emit_catalog_rerun_inputs() {
         "catalog_render.rs",
         "catalog_physical.rs",
         "catalog_keys.rs",
+        "catalog_links.rs",
         "catalog_validate.rs",
         "declarations_composed.rs",
         "declarations_rust_leaf.rs",

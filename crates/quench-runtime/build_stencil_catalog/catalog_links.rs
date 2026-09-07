@@ -1,0 +1,39 @@
+// Mechanical relocation-to-successor rendering from assembly declarations.
+
+fn render_links(declarations: &[RegionDeclaration]) -> String {
+    declarations
+        .iter()
+        .map(render_declaration_links)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn render_declaration_links(declaration: &RegionDeclaration) -> String {
+    let name = region_key_name(declaration.name);
+    let Some(target) = rust_assembly_recipe(declaration)
+        .and_then(RustAssemblyRecipe::continuation)
+        .map(|continuation| continuation.target)
+    else {
+        return format!(
+            "const CANONICAL_{name}_LINKS: &[crate::stencil_select::PhysicalLink] = &[];"
+        );
+    };
+    let x86 = render_target_links(declaration.holes, target);
+    let aarch64 = render_target_links(declaration.aarch64_holes, target);
+    format!(
+        "#[cfg(target_arch = \"x86_64\")]\nconst CANONICAL_{name}_LINKS: &[crate::stencil_select::PhysicalLink] = &[\n{x86}\n];\n#[cfg(target_arch = \"aarch64\")]\nconst CANONICAL_{name}_LINKS: &[crate::stencil_select::PhysicalLink] = &[\n{aarch64}\n];\n#[cfg(not(any(target_arch = \"x86_64\", target_arch = \"aarch64\")))]\nconst CANONICAL_{name}_LINKS: &[crate::stencil_select::PhysicalLink] = &[];"
+    )
+}
+
+fn render_target_links(holes: &[(u16, usize, &'static str)], target: &str) -> String {
+    holes
+        .iter()
+        .filter(|(_, _, kind)| matches!(*kind, "Rel32" | "Branch26" | "CondBranch19"))
+        .map(|(offset, _, kind)| {
+            format!(
+                "    crate::stencil_select::PhysicalLink {{ offset: {offset}, kind: crate::stencil_fact::HoleKind::{kind}, target: {target:?}, role: crate::stencil_select::SuccessorRole::Next }},"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}

@@ -69,6 +69,14 @@ fn scalar_leaf_and_continuation_keys_are_distinct() {
             .expect("continuation row")
             .fallthrough
             .is_some());
+        let view = select_physical(continuation).expect("continuation view");
+        assert!(!view.links.is_empty());
+        assert!(view
+            .links
+            .iter()
+            .all(|link| link.role == SuccessorRole::Next));
+        #[cfg(quench_generated_stencil_artifacts)]
+        assert_eq!(view.links.len(), view.relocations.len());
     }
 }
 
