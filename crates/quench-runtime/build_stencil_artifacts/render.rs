@@ -163,8 +163,11 @@ fn fingerprint(
             let successors = super::rust_assembly_recipe(item)
                 .map(|recipe| format!("{:?}:{:?}", recipe.successors(), recipe.control_links()))
                 .unwrap_or_default();
+            let patch_holes = super::rust_assembly_recipe(item)
+                .map(|recipe| format!("{:?}", recipe.patch_holes()))
+                .unwrap_or_default();
             format!(
-                "{name}:{abi:?}:{ops:?}:{x86:?}:{arm:?}:{portable:?}:{holes:?}:{arm_holes:?}:{entry}:{external:?}:{bindings}:{outputs}:{continuation_abi}:{successors}:{source}",
+                "{name}:{abi:?}:{ops:?}:{x86:?}:{arm:?}:{portable:?}:{holes:?}:{arm_holes:?}:{entry}:{external:?}:{bindings}:{outputs}:{continuation_abi}:{successors}:{patch_holes}:{source}",
                 name = item.name,
                 abi = item.abi,
                 ops = item.operations,
@@ -210,6 +213,7 @@ fn artifact_fingerprint(
             &mut hash,
             format!("{:?}", recipe.control_links()).as_bytes(),
         );
+        hash_bytes(&mut hash, format!("{:?}", recipe.patch_holes()).as_bytes());
     }
     hash_bytes(&mut hash, &declaration.entry.to_le_bytes());
     for entry in declaration.external_entries {
