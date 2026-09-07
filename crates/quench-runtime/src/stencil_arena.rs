@@ -105,9 +105,17 @@ pub struct StencilArena {
     cursor: usize,
     executable: bool,
     id: u64,
-    published_abis: RefCell<HashMap<usize, crate::stencil_select::RegionAbi>>,
+    published_entries: RefCell<HashMap<usize, PublishedEntry>>,
     last_physical_execution: Cell<Option<PhysicalExecutionWitness>>,
     global_charge: BudgetReservation<'static>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PublishedEntry {
+    key: crate::stencil_fact::RegionKey,
+    signature: u64,
+    abi: crate::stencil_select::RegionAbi,
+    byte_len: usize,
 }
 
 /// Bounded collection of immutable-after-publication executable slabs.  Region
@@ -1049,7 +1057,7 @@ impl StencilArena {
             cursor: 0,
             executable: false,
             id: NEXT_ARENA_ID.fetch_add(1, Ordering::Relaxed),
-            published_abis: RefCell::new(HashMap::new()),
+            published_entries: RefCell::new(HashMap::new()),
             last_physical_execution: Cell::new(None),
             global_charge,
         })
@@ -1561,12 +1569,18 @@ impl StencilArena {
             .get_owned(view.key, signature, self.id)
             .filter(|address| self.owns_address(*address))
         {
-            self.record_abi(address, view.abi);
+            self.require_publication(address, view, signature, view.stencil.bytes.len())?;
             return Ok(address);
         }
+        let checkpoint = self.cursor;
         let offset = self.copy_and_patch(view.stencil, values)?;
         let address = self.address(offset).ok_or(ArenaError::Exhausted)?;
-        self.record_abi(address, view.abi);
+        if let Err(error) =
+            self.record_publication(address, view, signature, view.stencil.bytes.len())
+        {
+            self.cursor = checkpoint;
+            return Err(error);
+        }
         Ok(cache.insert_owned(view.key, signature, address, self.id))
     }
 
@@ -1600,7 +1614,7 @@ impl StencilArena {
             return self.render_selected_view(cache, view, values);
         }
         let signature = view.cache_signature(values);
-        if let Some(address) = self.cached_executable(cache, view.key, signature) {
+        if let Some(address) = self.cached_executable(cache, view, signature) {
             return Ok(address);
         }
         let image = match control {
@@ -1640,8 +1654,46 @@ impl StencilArena {
         self.render_selected_controlled_view(cache, view, values, control)
     }
 
-    fn record_abi(&self, address: usize, abi: crate::stencil_select::RegionAbi) {
-        self.published_abis.borrow_mut().insert(address, abi);
+    fn record_publication(
+        &self,
+        address: usize,
+        view: crate::stencil_select::PhysicalStencilView,
+        signature: u64,
+        byte_len: usize,
+    ) -> Result<(), ArenaError> {
+        let entry = PublishedEntry {
+            key: view.key,
+            signature,
+            abi: view.abi,
+            byte_len,
+        };
+        let mut published = self.published_entries.borrow_mut();
+        match published.get(&address) {
+            Some(existing) if *existing != entry => Err(ArenaError::ProtectionFailed),
+            Some(_) => Ok(()),
+            None => {
+                published.insert(address, entry);
+                Ok(())
+            }
+        }
+    }
+
+    fn require_publication(
+        &self,
+        address: usize,
+        view: crate::stencil_select::PhysicalStencilView,
+        signature: u64,
+        byte_len: usize,
+    ) -> Result<(), ArenaError> {
+        let expected = PublishedEntry {
+            key: view.key,
+            signature,
+            abi: view.abi,
+            byte_len,
+        };
+        (self.published_entries.borrow().get(&address) == Some(&expected))
+            .then_some(())
+            .ok_or(ArenaError::ProtectionFailed)
     }
 
     fn require_abi(
@@ -1649,7 +1701,11 @@ impl StencilArena {
         address: usize,
         expected: crate::stencil_select::RegionAbi,
     ) -> Result<(), ArenaError> {
-        let actual = self.published_abis.borrow().get(&address).copied();
+        let actual = self
+            .published_entries
+            .borrow()
+            .get(&address)
+            .map(|entry| entry.abi);
         (actual == Some(expected) && self.executable && self.owns_address(address))
             .then_some(())
             .ok_or(ArenaError::ProtectionFailed)
@@ -1949,16 +2005,22 @@ impl StencilArena {
     fn cached_executable(
         &self,
         cache: &mut RenderedRegionCache,
-        key: crate::stencil_fact::RegionKey,
+        view: crate::stencil_select::PhysicalStencilView,
         signature: u64,
     ) -> Option<usize> {
         let address = cache
-            .get_owned(key, signature, self.id)
+            .get_owned(view.key, signature, self.id)
             .filter(|address| self.owns_address(*address))?;
-        if self.is_executable() {
+        let byte_len =
+            view.stencil.bytes.len() + view.fallthrough.map_or(0, |tail| tail.stencil.bytes.len());
+        if self.is_executable()
+            && self
+                .require_publication(address, view, signature, byte_len)
+                .is_ok()
+        {
             Some(address)
         } else {
-            cache.remove(key, signature, address);
+            cache.remove(view.key, signature, address);
             None
         }
     }
@@ -1976,11 +2038,14 @@ impl StencilArena {
         let offset = self.alloc_aligned(bytes.len(), STENCIL_ALIGNMENT)?;
         unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.ptr.add(offset), bytes.len()) };
         let address = self.address(offset).ok_or(ArenaError::Exhausted)?;
-        self.record_abi(address, view.abi);
+        if let Err(error) = self.record_publication(address, view, signature, bytes.len()) {
+            self.cursor = checkpoint;
+            return Err(error);
+        }
         cache.insert_owned(view.key, signature, address, self.id);
         if let Err(error) = self.make_executable() {
             cache.remove(view.key, signature, address);
-            self.published_abis.borrow_mut().remove(&address);
+            self.published_entries.borrow_mut().remove(&address);
             self.cursor = checkpoint;
             return Err(error);
         }
@@ -2272,6 +2337,41 @@ mod tests {
         let owner = pool.owner_for(first).unwrap();
         let signature = view.cache_signature(&values);
         assert_eq!(second_cache.get_owned(key, signature, owner), Some(first));
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn cache_cannot_relabel_a_published_entry() {
+        let mut arena = StencilArena::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let values = PatchValues::from_site(&site);
+        let add = crate::stencil_select::select_physical(
+            crate::stencil_select::numeric_region_key(Opcode::Add).unwrap(),
+        )
+        .unwrap();
+        let multiply =
+            crate::stencil_select::select_physical(crate::stencil_select::multiply_region_key())
+                .unwrap();
+        let _add_address = arena
+            .render_physical_view_or_get(&mut cache, add, &values)
+            .unwrap();
+        let multiply_address = arena
+            .render_physical_view_or_get(&mut cache, multiply, &values)
+            .unwrap();
+        arena.make_executable().unwrap();
+        cache.insert_owned(
+            add.key,
+            add.cache_signature(&values),
+            multiply_address,
+            arena.id(),
+        );
+
+        assert_eq!(
+            arena.render_physical_view_or_get(&mut cache, add, &values),
+            Err(ArenaError::ProtectionFailed)
+        );
+        assert!(arena.f64_entry(multiply_address).is_ok());
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
