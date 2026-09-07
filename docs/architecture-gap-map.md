@@ -18,7 +18,7 @@ verified source manifest, preserved executable identity, raw profiles, runner,
 | --- | --- | --- | --- |
 | Static activation metadata | Richards/Splay frame-width traversal appears in trace-off stacks; source recursively visits immutable fragments | Derive frame requirements once; share activation/exit/root contracts | Whole-run savings and best slot-storage strategy |
 | Layout identity and queries | Cached interned layout coexists with visible-name shape scanning; property iteration decodes owned values | One immutable layout record with distinct derived views; key-first internal queries | Benefit versus metadata bytes; mutation and identity-domain migration coverage |
-| Array/object storage ownership | Crypto/RayTrace allocation, copies, replacement and property paths; historical controlled slice evidence | Stable identity with mutable backing; implicit ordinary attributes and precise invalidation | Which allocation is avoidable in each current workload; retained bytes and migration cost |
+| Array/object storage ownership | Current Crypto classification isolates repeated existing sparse numeric writes; historical slice evidence isolates intrinsic destination construction | Stable identity with mutable backing; implicit ordinary attributes and precise invalidation | Remaining array lanes, retained bytes and broader migration cost |
 | Collection graph and capture lifetime | EarleyBoyer trace-off cycle/environment traversal; historical lifecycle accounting limitations | Actual owning-edge model, shared root visitation, selective capture; evaluate collector alternatives after measuring | Whole-run GC share, edge multiplicity, collection frequency, pauses and best collector policy |
 | Native region composition | NavierStokes dispatch/arithmetic/copy stacks under default policy; CFG/liveness/contracts already exist | Bounded costed composition, unboxed residency, effect-valid facts and exact exits | Actual opt-in native coverage and benefit; default-off events cannot prove rejection |
 | Cold planning and admission | RegExp initial sample includes BaselinePlan::compile amid allocation/free | Measure cold plan construction and lifetime separately from matcher and steady-state execution | Setup versus recurring planning cost; no attribution to regexp engine from suite name |
@@ -33,20 +33,17 @@ by raw counts from unequal, adaptive workloads.
 
 ## Fresh counter cross-check
 
-The completed Crypto trace reports 49,526,816 stale-representative array misses
-versus 4,972 sparse-kind misses, 142,014,373 descriptor-view allocations and
-3,093,219,162 owned reads under ordinary SetN. RayTrace reports 125,354,049 owned
-reads under Construct and 3,734,344 property-table clones. These observations
-corroborate shared storage/ownership investigation from trace-off samples; they
-do not assign CPU percentages or prove the speedup from any proposed redesign.
-`counter-summary.json` retains the exact fields and rejects DeltaBlue's failed
-run as performance evidence. All three currently usable traces contain at least
-one population with drops exceeding allocations. Live-heap subtraction remains
-invalid without the accounting audit. More traces and micro controls are pending.
-EarleyBoyer subsequently completes with 17,042,983 environment-allocation events;
-its environment and array drop populations remain unbalanced. This supports
-examining activation/capture creation and collection together, not attributing
-all memory cost to allocation policy or interpreting events as retained bytes.
+The current Crypto trace classifies 28,186,835 of 28,536,661 named writes as
+Number-to-Number updates of existing sparse own array properties. Only 57,369
+create an absent physical hole. This replaces the older coarse stale/sparse
+counter interpretation and directly motivated the canonical interior-mutable
+sparse store in `d69e6971ea`. Matched Crypto score improves from 17.0 to 55.2;
+the result is local throughput evidence, not a full-suite or RSS conclusion.
+RayTrace still reports substantial owned reads and property-table clones, while
+EarleyBoyer reports environment allocation/traversal. Those are separate open
+ownership questions and must not be collapsed into the proven Crypto mechanism.
+Lifecycle populations with drops exceeding allocations remain unsuitable for
+live-heap subtraction until their accounting contract is repaired.
 
 ## Coherent design direction
 
