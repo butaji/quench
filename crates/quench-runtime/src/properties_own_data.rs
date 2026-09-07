@@ -62,10 +62,31 @@ fn record_named_set_fact(value: &crate::value::Value, key: &str) {
     let name = match value {
         crate::value::Value::Object(_) => object_set_fact(fact),
         crate::value::Value::ObjectAlias(_) => alias_set_fact(fact),
-        crate::value::Value::Array(_) => "array",
+        crate::value::Value::Array(array) => array_set_fact(array, key),
         _ => "other",
     };
     crate::execution_trace::named_set_fact(name);
+}
+
+#[cfg(feature = "execution-trace")]
+fn array_set_fact(array: &crate::value::ArrayData, key: &str) -> &'static str {
+    if key == "length" {
+        return "array:length";
+    }
+    let Some(index) = crate::arrays::array_index(key).map(|value| value as usize) else {
+        return "array:nonindex";
+    };
+    if !crate::locals::array_word_is_current(array) {
+        return "array:index-stale";
+    }
+    if array.has_plain_dense_index(index) {
+        return "array:index-dense";
+    }
+    match index.cmp(&array.header_length()) {
+        std::cmp::Ordering::Less => "array:index-hole-or-special",
+        std::cmp::Ordering::Equal => "array:index-append",
+        std::cmp::Ordering::Greater => "array:index-gap",
+    }
 }
 
 #[cfg(feature = "execution-trace")]
@@ -183,7 +204,7 @@ mod own_data_tests {
         store_plain_writable_own_data, PlainOwnProperty,
     };
     #[cfg(feature = "execution-trace")]
-    use super::{alias_set_fact, object_set_fact};
+    use super::{alias_set_fact, array_set_fact, object_set_fact};
     use crate::value::{ObjectAliasValue, ObjectData, Value};
     use std::{cell::RefCell, rc::Rc};
 
@@ -285,5 +306,16 @@ mod own_data_tests {
             assert_eq!(object_set_fact(fact), object);
             assert_eq!(alias_set_fact(fact), alias);
         }
+    }
+
+    #[cfg(feature = "execution-trace")]
+    #[test]
+    fn named_set_array_labels_separate_dense_append_gap_and_names() {
+        let array = crate::value::ArrayData::new(vec![Value::Number(1.0)]);
+        assert_eq!(array_set_fact(&array, "0"), "array:index-dense");
+        assert_eq!(array_set_fact(&array, "1"), "array:index-append");
+        assert_eq!(array_set_fact(&array, "3"), "array:index-gap");
+        assert_eq!(array_set_fact(&array, "length"), "array:length");
+        assert_eq!(array_set_fact(&array, "field"), "array:nonindex");
     }
 }
