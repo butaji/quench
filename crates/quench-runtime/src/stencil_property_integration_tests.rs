@@ -57,6 +57,65 @@ fn named_get_pc(code: CodeView<'_>) -> Option<usize> {
     })
 }
 
+fn named_set_pc(code: CodeView<'_>) -> Option<usize> {
+    (0..code.len()).find(|pc| {
+        code.instruction(*pc)
+            .is_some_and(|instruction| instruction.opcode == crate::ir::Opcode::SetN)
+            && code.metadata_at(*pc).and_then(|meta| meta.name.as_deref()) == Some("value")
+    })
+}
+
+fn strict_store_plan() -> (FunctionCode, BaselinePlan, usize) {
+    let program =
+        crate::reduce::reduce_source("function write(o,v){'use strict';o.value=v;return v}")
+            .expect("ordinary strict store lowers");
+    let body = source_named_set_body(program.code());
+    let code = body.code().expect("linked strict store body");
+    let pc = named_set_pc(code).expect("SetN instruction");
+    assert_ne!(code.instruction(pc).unwrap().flags, 0);
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let plan = BaselinePlan::compile_for_test(code, policy);
+    (body, plan, pc)
+}
+
+fn source_named_set_body(root: CodeView<'_>) -> FunctionCode {
+    let mut pending = Vec::new();
+    collect_nested_bodies(root, &mut pending);
+    while let Some(body) = pending.pop() {
+        if body.code().is_some_and(|code| named_set_pc(code).is_some()) {
+            return body;
+        }
+        if let Some(code) = body.code() {
+            collect_nested_bodies(code, &mut pending);
+        }
+    }
+    panic!("ordinary source function must contain SetN")
+}
+
+fn run_store(
+    code: CodeView<'_>,
+    plan: &BaselinePlan,
+    pc: usize,
+    object: Rc<ObjectData>,
+    value: f64,
+) -> Result<Completion, crate::execute::VmError> {
+    let instruction = code.instruction(pc).expect("SetN instruction");
+    let mut registers = crate::register_file::RegisterFile::with_undefined(
+        usize::from(code.register_count()).max(4),
+    );
+    registers.write(usize::from(instruction.a), Value::Object(object));
+    registers.write(usize::from(instruction.b), Value::Number(value));
+    crate::vm::execute_baseline_code_from(
+        code,
+        plan,
+        pc,
+        &mut registers,
+        &crate::vm::current_context_or_default(),
+        crate::environment::Environment::new(),
+    )
+    .map(|result| result.0)
+}
+
 fn run_get(code: CodeView<'_>, plan: &BaselinePlan, pc: usize, receiver: &Rc<ObjectData>) -> Value {
     let instruction = code.instruction(pc).expect("GetN instruction");
     let mut registers = crate::register_file::RegisterFile::with_undefined(
@@ -438,5 +497,48 @@ fn ordinary_source_prototype_accessor_exits_before_native_entry() {
         native_count(&plan, pc),
         before,
         "accessor rejects before entry"
+    );
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn strict_store_uses_complete_boundary_and_never_native_leaf() {
+    let (body, plan, pc) = strict_store_plan();
+    let code = body.code().expect("linked strict store body");
+    let writable = Rc::new(ObjectData::new(vec![("value".into(), Value::Number(1.0))]));
+    assert!(run_store(code, &plan, pc, Rc::clone(&writable), 7.0).is_ok());
+    assert_eq!(
+        crate::vm::get_property_result(&Value::Object(writable), "value").unwrap(),
+        Value::Number(7.0)
+    );
+    let readonly = Rc::new(ObjectData::new(vec![("value".into(), Value::Number(2.0))]));
+    let descriptor = Value::Object(Rc::new(ObjectData::new(vec![
+        ("value".into(), Value::Number(2.0)),
+        ("writable".into(), Value::Boolean(false)),
+    ])));
+    let readonly =
+        match crate::execute::define_property(Value::Object(readonly), "value", descriptor)
+            .expect("define readonly value")
+        {
+            Value::Object(object) => object,
+            other => panic!("definition returned {other:?}"),
+        };
+    assert_eq!(
+        crate::builtins::descriptor_flag(&Value::Object(Rc::clone(&readonly)), "value", "writable"),
+        Some(false)
+    );
+    let failure = run_store(code, &plan, pc, Rc::clone(&readonly), 9.0);
+    assert!(matches!(failure, Ok(Completion::Throw(Value::Object(_)))));
+    assert_eq!(
+        crate::vm::get_property_result(&Value::Object(readonly), "value").unwrap(),
+        Value::Number(2.0)
+    );
+    assert!(plan.native_store_property_at(pc).is_some());
+    assert_eq!(
+        plan.native_store_property_at(pc)
+            .unwrap()
+            .borrow()
+            .native_entry_count(),
+        0
     );
 }
