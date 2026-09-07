@@ -309,6 +309,11 @@ fn replace_plain_array_index(
     index: usize,
     value: &crate::value::Value,
 ) {
+    if crate::locals::array_word_is_current(values)
+        && values.set_existing_number(index, value)
+    {
+        return;
+    }
     let mut data = values.as_ref().clone();
     data.set_length(values.logical_len());
     let value = value.clone();
