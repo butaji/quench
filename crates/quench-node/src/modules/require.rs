@@ -2366,6 +2366,11 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 "CustomEvent",
                 crate::registry::SPEC_CUSTOM_EVENT,
             );
+            let message_event = global_constructor_or_capability(
+                &global,
+                "MessageEvent",
+                crate::registry::SPEC_MESSAGE_EVENT,
+            );
             for (name, value) in [
                 ("NONE", 0.0),
                 ("CAPTURING_PHASE", 1.0),
@@ -2386,6 +2391,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             Some(crate::host::namespace_object_from_pairs(vec![
                 ("Event".to_string(), event),
                 ("CustomEvent".to_string(), custom_event),
+                ("MessageEvent".to_string(), message_event),
                 (
                     "defineEventHandler".to_string(),
                     crate::host::capability(crate::registry::SPEC_DEFINE_EVENT_HANDLER),
