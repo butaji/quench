@@ -41,3 +41,30 @@ pub(crate) enum SuspensionPoint {
         outer: Box<SuspensionPoint>,
     },
 }
+
+pub(crate) fn executed_point(
+    op: &crate::ops::Op,
+    range: crate::machine::CodeRange,
+    next: usize,
+) -> Option<SuspensionPoint> {
+    let next = u32::try_from(next).ok()?;
+    let start = range.start.checked_add(next)?;
+    if start > range.end {
+        return None;
+    }
+    let resume = Some(crate::machine::CodeRange {
+        code: range.code,
+        start,
+        end: range.end,
+    });
+    match op {
+        crate::ops::Op::Yield { src } => Some(SuspensionPoint::Yield { resume, src: *src }),
+        crate::ops::Op::Await { dst, .. } => Some(SuspensionPoint::Yield { resume, src: *dst }),
+        crate::ops::Op::YieldStar { dst, iterator, .. } => Some(SuspensionPoint::YieldStar {
+            resume,
+            dst: *dst,
+            iterator: *iterator,
+        }),
+        _ => None,
+    }
+}

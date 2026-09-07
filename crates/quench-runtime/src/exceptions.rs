@@ -90,7 +90,28 @@ fn execute_try_body(
     ops: &crate::machine::FunctionCode,
     registers: &mut crate::register_file::RegisterFile,
 ) -> Result<Completion, VmError> {
-    crate::vm::execute_function_code_completion_in_current_frame(ops, registers)
+    let code = ops.code().ok_or(VmError::MissingReturn)?;
+    let step = crate::vm::execute_function_code_completion_step_in_current_frame(ops, registers)?;
+    attach_executed_suspension(code, step)
+}
+
+fn attach_executed_suspension(
+    code: crate::machine::CodeView<'_>,
+    step: crate::vm::CompletionStep,
+) -> Result<Completion, VmError> {
+    let plain = matches!(step.completion, Completion::Yield(_) | Completion::Suspend(_));
+    if !plain {
+        return Ok(step.completion);
+    }
+    let pc = step.suspended_pc.ok_or(VmError::MissingReturn)?;
+    let op = code.cold_at(pc).ok_or(VmError::MissingReturn)?;
+    let point = crate::continuation::executed_point(op, code.range(), step.next)
+        .ok_or(VmError::MissingReturn)?;
+    match step.completion {
+        Completion::Yield(value) => Ok(Completion::YieldAt(value, point)),
+        Completion::Suspend(promise) => Ok(Completion::SuspendAt(promise, point)),
+        completion => Ok(completion),
+    }
 }
 
 fn bind_caught(

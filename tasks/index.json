@@ -51,7 +51,7 @@
       "file": "075.md",
       "title": "Complete stencil infrastructure, core bodies and VM integration",
       "theme": "stencil_infrastructure",
-      "status": "complete",
+      "status": "in_progress",
       "depends_on": []
     },
     {
@@ -59,7 +59,7 @@
       "file": "073.md",
       "title": "Validate performance and memory",
       "theme": "performance_validation",
-      "status": "in_progress",
+      "status": "pending",
       "depends_on": [
         "075"
       ]
