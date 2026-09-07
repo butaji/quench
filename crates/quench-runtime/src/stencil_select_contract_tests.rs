@@ -136,7 +136,9 @@ fn assert_scalar_word_shape(record: &RegionRecord) {
         assert!(record.stencil.bytes.is_empty());
         assert!(matches!(
             record.operations,
-            [crate::ir::Opcode::JumpIfFalse] | [crate::ir::Opcode::Return]
+            [crate::ir::Opcode::JumpIfFalse]
+                | [crate::ir::Opcode::LoadConst]
+                | [crate::ir::Opcode::Return]
         ));
         return;
     }

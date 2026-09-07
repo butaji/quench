@@ -53,6 +53,20 @@ const BOOL_BRANCH_LINKS: &[AssemblyControlLink] = &[
     },
 ];
 
+const WORD_CONST_LINKS: &[AssemblyControlLink] = &[AssemblyControlLink {
+    offset: 4,
+    width: 4,
+    kind: "Branch26",
+    target: "q_word_const_fragment_next",
+    role: AssemblySuccessorRole::Next,
+}];
+
+const WORD_CONST_HOLES: &[AssemblyPatchHole] = &[AssemblyPatchHole {
+    offset: 8,
+    width: 8,
+    kind: "Literal64",
+}];
+
 include!("../build_stencil_outputs.rs");
 
 rust_assembly_catalog! {
@@ -111,6 +125,15 @@ rust_assembly_catalog! {
         x86_holes: &[], aarch64_holes: &[],
         internal_abi: WordX0,
         composition: Whole
+    },
+    WordConstFragment {
+        name: "word_const_fragment", abi: ScalarWordBool, ops: ["LoadConst"],
+        x86: &[], aarch64: &[],
+        x86_holes: &[], aarch64_holes: &[],
+        control_links: WORD_CONST_LINKS,
+        patch_holes: WORD_CONST_HOLES,
+        internal_abi: WordX0,
+        composition: ControlFragment
     },
     CompareEqualBranch {
         name: "compare_equal_branch", abi: CompareBranch, ops: ["Binary", "JumpIfFalse"],
