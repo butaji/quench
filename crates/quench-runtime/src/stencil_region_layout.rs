@@ -15,6 +15,7 @@ const FALLTHROUGH_LABEL: LabelId = LabelId(1);
 /// Publication must not reconstruct ABI or identity from parallel arguments.
 pub(crate) struct VerifiedRegionImage {
     identity: RegionImageIdentity,
+    entry_offset: u16,
     bytes: Vec<u8>,
 }
 
@@ -47,8 +48,29 @@ impl VerifiedRegionImage {
         self.identity
     }
 
+    pub(crate) const fn entry_offset(&self) -> usize {
+        self.entry_offset as usize
+    }
+
     pub(crate) fn from_composed(identity: RegionImageIdentity, bytes: Vec<u8>) -> Self {
-        Self { identity, bytes }
+        Self {
+            identity,
+            entry_offset: 0,
+            bytes,
+        }
+    }
+
+    fn from_selected(
+        identity: RegionImageIdentity,
+        entry_offset: u16,
+        bytes: Vec<u8>,
+    ) -> Result<Self, LayoutError> {
+        validate_entry_offset(entry_offset, bytes.len())?;
+        Ok(Self {
+            identity,
+            entry_offset,
+            bytes,
+        })
     }
 
     #[cfg(test)]
@@ -57,15 +79,55 @@ impl VerifiedRegionImage {
         cache_signature: u64,
         bytes: Vec<u8>,
     ) -> Self {
+        Self::from_test_parts_at(view, cache_signature, 0, bytes)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_test_parts_at(
+        view: PhysicalStencilView,
+        cache_signature: u64,
+        entry_offset: u16,
+        bytes: Vec<u8>,
+    ) -> Self {
         Self {
             identity: RegionImageIdentity {
                 key: view.key,
                 cache_signature,
                 abi: view.abi,
             },
+            entry_offset,
             bytes,
         }
     }
+}
+
+pub(crate) fn finalize_selected_leaf<const N: usize>(
+    view: PhysicalStencilView,
+    values: &PatchValues<'_, N>,
+) -> Result<VerifiedRegionImage, LayoutError> {
+    if !view.contract().abi_is_well_formed() || !view.stencil.validate() {
+        return Err(LayoutError::RelocationContract);
+    }
+    let mut bytes = view.stencil.bytes.to_vec();
+    crate::stencil_patch::apply_holes(&mut bytes, view.stencil.holes, values)
+        .map_err(LayoutError::Patch)?;
+    VerifiedRegionImage::from_selected(
+        RegionImageIdentity::selected(view, values),
+        view.entry,
+        bytes,
+    )
+}
+
+fn validate_entry_offset(entry: u16, byte_len: usize) -> Result<(), LayoutError> {
+    let entry = usize::from(entry);
+    if entry >= byte_len {
+        return Err(LayoutError::TargetOutOfBounds);
+    }
+    #[cfg(target_arch = "aarch64")]
+    if entry % 4 != 0 {
+        return Err(LayoutError::RelocationContract);
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -275,10 +337,11 @@ pub(crate) fn compose_selected_controlled_region<const N: usize>(
         &selected_transfers(view)?,
         &mut bytes,
     )?;
-    Ok(VerifiedRegionImage {
-        identity: RegionImageIdentity::selected(view, values),
+    VerifiedRegionImage::from_selected(
+        RegionImageIdentity::selected(view, values),
+        view.entry,
         bytes,
-    })
+    )
 }
 
 pub(crate) fn compose_controlled_region<const N: usize>(
