@@ -594,6 +594,15 @@ node_api! {
     (SPEC_INTERNAL_CRYPTO_WEBIDL_AEAD, CAP_INTERNAL_CRYPTO_WEBIDL_AEAD, "internal/crypto/webidl:AeadParams", 0x2230),
     (SPEC_INTERNAL_CRYPTO_WEBIDL_AES_CTR, CAP_INTERNAL_CRYPTO_WEBIDL_AES_CTR, "internal/crypto/webidl:AesCtrParams", 0x2231),
     (SPEC_INTERNAL_CRYPTO_WEBIDL_ECDH, CAP_INTERNAL_CRYPTO_WEBIDL_ECDH, "internal/crypto/webidl:EcdhKeyDeriveParams", 0x2232),
+    (SPEC_INTERNAL_CRYPTO_HASH_JOB_CONSTRUCT, CAP_INTERNAL_CRYPTO_HASH_JOB_CONSTRUCT, "internalBinding(crypto):HashJob", 0x2233),
+    (SPEC_INTERNAL_CRYPTO_HASH_JOB_RUN, CAP_INTERNAL_CRYPTO_HASH_JOB_RUN, "internalBinding(crypto):HashJob.run", 0x2234),
+    (SPEC_INTERNAL_CRYPTO_SECRET_KEY_GEN_JOB_CONSTRUCT, CAP_INTERNAL_CRYPTO_SECRET_KEY_GEN_JOB_CONSTRUCT, "internalBinding(crypto):SecretKeyGenJob", 0x2235),
+    (SPEC_INTERNAL_CRYPTO_SECRET_KEY_GEN_JOB_RUN, CAP_INTERNAL_CRYPTO_SECRET_KEY_GEN_JOB_RUN, "internalBinding(crypto):SecretKeyGenJob.run", 0x2236),
+    (SPEC_INTERNAL_CRYPTO_EC_KEY_PAIR_GEN_JOB_CONSTRUCT, CAP_INTERNAL_CRYPTO_EC_KEY_PAIR_GEN_JOB_CONSTRUCT, "internalBinding(crypto):EcKeyPairGenJob", 0x2237),
+    (SPEC_INTERNAL_CRYPTO_EC_KEY_PAIR_GEN_JOB_RUN, CAP_INTERNAL_CRYPTO_EC_KEY_PAIR_GEN_JOB_RUN, "internalBinding(crypto):EcKeyPairGenJob.run", 0x2238),
+    (SPEC_INTERNAL_CRYPTO_AES_CIPHER_JOB_CONSTRUCT, CAP_INTERNAL_CRYPTO_AES_CIPHER_JOB_CONSTRUCT, "internalBinding(crypto):AESCipherJob", 0x2239),
+    (SPEC_INTERNAL_CRYPTO_AES_CIPHER_JOB_RUN, CAP_INTERNAL_CRYPTO_AES_CIPHER_JOB_RUN, "internalBinding(crypto):AESCipherJob.run", 0x223A),
+    (SPEC_INTERNAL_CRYPTO_JOB_COMPLETE, CAP_INTERNAL_CRYPTO_JOB_COMPLETE, "internalBinding(crypto):CryptoJob.complete", 0x223B),
 }
 pub const SPEC_OS_GET_PRIORITY: NodeSpec = NodeSpec::new("os:getPriority", 0x0736);
 pub const SPEC_OS_SET_PRIORITY: NodeSpec = NodeSpec::new("os:setPriority", 0x0737);
@@ -775,6 +784,8 @@ pub const SPEC_STREAM_FINISHED: NodeSpec = NodeSpec::new("stream:finished", 0x0C
 pub const SPEC_STREAM_WRITABLE_WRITE_ADAPTER: NodeSpec =
     NodeSpec::new("stream:Writable.writeAdapter", 2517);
 pub const CAP_STREAM_WRITABLE_WRITE_ADAPTER: CapId = SPEC_STREAM_WRITABLE_WRITE_ADAPTER.cap;
+pub const SPEC_STREAM_READABLE_BUFFER: NodeSpec =
+    NodeSpec::new("stream:Readable.readableBuffer", 2518);
 node_api! {
     (SPEC_STREAM_FINISHED_EVENT, "stream:finished:event", 0x0C06),
     (SPEC_STREAM_FINISHED_ABORT, "stream:finished:abort", 0x0C07),
@@ -841,6 +852,10 @@ pub const SPEC_HTTP_OUTGOING_WRITE: NodeSpec = NodeSpec::new("http:OutgoingMessa
 pub const SPEC_HTTP_OUTGOING_END: NodeSpec = NodeSpec::new("http:OutgoingMessage:end", 0x0F28);
 pub const SPEC_HTTP_OUTGOING_DESTROY: NodeSpec =
     NodeSpec::new("http:OutgoingMessage:destroy", 0x0F29);
+pub const SPEC_HTTP_OUTGOING_ASSIGN_SOCKET: NodeSpec =
+    NodeSpec::new("http:OutgoingMessage:assignSocket", 0x0F5A);
+pub const SPEC_HTTP_OUTGOING_DETACH_SOCKET: NodeSpec =
+    NodeSpec::new("http:OutgoingMessage:detachSocket", 0x0F5B);
 pub const SPEC_HTTP_AGENT_ADD_REQUEST: NodeSpec = NodeSpec::new("http:Agent:addRequest", 0x0F2A);
 pub const SPEC_HTTP_AGENT_KEEP_SOCKET_ALIVE: NodeSpec =
     NodeSpec::new("http:Agent:keepSocketAlive", 0x0F2B);
@@ -1279,6 +1294,11 @@ pub const SPEC_WEBCRYPTO_KEY_CONSTRUCT: NodeSpec =
 pub const SPEC_WEBCRYPTO_SIGN: NodeSpec = NodeSpec::new("webcrypto:sign", 0x1c38);
 pub const SPEC_WEBCRYPTO_VERIFY: NodeSpec = NodeSpec::new("webcrypto:verify", 0x1c39);
 pub const SPEC_WEBCRYPTO_EXPORT_KEY: NodeSpec = NodeSpec::new("webcrypto:exportKey", 0x1c3a);
+pub const SPEC_WEBCRYPTO_GET_PUBLIC_KEY: NodeSpec =
+    NodeSpec::new("webcrypto:getPublicKey", 0x1c3c);
+pub const SPEC_WEBCRYPTO_SUPPORTS: NodeSpec = NodeSpec::new("webcrypto:supports", 0x1c3d);
+pub const SPEC_WEBCRYPTO_WRAP_KEY: NodeSpec = NodeSpec::new("webcrypto:wrapKey", 0x1c3e);
+pub const SPEC_WEBCRYPTO_UNWRAP_KEY: NodeSpec = NodeSpec::new("webcrypto:unwrapKey", 0x1c3f);
 pub const SPEC_CRYPTO_CREATE_SECRET_KEY: NodeSpec = NodeSpec::new("crypto:createSecretKey", 0x1d50);
 pub const SPEC_CRYPTO_CREATE_HASH: NodeSpec = NodeSpec::new("crypto:createHash", 0x1d51);
 pub const SPEC_CRYPTO_HASH: NodeSpec = NodeSpec::new("crypto:hash", 0x1d52);
@@ -1829,6 +1849,10 @@ pub const CAP_WEBCRYPTO_KEY_CONSTRUCT: CapId = SPEC_WEBCRYPTO_KEY_CONSTRUCT.cap;
 pub const CAP_WEBCRYPTO_SIGN: CapId = SPEC_WEBCRYPTO_SIGN.cap;
 pub const CAP_WEBCRYPTO_VERIFY: CapId = SPEC_WEBCRYPTO_VERIFY.cap;
 pub const CAP_WEBCRYPTO_EXPORT_KEY: CapId = SPEC_WEBCRYPTO_EXPORT_KEY.cap;
+pub const CAP_WEBCRYPTO_GET_PUBLIC_KEY: CapId = SPEC_WEBCRYPTO_GET_PUBLIC_KEY.cap;
+pub const CAP_WEBCRYPTO_SUPPORTS: CapId = SPEC_WEBCRYPTO_SUPPORTS.cap;
+pub const CAP_WEBCRYPTO_WRAP_KEY: CapId = SPEC_WEBCRYPTO_WRAP_KEY.cap;
+pub const CAP_WEBCRYPTO_UNWRAP_KEY: CapId = SPEC_WEBCRYPTO_UNWRAP_KEY.cap;
 pub const CAP_CRYPTO_CREATE_SECRET_KEY: CapId = SPEC_CRYPTO_CREATE_SECRET_KEY.cap;
 pub const CAP_CRYPTO_CREATE_HASH: CapId = SPEC_CRYPTO_CREATE_HASH.cap;
 pub const CAP_CRYPTO_HASH: CapId = SPEC_CRYPTO_HASH.cap;
@@ -2003,6 +2027,8 @@ pub const CAP_HTTP_OUTGOING: CapId = SPEC_HTTP_OUTGOING.cap;
 pub const CAP_HTTP_OUTGOING_WRITE: CapId = SPEC_HTTP_OUTGOING_WRITE.cap;
 pub const CAP_HTTP_OUTGOING_END: CapId = SPEC_HTTP_OUTGOING_END.cap;
 pub const CAP_HTTP_OUTGOING_DESTROY: CapId = SPEC_HTTP_OUTGOING_DESTROY.cap;
+pub const CAP_HTTP_OUTGOING_ASSIGN_SOCKET: CapId = SPEC_HTTP_OUTGOING_ASSIGN_SOCKET.cap;
+pub const CAP_HTTP_OUTGOING_DETACH_SOCKET: CapId = SPEC_HTTP_OUTGOING_DETACH_SOCKET.cap;
 pub const CAP_INSPECTOR_CLOSE: CapId = SPEC_INSPECTOR_CLOSE.cap;
 pub const CAP_INSPECTOR_CONNECT: CapId = SPEC_INSPECTOR_CONNECT.cap;
 pub const CAP_INSPECTOR_CONNECT_MAIN: CapId = SPEC_INSPECTOR_CONNECT_MAIN.cap;

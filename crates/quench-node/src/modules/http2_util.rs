@@ -69,6 +69,7 @@ pub fn module() -> Value {
         ("assertIsObject".into(), make("object")),
         ("assertIsArray".into(), make("array")),
         ("assertWithinRange".into(), make("range")),
+        ("sessionName".into(), make("sessionName")),
         ("updateOptionsBuffer".into(), make("updateOptionsBuffer")),
         ("getAuthority".into(), make("getAuthority")),
         ("buildNgHeaderString".into(), make("buildNgHeaderString")),
@@ -84,10 +85,319 @@ pub fn sensitive_headers() -> Value {
     Value::String("Symbol.nodejs.http2.sensitiveHeaders\0quench".into())
 }
 
+/// The defaults used by the Rust HTTP/2 settings codec.  This is deliberately
+/// independent of any session implementation: callers can construct and
+/// inspect SETTINGS payloads even when no HTTP/2 transport is available.
+fn default_settings() -> Value {
+    host_api::object(vec![
+        ("headerTableSize".into(), Value::Number(4096.0)),
+        ("enablePush".into(), Value::Boolean(true)),
+        ("initialWindowSize".into(), Value::Number(4_194_304.0)),
+        ("maxFrameSize".into(), Value::Number(16_384.0)),
+        (
+            "maxConcurrentStreams".into(),
+            Value::Number(4_294_967_295.0),
+        ),
+        ("maxHeaderSize".into(), Value::Number(65_535.0)),
+        ("maxHeaderListSize".into(), Value::Number(65_535.0)),
+        ("enableConnectProtocol".into(), Value::Boolean(false)),
+    ])
+}
+
+fn packed_settings(values: &[Value]) -> Result<Value, VmError> {
+    let settings = values.first().unwrap_or(&Value::Undefined);
+    if matches!(settings, Value::Undefined) {
+        return Ok(crate::modules::buffer_proto::make_buffer(&[]));
+    }
+    if !matches!(settings, Value::Object(_) | Value::ObjectAlias(_)) {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::TypeError,
+            "ERR_INVALID_ARG_TYPE",
+            format!(
+                "The \"settings\" argument must be of type object.{}",
+                crate::modules::util::invalid_arg_received(settings)
+            ),
+        ));
+    }
+
+    let mut entries = Vec::new();
+    push_numeric_setting(settings, "headerTableSize", 1, 0.0, u32::MAX as f64, &mut entries)?;
+    push_boolean_setting(settings, "enablePush", 2, &mut entries)?;
+    push_numeric_setting(
+        settings,
+        "maxConcurrentStreams",
+        3,
+        0.0,
+        u32::MAX as f64,
+        &mut entries,
+    )?;
+    push_numeric_setting(
+        settings,
+        "initialWindowSize",
+        4,
+        0.0,
+        2_147_483_647.0,
+        &mut entries,
+    )?;
+    push_numeric_setting(
+        settings,
+        "maxFrameSize",
+        5,
+        16_384.0,
+        16_777_215.0,
+        &mut entries,
+    )?;
+    let header_list_name = if execute::has_own_property(settings, "maxHeaderListSize") {
+        "maxHeaderListSize"
+    } else {
+        "maxHeaderSize"
+    };
+    push_numeric_setting(
+        settings,
+        header_list_name,
+        6,
+        0.0,
+        u32::MAX as f64,
+        &mut entries,
+    )?;
+    push_boolean_setting(settings, "enableConnectProtocol", 8, &mut entries)?;
+
+    let custom = execute::get_property(settings, "customSettings");
+    if !matches!(custom, Value::Undefined) {
+        if !matches!(custom, Value::Object(_) | Value::ObjectAlias(_)) {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::TypeError,
+                "ERR_INVALID_ARG_TYPE",
+                format!(
+                    "The \"customSettings\" property must be of type object.{}",
+                    crate::modules::util::invalid_arg_received(&custom)
+                ),
+            ));
+        }
+        let keys = execute::own_enumerable_keys(&custom);
+        if keys.len() > 10 {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::RangeError,
+                "ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS",
+                "Maximum number of custom settings is 10".into(),
+            ));
+        }
+        for key in keys {
+            let Ok(id) = key.parse::<u32>() else {
+                return invalid_setting(&key, &execute::get_property(&custom, &key), false);
+            };
+            if !(9..=u16::MAX as u32).contains(&id) {
+                return invalid_setting(&key, &execute::get_property(&custom, &key), false);
+            }
+            let value = execute::get_property(&custom, &key);
+            let number = setting_number(&key, &value, 0.0, u32::MAX as f64)?;
+            entries.push((id as u16, number as u32));
+        }
+    }
+    let mut bytes = Vec::with_capacity(entries.len() * 6);
+    for (id, value) in entries {
+        bytes.extend_from_slice(&id.to_be_bytes());
+        bytes.extend_from_slice(&value.to_be_bytes());
+    }
+    Ok(crate::modules::buffer_proto::make_buffer(&bytes))
+}
+
+fn push_numeric_setting(
+    settings: &Value,
+    name: &str,
+    id: u16,
+    min: f64,
+    max: f64,
+    entries: &mut Vec<(u16, u32)>,
+) -> Result<(), VmError> {
+    if !execute::has_own_property(settings, name) {
+        return Ok(());
+    }
+    let value = execute::get_property(settings, name);
+    let number = setting_number(name, &value, min, max)?;
+    entries.push((id, number as u32));
+    Ok(())
+}
+
+fn push_boolean_setting(
+    settings: &Value,
+    name: &str,
+    id: u16,
+    entries: &mut Vec<(u16, u32)>,
+) -> Result<(), VmError> {
+    if !execute::has_own_property(settings, name) {
+        return Ok(());
+    }
+    let value = execute::get_property(settings, name);
+    let Value::Boolean(value) = value else {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::TypeError,
+            "ERR_HTTP2_INVALID_SETTING_VALUE",
+            format!(
+                "Invalid value for setting \"{name}\": {}",
+                setting_display(&value)
+            ),
+        ));
+    };
+    entries.push((id, value as u32));
+    Ok(())
+}
+
+fn setting_number(name: &str, value: &Value, min: f64, max: f64) -> Result<f64, VmError> {
+    let number = match value {
+        Value::Number(number) => *number,
+        _ => {
+            return invalid_setting(name, value, true);
+        }
+    };
+    if !number.is_finite() || number.fract() != 0.0 || number < min || number > max {
+        return invalid_setting(name, value, false);
+    }
+    Ok(number)
+}
+
+fn invalid_setting<T>(name: &str, value: &Value, type_error: bool) -> Result<T, VmError> {
+    let kind = if type_error {
+        quench_runtime::ops::Builtin::TypeError
+    } else {
+        quench_runtime::ops::Builtin::RangeError
+    };
+    Err(coded_error(
+        kind,
+        "ERR_HTTP2_INVALID_SETTING_VALUE",
+        format!(
+            "Invalid value for setting \"{name}\": {}",
+            setting_display(value)
+        ),
+    ))
+}
+
+fn setting_display(value: &Value) -> String {
+    quench_runtime::execute::to_js_string(value)
+        .unwrap_or_else(|_| crate::modules::util::inspect(value))
+}
+
+fn unpacked_settings(values: &[Value]) -> Result<Value, VmError> {
+    let packed = values.first().unwrap_or(&Value::Undefined);
+    let bytes = typed_array_elements(packed).ok_or_else(|| {
+        coded_error(
+            quench_runtime::ops::Builtin::TypeError,
+            "ERR_INVALID_ARG_TYPE",
+            format!(
+                "The \"buf\" argument must be an instance of Buffer or TypedArray.{}",
+                invalid_buffer_received(packed)
+            ),
+        )
+    })?;
+    if bytes.len() % 6 != 0 {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::RangeError,
+            "ERR_HTTP2_INVALID_PACKED_SETTINGS_LENGTH",
+            "Packed settings length must be a multiple of six".into(),
+        ));
+    }
+    let validate = matches!(
+        values.get(1),
+        Some(Value::Object(_) | Value::ObjectAlias(_))
+    ) && matches!(
+        execute::get_property(values.get(1).unwrap(), "validate"),
+        Value::Boolean(true)
+    );
+    let mut result = host_api::object(Vec::new());
+    let mut custom = host_api::object(Vec::new());
+    for chunk in bytes.chunks_exact(6) {
+        let id = u16::from_be_bytes([chunk[0], chunk[1]]);
+        let value = u32::from_be_bytes([chunk[2], chunk[3], chunk[4], chunk[5]]);
+        match id {
+            1 => set_number(&mut result, "headerTableSize", value),
+            2 => set_bool(&mut result, "enablePush", value != 0),
+            3 => set_number(&mut result, "maxConcurrentStreams", value),
+            4 => {
+                if validate && value > 2_147_483_647 {
+                    return invalid_setting("initialWindowSize", &Value::Number(value as f64), false);
+                }
+                set_number(&mut result, "initialWindowSize", value)
+            }
+            5 => {
+                if validate && !(16_384..=16_777_215).contains(&value) {
+                    return invalid_setting("maxFrameSize", &Value::Number(value as f64), false);
+                }
+                set_number(&mut result, "maxFrameSize", value)
+            }
+            6 => {
+                set_number(&mut result, "maxHeaderListSize", value);
+                set_number(&mut result, "maxHeaderSize", value);
+            }
+            8 => set_bool(&mut result, "enableConnectProtocol", value != 0),
+            _ => set_number(&mut custom, &id.to_string(), value),
+        }
+    }
+    set_property(&mut result, "customSettings", custom);
+    Ok(result)
+}
+
+fn invalid_buffer_received(value: &Value) -> String {
+    if matches!(value, Value::DataView(_)) {
+        " Received an instance of DataView".into()
+    } else {
+        crate::modules::util::invalid_arg_received(value)
+    }
+}
+
+fn set_number(object: &Value, name: &str, value: impl Into<f64>) {
+    let _ = execute::set_property_in_place(object, name, Value::Number(value.into()));
+}
+
+fn set_bool(object: &Value, name: &str, value: bool) {
+    let _ = execute::set_property_in_place(object, name, Value::Boolean(value));
+}
+
+fn set_property(object: &Value, name: &str, value: Value) {
+    let _ = execute::set_property_in_place(object, name, value);
+}
+
+fn typed_array_elements(value: &Value) -> Option<Vec<u8>> {
+    let length = match value {
+        Value::Uint8Array(view) => view.length,
+        Value::Uint8ClampedArray(view) => view.length,
+        Value::Int8Array(view) => view.length,
+        Value::Uint16Array(view) => view.length,
+        Value::Int16Array(view) => view.length,
+        Value::Uint32Array(view) => view.length,
+        Value::Int32Array(view) => view.length,
+        Value::Float32Array(view) => view.length,
+        Value::Float64Array(view) => view.length,
+        Value::BigInt64Array(view) => view.length,
+        Value::BigUint64Array(view) => view.length,
+        _ => return None,
+    };
+    Some(
+        (0..length)
+            .filter_map(|index| match quench_runtime::to_number(&execute::get_property(
+                value,
+                &index.to_string(),
+            )) {
+                Ok(number) if number.is_finite() => Some(number as u8),
+                _ => None,
+            })
+            .collect(),
+    )
+}
+
 pub fn binding() -> Value {
+    let session = host_api::bound_builtin(
+        quench_runtime::ops::Builtin::Object,
+        Value::Undefined,
+    );
+    let error_string = host_api::bound_capability_with_arguments(
+        crate::host::capability_ref(crate::registry::SPEC_INTERNAL_HTTP2_UTIL),
+        vec![Value::String("errorString".into())],
+    );
     host_api::object(vec![
         ("constants".into(), header_constants()),
         ("optionsBuffer".into(), options_buffer()),
+        ("Http2Session".into(), session),
+        ("nghttp2ErrorString".into(), error_string),
     ])
 }
 
@@ -127,6 +437,10 @@ pub fn dispatch(
     match kind.as_str() {
         "nghttpError" => nghttp_error(values),
         "nghttpToString" => nghttp_to_string(_receiver),
+        "errorString" => nghttp_error_string(values),
+        "defaultSettings" => Ok(default_settings()),
+        "packedSettings" => packed_settings(values),
+        "unpackedSettings" => unpacked_settings(values),
         "updateOptionsBuffer" => update_options_buffer(values),
         "getAuthority" => get_authority(values),
         "buildNgHeaderString" => build_ng_header_string(values),
@@ -158,8 +472,18 @@ pub fn dispatch(
         "object" => http2_asserts::object(values),
         "array" => http2_asserts::array(values),
         "range" => http2_asserts::range(values),
+        "sessionName" => session_name(values),
         _ => Err(VmError::NotCallable),
     }
+}
+
+fn session_name(values: &[Value]) -> Result<Value, VmError> {
+    let name = match values.first() {
+        Some(Value::Number(value)) if *value == 0.0 => "server",
+        Some(Value::Number(value)) if *value == 1.0 => "client",
+        _ => "<invalid>",
+    };
+    Ok(Value::String(name.into()))
 }
 
 fn get_authority(values: &[Value]) -> Result<Value, VmError> {
@@ -426,4 +750,70 @@ fn nghttp_to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
     let code = execute::to_js_string(&code).unwrap_or_default();
     let message = execute::to_js_string(&message).unwrap_or_default();
     Ok(Value::String(format!("Error [{code}]: {message}")))
+}
+
+fn nghttp_error_string(values: &[Value]) -> Result<Value, VmError> {
+    let errno = match values.first() {
+        Some(Value::Number(value)) => *value as i32,
+        _ => 0,
+    };
+    let message = match errno {
+        -501 => "Invalid argument",
+        -508 => "Operation would block",
+        -509 => "Stream ID not available",
+        -510 => "Stream closed",
+        -517 => "GOAWAY has already been sent",
+        -522 => "Frame size error",
+        -901 => "Out of memory",
+        _ => "Unknown error code",
+    };
+    Ok(Value::String(message.into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bytes(value: &Value) -> Vec<u8> {
+        let Value::Uint8Array(view) = value else {
+            panic!("expected byte array");
+        };
+        view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length].to_vec()
+    }
+
+    #[test]
+    fn default_settings_have_stable_wire_order() {
+        let packed = packed_settings(&[default_settings()]).expect("pack defaults");
+        assert_eq!(
+            bytes(&packed),
+            vec![
+                0, 1, 0, 0, 16, 0, 0, 2, 0, 0, 0, 1, 0, 3, 255, 255, 255, 255, 0, 4,
+                0, 64, 0, 0, 0, 5, 0, 0, 64, 0, 0, 6, 0, 0, 255, 255, 0, 8, 0, 0, 0, 0,
+            ]
+        );
+    }
+
+    #[test]
+    fn settings_round_trip_custom_values() {
+        let settings = host_api::object(vec![
+            ("headerTableSize".into(), Value::Number(100.0)),
+            ("maxFrameSize".into(), Value::Number(20_000.0)),
+            (
+                "customSettings".into(),
+                host_api::object(vec![("9999".into(), Value::Number(301.0))]),
+            ),
+        ]);
+        let packed = packed_settings(&[settings]).expect("pack settings");
+        let decoded = unpacked_settings(&[packed]).expect("unpack settings");
+        assert_eq!(
+            execute::get_property(&decoded, "headerTableSize"),
+            Value::Number(100.0)
+        );
+        assert_eq!(
+            execute::get_property(&decoded, "maxFrameSize"),
+            Value::Number(20_000.0)
+        );
+        let custom = execute::get_property(&decoded, "customSettings");
+        assert_eq!(execute::get_property(&custom, "9999"), Value::Number(301.0));
+    }
 }

@@ -4530,6 +4530,8 @@ pub fn key_export(
                 } else if let Ok(rsa) = pkey.rsa() {
                     let der = if requested_type_name == "pkcs1" {
                         rsa.private_key_to_der()
+                    } else if requested_type_name == "pkcs8" {
+                        pkey.private_key_to_pkcs8()
                     } else {
                         pkey.private_key_to_der()
                     };

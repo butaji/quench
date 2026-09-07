@@ -61,6 +61,7 @@ pub(crate) fn shell_output(command: &str, options: Option<&Value>) -> std::io::R
             process.env_clear().envs(env);
         }
     }
+    clear_worker_markers(&mut process);
     if uses_host_exec {
         process.env("QUENCH_CHILD_RUNNER", "1");
         process.env("QUENCH_PARENT_PID", std::process::id().to_string());
@@ -100,6 +101,15 @@ pub(crate) fn needs_shell(command: &str) -> bool {
     command
         .chars()
         .any(|character| matches!(character, '<' | '>' | '|' | '&' | ';'))
+}
+
+/// Worker launch markers are private host facts. They identify an actual
+/// `worker_threads` bootstrap and must not leak into ordinary child
+/// processes, otherwise a child recursively re-enters worker mode.
+pub(crate) fn clear_worker_markers(command: &mut Command) {
+    for key in ["QUENCH_WORKER", "QUENCH_WORKER_DATA", "QUENCH_WORKER_MESSAGE"] {
+        command.env_remove(key);
+    }
 }
 
 /// `child_process.spawnSync(command[, args][, options])`. Returns a
@@ -419,54 +429,6 @@ pub fn spawn_sync(
         return run_compat_test_child(&child_args, options);
     }
 
-    if command == state.borrow().process.exec_path
-        && child_args.iter().any(|arg| arg == "spawnchild")
-    {
-        let stdout = if child_args.first().map(String::as_str) == Some("-e") {
-            child_args
-                .get(1)
-                .map(|source| script_output(source, "console.log"))
-                .unwrap_or_default()
-        } else {
-            b"this is stdout\n".to_vec()
-        };
-        let stderr = if child_args.first().map(String::as_str) == Some("-e") {
-            child_args
-                .get(1)
-                .map(|source| script_output(source, "console.error"))
-                .unwrap_or_default()
-        } else {
-            b"this is stderr\n".to_vec()
-        };
-        if let Some(limit) = max_buffer(options) {
-            if stdout.len() > limit || stderr.len() > limit {
-                let mut error = quench_runtime::builtins::error(
-                    quench_runtime::ops::Builtin::Error,
-                    &[Value::String("spawnSync ENOBUFS".into())],
-                );
-                execute::set_property_in_place(&mut error, "code", Value::String("ENOBUFS".into()));
-                execute::set_property_in_place(&mut error, "errno", Value::Number(-105.0));
-                let stdout_value = output_value(&stdout, options);
-                let stderr_value = output_value(&stderr, options);
-                return Ok(host_api::object(vec![
-                    ("pid".into(), Value::Number(0.0)),
-                    ("status".into(), Value::Null),
-                    ("signal".into(), Value::Null),
-                    ("error".into(), error),
-                    ("stdout".into(), stdout_value),
-                    ("stderr".into(), stderr_value),
-                ]));
-            }
-        }
-        return Ok(host_api::object(vec![
-            ("pid".into(), Value::Number(0.0)),
-            ("status".into(), Value::Number(0.0)),
-            ("signal".into(), Value::Null),
-            ("stdout".into(), output_value(&stdout, options)),
-            ("stderr".into(), output_value(&stderr, options)),
-        ]));
-    }
-
     let host_exec = state.borrow().process.exec_path.clone();
     let is_host_exec = command == host_exec
         || matches!(
@@ -572,6 +534,7 @@ pub fn spawn_sync(
 
     // Re-exec children need the same process identity relation Node exposes;
     // pass the parent as an explicit fact after option.env has been applied.
+    clear_worker_markers(&mut cmd);
     if is_host_exec {
         cmd.env("QUENCH_CHILD_RUNNER", "1");
         cmd.env("QUENCH_PARENT_PID", std::process::id().to_string());
@@ -734,6 +697,7 @@ fn run_compat_test_child(args: &[String], options: Option<&Value>) -> Result<Val
         .ok_or_else(|| VmError::EvalError("compatibility runner is unavailable".into()))?;
     let mut command = std::process::Command::new(executable);
     command.arg(fixture).args(args.iter().skip(index + 1));
+    clear_worker_markers(&mut command);
     command.env("QUENCH_CHILD_RUNNER", "1");
     let output = command
         .output()

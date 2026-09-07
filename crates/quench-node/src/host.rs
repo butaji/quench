@@ -117,6 +117,14 @@ pub struct HostState {
     pub child_process_prototype: Option<Value>,
     /// One canonical source-to-stdin edge for in-process stdio pipelines.
     pub child_pipes: std::collections::HashMap<u64, Value>,
+    /// Stateful native compressors owned by zlib stream objects.  The VM
+    /// value only carries observable stream properties; codec state remains
+    /// in the host envelope so each write/flush sees the same deflater.
+    pub zlib_compressors:
+        std::collections::HashMap<u64, crate::modules::zlib::IncrementalCompressor>,
+    /// Stateful native decompressors owned by zlib stream objects.
+    pub zlib_decompressors:
+        std::collections::HashMap<u64, crate::modules::zlib::IncrementalDecompressor>,
 }
 
 /// Host-side handoff record for one in-flight CJS module load.
@@ -182,6 +190,8 @@ impl NodeHost {
             identity_roots: Vec::new(),
             child_process_prototype: None,
             child_pipes: std::collections::HashMap::new(),
+            zlib_compressors: std::collections::HashMap::new(),
+            zlib_decompressors: std::collections::HashMap::new(),
         };
         Self {
             state: Rc::new(RefCell::new(state)),
@@ -577,6 +587,10 @@ pub fn install_with_argv_and_title_and_exec_argv(
     context = context
         .with_persistent_host_value("crypto".to_string(), crypto)
         .with_host_value("CryptoKey".to_string(), crypto_key)
+        .with_host_value(
+            "__quench_subtle_supports".to_string(),
+            crate::host::capability(crate::registry::SPEC_WEBCRYPTO_SUPPORTS),
+        )
         .with_host_value(
             "__quench_crypto_key_prototype".to_string(),
             crypto_key_prototype,

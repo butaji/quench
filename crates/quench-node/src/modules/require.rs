@@ -2162,6 +2162,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             Some(execute::set_property(ctor.clone(), "StreamWrap", ctor))
         }
         "internal/net" => Some(crate::modules::net::internal_module()),
+        "internal/socketaddress" => Some(crate::modules::net::socket_address_module()),
         "internal/assert" => Some(crate::host::capability(crate::registry::SPEC_ASSERT_OK)),
         "internal/assert/myers_diff" => Some(crate::host::namespace_object_from_pairs(vec![(
             "myersDiff".into(),
@@ -2487,6 +2488,10 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "async_hooks" => Some(crate::modules::async_hooks::build()),
         "internal/timers" => Some(host_api::object(vec![
             ("TIMEOUT_MAX".into(), Value::Number(2_147_483_647.0)),
+            (
+                "kTimeout".into(),
+                Value::String("Symbol(kTimeout)\0quench".into()),
+            ),
             (
                 "setUnrefTimeout".into(),
                 crate::host::capability(crate::registry::SPEC_INTERNAL_TIMERS_SET_UNREF_TIMEOUT),
@@ -2844,10 +2849,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                     "generateKeyPairSync".into(),
                     crate::host::capability(crate::registry::SPEC_CRYPTO_GENERATE_KEY_PAIR_SYNC),
                 ),
-                (
-                    "generateKeyPair".into(),
-                    generate_key_pair,
-                ),
+                ("generateKeyPair".into(), generate_key_pair),
                 (
                     "generateKeySync".into(),
                     crate::host::capability(crate::registry::SPEC_CRYPTO_GENERATE_KEY_SYNC),
@@ -3326,11 +3328,48 @@ pub(crate) fn http2_module_value() -> Value {
         Value::Undefined,
     );
     let connect = execute::set_property(connect, "name", Value::String("connect".into()));
+    // The request/response constructors are part of the public HTTP/2
+    // namespace even when the transport is unavailable.  Keep their
+    // prototype identities real so compatibility consumers can perform the
+    // ordinary `instanceof` checks without manufacturing a JS fallback.
+    let constructor = |name: &str| {
+        let constructor = quench_runtime::host_api::bound_builtin(
+            quench_runtime::ops::Builtin::Object,
+            Value::Undefined,
+        );
+        let prototype = quench_runtime::host_api::object(Vec::new());
+        let constructor = execute::set_property(constructor, "name", Value::String(name.into()));
+        execute::set_callable_property(&constructor, "prototype", prototype);
+        constructor
+    };
     crate::host::namespace_object_from_pairs(vec![
         ("connect".into(), connect),
+        ("Http2ServerRequest".into(), constructor("Http2ServerRequest")),
+        ("Http2ServerResponse".into(), constructor("Http2ServerResponse")),
         (
             "sensitiveHeaders".into(),
             crate::modules::http2_util::sensitive_headers(),
+        ),
+        (
+            "getDefaultSettings".into(),
+            quench_runtime::host_api::bound_capability_with_arguments(
+                crate::host::capability_ref(crate::registry::SPEC_INTERNAL_HTTP2_UTIL),
+                vec![Value::String("defaultSettings".into())],
+            ),
+        ),
+        (
+            "getPackedSettings".into(),
+            quench_runtime::host_api::bound_capability_with_arguments(
+                crate::host::capability_ref(crate::registry::SPEC_INTERNAL_HTTP2_UTIL),
+                vec![Value::String("packedSettings".into())],
+            ),
+        ),
+        (
+            "getUnpackedSettings".into(),
+            quench_runtime::host_api::bound_capability_with_arguments(
+                crate::host::capability_ref(crate::registry::SPEC_INTERNAL_HTTP2_UTIL),
+                vec![Value::String("unpackedSettings".into())],
+            ),
         ),
     ])
 }
@@ -3339,16 +3378,12 @@ fn internal_crypto_util_module() -> Value {
     let digest = crate::host::namespace_object_from_pairs(
         [
             "SHA-1",
-            "SHA-224",
             "SHA-256",
             "SHA-384",
             "SHA-512",
-            "SHA3-224",
             "SHA3-256",
             "SHA3-384",
             "SHA3-512",
-            "MD5",
-            "RIPEMD160",
         ]
         .into_iter()
         .map(|name| (name.to_string(), Value::Boolean(true)))
@@ -3368,6 +3403,48 @@ fn internal_crypto_util_module() -> Value {
         ]
         .into_iter()
         .map(|name| (name.to_string(), Value::Boolean(true)))
+        .collect(),
+    );
+    let generate_key = crate::host::namespace_object_from_pairs(
+        [
+            "AES-CBC", "AES-CTR", "AES-GCM", "AES-KW", "AES-OCB",
+            "ChaCha20-Poly1305", "ECDH", "ECDSA", "Ed25519", "Ed448",
+            "HMAC", "KMAC128", "KMAC256",
+            "RSA-OAEP", "RSA-PSS", "RSASSA-PKCS1-v1_5", "X25519", "X448",
+        ]
+        .into_iter()
+        .map(|name| (name.to_string(), Value::Null))
+        .collect(),
+    );
+    // `kSupportedAlgorithms` is operation-indexed in Node's internal crypto
+    // utility.  Keep the export operation's registry complete: callers use
+    // its keys to discover which algorithms participate in exportKey (and,
+    // consequently, getPublicKey/supports checks).  The null values mirror
+    // Node's algorithm-definition entries; only the operation membership is
+    // consumed by the normalization helpers.
+    let export_key = crate::host::namespace_object_from_pairs(
+        [
+            "AES-CBC",
+            "AES-CTR",
+            "AES-GCM",
+            "AES-KW",
+            "AES-OCB",
+            "ChaCha20-Poly1305",
+            "ECDH",
+            "ECDSA",
+            "Ed25519",
+            "Ed448",
+            "HMAC",
+            "KMAC128",
+            "KMAC256",
+            "RSA-OAEP",
+            "RSA-PSS",
+            "RSASSA-PKCS1-v1_5",
+            "X25519",
+            "X448",
+        ]
+        .into_iter()
+        .map(|name| (name.to_string(), Value::Null))
         .collect(),
     );
     crate::host::namespace_object_from_pairs(vec![
@@ -3403,7 +3480,9 @@ fn internal_crypto_util_module() -> Value {
             "kSupportedAlgorithms".into(),
             crate::host::namespace_object_from_pairs(vec![
                 ("digest".into(), digest),
+                ("generateKey".into(), generate_key),
                 ("importKey".into(), import_key),
+                ("exportKey".into(), export_key),
             ]),
         ),
         (
