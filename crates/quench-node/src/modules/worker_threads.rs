@@ -111,8 +111,23 @@ pub fn build(state: &Rc<std::cell::RefCell<HostState>>) -> Result<Value, VmError
             }
         }
     }
+    // Always use the host constructor here. The bootstrap may have installed
+    // the Web/DOM fallback `MessageChannel` before this module is materialized;
+    // that fallback creates JS-only ports which cannot carry the host
+    // MessagePort prototype or registry identity. `compat_extra` publishes
+    // this canonical value to the global namespace after the module is built.
+    let global = quench_runtime::vm::current_global_object();
     let message_channel = cap(crate::registry::SPEC_MESSAGE_CHANNEL.cap);
-    let message_port = cap(MESSAGE_PORT_CALL);
+    // The exported function uses the construct-capability identity so the VM
+    // routes both invocation forms through the explicit Node constructor
+    // validation below (rather than reporting an unclassified missing
+    // construct handler for the call-only capability).
+    let message_port = cap(MESSAGE_PORT_CONSTRUCT);
+    // Keep the global and module constructors identical. The bootstrap DOM
+    // placeholders cannot manufacture host-backed ports, and leaving them in
+    // place makes `instanceof MessagePort` depend on load order.
+    let _ = execute::set_property_in_place(&global, "MessageChannel", message_channel.clone());
+    let _ = execute::set_property_in_place(&global, "MessagePort", message_port.clone());
     let _ =
         execute::set_callable_property(&message_port, "name", Value::String("MessagePort".into()));
     let message_port_prototype = host_api::object(vec![
@@ -144,7 +159,6 @@ pub fn build(state: &Rc<std::cell::RefCell<HostState>>) -> Result<Value, VmError
         ("onmessage".into(), Value::Null),
         ("onmessageerror".into(), Value::Null),
     ]);
-    let global = quench_runtime::vm::current_global_object();
     let event_target = execute::get_property(&global, "EventTarget");
     let event_target_prototype = execute::get_property(&event_target, "prototype");
     let message_port_prototype =
@@ -154,11 +168,9 @@ pub fn build(state: &Rc<std::cell::RefCell<HostState>>) -> Result<Value, VmError
     // the emitter method table shared with EventEmitter so `events.once()`
     // receives the posted value (rather than an EventTarget wrapper object).
     let original_message_port_prototype = message_port_prototype.clone();
-    let message_port_prototype = crate::modules::events::install_emitter_props(
-        message_port_prototype,
-        false,
-    )
-    .unwrap_or(original_message_port_prototype);
+    let message_port_prototype =
+        crate::modules::events::install_emitter_props(message_port_prototype, false)
+            .unwrap_or(original_message_port_prototype);
     let _ =
         execute::set_callable_property(&message_port, "prototype", message_port_prototype.clone());
     crate::modules::event_target::set_message_port_prototype(message_port_prototype);
@@ -262,11 +274,54 @@ pub fn message_port_construct(
     crate::modules::event_target::new_message_port(state)
 }
 
-pub fn message_port_construct_handler(
-    state: &Rc<RefCell<HostState>>,
+/// `MessagePort` is an internal constructor in Node.  Its public function
+/// value exists for identity/`instanceof`, but neither calling it nor using it
+/// with `new` is permitted.
+pub fn message_port_invalid_constructor(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    message_port_construct(state, _args)
+    Err(message_port_invalid_error())
+}
+
+pub fn message_port_invalid_construct(
+    _state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Err(message_port_invalid_error())
+}
+
+fn message_port_invalid_error() -> VmError {
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::TypeError,
+        &[Value::String("Illegal constructor".into())],
+    );
+    VmError::Thrown(execute::set_property(
+        error,
+        "code",
+        Value::String("ERR_CONSTRUCT_CALL_INVALID".into()),
+    ))
+}
+
+/// `MessageChannel` requires `new`; keep the call error distinct from the
+/// constructor's normal host allocation path.
+pub fn message_channel_call(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::TypeError,
+        &[Value::String(
+            "Class constructor MessageChannel cannot be invoked without 'new'".into(),
+        )],
+    );
+    Err(VmError::Thrown(execute::set_property(
+        error,
+        "code",
+        Value::String("ERR_CONSTRUCT_CALL_REQUIRED".into()),
+    )))
 }
 
 fn worker_environment_snapshot(options: &Value) -> Value {
@@ -287,7 +342,11 @@ fn worker_environment_snapshot(options: &Value) -> Value {
         .filter_map(|key| {
             let value = execute::get_property(&source, &key);
             (!matches!(value, Value::Undefined | Value::Null))
-                .then(|| execute::to_js_string(&value).ok().map(|value| (key, Value::String(value))))
+                .then(|| {
+                    execute::to_js_string(&value)
+                        .ok()
+                        .map(|value| (key, Value::String(value)))
+                })
                 .flatten()
         })
         .collect();
@@ -731,7 +790,10 @@ fn worker_start(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
 
 fn worker_is_refed(worker: &Value) -> bool {
     let Some(id) = worker_id(worker) else {
-        return !matches!(execute::get_property(worker, "_worker-refed"), Value::Boolean(false));
+        return !matches!(
+            execute::get_property(worker, "_worker-refed"),
+            Value::Boolean(false)
+        );
     };
     WORKER_FLAGS.with(|flags| flags.borrow().get(&id).map(|entry| entry.0).unwrap_or(true))
 }
@@ -948,10 +1010,7 @@ fn parse_messages(state: &Rc<RefCell<HostState>>, worker: &Value, text: &str) {
             let _ = crate::modules::events::method_emit(
                 state,
                 Some(worker),
-                &[
-                    Value::String("message".into()),
-                    from_json(json, state),
-                ],
+                &[Value::String("message".into()), from_json(json, state)],
             );
         }
     }
@@ -1084,9 +1143,9 @@ fn worker_terminate(
     // fulfillment value is the worker exit code.  Keep the host transition
     // synchronous, but preserve the observable promise-shaped boundary.
     Ok(Value::Promise(Rc::new(
-        quench_runtime::value::PromiseData::new(
-            quench_runtime::value::PromiseState::Fulfilled(Value::Number(0.0)),
-        ),
+        quench_runtime::value::PromiseData::new(quench_runtime::value::PromiseState::Fulfilled(
+            Value::Number(0.0),
+        )),
     )))
 }
 
@@ -1222,9 +1281,12 @@ fn from_json(value: serde_json::Value, state: &Rc<RefCell<HostState>>) -> Value 
         serde_json::Value::Bool(value) => Value::Boolean(value),
         serde_json::Value::Number(value) => Value::Number(value.as_f64().unwrap_or(0.0)),
         serde_json::Value::String(value) => Value::String(value),
-        serde_json::Value::Array(values) => {
-            host_api::array(values.into_iter().map(|value| from_json(value, state)).collect())
-        }
+        serde_json::Value::Array(values) => host_api::array(
+            values
+                .into_iter()
+                .map(|value| from_json(value, state))
+                .collect(),
+        ),
         serde_json::Value::Object(values) => {
             if let Some(key) = crate::modules::webcrypto::key_from_wire(&values) {
                 return key;

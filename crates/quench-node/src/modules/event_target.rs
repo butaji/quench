@@ -253,8 +253,23 @@ fn allocate_target_with_properties(
 }
 
 pub fn new_message_channel(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
-    let port1 = new_message_port(state)?;
-    let port2 = new_message_port(state)?;
+    let mut port1 = new_message_port(state)?;
+    let mut port2 = new_message_port(state)?;
+    // Apply the canonical public prototype at the channel boundary as well as
+    // in `new_message_port`; channels may be created while the bootstrap
+    // constructor is being replaced during module materialization.
+    let global = quench_runtime::vm::current_global_object();
+    let constructor = execute::get_property(&global, "MessagePort");
+    let prototype = execute::get_property(&constructor, "prototype");
+    if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
+        port1 = execute::set_prototype_of(&port1, &prototype)?;
+        port2 = execute::set_prototype_of(&port2, &prototype)?;
+        // Host objects may be copy-on-write aliases; make the resulting
+        // prototype visible through the canonical object retained by the
+        // target registry as well.
+        let _ = execute::set_property_in_place(&port1, "\0prototype", prototype.clone());
+        let _ = execute::set_property_in_place(&port2, "\0prototype", prototype.clone());
+    }
     for (port, peer) in [(&port1, port2.clone()), (&port2, port1.clone())] {
         if let Some(id) = target_id(port) {
             if let Some(target) = state.borrow().targets.get(id) {
@@ -316,9 +331,40 @@ pub fn new_message_port(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError
             let _ = execute::define_property(port.clone(), name, descriptor);
         }
     }
-    if let Some(prototype) = MESSAGE_PORT_PROTOTYPE.with(|slot| slot.borrow().clone()) {
+    // The worker_threads module can be initialized during bootstrap, before
+    // its canonical constructor is published globally. Prefer that global
+    // constructor once available, while retaining the host-side snapshot for
+    // worker bootstrap objects created before publication.
+    let global_prototype = {
+        let global = quench_runtime::vm::current_global_object();
+        let constructor = execute::get_property(&global, "MessagePort");
+        let prototype = execute::get_property(&constructor, "prototype");
+        matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)).then_some(prototype)
+    };
+    let prototype = global_prototype.or_else(|| {
+        MESSAGE_PORT_PROTOTYPE.with(|slot| slot.borrow().clone())
+    });
+    let canonical_prototype = prototype.clone();
+    if let Some(prototype) = prototype {
         if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
             port = execute::set_prototype_of(&port, &prototype)?;
+        }
+    }
+    if let Some(id) = target_id(&port) {
+        // `set_prototype_of` may return a copy-on-write alias. Update the
+        // registry's canonical wrapper from that final value so lookups and
+        // `instanceof` observe the same prototype as the returned port.
+        let canonical = state.borrow().targets.objects.get(&id).cloned();
+        if let Some(canonical) = canonical {
+            let updated = if let Some(prototype) = canonical_prototype {
+                execute::set_prototype_of(&canonical, &prototype)?
+            } else {
+                canonical
+            };
+            port = updated.clone();
+            state.borrow_mut().targets.objects.insert(id, updated);
+        } else {
+            state.borrow_mut().targets.objects.insert(id, port.clone());
         }
     }
     Ok(port)
@@ -532,7 +578,10 @@ pub fn message_port_deliver(
         .borrow()
         .targets
         .get(id)
-        .is_some_and(|target| target.borrow().message_closed);
+        .is_some_and(|target| {
+            let target = target.borrow();
+            target.message_closed
+        });
     if closed {
         return Ok(Value::Undefined);
     }

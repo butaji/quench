@@ -707,7 +707,9 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_WORKER_SET_ENVIRONMENT => crate::modules::worker_threads::set_environment_handler,
         CAP_WORKER_GET_ENVIRONMENT => crate::modules::worker_threads::get_environment_handler,
         CAP_WORKER_NOOP => crate::modules::worker_threads::worker_noop_handler,
-        CAP_MESSAGE_PORT_CALL => crate::modules::worker_threads::message_port_call_handler,
+        CAP_MESSAGE_CHANNEL => crate::modules::worker_threads::message_channel_call,
+        CAP_MESSAGE_PORT_CONSTRUCT => crate::modules::worker_threads::message_port_invalid_constructor,
+        CAP_MESSAGE_PORT_CALL => crate::modules::worker_threads::message_port_invalid_constructor,
         CAP_REQUIRE => node_require,
         CAP_REQUIRE_RESOLVE => node_require_resolve,
         CAP_REQUIRE_RESOLVE_PATHS => node_require_resolve_paths,
@@ -1778,8 +1780,9 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
             crate::modules::worker_threads::broadcast_channel_construct_handler
         }
         CAP_MESSAGE_PORT_CONSTRUCT => {
-            crate::modules::worker_threads::message_port_construct_handler
+            crate::modules::worker_threads::message_port_invalid_construct
         }
+        CAP_MESSAGE_PORT_CALL => crate::modules::worker_threads::message_port_invalid_construct,
         CAP_CLUSTER_WORKER_CONSTRUCTOR => crate::modules::cluster::worker_construct_handler,
         CAP_ZLIB_CONSTRUCT => crate::modules::zlib::construct_handler,
         CAP_STREAM_READABLE => stream_readable,
