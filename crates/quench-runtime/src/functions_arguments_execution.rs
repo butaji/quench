@@ -84,7 +84,28 @@ pub(crate) fn try_execute_specialized(
             completion, generator,
         )));
     }
+    if let Some(value) = try_execute_numeric_affine(function, arguments) {
+        crate::execution_trace::kernel("PrecompiledAffineI32", false);
+        return Ok(Some(crate::value::Value::Number(f64::from(value))));
+    }
     Ok(None)
+}
+
+fn try_execute_numeric_affine(
+    function: &crate::value::FunctionValue,
+    arguments: &[crate::value::Value],
+) -> Option<i32> {
+    if function.params != 1 {
+        return None;
+    }
+    let fact = function.code.numeric_affine_i32()?;
+    if usize::from(fact.parameter_slot) != function.captures.len() {
+        return None;
+    }
+    let crate::value::Value::Number(input) = arguments.first()? else {
+        return None;
+    };
+    fact.execute(*input)
 }
 
 /// Admission fact shared by ordinary and named calls.  The continuation

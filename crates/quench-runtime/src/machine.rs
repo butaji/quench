@@ -6729,6 +6729,7 @@ pub struct FunctionCode {
     declared_frame_register_count: Option<u16>,
     capture_slots: Rc<[u16]>,
     facts: Rc<crate::facts::FunctionFacts>,
+    numeric_affine_i32: Rc<OnceLock<Option<crate::function_physical::NumericAffineI32>>>,
     tier: Rc<RefCell<TierState>>,
 }
 
@@ -6741,6 +6742,7 @@ impl Clone for FunctionCode {
             declared_frame_register_count: self.declared_frame_register_count,
             capture_slots: self.capture_slots.clone(),
             facts: self.facts.clone(),
+            numeric_affine_i32: self.numeric_affine_i32.clone(),
             tier: self.tier.clone(),
         }
     }
@@ -6757,6 +6759,7 @@ impl FunctionCode {
             declared_frame_register_count: None,
             capture_slots,
             facts: Rc::default(),
+            numeric_affine_i32: Rc::default(),
             tier: Rc::new(RefCell::new(TierState::new())),
         }
     }
@@ -6771,6 +6774,7 @@ impl FunctionCode {
             declared_frame_register_count: Some(frame_register_count),
             capture_slots,
             facts: Rc::default(),
+            numeric_affine_i32: Rc::default(),
             tier: Rc::new(RefCell::new(TierState::new())),
         }
     }
@@ -6799,6 +6803,7 @@ impl FunctionCode {
             declared_frame_register_count,
             capture_slots,
             facts: Rc::default(),
+            numeric_affine_i32: Rc::default(),
             tier: Rc::new(RefCell::new(TierState::new())),
         }
     }
@@ -6830,6 +6835,7 @@ impl FunctionCode {
                 declared_frame_register_count: None,
                 capture_slots,
                 facts: Rc::default(),
+                numeric_affine_i32: Rc::default(),
                 tier: Rc::new(RefCell::new(TierState::new())),
             })
             .collect()
@@ -6845,6 +6851,7 @@ impl FunctionCode {
             declared_frame_register_count: None,
             capture_slots: Rc::from([u16::MAX]),
             facts: Rc::default(),
+            numeric_affine_i32: Rc::default(),
             tier: Rc::new(RefCell::new(TierState::new())),
         }
     }
@@ -6860,6 +6867,16 @@ impl FunctionCode {
 
     pub(crate) fn facts(&self) -> &crate::facts::FunctionFacts {
         &self.facts
+    }
+
+    /// Return the once-derived precompiled-handler fact for a pure affine
+    /// int32 body. The canonical lowered code remains authoritative; failure
+    /// is cached as `None` so unrelated calls do no repeated analysis.
+    pub(crate) fn numeric_affine_i32(&self) -> Option<crate::function_physical::NumericAffineI32> {
+        *self.numeric_affine_i32.get_or_init(|| {
+            self.code()
+                .and_then(crate::function_physical::numeric_affine_i32)
+        })
     }
 
     /// Account one function entry and compile the baseline plan when prior

@@ -72,6 +72,7 @@ pub mod facts;
 mod finalization_registry;
 mod function_code;
 mod function_parameters;
+mod function_physical;
 mod functions;
 mod functions_dynamic;
 mod functions_write;
