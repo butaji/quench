@@ -69,6 +69,7 @@ pub mod util;
 pub mod util_inherits;
 pub mod util_strip;
 pub mod util_style_text;
+pub mod v8;
 pub mod vm_api;
 pub mod wasi;
 pub mod web_locks;
