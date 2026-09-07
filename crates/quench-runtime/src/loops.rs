@@ -749,11 +749,13 @@ fn execute_loop_fragment_step_with_owner(
             crate::completion::Completion::Call(continuation) => {
                 crate::vm::vm_ops::execute_call_continuation(registers, continuation)?;
             }
-            completion => return Ok(crate::vm::CompletionStep {
-                completion,
-                next: pc,
-                suspended_pc: step.suspended_pc,
-            }),
+            completion => {
+                return Ok(crate::vm::CompletionStep {
+                    completion,
+                    next: pc,
+                    suspended_pc: step.suspended_pc,
+                })
+            }
         }
     }
 }
@@ -762,10 +764,12 @@ fn suspension_slot(
     body: crate::machine::CodeView<'_>,
     step: &crate::vm::CompletionStep,
 ) -> Option<u16> {
-    step.suspended_pc.and_then(|pc| body.cold_at(pc)).and_then(|op| match op {
-        crate::ops::Op::Await { dst, .. } | crate::ops::Op::Yield { src: dst } => Some(*dst),
-        _ => None,
-    })
+    step.suspended_pc
+        .and_then(|pc| body.cold_at(pc))
+        .and_then(|op| match op {
+            crate::ops::Op::Await { dst, .. } | crate::ops::Op::Yield { src: dst } => Some(*dst),
+            _ => None,
+        })
 }
 
 include!("loops_run.rs");
