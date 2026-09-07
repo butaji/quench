@@ -7620,27 +7620,27 @@ pub fn module_set_source_maps_support(
 }
 
 pub fn module_enable_compile_cache(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    crate::modules::require::module_enable_compile_cache(args)
+    crate::modules::require::module_enable_compile_cache(state, args)
 }
 
 pub fn module_get_compile_cache_dir(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    crate::modules::require::module_get_compile_cache_dir(args)
+    crate::modules::require::module_get_compile_cache_dir(state, args)
 }
 
 pub fn module_flush_compile_cache(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    crate::modules::require::module_flush_compile_cache(args)
+    crate::modules::require::module_flush_compile_cache(state, args)
 }
 
 pub fn process_env_set(

@@ -96,6 +96,10 @@ pub struct HostState {
     pub module_api: Option<Value>,
     /// Canonical `require.extensions` table for this realm.
     pub module_extensions: Option<Value>,
+    /// Observable module compile-cache configuration. The Rust engine has no
+    /// V8 bytecode artifact, but the API still tracks its per-process status
+    /// and selected directory like Node does.
+    pub compile_cache: crate::modules::require::CompileCacheState,
     pub string_decoder_aliases: std::collections::HashMap<u64, u64>,
     pub string_decoder_pending: std::collections::HashMap<u64, Vec<u8>>,
     pub string_decoder_encoding: std::collections::HashMap<u64, String>,
@@ -182,6 +186,7 @@ impl NodeHost {
             process_module: None,
             module_api: None,
             module_extensions: None,
+            compile_cache: crate::modules::require::CompileCacheState::from_environment(),
             string_decoder_aliases: std::collections::HashMap::new(),
             string_decoder_pending: std::collections::HashMap::new(),
             string_decoder_encoding: std::collections::HashMap::new(),
