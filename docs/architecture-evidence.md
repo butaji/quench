@@ -75,6 +75,11 @@ counts.
 
 Safe exclusions are explicit: unsupported target/ABI/relocation combinations,
 allocating or reentrant native interiors, proxies/accessors, sparse or unsupported
-typed-memory arrays and exotic coercions take complete ordinary semantics.
+typed-memory arrays, exotic coercions and the unverified AArch64 optimizing
+driver take complete ordinary semantics. A current task-073 ablation found that
+the former aggregate ARM development opt-in could corrupt structured numeric
+loops; the policy now exposes only independently selectable verified leaves and
+composed regions on that target. Both are still default-off and currently
+unprofitable in the measured RayTrace/NavierStokes pair.
 Production ARM admission stays conservative until task-073 measurements; passing
 this gate establishes correctness and boundedness, not a speedup or Bun parity.

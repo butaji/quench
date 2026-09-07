@@ -14,6 +14,27 @@ enum Architecture {
     Other,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ArmMode {
+    Disabled,
+    Leaves,
+    Composed,
+    All,
+}
+
+impl ArmMode {
+    fn from_environment() -> Self {
+        match std::env::var("QUENCH_AARCH64_STENCIL_MODE").as_deref() {
+            Ok("leaves") => Self::Leaves,
+            Ok("composed") => Self::Composed,
+            Ok("all") => Self::All,
+            Ok(_) => Self::Disabled,
+            Err(_) if std::env::var_os("QUENCH_ENABLE_AARCH64_STENCILS").is_some() => Self::All,
+            Err(_) => Self::Disabled,
+        }
+    }
+}
+
 const fn architecture() -> Architecture {
     #[cfg(target_arch = "x86_64")]
     {
@@ -71,6 +92,15 @@ impl ExecutionPolicy {
     }
 
     fn from_architecture(arch: Architecture, arm_opt_in: bool) -> Self {
+        let arm_mode = if arm_opt_in {
+            ArmMode::All
+        } else {
+            ArmMode::Disabled
+        };
+        Self::from_architecture_and_mode(arch, arm_mode)
+    }
+
+    fn from_architecture_and_mode(arch: Architecture, arm_mode: ArmMode) -> Self {
         match arch {
             Architecture::X86_64 => Self {
                 native_leaves: true,
@@ -80,14 +110,17 @@ impl ExecutionPolicy {
                 optimizing_view: true,
             },
             Architecture::Aarch64 => Self {
-                native_leaves: arm_opt_in,
+                native_leaves: matches!(arm_mode, ArmMode::Leaves | ArmMode::All),
                 native_dispatch: false,
                 fused_regions: false,
-                composed_regions: arm_opt_in,
-                // The explicit opt-in now exposes only the bounded composed
-                // region and scalar leaves whose generated entries are
-                // available on this ISA; the default remains conservative.
-                optimizing_view: arm_opt_in,
+                composed_regions: matches!(arm_mode, ArmMode::Composed | ArmMode::All),
+                // The AArch64 optimizing driver is not a distinct physical
+                // contract: enabling it can re-enter structured fragments at
+                // the wrong semantic boundary. Keep the verified leaves and
+                // composed regions independently exercisable, but reject this
+                // unsupported combination until its continuation contract is
+                // proven end to end.
+                optimizing_view: false,
             },
             Architecture::Other => Self {
                 native_leaves: false,
@@ -100,8 +133,7 @@ impl ExecutionPolicy {
     }
 
     fn current_uncached() -> Self {
-        let arm_opt_in = std::env::var_os("QUENCH_ENABLE_AARCH64_STENCILS").is_some();
-        Self::from_architecture(architecture(), arm_opt_in)
+        Self::from_architecture_and_mode(architecture(), ArmMode::from_environment())
     }
 }
 
@@ -113,7 +145,7 @@ pub(crate) fn current() -> ExecutionPolicy {
 
 #[cfg(test)]
 mod tests {
-    use super::{Architecture, ExecutionPolicy};
+    use super::{Architecture, ArmMode, ExecutionPolicy};
 
     #[test]
     fn policy_is_a_derived_capability_set() {
@@ -144,12 +176,33 @@ mod tests {
                 native_dispatch: false,
                 fused_regions: false,
                 composed_regions: true,
-                optimizing_view: true,
+                optimizing_view: false,
             }
         );
         assert!(
             !ExecutionPolicy::from_architecture(Architecture::Aarch64, false).allows_admission()
         );
         assert!(ExecutionPolicy::from_architecture(Architecture::Aarch64, true).allows_admission());
+    }
+
+    #[test]
+    fn arm_diagnostic_modes_isolate_physical_families() {
+        let leaves = ExecutionPolicy::from_architecture_and_mode(
+            Architecture::Aarch64,
+            ArmMode::Leaves,
+        );
+        let composed = ExecutionPolicy::from_architecture_and_mode(
+            Architecture::Aarch64,
+            ArmMode::Composed,
+        );
+        assert!(leaves.native_leaves && !leaves.composed_regions);
+        assert!(!composed.native_leaves && composed.composed_regions);
+        let all = ExecutionPolicy::from_architecture_and_mode(
+            Architecture::Aarch64,
+            ArmMode::All,
+        );
+        assert!(!leaves.optimizing_view && !composed.optimizing_view);
+        assert!(all.native_leaves && all.composed_regions);
+        assert!(!all.optimizing_view);
     }
 }
