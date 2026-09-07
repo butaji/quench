@@ -1654,8 +1654,7 @@ pub(crate) struct NativeBinaryPlan {
     // leaf.  The disposable executable arena is created on first proven
     // numeric execution, so a cold function cannot allocate native code for
     // every arithmetic instruction it happens to contain.
-    storage: PhysicalStorage,
-    physical: PhysicalState,
+    physical: PhysicalInstallation<InstalledBinaryEntry>,
     // Numeric leaves currently have no dynamic holes, but retaining one site
     // keeps the patch-value view stable and avoids constructing a fresh cache
     // object on every native execution.
@@ -1669,7 +1668,6 @@ pub(crate) struct NativeBinaryPlan {
     /// typed entry pointer. Numeric stencil bytes have no mutable VM state;
     /// re-running lifecycle, cache, mprotect, and address checks on every
     /// iteration otherwise costs more than the floating-point instruction.
-    installed: InstalledBinaryEntry,
     #[cfg(test)]
     native_entry_count: u64,
     #[cfg(test)]
@@ -1691,7 +1689,7 @@ impl NativeBinaryPlan {
         shared_arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
     ) -> Option<Self> {
         let mut plan = Self::new(instruction, policy)?;
-        plan.storage = PhysicalStorage::Shared(shared_arena);
+        plan.physical.use_shared(shared_arena);
         Some(plan)
     }
 
@@ -1829,15 +1827,13 @@ impl NativeBinaryPlan {
                 .filter(|record| record.executable && validate_physical_template(record).is_ok())?;
         }
         Some(Self {
-            storage: PhysicalStorage::Local(None),
-            physical: PhysicalState::new(),
+            physical: PhysicalInstallation::local(InstalledBinaryEntry::Unpublished),
             site: crate::quickening::QuickeningSite::new(opcode),
             opcode,
             key,
             tagged_key,
             semantic,
             compare_branch: None,
-            installed: InstalledBinaryEntry::Unpublished,
             #[cfg(test)]
             native_entry_count: 0,
             #[cfg(test)]
@@ -1868,15 +1864,13 @@ impl NativeBinaryPlan {
             return None;
         }
         Some(Self {
-            storage: PhysicalStorage::Local(None),
-            physical: PhysicalState::new(),
+            physical: PhysicalInstallation::local(InstalledBinaryEntry::Unpublished),
             site: crate::quickening::QuickeningSite::new(instruction.opcode),
             opcode: instruction.opcode,
             key,
             tagged_key: None,
             semantic: BinarySemantic::Integer { operator, unsigned },
             compare_branch: None,
-            installed: InstalledBinaryEntry::Unpublished,
             #[cfg(test)]
             native_entry_count: 0,
             #[cfg(test)]
@@ -1912,7 +1906,7 @@ impl NativeBinaryPlan {
 
     #[inline]
     fn clear_physical_capabilities(&mut self) {
-        reset_installed!(self, InstalledBinaryEntry::Unpublished);
+        self.physical.clear(InstalledBinaryEntry::Unpublished);
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -1924,27 +1918,27 @@ impl NativeBinaryPlan {
         let key = self
             .tagged_key
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-        if self.storage.shared().is_none() {
-            if let InstalledBinaryEntry::TaggedLocal(address) = self.installed {
-                if let Some(arena) = self.storage.local() {
+        if self.physical.storage.shared().is_none() {
+            if let InstalledBinaryEntry::TaggedLocal(address) = self.physical.installed() {
+                if let Some(arena) = self.physical.storage.local() {
                     if let Ok(entry) = arena.word_pair_bool_entry(address) {
                         self.note_native_entry();
                         return Ok(entry(lhs, rhs) != 0);
                     }
                 }
-                self.installed = InstalledBinaryEntry::Unpublished;
+                self.physical.publish(InstalledBinaryEntry::Unpublished);
             }
         }
         if let (Some(shared), InstalledBinaryEntry::TaggedShared(owned)) =
-            (self.storage.shared(), self.installed)
+            (self.physical.storage.shared(), self.physical.installed())
         {
             if let Ok(result) = invoke_shared_entry!(shared, owned, |entry| entry(lhs, rhs)) {
                 self.note_native_entry();
                 return Ok(result != 0);
             }
-            self.installed = InstalledBinaryEntry::Unpublished;
+            self.physical.publish(InstalledBinaryEntry::Unpublished);
         }
-        if let Some(shared) = self.storage.shared() {
+        if let Some(shared) = self.physical.storage.shared() {
             let values = crate::stencil_fact::PatchValues::from_site(&self.site);
             let address = {
                 let mut slab = shared.borrow_mut();
@@ -1954,12 +1948,12 @@ impl NativeBinaryPlan {
                 )
                 .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
                 let address =
-                    slab.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
+                    slab.render_physical_view_or_get(&mut self.physical.state.cache, view, &values)?;
                 slab.make_executable(address)?;
                 address
             };
             let owned = shared.borrow().owned_word_pair_bool_entry(address)?;
-            self.installed = InstalledBinaryEntry::TaggedShared(owned);
+            self.physical.publish(InstalledBinaryEntry::TaggedShared(owned));
             return match invoke_shared_entry!(shared, owned, |entry| entry(lhs, rhs)) {
                 Ok(result) => {
                     self.note_native_entry();
@@ -1972,18 +1966,24 @@ impl NativeBinaryPlan {
             };
         }
         let values = crate::stencil_fact::PatchValues::from_site(&self.site);
-        let arena = self.storage.local_mut()?;
         let view = crate::stencil_select::select_physical_for_abi(
             key,
             crate::stencil_select::RegionAbi::ScalarWordPairBool,
         )
         .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-        let address = arena.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
-        arena.make_executable()?;
-        let entry = arena.word_pair_bool_entry(address)?;
-        self.installed = InstalledBinaryEntry::TaggedLocal(address);
+        let (address, result) = {
+            let arena = self.physical.storage.local_mut()?;
+            let address = arena.render_physical_view_or_get(
+                &mut self.physical.state.cache,
+                view,
+                &values,
+            )?;
+            arena.make_executable()?;
+            (address, arena.word_pair_bool_entry(address)?(lhs, rhs) != 0)
+        };
+        self.physical.publish(InstalledBinaryEntry::TaggedLocal(address));
         self.note_native_entry();
-        Ok(entry(lhs, rhs) != 0)
+        Ok(result)
     }
 
     #[inline]
@@ -1996,30 +1996,30 @@ impl NativeBinaryPlan {
             let left = number_to_int32(lhs);
             let right = number_to_int32(rhs);
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            if self.storage.shared().is_none() {
-                if let InstalledBinaryEntry::I32Local(address) = self.installed {
-                    if let Some(arena) = self.storage.local() {
+            if self.physical.storage.shared().is_none() {
+                if let InstalledBinaryEntry::I32Local(address) = self.physical.installed() {
+                    if let Some(arena) = self.physical.storage.local() {
                         if let Ok(entry) = arena.i32_entry(address) {
                             self.note_native_entry();
                             return Ok(f64::from(entry(left, right)));
                         }
                     }
-                    self.installed = InstalledBinaryEntry::Unpublished;
+                    self.physical.publish(InstalledBinaryEntry::Unpublished);
                 }
-                if let InstalledBinaryEntry::U32Local(address) = self.installed {
-                    if let Some(arena) = self.storage.local() {
+                if let InstalledBinaryEntry::U32Local(address) = self.physical.installed() {
+                    if let Some(arena) = self.physical.storage.local() {
                         if let Ok(entry) = arena.u32_entry(address) {
                             self.note_native_entry();
                             return Ok(f64::from(entry(left as u32, right as u32)));
                         }
                     }
-                    self.installed = InstalledBinaryEntry::Unpublished;
+                    self.physical.publish(InstalledBinaryEntry::Unpublished);
                 }
             }
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            if let Some(shared) = self.storage.shared() {
+            if let Some(shared) = self.physical.storage.shared() {
                 if self.is_unsigned_integer() {
-                    if let InstalledBinaryEntry::U32Shared(owned) = self.installed {
+                    if let InstalledBinaryEntry::U32Shared(owned) = self.physical.installed() {
                         match invoke_shared_entry!(shared, owned, |entry| entry(
                             left as u32,
                             right as u32
@@ -2033,7 +2033,7 @@ impl NativeBinaryPlan {
                             }
                         }
                     }
-                } else if let InstalledBinaryEntry::I32Shared(owned) = self.installed {
+                } else if let InstalledBinaryEntry::I32Shared(owned) = self.physical.installed() {
                     match invoke_shared_entry!(shared, owned, |entry| entry(left, right)) {
                         Ok(result) => {
                             self.note_native_entry();
@@ -2048,6 +2048,7 @@ impl NativeBinaryPlan {
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             if self
                 .physical
+                .state
                 .lifecycle
                 .observe_site(&self.site, self.key, true)
                 == crate::stencil_lifecycle::StencilState::Retired
@@ -2056,7 +2057,7 @@ impl NativeBinaryPlan {
             }
             let values = crate::stencil_fact::PatchValues::from_site(&self.site);
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            if let Some(shared) = self.storage.shared() {
+            if let Some(shared) = self.physical.storage.shared() {
                 if self.is_unsigned_integer() {
                     let rendered = (|| -> Result<usize, crate::stencil_arena::ArenaError> {
                         let mut slab = shared.borrow_mut();
@@ -2066,7 +2067,7 @@ impl NativeBinaryPlan {
                         )
                         .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
                         let address = slab.render_physical_view_or_get(
-                            &mut self.physical.cache,
+                            &mut self.physical.state.cache,
                             view,
                             &values,
                         )?;
@@ -2076,7 +2077,7 @@ impl NativeBinaryPlan {
                     let address = match rendered {
                         Ok(rendered) => rendered,
                         Err(error) => {
-                            self.physical.clear();
+                            self.physical.clear(InstalledBinaryEntry::Unpublished);
                             return Err(error);
                         }
                     };
@@ -2091,7 +2092,7 @@ impl NativeBinaryPlan {
                             return Err(error);
                         }
                     };
-                    self.installed = InstalledBinaryEntry::U32Shared(owned);
+                    self.physical.publish(InstalledBinaryEntry::U32Shared(owned));
                     self.note_native_entry();
                     return Ok(f64::from(result));
                 }
@@ -2103,14 +2104,14 @@ impl NativeBinaryPlan {
                     )
                     .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
                     let address =
-                        slab.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
+                        slab.render_physical_view_or_get(&mut self.physical.state.cache, view, &values)?;
                     slab.make_executable(address)?;
                     Ok(address)
                 })();
                 let address = match rendered {
                     Ok(rendered) => rendered,
                     Err(error) => {
-                        self.physical.clear();
+                        self.physical.clear(InstalledBinaryEntry::Unpublished);
                         return Err(error);
                     }
                 };
@@ -2122,16 +2123,16 @@ impl NativeBinaryPlan {
                         return Err(error);
                     }
                 };
-                self.installed = InstalledBinaryEntry::I32Shared(owned);
+                self.physical.publish(InstalledBinaryEntry::I32Shared(owned));
                 self.note_native_entry();
                 return Ok(f64::from(result));
             }
             let unsigned = self.is_unsigned_integer();
-            let arena = self.storage.local_mut()?;
+            let arena = self.physical.storage.local_mut()?;
             let result = if unsigned {
                 arena
                     .render_selected_u32(
-                        &mut self.physical.cache,
+                        &mut self.physical.state.cache,
                         self.key,
                         &values,
                         left as u32,
@@ -2140,7 +2141,13 @@ impl NativeBinaryPlan {
                     .map(|value| f64::from(value))
             } else {
                 arena
-                    .render_selected_i32(&mut self.physical.cache, self.key, &values, left, right)
+                    .render_selected_i32(
+                        &mut self.physical.state.cache,
+                        self.key,
+                        &values,
+                        left,
+                        right,
+                    )
                     .map(|value| f64::from(value))
             };
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -2153,54 +2160,53 @@ impl NativeBinaryPlan {
                 let signature = crate::stencil_select::select_physical_for_abi(self.key, abi)
                     .map(|view| view.cache_signature(&values));
                 self.note_native_entry();
-                if let Some(arena) = self.storage.local() {
+                if let Some(arena) = self.physical.storage.local() {
                     if let Some(address) = signature.and_then(|signature| {
                         self.physical
+                            .state
                             .cache
                             .get_owned(self.key, signature, arena.id())
                     }) {
                         if self.is_unsigned_integer() {
-                            self.installed = arena
+                            let installed = arena
                                 .u32_entry(address)
                                 .ok()
                                 .map(|_| InstalledBinaryEntry::U32Local(address))
                                 .unwrap_or(InstalledBinaryEntry::Unpublished);
+                            self.physical.publish(installed);
                         } else {
-                            self.installed = arena
+                            let installed = arena
                                 .i32_entry(address)
                                 .ok()
                                 .map(|_| InstalledBinaryEntry::I32Local(address))
                                 .unwrap_or(InstalledBinaryEntry::Unpublished);
+                            self.physical.publish(installed);
                         }
                     }
                 }
             }
             if result.is_err() {
-                self.storage.reset_local();
-                self.physical.clear();
-                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-                {
-                    self.installed = InstalledBinaryEntry::Unpublished;
-                }
+                self.physical.storage.reset_local();
+                self.physical.clear(InstalledBinaryEntry::Unpublished);
             }
             return result;
         }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-        if self.storage.shared().is_none() && !self.returns_boolean() {
-            if let InstalledBinaryEntry::F64Local(address) = self.installed {
-                if let Some(arena) = self.storage.local() {
+        if self.physical.storage.shared().is_none() && !self.returns_boolean() {
+            if let InstalledBinaryEntry::F64Local(address) = self.physical.installed() {
+                if let Some(arena) = self.physical.storage.local() {
                     if let Ok(entry) = arena.f64_entry(address) {
                         self.note_native_entry();
                         return Ok(unsafe { invoke_f64x2_entry(entry, lhs, rhs) });
                     }
                 }
-                self.installed = InstalledBinaryEntry::Unpublished;
+                self.physical.publish(InstalledBinaryEntry::Unpublished);
             }
         }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if !self.returns_boolean() {
             if let (Some(shared), InstalledBinaryEntry::F64Shared(owned)) =
-                (self.storage.shared(), self.installed)
+                (self.physical.storage.shared(), self.physical.installed())
             {
                 match invoke_shared_entry!(shared, owned, |entry| unsafe {
                     invoke_f64x2_entry(entry, lhs, rhs)
@@ -2218,7 +2224,7 @@ impl NativeBinaryPlan {
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.returns_boolean() {
             if let (Some(shared), InstalledBinaryEntry::BoolShared(owned)) =
-                (self.storage.shared(), self.installed)
+                (self.physical.storage.shared(), self.physical.installed())
             {
                 match invoke_shared_entry!(shared, owned, |entry| entry(lhs, rhs)) {
                     Ok(result) => {
@@ -2241,13 +2247,13 @@ impl NativeBinaryPlan {
         if !crate::stencil_select::select_region(key).is_some_and(|record| record.executable) {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
         }
-        if self.physical.lifecycle.observe_site(&self.site, key, true)
+        if self.physical.state.lifecycle.observe_site(&self.site, key, true)
             == crate::stencil_lifecycle::StencilState::Retired
         {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
         }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-        if let Some(shared) = self.storage.shared() {
+        if let Some(shared) = self.physical.storage.shared() {
             if self.returns_boolean() {
                 let rendered = (|| {
                     let mut slab = shared.borrow_mut();
@@ -2257,14 +2263,14 @@ impl NativeBinaryPlan {
                     )
                     .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
                     let address =
-                        slab.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
+                        slab.render_physical_view_or_get(&mut self.physical.state.cache, view, &values)?;
                     slab.make_executable(address)?;
                     Ok(address)
                 })();
                 return match rendered {
                     Ok(address) => {
                         let owned = shared.borrow().owned_bool_entry(address)?;
-                        self.installed = InstalledBinaryEntry::BoolShared(owned);
+                        self.physical.publish(InstalledBinaryEntry::BoolShared(owned));
                         match invoke_shared_entry!(shared, owned, |entry| entry(lhs, rhs) != 0) {
                             Ok(value) => {
                                 self.note_native_entry();
@@ -2277,7 +2283,7 @@ impl NativeBinaryPlan {
                         }
                     }
                     Err(error) => {
-                        self.physical.clear();
+                        self.physical.clear(InstalledBinaryEntry::Unpublished);
                         Err(error)
                     }
                 };
@@ -2290,19 +2296,19 @@ impl NativeBinaryPlan {
                 )
                 .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
                 let address =
-                    slab.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
+                    slab.render_physical_view_or_get(&mut self.physical.state.cache, view, &values)?;
                 slab.make_executable(address)?;
                 Ok(address)
             })();
             let address = match rendered {
                 Ok(rendered) => rendered,
                 Err(error) => {
-                    self.physical.clear();
+                    self.physical.clear(InstalledBinaryEntry::Unpublished);
                     return Err(error);
                 }
             };
             let owned = shared.borrow().owned_f64_entry(address)?;
-            self.installed = InstalledBinaryEntry::F64Shared(owned);
+            self.physical.publish(InstalledBinaryEntry::F64Shared(owned));
             return match invoke_shared_entry!(shared, owned, |entry| unsafe {
                 invoke_f64x2_entry(entry, lhs, rhs)
             }) {
@@ -2317,19 +2323,19 @@ impl NativeBinaryPlan {
             };
         }
         let returns_boolean = self.returns_boolean();
-        let arena = match self.storage.local_mut() {
+        let arena = match self.physical.storage.local_mut() {
             Ok(arena) => arena,
             Err(error) => {
-                self.physical.lifecycle.reset();
+                self.physical.state.lifecycle.reset();
                 return Err(error);
             }
         };
         let result = if returns_boolean {
             arena
-                .render_selected_bool(&mut self.physical.cache, key, &values, lhs, rhs)
+                .render_selected_bool(&mut self.physical.state.cache, key, &values, lhs, rhs)
                 .map(|value| if value { 1.0 } else { 0.0 })
         } else {
-            arena.render_selected_f64(&mut self.physical.cache, key, &values, lhs, rhs, || {
+            arena.render_selected_f64(&mut self.physical.state.cache, key, &values, lhs, rhs, || {
                 Err(crate::stencil_arena::ArenaError::ProtectionFailed)
             })
         };
@@ -2342,14 +2348,15 @@ impl NativeBinaryPlan {
                 // Sub, Mul, and Div leaves and the boundary tax would return
                 // on every iteration.
                 let signature = view.cache_signature(&values);
-                if let Some(arena) = self.storage.local() {
-                    if let Some(address) = self.physical.cache.get_owned(key, signature, arena.id())
+                if let Some(arena) = self.physical.storage.local() {
+                    if let Some(address) = self.physical.state.cache.get_owned(key, signature, arena.id())
                     {
-                        self.installed = arena
+                        let installed = arena
                             .f64_entry(address)
                             .ok()
                             .map(|_| InstalledBinaryEntry::F64Local(address))
                             .unwrap_or(InstalledBinaryEntry::Unpublished);
+                        self.physical.publish(installed);
                     }
                 }
             }
@@ -2359,12 +2366,8 @@ impl NativeBinaryPlan {
             // view. Drop the disposable mapping, cache, and lifecycle state
             // instead of retrying into stale writable/exhausted storage; the
             // caller then takes the complete Rust semantic fallback.
-            self.storage.reset_local();
-            self.physical.clear();
-            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            {
-                self.installed = InstalledBinaryEntry::Unpublished;
-            }
+            self.physical.storage.reset_local();
+            self.physical.clear(InstalledBinaryEntry::Unpublished);
         }
         result
     }
@@ -2431,17 +2434,19 @@ impl NativeBinaryPlan {
     ) -> Result<crate::native_control::NativeCompareBranchOutcome, crate::stencil_arena::ArenaError>
     {
         let shared = self
+            .physical
             .storage
             .shared()
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-        if let InstalledBinaryEntry::CompareBranchShared(token) = self.installed {
+        if let InstalledBinaryEntry::CompareBranchShared(token) = self.physical.installed() {
             let result = invoke_compare_branch(&shared, token, lhs, rhs, true_pc, false_pc)?;
             self.note_native_entry_for(key);
             return Ok(result);
         }
         let token = self.publish_compare_branch(&shared, key)?;
         let result = invoke_compare_branch(&shared, token, lhs, rhs, true_pc, false_pc)?;
-        self.installed = InstalledBinaryEntry::CompareBranchShared(token);
+        self.physical
+            .publish(InstalledBinaryEntry::CompareBranchShared(token));
         self.note_native_entry_for(key);
         Ok(result)
     }
@@ -2474,7 +2479,7 @@ impl NativeBinaryPlan {
             )
             .map_err(|_| crate::stencil_arena::ArenaError::ProtectionFailed)?;
             let address =
-                slab.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
+                slab.render_physical_view_or_get(&mut self.physical.state.cache, view, &values)?;
             slab.make_executable(address)?;
             address
         };
@@ -2505,8 +2510,8 @@ impl std::fmt::Debug for NativeBinaryPlan {
             .debug_struct("NativeBinaryPlan")
             .field("opcode", &self.opcode)
             .field("semantic", &self.semantic)
-            .field("used_bytes", &self.storage.used())
-            .field("cache_len", &self.physical.cache.len())
+            .field("used_bytes", &self.physical.storage.used())
+            .field("cache_len", &self.physical.state.cache.len())
             .finish()
     }
 }

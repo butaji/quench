@@ -1036,8 +1036,9 @@ fn native_add_const_rejects_constant_left_for_signed_zero_order() {
 #[test]
 fn non_x86_native_execution_rejects_before_mapping() {
     let mut plan = super::NativeBinaryPlan {
-        storage: super::PhysicalStorage::Local(None),
-        physical: super::PhysicalState::new(),
+        physical: super::PhysicalInstallation::local(
+            super::InstalledBinaryEntry::Unpublished,
+        ),
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
         opcode: crate::ir::Opcode::Add,
         key: crate::stencil_select::numeric_region_key(crate::ir::Opcode::Add).unwrap(),
@@ -1046,20 +1047,20 @@ fn non_x86_native_execution_rejects_before_mapping() {
             returns_boolean: false,
         },
         compare_branch: None,
-        installed: super::InstalledBinaryEntry::Unpublished,
         native_entry_count: 0,
         last_native_view: None,
     };
     assert!(plan.execute(1.0, 2.0).is_err());
-    assert!(plan.storage.local().is_none());
+    assert!(plan.physical.storage.local().is_none());
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
 fn native_numeric_entry_pointer_is_cached_after_first_render() {
     let mut plan = super::NativeBinaryPlan {
-        storage: super::PhysicalStorage::Local(None),
-        physical: super::PhysicalState::new(),
+        physical: super::PhysicalInstallation::local(
+            super::InstalledBinaryEntry::Unpublished,
+        ),
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
         opcode: crate::ir::Opcode::Add,
         key: crate::stencil_select::numeric_region_key(crate::ir::Opcode::Add).unwrap(),
@@ -1068,18 +1069,17 @@ fn native_numeric_entry_pointer_is_cached_after_first_render() {
             returns_boolean: false,
         },
         compare_branch: None,
-        installed: super::InstalledBinaryEntry::Unpublished,
         native_entry_count: 0,
         last_native_view: None,
     };
     assert_eq!(plan.execute(1.5, 2.25), Ok(3.75));
     assert!(matches!(
-        plan.installed,
+        plan.physical.installed(),
         super::InstalledBinaryEntry::F64Local(_)
     ));
-    let used = plan.storage.used();
+    let used = plan.physical.storage.used();
     assert_eq!(plan.execute(4.0, 5.0), Ok(9.0));
-    assert_eq!(plan.storage.used(), used);
+    assert_eq!(plan.physical.storage.used(), used);
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -1101,7 +1101,7 @@ fn native_numeric_shared_entry_reuses_live_owner_and_recovers_after_eviction() {
     assert_eq!(plan.execute(1.5, 2.25), Ok(3.75));
     let used = shared.borrow().used();
     assert!(matches!(
-        plan.installed,
+        plan.physical.installed(),
         super::InstalledBinaryEntry::F64Shared(_)
     ));
     assert_eq!(plan.execute(4.0, 5.0), Ok(9.0));
@@ -1109,7 +1109,10 @@ fn native_numeric_shared_entry_reuses_live_owner_and_recovers_after_eviction() {
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert_eq!(plan.execute(4.0, 5.0), Ok(9.0));
     assert!(
-        matches!(plan.installed, super::InstalledBinaryEntry::F64Shared(_)),
+        matches!(
+            plan.physical.installed(),
+            super::InstalledBinaryEntry::F64Shared(_)
+        ),
         "eviction must rebuild the entry"
     );
 }
@@ -1181,7 +1184,7 @@ fn native_shared_boolean_entry_rebuilds_through_typed_owner() {
         .expect("shared boolean plan");
     assert_eq!(plan.execute(1.0, 2.0), Ok(1.0));
     assert!(matches!(
-        plan.installed,
+        plan.physical.installed(),
         super::InstalledBinaryEntry::BoolShared(_)
     ));
     let used = shared.borrow().used();
@@ -1194,7 +1197,7 @@ fn native_shared_boolean_entry_rebuilds_through_typed_owner() {
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert_eq!(plan.execute(2.0, 1.0), Ok(0.0));
     assert!(matches!(
-        plan.installed,
+        plan.physical.installed(),
         super::InstalledBinaryEntry::BoolShared(_)
     ));
 }
@@ -1375,7 +1378,7 @@ fn native_bitwise_i32_regions_guard_number_conversion() {
         );
         assert!(
             matches!(
-                plan.installed,
+                plan.physical.installed(),
                 super::InstalledBinaryEntry::I32Local(_) | super::InstalledBinaryEntry::U32Local(_)
             ),
             "conversion cases must reach the rendered typed entry"
@@ -1419,13 +1422,13 @@ fn native_shared_integer_entry_rebuilds_through_typed_owner() {
         .expect("shared integer plan");
     assert_eq!(plan.execute(-1.0, 1.0), Ok(2_147_483_647.0));
     assert!(matches!(
-        plan.installed,
+        plan.physical.installed(),
         super::InstalledBinaryEntry::U32Shared(_)
     ));
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert_eq!(plan.execute(-1.0, 33.5), Ok(2_147_483_647.0));
     assert!(matches!(
-        plan.installed,
+        plan.physical.installed(),
         super::InstalledBinaryEntry::U32Shared(_)
     ));
 }
