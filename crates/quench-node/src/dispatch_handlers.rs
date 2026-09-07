@@ -4567,7 +4567,7 @@ pub fn internal_binding(
             | "tcp_wrap"
             | "tls_wrap"
             | "udp_wrap"
-            | "zlib"
+        | "zlib"
     ) {
         if name == "udp_wrap" {
             // Reuse the dgram handle installed by the shared bootstrap so
@@ -9506,6 +9506,12 @@ pub fn cp_spawn_output_emit(
                 execute::get_property(child, "\0childTimerIds"),
                 Value::Array(ref timers) if timers.logical_len() > 0
             )
+            // A spawned IPC child that registered a message listener remains
+            // alive until its channel is disconnected, even when it has no
+            // timer or network handle.  Treat the listener as the referenced
+            // IPC resource so sends made immediately after spawn cannot race
+            // the synthetic startup finalizer.
+            || crate::modules::process::has_listener_in_scope(state, "message", scope)
     });
     let fork_ipc_live = matches!(
         execute::get_property(child, "\0childForkIpc"),
