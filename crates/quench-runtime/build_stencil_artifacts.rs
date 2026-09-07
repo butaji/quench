@@ -23,11 +23,12 @@ use super::{
 };
 
 const HEADER: &str = "/// Rust object artifacts generated at build time.\n";
+const DISABLE_GENERATION_ENV: &str = "QUENCH_DISABLE_STENCIL_OBJECTS";
 
 pub(crate) fn generate(out_dir: &Path, declarations: &[RegionDeclaration]) {
     let target = env::var("TARGET").unwrap_or_default();
     let generation_enabled =
-        env::var_os("QUENCH_GENERATE_STENCIL_OBJECTS").is_some() && supports_target(&target);
+        supports_target(&target) && env::var_os(DISABLE_GENERATION_ENV).is_none();
     if generation_enabled {
         println!("cargo:rustc-cfg=quench_generated_stencil_artifacts");
     }
