@@ -2049,7 +2049,7 @@ fn shared_constant_entry_recovers_after_owner_eviction() {
         Ok(crate::tagged_value::TaggedValue::number(42.5).bits())
     );
     assert!(matches!(
-        plan.installed,
+        plan.physical.installed(),
         super::InstalledConstantEntry::Shared(_)
     ));
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
@@ -2058,7 +2058,10 @@ fn shared_constant_entry_recovers_after_owner_eviction() {
         Ok(crate::tagged_value::TaggedValue::number(42.5).bits())
     );
     assert!(
-        matches!(plan.installed, super::InstalledConstantEntry::Shared(_)),
+        matches!(
+            plan.physical.installed(),
+            super::InstalledConstantEntry::Shared(_)
+        ),
         "eviction must force a fresh owner"
     );
 }
@@ -2896,11 +2899,9 @@ fn native_add_chain_rejects_mismatched_control_before_render() {
 #[test]
 fn native_move_uses_rendered_address_without_remapping() {
     let mut plan = super::NativeMovePlan {
-        storage: super::PhysicalStorage::Local(None),
-        physical: super::PhysicalState::new(),
+        physical: super::PhysicalInstallation::local(super::InstalledWordEntry::Unpublished),
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Move),
         opcode: crate::ir::Opcode::Move,
-        installed: super::InstalledWordEntry::Unpublished,
         native_entry_count: 0,
         last_native_view: None,
     };
@@ -2908,10 +2909,10 @@ fn native_move_uses_rendered_address_without_remapping() {
     assert_eq!(plan.execute(&source), Ok(source.bits()));
     #[cfg(quench_generated_stencil_artifacts)]
     assert!(plan.last_native_view.expect("invoked move view").generated);
-    let used = plan.storage.used();
+    let used = plan.physical.storage.used();
     assert!(used > 0);
     assert_eq!(plan.execute(&source), Ok(source.bits()));
-    assert_eq!(plan.storage.used(), used);
+    assert_eq!(plan.physical.storage.used(), used);
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -2934,7 +2935,7 @@ fn native_move_shared_entry_reuses_owner_and_recovers_after_eviction() {
     assert_eq!(plan.execute(&source), Ok(source.bits()));
     let used = shared.borrow().used();
     assert!(matches!(
-        plan.installed,
+        plan.physical.installed(),
         super::InstalledWordEntry::Shared(_)
     ));
     assert_eq!(plan.execute(&source), Ok(source.bits()));
@@ -2942,7 +2943,7 @@ fn native_move_shared_entry_reuses_owner_and_recovers_after_eviction() {
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert_eq!(plan.execute(&source), Ok(source.bits()));
     assert!(matches!(
-        plan.installed,
+        plan.physical.installed(),
         super::InstalledWordEntry::Shared(_)
     ));
 }
