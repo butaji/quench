@@ -1,9 +1,70 @@
 //! `structuredClone` — recursive value copy, no shared structure.
 
 use quench_runtime::host_api;
-use quench_runtime::value::Value;
+use quench_runtime::value::{ArrayBufferData, DataViewData, Value};
 use std::collections::HashMap;
 use std::rc::Rc;
+
+/// Copy a typed-array backing range without retaining the source ArrayBuffer.
+/// SharedArrayBuffer views intentionally keep their shared backing store;
+/// ordinary ArrayBuffer views receive an independent store so a subsequent
+/// transfer-detach cannot invalidate the queued clone.
+fn clone_view_buffer(
+    source: &Rc<ArrayBufferData>,
+    byte_offset: usize,
+    byte_length: usize,
+) -> Option<(Rc<ArrayBufferData>, usize)> {
+    if source.shared {
+        return Some((source.clone(), byte_offset));
+    }
+    let copy = Rc::new(ArrayBufferData::try_new(byte_length)?);
+    let source_bytes = source.bytes.borrow();
+    let start = byte_offset.min(source_bytes.len());
+    let end = start.saturating_add(byte_length).min(source_bytes.len());
+    if end > start {
+        copy.bytes.borrow_mut()[..end - start].copy_from_slice(&source_bytes[start..end]);
+    }
+    Some((copy, 0))
+}
+
+macro_rules! try_clone_typed_array {
+    ($value:expr, $variant:ident, $data:ty) => {
+        if let Value::$variant(view) = $value {
+            let length = view.logical_len();
+            let (buffer, byte_offset) =
+                clone_view_buffer(&view.buffer, view.byte_offset, view.byte_length())?;
+            return Some(Value::$variant(Rc::new(<$data>::new(
+                buffer,
+                byte_offset,
+                length,
+            ))));
+        }
+    };
+}
+
+fn clone_typed_view(value: &Value) -> Option<Value> {
+    try_clone_typed_array!(value, Float64Array, quench_runtime::value::Float64ArrayData);
+    try_clone_typed_array!(value, Float32Array, quench_runtime::value::Float32ArrayData);
+    try_clone_typed_array!(value, Int8Array, quench_runtime::value::Int8ArrayData);
+    try_clone_typed_array!(value, Int16Array, quench_runtime::value::Int16ArrayData);
+    try_clone_typed_array!(value, Int32Array, quench_runtime::value::Int32ArrayData);
+    try_clone_typed_array!(value, BigInt64Array, quench_runtime::value::BigInt64ArrayData);
+    try_clone_typed_array!(value, BigUint64Array, quench_runtime::value::BigUint64ArrayData);
+    try_clone_typed_array!(value, Uint8Array, quench_runtime::value::Uint8ArrayData);
+    try_clone_typed_array!(value, Uint8ClampedArray, quench_runtime::value::Uint8ClampedArrayData);
+    try_clone_typed_array!(value, Uint16Array, quench_runtime::value::Uint16ArrayData);
+    try_clone_typed_array!(value, Uint32Array, quench_runtime::value::Uint32ArrayData);
+    if let Value::DataView(view) = value {
+        let (buffer, byte_offset) =
+            clone_view_buffer(&view.buffer, view.byte_offset, view.byte_length())?;
+        return Some(Value::DataView(Rc::new(DataViewData::new(
+            buffer,
+            byte_offset,
+            view.byte_length,
+        ))));
+    }
+    None
+}
 
 pub fn deep_clone(value: Value) -> Value {
     if let Some(clone) = crate::modules::webcrypto::clone_key(&value) {
@@ -23,6 +84,9 @@ pub fn deep_clone(value: Value) -> Value {
         Value::Boolean(true)
     ) {
         return value;
+    }
+    if let Some(clone) = clone_typed_view(&value) {
+        return clone;
     }
     if matches!(
         quench_runtime::execute::get_property(&value, "name"),
