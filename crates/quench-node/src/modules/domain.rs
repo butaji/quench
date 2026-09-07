@@ -10,10 +10,10 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 use crate::registry::{
-    SPEC_DOMAIN_ADD, SPEC_DOMAIN_ADD_EMITTER, SPEC_DOMAIN_CONSTRUCTOR, SPEC_DOMAIN_CREATE,
-    SPEC_DOMAIN_DISPOSE, SPEC_DOMAIN_ENTER, SPEC_DOMAIN_EXIT, SPEC_DOMAIN_ON, SPEC_DOMAIN_ONCE,
-    SPEC_DOMAIN_BIND, SPEC_DOMAIN_BIND_CALL, SPEC_DOMAIN_INTERCEPT, SPEC_DOMAIN_INTERCEPT_CALL,
-    SPEC_DOMAIN_REMOVE, SPEC_DOMAIN_RUN,
+    SPEC_DOMAIN_ADD, SPEC_DOMAIN_ADD_EMITTER, SPEC_DOMAIN_BIND, SPEC_DOMAIN_BIND_CALL,
+    SPEC_DOMAIN_CONSTRUCTOR, SPEC_DOMAIN_CREATE, SPEC_DOMAIN_DISPOSE, SPEC_DOMAIN_ENTER,
+    SPEC_DOMAIN_EXIT, SPEC_DOMAIN_INTERCEPT, SPEC_DOMAIN_INTERCEPT_CALL, SPEC_DOMAIN_ON,
+    SPEC_DOMAIN_ONCE, SPEC_DOMAIN_REMOVE, SPEC_DOMAIN_RUN,
 };
 
 const ID: &str = "\0quench:domain:id";
@@ -402,6 +402,19 @@ fn run_callback(
                     result =
                         execute::call(handler, &Value::Undefined, std::slice::from_ref(&value));
                     if result.is_err() {
+                        // Node reports status 7 when a domain error handler
+                        // throws while handling the original exception. Mark
+                        // that second edge so the outer runner can preserve
+                        // the status across a child-process re-exec without
+                        // confusing it with an ordinary uncaught exception.
+                        if let Err(VmError::Thrown(thrown)) = &result {
+                            let marked = execute::set_property(
+                                thrown.clone(),
+                                "\0quench:uncaught-handler-throw",
+                                Value::Boolean(true),
+                            );
+                            execute::replace_value(thrown, &marked);
+                        }
                         break;
                     }
                     if *once {
@@ -498,7 +511,10 @@ fn mark_error(
     callback: &Value,
     thrown: bool,
 ) -> Result<Value, VmError> {
-    let value = if matches!(error, Value::Object(_) | Value::ObjectAlias(_)) {
+    // Error objects are identity-bearing JavaScript values.  Mutate the
+    // existing object in place so a domain handler observes the exact error
+    // instance thrown by the callback, rather than a host-created clone.
+    if matches!(error, Value::Object(_) | Value::ObjectAlias(_)) {
         execute::define_property(
             error.clone(),
             "domain",
@@ -508,16 +524,32 @@ fn mark_error(
                 ("writable".into(), Value::Boolean(true)),
                 ("value".into(), domain.clone()),
             ]),
-        )?
-    } else {
-        error.clone()
-    };
-    let value = execute::set_property(value, "domainThrown", Value::Boolean(thrown));
-    if thrown {
-        Ok(value)
-    } else {
-        Ok(execute::set_property(value, "domainBound", callback.clone()))
+        )?;
+        let _ = execute::define_property(
+            error.clone(),
+            "domainThrown",
+            host_api::object(vec![
+                ("configurable".into(), Value::Boolean(true)),
+                ("enumerable".into(), Value::Boolean(false)),
+                ("writable".into(), Value::Boolean(true)),
+                ("value".into(), Value::Boolean(thrown)),
+            ]),
+        );
+        if !thrown {
+            let _ = execute::define_property(
+                error.clone(),
+                "domainBound",
+                host_api::object(vec![
+                    ("configurable".into(), Value::Boolean(true)),
+                    ("enumerable".into(), Value::Boolean(false)),
+                    ("writable".into(), Value::Boolean(true)),
+                    ("value".into(), callback.clone()),
+                ]),
+            );
+        }
+        return Ok(error.clone());
     }
+    Ok(error.clone())
 }
 pub fn dispose(
     state: &Rc<RefCell<HostState>>,
@@ -606,7 +638,12 @@ pub(crate) fn stack_values(state: &Rc<RefCell<HostState>>) -> Vec<Value> {
     host.domain
         .stack
         .iter()
-        .filter_map(|id| host.domain.domains.get(id).map(|domain| domain.object.clone()))
+        .filter_map(|id| {
+            host.domain
+                .domains
+                .get(id)
+                .map(|domain| domain.object.clone())
+        })
         .collect()
 }
 

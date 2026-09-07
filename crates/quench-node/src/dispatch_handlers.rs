@@ -8893,6 +8893,12 @@ pub fn cp_spawn_output_emit(
     let Some(child) = args.first() else {
         return Ok(Value::Undefined);
     };
+    if matches!(
+        execute::get_property(child, "\0childTerminated"),
+        Value::Boolean(true)
+    ) {
+        return Ok(Value::Undefined);
+    }
     let stdout = args
         .get(1)
         .map(execute::canonical_value)

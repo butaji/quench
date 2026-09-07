@@ -380,27 +380,59 @@ fn route_uncaught(
                 std::process::abort();
             }
             match crate::modules::pump::handle_uncaught(&host.state(), error) {
-            Ok(()) => {
-                let handled = drive(context, "__quench_uncaught__();")
-                    .and_then(|_| drive(context, "__quench_run_loop__();"));
-                match handled {
-                    Ok(_) => Ok(()),
-                    Err(error) if crate::modules::process::abort_on_uncaught_exception(&host.state()) => {
+                Ok(()) => {
+                    let handled = drive(context, "__quench_uncaught__();")
+                        .and_then(|_| drive(context, "__quench_run_loop__();"));
+                    match handled {
+                        Ok(_) => Ok(()),
+                        Err(error)
+                            if crate::modules::process::abort_on_uncaught_exception(
+                                &host.state(),
+                            ) =>
+                        {
+                            std::process::abort();
+                        }
+                        Err(error) => {
+                            // Node reserves exit status 7 for an exception
+                            // thrown by the uncaughtException handler itself.
+                            // Preserve that status across child-process
+                            // re-exec so the parent observes the same close/
+                            // exit ordering and code as a native Node child.
+                            let global = quench_runtime::vm::current_global_object();
+                            let process = quench_runtime::execute::get_property(&global, "process");
+                            quench_runtime::execute::set_property_in_place(
+                                &process,
+                                "exitCode",
+                                Value::Number(7.0),
+                            );
+                            host.state().borrow_mut().process.exit_code = Some(7);
+                            Err(error)
+                        }
+                    }
+                }
+                Err(error) => {
+                    if crate::modules::process::abort_on_uncaught_exception(&host.state()) {
                         std::process::abort();
                     }
-                    Err(error) => Err(error),
+                    if is_uncaught_handler_throw(&error) {
+                        host.state().borrow_mut().process.exit_code = Some(7);
+                    }
+                    Err(error)
                 }
-            }
-            Err(error) => {
-                if crate::modules::process::abort_on_uncaught_exception(&host.state()) {
-                    std::process::abort();
-                }
-                Err(error)
-            }
             }
         }
         ok => ok.map(|_| ()),
     }
+}
+
+fn is_uncaught_handler_throw(error: &VmError) -> bool {
+    let VmError::Thrown(value) = error else {
+        return false;
+    };
+    matches!(
+        quench_runtime::execute::get_property(value, "\0quench:uncaught-handler-throw"),
+        Value::Boolean(true)
+    )
 }
 
 fn classify(result: Result<(), VmError>, exit_code: Option<i32>) -> RunOutcome {
