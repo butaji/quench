@@ -8996,6 +8996,31 @@ pub fn cp_spawn_output_emit(
         crate::modules::events::method_emit(state, Some(target), &event_args)
     };
     emit(child, "spawn", Vec::new())?;
+    // `fork()` owns the logical child lifecycle.  Its initial source runs
+    // synchronously before the caller can attach listeners, while the
+    // regular spawn-output transition would otherwise close the IPC channel
+    // on the next turn and race a deferred child `process.send()`.  Retain
+    // only the observable spawn edge here; terminal fork transitions are
+    // owned by the fork scope/IPC state machine.
+    if matches!(
+        execute::get_property(child, "\0childForkIpc"),
+        Value::Boolean(true)
+    ) {
+        // The forked source executes before the caller can install stream
+        // listeners, so writes from child `process.stdout`/`stderr` are
+        // buffered on the logical streams. Publish those bytes at the
+        // ordinary spawn checkpoint, but leave end/close/exit ownership with
+        // the fork IPC lifecycle below.
+        for (stream, key) in [(&stdout, "\0childPendingOutput"), (&stderr, "\0childPendingOutput")] {
+            if let Value::String(output) = execute::get_property(stream, key) {
+                if !output.is_empty() {
+                    emit(stream, "data", vec![cp_stream_output_value(stream, &output)?])?;
+                    execute::set_property_in_place(stream, key, Value::Undefined);
+                }
+            }
+        }
+        return Ok(Value::Undefined);
+    }
     let stdin_script = matches!(
         execute::get_property(child, "\0childStdinScript"),
         Value::Boolean(true)
@@ -9594,6 +9619,20 @@ pub fn cp_kill(
 ) -> Result<Value, VmError> {
     let child = receiver.ok_or(VmError::NotCallable)?;
     clear_child_timeout_timer(state, child);
+    // Timeout and explicit kill are terminal transitions too. Remove the
+    // AbortSignal listener here so it cannot retain the child after the exit
+    // event (the normal spawn-output path performs the same cleanup).
+    let abort_signal = execute::get_property(child, "\0childAbortSignal");
+    let abort_listener = execute::get_property(child, "\0childAbortListener");
+    if !matches!(abort_signal, Value::Undefined) && !matches!(abort_listener, Value::Undefined) {
+        let _ = crate::modules::event_target::remove_event_listener(
+            state,
+            Some(&abort_signal),
+            &[Value::String("abort".into()), abort_listener],
+        );
+        execute::set_property_in_place(child, "\0childAbortSignal", Value::Undefined);
+        execute::set_property_in_place(child, "\0childAbortListener", Value::Undefined);
+    }
     let signal = args
         .first()
         .cloned()
