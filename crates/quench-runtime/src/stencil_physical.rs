@@ -181,7 +181,9 @@ pub(crate) fn validate_aarch64_instruction_stream(bytes: &[u8]) -> Result<(), St
 
 #[cfg(target_arch = "aarch64")]
 fn known_aarch64_raw_instruction(encoded: u32) -> bool {
-    known_aarch64_instruction(encoded)
+    let indirect_branch = encoded & 0xFFFF_FC1F == 0xD61F_0000;
+    let indirect_call = encoded & 0xFFFF_FC1F == 0xD63F_0000;
+    known_aarch64_instruction(encoded) && !indirect_branch && !indirect_call
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -238,5 +240,14 @@ mod tests {
     fn raw_validator_rejects_direct_branch_outside_region() {
         let branch_past_end = 0x1400_0001u32.to_le_bytes();
         assert!(validate_raw_instruction_stream(&branch_past_end).is_err());
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn raw_validator_rejects_unprovable_indirect_control() {
+        let branch_x8 = 0xD61F_0100u32.to_le_bytes();
+        let call_x8 = 0xD63F_0100u32.to_le_bytes();
+        assert!(validate_raw_instruction_stream(&branch_x8).is_err());
+        assert!(validate_raw_instruction_stream(&call_x8).is_err());
     }
 }
