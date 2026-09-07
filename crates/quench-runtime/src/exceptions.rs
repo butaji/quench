@@ -10,12 +10,7 @@ pub(crate) fn execute(
     };
     let body_step = execute_try_body(body, registers)?;
     if body_step.completion.is_suspension() {
-        return wrap_try_suspension(
-            op,
-            crate::machine::TryPhase::Body,
-            body.range,
-            body_step,
-        );
+        return wrap_try_suspension(op, crate::machine::TryPhase::Body, body.range, body_step);
     }
     finish_try_completion(registers, op, body_step.completion)
 }
@@ -113,13 +108,27 @@ fn wrap_try_suspension(
     range: crate::machine::CodeRange,
     step: crate::vm::CompletionStep,
 ) -> Result<Completion, VmError> {
-    let Op::Try { body, handler, finalizer, catch_slot, .. } = op else {
+    let Op::Try {
+        body,
+        handler,
+        finalizer,
+        catch_slot,
+        ..
+    } = op
+    else {
         return Err(VmError::MissingReturn);
     };
-    let inner = step.completion.suspension_point().cloned().ok_or(VmError::MissingReturn)?;
+    let inner = step
+        .completion
+        .suspension_point()
+        .cloned()
+        .ok_or(VmError::MissingReturn)?;
     let yield_dst = inner.destination();
     let next = u32::try_from(step.next).map_err(|_| VmError::MissingReturn)?;
-    let body_resume = range.start.checked_add(next).ok_or(VmError::MissingReturn)?;
+    let body_resume = range
+        .start
+        .checked_add(next)
+        .ok_or(VmError::MissingReturn)?;
     if body_resume > range.end {
         return Err(VmError::MissingReturn);
     }
@@ -128,7 +137,10 @@ fn wrap_try_suspension(
         body: body.range,
         handler: handler.as_ref().map(|code| code.range),
         finalizer: finalizer.as_ref().map(|code| code.range),
-        body_resume: crate::machine::CodeRange { start: body_resume, ..range },
+        body_resume: crate::machine::CodeRange {
+            start: body_resume,
+            ..range
+        },
         yield_dst,
         catch_slot: *catch_slot,
     };

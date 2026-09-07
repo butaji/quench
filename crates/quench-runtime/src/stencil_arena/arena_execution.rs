@@ -195,7 +195,7 @@ impl StencilArena {
             view,
             values,
             crate::stencil_select::RegionAbi::ScalarF64x3,
-            ScalarEntryScope::Terminal,
+            ScalarEntryScope::DeclaredFallthrough,
             |arena, address| {
                 let entry = arena.f64x3_entry(address)?;
                 Ok(entry(lhs, rhs, third))

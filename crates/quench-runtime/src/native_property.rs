@@ -169,6 +169,21 @@ impl GuardedPropertySlot {
             .and_then(crate::register_file::SlotWord::plain_non_owning_bits)
             .is_some()
     }
+
+    /// Read an own data slot immediately after admission established its
+    /// owner and guards. No JavaScript or allocating helper may intervene.
+    pub(crate) fn load_own_now(self) -> Option<u64> {
+        if self.prototype_depth != 0 {
+            return None;
+        }
+        let layout = unsafe { self.layout.as_ref() }?;
+        let descriptor = unsafe { self.descriptor_state.as_ref() }?;
+        let deleted = unsafe { self.deleted_state.as_ref() }?;
+        if *layout != self.expected_layout || *descriptor != 1 || *deleted != 1 {
+            return None;
+        }
+        unsafe { self.slot.as_ref() }?.plain_tagged_bits()
+    }
 }
 
 const _: () = {

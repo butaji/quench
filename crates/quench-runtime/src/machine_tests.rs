@@ -2484,6 +2484,97 @@ fn ordinary_source_lowering_executes_fused_indexed_numeric_update() {
 }
 
 #[cfg(target_arch = "aarch64")]
+fn affine_i32_source_body() -> (super::FunctionCode, usize) {
+    let source = "function f(s){var x=s.seed;for(var i=0;i<s.n;i++)x=(x*33+7)|0;return x} f({seed:1,n:4});";
+    let program = crate::reduce::reduce_source(source).expect("affine source lowers");
+    let record = crate::stencil_select::select_region(
+        crate::stencil_select::affine_i32_loop_region_key(),
+    ).expect("affine declaration");
+    let mut pending = Vec::new();
+    program.code().cold_ops().for_each(|(_, op)| {
+        op.visit_bodies(&mut |body| pending.push(body.clone()));
+    });
+    while let Some(body) = pending.pop() {
+        let Some(code) = body.code() else { continue };
+        let pc = (0..code.len()).find(|pc| {
+            record.operations.iter().enumerate().all(|(offset, expected)| {
+                code.instruction(*pc + offset).is_some_and(|instruction| {
+                    expected.matches_physical_contract(instruction.opcode)
+                })
+            })
+        });
+        if let Some(pc) = pc {
+            return (body, pc);
+        }
+        code.cold_ops().for_each(|(_, op)| {
+            op.visit_bodies(&mut |nested| pending.push(nested.clone()));
+        });
+    }
+    panic!("ordinary source contains affine loop window")
+}
+
+#[cfg(target_arch = "aarch64")]
+fn affine_i32_environment(code: super::CodeView<'_>, pc: usize, value: f64, end: f64) -> std::rc::Rc<crate::environment::Environment> {
+    let captures = crate::environment::Environment::new();
+    let frame = crate::register_file::RegisterFile::with_undefined(usize::from(code.frame_register_count()));
+    let environment = crate::environment::Environment::child_registers(&captures, frame);
+    environment.set(code.instruction(pc).unwrap().b, super::Value::Number(0.0));
+    environment.set(code.instruction(pc + 5).unwrap().b, super::Value::Number(value));
+    let current = std::rc::Rc::new(crate::value::ObjectData::new(vec![
+        ("seed".into(), super::Value::Number(value)),
+        ("n".into(), super::Value::Number(end)),
+    ]));
+    let object = crate::value::ObjectData::new(Vec::new());
+    object.replace_with(current);
+    environment.set(code.instruction(pc + 1).unwrap().b, super::Value::Object(std::rc::Rc::new(object)));
+    environment
+}
+
+#[cfg(all(target_arch = "aarch64", quench_generated_stencil_artifacts))]
+#[test]
+fn ordinary_source_executes_generated_affine_i32_loop_region() {
+    let key = crate::stencil_select::affine_i32_loop_region_key();
+    let record = crate::stencil_select::select_region(key).expect("affine declaration");
+    let (function, pc) = affine_i32_source_body();
+    let code = function.code().expect("linked affine function");
+    let entries = super::baseline_entries(code);
+    let windows = (0..entries.len()).map(|pc| code.operand_window_at(pc)).collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &windows);
+    assert!(record.bindings_match_entries(&entries, pc), "affine operand bindings");
+    assert!(cfg.region_plan(&entries, pc, record.operations).is_some(), "affine control plan");
+    assert!(super::region_outputs_cover_exit(&entries, &cfg, pc, record), "affine live outputs");
+    let view = crate::stencil_select::select_physical(key).expect("affine physical view");
+    assert!(view.generated, "generated affine view required");
+    assert!(
+        crate::stencil_physical::contains_interrupt_checkpoint(view.stencil.bytes),
+        "generated affine checkpoint bytes: {:02x?}",
+        view.stencil.bytes
+    );
+    assert_eq!(super::validate_physical_view(record, view.stencil), Ok(()));
+    let plan = super::BaselinePlan::compile_for_test(
+        code,
+        crate::stencil_policy::ExecutionPolicy::arm_composed_opt_in_for_test(),
+    );
+    let region = plan.native_region_at(pc).expect("affine loop admission");
+    assert_eq!(region.borrow().key_for_test(), key);
+    let mut registers = crate::register_file::RegisterFile::with_undefined(usize::from(code.register_count()));
+    let completion = crate::vm::execute_baseline_code_from(
+        code, &plan, pc, &mut registers, &crate::vm::current_context_or_default(),
+        affine_i32_environment(code, pc, 1.0, 4.0),
+    ).expect("normal driver executes affine loop").0;
+    assert_eq!(completion, crate::completion::Completion::Return(super::Value::Number(1_445_341.0)));
+    assert!(region.borrow().last_native_execution());
+    assert!(region.borrow().last_native_view_for_test().is_some_and(|view| view.generated));
+
+    let completion = crate::vm::execute_baseline_code_from(
+        code, &plan, pc, &mut registers, &crate::vm::current_context_or_default(),
+        affine_i32_environment(code, pc, -0.0, 0.0),
+    ).expect("negative zero falls back").0;
+    assert!(matches!(completion, crate::completion::Completion::Return(super::Value::Number(value)) if value == 0.0 && value.is_sign_negative()));
+    assert!(!region.borrow().last_native_execution());
+}
+
+#[cfg(target_arch = "aarch64")]
 fn assert_holey_indexed_update_falls_back(
     view: crate::machine::CodeView<'_>,
     plan: &super::BaselinePlan,

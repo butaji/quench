@@ -198,6 +198,10 @@ impl SharedStencilSlab {
         owned_array_numeric_loop_entry,
         crate::stencil_select::RegionAbi::ArrayNumericLoop
     );
+    typed_dispatch_entry!(
+        owned_affine_i32_loop_entry,
+        crate::stencil_select::RegionAbi::AffineI32Loop
+    );
 
     pub(crate) fn with_owned<F: Copy, R>(
         &self,

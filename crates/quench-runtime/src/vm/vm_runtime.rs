@@ -55,6 +55,7 @@ pub(crate) struct NativeRegionContext<'a> {
     abi: crate::stencil_select::RegionAbi,
     registers: *mut crate::register_file::RegisterFile,
     context: *const VmContext,
+    environment: *const crate::environment::Environment,
     outcome: Option<NativeBridgeOutcome>,
     entry_started: bool,
     /// Set immediately before invoking rendered bytes; unlike a successful
@@ -91,6 +92,18 @@ impl<'a> NativeRegionContext<'a> {
         registers: &mut crate::register_file::RegisterFile,
         context: &VmContext,
     ) -> Self {
+        Self::new_with_environment(code, pc, operations, abi, registers, context, None)
+    }
+
+    pub(crate) fn new_with_environment(
+        code: crate::machine::CodeView<'a>,
+        pc: usize,
+        operations: &'static [crate::ir::Opcode],
+        abi: crate::stencil_select::RegionAbi,
+        registers: &mut crate::register_file::RegisterFile,
+        context: &VmContext,
+        environment: Option<&crate::environment::Environment>,
+    ) -> Self {
         Self {
             code,
             pc,
@@ -98,12 +111,17 @@ impl<'a> NativeRegionContext<'a> {
             abi,
             registers,
             context,
+            environment: environment.map_or(std::ptr::null(), std::ptr::from_ref),
             outcome: None,
             entry_started: false,
             native_entered: false,
             #[cfg(test)]
             force_committed_status: false,
         }
+    }
+
+    fn environment(&self) -> Option<&crate::environment::Environment> {
+        unsafe { self.environment.as_ref() }
     }
 
     pub(crate) fn finish(
@@ -1035,6 +1053,86 @@ pub(crate) struct NativeArrayLoopContext {
     pub interrupt: *const std::sync::atomic::AtomicBool,
 }
 
+#[repr(C)]
+pub(crate) struct NativeAffineI32LoopContext {
+    index: usize,
+    end: usize,
+    value: i32,
+    multiplier: i32,
+    addend: i32,
+    _padding: u32,
+    interrupt: *const std::sync::atomic::AtomicBool,
+}
+
+struct AffineI32Admission {
+    context: NativeAffineI32LoopContext,
+    start_index: usize,
+    index_slot: u16,
+    value_slot: u16,
+}
+
+#[derive(Clone, Copy)]
+enum AffineI32Rejection {
+    Window,
+    Binding,
+    Constants,
+    Index,
+    Value,
+    BoundReceiver,
+    BoundReplacement,
+    BoundDictionary,
+    BoundGlobal,
+    BoundGlobalView,
+    BoundMissing,
+    BoundNonObject,
+    BoundSlot,
+    BoundValue,
+    Range,
+    Stores,
+    Environment,
+}
+
+impl AffineI32Rejection {
+    const fn trace_name(self) -> &'static str {
+        match self {
+            Self::Window => "affine_i32_window",
+            Self::Binding => "affine_i32_binding",
+            Self::Constants => "affine_i32_constants",
+            Self::Index => "affine_i32_index",
+            Self::Value => "affine_i32_value",
+            Self::BoundReceiver => "affine_i32_bound_receiver",
+            Self::BoundReplacement => "affine_i32_bound_replacement",
+            Self::BoundDictionary => "affine_i32_bound_dictionary",
+            Self::BoundGlobal => "affine_i32_bound_global",
+            Self::BoundGlobalView => "affine_i32_bound_global_view",
+            Self::BoundMissing => "affine_i32_bound_missing",
+            Self::BoundNonObject => "affine_i32_bound_non_object",
+            Self::BoundSlot => "affine_i32_bound_slot",
+            Self::BoundValue => "affine_i32_bound_value",
+            Self::Range => "affine_i32_range",
+            Self::Stores => "affine_i32_stores",
+            Self::Environment => "affine_i32_environment",
+        }
+    }
+}
+
+const _: () = {
+    const INDEX_OFFSET: usize = 0;
+    const END_OFFSET: usize = 8;
+    const VALUE_OFFSET: usize = 16;
+    const MULTIPLIER_OFFSET: usize = 20;
+    const ADDEND_OFFSET: usize = 24;
+    const INTERRUPT_OFFSET: usize = 32;
+    const CONTEXT_SIZE: usize = 40;
+    assert!(std::mem::offset_of!(NativeAffineI32LoopContext, index) == INDEX_OFFSET);
+    assert!(std::mem::offset_of!(NativeAffineI32LoopContext, end) == END_OFFSET);
+    assert!(std::mem::offset_of!(NativeAffineI32LoopContext, value) == VALUE_OFFSET);
+    assert!(std::mem::offset_of!(NativeAffineI32LoopContext, multiplier) == MULTIPLIER_OFFSET);
+    assert!(std::mem::offset_of!(NativeAffineI32LoopContext, addend) == ADDEND_OFFSET);
+    assert!(std::mem::offset_of!(NativeAffineI32LoopContext, interrupt) == INTERRUPT_OFFSET);
+    assert!(std::mem::size_of::<NativeAffineI32LoopContext>() == CONTEXT_SIZE);
+};
+
 impl NativeArrayLoopContext {
     #[inline]
     fn is_valid(&self) -> bool {
@@ -1459,6 +1557,243 @@ pub(crate) fn execute_composed_array_numeric_loop(
     Ok(Some(handler_transition(pc + 19, None)))
 }
 
+#[cfg(target_arch = "aarch64")]
+fn affine_loop_window(region: &NativeRegionContext<'_>) -> Option<[crate::ir::Instruction; 19]> {
+    let instructions = (0..19)
+        .map(|offset| region.code.instruction(region.pc + offset))
+        .collect::<Option<Vec<_>>>()?;
+    instructions.try_into().ok()
+}
+
+#[cfg(target_arch = "aarch64")]
+fn exact_i32(value: f64) -> Option<i32> {
+    (value.is_finite()
+        && value.fract() == 0.0
+        && value >= f64::from(i32::MIN)
+        && value <= f64::from(i32::MAX)
+        && !(value == 0.0 && value.is_sign_negative()))
+    .then_some(value as i32)
+}
+
+#[cfg(target_arch = "aarch64")]
+fn tagged_number(bits: u64) -> Option<f64> {
+    match crate::tagged_value::TaggedValue::from_bits(bits).decode() {
+        crate::tagged_value::DecodedValue::Number(value) => Some(value),
+        crate::tagged_value::DecodedValue::I31(value) => Some(f64::from(value)),
+        _ => None,
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+fn affine_loop_constants(
+    code: crate::machine::CodeView<'_>,
+    ops: &[crate::ir::Instruction; 19],
+) -> Option<(i32, i32)> {
+    let crate::ops::Constant::Number(multiplier) = code.constant(ops[6].b)? else {
+        return None;
+    };
+    let crate::ops::Constant::Number(addend) = code.constant(ops[8].c)? else {
+        return None;
+    };
+    let crate::ops::Constant::Number(zero) = code.constant(ops[9].b)? else {
+        return None;
+    };
+    let crate::ops::Constant::Number(one) = code.constant(ops[14].b)? else {
+        return None;
+    };
+    let multiplier = exact_i32(*multiplier)?;
+    let addend = exact_i32(*addend)?;
+    let exact_bound =
+        i64::from(multiplier).unsigned_abs() * (1_u64 << 31) + i64::from(addend).unsigned_abs();
+    (*zero == 0.0 && *one == 1.0 && exact_bound <= (1_u64 << 53)).then_some((multiplier, addend))
+}
+
+#[cfg(target_arch = "aarch64")]
+fn affine_loop_operators(ops: &[crate::ir::Instruction; 19]) -> bool {
+    crate::ir::compact_binary_operator(ops[3].flags) == Some(crate::ops::BinaryOp::LessThan)
+        && crate::ir::compact_binary_operator(ops[10].flags)
+            == Some(crate::ops::BinaryOp::BitwiseOr)
+        && crate::ir::compact_binary_operator(ops[15].flags)
+            == Some(crate::ops::BinaryOp::NumericAdd)
+        && crate::ir::compact_unary_operator(ops[17].flags) == Some(crate::ops::UnaryOp::ToNumeric)
+}
+
+#[cfg(target_arch = "aarch64")]
+fn affine_loop_bound(
+    region: &NativeRegionContext<'_>,
+    receiver: &crate::value::Value,
+) -> Result<usize, AffineI32Rejection> {
+    let receiver = match receiver {
+        crate::value::Value::BindingCell(cell) => cell.load(),
+        receiver => receiver.clone(),
+    };
+    let receiver = match receiver {
+        crate::value::Value::ObjectAlias(alias) => alias
+            .target()
+            .map(crate::value::Value::Object)
+            .ok_or(AffineI32Rejection::BoundReceiver)?,
+        receiver => receiver,
+    };
+    let current = crate::locals::resolved_replacement(receiver);
+    let rejection = match current {
+        crate::value::Value::Null | crate::value::Value::Undefined => {
+            AffineI32Rejection::BoundMissing
+        }
+        crate::value::Value::Object(_) => AffineI32Rejection::BoundReceiver,
+        _ => AffineI32Rejection::BoundNonObject,
+    };
+    let crate::value::Value::Object(object) = &current else {
+        return Err(rejection);
+    };
+    let rejection = if object.has_replacement() {
+        AffineI32Rejection::BoundReplacement
+    } else if object.is_dictionary() {
+        AffineI32Rejection::BoundDictionary
+    } else if object.is_realm_global() {
+        AffineI32Rejection::BoundGlobal
+    } else if object.is_script_global_view() {
+        AffineI32Rejection::BoundGlobalView
+    } else {
+        AffineI32Rejection::BoundReceiver
+    };
+    let object = native_property_object_guard(object).ok_or(rejection)?;
+    let metadata = region
+        .code
+        .metadata_at(region.pc + 2)
+        .ok_or(AffineI32Rejection::BoundSlot)?;
+    let key = metadata
+        .name
+        .as_deref()
+        .ok_or(AffineI32Rejection::BoundSlot)?;
+    let access = quickened_native_own_slot(region.code, region.pc + 2, object, key)
+        .ok_or(AffineI32Rejection::BoundSlot)?;
+    let value = access
+        .load_own_now()
+        .and_then(tagged_number)
+        .ok_or(AffineI32Rejection::BoundValue)?;
+    (value.is_finite() && value >= 0.0 && value.fract() == 0.0 && value <= i32::MAX as f64)
+        .then_some(value as usize)
+        .ok_or(AffineI32Rejection::BoundValue)
+}
+
+#[cfg(target_arch = "aarch64")]
+fn admit_affine_i32_loop(
+    region: &NativeRegionContext<'_>,
+) -> Result<AffineI32Admission, AffineI32Rejection> {
+    let ops = affine_loop_window(region).ok_or(AffineI32Rejection::Window)?;
+    let record =
+        crate::stencil_select::select_region(crate::stencil_select::affine_i32_loop_region_key())
+            .ok_or(AffineI32Rejection::Window)?;
+    if !record.bindings_match(&ops, region.pc) || !affine_loop_operators(&ops) {
+        return Err(AffineI32Rejection::Binding);
+    }
+    let (multiplier, addend) =
+        affine_loop_constants(region.code, &ops).ok_or(AffineI32Rejection::Constants)?;
+    let environment = region.environment().ok_or(AffineI32Rejection::Window)?;
+    let current_environment = crate::locals::with_current_ref(|current| {
+        current.is_some_and(|current| std::ptr::eq(current, environment))
+    });
+    if !current_environment {
+        return Err(AffineI32Rejection::Environment);
+    }
+    let index = environment
+        .get_number(ops[0].b)
+        .and_then(exact_i32)
+        .ok_or(AffineI32Rejection::Index)?;
+    let value = environment
+        .get_number(ops[5].b)
+        .and_then(exact_i32)
+        .ok_or(AffineI32Rejection::Value)?;
+    let end = affine_loop_bound(region, &environment.get(ops[1].b))?;
+    if index < 0 || index as usize > end || end - index as usize > MAX_NATIVE_ARRAY_LOOP_ITERATIONS
+    {
+        return Err(AffineI32Rejection::Range);
+    }
+    if !environment.can_store_proven_tagged_bits(ops[16].a)
+        || !environment.can_store_proven_tagged_bits(ops[11].a)
+    {
+        return Err(AffineI32Rejection::Stores);
+    }
+    let interrupt = unsafe { &*region.context }.interrupt_flag();
+    Ok(AffineI32Admission {
+        context: NativeAffineI32LoopContext {
+            index: index as usize,
+            end,
+            value,
+            multiplier,
+            addend,
+            _padding: 0,
+            interrupt,
+        },
+        start_index: index as usize,
+        index_slot: ops[16].a,
+        value_slot: ops[11].a,
+    })
+}
+
+#[cfg(target_arch = "aarch64")]
+fn commit_affine_i32_loop(
+    admission: &AffineI32Admission,
+    environment: &crate::environment::Environment,
+) -> bool {
+    let index = crate::tagged_value::TaggedValue::number(admission.context.index as f64).bits();
+    let value = crate::tagged_value::TaggedValue::number(f64::from(admission.context.value)).bits();
+    environment.store_proven_tagged_bits(admission.index_slot, index)
+        && environment.store_proven_tagged_bits(admission.value_slot, value)
+}
+
+#[cfg(target_arch = "aarch64")]
+pub(crate) fn execute_composed_affine_i32_loop(
+    region: &mut NativeRegionContext<'_>,
+    invoke: impl FnOnce(*mut std::ffi::c_void) -> Result<u64, crate::stencil_arena::ArenaError>,
+) -> Result<Option<DispatchTransition>, crate::machine::NativeDispatchError> {
+    if region.registers.is_null() || region.context.is_null() || region.operations.len() != 19 {
+        return Ok(None);
+    }
+    let mut admission = match admit_affine_i32_loop(region) {
+        Ok(admission) => admission,
+        Err(reason) => {
+            crate::execution_trace::leaf_rejection(reason.trace_name());
+            return Ok(None);
+        }
+    };
+    region.native_entered = true;
+    let raw = (&mut admission.context as *mut NativeAffineI32LoopContext).cast();
+    let status = invoke(raw).map_err(|error| {
+        crate::machine::NativeDispatchError::committed(
+            region.pc + 18,
+            format!("affine loop failed after entry: {error:?}"),
+        )
+    })?;
+    let environment = region
+        .environment()
+        .expect("admission requires a live environment");
+    if !commit_affine_i32_loop(&admission, environment) {
+        return Err(crate::machine::NativeDispatchError::committed(
+            region.pc + 18,
+            "affine loop live-out commit failed",
+        ));
+    }
+    let iterations = admission.context.index - admission.start_index;
+    crate::execution_trace::stencil_iterations(
+        region.code,
+        region.pc,
+        "baseline_region",
+        iterations,
+    );
+    if status == NATIVE_DISPATCH_INTERRUPT && admission.context.index < admission.context.end {
+        unsafe { &*region.context }.clear_interrupt();
+        return Ok(Some(resume_region_transition(region.pc)));
+    }
+    if status != NATIVE_DISPATCH_OK || admission.context.index != admission.context.end {
+        return Err(crate::machine::NativeDispatchError::committed(
+            region.pc + 18,
+            "affine loop returned incomplete progress",
+        ));
+    }
+    Ok(Some(resume_region_transition(region.pc + 19)))
+}
+
 fn run_ops(
     ops: &[Op],
     registers: &mut crate::register_file::RegisterFile,
@@ -1711,7 +2046,8 @@ pub(crate) fn execute_optimized_code_step_from(
     if let Some(native) = entry.native_region() {
         let (result, native_executed) = {
             let mut plan = native.borrow_mut();
-            let result = plan.execute(code, start, registers, context);
+            let environment = crate::locals::current();
+            let result = plan.execute(code, start, registers, context, Some(&environment));
             (result, plan.last_native_execution())
         };
         match result {
@@ -2193,7 +2529,15 @@ fn run_baseline_completion_step_from(
     registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
 ) -> Result<CompletionStep, VmError> {
-    run_baseline_completion_step_from_with_environment(code, plan, start, registers, context, None)
+    let environment = crate::locals::current();
+    run_baseline_completion_step_from_with_environment(
+        code,
+        plan,
+        start,
+        registers,
+        context,
+        Some(&environment),
+    )
 }
 
 fn run_baseline_completion_step_from_with_environment(
@@ -2253,7 +2597,7 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
         if let Some(native) = plan.native_region_at(pc) {
             let (region_result, native_executed) = {
                 let mut native = native.borrow_mut();
-                let result = native.execute(code, pc, registers, context);
+                let result = native.execute(code, pc, registers, context, environment);
                 (result, native.last_native_execution())
             };
             crate::execution_trace::stencil_observation(
@@ -2780,9 +3124,7 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
             },
             None => match run_baseline_instruction(code, pc, entry, registers, context) {
                 Ok(transition) => transition,
-                Err(error) => {
-                    return completion_step_after_error_at(registers, error, pc + 1, pc)
-                }
+                Err(error) => return completion_step_after_error_at(registers, error, pc + 1, pc),
             },
         };
         let next = match transition.target {
@@ -5271,7 +5613,7 @@ mod compact_handler_tests {
         )
         .expect("array-get native declaration");
         let transition = region
-            .execute(code, 0, &mut registers, &context)
+            .execute(code, 0, &mut registers, &context, None)
             .expect("native dense array get");
         assert!(region.last_native_execution());
         #[cfg(quench_generated_stencil_artifacts)]
@@ -5824,7 +6166,7 @@ mod compact_handler_tests {
             )
             .expect("array region admission");
             let actual = region
-                .execute(native_code.code(), 0, &mut native, &context)
+                .execute(native_code.code(), 0, &mut native, &context, None)
                 .expect("canonical array fallback");
             assert_transition_equal(&actual, &expected);
             assert_eq!(native, ordinary);
@@ -5941,7 +6283,7 @@ mod compact_handler_tests {
         )
         .expect("array-loop region admission");
         let transition = region
-            .execute(lowered, 0, &mut registers, &context)
+            .execute(lowered, 0, &mut registers, &context, None)
             .expect("native composed entry");
         assert!(matches!(
             transition.completion,
@@ -5975,7 +6317,7 @@ mod compact_handler_tests {
         )
         .expect("array-loop fallback admission");
         fallback_region
-            .execute(lowered, 0, &mut fallback_registers, &context)
+            .execute(lowered, 0, &mut fallback_registers, &context, None)
             .expect("complete hole fallback");
         assert!(matches!(fallback_registers.read(4), Some(Value::Number(value)) if value.is_nan()));
         assert!(matches!(
@@ -6029,7 +6371,7 @@ mod compact_handler_tests {
         )
         .expect("stale region admission");
         assert!(matches!(
-            stale_region.execute(stale.code(), 0, &mut stale_registers, &context),
+            stale_region.execute(stale.code(), 0, &mut stale_registers, &context, None),
             Err(crate::machine::NativeDispatchError::Physical(_))
         ));
         assert_eq!(stale_registers, stale_before);
@@ -6298,6 +6640,62 @@ mod compact_handler_tests {
         assert_eq!(raw.index, 1);
         assert_eq!(raw.result, 11.0);
         assert_eq!(data, vec![11.0, 20.0]);
+    }
+
+    #[cfg(all(target_arch = "aarch64", quench_generated_stencil_artifacts))]
+    #[test]
+    fn generated_affine_i32_loop_executes_backedge_and_interrupt() {
+        let key = crate::stencil_select::affine_i32_loop_region_key();
+        let view = crate::stencil_select::select_physical(key).expect("affine loop view");
+        assert!(view.generated, "test requires the rustc-produced artifact");
+        let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::LoadLocal);
+        let values = crate::stencil_fact::PatchValues::from_site(&site);
+        let mut arena = crate::stencil_arena::StencilArena::new(4096).expect("arena");
+        let mut cache = crate::stencil_select::RenderedRegionCache::new();
+        let address = arena
+            .render_physical_view_or_get(&mut cache, view, &values)
+            .expect("render affine loop");
+        arena.make_executable().expect("publish affine loop");
+        let interrupt = std::sync::atomic::AtomicBool::new(false);
+        for (index, end, value, expected) in [(0, 0, 9, 9), (0, 1, 2, 73), (2, 5, 4, 151609)] {
+            let mut raw = super::NativeAffineI32LoopContext {
+                index,
+                end,
+                value,
+                multiplier: 33,
+                addend: 7,
+                _padding: 0,
+                interrupt: &interrupt,
+            };
+            let status = arena
+                .execute_dispatch_with_abi(
+                    address,
+                    (&mut raw as *mut super::NativeAffineI32LoopContext).cast(),
+                    view.abi,
+                )
+                .expect("execute generated affine loop");
+            assert_eq!(status, super::NATIVE_DISPATCH_OK);
+            assert_eq!((raw.index, raw.value), (end, expected));
+        }
+        interrupt.store(true, std::sync::atomic::Ordering::Relaxed);
+        let mut raw = super::NativeAffineI32LoopContext {
+            index: 0,
+            end: 3,
+            value: 1,
+            multiplier: 2,
+            addend: 1,
+            _padding: 0,
+            interrupt: &interrupt,
+        };
+        let status = arena
+            .execute_dispatch_with_abi(
+                address,
+                (&mut raw as *mut super::NativeAffineI32LoopContext).cast(),
+                view.abi,
+            )
+            .expect("execute interruptible affine loop");
+        assert_eq!(status, super::NATIVE_DISPATCH_INTERRUPT);
+        assert_eq!((raw.index, raw.value), (1, 3));
     }
 
     #[test]
@@ -6728,7 +7126,7 @@ mod compact_handler_tests {
         )
         .expect("call region admission");
         let actual = region
-            .execute(code, 0, &mut fused, &context)
+            .execute(code, 0, &mut fused, &context, None)
             .expect("call region execution");
         assert_transition_equal(&actual, &expected);
         assert_eq!(fused, ordinary);
@@ -6750,7 +7148,7 @@ mod compact_handler_tests {
         )
         .expect("call region admission");
         assert!(matches!(
-            hostile_region.execute(hostile_code, 0, &mut hostile_registers, &context),
+            hostile_region.execute(hostile_code, 0, &mut hostile_registers, &context, None),
             Err(crate::machine::NativeDispatchError::Physical(_))
         ));
         assert_eq!(hostile_registers, before);
@@ -7381,7 +7779,7 @@ mod compact_handler_tests {
                 let mut region = crate::machine::NativeRegionPlan::new_for_test(key)
                     .expect("fused region test plan");
                 region
-                    .execute(code, 0, &mut fused, &context)
+                    .execute(code, 0, &mut fused, &context, None)
                     .expect("fused region execution")
             };
             assert_transition_equal(&actual_transition, &expected_transition);
@@ -7461,7 +7859,7 @@ mod compact_handler_tests {
             let mut region =
                 crate::machine::NativeRegionPlan::new_for_test(key).expect("loop body test plan");
             region
-                .execute(code, 0, &mut fused, &context)
+                .execute(code, 0, &mut fused, &context, None)
                 .expect("loop body fused execution")
         };
         assert_transition_equal(&actual_transition, &expected_transition);
@@ -7483,7 +7881,7 @@ mod compact_handler_tests {
         let mut region = crate::machine::NativeRegionPlan::new_for_test(key)
             .expect("loop body hostile test plan");
         assert!(matches!(
-            region.execute(code, 0, &mut partial, &context),
+            region.execute(code, 0, &mut partial, &context, None),
             Err(crate::machine::NativeDispatchError::Physical(_))
         ));
         assert_eq!(partial, before, "hostile span executed a prefix");
@@ -7739,7 +8137,7 @@ mod compact_handler_tests {
         // the whole window before invoking the first handler.
         code.quicken_instruction(1, crate::ir::Opcode::Slow, 0, 0, 0);
         assert!(matches!(
-            region.execute(code, 0, &mut registers, &context),
+            region.execute(code, 0, &mut registers, &context, None),
             Err(crate::machine::NativeDispatchError::Physical(_))
         ));
         assert_eq!(registers, before, "partial match executed a prefix");
