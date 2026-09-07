@@ -322,7 +322,7 @@ pub fn message_port_post_message(
         .collect::<Vec<_>>();
     for item in &transfer_items {
         if let Value::ArrayBuffer(buffer) = item {
-            if buffer.untransferable {
+            if buffer.untransferable || *buffer.detached.borrow() {
                 return Err(quench_runtime::execute::VmError::Thrown(
                     quench_runtime::builtins::dom_exception(
                         "Cannot transfer an object that is not transferable",
