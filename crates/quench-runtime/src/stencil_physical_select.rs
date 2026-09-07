@@ -29,6 +29,9 @@ pub fn select_physical(key: RegionKey) -> Option<PhysicalStencilView> {
 }
 
 fn legacy_physical_view(key: RegionKey, record: &'static RegionRecord) -> PhysicalStencilView {
+    let abi = record.contract().abi_contract();
+    let has_checkpoint =
+        crate::stencil_physical::contains_interrupt_checkpoint(record.stencil.bytes);
     PhysicalStencilView {
         key,
         record,
@@ -44,7 +47,7 @@ fn legacy_physical_view(key: RegionKey, record: &'static RegionRecord) -> Physic
         links: record.links,
         fallthrough: record.fallthrough,
         continuation_abi: record.continuation_abi,
-        executable: record.executable,
+        executable: record.executable && (!abi.interruptible_backedge || has_checkpoint),
         template_calls_helper: record.template_calls_helper,
         target: option_env!("QUENCH_BUILD_TARGET"),
         fingerprint: None,

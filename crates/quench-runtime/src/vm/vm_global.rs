@@ -27,10 +27,16 @@ pub(crate) fn initialize_global_object(value: &Value) {
     let Value::Object(object) = value else {
         return;
     };
-    object.mark_realm_global();
     GLOBAL_OBJECT.with(|global| {
-        if global.borrow().is_none() {
-            global.replace(Some(object.clone()));
+        let mut global = global.borrow_mut();
+        if global.is_none() {
+            object.mark_realm_global();
+            *global = Some(object.clone());
+        } else if global
+            .as_ref()
+            .is_some_and(|current| current.identity() == object.identity())
+        {
+            object.mark_realm_global();
         }
     });
 }
@@ -190,9 +196,11 @@ pub(crate) fn define_global_declaration_property(
         // non-configurable property with a value-only descriptor.  The
         // ordinary DefineProperty path preserves that property's flags;
         // complete the staged descriptor before replacing its metadata.
-        let previous_descriptor = staged.properties.iter().rev().find_map(|(key, value)| {
-            (key == &descriptor_key).then_some(value)
-        });
+        let previous_descriptor = staged
+            .properties
+            .iter()
+            .rev()
+            .find_map(|(key, value)| (key == &descriptor_key).then_some(value));
         let mut effective_descriptor = descriptor.to_vec();
         if let Some(crate::value::Value::Object(previous)) = previous_descriptor {
             for field in ["writable", "enumerable", "configurable", "get", "set"] {
@@ -209,9 +217,9 @@ pub(crate) fn define_global_declaration_property(
             }
         }
         staged.ensure_creation_order();
-        staged.properties.retain(|(key, _)| {
-            key != name && key != &descriptor_key && key != &deleted_key
-        });
+        staged
+            .properties
+            .retain(|(key, _)| key != name && key != &descriptor_key && key != &deleted_key);
         let value = effective_descriptor
             .iter()
             .rev()
@@ -220,9 +228,9 @@ pub(crate) fn define_global_declaration_property(
         staged.properties.push((name.into(), value));
         staged.properties.push((
             descriptor_key.into(),
-            crate::value::Value::Object(std::rc::Rc::new(
-                crate::value::ObjectData::new(effective_descriptor),
-            )),
+            crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
+                effective_descriptor,
+            ))),
         ));
         if !staged.created.iter().any(|key| key == name) {
             staged.created.push(name.into());
@@ -356,12 +364,8 @@ fn current_realm() -> RealmId {
     // Nested calls into a child realm install that realm's context while the
     // caller's global storage is still live. Prefer the execution context so
     // global name resolution and COW ownership observe the callee's realm.
-    let context_realm = CURRENT_CONTEXT.with(|context| {
-        context
-            .borrow()
-            .as_ref()
-            .map(|rc| rc.realm())
-    });
+    let context_realm =
+        CURRENT_CONTEXT.with(|context| context.borrow().as_ref().map(|rc| rc.realm()));
     if let Some(realm) = context_realm.filter(|realm| *realm != RealmId::ROOT) {
         return realm;
     }
@@ -509,5 +513,23 @@ impl Drop for GlobalObjectGuard {
         } else if self.restore {
             GLOBAL_OBJECT.with(|global| global.replace(self.previous.take()));
         }
+    }
+}
+
+#[cfg(test)]
+mod vm_global_tests {
+    use super::*;
+    use std::rc::Rc;
+
+    #[test]
+    fn installing_nested_frame_does_not_promote_slot_zero_to_global() {
+        reset_global_object();
+        let global = Rc::new(crate::value::ObjectData::new(Vec::new()));
+        initialize_global_object(&Value::Object(Rc::clone(&global)));
+        let argument = Rc::new(crate::value::ObjectData::new(Vec::new()));
+        initialize_global_object(&Value::Object(Rc::clone(&argument)));
+        assert!(global.is_realm_global());
+        assert!(!argument.is_realm_global());
+        reset_global_object();
     }
 }

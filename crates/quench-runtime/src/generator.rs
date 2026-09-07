@@ -505,14 +505,21 @@ fn suspension_frame_matches(
     use crate::machine::Frame;
 
     match (frame, point) {
-        (Frame::Loop { body: left, .. }, SuspensionPoint::Loop { body: right, .. }) => left == right,
+        (Frame::Loop { body: left, .. }, SuspensionPoint::Loop { body: right, .. }) => {
+            left == right
+        }
         (Frame::Try { body: left, .. }, SuspensionPoint::Try { body: right, .. }) => left == right,
         (Frame::Iterator { body: left, .. }, SuspensionPoint::Iterator { body: right, .. }) => {
             left == right
         }
         (
-            Frame::Branch { branch_resume: left, .. },
-            SuspensionPoint::Branch { body_resume: right, .. },
+            Frame::Branch {
+                branch_resume: left,
+                ..
+            },
+            SuspensionPoint::Branch {
+                body_resume: right, ..
+            },
         ) => left.code == right.code && left.end == right.end,
         _ => false,
     }
