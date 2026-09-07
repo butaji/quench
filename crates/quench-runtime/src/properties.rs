@@ -656,6 +656,9 @@ fn finish_set_property(
     strict: bool,
 ) -> Result<(), crate::execute::VmError> {
     record_named_set_fact(target, key, &value);
+    if set_plain_numeric_array_index(target, key, &value) {
+        return Ok(());
+    }
     // A typed-array prototype consumes numeric keys before ordinary accessor
     // lookup.  Route this shape through the receiver-aware path so a setter
     // installed on `%TypedArray%.prototype` cannot observe the write.
@@ -755,6 +758,23 @@ fn finish_set_property(
     }
     let _scope = crate::execution_trace::attribution_scope("SetN:ordinary");
     ordinary_set(registers, object, target, key, value, strict)
+}
+
+fn set_plain_numeric_array_index(
+    target: &crate::value::Value,
+    key: &str,
+    value: &crate::value::Value,
+) -> bool {
+    let (
+        crate::value::Value::Array(array),
+        Some(index),
+        crate::value::Value::Number(number),
+    ) = (target, crate::arrays::array_index(key), value)
+    else {
+        return false;
+    };
+    crate::locals::array_word_is_current(array)
+        && crate::value::ArrayData::set_kernel_existing_f64(array, index as usize, *number)
 }
 
 pub(crate) fn set_property_from_host(
@@ -1347,7 +1367,7 @@ mod named_write_cache_tests {
 
 #[cfg(test)]
 mod array_identity_write_tests {
-    use crate::value::{ArrayData, Value};
+    use crate::value::{ArrayData, ObjectData, Value};
     use std::rc::Rc;
 
     #[test]
@@ -1393,6 +1413,46 @@ mod array_identity_write_tests {
             crate::execute::get_property_result(&current, "0").unwrap(),
             Value::String("changed".into())
         );
+        crate::locals::reset_replacements();
+    }
+
+    #[test]
+    fn sparse_numeric_write_preserves_current_array_identity() {
+        crate::locals::reset_replacements();
+        let mut data = ArrayData::new(Vec::new());
+        data.set_length(64);
+        data.set_index(7, Value::Number(1.0));
+        let array = Rc::new(data);
+        let value = Value::Array(Rc::clone(&array));
+
+        let updated = super::set_property_from_host(value.clone(), "7", Value::Number(2.5))
+            .expect("ordinary sparse write");
+
+        assert!(crate::locals::array_word_is_current(&array));
+        assert!(crate::locals::replacement(&value).is_none());
+        assert_eq!(updated, value);
+        assert_eq!(array.property("7"), Some(Value::Number(2.5)));
+        crate::locals::reset_replacements();
+    }
+
+    #[test]
+    fn sparse_numeric_write_respects_readonly_descriptor() {
+        crate::locals::reset_replacements();
+        let mut data = ArrayData::new(Vec::new());
+        data.set_length(64);
+        data.set_index(7, Value::Number(1.0));
+        data.define_descriptor(
+            "7",
+            Value::Object(Rc::new(ObjectData::new(vec![(
+                "writable".into(),
+                Value::Boolean(false),
+            )]))),
+        );
+        let array = Rc::new(data);
+        let value = Value::Array(Rc::clone(&array));
+
+        assert!(super::set_property_from_host(value, "7", Value::Number(2.5)).is_err());
+        assert_eq!(array.property("7"), Some(Value::Number(1.0)));
         crate::locals::reset_replacements();
     }
 }
