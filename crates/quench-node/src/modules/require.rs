@@ -3443,9 +3443,9 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
 /// protocol implementation remains owned by the HTTP host module; keeping the
 /// namespace construction here avoids manufacturing a second loader path.
 pub(crate) fn http2_module_value() -> Value {
-    let connect = quench_runtime::host_api::bound_builtin(
-        quench_runtime::ops::Builtin::Object,
-        Value::Undefined,
+    let connect = quench_runtime::host_api::bound_capability_with_arguments(
+        crate::host::capability_ref(crate::registry::SPEC_INTERNAL_HTTP2_UTIL),
+        vec![Value::String("connect".into())],
     );
     let connect = execute::set_property(connect, "name", Value::String("connect".into()));
     // The request/response constructors are part of the public HTTP/2
