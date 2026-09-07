@@ -103,7 +103,13 @@ fn array_set_fact(
                 "array:index-preallocated-other"
             }
         }
-        Fact::BeyondPhysicalLength => "array:index-physical-hole",
+        Fact::BeyondPhysicalLength => {
+            if matches!(assigned, crate::value::Value::Number(_)) {
+                "array:index-physical-hole-number"
+            } else {
+                "array:index-physical-hole-other"
+            }
+        }
         Fact::BeyondLogicalLength if index == array.header_length() => "array:index-append",
         Fact::BeyondLogicalLength => "array:index-gap",
     }
@@ -346,6 +352,14 @@ mod own_data_tests {
         assert_eq!(
             array_set_fact(&array, "1", &Value::String("x".into())),
             "array:index-preallocated-other"
+        );
+        assert_eq!(
+            array_set_fact(&array, "2", &number),
+            "array:index-physical-hole-number"
+        );
+        assert_eq!(
+            array_set_fact(&array, "2", &Value::String("x".into())),
+            "array:index-physical-hole-other"
         );
     }
 }
