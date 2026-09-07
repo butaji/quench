@@ -59,6 +59,21 @@ pub enum ContinuationAbi {
     F64AccumulatorD0ThenD2,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SuccessorRole {
+    Next,
+    True,
+    False,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PhysicalLink {
+    pub offset: u16,
+    pub kind: crate::stencil_fact::HoleKind,
+    pub target: &'static str,
+    pub role: SuccessorRole,
+}
+
 macro_rules! region_abi_catalog {
     ($( $name:ident => {
         context: $region_context:expr,
@@ -128,6 +143,9 @@ pub struct RegionRecord {
     /// All legal external entry offsets, generated from the declaration.
     /// Runtime admission may enter only at one of these boundaries.
     pub external_entries: &'static [u16],
+    /// Relocation sites and their semantic successor roles, generated from
+    /// the same assembly recipe as the stencil holes.
+    pub links: &'static [PhysicalLink],
     pub fallthrough: Option<PhysicalFallthrough>,
     pub continuation_abi: ContinuationAbi,
     pub abi: RegionAbi,
@@ -266,6 +284,7 @@ pub struct PhysicalStencilView {
     pub abi: RegionAbi,
     pub entry: u16,
     pub external_entries: &'static [u16],
+    pub links: &'static [PhysicalLink],
     pub fallthrough: Option<PhysicalFallthrough>,
     pub continuation_abi: ContinuationAbi,
     pub executable: bool,
