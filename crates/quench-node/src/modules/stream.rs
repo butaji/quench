@@ -772,6 +772,11 @@ pub fn finished(
         .find(|value| quench_runtime::is_callable(value))
         .cloned()
         .ok_or_else(|| pipeline_error("The callback must be a function", "ERR_INVALID_ARG_TYPE"))?;
+    // `finished()` stores its completion callback on a host-owned lifecycle
+    // record, so the eventual EventEmitter edge does not pass through the
+    // ordinary JS callback-registration wrapper. Capture the registration
+    // resource once and invoke the same callback under that context later.
+    let callback = capture_async_callback(state, callback)?;
     let options = args
         .get(1)
         .filter(|value| !quench_runtime::is_callable(value));
@@ -997,6 +1002,13 @@ pub fn finished(
         crate::host::capability_ref(SPEC_STREAM_FINISHED_CLEANUP),
         vec![state_object, stream],
     ))
+}
+
+fn capture_async_callback(
+    state: &Rc<RefCell<HostState>>,
+    callback: Value,
+) -> Result<Value, VmError> {
+    crate::modules::async_hooks::local_bind(state, None, &[callback])
 }
 
 /// Event callback used by `finished`; its fixed arguments are the shared
