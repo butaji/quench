@@ -113,6 +113,10 @@ pub(crate) enum LocalNumericInputs {
         sources: [NumericSource; 3],
         bindings: F64x3Bindings,
     },
+    RepeatedAdd {
+        sources: [NumericSource; 2],
+        repetitions: u8,
+    },
     Folded {
         bits: u64,
     },

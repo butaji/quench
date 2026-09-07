@@ -324,6 +324,9 @@ impl BlockValueGraph {
         if operator != crate::ops::BinaryOp::Add {
             return None;
         }
+        if let Some(selection) = self.select_repeated_add(operation, live_after) {
+            return Some(selection);
+        }
         let inner = self.canonical(self.current(operation.b)?)?;
         let ValueDefinition::Binary { operator, lhs, rhs } = self.node(inner)?.definition else {
             return None;
@@ -341,6 +344,50 @@ impl BlockValueGraph {
             output: operation.a,
         };
         self.select_add_tree_sources(operation, sources, bindings, live_after)
+    }
+
+    fn select_repeated_add(
+        &self,
+        operation: Instruction,
+        live_after: &BTreeSet<Register>,
+    ) -> Option<LocalBinarySelection> {
+        let repeated = self.resolve_register(operation.c)?;
+        let (base, repetitions) = self.repeated_add_base(operation.b, repeated)?;
+        if repetitions < 2 || self.has_unsupported_live_out(operation.a, live_after) {
+            return None;
+        }
+        let cost = FusionCost::numeric_producers(self.marked_len(&[operation.b, operation.c]));
+        cost.profitable().then_some(LocalBinarySelection {
+            inputs: LocalNumericInputs::RepeatedAdd {
+                sources: [base, repeated],
+                repetitions,
+            },
+            result: crate::stencil_plan::LocalResultBinding::register(operation.a),
+            operation,
+            span: u8::try_from(self.len() + 1).ok()?,
+            discarded: self.discarded_registers(operation.a),
+            cost,
+        })
+    }
+
+    fn repeated_add_base(
+        &self,
+        register: Register,
+        repeated: NumericSource,
+    ) -> Option<(NumericSource, u8)> {
+        let mut value = self.canonical(self.current(register)?)?;
+        let mut repetitions = 1u8;
+        loop {
+            let ValueDefinition::Binary { operator, lhs, rhs } = self.node(value)?.definition
+            else {
+                return Some((self.resolve(value)?, repetitions));
+            };
+            if operator != crate::ops::BinaryOp::Add || self.resolve(rhs)? != repeated {
+                return Some((self.resolve(value)?, repetitions));
+            }
+            repetitions = repetitions.checked_add(1)?;
+            value = self.canonical(lhs)?;
+        }
     }
 
     fn select_add_tree_sources(
