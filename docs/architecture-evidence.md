@@ -1,7 +1,7 @@
 # Task 075 — current completion matrix
 
 Status: **gate PASSED at `ecb00540c5`**. Subsequent default-runtime correctness
-at `b3f5f99ae7` is 994 passed/1 ignored and host correctness is 16/16. The
+at `57e428e176` is 996 passed/1 ignored and host correctness is 16/16. The
 current complete benchmark baseline is `b00f1961b0`; its production binary is
 SHA-256 `88f06a8d46f029e2d825663ac960f19ec1234d5f09e80e3716be14f7158117a2`.
 Generated-object configuration must still be rerun at the final task-073 revision.
@@ -14,13 +14,18 @@ produce a median-index geomean of 73.83 (MAD 0.20). These are correctness and
 prioritization observations; lifecycle lanes and final generated-object
 validation remain open in task 073.
 
-The first task-073 correction batch now has two bounded results. Internal
-RegExp descriptor reuse is semantically valid but performance-neutral. Mapping
-an observed intrinsic Array species to the existing fresh ordinary-array path
+The current task-073 correction batch has four bounded results. Internal RegExp
+descriptor reuse is semantically valid but performance-neutral. Mapping an
+observed intrinsic Array species to the existing fresh ordinary-array path
 removes per-element replacement/descriptor work: an alternating 64x1024 slice
 control improves from 1.61--1.70 s/~87.4 MB to 0.03 s/~43.3 MB while preserving
-custom-species ordering. A separate Crypto run stays flat, so this is not
-credited as a Crypto or aggregate improvement.
+custom-species ordering. A name-first internal own-property fact improves the
+controlled ordinary write lanes by roughly 16--21%; its rejected generic
+projection was 8--9x slower because it decoded unrelated values. Reusing the
+existing identity-preserving backing for current dense numeric `Reflect.set`
+writes improves a 100,000-write control from 211--218 ms to 199--200 ms. Separate
+Crypto samples remain 15.9--16.2, so none of these results is credited as a
+Crypto or aggregate improvement.
 
 ## Infrastructure
 
