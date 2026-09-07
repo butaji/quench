@@ -3,7 +3,8 @@ mod tests {
     use super::*;
     use crate::ir::Opcode;
     use crate::quickening::QuickeningSite;
-    use crate::stencil_fact::{Hole, PatchValues, Stencil};
+    use crate::stencil_fact::{Hole, HoleKind, PatchValues, Stencil};
+    use crate::stencil_select::PhysicalRelocation;
 
     const CONDITIONAL_BYTES: &[u8] = &[
         0x00, 0x00, 0x00, 0x54, // b.eq target
