@@ -787,10 +787,7 @@ pub fn module_enable_compile_cache(args: &[Value]) -> Result<Value, VmError> {
         // not persist V8 bytecode, but a supported argument must still be a
         // no-op rather than an argument-type failure.
         if matches!(options, Value::String(_)) && !execute::is_symbol(options) {
-            return Ok(host_api::object(vec![(
-                "status".into(),
-                Value::Number(3.0),
-            )]));
+            return Ok(compile_cache_disabled_result());
         }
         if matches!(
             options,
@@ -810,10 +807,7 @@ pub fn module_enable_compile_cache(args: &[Value]) -> Result<Value, VmError> {
                     )));
                 }
             }
-            return Ok(host_api::object(vec![(
-                "status".into(),
-                Value::Number(3.0),
-            )]));
+            return Ok(compile_cache_disabled_result());
         }
         let error = quench_runtime::builtins::error(
             quench_runtime::ops::Builtin::TypeError,
@@ -827,10 +821,30 @@ pub fn module_enable_compile_cache(args: &[Value]) -> Result<Value, VmError> {
             Value::String("ERR_INVALID_ARG_TYPE".into()),
         )));
     }
-    Ok(host_api::object(vec![(
-        "status".into(),
-        Value::Number(3.0),
-    )]))
+    Ok(compile_cache_disabled_result())
+}
+
+fn compile_cache_disabled_result() -> Value {
+    let disabled_by_env = std::env::var_os("NODE_DISABLE_COMPILE_CACHE").is_some();
+    if disabled_by_env && compile_cache_debug_enabled() {
+        eprintln!("[compile cache] Disabled by NODE_DISABLE_COMPILE_CACHE.");
+    }
+    let mut properties = vec![("status".into(), Value::Number(3.0))];
+    if disabled_by_env {
+        properties.push((
+            "message".into(),
+            Value::String("Disabled by NODE_DISABLE_COMPILE_CACHE".into()),
+        ));
+    }
+    host_api::object(properties)
+}
+
+fn compile_cache_debug_enabled() -> bool {
+    std::env::var("NODE_DEBUG_NATIVE").is_ok_and(|value| {
+        value
+            .split(',')
+            .any(|scope| scope.trim().eq_ignore_ascii_case("COMPILE_CACHE"))
+    })
 }
 
 pub fn module_get_compile_cache_dir(_: &[Value]) -> Result<Value, VmError> {
