@@ -13171,21 +13171,29 @@ pub fn net_get_asf_timeout(
     _receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    let argv = quench_runtime::execute::get_property(
-        &quench_runtime::vm::current_global_object(),
-        "__quench_argv",
-    );
-    let length = match execute::get_property(&argv, "length") {
-        Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
-        _ => 0,
-    };
-    for index in 0..length {
-        let value = execute::get_property(&argv, &index.to_string());
-        if let Value::String(value) = value {
-            if let Some(raw) = value.strip_prefix("--network-family-autoselection-attempt-timeout=")
-            {
-                if let Ok(milliseconds) = raw.parse::<u64>() {
-                    return Ok(Value::Number((milliseconds.max(10) * 5) as f64));
+    // Node receives invocation flags in `process.execArgv`, while the
+    // runner's canonical `__quench_argv` contains only the public argv
+    // (script and user arguments).  Check both representations so the
+    // capability observes flags regardless of which host entry point created
+    // the process.
+    let global = quench_runtime::vm::current_global_object();
+    let process = execute::get_property(&global, "process");
+    let exec_argv = execute::get_property(&process, "execArgv");
+    let argv = execute::get_property(&global, "__quench_argv");
+    for values in [&exec_argv, &argv] {
+        let length = match execute::get_property(values, "length") {
+            Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+            _ => 0,
+        };
+        for index in 0..length {
+            let value = execute::get_property(values, &index.to_string());
+            if let Value::String(value) = value {
+                if let Some(raw) =
+                    value.strip_prefix("--network-family-autoselection-attempt-timeout=")
+                {
+                    if let Ok(milliseconds) = raw.parse::<u64>() {
+                        return Ok(Value::Number((milliseconds.max(10) * 5) as f64));
+                    }
                 }
             }
         }
