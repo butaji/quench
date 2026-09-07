@@ -95,6 +95,22 @@ Evidence: `target/micros/*policy*-efbd45cc91-dirty.json`,
 `target/micros/calls-inline-affine-loop-diagnostic-efbd45cc91-dirty.json`, and
 `target/v8-policy-*-efbd45cc91-dirty-run1.json`.
 
+A corpus-ledger follow-up found a separate admission-order defect in the
+kernel lane. `numeric/floating/large` reached 11 array-region sites and no
+native entry, but dynamic guards ran only after publication, leaving 320 used
+bytes, 16 cache rows and 36 KiB of executable mappings. Physical publication
+now occurs inside the invocation edge, after dynamic admission; pre-entry
+publication/lease failures remain retryable while malformed post-entry status
+remains committed. The identical diagnostic now reports zero used, resident,
+cached and process-executable bytes at all 11 rejected sites. The focused tests
+and full runtime pass (1,031/1 ignored). On production binary SHA-256
+`fffc242d0c5faa8bf1ddbe4c285ec35952c72ba4cf310bab086cb0e9311e2b85`,
+kernel mode is still about 4.7% slower than default on that case (246.14x
+versus 235.20x Bun), so repeated failed admission—not rendering—is the next
+measured design gap. Evidence:
+`target/micros/numeric-floating-kernels-diagnostic-{fdb1c15963,lazy-region}.json`
+and `target/micros/numeric-floating-{default,kernels}-lazy-region.json`.
+
 At `94586e4d01`, leaf and composed publication share one transactional finalized
 image carrying exact bytes, identity, ABI and callable-entry offset. A real
 prefixed-entry image executes correctly; invalid entry offsets and cache-image
