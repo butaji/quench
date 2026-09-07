@@ -171,6 +171,36 @@ fn promoted_await_body_retains_executed_suspension_pc() {
 }
 
 #[test]
+fn async_branch_resumes_suffix_after_nested_loops() {
+    run_async(
+        r#"
+        async function invoke(){return await 1;}
+        async function window(count){
+          var calls=0,value;
+          do{value=await invoke();calls++;}while(calls<count);
+          return value;
+        }
+        async function verify(){
+          var log=[],mode="throughput";
+          if(mode==="throughput"){
+            for(var i=0;i<4;i++) log.push(await window(64));
+            for(var j=0;j<3;j++) log.push(await window(64));
+          }
+          log.push("after");
+          if(log.join()!=="1,1,1,1,1,1,1,after") {
+            throw "branch suffix was skipped after nested loops";
+          }
+          return log.join();
+        }
+        verify().then(function(value){
+          if(value!=="1,1,1,1,1,1,1,after") throw "async return was lost";
+          throw "__continuation_contract_done__";
+        });
+        "#,
+    );
+}
+
+#[test]
 fn suspended_generator_keeps_captured_binding_during_collection() {
     run_sync(
         r#"
