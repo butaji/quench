@@ -9403,15 +9403,41 @@ pub fn cp_spawn_output_emit(
                 Value::Array(ref timers) if timers.logical_len() > 0
             )
     });
-    if matches!(
+    let fork_ipc_live = matches!(
         execute::get_property(child, "\0childForkIpc"),
         Value::Boolean(true)
-    ) || spawn_ipc_live
+    ) && child_scope.is_some_and(|scope| {
+        crate::modules::net::has_live_scope(state, scope)
+            || matches!(
+                execute::get_property(child, "\0childTimerIds"),
+                Value::Array(ref timers) if timers.logical_len() > 0
+            )
+    });
+    if fork_ipc_live || spawn_ipc_live
     {
         // An IPC child remains alive after startup; its exit/close pair is
         // tied to the channel disconnect or the last referenced child handle
         // rather than the bootstrap callback.
         return Ok(Value::Undefined);
+    }
+    // A terminal fork/spawn transition closes its IPC channel before the
+    // public `close` event.  Keep the channel state as one lifecycle fact so
+    // sends made from a close listener observe Node's closed-channel
+    // contract instead of entering the ordinary backlog path.
+    if matches!(
+        execute::get_property(child, "\0childIpc"),
+        Value::Boolean(true)
+    ) || matches!(
+        execute::get_property(child, "\0childForkIpc"),
+        Value::Boolean(true)
+    ) {
+        execute::set_property_in_place(child, "connected", Value::Boolean(false));
+        if let Value::Object(_) | Value::ObjectAlias(_) =
+            execute::get_property(child, "\0forkProcess")
+        {
+            let process = execute::get_property(child, "\0forkProcess");
+            execute::set_property_in_place(&process, "connected", Value::Boolean(false));
+        }
     }
     let killed = matches!(execute::get_property(child, "killed"), Value::Boolean(true));
     let signal = execute::get_property(child, "signalCode");
@@ -10784,7 +10810,16 @@ pub fn cp_disconnect_emit(
         execute::set_property_in_place(process, "connected", Value::Boolean(false));
         crate::modules::process::emit(state, &[Value::String("disconnect".into())])?;
         if let Some(scope) = child_scope {
-            state.borrow_mut().emitters.remove_scope(scope);
+            // The child may have accepted sockets whose `end` listeners must
+            // run after the IPC disconnect (for example a server that closes
+            // itself from that callback). Retire the scope immediately only
+            // when no host network handle can still dispatch a callback;
+            // otherwise let the net pump drain those handles first.
+            if crate::modules::net::has_live_scope(state, scope) {
+                state.borrow_mut().deferred_emitter_scopes.insert(scope);
+            } else {
+                state.borrow_mut().emitters.remove_scope(scope);
+            }
         }
         execute::set_property_in_place(process, "stdout", previous_stdout);
         execute::set_property_in_place(process, "stderr", previous_stderr);
@@ -10942,12 +10977,20 @@ pub fn cp_send(
                         .is_some_and(|value| value == "ipc")
                 })
         ));
+    if (from_fork_process || to_fork_process)
+        && matches!(
+            execute::get_property(receiver, "connected"),
+            Value::Boolean(false)
+        )
+    {
+        return cp_send_closed(state, receiver, args);
+    }
     if generic_ipc {
         if matches!(
             execute::get_property(receiver, "connected"),
             Value::Boolean(false)
         ) {
-            return Ok(Value::Boolean(false));
+            return cp_send_closed(state, receiver, args);
         }
         let count = match execute::get_property(receiver, "sendCount") {
             Value::Number(value) if value.is_finite() && value >= 0.0 => value as u32,
@@ -11092,6 +11135,38 @@ pub fn cp_send(
         crate::modules::events::method_emit(state, Some(child), &event_args)?;
     }
     Ok(Value::Boolean(true))
+}
+
+fn cp_send_closed(
+    state: &Rc<RefCell<HostState>>,
+    receiver: &Value,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let error = host_api::object(vec![
+        ("name".into(), Value::String("Error".into())),
+        ("message".into(), Value::String("Channel closed".into())),
+        (
+            "code".into(),
+            Value::String("ERR_IPC_CHANNEL_CLOSED".into()),
+        ),
+    ]);
+    crate::modules::events::method_emit(
+        state,
+        Some(receiver),
+        &[Value::String("error".into()), error.clone()],
+    )?;
+    if let Some(callback) = args
+        .iter()
+        .skip(1)
+        .rev()
+        .find(|value| quench_runtime::is_callable(value))
+    {
+        state
+            .borrow()
+            .event_loop
+            .queue_microtask(callback.clone(), vec![error]);
+    }
+    Ok(Value::Boolean(false))
 }
 
 fn cp_send_arg_error(code: &str, message: &str) -> VmError {
