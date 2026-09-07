@@ -360,7 +360,7 @@ fn set_receiver_data(
     };
     if let Some(properties) = mutable_target {
         let host_mutable = properties.iter().any(|(name, value)| {
-            name == "\0quench:async_hooks:mutable"
+            (name == "\0quench:async_hooks:mutable" || name == "\0quench:host:mutable")
                 && matches!(value, crate::value::Value::Boolean(true))
         });
         if host_mutable {
