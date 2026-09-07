@@ -38,10 +38,15 @@ fn require_early_module(name: &str) -> Result<Option<Value>, VmError> {
                 CapabilityName::WorkerConstructor,
             )),
         )]),
-        "internal/dgram" | "node:internal/dgram" => quench_runtime::host_api::object(vec![(
-            "kStateSymbol".into(),
-            Value::String("__dgramState".into()),
-        )]),
+        "internal/webstreams/util" | "node:internal/webstreams/util" => {
+            let global = quench_runtime::vm::current_global_object();
+            quench_runtime::host_api::object(vec![
+                (
+                    "kState".into(),
+                    quench_runtime::execute::get_property(&global, "__quenchWebStreamsState"),
+                ),
+            ])
+        }
         _ => return Ok(None),
     };
     Ok(Some(value))
