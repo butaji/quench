@@ -177,9 +177,7 @@ pub(crate) fn execute_registered(
         return Ok(None);
     }
     if instruction.flags == 1 {
-        if let Value::Builtin(
-            builtin @ (crate::ops::Builtin::StringCharAt | crate::ops::Builtin::StringCharCodeAt),
-        ) = callee
+        if let Value::Builtin(builtin @ crate::ops::Builtin::StringCharCodeAt) = callee
         {
             let argument = read_register(registers, first)?;
             if let Value::Number(index) = argument {
