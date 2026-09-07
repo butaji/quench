@@ -66,7 +66,7 @@ fn generated_physical_view(
         || !effects_match
         || !artifact.stencil.validate()
         || !relocations_match(artifact.stencil, artifact.relocations)
-        || !links_match(record.links, artifact.relocations)
+        || !links_match(artifact.links, artifact.relocations)
         || !artifact
             .fallthrough
             .is_none_or(|stencil| stencil.validate())
@@ -85,7 +85,7 @@ fn generated_physical_view(
         abi: artifact.abi,
         entry: artifact.entry,
         external_entries: artifact.external_entries,
-        links: record.links,
+        links: artifact.links,
         fallthrough,
         continuation_abi: artifact.continuation_abi,
         executable: artifact.executable,
