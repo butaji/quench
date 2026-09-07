@@ -63,6 +63,17 @@ pub struct ClientReq {
     pub high_water_mark: Option<f64>,
     pub socket: Option<Value>,
     pub dispatched: bool,
+    /// Whether the request head has already been written by an early body
+    /// `write()`.  HTTP requests with an explicit Content-Length may expose
+    /// a response before `end()` is called; keep this separate from the
+    /// terminal `finished` property so a later `end()` only completes the
+    /// message instead of sending the head twice.
+    pub head_sent: bool,
+    /// Number of body bytes already written to the transport.  This lets an
+    /// early `write()` and a later `end()` share one ordered body stream.
+    pub body_sent: usize,
+    /// Number of body chunks already framed on a chunked request.
+    pub body_chunks_sent: usize,
     pub timeout: Option<Value>,
     pub timeout_set: bool,
     /// The first timeout supplied through request options. Node exposes this
@@ -877,6 +888,9 @@ fn request_inner(
             high_water_mark,
             socket: None,
             dispatched: false,
+            head_sent: false,
+            body_sent: 0,
+            body_chunks_sent: 0,
             timeout: None,
             timeout_set: false,
             initial_timeout: None,
@@ -1383,7 +1397,7 @@ pub fn req_write(
         invoke_write_callback(receiver, args)?;
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     }
-    let (open, agent, dispatched) = {
+    let (open, agent, dispatched, socket, finished) = {
         let mut guard = state.borrow_mut();
         let Some(req) = guard.http.clientreqs.get_mut(&id) else {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
@@ -1391,7 +1405,16 @@ pub fn req_write(
         req.body.extend_from_slice(&bytes);
         req.body_chunks.push(bytes.clone());
         req.body_started = true;
-        (req.socket.is_none(), req.agent.clone(), req.dispatched)
+        (
+            req.socket.is_none(),
+            req.agent.clone(),
+            req.dispatched,
+            req.socket.clone(),
+            matches!(
+                execute::get_property(&req.req, "finished"),
+                Value::Boolean(true)
+            ),
+        )
     };
     let custom = agent
         .as_ref()
@@ -1424,13 +1447,18 @@ pub fn req_write(
                 state.borrow_mut().http.clients.insert(socket_id, id);
             }
         }
+    } else if !finished {
+        // Node starts a request on its first body write.  Fixed-length
+        // requests can receive a response before `end()`, while chunked
+        // requests must stream each data chunk before their later terminator.
+        // Keep both cursors explicit and leave the JavaScript stream
+        // unfinished so a subsequent `end()` resumes the same message.
+        if let Some(socket) = socket {
+            dispatch_partial_body(state, receiver.unwrap_or(&Value::Undefined), &socket)?;
+        }
     } else if !dispatched {
-        // Keep body writes buffered until `end()` owns the request framing.
-        // Dispatching here used to append the terminating chunk (`0\r\n\r\n`)
-        // before later `write()` calls, so a normal sequence of writes sent
-        // only the first chunk to an HTTP/1.1 peer.  A reserved or pooled
-        // socket remains available through `request.socket`; `req_end`
-        // writes the complete ordered body and terminator exactly once.
+        // Keep chunked/unknown-length body writes buffered until `end()` owns
+        // the framing and emits the terminating chunk exactly once.
     }
     invoke_write_callback(receiver, args)?;
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
@@ -1625,7 +1653,9 @@ pub fn req_remove_header(
     let name = req_header_name(args)?;
     if let Some(id) = client_id(receiver) {
         if let Some(request) = state.borrow_mut().http.clientreqs.get_mut(&id) {
-            request.headers.retain(|(key, _)| !key.eq_ignore_ascii_case(&name));
+            request
+                .headers
+                .retain(|(key, _)| !key.eq_ignore_ascii_case(&name));
         }
     }
     Ok(Value::Undefined)
@@ -1933,7 +1963,13 @@ pub fn req_end(
         .clientreqs
         .get(&id)
         .is_some_and(|req| req.dispatched);
-    if already_dispatched && !expect_started {
+    let already_finished = state.borrow().http.clientreqs.get(&id).is_some_and(|req| {
+        matches!(
+            execute::get_property(&req.req, "finished"),
+            Value::Boolean(true)
+        )
+    });
+    if already_dispatched && already_finished && !expect_started {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     }
     if expect_started {
@@ -1981,7 +2017,10 @@ pub fn req_end(
         invoke_end_callback(receiver, args)?;
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     }
-    let queued = {
+    let queued = if already_dispatched {
+        false
+    } else {
+        {
         let mut guard = state.borrow_mut();
         let Some(current) = guard.http.clientreqs.get(&id) else {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
@@ -2041,6 +2080,7 @@ pub fn req_end(
                     }
                 }
             }
+        }
         }
     };
     if queued {
@@ -2126,6 +2166,9 @@ pub fn req_end(
         body,
         body_chunks,
         body_started,
+        body_sent,
+        body_chunks_sent,
+        head_sent,
         agent,
         lookup,
         omit_host,
@@ -2154,6 +2197,9 @@ pub fn req_end(
             req.body.clone(),
             req.body_chunks.clone(),
             req.body_started,
+            req.body_sent,
+            req.body_chunks_sent,
+            req.head_sent,
             req.agent.clone(),
             req.lookup.clone(),
             req.omit_host,
@@ -2224,9 +2270,22 @@ pub fn req_end(
     let socket = match (existing.or(pooled_transport), custom.or(custom_socket.clone())) {
         (Some(socket), _) => {
             net::socket_ref(state, Some(&socket), &[])?;
-            net::socket_write(state, Some(&socket), &[host_api::bytes(head.as_bytes())])?;
-            if body_started {
-                for chunk in &body_chunks {
+            if !head_sent {
+                net::socket_write(state, Some(&socket), &[host_api::bytes(head.as_bytes())])?;
+            }
+            let has_content_length = headers
+                .iter()
+                .any(|(key, _)| key.eq_ignore_ascii_case("content-length"));
+            if has_content_length {
+                if body_sent < body.len() {
+                    net::socket_write(
+                        state,
+                        Some(&socket),
+                        &[host_api::bytes(&body[body_sent..])],
+                    )?;
+                }
+            } else if body_started {
+                for chunk in body_chunks.iter().skip(body_chunks_sent) {
                     let mut frame = format!("{:x}\r\n", chunk.len()).into_bytes();
                     frame.extend_from_slice(chunk);
                     frame.extend_from_slice(b"\r\n");
@@ -2239,6 +2298,11 @@ pub fn req_end(
                 for chunk in &body_chunks {
                     net::socket_write(state, Some(&socket), &[host_api::bytes(chunk)])?;
                 }
+            }
+            if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&id) {
+                req.head_sent = true;
+                req.body_sent = body.len();
+                req.body_chunks_sent = body_chunks.len();
             }
             socket
         }
