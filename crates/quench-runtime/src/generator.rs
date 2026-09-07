@@ -319,6 +319,7 @@ fn resume_inner(generator: &GeneratorData, resume: Resume) -> Result<Value, VmEr
                 | crate::continuation::SuspensionPoint::YieldStar { .. }
         )
     );
+    let resumes_direct_value = direct_suspension && matches!(resume, Resume::Next(_));
     if let Resume::Next(input) = resume {
         let point = state.suspension.clone();
         install_resume_input(generator, &mut state, input);
@@ -326,8 +327,9 @@ fn resume_inner(generator: &GeneratorData, resume: Resume) -> Result<Value, VmEr
             state.suspension = point;
         }
     }
-    if !direct_suspension {
-        if let Some(result) = resume_suspended_contexts(generator, &mut state, &completion)? {
+    if !resumes_direct_value {
+        let resumed = resume_suspended_contexts(generator, &mut state, &completion)?;
+        if let Some(result) = resumed {
             generator.state.replace(Some(state));
             return Ok(result);
         }

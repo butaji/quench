@@ -1,8 +1,9 @@
 # Task 075 — current completion matrix
 
-Status: **gate PASSED for the bounded supported subset** at code revision
-`3121a9bcab`. Task 073 may now measure profitability; this is not a production
-enablement or speedup claim.
+Status: **gate CLOSED / NOT COMPLETE**. The first frozen-corpus semantic sweep
+against production binary `ea7b9a68480a46b96ba81bae3f3617d897e3b06e88c4e8aade885edbd22c8cb1`
+found eight iterator/generator boundary failures after the infrastructure suites
+passed. Task 073 timing remains deferred until these ordinary semantics are fixed.
 
 ## Infrastructure
 
@@ -33,7 +34,7 @@ enablement or speedup claim.
 | Objects/closures (B) | Existing allocation/capture semantics and code-owner leases remain authoritative; no unrooted native object intermediate is supported. | Closure/code-store lifetime, collection, repeated compilation and final-owner drop tests. |
 | Frames/returns (N/B) | Frozen operand-role frame widths, same-frame structured fragments and exact region live-outs; dynamic calls retain canonical frames. | Zero/one/many argument windows, absent-argument sentinel, nested callee width, OSR retirement and return tests. |
 | Exceptions (B) | Exact fault PC, committed state and canonical catch/finally paths; no generated-frame unwind. | Effect-then-throw, allocating finalizer, malformed status and exactly-once tests. |
-| Iteration (B) | Iterator protocol/close stays ordinary; native loops cover only declared dense numeric regions. | Iterator close/finally and ordered array species/Has/Get/Define/length tests. |
+| Iteration (B) | Iterator protocol/close stays ordinary; native loops cover only declared dense numeric regions. | **OPEN:** frozen smoke passes `iteration/close` but all six `iteration/throw_close` scenarios produce no completed result; legacy generator cases 067 and 068 also fail. The prior unit coverage did not exercise these outer-driver paths. |
 | Async/generators (B) | Native admission exits before suspension; one `SuspensionPoint` stack owns executed PC/destination and nested loop/try phases. | Continuation contracts and Node-facing tests cover nested/sequential await, generator progress/return/finally and captured-root collection. |
 | IC lifecycle (G) | Existing mono/poly/mega quickening facts drive property variants and bounded retirement; no parallel IC universe. | Stable alternatives reuse code, incompatible facts do not alias, mutation invalidates, megamorphic sites degrade safely. |
 | Strings/BigInt/exotics (B) | Existing ordinary conversions and semantics remain the complete path; no native proxy/eval/with/string/BigInt interior is claimed. | Full runtime/host regressions plus string surrogate and ordinary coercion/error tests. |
