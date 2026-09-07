@@ -237,6 +237,38 @@ fn ordinary_source_call_frames_use_declared_argument_windows() {
 }
 
 #[test]
+fn ordinary_counted_numeric_loop_lowers_to_one_cfg_backedge() {
+    let source = concat!(
+        "function f(s){var x=17;for(var i=0;i<s.n;i++)x=(x*33+7)|0;return x}",
+        "if(f({n:4})!==20420077)throw new Error('bad loop')"
+    );
+    let program = crate::reduce::reduce_source(source).expect("counted loop lowers");
+    let mut matched = false;
+    crate::stencil_test_support::visit_code_views(program.code(), &mut |code| {
+        let instructions = (0..code.len())
+            .filter_map(|pc| code.instruction(pc))
+            .collect::<Vec<_>>();
+        let has_body = instructions
+            .iter()
+            .any(|instruction| instruction.opcode == crate::ir::Opcode::Mul)
+            && instructions
+                .iter()
+                .any(|instruction| instruction.opcode == crate::ir::Opcode::StoreLocal);
+        let has_backedge = instructions.iter().enumerate().any(|(pc, instruction)| {
+            instruction.opcode == crate::ir::Opcode::Jump && usize::from(instruction.a) <= pc
+        });
+        if has_body && has_backedge {
+            matched = true;
+            assert!(
+                (0..code.len()).all(|pc| !matches!(code.cold_at(pc), Some(super::Op::Loop { .. }))),
+                "eligible loop retained the structured gateway"
+            );
+        }
+    });
+    assert!(matched, "ordinary loop did not expose its canonical CFG");
+}
+
+#[test]
 fn ordinary_source_freezes_lowering_frame_width() {
     let mut source = String::from("function f(){");
     for _ in 0..80 {
