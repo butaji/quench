@@ -10,8 +10,9 @@ fn render_links(declarations: &[RegionDeclaration]) -> String {
 
 fn render_declaration_links(declaration: &RegionDeclaration) -> String {
     let name = region_key_name(declaration.name);
-    let Some(successor) =
-        rust_assembly_recipe(declaration).and_then(|recipe| recipe.successors().first())
+    let Some(successor) = rust_assembly_recipe(declaration)
+        .filter(|recipe| recipe.successors().len() == 1)
+        .and_then(|recipe| recipe.successors().first())
     else {
         return format!(
             "const CANONICAL_{name}_LINKS: &[crate::stencil_select::PhysicalLink] = &[];"

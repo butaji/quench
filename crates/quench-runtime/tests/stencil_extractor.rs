@@ -25,10 +25,10 @@ mod leaf_catalog {
 
 mod assembly_catalog {
     use super::build_stencil_contract::{
-        equal, operand, value, AssemblyContinuation, AssemblySuccessor, AssemblySuccessorRole,
-        DeclAbi, DeclContinuationAbi, PhysicalBinding, PhysicalBindingValue, PhysicalOperand,
-        PhysicalOperandField, PhysicalOutput, PhysicalOutputDestination, PhysicalOutputValue,
-        RecipeComposition, RegionDeclaration,
+        equal, operand, value, AssemblyContinuation, AssemblyControlLink, AssemblySuccessor,
+        AssemblySuccessorRole, DeclAbi, DeclContinuationAbi, PhysicalBinding, PhysicalBindingValue,
+        PhysicalOperand, PhysicalOperandField, PhysicalOutput, PhysicalOutputDestination,
+        PhysicalOutputValue, RecipeComposition, RegionDeclaration,
     };
 
     include!(concat!(
@@ -191,4 +191,27 @@ fn rust_assembly_recipe_requires_name_abi_and_residual_shape() {
     assert_eq!(continuation.target, "q_add_chain_tail");
     add_chain.aarch64_holes = &[(8, 4, "Branch26")];
     assert!(rust_assembly_recipe(&add_chain).is_none());
+}
+
+#[test]
+fn boolean_control_recipe_owns_both_successor_contracts() {
+    use assembly_catalog::{rust_assembly_declaration, rust_assembly_recipe, RustAssemblyRecipe};
+    use build_stencil_contract::{AssemblySuccessorRole, DeclContinuationAbi, RecipeComposition};
+
+    let declaration = rust_assembly_declaration(RustAssemblyRecipe::BoolBranch);
+    let recipe = rust_assembly_recipe(declaration).expect("boolean control recipe");
+    assert_eq!(recipe.composition(), RecipeComposition::ControlFragment);
+    assert_eq!(recipe.internal_abi(), DeclContinuationAbi::WordX0);
+    assert_eq!(recipe.successors(), &[]);
+    assert_eq!(
+        recipe
+            .control_links()
+            .iter()
+            .map(|link| (link.offset, link.role, link.target))
+            .collect::<Vec<_>>(),
+        vec![
+            (4, AssemblySuccessorRole::False, "q_bool_branch_false"),
+            (8, AssemblySuccessorRole::True, "q_bool_branch_true"),
+        ]
+    );
 }

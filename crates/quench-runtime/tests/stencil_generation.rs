@@ -40,3 +40,28 @@ fn generated_artifacts_have_nonzero_identity_and_physical_payload() {
         assert_eq!(artifact.target, env!("QUENCH_BUILD_TARGET"));
     }
 }
+
+#[cfg(quench_generated_stencil_artifacts)]
+#[test]
+fn generated_boolean_branch_preserves_typed_successor_metadata() {
+    use quench_runtime::stencil_select::SuccessorRole;
+
+    let artifact = BUILD_STENCIL_ARTIFACTS
+        .iter()
+        .find(|artifact| artifact.name == "bool_branch")
+        .expect("generated boolean branch artifact");
+    let selected = select_physical(artifact.key).expect("selected boolean branch");
+    assert!(selected.generated);
+    assert_eq!(selected.artifact_id, artifact.artifact_id);
+    assert_eq!(selected.links, artifact.links);
+    assert_eq!(selected.relocations, artifact.relocations);
+    assert_eq!(selected.links.len(), 2);
+    assert!(selected
+        .links
+        .iter()
+        .any(|link| link.role == SuccessorRole::False && link.offset == 4));
+    assert!(selected
+        .links
+        .iter()
+        .any(|link| link.role == SuccessorRole::True && link.offset == 8));
+}

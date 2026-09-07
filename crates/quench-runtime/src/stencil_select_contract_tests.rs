@@ -44,17 +44,7 @@ fn generated_abi_classification_matches_physical_entry_shape() {
                 assert_ne!(record.stencil.bytes.len(), 76);
             }
             RegionAbi::TaggedWord => {
-                assert!(matches!(record.stencil.bytes.len(), 4 | 8));
-                assert!(matches!(
-                    record.operations.first(),
-                    Some(
-                        crate::ir::Opcode::Move
-                            | crate::ir::Opcode::LoadLocal
-                            | crate::ir::Opcode::StoreLocal
-                            | crate::ir::Opcode::GetN
-                            | crate::ir::Opcode::SetN,
-                    )
-                ));
+                assert_tagged_word_shape(record);
             }
             RegionAbi::PropertyGuard => {
                 assert!(
@@ -137,6 +127,25 @@ fn generated_abi_classification_matches_physical_entry_shape() {
             }
         }
     }
+}
+
+fn assert_tagged_word_shape(record: &RegionRecord) {
+    if record.continuation_abi == ContinuationAbi::WordX0 {
+        assert!(record.stencil.bytes.is_empty());
+        assert_eq!(record.operations, [crate::ir::Opcode::JumpIfFalse]);
+        return;
+    }
+    assert!(matches!(record.stencil.bytes.len(), 4 | 8));
+    assert!(matches!(
+        record.operations.first(),
+        Some(
+            crate::ir::Opcode::Move
+                | crate::ir::Opcode::LoadLocal
+                | crate::ir::Opcode::StoreLocal
+                | crate::ir::Opcode::GetN
+                | crate::ir::Opcode::SetN,
+        )
+    ));
 }
 
 #[test]

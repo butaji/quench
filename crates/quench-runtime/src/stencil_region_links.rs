@@ -170,4 +170,37 @@ mod tests {
         assert_eq!(successor_target(&[next], SuccessorRole::Next), Some(target));
         assert_eq!(successor_target(&[next], SuccessorRole::True), None);
     }
+
+    #[cfg(quench_generated_stencil_artifacts)]
+    #[test]
+    fn generated_boolean_links_resolve_by_semantic_role() {
+        let record = crate::stencil_select::region_records()
+            .iter()
+            .find(|record| record.name == "bool_branch")
+            .expect("boolean branch declaration");
+        let view = crate::stencil_select::select_physical(record.key)
+            .expect("generated boolean branch view");
+        let transfers = selected_transfers_by_role(
+            view,
+            RegionPoint::Operation(3),
+            &[
+                SuccessorPlacement {
+                    role: SuccessorRole::False,
+                    target: RegionPoint::Exit(7),
+                },
+                SuccessorPlacement {
+                    role: SuccessorRole::True,
+                    target: RegionPoint::Operation(4),
+                },
+            ],
+        )
+        .expect("typed branch transfers");
+        assert_eq!(transfers.len(), 2);
+        assert!(transfers
+            .iter()
+            .any(|item| { item.offset == 4 && item.target == RegionPoint::Exit(7) }));
+        assert!(transfers
+            .iter()
+            .any(|item| { item.offset == 8 && item.target == RegionPoint::Operation(4) }));
+    }
 }

@@ -36,8 +36,8 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
             .then(|| super::rust_assembly_recipe(declaration))
             .flatten();
         let extracted = if let Some(recipe) = assembly {
-            if recipe.composition() != RecipeComposition::Whole {
-                compile_fragment_pair(
+            match recipe.composition() {
+                RecipeComposition::LinkedFragments => compile_fragment_pair(
                     &root.path,
                     &target,
                     &compiler,
@@ -45,27 +45,25 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
                     &rustflags,
                     declaration,
                     recipe,
-                )
-            } else {
-                let source = super::build_stencil_templates::assembly_source(recipe);
-                let expected_holes = expected_holes(declaration, &target);
-                let parsed = compile_assembly_fragment(
+                ),
+                RecipeComposition::ControlFragment => compile_control_fragment(
                     &root.path,
                     &target,
                     &compiler,
                     &flags,
                     &rustflags,
-                    declaration.name,
-                    &source,
-                    &[],
-                    &expected_holes,
-                );
-                ExtractedObject {
-                    bytes: parsed.bytes,
-                    fallthrough: None,
-                    relocations: parsed.relocations,
-                    holes: parsed.holes,
-                }
+                    declaration,
+                    recipe,
+                ),
+                RecipeComposition::Whole => compile_whole_assembly(
+                    &root.path,
+                    &target,
+                    &compiler,
+                    &flags,
+                    &rustflags,
+                    declaration,
+                    recipe,
+                ),
             }
         } else {
             let Some(recipe) = super::rust_leaf_recipe(declaration) else {

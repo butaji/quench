@@ -53,40 +53,45 @@ fn render_artifact(
 }
 
 fn links_expr(declaration: &RegionDeclaration, extracted: &ExtractedObject) -> String {
-    let successors = super::rust_assembly_recipe(declaration)
-        .map(RustAssemblyRecipe::successors)
-        .unwrap_or_default();
-    if successors.is_empty() {
+    let Some(recipe) = super::rust_assembly_recipe(declaration) else {
         return "&[]".to_owned();
-    }
+    };
     let entries = extracted
         .relocations
         .iter()
         .map(|relocation| {
-            render_link(relocation, successors)
-                .unwrap_or_else(|| panic!("undeclared successor target {}", relocation.target))
+            let role = successor_role(recipe, &relocation.target)
+                .unwrap_or_else(|| panic!("undeclared successor target {}", relocation.target));
+            render_link(relocation, role)
         })
         .collect::<Vec<_>>()
         .join(", ");
     format!("&[{entries}]")
 }
 
-fn render_link(
-    relocation: &DeclaredRelocation,
-    successors: &[AssemblySuccessor],
-) -> Option<String> {
-    let successor = successors
-        .iter()
-        .find(|successor| successor.target == relocation.target)?;
-    let role = match successor.role {
+fn render_link(relocation: &DeclaredRelocation, successor_role: AssemblySuccessorRole) -> String {
+    let role = match successor_role {
         AssemblySuccessorRole::Next => "Next",
         AssemblySuccessorRole::True => "True",
         AssemblySuccessorRole::False => "False",
     };
-    Some(format!(
+    format!(
         "crate::stencil_select::PhysicalLink {{ offset: {}, kind: crate::stencil_fact::HoleKind::{}, target: {:?}, role: crate::stencil_select::SuccessorRole::{role} }}",
         relocation.offset, relocation.kind, relocation.target
-    ))
+    )
+}
+
+fn successor_role(recipe: RustAssemblyRecipe, target: &str) -> Option<AssemblySuccessorRole> {
+    recipe
+        .successors()
+        .iter()
+        .find_map(|item| (item.target == target).then_some(item.role))
+        .or_else(|| {
+            recipe
+                .control_links()
+                .iter()
+                .find_map(|item| (item.target == target).then_some(item.role))
+        })
 }
 
 fn relocation_expr(extracted: &ExtractedObject) -> String {
@@ -156,7 +161,7 @@ fn fingerprint(
                 .map(|recipe| format!("{:?}", recipe.internal_abi()))
                 .unwrap_or_default();
             let successors = super::rust_assembly_recipe(item)
-                .map(|recipe| format!("{:?}", recipe.successors()))
+                .map(|recipe| format!("{:?}:{:?}", recipe.successors(), recipe.control_links()))
                 .unwrap_or_default();
             format!(
                 "{name}:{abi:?}:{ops:?}:{x86:?}:{arm:?}:{portable:?}:{holes:?}:{arm_holes:?}:{entry}:{external:?}:{bindings}:{outputs}:{continuation_abi}:{successors}:{source}",
@@ -201,6 +206,10 @@ fn artifact_fingerprint(
         hash_bytes(&mut hash, format!("{:?}", recipe.outputs()).as_bytes());
         hash_bytes(&mut hash, format!("{:?}", recipe.internal_abi()).as_bytes());
         hash_bytes(&mut hash, format!("{:?}", recipe.successors()).as_bytes());
+        hash_bytes(
+            &mut hash,
+            format!("{:?}", recipe.control_links()).as_bytes(),
+        );
     }
     hash_bytes(&mut hash, &declaration.entry.to_le_bytes());
     for entry in declaration.external_entries {
