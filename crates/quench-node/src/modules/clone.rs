@@ -139,6 +139,13 @@ fn advanced_buffer_view(value: &Value) -> bool {
         )
 }
 
+fn advanced_public_keys(value: &Value) -> Vec<String> {
+    quench_runtime::execute::own_enumerable_keys(value)
+        .into_iter()
+        .filter(|name| !name.starts_with('\0'))
+        .collect()
+}
+
 fn advanced_clone_inner(value: Value, seen: &mut HashMap<u64, Value>) -> Value {
     if let Some(clone) = crate::modules::crypto::clone_key_object(&value) {
         return clone;
@@ -209,7 +216,7 @@ fn advanced_clone_inner(value: Value, seen: &mut HashMap<u64, Value>) -> Value {
             if identity != 0 {
                 seen.insert(identity, clone.clone());
             }
-            for name in quench_runtime::execute::own_enumerable_keys(&value) {
+            for name in advanced_public_keys(&value) {
                 let item = quench_runtime::execute::get_property(&value, &name);
                 quench_runtime::execute::set_property_in_place(
                     &clone,
@@ -254,7 +261,7 @@ fn advanced_clone_inner(value: Value, seen: &mut HashMap<u64, Value>) -> Value {
             if identity != 0 {
                 seen.insert(identity, clone.clone());
             }
-            for name in quench_runtime::execute::own_enumerable_keys(&value) {
+            for name in advanced_public_keys(&value) {
                 let item = quench_runtime::execute::get_property(&value, &name);
                 quench_runtime::execute::set_property_in_place(
                     &clone,
