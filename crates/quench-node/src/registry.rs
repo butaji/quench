@@ -1050,6 +1050,10 @@ pub const SPEC_FS_FSYNC: NodeSpec = NodeSpec::new("fs:fsync", 0x1173);
 pub const SPEC_FS_WRITE_STREAM_WRITE: NodeSpec = NodeSpec::new("fs:WriteStream:write", 0x1174);
 pub const SPEC_FS_WRITE_STREAM_CLOSE: NodeSpec = NodeSpec::new("fs:WriteStream:close", 0x1175);
 pub const SPEC_FS_WRITE_STREAM_OPEN: NodeSpec = NodeSpec::new("fs:WriteStream:open", 0x7FD4);
+pub const SPEC_FS_WRITE_STREAM_AUTO_CLOSE_GET: NodeSpec =
+    NodeSpec::new("fs:WriteStream:autoClose:get", 0x7FE3);
+pub const SPEC_FS_WRITE_STREAM_AUTO_CLOSE_SET: NodeSpec =
+    NodeSpec::new("fs:WriteStream:autoClose:set", 0x7FE4);
 pub const SPEC_FS_FDATASYNC_SYNC: NodeSpec = NodeSpec::new("fs:fdatasyncSync", 0x1169);
 pub const SPEC_FSP_OPEN: NodeSpec = NodeSpec::new("fs:promises:open", 0x116A);
 pub const SPEC_FS_HANDLE_READ: NodeSpec = NodeSpec::new("fs:FileHandle:read", 0x116B);
@@ -1630,6 +1634,8 @@ pub const CAP_FS_FSYNC: CapId = SPEC_FS_FSYNC.cap;
 pub const CAP_FS_WRITE_STREAM_WRITE: CapId = SPEC_FS_WRITE_STREAM_WRITE.cap;
 pub const CAP_FS_WRITE_STREAM_CLOSE: CapId = SPEC_FS_WRITE_STREAM_CLOSE.cap;
 pub const CAP_FS_WRITE_STREAM_OPEN: CapId = SPEC_FS_WRITE_STREAM_OPEN.cap;
+pub const CAP_FS_WRITE_STREAM_AUTO_CLOSE_GET: CapId = SPEC_FS_WRITE_STREAM_AUTO_CLOSE_GET.cap;
+pub const CAP_FS_WRITE_STREAM_AUTO_CLOSE_SET: CapId = SPEC_FS_WRITE_STREAM_AUTO_CLOSE_SET.cap;
 pub const CAP_FS_FDATASYNC_SYNC: CapId = SPEC_FS_FDATASYNC_SYNC.cap;
 pub const CAP_FSP_OPEN: CapId = SPEC_FSP_OPEN.cap;
 pub const CAP_FS_HANDLE_READ: CapId = SPEC_FS_HANDLE_READ.cap;
