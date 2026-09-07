@@ -35,6 +35,12 @@ generated composition is 10/10, and the default runtime is 1000 passed/1 ignored
 This is an AsmJit-inspired boundary reduction, not adoption of its assembler or
 a measured speedup.
 
+At `52178bbc90`, that staged boundary also owns the common typed scalar
+render/publish/invoke/cache transition, and `0e36f1432e` reduces the two idle
+eviction APIs to one generation-aware owner transition. Typed callable
+conversion, F64 fallthrough permission and semantic fallback remain explicit.
+Focused lifecycle tests pass and the default runtime is 1000 passed/1 ignored.
+
 ## Infrastructure
 
 | Contract | Implemented code and normal wiring | Executed evidence |

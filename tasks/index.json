@@ -125,7 +125,7 @@
       "file": "082.md",
       "title": "Factor stencil render and eviction paths",
       "theme": "simplification",
-      "status": "pending",
+      "status": "complete",
       "depends_on": []
     },
     {
