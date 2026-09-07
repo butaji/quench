@@ -221,6 +221,32 @@ impl StencilArena {
             .ok_or(ArenaError::ProtectionFailed)
     }
 
+    /// A cache signature is an index, not proof that an immutable code image
+    /// is the one selected by the caller. Compare the finalized bytes before
+    /// reusing a composed entry so a collision cannot authorize other code.
+    pub(super) fn require_region_image(
+        &self,
+        address: usize,
+        image: &VerifiedRegionImage,
+    ) -> Result<(), ArenaError> {
+        self.require_publication(address, image.identity(), image.bytes().len())?;
+        let offset = address
+            .checked_sub(self.ptr as usize)
+            .ok_or(ArenaError::ProtectionFailed)?;
+        let end = offset
+            .checked_add(image.bytes().len())
+            .ok_or(ArenaError::ProtectionFailed)?;
+        if end > self.cursor {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        let published = unsafe {
+            std::slice::from_raw_parts(self.ptr.add(offset), image.bytes().len())
+        };
+        (published == image.bytes())
+            .then_some(())
+            .ok_or(ArenaError::ProtectionFailed)
+    }
+
     pub(super) fn require_abi(
         &self,
         address: usize,
