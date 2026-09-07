@@ -44,7 +44,7 @@ pub struct ArrayData {
     values: DenseElements,
     length: std::cell::Cell<usize>,
     kind: std::cell::Cell<ArrayKind>,
-    properties: Vec<(String, Value)>,
+    properties: RefCell<Vec<(String, Value)>>,
     descriptors: Vec<(String, Value)>,
     arguments: bool,
     strict_arguments: bool,
@@ -298,7 +298,7 @@ impl ArrayData {
             kind: std::cell::Cell::new(kind),
             values: DenseElements::from_values(values),
             length: std::cell::Cell::new(length),
-            properties: Vec::new(),
+            properties: RefCell::new(Vec::new()),
             descriptors: Vec::new(),
             arguments: false,
             strict_arguments: false,
@@ -366,7 +366,7 @@ impl ArrayData {
                 // value-only append remains visible through all references.
                 if self.kind.get().is_packed()
                     && self.deleted.is_empty()
-                    && self.properties.is_empty()
+                    && self.properties.borrow().is_empty()
                     && self.descriptors.is_empty()
                     && self.prototype.borrow().is_none()
                     && !self.arguments
@@ -473,7 +473,7 @@ impl ArrayData {
     pub(crate) fn is_packed_ordinary(&self) -> bool {
         self.is_packed()
             && self.logical_len() == self.physical_len()
-            && self.properties.is_empty()
+            && self.properties.borrow().is_empty()
             && self.indexed_descriptors_plain()
             && self.has_default_array_prototype()
             && !self.arguments
@@ -487,7 +487,7 @@ impl ArrayData {
     pub(crate) fn is_packed_data(&self) -> bool {
         self.is_packed()
             && self.logical_len() == self.physical_len()
-            && self.properties.is_empty()
+            && self.properties.borrow().is_empty()
             && self.indexed_descriptors_plain()
             && !self.arguments
             && self.argument_live.is_none()
@@ -499,7 +499,7 @@ impl ArrayData {
     #[inline]
     pub(crate) fn is_plain_dense_access(&self) -> bool {
         !self.is_sparse()
-            && self.properties.is_empty()
+            && self.properties.borrow().is_empty()
             && self.indexed_descriptors_plain()
             && self.has_default_array_prototype()
             && !self.arguments
@@ -510,7 +510,7 @@ impl ArrayData {
     /// Holes are allowed because fill materializes every slot in its range.
     #[inline]
     pub(crate) fn can_fast_fill(&self) -> bool {
-        self.properties.is_empty()
+        self.properties.borrow().is_empty()
             && self.indexed_descriptors_plain()
             && self.has_default_array_prototype()
             && !self.arguments
@@ -525,7 +525,7 @@ impl ArrayData {
     pub(crate) fn is_dense_numeric_data(&self) -> bool {
         self.logical_len() == self.physical_len()
             && self.deleted.iter().all(|deleted| !deleted)
-            && self.properties.is_empty()
+            && self.properties.borrow().is_empty()
             && self.indexed_descriptors_plain()
             && !self.arguments
             && self.argument_live.is_none()
@@ -568,7 +568,9 @@ impl ArrayData {
             self.values.truncate(length);
             self.deleted.truncate(length);
             self.mapped.truncate(length);
-            self.properties.retain(|(key, _)| keep_index(key, length));
+            self.properties
+                .borrow_mut()
+                .retain(|(key, _)| keep_index(key, length));
             self.descriptors.retain(|(key, _)| keep_index(key, length));
         }
         self.length.set(length);
@@ -589,7 +591,7 @@ impl ArrayData {
         }
         if index == self.length.get()
             && index == self.values.len()
-            && self.properties.is_empty()
+            && self.properties.borrow().is_empty()
             && self.indexed_descriptors_plain()
             && self.has_default_array_prototype()
             && !self.arguments
@@ -882,7 +884,7 @@ impl ArrayData {
                 return false;
             }
         }
-        self.properties.clear();
+        self.properties.borrow_mut().clear();
         self.kind.set(
             self.values
                 .kind_with_holes(&self.deleted, self.length.get()),
@@ -893,7 +895,8 @@ impl ArrayData {
     fn numeric_sparse_tail(&self, start: usize) -> Option<Vec<f64>> {
         (start <= self.length.get()).then_some(())?;
         let mut tail = vec![None; self.length.get() - start];
-        for (key, value) in &self.properties {
+        let properties = self.properties.borrow();
+        for (key, value) in properties.iter() {
             let index = usize::try_from(crate::arrays::array_index(key)?).ok()?;
             let Value::Number(number) = value else {
                 return None;
@@ -1071,7 +1074,7 @@ impl ArrayData {
             && index < self.logical_len()
             && self.deleted.get(index) != Some(&true)
             && self.mapped.get(index).and_then(Option::as_ref).is_none()
-            && matches!(self.property(&index.to_string()), Some(Value::Number(_)))
+            && self.sparse_own_index_fact(index) == SparseOwnIndexFact::Number
     }
 
     /// Store into a preflighted ordinary numeric index without changing array
@@ -1090,10 +1093,8 @@ impl ArrayData {
             array.values.set_existing_numeric_value(index, number)
         } else {
             let key = index.to_string();
-            // SAFETY: realm execution is single-threaded; admission proved an
-            // existing ordinary data property, and this changes only its value.
-            let array = unsafe { &mut *(Rc::as_ptr(array) as *mut Self) };
-            match array.properties.iter_mut().rev().find(|(name, _)| name == &key) {
+            let mut properties = array.properties.borrow_mut();
+            match properties.iter_mut().rev().find(|(name, _)| name == &key) {
                 Some((_, Value::Number(value))) => { *value = number; true }
                 _ => false,
             }
@@ -1118,7 +1119,7 @@ impl ArrayData {
 
     #[inline(always)]
     pub(crate) fn append_preallocated_f64(&self, index: usize, number: f64) -> bool {
-        let plain = self.properties.is_empty()
+        let plain = self.properties.borrow().is_empty()
             && self.indexed_descriptors_plain()
             && self.has_default_array_prototype()
             && !self.arguments
@@ -1356,6 +1357,7 @@ impl ArrayData {
             .find(|&index| self.has_index(index))
             .or_else(|| {
                 self.properties
+                    .borrow()
                     .iter()
                     .filter_map(|(key, _)| {
                         let index = crate::arrays::array_index(key)? as usize;
@@ -1366,7 +1368,7 @@ impl ArrayData {
     }
 
     pub(crate) fn snapshot(&self) -> Vec<Value> {
-        if self.deleted.iter().all(|deleted| !*deleted) && self.properties.is_empty() {
+        if self.deleted.iter().all(|deleted| !*deleted) && self.properties.borrow().is_empty() {
             if let DenseElements::Numbers(values) = &self.values {
                 let values = values.borrow();
                 return values
@@ -1434,6 +1436,7 @@ impl ArrayData {
 
     pub(crate) fn property(&self, key: &str) -> Option<Value> {
         self.properties
+            .borrow()
             .iter()
             .rev()
             .find_map(|(name, value)| (name == key).then(|| value.clone()))
@@ -1441,8 +1444,8 @@ impl ArrayData {
 
     pub(crate) fn sparse_own_index_fact(&self, index: usize) -> SparseOwnIndexFact {
         let key = index.to_string();
-        match self
-            .properties
+        let properties = self.properties.borrow();
+        match properties
             .iter()
             .rev()
             .find_map(|(name, value)| (name == &key).then_some(value))
@@ -1454,19 +1457,21 @@ impl ArrayData {
     }
 
     pub fn property_keys(&self) -> Vec<String> {
-        self.properties.iter().map(|(key, _)| key.clone()).collect()
+        self.properties
+            .borrow()
+            .iter()
+            .map(|(key, _)| key.clone())
+            .collect()
     }
 
     pub(crate) fn set_property(&mut self, key: &str, value: Value) {
-        if let Some((_, current)) = self
-            .properties
-            .iter_mut()
-            .rev()
-            .find(|(name, _)| name == key)
         {
-            *current = value;
-        } else {
-            self.properties.push((key.to_string(), value));
+            let mut properties = self.properties.borrow_mut();
+            if let Some((_, current)) = properties.iter_mut().rev().find(|(name, _)| name == key) {
+                *current = value;
+            } else {
+                properties.push((key.to_string(), value));
+            }
         }
         self.sync_descriptor_value(key);
     }
@@ -1490,7 +1495,7 @@ impl ArrayData {
     }
 
     pub(crate) fn delete_property(&mut self, key: &str) {
-        self.properties.retain(|(name, _)| name != key);
+        self.properties.borrow_mut().retain(|(name, _)| name != key);
         self.descriptors.retain(|(name, _)| name != key);
         if let Some(index) = crate::arrays::array_index(key) {
             let index = index as usize;
