@@ -744,6 +744,16 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
     state.borrow_mut().cluster.worker_context = Some(id);
     state.borrow_mut().cluster.worker_listen_slots.insert(id, 0);
     let wrapped = crate::modules::require::wrap_cjs(state, &filename, &source);
+    // A cluster worker re-enters the VM after the runner bootstrap has
+    // completed. Reinstall the runner-owned web/global surfaces before
+    // evaluating its CommonJS entry: shared helpers (notably common.js)
+    // legitimately inspect the standard fetch binding during startup.
+    let web_streams_surface = crate::polyfills::bootstrap::lookup("web-streams").unwrap_or("");
+    let globals_surface = crate::polyfills::bootstrap::lookup("globals-extra").unwrap_or("");
+    let fetch_surface = crate::polyfills::bootstrap::lookup("fetch").unwrap_or("");
+    let worker_bootstrap =
+        format!("{web_streams_surface}\n{globals_surface}\n{fetch_surface}\nconst fetch = globalThis.fetch;");
+    let wrapped = format!("{worker_bootstrap}\n{wrapped}");
     let result =
         quench_runtime::reduce::reduce_global_script_source(&wrapped).and_then(|program| {
             // Cluster workers re-enter this VM synchronously. Bound only this
