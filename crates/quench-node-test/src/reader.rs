@@ -1,6 +1,7 @@
 //! Discovery and classification of Node fixture outcomes.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use quench_node::NodeHost;
 use quench_runtime::ops::RealmId;
@@ -106,9 +107,18 @@ impl NodeRunner {
         let _cwd_guard = FixtureCwdGuard::capture();
         let script = fixture.path.to_string_lossy().into_owned();
         let title = cli_title(&fixture.source).unwrap_or_else(|| "quench-node".into());
+        let captured_output = Arc::new(Mutex::new(String::new()));
+        let captured_output_sink = Arc::clone(&captured_output);
+        let parent_sink = Arc::clone(&self.sink);
+        let sink: std::sync::Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |chunk| {
+            if let Ok(mut output) = captured_output_sink.lock() {
+                output.push_str(chunk);
+            }
+            parent_sink(chunk);
+        });
         let (host, context) = quench_node::host::install_script_with_args_and_title(
             RealmId::ROOT,
-            self.sink.clone(),
+            sink,
             &script,
             &fixture.argv,
             &title,
@@ -456,7 +466,20 @@ impl NodeRunner {
                 normalized
             }
         };
-        Self::classify(result, self.host.exit_code())
+        let captured_output = captured_output
+            .lock()
+            .map(|output| output.clone())
+            .unwrap_or_default();
+        if let Some(reason) = tap_skip_reason(&captured_output) {
+            let has_tests = captured_output.lines().any(|line| {
+                line.trim_start().starts_with("ok ")
+                    || line.trim_start().starts_with("not ok ")
+            });
+            if !has_tests {
+                return NodeOutcome::Skip { reason };
+            }
+        }
+        Self::classify(result, self.host.exit_code(), &captured_output)
     }
 
     /// Node dispatches top-level uncaught exceptions to
@@ -467,6 +490,14 @@ impl NodeRunner {
     ) -> Result<(), quench_runtime::vm::VmError> {
         match result {
             Err(error) => {
+                // `common.skip()` terminates through the same private
+                // process-exit completion as an ordinary script exit.  It is
+                // a control-flow signal, not an uncaught exception; routing
+                // it through the process error handler would turn a clean
+                // skip into exit status 1 before classification.
+                if is_process_exit_signal(&error) {
+                    return Err(error);
+                }
                 if quench_node::modules::process::abort_on_uncaught_exception(&self.host.state()) {
                     std::process::abort();
                 }
@@ -503,7 +534,15 @@ impl NodeRunner {
     fn classify(
         result: Result<(), quench_runtime::vm::VmError>,
         exit_code: Option<i32>,
+        output: &str,
     ) -> NodeOutcome {
+        if let (Err(error), Some(0)) = (&result, exit_code) {
+            if is_process_exit_signal(error) {
+                if let Some(reason) = tap_skip_reason(output) {
+                    return NodeOutcome::Skip { reason };
+                }
+            }
+        }
         match (result, exit_code) {
             (Ok(_), None | Some(0)) => NodeOutcome::Pass,
             (Ok(_), Some(code)) => NodeOutcome::Fail {
@@ -515,11 +554,7 @@ impl NodeRunner {
                 // unwind the VM.  It is a normal CLI termination, not an
                 // uncaught exception, so preserve the status without
                 // manufacturing stderr output in child mode.
-                let explicit_exit = matches!(
-                    &error,
-                    quench_runtime::vm::VmError::Thrown(Value::String(text))
-                        if text.starts_with("process.exit(")
-                );
+                let explicit_exit = is_process_exit_signal(&error);
                 if explicit_exit {
                     NodeOutcome::Fail {
                         reason: format!("exit code {code}"),
@@ -554,6 +589,29 @@ impl NodeRunner {
             result => result,
         }
     }
+}
+
+fn is_process_exit_signal(error: &quench_runtime::vm::VmError) -> bool {
+    matches!(
+        error,
+        quench_runtime::vm::VmError::Thrown(Value::String(text))
+            if text.starts_with("process.exit(")
+    ) || matches!(
+        error,
+        quench_runtime::vm::VmError::Thrown(value)
+            if matches!(
+                quench_runtime::execute::get_property(value, "__quench_process_exit"),
+                Value::Boolean(true)
+            )
+    )
+}
+
+fn tap_skip_reason(output: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        let marker = line.find("# Skipped:")?;
+        let reason = line[marker + "# Skipped:".len()..].trim();
+        (!reason.is_empty()).then(|| reason.to_string())
+    })
 }
 
 fn render_uncaught(error: &quench_runtime::vm::VmError) -> String {
