@@ -603,7 +603,9 @@ fn iterate_loop_values(
         };
         let _binding = bind_iteration(registers, slot, value, per_iteration, iteration_slots);
         let _ = body.enter_invocation();
-        match execute_loop_body_with_owner(registers, label, body_code, body)? {
+        let step = execute_loop_body_completion_step(registers, body_code, body)?;
+        let body_resume = body_resume_range(body.range, step.next)?;
+        match step.completion.into_loop_transition(label) {
             crate::completion::LoopTransition::Continue(_) => {}
             crate::completion::LoopTransition::Break(_) => {
                 return crate::collections::iterator::close(
@@ -614,13 +616,50 @@ fn iterate_loop_values(
             crate::completion::LoopTransition::Propagate(completion) => {
                 if completion.is_suspension() {
                     remember_for_of(iterator);
-                    return Ok(completion);
+                    return wrap_for_of_suspension(completion, &pending, body_resume);
                 }
                 let completion = attach_loop_completion(registers, dst, completion)?;
                 return crate::collections::iterator::close(iterator, completion);
             }
         }
     }
+}
+
+fn wrap_for_of_suspension(
+    completion: crate::completion::Completion,
+    pending: &crate::value::AsyncForOfState,
+    body_resume: crate::machine::CodeRange,
+) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    let inner = completion
+        .suspension_point()
+        .cloned()
+        .ok_or(crate::execute::VmError::MissingReturn)?;
+    let outer = crate::continuation::SuspensionPoint::Iterator {
+        iterator: pending.iterator.clone(),
+        binding: 0,
+        body: pending.body.range,
+        body_resume,
+        yield_dst: inner.destination(),
+        close_normal: true,
+        repeat: true,
+        slot: pending.slot,
+    };
+    Ok(completion.nest_suspension(outer))
+}
+
+fn body_resume_range(
+    range: crate::machine::CodeRange,
+    next: usize,
+) -> Result<crate::machine::CodeRange, crate::execute::VmError> {
+    let next = u32::try_from(next).map_err(|_| crate::execute::VmError::MissingReturn)?;
+    let start = range
+        .start
+        .checked_add(next)
+        .ok_or(crate::execute::VmError::MissingReturn)?;
+    if start > range.end {
+        return Err(crate::execute::VmError::MissingReturn);
+    }
+    Ok(crate::machine::CodeRange { start, ..range })
 }
 
 pub(crate) fn resume_async_for_of(
@@ -718,10 +757,17 @@ fn execute_loop_body_with_owner(
     body: crate::machine::CodeView<'_>,
     owner: &crate::machine::FunctionCode,
 ) -> Result<crate::completion::LoopTransition, crate::execute::VmError> {
-    Ok(crate::completion::Completion::into_loop_transition(
-        crate::vm::execute_code_completion_with_owner(body, owner, registers)?,
-        label,
-    ))
+    let step = execute_loop_body_completion_step(registers, body, owner)?;
+    Ok(step.completion.into_loop_transition(label))
+}
+
+fn execute_loop_body_completion_step(
+    registers: &mut crate::register_file::RegisterFile,
+    body: crate::machine::CodeView<'_>,
+    owner: &crate::machine::FunctionCode,
+) -> Result<crate::vm::CompletionStep, crate::execute::VmError> {
+    let step = execute_loop_fragment_step_with_owner(registers, body, owner, 0)?;
+    crate::continuation::attach_executed_suspension(body, step)
 }
 
 fn execute_loop_body_step_with_owner(

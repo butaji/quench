@@ -364,7 +364,6 @@ fn update_machine_frame(
         .clone()
         .filter(|point| suspension_child_resume(point).is_some())
     {
-        push_try_frames_for_point(generator, &point)?;
         if is_structured_suspension(&point) {
             let resume = parent_resume_range(generator, state);
             install_suspension_frames(generator, point, resume)?;
@@ -401,6 +400,8 @@ fn is_structured_suspension(point: &crate::continuation::SuspensionPoint) -> boo
         crate::continuation::SuspensionPoint::Nested { .. }
             | crate::continuation::SuspensionPoint::Loop { .. }
             | crate::continuation::SuspensionPoint::Branch { .. }
+            | crate::continuation::SuspensionPoint::Try { .. }
+            | crate::continuation::SuspensionPoint::Iterator { .. }
     )
 }
 
@@ -431,6 +432,51 @@ fn install_suspension_frames(
                 yield_dst,
             },
         ),
+        crate::continuation::SuspensionPoint::Try {
+            phase,
+            body,
+            handler,
+            finalizer,
+            body_resume,
+            yield_dst,
+            catch_slot,
+        } => try_push_frame(
+            &mut generator.machine.borrow_mut(),
+            crate::machine::Frame::Try {
+                phase,
+                body,
+                handler,
+                finalizer,
+                body_resume,
+                resume: parent_resume,
+                yield_dst,
+                catch_slot,
+            },
+        ),
+        crate::continuation::SuspensionPoint::Iterator {
+            iterator,
+            binding,
+            body,
+            body_resume,
+            yield_dst,
+            close_normal,
+            repeat,
+            slot,
+        } => try_push_frame(
+            &mut generator.machine.borrow_mut(),
+            crate::machine::Frame::Iterator {
+                phase: crate::machine::IteratorPhase::Body,
+                iterator,
+                binding,
+                body,
+                body_resume,
+                resume: parent_resume,
+                yield_dst,
+                close_normal,
+                repeat,
+                slot,
+            },
+        ),
         _ => Ok(()),
     }
 }
@@ -443,6 +489,8 @@ fn suspension_child_resume(
         | crate::continuation::SuspensionPoint::YieldStar { resume, .. } => *resume,
         crate::continuation::SuspensionPoint::Loop { phase_resume, .. } => Some(*phase_resume),
         crate::continuation::SuspensionPoint::Branch { body_resume, .. } => Some(*body_resume),
+        crate::continuation::SuspensionPoint::Try { body_resume, .. } => Some(*body_resume),
+        crate::continuation::SuspensionPoint::Iterator { body_resume, .. } => Some(*body_resume),
         crate::continuation::SuspensionPoint::Nested { inner, .. } => {
             suspension_child_resume(inner)
         }
@@ -661,13 +709,15 @@ fn resume_suspended_contexts(
         return resume_machine_frame(generator, state, completion).map(Some);
     }
     restore_nested_loop_frames(generator, state)?;
-    if let Some(completion) = resume_loop_frame(generator, state, completion.clone())? {
+    let loop_result = resume_loop_frame(generator, state, completion.clone())?;
+    if let Some(completion) = loop_result {
         return resume_machine_frame(generator, state, completion).map(Some);
     }
     if let Some(completion) = resume_private_frame(generator, state, completion.clone())? {
         return resume_machine_frame(generator, state, completion).map(Some);
     }
-    if let Some(completion) = resume_try_frame(generator, state, completion.clone())? {
+    let try_result = resume_try_frame(generator, state, completion.clone())?;
+    if let Some(completion) = try_result {
         if completion.is_suspension() {
             return resume_machine_frame(generator, state, completion).map(Some);
         }
@@ -730,6 +780,8 @@ fn collect_loop_points(
     match point {
         crate::continuation::SuspensionPoint::Loop { .. } => output.push(point.clone()),
         crate::continuation::SuspensionPoint::Branch { .. } => {}
+        crate::continuation::SuspensionPoint::Try { .. } => {}
+        crate::continuation::SuspensionPoint::Iterator { .. } => {}
         crate::continuation::SuspensionPoint::Nested { inner, outer } => {
             collect_loop_points(inner, output);
             collect_loop_points(outer, output);

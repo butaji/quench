@@ -6,7 +6,7 @@ pub(crate) enum LoopPhase {
     Update,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum SuspensionPoint {
     Yield {
         resume: Option<crate::machine::CodeRange>,
@@ -20,6 +20,25 @@ pub(crate) enum SuspensionPoint {
     Branch {
         body_resume: crate::machine::CodeRange,
         yield_dst: u16,
+    },
+    Try {
+        phase: crate::machine::TryPhase,
+        body: crate::machine::CodeRange,
+        handler: Option<crate::machine::CodeRange>,
+        finalizer: Option<crate::machine::CodeRange>,
+        body_resume: crate::machine::CodeRange,
+        yield_dst: u16,
+        catch_slot: Option<u16>,
+    },
+    Iterator {
+        iterator: crate::value::Value,
+        binding: u16,
+        body: crate::machine::CodeRange,
+        body_resume: crate::machine::CodeRange,
+        yield_dst: u16,
+        close_normal: bool,
+        repeat: bool,
+        slot: u16,
     },
     Loop {
         pc: usize,
@@ -40,6 +59,27 @@ pub(crate) enum SuspensionPoint {
         inner: Box<SuspensionPoint>,
         outer: Box<SuspensionPoint>,
     },
+}
+
+impl SuspensionPoint {
+    pub(crate) fn destination(&self) -> u16 {
+        match self {
+            Self::Yield { src, .. } => *src,
+            Self::YieldStar { dst, .. } => *dst,
+            Self::Branch { yield_dst, .. }
+            | Self::Try { yield_dst, .. }
+            | Self::Iterator { yield_dst, .. }
+            | Self::Loop { yield_dst, .. } => *yield_dst,
+            Self::Nested { inner, .. } => inner.destination(),
+        }
+    }
+
+    pub(crate) fn nest(self, outer: Self) -> Self {
+        Self::Nested {
+            inner: Box::new(self),
+            outer: Box::new(outer),
+        }
+    }
 }
 
 pub(crate) fn executed_point(
@@ -67,4 +107,30 @@ pub(crate) fn executed_point(
         }),
         _ => None,
     }
+}
+
+pub(crate) fn attach_executed_suspension(
+    code: crate::machine::CodeView<'_>,
+    mut step: crate::vm::CompletionStep,
+) -> Result<crate::vm::CompletionStep, crate::execute::VmError> {
+    use crate::completion::Completion;
+
+    if !matches!(step.completion, Completion::Yield(_) | Completion::Suspend(_)) {
+        return Ok(step);
+    }
+    let pc = step
+        .suspended_pc
+        .or_else(|| step.next.checked_sub(1))
+        .ok_or(crate::execute::VmError::MissingReturn)?;
+    let op = code
+        .cold_at(pc)
+        .ok_or(crate::execute::VmError::MissingReturn)?;
+    let point = executed_point(op, code.range(), step.next)
+        .ok_or(crate::execute::VmError::MissingReturn)?;
+    step.completion = match step.completion {
+        Completion::Yield(value) => Completion::YieldAt(value, point),
+        Completion::Suspend(promise) => Completion::SuspendAt(promise, point),
+        completion => completion,
+    };
+    Ok(step)
 }

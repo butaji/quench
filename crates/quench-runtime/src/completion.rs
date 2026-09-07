@@ -222,6 +222,19 @@ pub(crate) enum LoopTransition {
 }
 
 impl Completion {
+    pub(crate) fn nest_suspension(
+        self,
+        outer: crate::continuation::SuspensionPoint,
+    ) -> Self {
+        match self {
+            Self::Suspend(value) => Self::SuspendAt(value, outer),
+            Self::Yield(value) => Self::YieldAt(value, outer),
+            Self::SuspendAt(value, inner) => Self::SuspendAt(value, inner.nest(outer)),
+            Self::YieldAt(value, inner) => Self::YieldAt(value, inner.nest(outer)),
+            completion => completion,
+        }
+    }
+
     pub(crate) fn visit_values(&self, mut visit: impl FnMut(&Value)) {
         match self {
             Self::Normal => {}
