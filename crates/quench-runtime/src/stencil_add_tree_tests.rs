@@ -9,6 +9,7 @@ fn execute_source_add_chain(
     Completion,
     u64,
     Option<crate::stencil_select::PhysicalStencilView>,
+    Option<crate::stencil_region_builder::NativeLinearWitness>,
     crate::stencil_plan::LocalNumericInputs,
 )> {
     let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
@@ -38,7 +39,8 @@ fn execute_source_add_chain(
     .ok()?;
     let entries = native.borrow().native_entry_count();
     let physical = native.borrow().last_native_view();
-    Some((completion, entries, physical, selection.inputs))
+    let linear = native.borrow().last_linear_witness();
+    Some((completion, entries, physical, linear, selection.inputs))
 }
 
 fn has_add_tree(plan: &BaselinePlan, pc: usize) -> bool {
@@ -99,7 +101,7 @@ fn ordinary_source_repeated_add_uses_composed_fragment_image() {
     let program = crate::reduce::reduce_source(source).expect("ordinary source lowers");
     let mut checked = false;
     crate::stencil_test_support::visit_code_views(program.code(), &mut |view| {
-        let Some((completion, entries, physical, _)) = execute_source_add_chain(
+        let Some((completion, entries, _, witness, _)) = execute_source_add_chain(
             view,
             [Value::Number(1.0), Value::Number(2.0), Value::Number(2.0)],
         ) else {
@@ -107,17 +109,14 @@ fn ordinary_source_repeated_add_uses_composed_fragment_image() {
         };
         assert_eq!(completion, Completion::Return(Value::Number(5.0)));
         assert_eq!(entries, 1);
-        let physical = physical.expect("composed physical view witness");
+        let witness = witness.expect("composed image witness");
+        assert_eq!(witness.fragments, 2);
         assert_eq!(
-            physical.key,
-            crate::stencil_select::fallthrough_region_key()
-        );
-        assert_eq!(
-            physical.abi,
+            witness.identity.abi,
             crate::stencil_select::RegionAbi::ScalarF64Binary
         );
         #[cfg(quench_generated_stencil_artifacts)]
-        assert!(physical.generated);
+        assert_eq!(witness.generated_fragments, 2);
         let fallback = execute_source_add_chain(
             view,
             [
@@ -129,7 +128,7 @@ fn ordinary_source_repeated_add_uses_composed_fragment_image() {
         .expect("hostile input takes ordinary path");
         assert_eq!(fallback.0, Completion::Return(Value::String("x22".into())));
         assert_eq!(fallback.1, 0);
-        assert!(fallback.2.is_none());
+        assert!(fallback.3.is_none());
         checked = true;
     });
     assert!(checked, "ordinary source must reach fragment composition");
@@ -151,7 +150,7 @@ fn ordinary_source_mixed_add_sub_uses_one_heterogeneous_chain() {
 
 fn check_mixed_chain(view: crate::machine::CodeView<'_>) -> bool {
     let values = [Value::Number(1.0), Value::Number(2.0), Value::Number(2.0)];
-    let Some((completion, entries, physical, inputs)) = execute_source_add_chain(view, values)
+    let Some((completion, entries, _, witness, inputs)) = execute_source_add_chain(view, values)
     else {
         return false;
     };
@@ -168,7 +167,10 @@ fn check_mixed_chain(view: crate::machine::CodeView<'_>) -> bool {
     );
     assert_eq!(completion, Completion::Return(Value::Number(3.0)));
     assert_eq!(entries, 1);
-    assert!(physical.is_some());
+    let witness = witness.expect("heterogeneous composed image witness");
+    assert_eq!(witness.fragments, 3);
+    #[cfg(quench_generated_stencil_artifacts)]
+    assert_eq!(witness.generated_fragments, 3);
     assert_mixed_chain_edges(view);
     true
 }
@@ -188,6 +190,7 @@ fn assert_mixed_chain_edges(view: crate::machine::CodeView<'_>) {
     };
     assert!(value.is_nan());
     assert_eq!(fallback.1, 0);
+    assert!(fallback.3.is_none());
     let ordered = execute_source_add_chain(
         view,
         [
@@ -199,6 +202,7 @@ fn assert_mixed_chain_edges(view: crate::machine::CodeView<'_>) {
     .expect("mixed series preserves operation order");
     assert_eq!(ordered.0, Completion::Return(Value::Number(0.0)));
     assert_eq!(ordered.1, 1);
+    assert!(ordered.3.is_some());
 }
 
 #[test]
@@ -207,7 +211,7 @@ fn ordinary_source_repeated_add_depth_is_data_not_a_new_plan() {
     let program = crate::reduce::reduce_source(source).expect("ordinary source lowers");
     let mut checked = false;
     crate::stencil_test_support::visit_code_views(program.code(), &mut |view| {
-        let Some((completion, entries, physical, _)) = execute_source_add_chain(
+        let Some((completion, entries, _, witness, _)) = execute_source_add_chain(
             view,
             [Value::Number(1.0), Value::Number(2.0), Value::Number(2.0)],
         ) else {
@@ -215,10 +219,7 @@ fn ordinary_source_repeated_add_depth_is_data_not_a_new_plan() {
         };
         assert_eq!(completion, Completion::Return(Value::Number(9.0)));
         assert_eq!(entries, 1);
-        assert_eq!(
-            physical.expect("composed view").key,
-            crate::stencil_select::fallthrough_region_key()
-        );
+        assert_eq!(witness.expect("composed image").fragments, 4);
         let negative_zero = execute_source_add_chain(
             view,
             [
