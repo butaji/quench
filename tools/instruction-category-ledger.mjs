@@ -113,7 +113,11 @@ function collectFixtures(args) {
 }
 
 function runOne(engine, fixture, timeoutMs) {
-  const result = spawnSync(engine, [fixture], { timeout: timeoutMs, encoding: 'utf8' });
+  const result = spawnSync(engine, [fixture], {
+    timeout: timeoutMs,
+    encoding: 'utf8',
+    env: { ...process.env, QUENCH_EXEC_TRACE: '1' },
+  });
   const stderr = result.stderr ?? '';
   const line = stderr.split('\n').find((l) => l.startsWith('QUENCH_EXEC_TRACE '));
   if (!line) {
