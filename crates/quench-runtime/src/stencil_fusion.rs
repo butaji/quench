@@ -259,10 +259,12 @@ impl NativeLocalBinaryPlan {
         }
         let physical = match selection.inputs {
             LocalNumericInputs::Folded { .. } => LocalNumericPhysical::Folded,
-            LocalNumericInputs::AddChain { sources, .. } if sources[1] == sources[2] => {
+            LocalNumericInputs::RepeatedAdd { repetitions, .. } => {
                 LocalNumericPhysical::RepeatedAdd(
                     crate::stencil_region_builder::NativeLinearF64Plan::repeated_add(
-                        policy, arena,
+                        policy,
+                        arena,
+                        repetitions,
                     )?,
                 )
             }
@@ -337,6 +339,13 @@ impl NativeLocalBinaryPlan {
                     _ => return None,
                 }
             }
+            LocalNumericInputs::RepeatedAdd { sources, .. } => {
+                let (lhs, rhs) = self.read_sources(environment, sources)?;
+                let LocalNumericPhysical::RepeatedAdd(chain) = &mut self.physical else {
+                    return None;
+                };
+                chain.execute(lhs, rhs)?
+            }
             _ => {
                 let (lhs, rhs) = self.operands(environment)?;
                 self.execute(lhs, rhs).ok()?
@@ -357,7 +366,7 @@ impl NativeLocalBinaryPlan {
                 Some((self.read_number(environment, slot)?, f64::from_bits(bits)))
             }
             LocalNumericInputs::Folded { .. } => None,
-            LocalNumericInputs::AddChain { .. } => None,
+            LocalNumericInputs::AddChain { .. } | LocalNumericInputs::RepeatedAdd { .. } => None,
         }
     }
 

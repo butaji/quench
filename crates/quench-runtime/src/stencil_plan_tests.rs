@@ -425,6 +425,26 @@ fn value_graph_selects_ordered_nonconstant_add_tree() {
 }
 
 #[test]
+fn value_graph_selects_bounded_ordered_repeated_add() {
+    let mut graph = BlockValueGraph::new();
+    assert!(graph.push(Instruction::load_local(0, 6), |_| None));
+    assert!(graph.push(Instruction::load_local(1, 7), |_| None));
+    assert!(graph.push(Instruction::add(2, 0, 1), |_| None));
+    assert!(graph.push(Instruction::add(3, 2, 1), |_| None));
+    let selected = graph
+        .select(Instruction::add(4, 3, 1), &BTreeSet::new())
+        .expect("ordered repeated add");
+    assert_eq!(selected.span, 5);
+    assert_eq!(
+        selected.inputs,
+        LocalNumericInputs::RepeatedAdd {
+            sources: [NumericSource::Local(6), NumericSource::Local(7)],
+            repetitions: 3,
+        }
+    );
+}
+
+#[test]
 fn value_graph_rejects_live_or_reassociated_add_tree() {
     let mut graph = BlockValueGraph::new();
     assert!(graph.push(Instruction::load_local(0, 6), |_| None));
