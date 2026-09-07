@@ -8,6 +8,19 @@ pub enum ArrayKind {
     Holey,
     Sparse,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PlainDenseIndexFact {
+    Available,
+    Arguments,
+    NamedDescriptor,
+    IndexedDescriptor,
+    ReadonlyLength,
+    BeyondLogicalLength,
+    BeyondPhysicalLength,
+    Deleted,
+    Mapped,
+}
 impl ArrayKind {
     #[inline]
     pub fn is_packed(self) -> bool {
@@ -190,7 +203,9 @@ impl DenseElements {
             Self::Numbers(_) => self.set_existing_number(index, number),
             Self::Values(values) => {
                 let mut values = values.borrow_mut();
-                let Some(Value::Number(value)) = values.get_mut(index) else { return false };
+                let Some(Value::Number(value)) = values.get_mut(index) else {
+                    return false;
+                };
                 *value = number;
                 true
             }
@@ -616,9 +631,7 @@ impl ArrayData {
             // An overwrite of a dense packed array cannot introduce a hole or
             // sparse index. Derive the monotonic widening directly from the
             // mutation, avoiding a full backing-store scan on every store.
-            written_number_kind.map_or(ArrayKind::PackedValue, |kind| {
-                appended_kind.unwrap_or(kind)
-            })
+            written_number_kind.map_or(ArrayKind::PackedValue, |kind| appended_kind.unwrap_or(kind))
         } else if previous_kind.is_packed() {
             // The append fast path above already supplied its number kind;
             // this branch is only for a packed array whose structural facts
@@ -1029,8 +1042,8 @@ impl ArrayData {
     /// sparse properties keep the array's monotonic kind at `Sparse`.
     #[inline(always)]
     pub(crate) fn set_proven_existing_f64(&self, index: usize, number: f64) -> bool {
-        let stored = self.has_plain_dense_index(index)
-            && self.values.set_existing_number(index, number);
+        let stored =
+            self.has_plain_dense_index(index) && self.values.set_existing_number(index, number);
         if stored {
             self.kind
                 .set(monotonic_kind(self.kind.get(), number_kind(number)));
@@ -1058,11 +1071,7 @@ impl ArrayData {
     /// structure. Sparse tails use the same single-threaded interior-mutation
     /// rule as ordinary object data properties.
     #[inline(always)]
-    pub(crate) fn set_kernel_existing_f64(
-        array: &Rc<Self>,
-        index: usize,
-        number: f64,
-    ) -> bool {
+    pub(crate) fn set_kernel_existing_f64(array: &Rc<Self>, index: usize, number: f64) -> bool {
         if !array.has_kernel_numeric_index(index) {
             return false;
         }
@@ -1073,13 +1082,22 @@ impl ArrayData {
             // SAFETY: realm execution is single-threaded; admission proved an
             // existing ordinary data property, and this changes only its value.
             let array = unsafe { &mut *(Rc::as_ptr(array) as *mut Self) };
-            match array.properties.iter_mut().rev().find(|(name, _)| name == &key) {
-                Some((_, Value::Number(value))) => { *value = number; true }
+            match array
+                .properties
+                .iter_mut()
+                .rev()
+                .find(|(name, _)| name == &key)
+            {
+                Some((_, Value::Number(value))) => {
+                    *value = number;
+                    true
+                }
                 _ => false,
             }
         };
         if stored {
-            array.kind
+            array
+                .kind
                 .set(monotonic_kind(array.kind.get(), number_kind(number)));
         }
         stored
@@ -1146,17 +1164,29 @@ impl ArrayData {
     /// changes the write semantics.
     #[inline]
     fn indexed_descriptors_plain(&self) -> bool {
-        self.descriptors.iter().all(|(key, descriptor)| {
+        self.dense_descriptor_rejection().is_none()
+    }
+
+    fn dense_descriptor_rejection(&self) -> Option<PlainDenseIndexFact> {
+        for (key, descriptor) in &self.descriptors {
             if key != "length" {
-                return false;
+                return Some(if crate::arrays::array_index(key).is_some() {
+                    PlainDenseIndexFact::IndexedDescriptor
+                } else {
+                    PlainDenseIndexFact::NamedDescriptor
+                });
             }
             let Value::Object(fields) = descriptor else {
-                return false;
+                return Some(PlainDenseIndexFact::ReadonlyLength);
             };
-            fields.iter().rev().find_map(|(name, value)| {
+            let writable = fields.iter().rev().find_map(|(name, value)| {
                 (name == "writable").then_some(matches!(value, Value::Boolean(true)))
-            }) == Some(true)
-        })
+            });
+            if writable != Some(true) {
+                return Some(PlainDenseIndexFact::ReadonlyLength);
+            }
+        }
+        None
     }
 
     /// Append a numeric value to an ordinary packed array without cloning its
@@ -1257,16 +1287,29 @@ impl ArrayData {
     /// remain on the property-aware path.
     #[inline]
     pub(crate) fn has_plain_dense_index(&self, index: usize) -> bool {
-        !self.arguments
-            && self.argument_live.is_none()
-            // The standard writable `length` descriptor is harmless for an
-            // indexed data write. Only indexed/accessor descriptors make the
-            // direct dense-store path unsafe.
-            && self.indexed_descriptors_plain()
-            && index < self.logical_len()
-            && index < self.values.len()
-            && self.deleted.get(index) != Some(&true)
-            && self.mapped.get(index).and_then(Option::as_ref).is_none()
+        self.plain_dense_index_fact(index) == PlainDenseIndexFact::Available
+    }
+
+    pub(crate) fn plain_dense_index_fact(&self, index: usize) -> PlainDenseIndexFact {
+        if self.arguments || self.argument_live.is_some() {
+            return PlainDenseIndexFact::Arguments;
+        }
+        if let Some(fact) = self.dense_descriptor_rejection() {
+            return fact;
+        }
+        if index >= self.logical_len() {
+            return PlainDenseIndexFact::BeyondLogicalLength;
+        }
+        if index >= self.values.len() {
+            return PlainDenseIndexFact::BeyondPhysicalLength;
+        }
+        if self.deleted.get(index) == Some(&true) {
+            return PlainDenseIndexFact::Deleted;
+        }
+        if self.mapped.get(index).and_then(Option::as_ref).is_some() {
+            return PlainDenseIndexFact::Mapped;
+        }
+        PlainDenseIndexFact::Available
     }
     /// Copy a fully dense range within the backing store using memmove ordering.
     ///
@@ -1572,8 +1615,16 @@ fn live_index(live: &ArgumentLive, index: usize) -> Option<Value> {
 
 #[cfg(test)]
 mod array_data_tests {
-    use super::{ArrayData, ArrayKind};
-    use crate::value::Value;
+    use super::{ArrayData, ArrayKind, PlainDenseIndexFact};
+    use crate::value::{ObjectData, Value};
+    use std::rc::Rc;
+
+    fn writable_descriptor(writable: bool) -> Value {
+        Value::Object(Rc::new(ObjectData::new(vec![(
+            "writable".into(),
+            Value::Boolean(writable),
+        )])))
+    }
 
     #[test]
     fn classifies_numeric_and_holey_storage() {
@@ -1590,6 +1641,47 @@ mod array_data_tests {
         holey.delete_property("0");
         assert_eq!(holey.kind(), ArrayKind::Holey);
         assert!(!holey.kind().is_packed());
+    }
+
+    #[test]
+    fn plain_dense_index_fact_explains_each_structural_rejection() {
+        let dense = ArrayData::new(vec![Value::Number(1.0)]);
+        assert_eq!(
+            dense.plain_dense_index_fact(0),
+            PlainDenseIndexFact::Available
+        );
+        assert_eq!(
+            dense.plain_dense_index_fact(1),
+            PlainDenseIndexFact::BeyondLogicalLength
+        );
+
+        let mut hole = dense.clone();
+        hole.set_length(2);
+        assert_eq!(
+            hole.plain_dense_index_fact(1),
+            PlainDenseIndexFact::BeyondPhysicalLength
+        );
+        hole.delete_property("0");
+        assert_eq!(hole.plain_dense_index_fact(0), PlainDenseIndexFact::Deleted);
+
+        let mut named = dense.clone();
+        named.define_descriptor("field", writable_descriptor(true));
+        assert_eq!(
+            named.plain_dense_index_fact(0),
+            PlainDenseIndexFact::NamedDescriptor
+        );
+        let mut indexed = dense.clone();
+        indexed.define_descriptor("0", writable_descriptor(true));
+        assert_eq!(
+            indexed.plain_dense_index_fact(0),
+            PlainDenseIndexFact::IndexedDescriptor
+        );
+        let mut length = dense.clone();
+        length.define_descriptor("length", writable_descriptor(false));
+        assert_eq!(
+            length.plain_dense_index_fact(0),
+            PlainDenseIndexFact::ReadonlyLength
+        );
     }
     #[test]
     fn kind_transitions_preserve_monotonic_holes_and_sparse_boundary() {
@@ -1725,7 +1817,10 @@ mod array_data_tests {
         assert!(!data.set_existing_f64(1, 9.5));
         assert!(data.set_existing_f64(0, 9.5));
         assert_eq!(alias.dense_number_at(0), Some(9.5));
-        assert_eq!(alias.get_index(1), Some(Value::String("materialized".into())));
+        assert_eq!(
+            alias.get_index(1),
+            Some(Value::String("materialized".into()))
+        );
     }
 
     #[test]

@@ -43,10 +43,7 @@ fn plain_own_property(
     })
 }
 
-fn plain_own_property_value(
-    value: &crate::value::Value,
-    key: &str,
-) -> Option<PlainOwnProperty> {
+fn plain_own_property_value(value: &crate::value::Value, key: &str) -> Option<PlainOwnProperty> {
     match value {
         crate::value::Value::Object(properties) => plain_own_property(properties, key),
         crate::value::Value::ObjectAlias(alias) => {
@@ -57,11 +54,7 @@ fn plain_own_property_value(
 }
 
 #[cfg(feature = "execution-trace")]
-fn record_named_set_fact(
-    target: &crate::value::Value,
-    key: &str,
-    assigned: &crate::value::Value,
-) {
+fn record_named_set_fact(target: &crate::value::Value, key: &str, assigned: &crate::value::Value) {
     let fact = plain_own_property_value(target, key);
     let name = match target {
         crate::value::Value::Object(_) => object_set_fact(fact),
@@ -87,20 +80,25 @@ fn array_set_fact(
     if !crate::locals::array_word_is_current(array) {
         return "array:index-stale";
     }
-    if array.has_plain_dense_index(index) {
-        return "array:index-dense";
-    }
-    if index == array.physical_len() && index < array.header_length() {
-        return if matches!(assigned, crate::value::Value::Number(_)) {
-            "array:index-preallocated-number"
-        } else {
-            "array:index-preallocated-other"
-        };
-    }
-    match index.cmp(&array.header_length()) {
-        std::cmp::Ordering::Less => "array:index-hole-or-special",
-        std::cmp::Ordering::Equal => "array:index-append",
-        std::cmp::Ordering::Greater => "array:index-gap",
+    use crate::value::PlainDenseIndexFact as Fact;
+    match array.plain_dense_index_fact(index) {
+        Fact::Available => "array:index-dense",
+        Fact::Arguments => "array:index-arguments",
+        Fact::NamedDescriptor => "array:index-named-descriptor",
+        Fact::IndexedDescriptor => "array:index-indexed-descriptor",
+        Fact::ReadonlyLength => "array:index-readonly-length",
+        Fact::Deleted => "array:index-deleted",
+        Fact::Mapped => "array:index-mapped",
+        Fact::BeyondPhysicalLength if index == array.physical_len() => {
+            if matches!(assigned, crate::value::Value::Number(_)) {
+                "array:index-preallocated-number"
+            } else {
+                "array:index-preallocated-other"
+            }
+        }
+        Fact::BeyondPhysicalLength => "array:index-physical-hole",
+        Fact::BeyondLogicalLength if index == array.header_length() => "array:index-append",
+        Fact::BeyondLogicalLength => "array:index-gap",
     }
 }
 
@@ -214,12 +212,12 @@ fn store_plain_writable_own_data(
 
 #[cfg(test)]
 mod own_data_tests {
+    #[cfg(feature = "execution-trace")]
+    use super::{alias_set_fact, array_set_fact, object_set_fact};
     use super::{
         plain_own_property, plain_own_property_value, plain_writable_own_data,
         store_plain_writable_own_data, PlainOwnProperty,
     };
-    #[cfg(feature = "execution-trace")]
-    use super::{alias_set_fact, array_set_fact, object_set_fact};
     use crate::value::{ObjectAliasValue, ObjectData, Value};
     use std::{cell::RefCell, rc::Rc};
 
@@ -269,7 +267,10 @@ mod own_data_tests {
             "field",
             &Value::Number(9.0)
         ));
-        assert_eq!(owner.hot_properties().slot_value(0), Some(Value::Number(9.0)));
+        assert_eq!(
+            owner.hot_properties().slot_value(0),
+            Some(Value::Number(9.0))
+        );
     }
 
     #[test]
