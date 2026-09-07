@@ -78,6 +78,23 @@ it.  Generated bodies pass 32/32 focused tests and 1,031/1 ignored full runtime;
 the disabled selector boundary passes 4/4.  Evidence:
 `target/micros/calls-inline-{composed,generated-composed}-*-measure-*.json`.
 
+The aggregate `composed` switch also hid three distinct generated ABIs. The
+runtime policy now derives kernel, numeric-array-loop and affine-loop admission
+independently from the canonical `RegionAbi`; `composed` remains only their
+diagnostic compatibility bundle. On one identified generated production binary
+(SHA-256 `e193fad8b09e2aab54b0fd62a5f8800441d89b8272c3dfb55fb084c542503211`),
+large `calls/inline` is 326x Bun with default policy, 324x with kernels only,
+322x with the array loop only, and 2.23x with the affine loop only. The affine
+trace records 33 actual region entries, 135,166 native backedges, zero misses,
+84 used code bytes and one 4 KiB slab. All 36 reserved call cases and 18 numeric
+cases pass. A paired one-sample V8_v7 sweep is neutral within host variation:
+the numeric-cluster geomean is 108.87 default versus 109.34 affine-only, while
+the other-five geomean is 88.78 versus 88.01. Therefore the split is retained
+as a causal diagnostic correction and ARM default admission remains unchanged.
+Evidence: `target/micros/*policy*-efbd45cc91-dirty.json`,
+`target/micros/calls-inline-affine-loop-diagnostic-efbd45cc91-dirty.json`, and
+`target/v8-policy-*-efbd45cc91-dirty-run1.json`.
+
 At `94586e4d01`, leaf and composed publication share one transactional finalized
 image carrying exact bytes, identity, ABI and callable-entry offset. A real
 prefixed-entry image executes correctly; invalid entry offsets and cache-image
