@@ -2561,20 +2561,13 @@ pub(crate) struct NativeTruthinessPlan {
     key: crate::stencil_fact::RegionKey,
     word_key: crate::stencil_fact::RegionKey,
     pointer_key: crate::stencil_fact::RegionKey,
-    storage: PhysicalStorage,
-    physical: PhysicalState,
+    physical: PhysicalInstallation<InstalledTruthinessEntry>,
     site: crate::quickening::QuickeningSite<2>,
-    installed: InstalledTruthinessEntry,
     #[cfg(test)]
     native_entry_count: u64,
 }
 
 impl NativeTruthinessPlan {
-    #[inline]
-    fn clear_shared_capabilities(&mut self) {
-        reset_installed!(self, InstalledTruthinessEntry::Unpublished);
-    }
-
     #[inline]
     fn note_entry(&mut self) {
         #[cfg(test)]
@@ -2589,7 +2582,7 @@ impl NativeTruthinessPlan {
         shared: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
     ) -> Option<Self> {
         let mut plan = Self::new(instruction, policy)?;
-        plan.storage = PhysicalStorage::Shared(shared);
+        plan.physical.use_shared(shared);
         Some(plan)
     }
 
@@ -2624,10 +2617,8 @@ impl NativeTruthinessPlan {
             key,
             word_key,
             pointer_key,
-            storage: PhysicalStorage::Local(None),
-            physical: PhysicalState::new(),
+            physical: PhysicalInstallation::local(InstalledTruthinessEntry::Unpublished),
             site: crate::quickening::QuickeningSite::new(instruction.opcode),
-            installed: InstalledTruthinessEntry::Unpublished,
             #[cfg(test)]
             native_entry_count: 0,
         })
@@ -2636,8 +2627,8 @@ impl NativeTruthinessPlan {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn execute(&mut self, value: f64) -> Result<bool, crate::stencil_arena::ArenaError> {
         let values = crate::stencil_fact::PatchValues::from_site(&self.site);
-        if let Some(shared) = self.storage.shared() {
-            if let InstalledTruthinessEntry::NumberShared(owned) = self.installed {
+        if let Some(shared) = self.physical.storage.shared() {
+            if let InstalledTruthinessEntry::NumberShared(owned) = self.physical.installed() {
                 if let Ok(result) = invoke_shared_entry!(shared, owned, |entry| entry(value)) {
                     #[cfg(test)]
                     {
@@ -2645,7 +2636,7 @@ impl NativeTruthinessPlan {
                     }
                     return Ok(result != 0);
                 }
-                self.clear_shared_capabilities();
+                self.physical.clear(InstalledTruthinessEntry::Unpublished);
             }
             let address = {
                 let values = crate::stencil_fact::PatchValues::from_site(&self.site);
@@ -2656,12 +2647,12 @@ impl NativeTruthinessPlan {
                 )
                 .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
                 let address =
-                    slab.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
+                    slab.render_physical_view_or_get(&mut self.physical.state.cache, view, &values)?;
                 slab.make_executable(address)?;
                 address
             };
             let owned = shared.borrow().owned_bool_unary_entry(address)?;
-            self.installed = InstalledTruthinessEntry::NumberShared(owned);
+            self.physical.publish(InstalledTruthinessEntry::NumberShared(owned));
             return match invoke_shared_entry!(shared, owned, |entry| entry(value)) {
                 Ok(result) => {
                     #[cfg(test)]
@@ -2671,13 +2662,13 @@ impl NativeTruthinessPlan {
                     Ok(result != 0)
                 }
                 Err(error) => {
-                    self.clear_shared_capabilities();
+                    self.physical.clear(InstalledTruthinessEntry::Unpublished);
                     Err(error)
                 }
             };
         }
-        if let InstalledTruthinessEntry::NumberLocal(address) = self.installed {
-            if let Some(arena) = self.storage.local() {
+        if let InstalledTruthinessEntry::NumberLocal(address) = self.physical.installed() {
+            if let Some(arena) = self.physical.storage.local() {
                 if let Ok(entry) = arena.bool_unary_entry(address) {
                     #[cfg(test)]
                     {
@@ -2686,24 +2677,30 @@ impl NativeTruthinessPlan {
                     return Ok(entry(value) != 0);
                 }
             }
-            self.installed = InstalledTruthinessEntry::Unpublished;
+            self.physical.publish(InstalledTruthinessEntry::Unpublished);
         }
         let values = crate::stencil_fact::PatchValues::from_site(&self.site);
-        let arena = self.storage.local_mut()?;
         let view = crate::stencil_select::select_physical_for_abi(
             self.key,
             crate::stencil_select::RegionAbi::ScalarBool,
         )
         .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-        let address = arena.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
-        arena.make_executable()?;
-        let entry = arena.bool_unary_entry(address)?;
-        self.installed = InstalledTruthinessEntry::NumberLocal(address);
+        let (address, result) = {
+            let arena = self.physical.storage.local_mut()?;
+            let address = arena.render_physical_view_or_get(
+                &mut self.physical.state.cache,
+                view,
+                &values,
+            )?;
+            arena.make_executable()?;
+            (address, arena.bool_unary_entry(address)?(value) != 0)
+        };
+        self.physical.publish(InstalledTruthinessEntry::NumberLocal(address));
         #[cfg(test)]
         {
             self.native_entry_count = self.native_entry_count.saturating_add(1);
         }
-        Ok(entry(value) != 0)
+        Ok(result)
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -2713,8 +2710,8 @@ impl NativeTruthinessPlan {
     ) -> Result<bool, crate::stencil_arena::ArenaError> {
         let values = crate::stencil_fact::PatchValues::from_site(&self.site)
             .with_constant_bits(crate::tagged_value::TaggedValue::bool(true).bits());
-        if let Some(shared) = self.storage.shared() {
-            if let InstalledTruthinessEntry::WordShared(owned) = self.installed {
+        if let Some(shared) = self.physical.storage.shared() {
+            if let InstalledTruthinessEntry::WordShared(owned) = self.physical.installed() {
                 if let Ok(result) = invoke_shared_entry!(shared, owned, |entry| entry(value)) {
                     #[cfg(test)]
                     {
@@ -2722,7 +2719,7 @@ impl NativeTruthinessPlan {
                     }
                     return Ok(result != 0);
                 }
-                self.installed = InstalledTruthinessEntry::Unpublished;
+                self.physical.publish(InstalledTruthinessEntry::Unpublished);
             }
             let mut slab = shared.borrow_mut();
             let view = crate::stencil_select::select_physical_for_abi(
@@ -2731,16 +2728,16 @@ impl NativeTruthinessPlan {
             )
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
             let address =
-                slab.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
+                slab.render_physical_view_or_get(&mut self.physical.state.cache, view, &values)?;
             slab.make_executable(address)?;
             let entry = slab.word_bool_entry(address)?;
             drop(slab);
             let owned = shared.borrow().owned_word_bool_entry(address)?;
-            self.installed = InstalledTruthinessEntry::WordShared(owned);
+            self.physical.publish(InstalledTruthinessEntry::WordShared(owned));
             let result = match invoke_shared_entry!(shared, owned, |entry| entry(value)) {
                 Ok(result) => result,
                 Err(error) => {
-                    self.clear_shared_capabilities();
+                    self.physical.clear(InstalledTruthinessEntry::Unpublished);
                     return Err(error);
                 }
             };
@@ -2750,8 +2747,8 @@ impl NativeTruthinessPlan {
             }
             return Ok(result != 0);
         }
-        if let InstalledTruthinessEntry::WordLocal(address) = self.installed {
-            if let Some(arena) = self.storage.local() {
+        if let InstalledTruthinessEntry::WordLocal(address) = self.physical.installed() {
+            if let Some(arena) = self.physical.storage.local() {
                 if let Ok(entry) = arena.word_bool_entry(address) {
                     #[cfg(test)]
                     {
@@ -2760,23 +2757,29 @@ impl NativeTruthinessPlan {
                     return Ok(entry(value) != 0);
                 }
             }
-            self.installed = InstalledTruthinessEntry::Unpublished;
+            self.physical.publish(InstalledTruthinessEntry::Unpublished);
         }
-        let arena = self.storage.local_mut()?;
         let view = crate::stencil_select::select_physical_for_abi(
             self.word_key,
             crate::stencil_select::RegionAbi::ScalarWordBool,
         )
         .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-        let address = arena.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
-        arena.make_executable()?;
-        let entry = arena.word_bool_entry(address)?;
-        self.installed = InstalledTruthinessEntry::WordLocal(address);
+        let (address, result) = {
+            let arena = self.physical.storage.local_mut()?;
+            let address = arena.render_physical_view_or_get(
+                &mut self.physical.state.cache,
+                view,
+                &values,
+            )?;
+            arena.make_executable()?;
+            (address, arena.word_bool_entry(address)?(value) != 0)
+        };
+        self.physical.publish(InstalledTruthinessEntry::WordLocal(address));
         #[cfg(test)]
         {
             self.native_entry_count = self.native_entry_count.saturating_add(1);
         }
-        Ok(entry(value) != 0)
+        Ok(result)
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -2785,13 +2788,13 @@ impl NativeTruthinessPlan {
         value: u64,
     ) -> Result<bool, crate::stencil_arena::ArenaError> {
         let values = crate::stencil_fact::PatchValues::from_site(&self.site);
-        if let Some(shared) = self.storage.shared() {
-            if let InstalledTruthinessEntry::PointerShared(owned) = self.installed {
+        if let Some(shared) = self.physical.storage.shared() {
+            if let InstalledTruthinessEntry::PointerShared(owned) = self.physical.installed() {
                 if let Ok(result) = invoke_shared_entry!(shared, owned, |entry| entry(value)) {
                     self.note_entry();
                     return Ok(result != 0);
                 }
-                self.installed = InstalledTruthinessEntry::Unpublished;
+                self.physical.publish(InstalledTruthinessEntry::Unpublished);
             }
             let mut slab = shared.borrow_mut();
             let view = crate::stencil_select::select_physical_for_abi(
@@ -2800,43 +2803,49 @@ impl NativeTruthinessPlan {
             )
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
             let address =
-                slab.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
+                slab.render_physical_view_or_get(&mut self.physical.state.cache, view, &values)?;
             slab.make_executable(address)?;
             let entry = slab.word_bool_entry(address)?;
             drop(slab);
             let owned = shared.borrow().owned_word_bool_entry(address)?;
-            self.installed = InstalledTruthinessEntry::PointerShared(owned);
+            self.physical.publish(InstalledTruthinessEntry::PointerShared(owned));
             let result = match invoke_shared_entry!(shared, owned, |entry| entry(value)) {
                 Ok(result) => result,
                 Err(error) => {
-                    self.clear_shared_capabilities();
+                    self.physical.clear(InstalledTruthinessEntry::Unpublished);
                     return Err(error);
                 }
             };
             self.note_entry();
             return Ok(result != 0);
         }
-        if let InstalledTruthinessEntry::PointerLocal(address) = self.installed {
-            if let Some(arena) = self.storage.local() {
+        if let InstalledTruthinessEntry::PointerLocal(address) = self.physical.installed() {
+            if let Some(arena) = self.physical.storage.local() {
                 if let Ok(entry) = arena.word_bool_entry(address) {
                     self.note_entry();
                     return Ok(entry(value) != 0);
                 }
             }
-            self.installed = InstalledTruthinessEntry::Unpublished;
+            self.physical.publish(InstalledTruthinessEntry::Unpublished);
         }
-        let arena = self.storage.local_mut()?;
         let view = crate::stencil_select::select_physical_for_abi(
             self.pointer_key,
             crate::stencil_select::RegionAbi::ScalarWordBool,
         )
         .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-        let address = arena.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
-        arena.make_executable()?;
-        let entry = arena.word_bool_entry(address)?;
-        self.installed = InstalledTruthinessEntry::PointerLocal(address);
+        let (address, result) = {
+            let arena = self.physical.storage.local_mut()?;
+            let address = arena.render_physical_view_or_get(
+                &mut self.physical.state.cache,
+                view,
+                &values,
+            )?;
+            arena.make_executable()?;
+            (address, arena.word_bool_entry(address)?(value) != 0)
+        };
+        self.physical.publish(InstalledTruthinessEntry::PointerLocal(address));
         self.note_entry();
-        Ok(entry(value) != 0)
+        Ok(result)
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -2875,7 +2884,7 @@ impl std::fmt::Debug for NativeTruthinessPlan {
         formatter
             .debug_struct("NativeTruthinessPlan")
             .field("key", &self.key)
-            .field("cache_len", &self.physical.cache.len())
+            .field("cache_len", &self.physical.state.cache.len())
             .finish()
     }
 }
