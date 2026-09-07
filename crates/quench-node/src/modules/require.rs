@@ -1223,10 +1223,15 @@ fn require_impl(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
             .unwrap_or(Value::Undefined);
         let child_process = quench_runtime::execute::get_property(&public, "ChildProcess");
         let spawn_sync = crate::host::capability(crate::registry::SPEC_CP_SPAWNSYNC);
+        let spawn = quench_runtime::execute::get_property(
+            &quench_runtime::execute::get_property(&child_process, "prototype"),
+            "spawn",
+        );
         let internal = host_api::object(vec![
             ("ChildProcess".into(), child_process),
             ("spawnSync".into(), spawn_sync.clone()),
             ("\0originalSpawnSync".into(), spawn_sync),
+            ("\0originalSpawn".into(), spawn),
             (
                 "getValidStdio".into(),
                 crate::host::capability(crate::registry::SPEC_CP_GET_VALID_STDIO),
