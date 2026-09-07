@@ -228,10 +228,7 @@ fn allocate_target_with_properties(
         ..EventTarget::default()
     }));
     state.borrow_mut().targets.targets.insert(id, target);
-    let mut initial = vec![(
-        TARGET_ID_PROP.to_string(),
-        Value::Number(id.0 as f64),
-    )];
+    let mut initial = vec![(TARGET_ID_PROP.to_string(), Value::Number(id.0 as f64))];
     initial.extend(properties);
     let object = crate::host::namespace_object_from_pairs(initial);
     let prototype = if node {
@@ -248,7 +245,11 @@ fn allocate_target_with_properties(
     } else {
         object
     };
-    state.borrow_mut().targets.objects.insert(id, object.clone());
+    state
+        .borrow_mut()
+        .targets
+        .objects
+        .insert(id, object.clone());
     Ok(object)
 }
 
@@ -341,9 +342,8 @@ pub fn new_message_port(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError
         let prototype = execute::get_property(&constructor, "prototype");
         matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)).then_some(prototype)
     };
-    let prototype = global_prototype.or_else(|| {
-        MESSAGE_PORT_PROTOTYPE.with(|slot| slot.borrow().clone())
-    });
+    let prototype =
+        global_prototype.or_else(|| MESSAGE_PORT_PROTOTYPE.with(|slot| slot.borrow().clone()));
     let canonical_prototype = prototype.clone();
     if let Some(prototype) = prototype {
         if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
@@ -574,14 +574,10 @@ pub fn message_port_deliver(
     let Some(id) = target_id(peer) else {
         return Ok(Value::Undefined);
     };
-    let closed = state
-        .borrow()
-        .targets
-        .get(id)
-        .is_some_and(|target| {
-            let target = target.borrow();
-            target.message_closed
-        });
+    let closed = state.borrow().targets.get(id).is_some_and(|target| {
+        let target = target.borrow();
+        target.message_closed
+    });
     if closed {
         return Ok(Value::Undefined);
     }
@@ -613,13 +609,20 @@ pub fn message_port_deliver(
         target.message_queue.remove(0);
         (data, ports)
     };
-    let event = host_api::object(vec![
-        ("type".into(), Value::String("message".into())),
+    let event_options = host_api::object(vec![
         ("data".into(), data.clone()),
-        ("target".into(), peer.clone()),
-        ("currentTarget".into(), peer.clone()),
         ("ports".into(), host_api::array(ports)),
     ]);
+    // Message deliveries are MessageEvents, not plain event-shaped records.
+    // Going through the canonical host constructor gives `instanceof
+    // MessageEvent` and the standard origin/source/ports fields while the
+    // EventTarget dispatcher below supplies the delivery target identity.
+    let event = crate::dispatch_handlers::message_event_new(
+        state,
+        &[Value::String("message".into()), event_options],
+    )?;
+    execute::set_property_in_place(&event, "target", peer.clone());
+    execute::set_property_in_place(&event, "currentTarget", peer.clone());
     // The `onmessage` slot is an EventTarget listener installed at assignment
     // time. Invoke it before later addEventListener listeners so registration
     // order remains observable for channel and port targets alike.
@@ -633,6 +636,68 @@ pub fn message_port_deliver(
         Some(peer),
         &[Value::String("message".into()), data],
     )?;
+    Ok(Value::Undefined)
+}
+
+/// Drain queued BroadcastChannel messages by destination creation order.
+/// Each destination owns a FIFO queue; grouping the queue drain avoids making
+/// sender iteration order observable when several channels post in one turn.
+pub fn broadcast_channel_drain(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
+    loop {
+        let mut ids = {
+            let host = state.borrow();
+            host.targets
+                .targets
+                .iter()
+                .filter_map(|(id, target)| {
+                    let target = target.borrow();
+                    (target.broadcast_channel && !target.message_queue.is_empty()).then_some(*id)
+                })
+                .collect::<Vec<_>>()
+        };
+        ids.sort_by_key(|id| id.0);
+        if ids.is_empty() {
+            break;
+        }
+        let mut progressed = false;
+        for id in ids {
+            loop {
+                let next = {
+                    let host = state.borrow();
+                    host.targets.targets.get(&id).and_then(|target| {
+                        let target = target.borrow();
+                        if target.message_closed || target.message_queue.is_empty() {
+                            None
+                        } else {
+                            host.targets
+                                .objects
+                                .get(&id)
+                                .cloned()
+                                .map(|peer| (peer, target.message_queue.len()))
+                        }
+                    })
+                };
+                let Some((peer, queued)) = next else {
+                    break;
+                };
+                let _ = message_port_deliver(state, None, std::slice::from_ref(&peer))?;
+                let remaining = state
+                    .borrow()
+                    .targets
+                    .targets
+                    .get(&id)
+                    .map(|target| target.borrow().message_queue.len())
+                    .unwrap_or(0);
+                if remaining >= queued {
+                    break;
+                }
+                progressed = true;
+            }
+        }
+        if !progressed {
+            break;
+        }
+    }
     Ok(Value::Undefined)
 }
 

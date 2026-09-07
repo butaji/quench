@@ -571,6 +571,7 @@ const CAP_BROADCAST_CHANNEL_REF: u16 = 0x7FE8;
 const CAP_BROADCAST_CHANNEL_UNREF: u16 = 0x7FE9;
 const CAP_BROADCAST_CHANNEL_HAS_REF: u16 = 0x7FEA;
 const CAP_BROADCAST_CHANNEL_NAME: u16 = 0x7FEB;
+const CAP_BROADCAST_CHANNEL_DRAIN: u16 = 0x7FEC;
 const CAP_STREAM_IS_READABLE: u16 = SPEC_STREAM_IS_READABLE.cap;
 const CAP_STREAM_IS_WRITABLE: u16 = SPEC_STREAM_IS_WRITABLE.cap;
 const CAP_STREAM_IS_ERRORED: u16 = SPEC_STREAM_IS_ERRORED.cap;
@@ -691,6 +692,9 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         }
         CAP_BROADCAST_CHANNEL_NAME => {
             crate::modules::worker_threads::broadcast_channel_name_handler
+        }
+        CAP_BROADCAST_CHANNEL_DRAIN => {
+            crate::modules::worker_threads::broadcast_channel_drain_handler
         }
         CAP_STREAM_IS_READABLE => crate::modules::stream::is_readable,
         CAP_STREAM_IS_WRITABLE => crate::modules::stream::is_writable,
