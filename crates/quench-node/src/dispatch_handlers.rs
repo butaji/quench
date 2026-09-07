@@ -1652,6 +1652,7 @@ pub fn util_system_error_name(
         -32 => "EPIPE",
         -105 => "ENOBUFS",
         -110 => "ETIMEDOUT",
+        -4094 => "UNKNOWN",
         _ => return Ok(Value::String(format!("Unknown system error {errno}"))),
     };
     Ok(Value::String(name.into()))
@@ -4382,6 +4383,10 @@ pub fn internal_binding(
             ("UV_ENOTEMPTY".to_string(), Value::Number(-66.0)),
             ("UV_EPERM".to_string(), Value::Number(-1.0)),
             ("UV_EOF".to_string(), Value::Number(-4095.0)),
+            // libuv's sentinel for an unclassified operation failure.  The
+            // dgram send path returns this value synchronously so its normal
+            // asynchronous error delivery can preserve Node's contract.
+            ("UV_UNKNOWN".to_string(), Value::Number(-4094.0)),
             (
                 "errname".to_string(),
                 crate::host::capability(crate::registry::SPEC_PROCESS_BINDING_UV_ERRNAME),
