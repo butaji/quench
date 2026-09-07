@@ -180,17 +180,16 @@ fn lowered_named_call_width_uses_real_argument_operands() {
     let zero = lowered_named_call(Vec::new());
     let one = lowered_named_call(vec![9]);
     let many = lowered_named_call(vec![5, 7, 11]);
-    assert_eq!(zero.code().unwrap().instruction(0).unwrap().opcode, crate::ir::Opcode::CallN);
+    assert_eq!(
+        zero.code().unwrap().instruction(0).unwrap().opcode,
+        crate::ir::Opcode::CallN
+    );
     assert_eq!(zero.required_register_count(), 4);
     assert_eq!(one.required_register_count(), 10);
     assert_eq!(many.required_register_count(), 12);
 }
 
-fn source_call_frame(
-    source: &str,
-    opcode: crate::ir::Opcode,
-    argc: u8,
-) -> (u16, Option<Vec<u16>>) {
+fn source_call_frame(source: &str, opcode: crate::ir::Opcode, argc: u8) -> (u16, Option<Vec<u16>>) {
     let program = crate::reduce::reduce_source(source).expect("call source lowers");
     let mut found = None;
     crate::stencil_test_support::visit_code_views(program.code(), &mut |code| {
@@ -280,13 +279,15 @@ fn ordinary_call_loop_lowers_to_one_cfg_and_preserves_throw() {
     crate::stencil_test_support::visit_code_views(program.code(), &mut |code| {
         let has_call = (0..code.len()).any(|pc| {
             code.instruction(pc).is_some_and(|instruction| {
-                matches!(instruction.opcode, crate::ir::Opcode::Call | crate::ir::Opcode::CallN)
+                matches!(
+                    instruction.opcode,
+                    crate::ir::Opcode::Call | crate::ir::Opcode::CallN
+                )
             })
         });
         let has_backedge = (0..code.len()).any(|pc| {
             code.instruction(pc).is_some_and(|instruction| {
-                instruction.opcode == crate::ir::Opcode::Jump
-                    && usize::from(instruction.a) <= pc
+                instruction.opcode == crate::ir::Opcode::Jump && usize::from(instruction.a) <= pc
             })
         });
         matched |= has_call && has_backedge;
@@ -306,12 +307,15 @@ fn trace_metadata_does_not_change_counted_loop_lowering() {
     let program = crate::reduce::reduce_source(source).expect("counted loop lowers");
     let mut matched = false;
     crate::stencil_test_support::visit_code_views(program.code(), &mut |code| {
-        let has_mul = (0..code.len()).any(|pc| code.instruction(pc).is_some_and(|instruction| {
-            instruction.opcode == crate::ir::Opcode::Mul
-        }));
-        let has_backedge = (0..code.len()).any(|pc| code.instruction(pc).is_some_and(|instruction| {
-            instruction.opcode == crate::ir::Opcode::Jump && usize::from(instruction.a) <= pc
-        }));
+        let has_mul = (0..code.len()).any(|pc| {
+            code.instruction(pc)
+                .is_some_and(|instruction| instruction.opcode == crate::ir::Opcode::Mul)
+        });
+        let has_backedge = (0..code.len()).any(|pc| {
+            code.instruction(pc).is_some_and(|instruction| {
+                instruction.opcode == crate::ir::Opcode::Jump && usize::from(instruction.a) <= pc
+            })
+        });
         matched |= has_mul && has_backedge;
     });
     assert!(matched, "trace metadata changed canonical loop shape");
@@ -335,7 +339,10 @@ fn ordinary_source_freezes_lowering_frame_width() {
             }
         }
     });
-    assert!(!widths.is_empty(), "source produced no declared function frame");
+    assert!(
+        !widths.is_empty(),
+        "source produced no declared function frame"
+    );
     assert!(widths.iter().all(|(declared, linked)| declared == linked));
     crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default())
         .expect("source executes");
@@ -472,7 +479,9 @@ fn disabled_native_policy_keeps_admission_and_executable_storage_empty() {
         local_fusions: false,
         native_dispatch: false,
         fused_regions: false,
-        composed_regions: false,
+        array_kernels: false,
+        array_numeric_loops: false,
+        affine_i32_loops: false,
         optimizing_view: false,
     };
     let plan =
@@ -730,7 +739,9 @@ fn native_dispatch_rebuilds_evicted_typed_entry_in_normal_driver() {
         local_fusions: false,
         native_dispatch: true,
         fused_regions: false,
-        composed_regions: false,
+        array_kernels: false,
+        array_numeric_loops: false,
+        affine_i32_loops: false,
         optimizing_view: false,
     };
     let plan = super::BaselinePlan::compile_for_test(executable.code(), policy);
@@ -797,11 +808,8 @@ fn composed_plan_retires_cached_bytes_after_committed_failure() {
             pc: 0,
             error: crate::vm::VmError::EvalError("ordinary throw".into()),
         });
-    plan.physical.apply_dispatch_outcome(
-        &semantic,
-        None,
-        super::InstalledRegionEntry::Unpublished,
-    );
+    plan.physical
+        .apply_dispatch_outcome(&semantic, None, super::InstalledRegionEntry::Unpublished);
     assert_eq!(
         plan.physical.state.cache.len(),
         1,
@@ -1171,9 +1179,7 @@ fn native_add_const_rejects_constant_left_for_signed_zero_order() {
 #[test]
 fn non_x86_native_execution_rejects_before_mapping() {
     let mut plan = super::NativeBinaryPlan {
-        physical: super::PhysicalInstallation::local(
-            super::InstalledBinaryEntry::Unpublished,
-        ),
+        physical: super::PhysicalInstallation::local(super::InstalledBinaryEntry::Unpublished),
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
         opcode: crate::ir::Opcode::Add,
         key: crate::stencil_select::numeric_region_key(crate::ir::Opcode::Add).unwrap(),
@@ -1193,9 +1199,7 @@ fn non_x86_native_execution_rejects_before_mapping() {
 #[test]
 fn native_numeric_entry_pointer_is_cached_after_first_render() {
     let mut plan = super::NativeBinaryPlan {
-        physical: super::PhysicalInstallation::local(
-            super::InstalledBinaryEntry::Unpublished,
-        ),
+        physical: super::PhysicalInstallation::local(super::InstalledBinaryEntry::Unpublished),
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
         opcode: crate::ir::Opcode::Add,
         key: crate::stencil_select::numeric_region_key(crate::ir::Opcode::Add).unwrap(),
@@ -2513,11 +2517,12 @@ fn ordinary_source_lowering_executes_fused_indexed_numeric_update() {
 
 #[cfg(target_arch = "aarch64")]
 fn affine_i32_source_body() -> (super::FunctionCode, usize) {
-    let source = "function f(s){var x=s.seed;for(var i=0;i<s.n;i++)x=(x*33+7)|0;return x} f({seed:1,n:4});";
+    let source =
+        "function f(s){var x=s.seed;for(var i=0;i<s.n;i++)x=(x*33+7)|0;return x} f({seed:1,n:4});";
     let program = crate::reduce::reduce_source(source).expect("affine source lowers");
-    let record = crate::stencil_select::select_region(
-        crate::stencil_select::affine_i32_loop_region_key(),
-    ).expect("affine declaration");
+    let record =
+        crate::stencil_select::select_region(crate::stencil_select::affine_i32_loop_region_key())
+            .expect("affine declaration");
     let mut pending = Vec::new();
     program.code().cold_ops().for_each(|(_, op)| {
         op.visit_bodies(&mut |body| pending.push(body.clone()));
@@ -2525,11 +2530,15 @@ fn affine_i32_source_body() -> (super::FunctionCode, usize) {
     while let Some(body) = pending.pop() {
         let Some(code) = body.code() else { continue };
         let pc = (0..code.len()).find(|pc| {
-            record.operations.iter().enumerate().all(|(offset, expected)| {
-                code.instruction(*pc + offset).is_some_and(|instruction| {
-                    expected.matches_physical_contract(instruction.opcode)
+            record
+                .operations
+                .iter()
+                .enumerate()
+                .all(|(offset, expected)| {
+                    code.instruction(*pc + offset).is_some_and(|instruction| {
+                        expected.matches_physical_contract(instruction.opcode)
+                    })
                 })
-            })
         });
         if let Some(pc) = pc {
             return (body, pc);
@@ -2542,19 +2551,32 @@ fn affine_i32_source_body() -> (super::FunctionCode, usize) {
 }
 
 #[cfg(target_arch = "aarch64")]
-fn affine_i32_environment(code: super::CodeView<'_>, pc: usize, value: f64, end: f64) -> std::rc::Rc<crate::environment::Environment> {
+fn affine_i32_environment(
+    code: super::CodeView<'_>,
+    pc: usize,
+    value: f64,
+    end: f64,
+) -> std::rc::Rc<crate::environment::Environment> {
     let captures = crate::environment::Environment::new();
-    let frame = crate::register_file::RegisterFile::with_undefined(usize::from(code.frame_register_count()));
+    let frame = crate::register_file::RegisterFile::with_undefined(usize::from(
+        code.frame_register_count(),
+    ));
     let environment = crate::environment::Environment::child_registers(&captures, frame);
     environment.set(code.instruction(pc).unwrap().b, super::Value::Number(0.0));
-    environment.set(code.instruction(pc + 5).unwrap().b, super::Value::Number(value));
+    environment.set(
+        code.instruction(pc + 5).unwrap().b,
+        super::Value::Number(value),
+    );
     let current = std::rc::Rc::new(crate::value::ObjectData::new(vec![
         ("seed".into(), super::Value::Number(value)),
         ("n".into(), super::Value::Number(end)),
     ]));
     let object = crate::value::ObjectData::new(Vec::new());
     object.replace_with(current);
-    environment.set(code.instruction(pc + 1).unwrap().b, super::Value::Object(std::rc::Rc::new(object)));
+    environment.set(
+        code.instruction(pc + 1).unwrap().b,
+        super::Value::Object(std::rc::Rc::new(object)),
+    );
     environment
 }
 
@@ -2566,11 +2588,22 @@ fn ordinary_source_executes_generated_affine_i32_loop_region() {
     let (function, pc) = affine_i32_source_body();
     let code = function.code().expect("linked affine function");
     let entries = super::baseline_entries(code);
-    let windows = (0..entries.len()).map(|pc| code.operand_window_at(pc)).collect::<Vec<_>>();
+    let windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
     let cfg = super::ControlFlowFacts::new(&entries, &windows);
-    assert!(record.bindings_match_entries(&entries, pc), "affine operand bindings");
-    assert!(cfg.region_plan(&entries, pc, record.operations).is_some(), "affine control plan");
-    assert!(super::region_outputs_cover_exit(&entries, &cfg, pc, record), "affine live outputs");
+    assert!(
+        record.bindings_match_entries(&entries, pc),
+        "affine operand bindings"
+    );
+    assert!(
+        cfg.region_plan(&entries, pc, record.operations).is_some(),
+        "affine control plan"
+    );
+    assert!(
+        super::region_outputs_cover_exit(&entries, &cfg, pc, record),
+        "affine live outputs"
+    );
     let view = crate::stencil_select::select_physical(key).expect("affine physical view");
     assert!(view.generated, "generated affine view required");
     assert!(
@@ -2585,20 +2618,41 @@ fn ordinary_source_executes_generated_affine_i32_loop_region() {
     );
     let region = plan.native_region_at(pc).expect("affine loop admission");
     assert_eq!(region.borrow().key_for_test(), key);
-    let mut registers = crate::register_file::RegisterFile::with_undefined(usize::from(code.register_count()));
+    let mut registers =
+        crate::register_file::RegisterFile::with_undefined(usize::from(code.register_count()));
     let completion = crate::vm::execute_baseline_code_from(
-        code, &plan, pc, &mut registers, &crate::vm::current_context_or_default(),
+        code,
+        &plan,
+        pc,
+        &mut registers,
+        &crate::vm::current_context_or_default(),
         affine_i32_environment(code, pc, 1.0, 4.0),
-    ).expect("normal driver executes affine loop").0;
-    assert_eq!(completion, crate::completion::Completion::Return(super::Value::Number(1_445_341.0)));
+    )
+    .expect("normal driver executes affine loop")
+    .0;
+    assert_eq!(
+        completion,
+        crate::completion::Completion::Return(super::Value::Number(1_445_341.0))
+    );
     assert!(region.borrow().last_native_execution());
-    assert!(region.borrow().last_native_view_for_test().is_some_and(|view| view.generated));
+    assert!(region
+        .borrow()
+        .last_native_view_for_test()
+        .is_some_and(|view| view.generated));
 
     let completion = crate::vm::execute_baseline_code_from(
-        code, &plan, pc, &mut registers, &crate::vm::current_context_or_default(),
+        code,
+        &plan,
+        pc,
+        &mut registers,
+        &crate::vm::current_context_or_default(),
         affine_i32_environment(code, pc, -0.0, 0.0),
-    ).expect("negative zero falls back").0;
-    assert!(matches!(completion, crate::completion::Completion::Return(super::Value::Number(value)) if value == 0.0 && value.is_sign_negative()));
+    )
+    .expect("negative zero falls back")
+    .0;
+    assert!(
+        matches!(completion, crate::completion::Completion::Return(super::Value::Number(value)) if value == 0.0 && value.is_sign_negative())
+    );
     assert!(!region.borrow().last_native_execution());
 }
 
@@ -2617,9 +2671,15 @@ fn assert_holey_indexed_update_falls_back(
     let mut registers = crate::register_file::RegisterFile::with_undefined(
         usize::from(view.register_count()).max(8),
     );
-    registers.write(usize::from(load.b), crate::value::Value::Array(array.clone()));
+    registers.write(
+        usize::from(load.b),
+        crate::value::Value::Array(array.clone()),
+    );
     registers.write(usize::from(load.c), crate::value::Value::Number(0.0));
-    registers.write(usize::from(store.a), crate::value::Value::Array(array.clone()));
+    registers.write(
+        usize::from(store.a),
+        crate::value::Value::Array(array.clone()),
+    );
     registers.write(usize::from(store.b), crate::value::Value::Number(0.0));
     if add.opcode == crate::ir::Opcode::Add {
         registers.write(usize::from(add.c), crate::value::Value::Number(2.0));
@@ -2636,7 +2696,11 @@ fn assert_holey_indexed_update_falls_back(
     let value = crate::vm::get_property_result(&crate::value::Value::Array(array), "0")
         .expect("ordinary indexed result");
     assert!(matches!(value, crate::value::Value::Number(number) if number.is_nan()));
-    assert!(!plan.native_region_at(pc).unwrap().borrow().last_native_execution());
+    assert!(!plan
+        .native_region_at(pc)
+        .unwrap()
+        .borrow()
+        .last_native_execution());
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -3007,9 +3071,7 @@ fn ordinary_source_lowering_executes_tagged_identity_inequality() {
 #[test]
 fn native_add_chain_executes_two_ops_with_one_entry() {
     let mut plan = super::NativeAddChainPlan {
-        physical: super::PhysicalInstallation::local(
-            super::InstalledF64x3Entry::Unpublished,
-        ),
+        physical: super::PhysicalInstallation::local(super::InstalledF64x3Entry::Unpublished),
         bindings: crate::stencil_plan::F64x3Bindings {
             inputs: [0, 1, 2],
             output: 3,
@@ -3233,9 +3295,7 @@ fn native_store_local_uses_declared_tagged_word_entry() {
 #[test]
 fn native_property_uses_rendered_address_without_remapping() {
     let mut plan = super::NativePropertyPlan {
-        physical: super::PhysicalInstallation::local(
-            super::InstalledPropertyEntry::Unpublished,
-        ),
+        physical: super::PhysicalInstallation::local(super::InstalledPropertyEntry::Unpublished),
         opcode: crate::ir::Opcode::GetN,
         native_entry_count: 0,
         last_native_view: None,
@@ -3304,9 +3364,7 @@ fn native_property_shared_entry_reuses_live_owner_and_recovers_after_eviction() 
 #[test]
 fn native_property_rejects_stale_layout_before_loading_slot() {
     let mut plan = super::NativePropertyPlan {
-        physical: super::PhysicalInstallation::local(
-            super::InstalledPropertyEntry::Unpublished,
-        ),
+        physical: super::PhysicalInstallation::local(super::InstalledPropertyEntry::Unpublished),
         opcode: crate::ir::Opcode::GetN,
         native_entry_count: 0,
         last_native_view: None,
@@ -3556,12 +3614,20 @@ fn execute_generated_property_store(code: crate::machine::CodeView<'_>, pc: usiz
     let context = crate::vm::current_context_or_default();
     run_property_store_and_assert(code, &plan, pc, &mut registers, &context, 5.0);
     run_property_store_and_assert(code, &plan, pc, &mut registers, &context, 7.0);
-    let native = plan.native_store_property_at(pc).expect("native store plan");
+    let native = plan
+        .native_store_property_at(pc)
+        .expect("native store plan");
     assert!(native.borrow().native_entry_count() > 0);
     #[cfg(quench_generated_stencil_artifacts)]
     assert_generated_property_store(&native.borrow());
     assert_readonly_property_store_falls_back(
-        code, &plan, pc, &mut registers, &context, &object, &native,
+        code,
+        &plan,
+        pc,
+        &mut registers,
+        &context,
+        &object,
+        &native,
     );
 }
 
@@ -3609,12 +3675,9 @@ fn assert_readonly_property_store_falls_back(
     native: &std::cell::RefCell<super::NativePropertyPlan>,
 ) {
     let entries = native.borrow().native_entry_count();
-    let descriptor = crate::value::Value::Object(std::rc::Rc::new(
-        crate::value::ObjectData::new(vec![(
-            "writable".into(),
-            crate::value::Value::Boolean(false),
-        )]),
-    ));
+    let descriptor = crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
+        vec![("writable".into(), crate::value::Value::Boolean(false))],
+    )));
     assert!(crate::execute::set_property_in_place(
         &crate::value::Value::Object(std::rc::Rc::clone(&object)),
         &crate::builtins::descriptor_key("value"),
@@ -3623,7 +3686,10 @@ fn assert_readonly_property_store_falls_back(
     let source = code.instruction(pc).expect("SetN instruction").b;
     run_property_store(code, plan, pc, registers, context, source, 9.0);
     let object_register = code.instruction(pc).expect("SetN instruction").a;
-    assert_eq!(named_value(registers, object_register), crate::value::Value::Number(7.0));
+    assert_eq!(
+        named_value(registers, object_register),
+        crate::value::Value::Number(7.0)
+    );
     assert_eq!(native.borrow().native_entry_count(), entries);
 }
 

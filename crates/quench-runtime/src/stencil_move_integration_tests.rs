@@ -104,7 +104,9 @@ fn leaf_policy() -> crate::stencil_policy::ExecutionPolicy {
         local_fusions: true,
         native_dispatch: false,
         fused_regions: false,
-        composed_regions: false,
+        array_kernels: false,
+        array_numeric_loops: false,
+        affine_i32_loops: false,
         optimizing_view: false,
     }
 }
@@ -115,7 +117,9 @@ fn disabled_policy() -> crate::stencil_policy::ExecutionPolicy {
         local_fusions: false,
         native_dispatch: false,
         fused_regions: false,
-        composed_regions: false,
+        array_kernels: false,
+        array_numeric_loops: false,
+        affine_i32_loops: false,
         optimizing_view: false,
     }
 }
