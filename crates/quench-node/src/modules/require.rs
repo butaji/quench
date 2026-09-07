@@ -2503,7 +2503,11 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             ),
         ])),
         "internal/async_context_frame" => Some(host_api::object(vec![
-            ("enabled".into(), Value::Boolean(false)),
+            // Node's internal frame machinery is available even when no
+            // user async hook is enabled.  AsyncLocalStorage and stream
+            // completion code use this flag to distinguish a live context
+            // frame from the legacy hook-only path.
+            ("enabled".into(), Value::Boolean(true)),
             (
                 "current".into(),
                 crate::host::capability(crate::registry::SPEC_INTERNAL_ASYNC_CONTEXT_FRAME_CURRENT),
