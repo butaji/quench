@@ -109,6 +109,94 @@ impl ClusterState {
     pub(crate) fn fork_process(&self, scope: u64) -> Option<Value> {
         self.fork_processes.get(&scope).cloned()
     }
+
+    pub(crate) fn fork_scopes(&self) -> Vec<u64> {
+        self.fork_processes.keys().copied().collect()
+    }
+}
+
+/// Complete a child-process fork whose last referenced host handle has
+/// closed.  IPC itself is not a reason to keep a Node child alive once its
+/// event loop is idle; the parent observes the normal exit/close pair.
+pub(crate) fn finish_idle_fork_process(
+    state: &Rc<RefCell<HostState>>,
+    scope: u64,
+) -> Result<bool, VmError> {
+    // `net::poll()` runs before nextTick/microtask draining. Keep a fork alive
+    // whenever work already queued for that logical process can still settle
+    // its exit status; otherwise a child that throws from nextTick is finalized
+    // as exit(0) before the exception reaches the fork boundary.
+    let pending_microtask = state
+        .borrow()
+        .event_loop
+        .microtasks
+        .borrow()
+        .iter()
+        .any(|task| task.process_scope == scope);
+    if pending_microtask {
+        return Ok(false);
+    }
+    if crate::modules::net::has_live_scope(state, scope) {
+        return Ok(false);
+    }
+    let child = state.borrow().cluster.fork_process(scope);
+    let Some(child) = child else {
+        return Ok(false);
+    };
+    // A fork can fail during invocation validation before its queued spawn
+    // phase runs. Keep the logical child registered until that phase emits
+    // the terminal stderr/exit events after fork() returns and listeners can
+    // observe them.
+    if matches!(
+        execute::get_property(&child, "\0forkStartupFailed"),
+        Value::Boolean(true)
+    ) {
+        return Ok(false);
+    }
+    let timer_live = match execute::get_property(&child, "\0childTimerIds") {
+        Value::Array(ids) => (0..ids.logical_len()).any(|index| {
+            matches!(
+                execute::get_property_result(&Value::Array(ids.clone()), &index.to_string()),
+                Ok(Value::Number(id)) if id.is_finite() && state.borrow().timers.timers.contains_key(&(id as u64))
+            )
+        }),
+        _ => false,
+    };
+    if timer_live {
+        return Ok(false);
+    }
+    let child = state.borrow_mut().cluster.take_fork_process(scope);
+    let Some(child) = child else {
+        return Ok(false);
+    };
+    execute::set_property_in_place(&child, "connected", Value::Boolean(false));
+    execute::set_property_in_place(&child, "exitCode", Value::Number(0.0));
+    execute::set_property_in_place(&child, "signalCode", Value::Null);
+    if let Value::Number(pid) = execute::get_property(&child, "pid") {
+        state.borrow_mut().process.alive_pids.remove(&(pid as i64));
+    }
+    let previous_scope = state.borrow().cluster.process_scope();
+    let previous_event_scope = state.borrow().event_loop.process_scope();
+    state.borrow_mut().cluster.set_process_scope(0);
+    state.borrow().event_loop.set_process_scope(0);
+    for event in ["exit", "close"] {
+        crate::modules::events::method_emit(
+            state,
+            Some(&child),
+            &[
+                Value::String(event.into()),
+                Value::Number(0.0),
+                Value::Null,
+            ],
+        )?;
+    }
+    state.borrow_mut().cluster.set_process_scope(previous_scope);
+    state
+        .borrow()
+        .event_loop
+        .set_process_scope(previous_event_scope);
+    state.borrow_mut().emitters.remove_scope(scope);
+    Ok(true)
 }
 
 pub fn setup_primary(
@@ -1303,6 +1391,10 @@ pub(crate) fn fail_fork_process(
     execute::set_property_in_place(&child, "connected", Value::Boolean(false));
     execute::set_property_in_place(&child, "exitCode", Value::Number(code as f64));
     execute::set_property_in_place(&child, "signalCode", Value::Null);
+    // Mark the terminal transition before queued spawn-output work runs. The
+    // output callback must not emit a second synthetic exit(0) after this
+    // error path has already delivered exit(code)/close to the parent.
+    execute::set_property_in_place(&child, "\0childTerminated", Value::Boolean(true));
     let stderr = execute::get_property(&child, "stderr");
     if let Value::String(text) = execute::get_property(&child, "\0forkStderr") {
         if !text.is_empty() && matches!(stderr, Value::Object(_) | Value::ObjectAlias(_)) {
