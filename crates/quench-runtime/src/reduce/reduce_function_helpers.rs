@@ -108,6 +108,7 @@ pub fn reduce_default_function_declaration(
             crate::reduce_support::function_strictness(body, facts.strict),
             locals,
         ),
+        facts.source_for_span(function.span),
     ));
     ops.push(Op::SetFunctionName { function: register, name: "default".to_string() });
     ops.push(Op::StoreLocal { slot, src: register });
