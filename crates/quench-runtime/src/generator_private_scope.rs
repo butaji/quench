@@ -1,15 +1,25 @@
 fn suspended_conditional<'a>(
     generator: &'a GeneratorData,
     _state: &GeneratorState,
-) -> Option<(&'a Op, crate::machine::CodeView<'a>)> {
-    let Op::Conditional {
-        condition,
-        consequent,
-        alternate,
-        ..
-    } = generator.function.code.code()?.cold_at(machine_pc(generator).checked_sub(1)?)?
-    else {
-        return None;
+) -> Option<(Option<u16>, &'a Op, crate::machine::CodeView<'a>)> {
+    let branch = generator
+        .function
+        .code
+        .code()?
+        .cold_at(machine_pc(generator).checked_sub(1)?)?;
+    let (condition, consequent, alternate, destination) = match branch {
+        Op::Conditional {
+            dst,
+            condition,
+            consequent,
+            alternate,
+        } => (condition, consequent, alternate, Some(*dst)),
+        Op::Branch {
+            condition,
+            then_ops,
+            else_ops,
+        } => (condition, then_ops, else_ops, None),
+        _ => return None,
     };
     let test = crate::execute::read_register(&registers(generator), *condition).ok()?;
     let branch = if crate::execute::is_truthy(&test) {
@@ -18,8 +28,11 @@ fn suspended_conditional<'a>(
         alternate
     };
     let branch = branch.code()?;
-    let (index, op) = branch.find_cold(|op| matches!(op, Op::Yield { .. }))?;
-    Some((op, branch.slice(index + 1, branch.len())?))
+    // Async functions suspend with `Await`, while generators suspend with
+    // `Yield`; both need the same branch continuation so a conditional body
+    // does not lose its assignment when the awaited promise resumes.
+    let (index, op) = branch.find_cold(|op| matches!(op, Op::Yield { .. } | Op::Await { .. }))?;
+    Some((destination, op, branch.slice(index + 1, branch.len())?))
 }
 
 fn resume_suspended_conditional(
@@ -27,12 +40,18 @@ fn resume_suspended_conditional(
     state: &mut GeneratorState,
     resume: crate::completion::Completion,
 ) -> Result<Option<crate::completion::Completion>, VmError> {
-    let Some((_, suffix)) = suspended_conditional(generator, state) else {
+    let Some((_, _, suffix)) = suspended_conditional(generator, state) else {
         return Ok(None);
     };
     if !matches!(resume, crate::completion::Completion::Normal) {
         return Ok(Some(resume));
     }
+    let _private = crate::private_environment::Guard::install_environment(
+        generator.function.private_environment.clone(),
+    );
+    let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
+    let _with = crate::with_scope::FunctionGuard::install(&generator.function.with_captures);
+    let _locals = crate::locals::EnvironmentGuard::install(machine_environment(generator)?);
     let completion = execute_with_generator_registers(generator, |registers| {
         crate::vm::execute_code_completion_in_current_frame(suffix, registers)
     })?;
@@ -61,8 +80,12 @@ fn install_nested_resume_input(
     state: &mut GeneratorState,
     input: Value,
 ) {
-    if let Some((Op::Yield { src }, _)) = suspended_conditional(generator, state) {
-        crate::execute::write_value(&mut registers_mut(generator), *src, input);
+    if let Some((_, op, _)) = suspended_conditional(generator, state) {
+        let destination = match op {
+            Op::Yield { src } | Op::Await { dst: src, .. } => *src,
+            _ => return,
+        };
+        crate::execute::write_value(&mut registers_mut(generator), destination, input);
         return;
     }
     if install_iterator_binding_input(generator, state, &input) {

@@ -57,6 +57,16 @@ fn resume_loop_frame(
     let _locals = crate::locals::EnvironmentGuard::install(machine_environment(generator)?);
     let completion = run_loop_after_yield(generator, &frame)?;
     if completion.is_suspension() {
+        try_push_frame(
+            &mut generator.machine.borrow_mut(),
+            crate::machine::Frame::Await {
+                phase: 0,
+                resume: generator.function.code.range,
+                destination: loop_frame_resume(generator)
+                    .map(|current| current.yield_dst)
+                    .unwrap_or(frame.yield_dst),
+            },
+        )?;
         return Ok(Some(completion));
     }
     generator.machine.borrow_mut().pop_frame();
@@ -71,15 +81,22 @@ fn run_loop_after_yield(
     loop {
         let step = execute_loop_body_range(generator, body)?;
         if step.completion.is_suspension() {
-            if let Some(crate::continuation::SuspensionPoint::Yield { src, .. }) = step.suspension {
+            if let Some(src) = loop_suspension_destination(generator, body, &step) {
                 update_loop_body_resume(generator, body, step.pc, src)?;
                 return Ok(step.completion);
             }
             return Err(VmError::MissingReturn);
         }
         match step.completion {
-            crate::completion::Completion::Normal
-            | crate::completion::Completion::Return(_) => {}
+            crate::completion::Completion::Normal => {}
+            crate::completion::Completion::Return(value)
+                if step.pc >= body.end.saturating_sub(body.start) as usize =>
+            {
+                let _ = value;
+            }
+            crate::completion::Completion::Return(value) => {
+                return Ok(crate::completion::Completion::Return(value));
+            }
             completion => match completion.into_loop_transition(&frame.label) {
                 crate::completion::LoopTransition::Continue(_) => {}
                 crate::completion::LoopTransition::Break(value) => {
@@ -96,6 +113,35 @@ fn run_loop_after_yield(
             return Ok(crate::completion::Completion::Normal);
         }
         body = frame.body;
+    }
+}
+
+fn loop_suspension_destination(
+    generator: &GeneratorData,
+    body: crate::machine::CodeRange,
+    step: &crate::vm::GeneratorStep,
+) -> Option<u16> {
+    if let Some(crate::continuation::SuspensionPoint::Yield { src, .. }) = step.suspension {
+        return Some(src);
+    }
+    let store = generator.machine.borrow().store.clone()?;
+    let code = store.code(body)?;
+    let candidate = code.cold_at(step.pc.saturating_sub(1));
+    if let Some(crate::ops::Op::Branch { condition, then_ops, else_ops }) = candidate {
+        let truthy = crate::execute::read_register(&registers(generator), *condition)
+            .ok()
+            .is_some_and(|value| crate::execute::is_truthy(&value));
+        let selected = if truthy { then_ops } else { else_ops };
+        if let Some((_, crate::ops::Op::Await { dst, .. })) = selected
+            .code()
+            .and_then(|view| view.find_cold(|op| matches!(op, crate::ops::Op::Await { .. })))
+        {
+            return Some(*dst);
+        }
+    }
+    match candidate? {
+        crate::ops::Op::Await { dst, .. } => Some(*dst),
+        _ => None,
     }
 }
 
