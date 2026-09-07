@@ -141,6 +141,8 @@ fn suspension_destination(point: &crate::continuation::SuspensionPoint) -> Optio
         | crate::continuation::SuspensionPoint::Yield { src: yield_dst, .. } => Some(*yield_dst),
         crate::continuation::SuspensionPoint::YieldStar { dst, .. } => Some(*dst),
         crate::continuation::SuspensionPoint::Branch { yield_dst, .. } => Some(*yield_dst),
+        crate::continuation::SuspensionPoint::Try { yield_dst, .. } => Some(*yield_dst),
+        crate::continuation::SuspensionPoint::Iterator { yield_dst, .. } => Some(*yield_dst),
         crate::continuation::SuspensionPoint::Nested { inner, .. } => suspension_destination(inner),
     }
 }
@@ -367,6 +369,15 @@ fn resume_machine_frame(
     // next settlement must install the continuation that actually executed,
     // not the point that caused the previous await.
     state.suspension = completion.suspension_point().cloned();
+    if let Some(point) = state.suspension.clone() {
+        if is_structured_suspension(&point) {
+            let parent = active_frame_resume(generator)
+                .unwrap_or_else(|| parent_resume_range(generator, state));
+            install_suspension_frames(generator, point, parent)?;
+        } else {
+            update_machine_frame(generator, state, &completion)?;
+        }
+    }
     // Promise settlement can invoke the next continuation synchronously.  Make
     // the newly captured point visible before exposing the suspended result so
     // re-entry cannot observe the previous loop's state.
@@ -376,4 +387,17 @@ fn resume_machine_frame(
         .borrow_mut()
         .record_completion(completion.clone());
     complete_step(generator, state, completion)
+}
+
+fn active_frame_resume(generator: &GeneratorData) -> Option<crate::machine::CodeRange> {
+    match generator.machine.borrow().frames.frames.last()? {
+        crate::machine::Frame::Try { body_resume, .. }
+        | crate::machine::Frame::Iterator { body_resume, .. }
+        | crate::machine::Frame::Private { body_resume, .. }
+        | crate::machine::Frame::Dispose { body_resume, .. } => Some(*body_resume),
+        crate::machine::Frame::Branch { branch_resume, .. } => Some(*branch_resume),
+        crate::machine::Frame::Loop { phase_resume, .. } => Some(*phase_resume),
+        crate::machine::Frame::Await { resume, .. } => Some(*resume),
+        crate::machine::Frame::Delegate { .. } => None,
+    }
 }

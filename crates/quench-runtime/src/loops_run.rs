@@ -286,7 +286,9 @@ fn point_destination(point: &crate::continuation::SuspensionPoint) -> Option<u16
     match point {
         crate::continuation::SuspensionPoint::Yield { src, .. }
         | crate::continuation::SuspensionPoint::Loop { yield_dst: src, .. }
-        | crate::continuation::SuspensionPoint::Branch { yield_dst: src, .. } => Some(*src),
+        | crate::continuation::SuspensionPoint::Branch { yield_dst: src, .. }
+        | crate::continuation::SuspensionPoint::Try { yield_dst: src, .. } => Some(*src),
+        | crate::continuation::SuspensionPoint::Iterator { yield_dst: src, .. } => Some(*src),
         crate::continuation::SuspensionPoint::YieldStar { dst, .. } => Some(*dst),
         crate::continuation::SuspensionPoint::Nested { inner, .. } => point_destination(inner),
     }

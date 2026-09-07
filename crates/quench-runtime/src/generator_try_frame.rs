@@ -368,7 +368,8 @@ fn resume_after_try(
         Some(crate::machine::Frame::Loop { .. })
     ) && matches!(completion, crate::completion::Completion::Normal)
     {
-        if let Some(completion) = resume_loop_frame(generator, state, completion.clone())? {
+        let resumed = resume_loop_frame(generator, state, completion.clone())?;
+        if let Some(completion) = resumed {
             return Ok(completion);
         }
     }

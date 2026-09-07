@@ -8,11 +8,16 @@ pub(crate) fn execute(
     let Op::Try { body, .. } = op else {
         return Err(VmError::MissingReturn);
     };
-    let body_completion = execute_try_body(body, registers)?;
-    if body_completion.is_suspension() {
-        return Ok(body_completion);
+    let body_step = execute_try_body(body, registers)?;
+    if body_step.completion.is_suspension() {
+        return wrap_try_suspension(
+            op,
+            crate::machine::TryPhase::Body,
+            body.range,
+            body_step,
+        );
     }
-    finish_try_completion(registers, op, body_completion)
+    finish_try_completion(registers, op, body_step.completion)
 }
 
 pub(crate) fn finish_try_completion(
@@ -35,12 +40,19 @@ pub(crate) fn finish_try_completion(
         Completion::Throw(value) => match handler {
             Some(ops) => {
                 let previous = bind_caught(value, *catch_slot, registers);
-                let completion =
-                    crate::vm::execute_function_code_completion_in_current_frame(ops, registers)?;
+                let step = execute_try_body(ops, registers)?;
                 if let Some((slot, cell)) = previous {
                     crate::locals::current().restore_slot(slot, cell);
                 }
-                completion
+                if step.completion.is_suspension() {
+                    return wrap_try_suspension(
+                        op,
+                        crate::machine::TryPhase::Catch,
+                        ops.range,
+                        step,
+                    );
+                }
+                step.completion
             }
             None => Completion::Throw(value),
         },
@@ -89,29 +101,38 @@ pub(crate) fn execute_ops(
 fn execute_try_body(
     ops: &crate::machine::FunctionCode,
     registers: &mut crate::register_file::RegisterFile,
-) -> Result<Completion, VmError> {
+) -> Result<crate::vm::CompletionStep, VmError> {
     let code = ops.code().ok_or(VmError::MissingReturn)?;
     let step = crate::vm::execute_function_code_completion_step_in_current_frame(ops, registers)?;
-    attach_executed_suspension(code, step)
+    crate::continuation::attach_executed_suspension(code, step)
 }
 
-fn attach_executed_suspension(
-    code: crate::machine::CodeView<'_>,
+fn wrap_try_suspension(
+    op: &Op,
+    phase: crate::machine::TryPhase,
+    range: crate::machine::CodeRange,
     step: crate::vm::CompletionStep,
 ) -> Result<Completion, VmError> {
-    let plain = matches!(step.completion, Completion::Yield(_) | Completion::Suspend(_));
-    if !plain {
-        return Ok(step.completion);
+    let Op::Try { body, handler, finalizer, catch_slot, .. } = op else {
+        return Err(VmError::MissingReturn);
+    };
+    let inner = step.completion.suspension_point().cloned().ok_or(VmError::MissingReturn)?;
+    let yield_dst = inner.destination();
+    let next = u32::try_from(step.next).map_err(|_| VmError::MissingReturn)?;
+    let body_resume = range.start.checked_add(next).ok_or(VmError::MissingReturn)?;
+    if body_resume > range.end {
+        return Err(VmError::MissingReturn);
     }
-    let pc = step.suspended_pc.ok_or(VmError::MissingReturn)?;
-    let op = code.cold_at(pc).ok_or(VmError::MissingReturn)?;
-    let point = crate::continuation::executed_point(op, code.range(), step.next)
-        .ok_or(VmError::MissingReturn)?;
-    match step.completion {
-        Completion::Yield(value) => Ok(Completion::YieldAt(value, point)),
-        Completion::Suspend(promise) => Ok(Completion::SuspendAt(promise, point)),
-        completion => Ok(completion),
-    }
+    let outer = crate::continuation::SuspensionPoint::Try {
+        phase,
+        body: body.range,
+        handler: handler.as_ref().map(|code| code.range),
+        finalizer: finalizer.as_ref().map(|code| code.range),
+        body_resume: crate::machine::CodeRange { start: body_resume, ..range },
+        yield_dst,
+        catch_slot: *catch_slot,
+    };
+    Ok(step.completion.nest_suspension(outer))
 }
 
 fn bind_caught(
