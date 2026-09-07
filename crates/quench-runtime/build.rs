@@ -11,8 +11,8 @@ mod build_stencil_contract;
 mod build_stencil_templates;
 
 use build_stencil_contract::{
-    equal, operand, region_key_name, value, AssemblyContinuation, DeclAbi, PhysicalBinding,
-    PhysicalBindingValue, PhysicalOperand, PhysicalOperandField, PhysicalOutput,
+    equal, operand, region_key_name, value, AssemblyContinuation, DeclAbi, DeclContinuationAbi,
+    PhysicalBinding, PhysicalBindingValue, PhysicalOperand, PhysicalOperandField, PhysicalOutput,
     PhysicalOutputDestination, PhysicalOutputValue, RecipeComposition, RegionDeclaration,
 };
 

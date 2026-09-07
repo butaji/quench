@@ -84,11 +84,21 @@ fn render_region_row(index: usize, declaration: &RegionDeclaration) -> String {
         .join(", ");
     let bindings = render_physical_bindings(declaration);
     let outputs = render_physical_outputs(declaration);
+    let continuation_abi = continuation_abi_expr(declaration);
     format!(
-        "    crate::stencil_select::RegionRecord {{ name: {declaration_name:?}, key: CANONICAL_{name}_KEY, stencil: crate::stencil_fact::Stencil {{ bytes: CANONICAL_{name}_BYTES, holes: CANONICAL_{name}_HOLES }}, operations: CANONICAL_{name}_OPS, bindings: {bindings}, outputs: {outputs}, entry: {entry}, external_entries: &[{external_entries}], fallthrough: {fallthrough}, abi: {abi}, template_calls_helper: {template_calls_helper}, executable: {executable} }}, // declaration {index}",
+        "    crate::stencil_select::RegionRecord {{ name: {declaration_name:?}, key: CANONICAL_{name}_KEY, stencil: crate::stencil_fact::Stencil {{ bytes: CANONICAL_{name}_BYTES, holes: CANONICAL_{name}_HOLES }}, operations: CANONICAL_{name}_OPS, bindings: {bindings}, outputs: {outputs}, entry: {entry}, external_entries: &[{external_entries}], fallthrough: {fallthrough}, continuation_abi: {continuation_abi}, abi: {abi}, template_calls_helper: {template_calls_helper}, executable: {executable} }}, // declaration {index}",
         entry = declaration.entry,
         template_calls_helper = target_template_calls_helper(declaration),
     )
+}
+
+fn continuation_abi_expr(declaration: &RegionDeclaration) -> &'static str {
+    use DeclContinuationAbi::{F64AccumulatorD0AddD1, F64AccumulatorD0ThenD2, None};
+    match rust_assembly_recipe(declaration).map_or(None, |recipe| recipe.internal_abi()) {
+        None => "crate::stencil_select::ContinuationAbi::None",
+        F64AccumulatorD0AddD1 => "crate::stencil_select::ContinuationAbi::F64AccumulatorD0AddD1",
+        F64AccumulatorD0ThenD2 => "crate::stencil_select::ContinuationAbi::F64AccumulatorD0ThenD2",
+    }
 }
 
 fn render_fallthrough(declaration: &RegionDeclaration) -> String {

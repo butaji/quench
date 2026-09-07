@@ -24,6 +24,7 @@ fn extracted_build_artifacts_match_canonical_contracts() {
         assert!(artifact.artifact_id.starts_with(artifact.name));
         assert!(!artifact.target.is_empty());
         assert_eq!(artifact.abi, record.abi);
+        assert_eq!(artifact.continuation_abi, record.continuation_abi);
         assert_eq!(artifact.key, record.key);
         for relocation in artifact.relocations {
             assert!(artifact
@@ -65,6 +66,28 @@ fn extracted_build_artifacts_match_canonical_contracts() {
     }
 }
 
+#[cfg(quench_generated_stencil_artifacts)]
+#[test]
+fn generated_continuation_abi_mismatch_rejects_the_complete_view() {
+    let record = CANONICAL_REGION_TABLE
+        .iter()
+        .find(|record| record.name == "fallthrough")
+        .expect("fallthrough row");
+    let artifact = BUILD_STENCIL_ARTIFACTS
+        .iter()
+        .find(|artifact| artifact.name == record.name)
+        .expect("generated fallthrough artifact");
+    assert_ne!(artifact.continuation_abi, ContinuationAbi::None);
+    let mut mismatched = *artifact;
+    mismatched.continuation_abi = ContinuationAbi::None;
+    assert!(!generated_contract_matches(
+        record.key,
+        record,
+        &mismatched,
+        record.fallthrough
+    ));
+}
+
 #[test]
 fn physical_relocations_reject_unsupported_addends() {
     static BYTES: [u8; 4] = 0x1400_0000u32.to_le_bytes();
@@ -101,6 +124,7 @@ fn physical_view_rejects_layout_mismatch_before_entry() {
         compiler: "test",
         fingerprint: "test",
         abi: RegionAbi::ScalarF64Binary,
+        continuation_abi: ContinuationAbi::None,
         entry: 1,
         external_entries: &[0],
         has_fallthrough: false,
@@ -123,6 +147,7 @@ fn physical_view_rejects_layout_mismatch_before_entry() {
         compiler: "test",
         fingerprint: "test",
         abi: RegionAbi::ScalarF64Binary,
+        continuation_abi: ContinuationAbi::None,
         entry: 0,
         external_entries: WRONG_ENTRIES,
         has_fallthrough: false,
@@ -145,6 +170,7 @@ fn physical_view_rejects_layout_mismatch_before_entry() {
         compiler: "test",
         fingerprint: "test",
         abi: RegionAbi::ScalarF64Binary,
+        continuation_abi: ContinuationAbi::None,
         entry: 0,
         external_entries: &[0],
         has_fallthrough: true,
@@ -167,6 +193,7 @@ fn physical_view_rejects_layout_mismatch_before_entry() {
         compiler: "test",
         fingerprint: "test",
         abi: RegionAbi::TaggedWord,
+        continuation_abi: ContinuationAbi::None,
         entry: 0,
         external_entries: &[0],
         has_fallthrough: false,
@@ -189,6 +216,7 @@ fn physical_view_rejects_layout_mismatch_before_entry() {
         compiler: "test",
         fingerprint: "test",
         abi: RegionAbi::ScalarF64Binary,
+        continuation_abi: ContinuationAbi::None,
         entry: 0,
         external_entries: &[0],
         has_fallthrough: false,
@@ -227,6 +255,7 @@ fn physical_view_rejects_layout_mismatch_before_entry() {
         compiler: "test",
         fingerprint: "test",
         abi: RegionAbi::ScalarF64Binary,
+        continuation_abi: ContinuationAbi::None,
         entry: 0,
         external_entries: &[0],
         has_fallthrough: false,

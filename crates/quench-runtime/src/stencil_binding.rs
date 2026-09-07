@@ -222,6 +222,7 @@ mod tests {
             entry: 0,
             external_entries: &[0],
             fallthrough: None,
+            continuation_abi: crate::stencil_select::ContinuationAbi::None,
             abi: crate::stencil_select::RegionAbi::ArrayNumericLoop,
             template_calls_helper: false,
             executable: false,

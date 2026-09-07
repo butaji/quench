@@ -34,8 +34,9 @@ fn render_artifact(
         .collect::<Vec<_>>()
         .join(", ");
     let row = format!(
-        "    BuildStencilArtifact {{ name: {name:?}, artifact_id: {artifact_id:?}, key: CANONICAL_{identifier}_KEY, target: {target:?}, compiler: {compiler:?}, fingerprint: {fingerprint:?}, abi: {}, entry: {}, external_entries: &[{}], has_fallthrough: {}, executable: true, template_calls_helper: {}, bytes: BYTES_{identifier}, data: &[], relocations: {}, stencil: crate::stencil_fact::Stencil {{ bytes: BYTES_{identifier}, holes: {} }}, fallthrough: {} }},",
+        "    BuildStencilArtifact {{ name: {name:?}, artifact_id: {artifact_id:?}, key: CANONICAL_{identifier}_KEY, target: {target:?}, compiler: {compiler:?}, fingerprint: {fingerprint:?}, abi: {}, continuation_abi: {}, entry: {}, external_entries: &[{}], has_fallthrough: {}, executable: true, template_calls_helper: {}, bytes: BYTES_{identifier}, data: &[], relocations: {}, stencil: crate::stencil_fact::Stencil {{ bytes: BYTES_{identifier}, holes: {} }}, fallthrough: {} }},",
         super::abi_expr(declaration),
+        super::continuation_abi_expr(declaration),
         declaration.entry,
         entries,
         extracted.fallthrough.is_some(),
@@ -113,8 +114,11 @@ fn fingerprint(
             let outputs = super::rust_assembly_recipe(item)
                 .map(|recipe| format!("{:?}", recipe.outputs()))
                 .unwrap_or_default();
+            let continuation_abi = super::rust_assembly_recipe(item)
+                .map(|recipe| format!("{:?}", recipe.internal_abi()))
+                .unwrap_or_default();
             format!(
-                "{name}:{abi:?}:{ops:?}:{x86:?}:{arm:?}:{portable:?}:{holes:?}:{arm_holes:?}:{entry}:{external:?}:{bindings}:{outputs}:{source}",
+                "{name}:{abi:?}:{ops:?}:{x86:?}:{arm:?}:{portable:?}:{holes:?}:{arm_holes:?}:{entry}:{external:?}:{bindings}:{outputs}:{continuation_abi}:{source}",
                 name = item.name,
                 abi = item.abi,
                 ops = item.operations,
@@ -154,6 +158,7 @@ fn artifact_fingerprint(
     if let Some(recipe) = super::rust_assembly_recipe(declaration) {
         hash_bytes(&mut hash, format!("{:?}", recipe.bindings()).as_bytes());
         hash_bytes(&mut hash, format!("{:?}", recipe.outputs()).as_bytes());
+        hash_bytes(&mut hash, format!("{:?}", recipe.internal_abi()).as_bytes());
     }
     hash_bytes(&mut hash, &declaration.entry.to_le_bytes());
     for entry in declaration.external_entries {
