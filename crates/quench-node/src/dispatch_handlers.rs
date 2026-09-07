@@ -8596,17 +8596,12 @@ pub fn cp_spawn(
             .position(|value| value.ends_with(".js") || value.ends_with(".mjs"))
         {
             let script = Value::String(values[script_index].clone());
-            let execute_source = std::fs::read_to_string(&values[script_index])
-                .map(|source| {
-                    source.contains("process.on('message'")
-                        || source.contains("process.on(\"message\"")
-                        || source.contains("process.send")
-                        || source.contains("process.stdin")
-                })
-                .unwrap_or(false);
-            if !execute_source {
-                return Ok(child);
-            }
+            // A real `spawn(process.execPath, [script], {stdio: ..., ipc})`
+            // executes the entry script regardless of whether it happens to
+            // install an IPC listener.  Running the source here keeps timer
+            // and handle liveness observable (for example a child that stays
+            // alive without calling `process.on('message')`) and avoids
+            // guessing at script contents to decide whether the child exists.
             execute::set_property_in_place(&child, "\0childSpawnIpc", Value::Boolean(true));
             let fork_args = host_api::array(
                 values
@@ -8803,7 +8798,13 @@ fn cp_run_host_child(
         (arg.ends_with(".js") || arg.ends_with(".mjs") || arg.ends_with(".cjs"))
             && std::path::Path::new(arg).is_file()
     });
-    if !has_entry && !version_probe && !args.iter().any(|arg| arg == "-e" || arg == "--eval") {
+    let eval_probe = args.iter().any(|arg| {
+        matches!(
+            arg.as_str(),
+            "-e" | "--eval" | "-p" | "--print" | "-pe" | "-ep"
+        )
+    });
+    if !has_entry && !version_probe && !eval_probe {
         return None;
     }
     // `process.execPath` points at the compatibility runner selected by the
@@ -8842,7 +8843,12 @@ fn cp_run_host_child(
         process.env_clear().envs(values);
         process.env("QUENCH_CHILD_RUNNER", "1");
     }
-    if let Some(eval_index) = args.iter().position(|arg| arg == "-e" || arg == "--eval") {
+    if let Some(eval_index) = args.iter().position(|arg| {
+        matches!(
+            arg.as_str(),
+            "-e" | "--eval" | "-p" | "--print" | "-pe" | "-ep"
+        )
+    }) {
         let exec_argv = serde_json::to_string(&args[..eval_index]).unwrap_or_else(|_| "[]".into());
         process.env("QUENCH_EXEC_ARGV", exec_argv);
     }
@@ -9050,9 +9056,12 @@ pub fn cp_spawn_output_emit(
             &[Value::String("abort".into()), abort_listener],
         );
     }
-    let fork_stderr = match execute::get_property(&child_options, "\0quench:forkStderr") {
+    let fork_stderr = match execute::get_property(child, "\0forkStderr") {
         Value::String(value) => value,
-        _ => String::new(),
+        _ => match execute::get_property(&child_options, "\0quench:forkStderr") {
+            Value::String(value) => value,
+            _ => String::new(),
+        },
     };
     let stderr_text = if let Some((_, stderr, _)) = real_child.as_ref() {
         String::from_utf8_lossy(stderr).into_owned()
@@ -9470,6 +9479,11 @@ pub fn cp_spawn_output_emit(
         vec![Value::Null, signal]
     } else if shell_missing {
         vec![Value::Number(127.0), Value::Null]
+    } else if matches!(
+        execute::get_property(child, "\0forkStartupFailed"),
+        Value::Boolean(true)
+    ) {
+        vec![Value::Number(1.0), Value::Null]
     } else if let Some((_, _, status)) = real_child {
         vec![Value::Number(status as f64), Value::Null]
     } else {
@@ -10417,6 +10431,14 @@ fn fork_child_start(
     let previous_stdout = execute::get_property(&process, "stdout");
     let previous_stderr = execute::get_property(&process, "stderr");
     let previous_stdin = execute::get_property(&process, "stdin");
+    let previous_secure_heap = {
+        let host = state.borrow();
+        (
+            host.process.secure_heap_total,
+            host.process.secure_heap_min,
+            host.process.secure_heap_used,
+        )
+    };
     let console = execute::get_property(&global, "console");
     let previous_console_stdout = execute::get_property(&console, "_stdout");
     let previous_console_stderr = execute::get_property(&console, "_stderr");
@@ -10449,16 +10471,39 @@ fn fork_child_start(
     // child view just as argv is materialized above; otherwise JSON/string
     // operations can attempt to call a cross-realm method and throw
     // "value is not callable" before user code reaches stdout.
-    let exec_argv_values = if let Value::Array(values) = &previous_exec_argv {
+    let child_exec_argv = match execute::get_property(&child_options, "execArgv") {
+        Value::Array(values) => Value::Array(values),
+        _ => previous_exec_argv.clone(),
+    };
+    let exec_argv_values = if let Value::Array(values) = &child_exec_argv {
         (0..values.logical_len())
             .filter_map(|index| {
-                execute::get_property_result(&previous_exec_argv, &index.to_string()).ok()
+                execute::get_property_result(&child_exec_argv, &index.to_string()).ok()
             })
             .collect::<Vec<_>>()
     } else {
         Vec::new()
     };
+    let child_exec_argv_strings = exec_argv_values
+        .iter()
+        .filter_map(|value| execute::to_js_string(value).ok())
+        .collect::<Vec<_>>();
+    let (secure_heap_total, secure_heap_min) = match crate::modules::process::secure_heap_config(
+        &child_exec_argv_strings,
+    ) {
+        Ok(config) => config,
+        Err(stderr) => {
+            execute::set_property_in_place(child, "\0forkStderr", Value::String(stderr));
+            // Startup validation belongs to the child lifecycle, so leave
+            // terminal event delivery queued until fork() returns and the
+            // caller can install its exit/stderr listeners.
+            execute::set_property_in_place(child, "\0forkStartupFailed", Value::Boolean(true));
+            execute::set_property_in_place(child, "connected", Value::Boolean(false));
+            return Ok(());
+        }
+    };
     execute::set_property_in_place(&process, "execArgv", host_api::array(exec_argv_values));
+    crate::modules::process::set_secure_heap_config(state, secure_heap_total, secure_heap_min);
     execute::set_property_in_place(&process, "connected", Value::Boolean(true));
     let child_env = execute::get_property(&child_options, "env");
     if matches!(child_env, Value::Object(_) | Value::ObjectAlias(_)) {
@@ -10646,11 +10691,23 @@ fn fork_child_start(
             child.object_identity().unwrap_or(0),
             code,
         );
+        crate::modules::process::set_secure_heap_config(
+            state,
+            previous_secure_heap.0,
+            previous_secure_heap.1,
+        );
+        state.borrow_mut().process.secure_heap_used = previous_secure_heap.2;
         execute::set_property_in_place(&process, "send", previous_send);
         execute::set_property_in_place(&process, "disconnect", previous_disconnect);
         execute::set_property_in_place(&process, "connected", previous_connected);
         return Ok(());
     }
+    crate::modules::process::set_secure_heap_config(
+        state,
+        previous_secure_heap.0,
+        previous_secure_heap.1,
+    );
+    state.borrow_mut().process.secure_heap_used = previous_secure_heap.2;
     Ok(())
 }
 
@@ -10977,7 +11034,6 @@ pub fn cp_send(
     // Keep the backlog as one hidden state fact and acknowledge callbacks on
     // the drain edge; ordinary fork routing below remains unchanged.
     let generic_ipc = !from_fork_process
-        && !to_fork_process
         && (matches!(
             execute::get_property(receiver, "\0childIpc"),
             Value::Boolean(true)
@@ -11164,21 +11220,27 @@ fn cp_send_closed(
             Value::String("ERR_IPC_CHANNEL_CLOSED".into()),
         ),
     ]);
-    crate::modules::events::method_emit(
-        state,
-        Some(receiver),
-        &[Value::String("error".into()), error.clone()],
-    )?;
-    if let Some(callback) = args
+    let callback = args
         .iter()
         .skip(1)
         .rev()
-        .find(|value| quench_runtime::is_callable(value))
-    {
+        .find(|value| quench_runtime::is_callable(value));
+    // `send()` has two mutually exclusive error surfaces: with a callback,
+    // Node reports the channel failure to that callback; without one, it
+    // emits the ChildProcess `error` event. Emitting both leaves a callback
+    // form vulnerable to an unhandled error event and changes the observable
+    // overload contract.
+    if let Some(callback) = callback {
         state
             .borrow()
             .event_loop
             .queue_microtask(callback.clone(), vec![error]);
+    } else {
+        crate::modules::events::method_emit(
+            state,
+            Some(receiver),
+            &[Value::String("error".into()), error],
+        )?;
     }
     Ok(Value::Boolean(false))
 }
