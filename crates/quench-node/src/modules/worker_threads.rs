@@ -236,6 +236,10 @@ pub fn build(state: &Rc<std::cell::RefCell<HostState>>) -> Result<Value, VmError
         ("BroadcastChannel".into(), broadcast_channel),
         ("Worker".into(), worker),
         ("receiveMessageOnPort".into(), cap(RECEIVE_MESSAGE)),
+        (
+            "moveMessagePortToContext".into(),
+            crate::host::capability(crate::registry::SPEC_MESSAGE_PORT_MOVE),
+        ),
         ("SHARE_ENV".into(), share_env),
         ("markAsUncloneable".into(), cap(WORKER_NOOP)),
         ("markAsUntransferable".into(), cap(WORKER_NOOP)),
@@ -301,6 +305,116 @@ pub fn message_port_invalid_construct(
     Err(message_port_invalid_error())
 }
 
+/// Move a MessagePort's JS wrapper into a vm context while retaining the
+/// canonical host target and its peer.  The target registry is updated before
+/// returning so queued delivery uses the moved wrapper rather than a stale
+/// pre-move alias.
+pub fn move_message_port_to_context(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let port = args.first().ok_or_else(|| {
+        VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            (
+                "message".into(),
+                Value::String("The \"port\" argument must be a MessagePort".into()),
+            ),
+        ]))
+    })?;
+    if !crate::modules::event_target::is_message_port(state, port) {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            (
+                "message".into(),
+                Value::String("The \"port\" argument must be a MessagePort".into()),
+            ),
+        ])));
+    }
+    let context = args.get(1).ok_or_else(|| {
+        VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            (
+                "message".into(),
+                Value::String("The \"context\" argument must be an vm.Context".into()),
+            ),
+        ]))
+    })?;
+    if !quench_runtime::vm::is_script_context(context) {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            (
+                "message".into(),
+                Value::String("The \"context\" argument must be an vm.Context".into()),
+            ),
+        ])));
+    }
+    let Some(id) = crate::modules::event_target::target_identity(port) else {
+        return Err(message_port_invalid_error());
+    };
+    let closed = state
+        .borrow()
+        .targets
+        .get(crate::modules::event_target::TargetId(id))
+        .is_some_and(|target| target.borrow().message_closed);
+    if closed {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("Error".into())),
+            (
+                "code".into(),
+                Value::String("ERR_CLOSED_MESSAGE_PORT".into()),
+            ),
+            (
+                "message".into(),
+                Value::String("Cannot send data on closed MessagePort".into()),
+            ),
+        ])));
+    }
+    crate::modules::event_target::mark_message_port_moved_context(state, port)?;
+    // A moved wrapper belongs to a different intrinsic realm.  Copy the
+    // public method table from the canonical port's prototype chain onto a
+    // fresh null-prototype wrapper: this preserves the host target id and
+    // emitter id while making cross-realm `instanceof Object` false.
+    let mut properties = vec![
+        (
+            crate::modules::event_target::TARGET_ID_PROP.to_string(),
+            Value::Number(id as f64),
+        ),
+        (
+            crate::modules::emitter::EMITTER_ID_PROP.to_string(),
+            execute::get_property(port, crate::modules::emitter::EMITTER_ID_PROP),
+        ),
+    ];
+    let mut prototype = port.clone();
+    for _ in 0..4 {
+        for key in execute::own_keys(&prototype).into_iter().filter_map(|key| match key {
+            Value::String(key) if !key.starts_with('\0') => Some(key),
+            _ => None,
+        }) {
+            if !properties.iter().any(|(existing, _)| existing == &key) {
+                properties.push((key.clone(), execute::get_property(port, &key)));
+            }
+        }
+        prototype = execute::get_prototype_of(&prototype).unwrap_or(Value::Null);
+        if matches!(prototype, Value::Null | Value::Undefined) {
+            break;
+        }
+    }
+    let moved = execute::set_prototype_of(&host_api::object(properties), &Value::Null)?;
+    let constructor = execute::get_property(
+        &quench_runtime::vm::current_global_object(),
+        "MessagePort",
+    );
+    let moved = execute::set_property(moved, "constructor", constructor);
+    crate::modules::event_target::remember_target_object(state, &moved)?;
+    Ok(moved)
+}
+
 fn message_port_invalid_error() -> VmError {
     let error = quench_runtime::builtins::error(
         quench_runtime::ops::Builtin::TypeError,
@@ -333,19 +447,46 @@ pub fn message_channel_call(
     )))
 }
 
-fn worker_environment_snapshot(options: &Value) -> Value {
+fn worker_environment_snapshot(state: &Rc<RefCell<HostState>>, options: &Value) -> Value {
     let requested = execute::get_property(options, "env");
     let share_env = matches!(
         execute::get_property(&requested, SHARE_ENV_PROP),
         Value::Boolean(true)
     );
     let source = if matches!(requested, Value::Object(_) | Value::ObjectAlias(_)) && !share_env {
-        requested
+        requested.clone()
     } else {
-        let global = quench_runtime::vm::current_global_object();
-        execute::get_property(&execute::get_property(&global, "process"), "env")
+        let process = state
+            .borrow()
+            .process_module
+            .clone()
+            .unwrap_or_else(|| {
+                let global = quench_runtime::vm::current_global_object();
+                execute::get_property(&global, "process")
+            });
+        execute::get_property(&process, "env")
     };
-    let pairs = execute::own_enumerable_keys(&source)
+    // `process.env` is a Proxy whose ownKeys trap is backed by the canonical
+    // Rust-owned key list.  Read that list explicitly when inheriting the
+    // default environment so mutations made after process startup are not
+    // lost at the worker launch boundary.
+    let keys = if !share_env && matches!(&requested, Value::Undefined) {
+        let global = quench_runtime::vm::current_global_object();
+        match execute::get_property(&global, "__quench_env_keys") {
+            Value::Array(values) => (0..values.logical_len())
+                .filter_map(|index| {
+                    execute::to_js_string(
+                        &execute::get_property(&Value::Array(values.clone()), &index.to_string()),
+                    )
+                    .ok()
+                })
+                .collect(),
+            _ => execute::own_enumerable_keys(&source),
+        }
+    } else {
+        execute::own_enumerable_keys(&source)
+    };
+    let pairs: Vec<(String, Value)> = keys
         .into_iter()
         .filter(|key| !key.starts_with('\0'))
         .filter_map(|key| {
@@ -674,7 +815,7 @@ fn worker_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, V
         }
     }
     let data = execute::get_property(&options, "workerData");
-    let env_snapshot = worker_environment_snapshot(&options);
+    let env_snapshot = worker_environment_snapshot(state, &options);
     let transfer_list = execute::get_property(&options, "transferList");
     if contains_port(&data, state) && !transfer_contains(&transfer_list, state, &data) {
         return Err(quench_runtime::execute::VmError::Thrown(
