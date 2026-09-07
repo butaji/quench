@@ -155,7 +155,14 @@ pub fn run_script_with_exec_argv(
         Err(error) => return RunOutcome::fail(1, format!("reduce: {error}")),
     };
     let result = quench_runtime::vm::with_current_context(&context, || {
-        normalize_script_completion(execute_code_with_context(ops.code(), &context))
+        // Keep the initial ECMAScript job queue intact until the host pump
+        // reaches its first checkpoint.  `execute_code_with_context` drains
+        // Promise jobs as a convenience for synchronous VM callers; doing so
+        // here would run a Promise reaction before the already-queued
+        // process.nextTick callbacks, reversing Node's turn ordering.
+        normalize_script_completion(
+            quench_runtime::vm::execute_code_isolated_in_context(ops.code(), &context),
+        )
             .and_then(|_| drive(&context, "__quench_run_loop__();"))
     });
     let result = route_uncaught(&host, &context, result);
@@ -301,7 +308,11 @@ pub fn eval_script_with_exec_argv(
                 }
             })
         });
-        normalize_script_completion(execute_code_with_context(ops.code(), &context))
+        // As with file-backed scripts, defer the first Promise checkpoint to
+        // the host event-loop pump so process.nextTick precedes Promise jobs.
+        normalize_script_completion(
+            quench_runtime::vm::execute_code_isolated_in_context(ops.code(), &context),
+        )
             .and_then(|_| drive(&context, "__quench_run_loop__();"))
     });
     let result = route_uncaught(&host, &context, result);
