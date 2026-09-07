@@ -401,6 +401,17 @@ pub(crate) fn view_len_units(view: StringView<'_>) -> usize {
     }
 }
 
+#[inline]
+pub(crate) fn view_code_unit(view: StringView<'_>, index: usize) -> Option<u16> {
+    match view {
+        StringView::Utf8(value) if value.is_ascii() => {
+            value.as_bytes().get(index).copied().map(u16::from)
+        }
+        StringView::Utf8(value) => value.encode_utf16().nth(index),
+        StringView::Utf16(units) => units.get(index).copied(),
+    }
+}
+
 /// Materialize the canonical string at host/serialization boundaries.
 /// Lone surrogates use the replacement semantics of host string APIs.
 #[inline]
@@ -638,7 +649,13 @@ pub(crate) fn char_code_at(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let units = receiver_units(receiver)?;
+    let owned;
+    let view = if let Some(view) = receiver.and_then(view_of) {
+        view
+    } else {
+        owned = string_receiver(receiver)?;
+        StringView::Utf8(&owned)
+    };
     let index = arguments
         .first()
         .map_or(Ok(0.0), crate::conversion::to_number)?;
@@ -646,7 +663,7 @@ pub(crate) fn char_code_at(
     if index < 0.0 {
         return Ok(Value::Number(f64::NAN));
     }
-    let unit = units.get(index as usize).copied();
+    let unit = view_code_unit(view, index as usize);
     Ok(unit.map_or(Value::Number(f64::NAN), |unit| Value::Number(unit as f64)))
 }
 
@@ -1025,6 +1042,11 @@ mod tests {
             super::char_code_at(Some(&value), &[Value::Number(4.0)]).unwrap(),
             Value::Number(value) if value.is_nan()
         ));
+        let lone = super::from_units(vec![0xd800, u16::from(b'x')]);
+        assert_eq!(
+            super::char_code_at(Some(&lone), &[Value::Number(0.0)]).unwrap(),
+            Value::Number(0xd800 as f64)
+        );
     }
 
     #[test]
