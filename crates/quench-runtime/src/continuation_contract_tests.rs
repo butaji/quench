@@ -80,6 +80,43 @@ fn generators_preserve_nested_progress_finally_and_return() {
 }
 
 #[test]
+fn throwing_for_of_closes_generator_before_outer_catch() {
+    run_sync(
+        r#"
+        var closed=0,caught=-1;
+        function* values(){try{yield 64;}finally{closed++;}}
+        try{for(var value of values())throw value;}catch(error){caught=error;}
+        if(caught!==64 || closed!==1) throw "iterator throw/close order";
+        "#,
+    );
+}
+
+#[test]
+fn injected_generator_return_runs_finally_and_preserves_value() {
+    run_sync(
+        r#"
+        var closed=0;
+        function* values(){try{yield 1;}finally{closed++;}}
+        var iterator=values(),first=iterator.next(),last=iterator.return(42);
+        if(first.value!==1 || first.done || last.value!==42 || !last.done || closed!==1) {
+          throw "generator return/finally order";
+        }
+        "#,
+    );
+}
+
+#[test]
+fn generator_suspends_inside_try_before_close() {
+    run_sync(
+        r#"
+        function* values(){try{yield 1;}finally{}}
+        var first=values().next();
+        if(first.value!==1 || first.done) throw "generator did not suspend in try";
+        "#,
+    );
+}
+
+#[test]
 fn suspended_generator_keeps_captured_binding_during_collection() {
     run_sync(
         r#"
