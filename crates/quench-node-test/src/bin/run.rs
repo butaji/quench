@@ -15,7 +15,9 @@ fn main() -> ExitCode {
     // probe as Node even when permission flags precede --version.  Keep this
     // at the Rust boundary so child_process does not special-case filenames
     // or project fixtures.
-    if arguments.iter().any(|arg| arg == "--version" || arg == "-v")
+    if arguments
+        .iter()
+        .any(|arg| arg == "--version" || arg == "-v")
         && !arguments
             .iter()
             .any(|arg| arg.ends_with(".js") || arg.ends_with(".mjs") || arg.ends_with(".cjs"))
@@ -24,12 +26,27 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     let input_type = arguments
-        .windows(2)
-        .find_map(|pair| (pair[0] == "--input-type").then(|| pair[1].as_str()));
-    if let Some(index) = arguments
         .iter()
-        .position(|arg| arg == "--eval" || arg == "-e")
-    {
+        .find_map(|arg| arg.strip_prefix("--input-type="))
+        .or_else(|| {
+            arguments
+                .windows(2)
+                .find_map(|pair| (pair[0] == "--input-type").then(|| pair[1].as_str()))
+        });
+    if let Some(index) = arguments.iter().position(|arg| {
+        matches!(
+            arg.as_str(),
+            "--eval" | "-e" | "--print" | "-p" | "-pe" | "-ep"
+        )
+    }) {
+        if arguments.iter().any(|arg| arg == "--enable-fips") {
+            eprintln!("--enable-fips requires an active OpenSSL provider named \"fips\"");
+            return ExitCode::from(1);
+        }
+        if arguments.iter().any(|arg| arg == "--force-fips") {
+            eprintln!("--force-fips requires an active OpenSSL provider named \"fips\"");
+            return ExitCode::from(1);
+        }
         let source = arguments
             .get(index + 1)
             .map(String::as_str)
@@ -39,15 +56,44 @@ fn main() -> ExitCode {
         } else {
             source.to_string()
         };
-        let outcome = quench_node::run::eval_script(&source, Arc::new(|line| println!("{line}")));
+        let source = if input_type == Some("module") && source.contains("await ") {
+            format!("(async () => {{\n{source}\n}})();")
+        } else {
+            source
+        };
+        let child_mode = std::env::var_os("QUENCH_CHILD_RUNNER").is_some();
+        let captured = Arc::new(Mutex::new(Vec::<String>::new()));
+        let sink_capture = Arc::clone(&captured);
+        let sink: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |line| {
+            if let Ok(mut lines) = sink_capture.lock() {
+                lines.push(line.to_string());
+            }
+        });
+        let outcome = quench_node::run::eval_script_with_input_type(
+            &source,
+            sink,
+            input_type == Some("module"),
+        );
+        if child_mode {
+            if let Ok(lines) = captured.lock() {
+                for line in lines.iter() {
+                    print!("{line}");
+                }
+            }
+        } else if let Ok(lines) = captured.lock() {
+            for line in lines.iter() {
+                println!("{line}");
+            }
+        }
         if let Some(error) = outcome.error {
             eprintln!("{error}");
         }
         return ExitCode::from(outcome.exit_code.clamp(0, 255) as u8);
     }
-    let Some(script_index) = arguments.iter().position(|arg| {
-        arg.ends_with(".js") || arg.ends_with(".mjs") || arg.ends_with(".cjs")
-    }) else {
+    let Some(script_index) = arguments
+        .iter()
+        .position(|arg| arg.ends_with(".js") || arg.ends_with(".mjs") || arg.ends_with(".cjs"))
+    else {
         eprintln!("usage: cargo run -p quench-node-test --bin run -- <file.js>");
         return ExitCode::from(2);
     };
