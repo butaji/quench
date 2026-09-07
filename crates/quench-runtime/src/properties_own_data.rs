@@ -57,19 +57,27 @@ fn plain_own_property_value(
 }
 
 #[cfg(feature = "execution-trace")]
-fn record_named_set_fact(value: &crate::value::Value, key: &str) {
-    let fact = plain_own_property_value(value, key);
-    let name = match value {
+fn record_named_set_fact(
+    target: &crate::value::Value,
+    key: &str,
+    assigned: &crate::value::Value,
+) {
+    let fact = plain_own_property_value(target, key);
+    let name = match target {
         crate::value::Value::Object(_) => object_set_fact(fact),
         crate::value::Value::ObjectAlias(_) => alias_set_fact(fact),
-        crate::value::Value::Array(array) => array_set_fact(array, key),
+        crate::value::Value::Array(array) => array_set_fact(array, key, assigned),
         _ => "other",
     };
     crate::execution_trace::named_set_fact(name);
 }
 
 #[cfg(feature = "execution-trace")]
-fn array_set_fact(array: &crate::value::ArrayData, key: &str) -> &'static str {
+fn array_set_fact(
+    array: &crate::value::ArrayData,
+    key: &str,
+    assigned: &crate::value::Value,
+) -> &'static str {
     if key == "length" {
         return "array:length";
     }
@@ -81,6 +89,13 @@ fn array_set_fact(array: &crate::value::ArrayData, key: &str) -> &'static str {
     }
     if array.has_plain_dense_index(index) {
         return "array:index-dense";
+    }
+    if index == array.physical_len() && index < array.header_length() {
+        return if matches!(assigned, crate::value::Value::Number(_)) {
+            "array:index-preallocated-number"
+        } else {
+            "array:index-preallocated-other"
+        };
     }
     match index.cmp(&array.header_length()) {
         std::cmp::Ordering::Less => "array:index-hole-or-special",
@@ -113,7 +128,7 @@ fn alias_set_fact(fact: Option<PlainOwnProperty>) -> &'static str {
 
 #[cfg(not(feature = "execution-trace"))]
 #[inline(always)]
-fn record_named_set_fact(_: &crate::value::Value, _: &str) {}
+fn record_named_set_fact(_: &crate::value::Value, _: &str, _: &crate::value::Value) {}
 
 fn own_and_metadata_slots(
     properties: &crate::value::ObjectData,
@@ -311,11 +326,21 @@ mod own_data_tests {
     #[cfg(feature = "execution-trace")]
     #[test]
     fn named_set_array_labels_separate_dense_append_gap_and_names() {
-        let array = crate::value::ArrayData::new(vec![Value::Number(1.0)]);
-        assert_eq!(array_set_fact(&array, "0"), "array:index-dense");
-        assert_eq!(array_set_fact(&array, "1"), "array:index-append");
-        assert_eq!(array_set_fact(&array, "3"), "array:index-gap");
-        assert_eq!(array_set_fact(&array, "length"), "array:length");
-        assert_eq!(array_set_fact(&array, "field"), "array:nonindex");
+        let mut array = crate::value::ArrayData::new(vec![Value::Number(1.0)]);
+        let number = Value::Number(2.0);
+        assert_eq!(array_set_fact(&array, "0", &number), "array:index-dense");
+        assert_eq!(array_set_fact(&array, "1", &number), "array:index-append");
+        assert_eq!(array_set_fact(&array, "3", &number), "array:index-gap");
+        assert_eq!(array_set_fact(&array, "length", &number), "array:length");
+        assert_eq!(array_set_fact(&array, "field", &number), "array:nonindex");
+        array.set_length(3);
+        assert_eq!(
+            array_set_fact(&array, "1", &number),
+            "array:index-preallocated-number"
+        );
+        assert_eq!(
+            array_set_fact(&array, "1", &Value::String("x".into())),
+            "array:index-preallocated-other"
+        );
     }
 }
