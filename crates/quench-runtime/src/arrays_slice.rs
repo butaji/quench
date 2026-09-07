@@ -146,6 +146,13 @@ fn slice_species(this: &Value, count: isize) -> Result<Option<Value>, crate::exe
     if matches!(species, Value::Undefined | Value::Null) {
         return Ok(None);
     }
+    // All observable constructor/species reads have happened. The intrinsic
+    // Array constructor creates the same fresh ordinary target represented by
+    // `None`; keeping it in the custom-species path would publish and clone an
+    // unobservable intermediate ArrayData once per copied element.
+    if matches!(species, Value::Builtin(crate::ops::Builtin::Array)) {
+        return Ok(None);
+    }
     crate::construct::construct_value(&species, &[Value::Number(count as f64)]).map(Some)
 }
 
@@ -209,4 +216,41 @@ fn copy_species_slice(
         "length",
         Value::Number(destination as f64),
     )
+}
+
+#[cfg(test)]
+mod slice_tests {
+    use super::{slice, slice_species};
+    use crate::value::Value;
+
+    #[test]
+    fn intrinsic_species_uses_the_fresh_ordinary_array_path() {
+        let source = Value::array(vec![Value::Number(1.0), Value::Number(2.0)]);
+        assert_eq!(slice_species(&source, 2), Ok(None));
+    }
+
+    #[test]
+    fn intrinsic_slice_preserves_fresh_identity_values_and_default_attributes() {
+        let source = Value::array(vec![Value::Number(1.0), Value::Number(2.0)]);
+        let result = slice(Some(&source), &[]).expect("slice");
+        let (Value::Array(source), Value::Array(result)) = (&source, &result) else {
+            panic!("ordinary arrays remain arrays");
+        };
+        assert!(!std::rc::Rc::ptr_eq(source, result));
+        assert_eq!(
+            result.snapshot(),
+            vec![Value::Number(1.0), Value::Number(2.0)]
+        );
+        let descriptor = crate::builtins::object::descriptor(
+            Some(&Value::Array(result.clone())),
+            Some(&Value::String("0".into())),
+        )
+        .expect("descriptor");
+        for field in ["writable", "enumerable", "configurable"] {
+            assert_eq!(
+                crate::execute::get_property_result(&descriptor, field),
+                Ok(Value::Boolean(true))
+            );
+        }
+    }
 }
