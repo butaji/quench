@@ -192,6 +192,10 @@ const fn x86_fallthrough_bytes() -> [u8; 9] {
 }
 
 const X86_FALLTHROUGH_BYTES: [u8; 9] = x86_fallthrough_bytes();
+const X86_SUB_FALLTHROUGH_BYTES: [u8; 9] = {
+    let sub = x86_sse2_binary(0x5C, 0, 1);
+    [sub[0], sub[1], sub[2], sub[3], 0xE9, 0, 0, 0, 0]
+};
 const X86_SUBTRACT_BYTES: [u8; 5] = x86_binary_ret(0x5C);
 const X86_MULTIPLY_BYTES: [u8; 5] = x86_binary_ret(0x59);
 const X86_DIVIDE_BYTES: [u8; 5] = x86_binary_ret(0x5E);

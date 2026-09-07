@@ -37,7 +37,7 @@ fn execute_case(
                 }
             }
         }
-        crate::stencil_plan::LocalNumericInputs::RepeatedAdd { sources, .. } => {
+        crate::stencil_plan::LocalNumericInputs::BinarySeries { sources, .. } => {
             for (index, source) in sources.into_iter().enumerate() {
                 if let crate::stencil_plan::NumericSource::Local(slot) = source {
                     environment.set(slot, values[index].clone());

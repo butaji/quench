@@ -6,6 +6,10 @@ pub(crate) fn aarch64_tail() -> &'static str {
     "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_fallthrough_tail\nq_fallthrough_tail:\n  ret\nq_fallthrough_tail_end:\n\"#);\n"
 }
 
+fn aarch64_sub_head() -> &'static str {
+    "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_sub_fallthrough_head\nq_sub_fallthrough_head:\n  fsub d0, d0, d1\n  b q_fallthrough_tail\nq_sub_fallthrough_head_end:\n\"#);\n"
+}
+
 fn aarch64_add_chain_head() -> &'static str {
     "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_add_chain_head\nq_add_chain_head:\n  fadd d0, d0, d1\n  b q_add_chain_tail\nq_add_chain_head_end:\n\"#);\n"
 }
@@ -17,9 +21,10 @@ fn aarch64_add_chain_tail() -> &'static str {
 pub(crate) fn fragment_sources(
     recipe: super::RustAssemblyRecipe,
 ) -> Option<(&'static str, &'static str)> {
-    use super::RustAssemblyRecipe::{AddChain, Fallthrough};
+    use super::RustAssemblyRecipe::{AddChain, Fallthrough, SubFallthrough};
     match recipe {
         Fallthrough => Some((aarch64_head(), aarch64_tail())),
+        SubFallthrough => Some((aarch64_sub_head(), aarch64_tail())),
         AddChain => Some((aarch64_add_chain_head(), aarch64_add_chain_tail())),
         _ => None,
     }
@@ -283,7 +288,7 @@ fn nullish_word_source(name: &str) -> String {
 pub(crate) fn assembly_source(recipe: super::RustAssemblyRecipe) -> String {
     use super::RustAssemblyRecipe::*;
     match recipe {
-        Fallthrough | AddChain => fragment_sources(recipe)
+        Fallthrough | SubFallthrough | AddChain => fragment_sources(recipe)
             .map(|(head, tail)| head.to_owned() + tail)
             .expect("declared fragment pair"),
         CompareEqualBranch => compare_branch_source(recipe.name(), "eq", false),

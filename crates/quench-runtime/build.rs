@@ -26,5 +26,6 @@ include!("build_stencil_catalog/declarations_tagged.rs");
 include!("build_stencil_catalog/driver.rs");
 include!("build_stencil_catalog/encoding_verify.rs");
 include!("build_stencil_catalog/catalog_physical.rs");
+include!("build_stencil_catalog/catalog_keys.rs");
 include!("build_stencil_catalog/catalog_render.rs");
 include!("build_stencil_catalog/catalog_validate.rs");
