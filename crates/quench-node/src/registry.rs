@@ -884,6 +884,7 @@ pub const SPEC_NET_SERVER: NodeSpec = NodeSpec::new("net:createServer", 0x1001);
 pub const SPEC_NET_ISIP: NodeSpec = NodeSpec::new("net:isIP", 0x1002);
 pub const SPEC_NET_ISIPV4: NodeSpec = NodeSpec::new("net:isIPv4", 0x1003);
 pub const SPEC_NET_ISIPV6: NodeSpec = NodeSpec::new("net:isIPv6", 0x1004);
+pub const SPEC_NET_NORMALIZE_ARGS: NodeSpec = NodeSpec::new("net:_normalizeArgs", 0x1035);
 node_api! {
     (SPEC_INTERNAL_NET_IS_LOOPBACK, CAP_INTERNAL_NET_IS_LOOPBACK, "internal/net:isLoopback", 0x1034),
 }
@@ -2065,6 +2066,7 @@ pub const CAP_NET_GET_ASF_TIMEOUT: CapId = SPEC_NET_GET_ASF_TIMEOUT.cap;
 pub const CAP_NET_ISIP: CapId = SPEC_NET_ISIP.cap;
 pub const CAP_NET_ISIPV4: CapId = SPEC_NET_ISIPV4.cap;
 pub const CAP_NET_ISIPV6: CapId = SPEC_NET_ISIPV6.cap;
+pub const CAP_NET_NORMALIZE_ARGS: CapId = SPEC_NET_NORMALIZE_ARGS.cap;
 pub const CAP_NET_LOOKUP_CALLBACK: CapId = SPEC_NET_LOOKUP_CALLBACK.cap;
 pub const CAP_NET_SERVER: CapId = SPEC_NET_SERVER.cap;
 pub const CAP_NET_SERVER_ADDRESS: CapId = SPEC_NET_SERVER_ADDRESS.cap;
