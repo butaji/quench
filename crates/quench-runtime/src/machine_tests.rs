@@ -636,6 +636,48 @@ fn execute_numeric_add(
     .expect("numeric region executes");
 }
 
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn native_dispatch_rebuilds_evicted_typed_entry_in_normal_driver() {
+    let executable = super::ExecutableCode::from_ops(vec![
+        super::Op::Move { dst: 0, src: 1 },
+        super::Op::Return { src: 0 },
+    ]);
+    let policy = crate::stencil_policy::ExecutionPolicy {
+        native_leaves: false,
+        native_dispatch: true,
+        fused_regions: false,
+        composed_regions: false,
+        optimizing_view: false,
+    };
+    let plan = super::BaselinePlan::compile_for_test(executable.code(), policy);
+    assert!(plan.native_dispatch_at(0).is_some());
+    let pool = plan.shared_stencil_pool_for_test();
+    for expected in [7.0, 11.0] {
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![
+            crate::value::Value::Undefined,
+            crate::value::Value::Number(expected),
+        ]);
+        let result = crate::vm::execute_baseline_code_from(
+            executable.code(),
+            &plan,
+            0,
+            &mut registers,
+            &crate::vm::VmContext::default(),
+            crate::environment::Environment::new(),
+        )
+        .expect("dispatch execution");
+        assert_eq!(
+            result.0,
+            crate::completion::Completion::Return(crate::value::Value::Number(expected))
+        );
+        assert!(pool.borrow().used() > 0);
+        if expected == 7.0 {
+            assert!(pool.borrow_mut().evict_idle(0) > 0);
+        }
+    }
+}
+
 #[test]
 fn composed_plan_retires_cached_bytes_after_committed_failure() {
     let mut plan =
