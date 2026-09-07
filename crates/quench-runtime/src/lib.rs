@@ -161,6 +161,7 @@ pub mod stencil_patch;
 mod stencil_physical;
 mod stencil_plan;
 mod stencil_policy;
+mod stencil_predicate_fusion;
 #[cfg(test)]
 mod stencil_property_integration_tests;
 #[cfg(test)]
