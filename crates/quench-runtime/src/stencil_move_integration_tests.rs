@@ -101,6 +101,7 @@ fn body_with_number_constant(root: CodeView<'_>, expected: f64) -> (FunctionCode
 fn leaf_policy() -> crate::stencil_policy::ExecutionPolicy {
     crate::stencil_policy::ExecutionPolicy {
         native_leaves: true,
+        local_fusions: true,
         native_dispatch: false,
         fused_regions: false,
         composed_regions: false,
@@ -111,6 +112,7 @@ fn leaf_policy() -> crate::stencil_policy::ExecutionPolicy {
 fn disabled_policy() -> crate::stencil_policy::ExecutionPolicy {
     crate::stencil_policy::ExecutionPolicy {
         native_leaves: false,
+        local_fusions: false,
         native_dispatch: false,
         fused_regions: false,
         composed_regions: false,

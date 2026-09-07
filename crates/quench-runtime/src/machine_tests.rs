@@ -441,6 +441,7 @@ fn disabled_native_policy_keeps_admission_and_executable_storage_empty() {
     ]);
     let disabled = crate::stencil_policy::ExecutionPolicy {
         native_leaves: false,
+        local_fusions: false,
         native_dispatch: false,
         fused_regions: false,
         composed_regions: false,
@@ -698,6 +699,7 @@ fn native_dispatch_rebuilds_evicted_typed_entry_in_normal_driver() {
     ]);
     let policy = crate::stencil_policy::ExecutionPolicy {
         native_leaves: false,
+        local_fusions: false,
         native_dispatch: true,
         fused_regions: false,
         composed_regions: false,
