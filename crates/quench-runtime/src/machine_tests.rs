@@ -3004,10 +3004,10 @@ fn native_store_local_uses_declared_tagged_word_entry() {
 #[test]
 fn native_property_uses_rendered_address_without_remapping() {
     let mut plan = super::NativePropertyPlan {
-        storage: super::PhysicalStorage::Local(None),
-        physical: super::PhysicalState::new(),
+        physical: super::PhysicalInstallation::local(
+            super::InstalledPropertyEntry::Unpublished,
+        ),
         opcode: crate::ir::Opcode::GetN,
-        installed: super::InstalledPropertyEntry::Unpublished,
         native_entry_count: 0,
         last_native_view: None,
     };
@@ -3021,14 +3021,14 @@ fn native_property_uses_rendered_address_without_remapping() {
         Ok(crate::tagged_value::TaggedValue::number(42.5).bits())
     );
     assert_eq!(plan.native_entry_count, 1);
-    let used = plan.storage.used();
+    let used = plan.physical.storage.used();
     assert!(used > 0);
     assert_eq!(
         plan.execute(access, &site),
         Ok(crate::tagged_value::TaggedValue::number(42.5).bits())
     );
     assert_eq!(plan.native_entry_count, 2);
-    assert_eq!(plan.storage.used(), used);
+    assert_eq!(plan.physical.storage.used(), used);
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -3055,7 +3055,7 @@ fn native_property_shared_entry_reuses_live_owner_and_recovers_after_eviction() 
     assert!(plan.execute(access, &site).is_ok());
     let used = shared.borrow().used();
     assert!(matches!(
-        plan.installed,
+        plan.physical.installed(),
         super::InstalledPropertyEntry::ReadShared { .. }
     ));
     assert!(plan.execute(access, &site).is_ok());
@@ -3064,7 +3064,7 @@ fn native_property_shared_entry_reuses_live_owner_and_recovers_after_eviction() 
     assert!(plan.execute(access, &site).is_ok());
     assert!(
         matches!(
-            plan.installed,
+            plan.physical.installed(),
             super::InstalledPropertyEntry::ReadShared { .. }
         ),
         "eviction must rebuild the entry"
@@ -3075,10 +3075,10 @@ fn native_property_shared_entry_reuses_live_owner_and_recovers_after_eviction() 
 #[test]
 fn native_property_rejects_stale_layout_before_loading_slot() {
     let mut plan = super::NativePropertyPlan {
-        storage: super::PhysicalStorage::Local(None),
-        physical: super::PhysicalState::new(),
+        physical: super::PhysicalInstallation::local(
+            super::InstalledPropertyEntry::Unpublished,
+        ),
         opcode: crate::ir::Opcode::GetN,
-        installed: super::InstalledPropertyEntry::Unpublished,
         native_entry_count: 0,
         last_native_view: None,
     };
@@ -3509,7 +3509,7 @@ fn ordinary_residual_prototype_get_executes_guarded_property_stencil() {
         .native_property_at(0)
         .is_some_and(|native| native.borrow().native_entry_count > 0));
     assert!(plan.native_property_at(0).is_some_and(|native| matches!(
-        native.borrow().installed,
+        native.borrow().physical.installed(),
         super::InstalledPropertyEntry::ReadShared { key, .. }
             if key == crate::stencil_select::prototype_property_region_key()
     )));
