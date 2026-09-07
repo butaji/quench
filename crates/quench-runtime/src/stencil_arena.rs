@@ -90,28 +90,6 @@ fn cache_signature<const N: usize>(stencil: &Stencil, values: &PatchValues<'_, N
     }
 }
 
-pub(crate) fn physical_cache_signature<const N: usize>(
-    view: crate::stencil_select::PhysicalStencilView,
-    values: &PatchValues<'_, N>,
-) -> u64 {
-    let mut hash = cache_signature(view.stencil, values).wrapping_add(0xcbf2_9ce4_8422_2325);
-    for byte in view
-        .artifact_id
-        .as_bytes()
-        .iter()
-        .chain(view.fingerprint.unwrap_or_default().as_bytes().iter())
-    {
-        hash = hash
-            .wrapping_mul(0x1000_0000_01b3)
-            .wrapping_add(u64::from(*byte));
-    }
-    if hash == 0 {
-        1
-    } else {
-        hash
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ArenaError {
     InvalidCapacity,
@@ -481,7 +459,7 @@ impl SharedStencilSlab {
         values: &PatchValues<'_, N>,
     ) -> Result<usize, ArenaError> {
         let signature = crate::stencil_select::select_physical(key)
-            .map(|view| physical_cache_signature(view, values))
+            .map(|view| view.cache_signature(values))
             .unwrap_or_else(|| cache_signature(stencil, values));
         for slab in &mut self.slabs {
             if self.lease_state.is_retired(slab.id()) {
@@ -541,7 +519,7 @@ impl SharedStencilSlab {
         if !view.contract().abi_is_well_formed() || !view.matches(&selected) {
             return Err(ArenaError::ProtectionFailed);
         }
-        let signature = physical_cache_signature(view, values);
+        let signature = view.cache_signature(values);
         if let Some(address) = self.render_existing_physical(cache, view, values, control)? {
             return Ok(address);
         }
@@ -555,7 +533,7 @@ impl SharedStencilSlab {
         values: &PatchValues<'_, N>,
         control: Option<&crate::stencil_cfg::RegionControlPlan>,
     ) -> Result<Option<usize>, ArenaError> {
-        let signature = physical_cache_signature(view, values);
+        let signature = view.cache_signature(values);
         for slab in &mut self.slabs {
             if self.lease_state.is_retired(slab.id()) {
                 continue;
@@ -1578,7 +1556,7 @@ impl StencilArena {
         if !view.contract().abi_is_well_formed() || !view.stencil.validate() {
             return Err(ArenaError::ProtectionFailed);
         }
-        let signature = physical_cache_signature(view, values);
+        let signature = view.cache_signature(values);
         if let Some(address) = cache
             .get_owned(view.key, signature, self.id)
             .filter(|address| self.owns_address(*address))
@@ -1621,7 +1599,7 @@ impl StencilArena {
         if view.fallthrough.is_none() {
             return self.render_selected_view(cache, view, values);
         }
-        let signature = physical_cache_signature(view, values);
+        let signature = view.cache_signature(values);
         if let Some(address) = self.cached_executable(cache, view.key, signature) {
             return Ok(address);
         }
@@ -1630,7 +1608,7 @@ impl StencilArena {
             None => compose_selected_region(view, values),
         }
         .map_err(|_| ArenaError::ProtectionFailed)?;
-        self.publish_composed(cache, signature, &image)
+        self.publish_composed(cache, &image)
     }
 
     pub fn render_physical_view_or_get<const N: usize>(
@@ -1696,7 +1674,7 @@ impl StencilArena {
             return self.render_view_and_execute(cache, view, values, execute, fallback);
         }
         let signature = selected
-            .map(|view| physical_cache_signature(view, values))
+            .map(|view| view.cache_signature(values))
             .unwrap_or_else(|| cache_signature(stencil, values));
         match self.render_or_get(cache, key, stencil, values) {
             Ok(address) => {
@@ -1732,7 +1710,7 @@ impl StencilArena {
         execute: impl FnOnce(usize) -> Result<T, E>,
         fallback: impl FnOnce() -> Result<T, E>,
     ) -> Result<T, E> {
-        let signature = physical_cache_signature(view, values);
+        let signature = view.cache_signature(values);
         let Ok(address) = self.render_selected_view(cache, view, values) else {
             return fallback();
         };
@@ -1797,7 +1775,7 @@ impl StencilArena {
             Ok(address) => address,
             Err(_) => return fallback(),
         };
-        let signature = physical_cache_signature(view, values);
+        let signature = view.cache_signature(values);
         if self.make_executable().is_err() {
             cache.remove(key, signature, address);
             return fallback();
@@ -1845,7 +1823,7 @@ impl StencilArena {
                 Ok(value)
             }
             Err(error) => {
-                cache.remove(key, physical_cache_signature(view, values), address);
+                cache.remove(key, view.cache_signature(values), address);
                 Err(error)
             }
         }
@@ -1878,7 +1856,7 @@ impl StencilArena {
                 Ok(value)
             }
             Err(error) => {
-                cache.remove(key, physical_cache_signature(view, values), address);
+                cache.remove(key, view.cache_signature(values), address);
                 Err(error)
             }
         }
@@ -1911,7 +1889,7 @@ impl StencilArena {
                 Ok(value)
             }
             Err(error) => {
-                cache.remove(key, physical_cache_signature(view, values), address);
+                cache.remove(key, view.cache_signature(values), address);
                 Err(error)
             }
         }
@@ -1989,10 +1967,10 @@ impl StencilArena {
     fn publish_composed(
         &mut self,
         cache: &mut RenderedRegionCache,
-        signature: u64,
         image: &VerifiedRegionImage,
     ) -> Result<usize, ArenaError> {
         let view = image.view();
+        let signature = image.cache_signature();
         let bytes = image.bytes();
         let checkpoint = self.cursor;
         let offset = self.alloc_aligned(bytes.len(), STENCIL_ALIGNMENT)?;
@@ -2292,7 +2270,7 @@ mod tests {
         assert_eq!(second, first);
         assert_eq!(pool.used(), used);
         let owner = pool.owner_for(first).unwrap();
-        let signature = physical_cache_signature(view, &values);
+        let signature = view.cache_signature(&values);
         assert_eq!(second_cache.get_owned(key, signature, owner), Some(first));
     }
 
@@ -3444,8 +3422,8 @@ mod tests {
         let view =
             crate::stencil_select::select_physical(crate::stencil_select::multiply_region_key())
                 .expect("binary physical view");
-        let image = VerifiedRegionImage::from_test_parts(view, bytes.clone());
-        let address = arena.publish_composed(&mut cache, 0, &image).unwrap();
+        let image = VerifiedRegionImage::from_test_parts(view, 0, bytes.clone());
+        let address = arena.publish_composed(&mut cache, &image).unwrap();
         assert_eq!(arena.execute_f64(address, 1.0, 2.0), Ok(5.0));
         assert_eq!(arena.used(), bytes.len());
     }
@@ -3741,8 +3719,8 @@ mod tests {
         let mut alternate = view;
         alternate.artifact_id = "different-artifact";
         assert_ne!(
-            physical_cache_signature(view, &values),
-            physical_cache_signature(alternate, &values)
+            view.cache_signature(&values),
+            alternate.cache_signature(&values)
         );
     }
 

@@ -15,6 +15,7 @@ const FALLTHROUGH_LABEL: LabelId = LabelId(1);
 /// Publication must not reconstruct ABI or identity from parallel arguments.
 pub(crate) struct VerifiedRegionImage {
     view: PhysicalStencilView,
+    cache_signature: u64,
     bytes: Vec<u8>,
 }
 
@@ -27,9 +28,21 @@ impl VerifiedRegionImage {
         &self.bytes
     }
 
+    pub(crate) const fn cache_signature(&self) -> u64 {
+        self.cache_signature
+    }
+
     #[cfg(test)]
-    pub(crate) fn from_test_parts(view: PhysicalStencilView, bytes: Vec<u8>) -> Self {
-        Self { view, bytes }
+    pub(crate) fn from_test_parts(
+        view: PhysicalStencilView,
+        cache_signature: u64,
+        bytes: Vec<u8>,
+    ) -> Self {
+        Self {
+            view,
+            cache_signature,
+            bytes,
+        }
     }
 }
 
@@ -240,7 +253,11 @@ pub(crate) fn compose_selected_controlled_region<const N: usize>(
         &selected_transfers(view)?,
         &mut bytes,
     )?;
-    Ok(VerifiedRegionImage { view, bytes })
+    Ok(VerifiedRegionImage {
+        view,
+        cache_signature: view.cache_signature(values),
+        bytes,
+    })
 }
 
 pub(crate) fn compose_controlled_region<const N: usize>(

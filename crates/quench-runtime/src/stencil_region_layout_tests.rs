@@ -38,6 +38,7 @@ mod tests {
         let values = PatchValues::from_site(&site);
         let image = compose_selected_region(view, &values).expect("compose selected view");
         let bytes = image.bytes();
+        assert_eq!(image.cache_signature(), view.cache_signature(&values));
         assert_eq!(
             bytes.len(),
             view.stencil.bytes.len() + view.fallthrough.unwrap().stencil.bytes.len()

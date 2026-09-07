@@ -2192,7 +2192,7 @@ impl NativeBinaryPlan {
                     crate::stencil_select::RegionAbi::ScalarI32
                 };
                 let signature = crate::stencil_select::select_physical_for_abi(self.key, abi)
-                    .map(|view| crate::stencil_arena::physical_cache_signature(view, &values));
+                    .map(|view| view.cache_signature(&values));
                 self.note_native_entry();
                 if let Some(arena) = self.storage.local() {
                     if let Some(address) = signature.and_then(|signature| {
@@ -2382,7 +2382,7 @@ impl NativeBinaryPlan {
                 // cached pointer would never be found for the common Add,
                 // Sub, Mul, and Div leaves and the boundary tax would return
                 // on every iteration.
-                let signature = crate::stencil_arena::physical_cache_signature(view, &values);
+                let signature = view.cache_signature(&values);
                 if let Some(arena) = self.storage.local() {
                     if let Some(address) = self.physical.cache.get_owned(key, signature, arena.id())
                     {
@@ -3773,10 +3773,9 @@ impl NativeAddChainPlan {
             }
             self.note_entry();
             if let Some(arena) = self.storage.local() {
-                let signature = crate::stencil_arena::physical_cache_signature(
-                    crate::stencil_select::select_physical(key).expect("installed view"),
-                    &values,
-                );
+                let signature = crate::stencil_select::select_physical(key)
+                    .expect("installed view")
+                    .cache_signature(&values);
                 if let Some(address) = self.physical.cache.get_owned(key, signature, arena.id()) {
                     self.installed = arena
                         .f64x3_entry(address)
@@ -4049,7 +4048,7 @@ impl NativeMovePlan {
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if let Ok((_, view)) = &result {
             let signature = crate::stencil_select::select_physical(key)
-                .map(|view| crate::stencil_arena::physical_cache_signature(view, &values));
+                .map(|view| view.cache_signature(&values));
             self.note_view(*view);
             self.note_entry();
             if let Some(arena) = self.storage.local() {
@@ -4318,10 +4317,9 @@ impl NativePropertyPlan {
                 self.last_native_view = rendered_view;
             }
             if let Some(arena) = self.storage.local() {
-                let signature = crate::stencil_arena::physical_cache_signature(
-                    crate::stencil_select::select_physical(key).expect("installed view"),
-                    &values,
-                );
+                let signature = crate::stencil_select::select_physical(key)
+                    .expect("installed view")
+                    .cache_signature(&values);
                 if let Some(address) = self.physical.cache.get_owned(key, signature, arena.id()) {
                     self.installed = arena
                         .property_guard_entry(address)
