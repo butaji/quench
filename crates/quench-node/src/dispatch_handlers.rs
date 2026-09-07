@@ -11215,29 +11215,29 @@ pub fn cp_send(
             .rev()
             .find(|value| quench_runtime::is_callable(value))
             .cloned();
-        if generic_ipc {
-            let count = match execute::get_property(receiver, "sendCount") {
-                Value::Number(value) if value.is_finite() && value >= 0.0 => value as u32,
-                _ => 0,
-            };
-            if count >= 2 {
-                let ack = host_api::bound_capability_with_arguments(
-                    quench_runtime::ops::HostCapabilityRef {
-                        realm: quench_runtime::ops::RealmId::ROOT,
-                        kind: quench_runtime::ops::HostCapabilityKind::Custom(
-                            crate::registry::SPEC_CP_SEND_ACK.cap,
-                        ),
-                    },
-                    vec![receiver.clone(), callback.unwrap_or(Value::Undefined)],
-                );
-                state.borrow().event_loop.queue_immediate(ack, vec![]);
-                return Ok(Value::Boolean(false));
-            }
-            execute::set_property_in_place(
-                receiver,
-                "sendCount",
-                Value::Number((count + 1) as f64),
+        let count = match execute::get_property(receiver, "sendCount") {
+            Value::Number(value) if value.is_finite() && value >= 0.0 => value as u32,
+            _ => 0,
+        };
+        if count >= 2 {
+            let ack = host_api::bound_capability_with_arguments(
+                quench_runtime::ops::HostCapabilityRef {
+                    realm: quench_runtime::ops::RealmId::ROOT,
+                    kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                        crate::registry::SPEC_CP_SEND_ACK.cap,
+                    ),
+                },
+                vec![receiver.clone(), callback.unwrap_or(Value::Undefined)],
             );
+            state.borrow().event_loop.queue_immediate(ack, vec![]);
+            return Ok(Value::Boolean(false));
+        }
+        execute::set_property_in_place(
+            receiver,
+            "sendCount",
+            Value::Number((count + 1) as f64),
+        );
+        if generic_ipc {
             if let Some(callback) = callback {
                 state.borrow().event_loop.queue_immediate(callback, vec![]);
             }
