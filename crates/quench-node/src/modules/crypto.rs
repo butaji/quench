@@ -4511,6 +4511,15 @@ pub fn key_export(
                         return Ok(crate::modules::buffer_proto::make_buffer(&der));
                     }
                 }
+                // SPKI is the DER representation for non-RSA public keys.
+                // Keep this conversion at the shared export boundary so EC,
+                // OKP, and DSA callers do not receive the source PEM bytes
+                // merely because RSA has a special PKCS#1 branch.
+                if requested_type_name != "pkcs1" {
+                    if let Ok(der) = pkey.public_key_to_der() {
+                        return Ok(crate::modules::buffer_proto::make_buffer(&der));
+                    }
+                }
             } else if let Ok(pkey) = PKey::private_key_from_pem(&data) {
                 if let Ok(rsa) = pkey.rsa() {
                     let der = if requested_type_name == "pkcs1" {
@@ -4549,6 +4558,11 @@ pub fn key_export(
                         pkey.private_key_to_der()
                     };
                     if let Ok(der) = der {
+                        return Ok(crate::modules::buffer_proto::make_buffer(&der));
+                    }
+                }
+                if requested_type_name != "pkcs1" && requested_type_name != "sec1" {
+                    if let Ok(der) = pkey.private_key_to_pkcs8() {
                         return Ok(crate::modules::buffer_proto::make_buffer(&der));
                     }
                 }
