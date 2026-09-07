@@ -265,7 +265,7 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
       if (value > 0x7fffffff) {
         throw __quenchDgramBufferError("recv", "EINVAL", "invalid argument");
       }
-      socket._recvBufferSize = value * 2;
+      socket._recvBufferSize = value * (process.platform === "linux" ? 2 : 1);
     },
     setSendBufferSize: (value) => {
       if (!socket._bound) {
@@ -282,7 +282,7 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
       if (value > 0x7fffffff) {
         throw __quenchDgramBufferError("send", "EINVAL", "invalid argument");
       }
-      socket._sendBufferSize = value * 2;
+      socket._sendBufferSize = value * (process.platform === "linux" ? 2 : 1);
     },
     setBroadcast: (value) => {
       if (!socket._bound) throw new Error("setBroadcast EBADF");

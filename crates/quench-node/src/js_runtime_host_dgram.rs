@@ -255,7 +255,11 @@ impl QuenchNodeHost {
             }
             CapabilityName::DgramGetRecvBufferSize => {
                 if state.0 {
-                    Ok(Value::Number(20000.0))
+                    Ok(Value::Number(if cfg!(target_os = "linux") {
+                        20000.0
+                    } else {
+                        10000.0
+                    }))
                 } else {
                     Err(VmError::Thrown(fs_error(
                         "ERR_SOCKET_BUFFER_SIZE",
@@ -265,7 +269,11 @@ impl QuenchNodeHost {
             }
             CapabilityName::DgramGetSendBufferSize => {
                 if state.0 {
-                    Ok(Value::Number(20000.0))
+                    Ok(Value::Number(if cfg!(target_os = "linux") {
+                        20000.0
+                    } else {
+                        10000.0
+                    }))
                 } else {
                     Err(VmError::Thrown(fs_error(
                         "ERR_SOCKET_BUFFER_SIZE",
