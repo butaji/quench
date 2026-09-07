@@ -425,9 +425,18 @@ impl NativeLocalBinaryPlan {
     pub(crate) fn last_native_view(&self) -> Option<crate::stencil_select::PhysicalStencilView> {
         match &self.physical {
             LocalNumericPhysical::AddChain(chain) => chain.last_native_view(),
-            LocalNumericPhysical::BinarySeries(chain) => chain.last_native_view(),
             _ => None,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_linear_witness(
+        &self,
+    ) -> Option<crate::stencil_region_builder::NativeLinearWitness> {
+        let LocalNumericPhysical::BinarySeries(chain) = &self.physical else {
+            return None;
+        };
+        chain.last_native_witness()
     }
 
     #[cfg(test)]
