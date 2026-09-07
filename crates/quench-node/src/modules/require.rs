@@ -28,6 +28,46 @@ thread_local! {
     static STATIC_ESM_LOAD: Cell<bool> = const { Cell::new(false) };
 }
 
+/// The compile-cache API's observable state is per host process/realm. The
+/// Rust engine deliberately does not serialize V8 bytecode; retaining this
+/// small state record still makes the documented status and directory
+/// contract truthful without inventing a second cache format.
+#[derive(Debug, Clone, Default)]
+pub struct CompileCacheState {
+    status: CompileCacheStatus,
+    directory: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum CompileCacheStatus {
+    #[default]
+    Uninitialized,
+    Enabled,
+    Disabled,
+}
+
+impl CompileCacheState {
+    pub fn from_environment() -> Self {
+        if std::env::var_os("NODE_DISABLE_COMPILE_CACHE").is_some() {
+            return Self {
+                status: CompileCacheStatus::Disabled,
+                directory: None,
+            };
+        }
+        let directory = std::env::var_os("NODE_COMPILE_CACHE")
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string_lossy().into_owned());
+        Self {
+            status: if directory.is_some() {
+                CompileCacheStatus::Enabled
+            } else {
+                CompileCacheStatus::Uninitialized
+            },
+            directory,
+        }
+    }
+}
+
 pub fn with_static_esm_mode<T>(enabled: bool, body: impl FnOnce() -> T) -> T {
     let previous = STATIC_ESM_LOAD.with(|flag| flag.replace(enabled));
     let result = body();
@@ -777,60 +817,108 @@ pub fn module_set_source_maps_support(args: &[Value]) -> Result<Value, VmError> 
     Ok(Value::Undefined)
 }
 
-/// Compile-cache API surface for the Rust engine.  There is no V8 bytecode
+/// Compile-cache API surface for the Rust engine. There is no V8 bytecode
 /// format to persist, so enabling is an observable no-op with Node's status
 /// object rather than a second cache implementation.
-pub fn module_enable_compile_cache(args: &[Value]) -> Result<Value, VmError> {
-    if let Some(options) = args.first() {
-        // Node accepts the cache directory as a legacy string shorthand as
-        // well as the options object.  The Rust engine intentionally does
-        // not persist V8 bytecode, but a supported argument must still be a
-        // no-op rather than an argument-type failure.
-        if matches!(options, Value::String(_)) && !execute::is_symbol(options) {
-            return Ok(compile_cache_disabled_result());
+pub fn module_enable_compile_cache(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let directory = match args.first() {
+        Some(options) if matches!(options, Value::String(_)) && !execute::is_symbol(options) => {
+            Some(options.clone())
         }
-        if matches!(
-            options,
-            Value::Undefined | Value::Object(_) | Value::ObjectAlias(_)
-        ) {
-            if matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
-                let directory = execute::get_property(options, "directory");
-                if !matches!(directory, Value::Undefined | Value::String(_)) {
-                    let error = quench_runtime::builtins::error(
-                        quench_runtime::ops::Builtin::TypeError,
-                        &[Value::String("cacheDir should be a string".into())],
-                    );
-                    return Err(VmError::Thrown(execute::set_property(
-                        error,
-                        "code",
-                        Value::String("ERR_INVALID_ARG_TYPE".into()),
-                    )));
-                }
+        Some(options) if matches!(options, Value::Object(_) | Value::ObjectAlias(_)) => {
+            let directory = execute::get_property(options, "directory");
+            if !matches!(directory, Value::Undefined | Value::String(_)) {
+                let error = quench_runtime::builtins::error(
+                    quench_runtime::ops::Builtin::TypeError,
+                    &[Value::String("cacheDir should be a string".into())],
+                );
+                return Err(VmError::Thrown(execute::set_property(
+                    error,
+                    "code",
+                    Value::String("ERR_INVALID_ARG_TYPE".into()),
+                )));
             }
-            return Ok(compile_cache_disabled_result());
+            match directory {
+                Value::String(_) => Some(directory),
+                _ => None,
+            }
         }
-        let error = quench_runtime::builtins::error(
-            quench_runtime::ops::Builtin::TypeError,
-            &[Value::String(
-                "The \"options\" argument must be of type object".into(),
-            )],
-        );
-        return Err(VmError::Thrown(execute::set_property(
-            error,
-            "code",
-            Value::String("ERR_INVALID_ARG_TYPE".into()),
-        )));
+        Some(Value::Undefined) | None => None,
+        Some(_) => {
+            let error = quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::TypeError,
+                &[Value::String(
+                    "The \"options\" argument must be of type object".into(),
+                )],
+            );
+            return Err(VmError::Thrown(execute::set_property(
+                error,
+                "code",
+                Value::String("ERR_INVALID_ARG_TYPE".into()),
+            )));
+        }
+    };
+
+    let mut host = state.borrow_mut();
+    if host.compile_cache.status == CompileCacheStatus::Disabled {
+        drop(host);
+        if compile_cache_debug_enabled() {
+            let _ = crate::modules::process::stream_write(
+                state,
+                &[Value::String(
+                    "[compile cache] Disabled by NODE_DISABLE_COMPILE_CACHE.\n".into(),
+                )],
+                true,
+            );
+        }
+        return Ok(compile_cache_result(3.0, None, None));
     }
-    Ok(compile_cache_disabled_result())
+    if host.compile_cache.status == CompileCacheStatus::Enabled {
+        return Ok(compile_cache_result(
+            2.0,
+            host.compile_cache.directory.clone(),
+            None,
+        ));
+    }
+
+    let directory = directory
+        .and_then(|value| match value {
+            Value::String(value) => Some(value),
+            _ => None,
+        })
+        .unwrap_or_else(|| {
+            std::env::temp_dir()
+                .join("node-compile-cache")
+                .to_string_lossy()
+                .into_owned()
+        });
+    if let Err(error) = std::fs::create_dir_all(&directory) {
+        return Ok(compile_cache_result(
+            0.0,
+            None,
+            Some(format!("Unable to create compile cache directory: {error}")),
+        ));
+    }
+    host.compile_cache.status = CompileCacheStatus::Enabled;
+    host.compile_cache.directory = Some(directory.clone());
+    Ok(compile_cache_result(1.0, Some(directory), None))
 }
 
-fn compile_cache_disabled_result() -> Value {
-    let disabled_by_env = std::env::var_os("NODE_DISABLE_COMPILE_CACHE").is_some();
-    if disabled_by_env && compile_cache_debug_enabled() {
-        eprintln!("[compile cache] Disabled by NODE_DISABLE_COMPILE_CACHE.");
+fn compile_cache_result(
+    status: f64,
+    directory: Option<String>,
+    message: Option<String>,
+) -> Value {
+    let mut properties = vec![("status".into(), Value::Number(status))];
+    if let Some(directory) = directory {
+        properties.push(("directory".into(), Value::String(directory)));
     }
-    let mut properties = vec![("status".into(), Value::Number(3.0))];
-    if disabled_by_env {
+    if let Some(message) = message {
+        properties.push(("message".into(), Value::String(message)));
+    } else if status == 3.0 && std::env::var_os("NODE_DISABLE_COMPILE_CACHE").is_some() {
         properties.push((
             "message".into(),
             Value::String("Disabled by NODE_DISABLE_COMPILE_CACHE".into()),
@@ -847,11 +935,18 @@ fn compile_cache_debug_enabled() -> bool {
     })
 }
 
-pub fn module_get_compile_cache_dir(_: &[Value]) -> Result<Value, VmError> {
-    Ok(Value::Undefined)
+pub fn module_get_compile_cache_dir(
+    state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let directory = state.borrow().compile_cache.directory.clone();
+    Ok(directory.map(Value::String).unwrap_or(Value::Undefined))
 }
 
-pub fn module_flush_compile_cache(_: &[Value]) -> Result<Value, VmError> {
+pub fn module_flush_compile_cache(
+    _state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
     Ok(Value::Undefined)
 }
 
