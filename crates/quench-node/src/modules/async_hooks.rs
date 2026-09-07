@@ -1122,9 +1122,20 @@ pub fn resource_run(
             let this_arg = args.get(1).unwrap_or(&Value::Undefined);
             execute::call(f, this_arg, args.get(2..).unwrap_or(&[]))
         })
-        .transpose()?;
-    resource_after(state, Some(&resource), &[])?;
-    Ok(result.unwrap_or(Value::Undefined))
+        .transpose();
+
+    // `after` is a scope-exit edge, not a success callback.  It must run when
+    // the user callback throws as well, otherwise the current async resource
+    // remains stuck on this resource and later work observes the wrong
+    // executionAsyncId/triggerAsyncId.  Preserve the callback's completion
+    // after restoring the host state, matching ordinary try/finally
+    // semantics without introducing a second scope representation.
+    let after = resource_after(state, Some(&resource), &[]);
+    match (result, after) {
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+        (Ok(value), Ok(_)) => Ok(value.unwrap_or(Value::Undefined)),
+    }
 }
 
 fn bind_factory(
