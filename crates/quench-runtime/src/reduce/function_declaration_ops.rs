@@ -28,6 +28,7 @@ fn function_declaration_op(
     params: u16,
     captures: u16,
     metadata: functions::FunctionMetadata,
+    source: Option<String>,
 ) -> Op {
     Op::MakeFunctionWithKind {
         dst,
@@ -45,6 +46,6 @@ fn function_declaration_op(
         strictness: metadata.strictness,
         is_async: metadata.is_async,
         mapped_arguments: metadata.mapped_arguments,
-        source: None,
+        source,
     }
 }
