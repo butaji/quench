@@ -1874,15 +1874,15 @@ pub(crate) fn emit_warning_with_detail(
     }
     let warning = warning_value(state, name, message, code, detail);
     // Node schedules warnings on its next-tick queue, ahead of ordinary
-    // promise reactions.  A resolved runtime promise gives us that ordering
-    // while retaining the canonical process emitter capability and keeping
-    // delivery asynchronous to the caller.
+    // promise reactions.  Queue through the host process queue directly:
+    // creating a Promise here would capture a transient vm sandbox realm
+    // when the warning originates in vm.runInNewContext, then invoke the
+    // process listener with that realm's incomplete host globals.
     let emitter = quench_runtime::host_api::bound_capability_with_arguments(
         crate::host::capability_ref(crate::registry::SPEC_PROCESS_EMIT),
         vec![Value::String("warning".into()), warning],
     );
-    let ready = quench_runtime::promise_resolve(&[Value::Undefined]);
-    let _ = quench_runtime::promise_then(Some(&ready), &[emitter]);
+    let _ = next_tick(state, &[emitter]);
 }
 
 fn warning_value(

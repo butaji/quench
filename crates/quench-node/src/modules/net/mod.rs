@@ -61,6 +61,9 @@ pub(crate) const TOS_PROP: &str = "\0quench:net:tos";
 pub(crate) const HANDLE_CLOSED_PROP: &str = "\0quench:net:handle-closed";
 pub(crate) const HANDLE_NO_DELAY_PROP: &str = "\0quench:net:handle-no-delay";
 const ASYNC_ITER_TARGET_PROP: &str = "\0quench:net:async-iter-target";
+const SOCKET_ADDRESS_MARKER: &str = "\0quench:socket-address:marker";
+const SOCKET_ADDRESS_CONSTRUCTOR_MARKER: &str = "\0quench:socket-address:constructor";
+const SOCKET_ADDRESS_CONSTRUCTOR_GLOBAL_PROP: &str = "\0quench:net:socket-address-constructor";
 const READ_CHUNK: usize = 16 * 1024;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -477,6 +480,7 @@ fn socket_props() -> Vec<(&'static str, Value)> {
         ("_handle", Value::Null),
         // HTTP Agent exposes parser=null while a keep-alive socket is idle.
         ("parser", Value::Null),
+        ("Symbol(kTimeout)\0quench", Value::Null),
         ("readable", Value::Boolean(true)),
         ("writable", Value::Boolean(true)),
         ("writableCorked", Value::Number(0.0)),
@@ -1198,6 +1202,25 @@ pub fn internal_module() -> Value {
     ])
 }
 
+/// The public net implementation and Node's internal socket-address helper
+/// share one constructor/prototype pair.  Keeping the internal constructor on
+/// the same Rust capability preserves `instanceof net.SocketAddress` for
+/// addresses created while deserializing native handles.
+pub fn socket_address_module() -> Value {
+    let net = build();
+    let constructor = execute::get_property(&net, "SocketAddress");
+    let internal = execute::set_property(
+        crate::host::capability(crate::registry::SPEC_NET_SOCKET_ADDRESS_CONSTRUCT),
+        "prototype",
+        execute::get_property(&constructor, "prototype"),
+    );
+    crate::host::namespace_object_from_pairs(vec![
+        ("SocketAddress".into(), constructor),
+        ("InternalSocketAddress".into(), internal),
+        ("kHandle".into(), Value::String("\0quench:socket-address:handle".into())),
+    ])
+}
+
 fn parse_ipv6(value: &str) -> Option<std::net::Ipv6Addr> {
     let (address, zone) = value
         .split_once('%')
@@ -1286,6 +1309,38 @@ pub fn build_with_state(state: Option<&Rc<RefCell<HostState>>>) -> Value {
         "prototype",
         host_api::object(vec![("isPipe".into(), Value::Boolean(false))]),
     );
+    let existing_socket_address = execute::get_property(
+        &global,
+        SOCKET_ADDRESS_CONSTRUCTOR_GLOBAL_PROP,
+    );
+    let socket_address_ctor = if quench_runtime::is_callable(&existing_socket_address) {
+        existing_socket_address
+    } else {
+        let socket_address_prototype = host_api::object(vec![(
+            "toJSON".into(),
+            crate::host::capability(crate::registry::SPEC_NET_SOCKET_ADDRESS_CONSTRUCT),
+        )]);
+        let socket_address_ctor = execute::set_property(
+            crate::host::capability(crate::registry::SPEC_NET_SOCKET_ADDRESS_CONSTRUCT),
+            "prototype",
+            socket_address_prototype,
+        );
+        let socket_address_ctor = execute::set_property(
+            socket_address_ctor,
+            "isSocketAddress",
+            crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST_IS),
+        );
+        execute::set_property(
+            socket_address_ctor,
+            "parse",
+            crate::host::capability(crate::registry::SPEC_NET_SOCKET_ADDRESS_CONSTRUCT),
+        )
+    };
+    execute::set_property_in_place(
+        &global,
+        SOCKET_ADDRESS_CONSTRUCTOR_GLOBAL_PROP,
+        socket_address_ctor.clone(),
+    );
     let block_list = crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST);
     let _ = execute::set_property(
         block_list.clone(),
@@ -1334,7 +1389,7 @@ pub fn build_with_state(state: Option<&Rc<RefCell<HostState>>>) -> Value {
         ("BlockList", block_list),
         (
             "SocketAddress",
-            crate::host::capability(crate::registry::SPEC_NET_SOCKET_ADDRESS_CONSTRUCT),
+            socket_address_ctor,
         ),
         (
             "isIP",
@@ -1712,6 +1767,14 @@ pub fn socket_address_construct(
             Value::String("SocketAddress".into()),
         ),
     ]))
+}
+
+pub fn socket_address_call(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    socket_address_construct(state, args)
 }
 
 pub fn block_list_clear(

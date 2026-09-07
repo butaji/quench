@@ -3034,10 +3034,7 @@ pub fn internal_crypto_key_handle(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let key = args.first().unwrap_or(&Value::Undefined);
-    Ok(execute::get_property(
-        key,
-        crate::modules::webcrypto::KEY_DATA_PROP,
-    ))
+    Ok(crate::modules::webcrypto::crypto_key_handle(key))
 }
 
 pub fn internal_crypto_get_usages_mask(
@@ -3090,9 +3087,9 @@ pub fn internal_crypto_aes_cipher(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let iv = args
-        .get(2)
-        .and_then(crate::modules::crypto::bytes_from_value);
+    let iv = args.get(3).and_then(|algorithm| {
+        crate::modules::crypto::bytes_from_value(&execute::get_property(algorithm, "iv"))
+    });
     let promise = if matches!(iv.as_deref(), Some(value) if value.len() != 16) {
         let cause = quench_runtime::builtins::error(
             quench_runtime::ops::Builtin::Error,
@@ -4198,6 +4195,18 @@ pub fn internal_binding(
             ),
         ]));
     }
+    if name == "block_list" {
+        // `internal/socketaddress` uses this native constructor to create a
+        // compact address handle before wrapping it in InternalSocketAddress.
+        return Ok(crate::host::namespace_object_from_pairs(vec![
+            (
+                "SocketAddress".into(),
+                crate::host::capability(crate::registry::SPEC_NET_SOCKET_ADDRESS_CONSTRUCT),
+            ),
+            ("AF_INET".into(), Value::Number(2.0)),
+            ("AF_INET6".into(), Value::Number(10.0)),
+        ]));
+    }
     if name == "http2" {
         return Ok(crate::modules::http2_util::binding());
     }
@@ -4239,6 +4248,31 @@ pub fn internal_binding(
         execute::set_property_in_place(&prototype, "_external", Value::Undefined);
         execute::set_property_in_place(&secure_context, "prototype", prototype);
         return Ok(crate::host::namespace_object_from_pairs(vec![
+            (
+                "HashJob".to_string(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_CRYPTO_HASH_JOB_CONSTRUCT),
+            ),
+            (
+                "SecretKeyGenJob".to_string(),
+                crate::host::capability(
+                    crate::registry::SPEC_INTERNAL_CRYPTO_SECRET_KEY_GEN_JOB_CONSTRUCT,
+                ),
+            ),
+            (
+                "EcKeyPairGenJob".to_string(),
+                crate::host::capability(
+                    crate::registry::SPEC_INTERNAL_CRYPTO_EC_KEY_PAIR_GEN_JOB_CONSTRUCT,
+                ),
+            ),
+            (
+                "AESCipherJob".to_string(),
+                crate::host::capability(
+                    crate::registry::SPEC_INTERNAL_CRYPTO_AES_CIPHER_JOB_CONSTRUCT,
+                ),
+            ),
+            ("kCryptoJobWebCrypto".to_string(), Value::Number(1.0)),
+            ("kKeyVariantAES_CBC_128".to_string(), Value::Number(1.0)),
+            ("kWebCryptoCipherEncrypt".to_string(), Value::Number(1.0)),
             (
                 "testFipsCrypto".to_string(),
                 crate::host::capability(crate::registry::SPEC_CRYPTO_TEST_FIPS),
@@ -7131,6 +7165,56 @@ pub fn http_outgoing_construct(
     Ok(object)
 }
 
+/// Attach a transferred net.Socket to an OutgoingMessage/ServerResponse.
+pub fn http_outgoing_assign_socket(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    let socket = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(socket, Value::Object(_) | Value::ObjectAlias(_)) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"socket\" argument must be an instance of Socket".into(),
+        ));
+    }
+    let current = execute::get_property(&socket, "_httpMessage");
+    if execute::same_value(&current, receiver) {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("Error".into())),
+            ("code".into(), Value::String("ERR_HTTP_SOCKET_ASSIGNED".into())),
+        ])));
+    }
+    execute::set_property_in_place(&socket, "_httpMessage", receiver.clone());
+    execute::set_property_in_place(receiver, "socket", socket.clone());
+    crate::modules::events::method_emit(
+        state,
+        Some(receiver),
+        &[Value::String("socket".into()), socket],
+    )?;
+    Ok(Value::Undefined)
+}
+
+pub fn http_outgoing_detach_socket(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    let socket = args
+        .first()
+        .cloned()
+        .filter(|value| !matches!(value, Value::Undefined | Value::Null))
+        .unwrap_or_else(|| execute::get_property(receiver, "socket"));
+    if matches!(socket, Value::Object(_) | Value::ObjectAlias(_))
+        && execute::same_value(&execute::get_property(&socket, "_httpMessage"), receiver)
+    {
+        execute::set_property_in_place(&socket, "_httpMessage", Value::Null);
+    }
+    execute::set_property_in_place(receiver, "socket", Value::Null);
+    Ok(Value::Undefined)
+}
+
 pub fn http_outgoing_write(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -7154,7 +7238,7 @@ pub fn http_outgoing_write(
 }
 
 pub fn http_outgoing_end(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
@@ -7162,6 +7246,17 @@ pub fn http_outgoing_end(
     execute::set_property_in_place(&receiver, "finished", Value::Boolean(true));
     execute::set_property_in_place(&receiver, "writableEnded", Value::Boolean(true));
     execute::set_property_in_place(&receiver, "writableLength", Value::Number(0.0));
+    let socket = execute::get_property(&receiver, "socket");
+    if matches!(socket, Value::Object(_) | Value::ObjectAlias(_)) {
+        let _ = crate::modules::net::socket_write(
+            state,
+            Some(&socket),
+            &[Value::String("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n\r\n".into())],
+        );
+        let _ = crate::modules::net::socket_end(state, Some(&socket), &[]);
+        execute::set_property_in_place(&socket, "_httpMessage", Value::Null);
+        execute::set_property_in_place(&receiver, "socket", Value::Null);
+    }
     Ok(receiver)
 }
 
@@ -8693,6 +8788,7 @@ fn cp_run_host_child(
             .or(Some(path))
     })?;
     let mut process = std::process::Command::new(executable);
+    crate::modules::child_process::clear_worker_markers(&mut process);
     process.args(&args).env("QUENCH_CHILD_RUNNER", "1");
     if let Value::String(cwd) = execute::get_property(options, "cwd") {
         process.current_dir(cwd);
@@ -8700,6 +8796,12 @@ fn cp_run_host_child(
     if matches!(env, Value::Object(_) | Value::ObjectAlias(_)) {
         let mut values = Vec::new();
         for key in execute::own_enumerable_keys(&env) {
+            if matches!(
+                key.as_str(),
+                "QUENCH_WORKER" | "QUENCH_WORKER_DATA" | "QUENCH_WORKER_MESSAGE"
+            ) {
+                continue;
+            }
             let value = execute::get_property(&env, &key);
             if !matches!(value, Value::Undefined | Value::Null) {
                 if let Ok(value) = execute::to_js_string(&value) {
@@ -8882,16 +8984,25 @@ pub fn cp_spawn_output_emit(
     if let Ok(signal) = execute::get_property_result(&child_options, "signal") {
         if execute::is_truthy(&execute::get_property(&signal, "aborted")) {
             execute::set_property_in_place(child, "killed", Value::Boolean(true));
-            let kill_signal = execute::get_property(&child_options, "killSignal");
-            execute::set_property_in_place(
-                child,
-                "signalCode",
-                if matches!(kill_signal, Value::Undefined) {
-                    Value::String("SIGTERM".into())
-                } else {
-                    kill_signal
-                },
-            );
+            // An already-aborted signal is handled synchronously by
+            // `cp_abort`, which records the selected kill signal before this
+            // queued spawn phase runs. Preserve that terminal fact instead of
+            // overwriting it with the normalized (possibly null) option.
+            if matches!(
+                execute::get_property(child, "signalCode"),
+                Value::Null | Value::Undefined
+            ) {
+                let kill_signal = execute::get_property(&child_options, "killSignal");
+                execute::set_property_in_place(
+                    child,
+                    "signalCode",
+                    if matches!(kill_signal, Value::Undefined | Value::Null) {
+                        Value::String("SIGTERM".into())
+                    } else {
+                        kill_signal
+                    },
+                );
+            }
         }
     }
     let abort_signal = execute::get_property(child, "\0childAbortSignal");
@@ -9914,7 +10025,10 @@ pub fn cp_abort(
                 crate::registry::SPEC_CP_ABORT_EMIT.cap,
             ),
         },
-        vec![child.clone(), error],
+        // Carry the selected signal across the queued error/exit transition.
+        // The shared child lifecycle may restore process-scoped state before
+        // this microtask runs, so rereading `child.signalCode` is not stable.
+        vec![child.clone(), error, signal],
     );
     state.borrow_mut().event_loop.queue_microtask(emit, vec![]);
     Ok(Value::Undefined)
@@ -9957,7 +10071,11 @@ pub fn cp_abort_emit(
             execute::get_property(child, "\0childForkIpc"),
             Value::Boolean(true)
         ) {
-            let signal = execute::get_property(child, "signalCode");
+            let signal = args
+                .get(2)
+                .filter(|value| !matches!(value, Value::Undefined | Value::Null))
+                .cloned()
+                .unwrap_or_else(|| execute::get_property(child, "signalCode"));
             for event in ["exit", "close"] {
                 crate::modules::events::method_emit(
                     state,
@@ -10227,6 +10345,7 @@ fn fork_child_start(
         .copied()
         .collect::<std::collections::HashSet<_>>();
     let previous_argv = execute::get_property(&process, "argv");
+    let previous_exec_argv = execute::get_property(&process, "execArgv");
     let previous_send = execute::get_property(&process, "send");
     let previous_cluster_sender = execute::get_property(&process, "\0clusterProcessSender");
     let previous_disconnect = execute::get_property(&process, "disconnect");
@@ -10263,6 +10382,21 @@ fn fork_child_start(
         }
     }
     execute::set_property_in_place(&process, "argv", host_api::array(child_argv));
+    // Arrays exposed by the parent realm retain realm-owned prototypes.  The
+    // child executes with fresh intrinsics, so materialize execArgv in the
+    // child view just as argv is materialized above; otherwise JSON/string
+    // operations can attempt to call a cross-realm method and throw
+    // "value is not callable" before user code reaches stdout.
+    let exec_argv_values = if let Value::Array(values) = &previous_exec_argv {
+        (0..values.logical_len())
+            .filter_map(|index| {
+                execute::get_property_result(&previous_exec_argv, &index.to_string()).ok()
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    execute::set_property_in_place(&process, "execArgv", host_api::array(exec_argv_values));
     execute::set_property_in_place(&process, "connected", Value::Boolean(true));
     let child_env = execute::get_property(&child_options, "env");
     if matches!(child_env, Value::Object(_) | Value::ObjectAlias(_)) {
@@ -10351,14 +10485,52 @@ fn fork_child_start(
     // `import.meta` lowering as a top-level `.mjs` fixture; wrapping it as
     // CommonJS leaves raw import syntax for the reducer to reject.
     let wrapped = if filename.ends_with(".mjs") {
-        crate::esm_imports::transform_esm_imports(&source)
+        // A forked ESM entry executes in the parent's VM realm, but must
+        // retain module-local lexical bindings.  Lower imports first, then
+        // put the module body in a block so a second fork of the same entry
+        // cannot collide with the parent's `const`/`let` declarations.
+        format!(
+            "{{\n{}\n}}",
+            crate::esm_imports::transform_esm_imports(&source)
+        )
     } else {
         crate::modules::require::wrap_cjs(state, &filename, &source)
     };
     // Forked workers reuse the parent VM realm, but their source is reduced
     // independently from the runner bootstrap. Ensure the canonical fetch
     // global is present before common modules inspect the global surface.
+    let support_surface = crate::polyfills::bootstrap::lookup("support")
+        .map(|surface| format!("{{\n{surface}\n}}"))
+        .unwrap_or_default();
     let fetch_surface = crate::polyfills::bootstrap::lookup("fetch").unwrap_or("");
+    // The ESM reducer lowers `import.meta` to the canonical Rust-provided
+    // global.  A forked entry is reduced outside the top-level fixture
+    // bootstrap, so install the same per-module metadata from the resolved
+    // child path before evaluating it.  Keep this as one semantic object
+    // rather than teaching the fork path about individual URL fixtures.
+    let import_meta_surface = if filename.ends_with(".mjs") {
+        let meta_url = crate::modules::url_file::path_to_file_url(
+            state,
+            None,
+            &[Value::String(filename.clone())],
+        )
+        .ok()
+        .and_then(|url| execute::get_property_result(&url, "href").ok())
+        .and_then(|value| execute::to_js_string(&value).ok())
+        .unwrap_or_else(|| format!("file://{filename}"));
+        let filename_json = serde_json::to_string(&filename).unwrap_or_else(|_| "\"\"".into());
+        let url_json = serde_json::to_string(&meta_url).unwrap_or_else(|_| "\"\"".into());
+        let dirname = std::path::Path::new(&filename)
+            .parent()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let dirname_json = serde_json::to_string(&dirname).unwrap_or_else(|_| "\"\"".into());
+        format!(
+            "Object.defineProperty(globalThis, 'import_meta', {{ configurable: true, value: {{ url: {url_json}, filename: {filename_json}, dirname: {dirname_json}, resolve: (specifier, parent) => new URL(specifier, parent || {url_json}).href }} }});"
+        )
+    } else {
+        String::new()
+    };
     let dgram_surface = source
         .contains("dgram")
         .then_some(
@@ -10366,7 +10538,7 @@ fn fork_child_start(
         )
         .unwrap_or_default();
     let wrapped = format!(
-        "if (typeof globalThis.fetch !== \"function\") {{\n{fetch_surface}\n}}\n{dgram_surface}\n{wrapped}"
+        "{support_surface}\nif (typeof globalThis.fetch !== \"function\") {{\n{fetch_surface}\n}}\n{import_meta_surface}\n{dgram_surface}\n{wrapped}"
     );
     let program = quench_runtime::reduce::reduce_global_script_source(&wrapped)
         .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
@@ -10375,6 +10547,7 @@ fn fork_child_start(
     let result =
         quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context);
     execute::set_property_in_place(&process, "argv", previous_argv);
+    execute::set_property_in_place(&process, "execArgv", previous_exec_argv);
     execute::set_property_in_place(&process, "env", previous_env);
     execute::set_property_in_place(&process, "execPath", previous_exec_path);
     execute::set_property_in_place(&process, "stdout", previous_stdout);
@@ -10588,6 +10761,9 @@ pub fn cp_disconnect_emit(
         execute::set_property_in_place(&console, "_stderr", child_stderr);
         execute::set_property_in_place(process, "connected", Value::Boolean(false));
         crate::modules::process::emit(state, &[Value::String("disconnect".into())])?;
+        if let Some(scope) = child_scope {
+            state.borrow_mut().emitters.remove_scope(scope);
+        }
         execute::set_property_in_place(process, "stdout", previous_stdout);
         execute::set_property_in_place(process, "stderr", previous_stderr);
         execute::set_property_in_place(&console, "_stdout", previous_console_stdout);
