@@ -165,6 +165,7 @@ mod stencil_property_integration_tests;
 mod stencil_property_store_tests;
 mod stencil_region_builder;
 mod stencil_region_layout;
+mod stencil_region_links;
 pub mod stencil_select;
 #[cfg(test)]
 mod stencil_test_support;

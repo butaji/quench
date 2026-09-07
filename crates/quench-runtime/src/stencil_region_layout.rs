@@ -4,9 +4,9 @@
 //! into the bounded symbolic layout consumed by publication; it does not
 //! rediscover branch sites from machine bytes or JavaScript opcodes.
 
-use crate::stencil_fact::{HoleKind, PatchValues};
+use crate::stencil_fact::PatchValues;
 use crate::stencil_layout::{compose_region, Fixup, FixupKind, LabelId, LayoutError};
-use crate::stencil_select::{PhysicalRelocation, PhysicalStencilView};
+use crate::stencil_select::PhysicalStencilView;
 
 const ENTRY_LABEL: LabelId = LabelId(0);
 const FALLTHROUGH_LABEL: LabelId = LabelId(1);
@@ -383,107 +383,11 @@ fn selected_points() -> [RegionPoint; 2] {
 }
 
 fn selected_transfers(view: PhysicalStencilView) -> Result<Vec<PlannedTransfer>, LayoutError> {
-    selected_transfers_between(view, RegionPoint::Operation(0), RegionPoint::Operation(1))
-}
-
-pub(crate) fn selected_transfers_between(
-    view: PhysicalStencilView,
-    source: RegionPoint,
-    target: RegionPoint,
-) -> Result<Vec<PlannedTransfer>, LayoutError> {
-    let tail = view.fallthrough.ok_or(LayoutError::MissingSuccessor)?;
-    validate_linear_links(view, tail.target)?;
-    if view.generated {
-        return generated_transfers(view, source, target);
-    }
-    view.links
-        .iter()
-        .copied()
-        .map(|link| physical_transfer(link.offset, link.kind, 0, source, target))
-        .collect()
-}
-
-fn validate_linear_links(view: PhysicalStencilView, target: &str) -> Result<(), LayoutError> {
-    let relative_holes = view
-        .stencil
-        .holes
-        .iter()
-        .filter(|hole| relative_kind(hole.kind).is_some())
-        .count();
-    let valid = view.links.len() == relative_holes
-        && view.links.iter().all(|link| {
-            link.role == crate::stencil_select::SuccessorRole::Next
-                && link.target == target
-                && view
-                    .stencil
-                    .holes
-                    .iter()
-                    .any(|hole| hole.offset == link.offset && hole.kind == link.kind)
-        });
-    valid.then_some(()).ok_or(LayoutError::RelocationContract)
-}
-
-fn generated_transfers(
-    view: PhysicalStencilView,
-    source: RegionPoint,
-    destination: RegionPoint,
-) -> Result<Vec<PlannedTransfer>, LayoutError> {
-    if view.relocations.len() != view.links.len() {
-        return Err(LayoutError::RelocationContract);
-    }
-    view.relocations
-        .iter()
-        .map(|relocation| generated_transfer(view, relocation, source, destination))
-        .collect()
-}
-
-fn generated_transfer(
-    view: PhysicalStencilView,
-    relocation: &PhysicalRelocation,
-    source: RegionPoint,
-    destination: RegionPoint,
-) -> Result<PlannedTransfer, LayoutError> {
-    let declared = view.links.iter().any(|link| {
-        link.offset == relocation.offset
-            && link.kind == relocation.kind
-            && link.target == relocation.target
-    });
-    if !declared {
-        return Err(LayoutError::RelocationContract);
-    }
-    let addend = i32::try_from(relocation.addend).map_err(|_| LayoutError::RelocationContract)?;
-    physical_transfer(
-        relocation.offset,
-        relocation.kind,
-        addend,
-        source,
-        destination,
+    crate::stencil_region_links::selected_transfers_between(
+        view,
+        RegionPoint::Operation(0),
+        RegionPoint::Operation(1),
     )
-}
-
-fn physical_transfer(
-    offset: u16,
-    kind: HoleKind,
-    addend: i32,
-    source: RegionPoint,
-    target: RegionPoint,
-) -> Result<PlannedTransfer, LayoutError> {
-    Ok(PlannedTransfer {
-        source,
-        offset,
-        target,
-        addend,
-        kind: relative_kind(kind).ok_or(LayoutError::RelocationContract)?,
-    })
-}
-
-const fn relative_kind(kind: HoleKind) -> Option<FixupKind> {
-    match kind {
-        HoleKind::Rel32 => Some(FixupKind::X86Rel32),
-        HoleKind::Branch26 => Some(FixupKind::Aarch64Branch26),
-        HoleKind::CondBranch19 => Some(FixupKind::Aarch64CondBranch19),
-        _ => None,
-    }
 }
 
 #[cfg(test)]

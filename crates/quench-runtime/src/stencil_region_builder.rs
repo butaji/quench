@@ -7,8 +7,7 @@
 use crate::stencil_fact::{PatchValues, RegionId, RegionKey};
 use crate::stencil_layout::LayoutError;
 use crate::stencil_region_layout::{
-    compose_planned_region, selected_transfers_between, PlannedFragment, RegionImageIdentity,
-    RegionPoint, VerifiedRegionImage,
+    compose_planned_region, PlannedFragment, RegionImageIdentity, RegionPoint, VerifiedRegionImage,
 };
 use crate::stencil_select::PhysicalStencilView;
 use std::cell::RefCell;
@@ -256,7 +255,7 @@ fn chain_transfers(
     let mut transfers = Vec::new();
     for (operation, view) in views.iter().enumerate() {
         let operation = operation_index(operation)?;
-        transfers.extend(selected_transfers_between(
+        transfers.extend(crate::stencil_region_links::selected_transfers_between(
             *view,
             RegionPoint::Operation(operation),
             RegionPoint::Operation(operation + 1),
