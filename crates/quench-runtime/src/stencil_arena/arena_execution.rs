@@ -1,5 +1,17 @@
 use super::*;
 
+#[derive(Clone, Copy)]
+enum ScalarEntryScope {
+    Terminal,
+    DeclaredFallthrough,
+}
+
+impl ScalarEntryScope {
+    fn accepts(self, view: crate::stencil_select::PhysicalStencilView) -> bool {
+        matches!(self, Self::DeclaredFallthrough) || view.fallthrough.is_none()
+    }
+}
+
 impl StencilArena {
     /// End-to-end executable entry for the proven-number Add+Return region.
     /// The fallback closure remains the semantic owner if selection,
@@ -23,7 +35,7 @@ impl StencilArena {
             key,
             values,
             crate::stencil_select::RegionAbi::ScalarF64Binary,
-            true,
+            ScalarEntryScope::DeclaredFallthrough,
             |arena, address| arena.execute_f64(address, lhs, entry_rhs),
         ) {
             Ok(value) => Ok(value),
@@ -44,7 +56,7 @@ impl StencilArena {
             key,
             values,
             crate::stencil_select::RegionAbi::ScalarBool,
-            false,
+            ScalarEntryScope::Terminal,
             |arena, address| arena.execute_bool(address, lhs, rhs),
         )
     }
@@ -63,7 +75,7 @@ impl StencilArena {
             key,
             values,
             crate::stencil_select::RegionAbi::ScalarI32,
-            false,
+            ScalarEntryScope::Terminal,
             |arena, address| arena.execute_i32(address, lhs, rhs),
         )
     }
@@ -82,7 +94,7 @@ impl StencilArena {
             key,
             values,
             crate::stencil_select::RegionAbi::ScalarU32,
-            false,
+            ScalarEntryScope::Terminal,
             |arena, address| arena.execute_u32(address, lhs, rhs),
         )
     }
@@ -94,14 +106,14 @@ impl StencilArena {
         key: crate::stencil_fact::RegionKey,
         values: &PatchValues<'_, N>,
         abi: crate::stencil_select::RegionAbi,
-        allow_fallthrough: bool,
+        scope: ScalarEntryScope,
         invoke: impl FnOnce(&Self, usize) -> Result<T, ArenaError>,
     ) -> Result<T, ArenaError> {
         let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.executable)
         else {
             return Err(ArenaError::ProtectionFailed);
         };
-        self.render_selected_scalar_view(cache, view, values, abi, allow_fallthrough, invoke)
+        self.render_selected_scalar_view(cache, view, values, abi, scope, invoke)
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -111,10 +123,10 @@ impl StencilArena {
         view: crate::stencil_select::PhysicalStencilView,
         values: &PatchValues<'_, N>,
         abi: crate::stencil_select::RegionAbi,
-        allow_fallthrough: bool,
+        scope: ScalarEntryScope,
         invoke: impl FnOnce(&Self, usize) -> Result<T, ArenaError>,
     ) -> Result<T, ArenaError> {
-        if view.contract().abi != abi || (!allow_fallthrough && view.fallthrough.is_some()) {
+        if view.contract().abi != abi || !scope.accepts(view) {
             return Err(ArenaError::ProtectionFailed);
         }
         let key = view.key;
@@ -183,7 +195,7 @@ impl StencilArena {
             view,
             values,
             crate::stencil_select::RegionAbi::ScalarF64x3,
-            false,
+            ScalarEntryScope::Terminal,
             |arena, address| {
                 let entry = arena.f64x3_entry(address)?;
                 Ok(entry(lhs, rhs, third))
