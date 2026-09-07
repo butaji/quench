@@ -1930,9 +1930,10 @@ fn validate_okp_jwk(
 fn symmetric_allowed_usages(name: &str) -> Option<&'static [&'static str]> {
     match name {
         "HMAC" | "KMAC128" | "KMAC256" => Some(&["sign", "verify"]),
-        "AES-CTR" | "AES-CBC" | "AES-GCM" | "AES-KW" | "AES-OCB" | "CHACHA20-POLY1305" => {
+        "AES-CTR" | "AES-CBC" | "AES-GCM" | "AES-OCB" | "CHACHA20-POLY1305" => {
             Some(&["encrypt", "decrypt", "wrapKey", "unwrapKey"])
         }
+        "AES-KW" => Some(&["wrapKey", "unwrapKey"]),
         "HKDF" | "PBKDF2" => Some(&["deriveKey", "deriveBits"]),
         _ => None,
     }
@@ -4424,6 +4425,13 @@ pub fn generate_key(
     ) {
         if matches!(name.as_str(), "RSA-OAEP" | "RSA-PSS" | "RSASSA-PKCS1-V1_5") {
             if algorithm_hash(&algorithm).is_none() {
+                if matches!(execute::get_property(&algorithm, "hash"), Value::Undefined) {
+                    return Ok(settled(Err(error(
+                        Builtin::TypeError,
+                        Some("ERR_MISSING_OPTION"),
+                        "The \"hash\" property is required",
+                    ))));
+                }
                 return Ok(settled(Err(not_supported("Unrecognized hash algorithm"))));
             }
             let modulus = execute::get_property(&algorithm, "modulusLength");
@@ -4454,7 +4462,17 @@ pub fn generate_key(
                 ))));
             }
             let exponent = execute::get_property(&algorithm, "publicExponent");
-            let Some(exponent) = bytes(&exponent) else {
+            if matches!(exponent, Value::Undefined) {
+                return Ok(settled(Err(error(
+                    Builtin::TypeError,
+                    Some("ERR_MISSING_OPTION"),
+                    "The \"publicExponent\" property is required",
+                ))));
+            }
+            let Some(exponent) = (matches!(&exponent, Value::Uint8Array(_)))
+                .then(|| bytes(&exponent))
+                .flatten()
+            else {
                 return Ok(settled(Err(error(
                     Builtin::TypeError,
                     Some("ERR_INVALID_ARG_TYPE"),
@@ -4464,6 +4482,24 @@ pub fn generate_key(
             if exponent.is_empty() {
                 return Ok(settled(Err(operation_error(
                     "algorithm.publicExponent must be at least 3",
+                ))));
+            }
+            if exponent.len() > 4 {
+                return Ok(settled(Err(operation_error(
+                    "algorithm.publicExponent must fit in an unsigned 32-bit integer",
+                ))));
+            }
+            let exponent_value = exponent
+                .iter()
+                .fold(0_u32, |value, byte| (value << 8) | u32::from(*byte));
+            if exponent_value < 3 {
+                return Ok(settled(Err(operation_error(
+                    "algorithm.publicExponent must be at least 3",
+                ))));
+            }
+            if exponent_value % 2 == 0 {
+                return Ok(settled(Err(operation_error(
+                    "algorithm.publicExponent must be odd",
                 ))));
             }
         }
@@ -4489,6 +4525,13 @@ pub fn generate_key(
             .get(2)
             .cloned()
             .unwrap_or_else(|| host_api::array(Vec::new()));
+        if !matches!(requested_usages, Value::Array(_) | Value::Set(_)) {
+            return Ok(settled(Err(error(
+                Builtin::TypeError,
+                Some("ERR_INVALID_ARG_TYPE"),
+                "The \"keyUsages\" argument must be an instance of Array",
+            ))));
+        }
         let (private_usages, public_usages) = match asymmetric_usages(&name, &requested_usages) {
             Ok(usages) => usages,
             Err(error) => return Ok(settled(Err(error))),
@@ -4736,15 +4779,22 @@ pub fn generate_key(
             .get(2)
             .cloned()
             .unwrap_or_else(|| host_api::array(Vec::new()));
-        let usages = match symmetric_usages("HMAC", &usages) {
-            Ok(usages) => usages,
-            Err(error) => return Ok(settled(Err(error))),
-        };
         if !matches!(execute::get_property(&algorithm, "hash"), Value::Undefined)
             && algorithm_hash(&algorithm).is_none()
         {
             return Ok(settled(Err(not_supported("Unrecognized hash algorithm"))));
         }
+        if !matches!(usages, Value::Array(_) | Value::Set(_)) {
+            return Ok(settled(Err(error(
+                Builtin::TypeError,
+                Some("ERR_INVALID_ARG_TYPE"),
+                "The \"keyUsages\" argument must be an instance of Array",
+            ))));
+        }
+        let usages = match symmetric_usages("HMAC", &usages) {
+            Ok(usages) => usages,
+            Err(error) => return Ok(settled(Err(error))),
+        };
         let bits = match execute::get_property(&algorithm, "length") {
             Value::Number(value) if value.is_finite() && value > 0.0 => value as usize,
             Value::Undefined => {
@@ -4792,6 +4842,13 @@ pub fn generate_key(
             .get(2)
             .cloned()
             .unwrap_or_else(|| host_api::array(Vec::new()));
+        if !matches!(usages, Value::Array(_) | Value::Set(_)) {
+            return Ok(settled(Err(error(
+                Builtin::TypeError,
+                Some("ERR_INVALID_ARG_TYPE"),
+                "The \"keyUsages\" argument must be an instance of Array",
+            ))));
+        }
         let usages = match symmetric_usages(&name, &usages) {
             Ok(usages) => usages,
             Err(error) => return Ok(settled(Err(error))),
