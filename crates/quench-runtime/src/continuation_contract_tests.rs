@@ -117,6 +117,30 @@ fn generator_suspends_inside_try_before_close() {
 }
 
 #[test]
+fn generator_try_catch_loop_resumes_each_yield() {
+    run_sync(
+        r#"
+        function* values(){for(var i=0;i<8;i++){try{if(i===3)throw i;yield i;}catch(e){yield e+10;}}}
+        var result=[],iterator=values(),step;
+        while(!(step=iterator.next()).done) result.push(step.value);
+        if(result.join(",")!=="0,1,2,13,4,5,6,7") throw "try/catch loop resume";
+        "#,
+    );
+}
+
+#[test]
+fn nested_generator_for_of_resumes_source_and_consumer() {
+    run_sync(
+        r#"
+        function* source(){for(var i=0;i<4;i++)yield i+7;}
+        function* mapped(input){for(var value of input)yield value*3;}
+        var total=0;for(var value of mapped(source()))total+=value;
+        if(total!==102) throw "nested generator composition";
+        "#,
+    );
+}
+
+#[test]
 fn suspended_generator_keeps_captured_binding_during_collection() {
     run_sync(
         r#"

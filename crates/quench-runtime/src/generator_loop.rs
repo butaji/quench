@@ -101,7 +101,8 @@ fn resume_loop_frame(
     );
     let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
     let _with = crate::with_scope::FunctionGuard::install(&generator.function.with_captures);
-    let _locals = crate::locals::EnvironmentGuard::install(machine_environment(generator)?);
+    let environment = machine_environment(generator)?;
+    let _locals = crate::locals::EnvironmentGuard::install(environment);
     let completion = run_loop_after_yield(generator, &frame)?;
     if completion.is_suspension() {
         if matches!(
@@ -294,6 +295,8 @@ fn resume_destination(
         | crate::continuation::SuspensionPoint::Loop { yield_dst: src, .. } => Some(*src),
         crate::continuation::SuspensionPoint::YieldStar { dst, .. } => Some(*dst),
         crate::continuation::SuspensionPoint::Branch { yield_dst, .. } => Some(*yield_dst),
+        crate::continuation::SuspensionPoint::Try { yield_dst, .. } => Some(*yield_dst),
+        crate::continuation::SuspensionPoint::Iterator { yield_dst, .. } => Some(*yield_dst),
         crate::continuation::SuspensionPoint::Nested { inner, .. } => resume_destination(inner),
     }
 }
