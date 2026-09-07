@@ -8422,17 +8422,25 @@ pub fn cp_spawn(
     }
     if let Value::Number(timeout) = execute::get_property(&options, "timeout") {
         if timeout.is_finite() && timeout >= 0.0 {
-            execute::set_property_in_place(&child, "killed", Value::Boolean(true));
             let signal = execute::get_property(&options, "killSignal");
-            execute::set_property_in_place(
-                &child,
-                "signalCode",
-                if matches!(signal, Value::Undefined) {
-                    Value::String("SIGTERM".into())
-                } else {
-                    signal
-                },
+            let signal = if matches!(signal, Value::Undefined | Value::Null) {
+                Value::String("SIGTERM".into())
+            } else {
+                signal
+            };
+            // Timeout is a lifecycle transition, not an initial child state.
+            // Register it with the shared Rust timer registry so forked
+            // children (including those whose source creates referenced
+            // handles) are killed only when the deadline actually expires.
+            let callback = bound_custom(
+                crate::registry::SPEC_CP_TIMEOUT.cap,
+                vec![child.clone(), signal],
             );
+            let timer = crate::modules::timers::set_timeout(
+                state,
+                &[callback, Value::Number(timeout)],
+            )?;
+            execute::set_property_in_place(&child, "\0childTimeoutTimer", timer);
         }
     }
     if let Some(cwd) = execute::get_property_result(&options, "cwd").ok() {
@@ -9318,6 +9326,18 @@ pub fn cp_spawn_output_emit(
         // streams alive until cp_stdin_end observes upstream completion.
         return Ok(Value::Undefined);
     }
+    // A source-backed child with a referenced interval has not completed when
+    // its initial output turn is drained. Keep the logical child alive until
+    // that handle is terminated (for example by options.timeout), instead of
+    // publishing an early exit(0) pair.
+    let timeout_live = matches!(
+        execute::get_property(child, "\0childTimeoutTimer"),
+        Value::Object(_) | Value::ObjectAlias(_)
+    ) && real_child.is_none()
+        && cp_spawn_script_has_persistent_handle(&child_args);
+    if timeout_live {
+        return Ok(Value::Undefined);
+    }
     let echo_process = matches!(
         command,
         Value::String(ref value) if value == "echo" || value.ends_with("/echo")
@@ -9467,6 +9487,7 @@ pub fn cp_spawn_output_emit(
             execute::set_property_in_place(&process, "connected", Value::Boolean(false));
         }
     }
+    clear_child_timeout_timer(state, child);
     let killed = matches!(execute::get_property(child, "killed"), Value::Boolean(true));
     let signal = execute::get_property(child, "signalCode");
     let shell_missing = matches!(
@@ -9505,6 +9526,7 @@ pub fn cp_kill(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let child = receiver.ok_or(VmError::NotCallable)?;
+    clear_child_timeout_timer(state, child);
     let signal = args
         .first()
         .cloned()
@@ -9576,6 +9598,11 @@ pub fn cp_kill(
         crate::modules::net::terminate_scope(state, child_scope);
         execute::set_property_in_place(child, "\0forkProcess", Value::Undefined);
         clear_fork_timers(state, child);
+        // Mark the terminal transition before publishing exit/close. The
+        // logical fork remains registered until the next net poll, whose
+        // idle finalizer must not manufacture a second exit(0) pair.
+        execute::set_property_in_place(child, "\0childTerminated", Value::Boolean(true));
+        execute::set_property_in_place(child, "exitCode", Value::Null);
         let signal = execute::get_property(child, "signalCode");
         for event in ["exit", "close"] {
             crate::modules::events::method_emit(
@@ -9614,6 +9641,38 @@ pub fn cp_kill(
         }
     }
     Ok(Value::Boolean(true))
+}
+
+/// Fire a ChildProcess timeout through the same terminal transition as an
+/// explicit `.kill()`. The timer owns the child and selected signal as data;
+/// no source or fixture classification is involved.
+pub fn cp_timeout(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(child) = args.first() else {
+        return Ok(Value::Undefined);
+    };
+    if matches!(
+        execute::get_property(child, "\0childTerminated"),
+        Value::Boolean(true)
+    ) {
+        return Ok(Value::Undefined);
+    }
+    let signal = args
+        .get(1)
+        .cloned()
+        .unwrap_or_else(|| Value::String("SIGTERM".into()));
+    cp_kill(state, Some(child), &[signal])
+}
+
+fn clear_child_timeout_timer(state: &Rc<RefCell<HostState>>, child: &Value) {
+    let timer = execute::get_property(child, "\0childTimeoutTimer");
+    if matches!(timer, Value::Object(_) | Value::ObjectAlias(_)) {
+        let _ = crate::modules::timers::clear_timeout(state, &[timer]);
+        execute::set_property_in_place(child, "\0childTimeoutTimer", Value::Undefined);
+    }
 }
 
 pub fn cp_stdin_write(
@@ -10087,6 +10146,16 @@ pub fn cp_abort(
     execute::set_property_in_place(child, "killed", Value::Boolean(true));
     execute::set_property_in_place(child, "signalCode", signal.clone());
     clear_fork_timers(state, child);
+    // Abort is a terminal child transition.  Mark it before queuing the
+    // AbortError delivery so the already-queued spawn/output phase and the
+    // idle-fork finalizer cannot publish a second synthetic exit(0).
+    if matches!(
+        execute::get_property(child, "\0childForkIpc"),
+        Value::Boolean(true)
+    ) {
+        execute::set_property_in_place(child, "\0childTerminated", Value::Boolean(true));
+        execute::set_property_in_place(child, "exitCode", Value::Null);
+    }
     let error = host_api::object(vec![
         ("name".into(), Value::String("AbortError".into())),
         (
