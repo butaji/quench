@@ -1037,6 +1037,12 @@ pub fn set_credential(kind: &str, args: &[Value]) -> Result<Value, VmError> {
 /// `process.env` — a snapshot of the host environment at startup.
 fn env_object() -> Value {
     let mut pairs: Vec<(String, Value)> = std::env::vars()
+        // QUENCH_* variables are private host transport facts used to
+        // re-enter the runner and must not become observable process.env
+        // entries in the child (Node exposes only the user environment).
+        .filter(|(key, _)| {
+            !key.starts_with("QUENCH_") && key != "__CF_USER_TEXT_ENCODING"
+        })
         .map(|(key, value)| (key, Value::String(value)))
         .collect();
     pairs.push(("\0quench:process_env".into(), Value::Boolean(true)));
