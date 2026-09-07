@@ -55,6 +55,16 @@ fn resume_suspended_conditional(
     let completion = execute_with_generator_registers(generator, |registers| {
         crate::vm::execute_code_completion_in_current_frame(suffix, registers)
     })?;
+    // The conditional body is a nested range.  Once its awaited suffix
+    // completes normally, continue with the enclosing function range rather
+    // than treating that nested completion as the function's final result.
+    // Without this hand-off, code immediately following `if (...) { await
+    // ... }` is skipped and the async function resolves too early.
+    if matches!(completion, crate::completion::Completion::Normal) {
+        let range = parent_resume_range(generator, state);
+        let resumed = resume_generator_range(generator, state, range, completion)?;
+        return Ok(Some(resumed));
+    }
     Ok(Some(completion))
 }
 
