@@ -1358,7 +1358,9 @@ fn diffie_hellman_impl(
         }
         let format = execute::get_property(value, "format");
         let format_valid = matches!(format, Value::Undefined)
-            || matches!(format, Value::String(ref value) if value == "pem" || value == "der");
+            || execute::to_js_string(&format).ok().is_some_and(|value| {
+                matches!(value.as_str(), "pem" | "der" | "jwk" | "raw-public" | "raw-private")
+            });
         if !format_valid {
             return Err(error(
                 "ERR_INVALID_ARG_VALUE",
@@ -1366,11 +1368,16 @@ fn diffie_hellman_impl(
             ));
         }
         let kind = execute::get_property(value, "type");
-        let valid = match kind {
-            Value::Undefined => true,
-            Value::String(ref value) if private_side => matches!(value.as_str(), "pkcs8" | "pkcs1"),
-            Value::String(ref value) => matches!(value.as_str(), "spki" | "pkcs1"),
-            _ => false,
+        let valid = if matches!(kind, Value::Undefined) {
+            true
+        } else if let Ok(kind) = execute::to_js_string(&kind) {
+            if private_side {
+                matches!(kind.as_str(), "pkcs8" | "pkcs1" | "sec1")
+            } else {
+                matches!(kind.as_str(), "spki" | "pkcs1")
+            }
+        } else {
+            false
         };
         if !valid {
             return Err(error(
@@ -1382,23 +1389,69 @@ fn diffie_hellman_impl(
     };
     validate_descriptor(&private, "privateKey", true)?;
     validate_descriptor(&public, "publicKey", false)?;
-    let key_data = |value: &Value| {
+    let key_data = |value: &Value, key_type: &str| -> Result<Vec<u8>, VmError> {
         if matches!(value, Value::Object(_) | Value::ObjectAlias(_)) {
+            let format = execute::to_js_string(&execute::get_property(value, "format"))
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            // JWK and raw key descriptors are normalized by the canonical
+            // asymmetric-key loader. This keeps DH from maintaining a second
+            // parser for those encodings.
+            if matches!(format.as_str(), "jwk" | "raw-public" | "raw-private") {
+                let converted = if key_type == "private" {
+                    crate::modules::crypto::create_private_key(
+                        _state,
+                        None,
+                        std::slice::from_ref(value),
+                    )?
+                } else {
+                    crate::modules::crypto::create_public_key(
+                        _state,
+                        None,
+                        std::slice::from_ref(value),
+                    )?
+                };
+                return crate::modules::crypto::bytes_from_value(&execute::get_property(
+                    &converted,
+                    crate::modules::crypto::KEY_DATA_PROP,
+                ))
+                .ok_or_else(|| {
+                    error(
+                        "ERR_CRYPTO_OPERATION_FAILED",
+                        if key_type == "private" {
+                            "Invalid private key"
+                        } else {
+                            "Invalid public key"
+                        },
+                    )
+                });
+            }
             let hidden = execute::get_property(value, crate::modules::crypto::KEY_DATA_PROP);
             if !matches!(hidden, Value::Undefined) {
-                return crate::modules::crypto::bytes_from_value(&hidden);
+                if let Some(bytes) = crate::modules::crypto::bytes_from_value(&hidden) {
+                    return Ok(bytes);
+                }
             }
             let nested = execute::get_property(value, "key");
             if !matches!(nested, Value::Undefined) {
-                return crate::modules::crypto::bytes_from_value(&nested);
+                if let Some(bytes) = crate::modules::crypto::bytes_from_value(&nested) {
+                    return Ok(bytes);
+                }
             }
         }
-        crate::modules::crypto::bytes_from_value(value)
+        crate::modules::crypto::bytes_from_value(value).ok_or_else(|| {
+            error(
+                "ERR_CRYPTO_OPERATION_FAILED",
+                if key_type == "private" {
+                    "Invalid private key"
+                } else {
+                    "Invalid public key"
+                },
+            )
+        })
     };
-    let private_bytes = key_data(&private)
-        .ok_or_else(|| error("ERR_CRYPTO_OPERATION_FAILED", "Invalid private key"))?;
-    let public_bytes = key_data(&public)
-        .ok_or_else(|| error("ERR_CRYPTO_OPERATION_FAILED", "Invalid public key"))?;
+    let private_bytes = key_data(&private, "private")?;
+    let public_bytes = key_data(&public, "public")?;
     let private_key = PKey::private_key_from_pem(&private_bytes)
         .or_else(|_| PKey::private_key_from_der(&private_bytes))
         .map_err(|_| error("ERR_CRYPTO_OPERATION_FAILED", "Invalid private key"))?;
@@ -1411,8 +1464,15 @@ fn diffie_hellman_impl(
             })
         })
         .map_err(|_| error("ERR_CRYPTO_OPERATION_FAILED", "Invalid public key"))?;
-    let mut deriver = Deriver::new(&private_key)
-        .map_err(|_| error("ERR_CRYPTO_OPERATION_FAILED", "Invalid private key"))?;
+    let mut deriver = Deriver::new(&private_key).map_err(|_| {
+        let code = match private_key.id() {
+            openssl::pkey::Id::ED25519 | openssl::pkey::Id::ED448 => {
+                "ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE"
+            }
+            _ => "ERR_CRYPTO_OPERATION_FAILED",
+        };
+        error(code, "Invalid private key")
+    })?;
     deriver.set_peer(&public_key).map_err(|_| {
         let same_dh_family = matches!(
             (private_key.id(), public_key.id()),
@@ -1435,9 +1495,21 @@ fn diffie_hellman_impl(
             )
         }
     })?;
-    let mut secret = deriver
-        .derive_to_vec()
-        .map_err(|_| error("ERR_CRYPTO_OPERATION_FAILED", "Invalid public key"))?;
+    let mut secret = deriver.derive_to_vec().map_err(|_| {
+        // OpenSSL reports an all-zero X25519 peer as a derivation failure.
+        // Node preserves that distinction (`ERR_OSSL_FAILED_DURING_DERIVATION`)
+        // instead of collapsing it into the generic crypto-operation error.
+        // Keep the mapping keyed by the reusable key family, not by a fixture
+        // or encoded key value.
+        let code = match (private_key.id(), public_key.id()) {
+            (openssl::pkey::Id::X25519, openssl::pkey::Id::X25519)
+            | (openssl::pkey::Id::X448, openssl::pkey::Id::X448) => {
+                "ERR_OSSL_FAILED_DURING_DERIVATION"
+            }
+            _ => "ERR_CRYPTO_OPERATION_FAILED",
+        };
+        error(code, "Invalid public key")
+    })?;
     if matches!(
         private_key.id(),
         openssl::pkey::Id::DH | openssl::pkey::Id::DHX
