@@ -141,9 +141,11 @@ emitters populate it, then flattening and relocation precede one allocation and
 publication step. Quench applies that shape with `PhysicalStencilView` and a
 finalized `VerifiedRegionImage`. Selection derives one immutable
 `RegionImageIdentity` (key, patched physical signature and ABI); composition
-adds finalized bytes, and publication consumes only that image. The arena cannot
-reconstruct or relabel identity from parallel arguments. Typed labels and fixups
-remain bounded Rust data and resolution stays transactional. Do not import
+adds finalized bytes and the checked callable-entry offset, and publication
+consumes only that image. Leaf and composed rendering share this finalization
+boundary; cache reuse compares the exact image before invocation. The arena
+cannot reconstruct or relabel identity from parallel arguments. Typed labels and
+fixups remain bounded Rust data and resolution stays transactional. Do not import
 AsmJit's instruction builder, compiler, allocator or runtime dependency: those
 would duplicate the canonical Rust catalog and the existing slab/lease lifecycle.
 The first reusable builder deliberately accepts only repeated fragments sharing
