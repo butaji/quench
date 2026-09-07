@@ -23,11 +23,20 @@ pub(crate) struct NativeLinearF64Plan {
     image: VerifiedRegionImage,
     cache: crate::stencil_select::RenderedRegionCache,
     installed: Option<crate::stencil_arena::EntryToken<F64Entry>>,
-    view: PhysicalStencilView,
+    #[cfg(test)]
+    witness: NativeLinearWitness,
     #[cfg(test)]
     entries: u64,
     #[cfg(test)]
     last_entered: bool,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct NativeLinearWitness {
+    pub(crate) identity: RegionImageIdentity,
+    pub(crate) fragments: u8,
+    pub(crate) generated_fragments: u8,
 }
 
 impl NativeLinearF64Plan {
@@ -41,16 +50,18 @@ impl NativeLinearF64Plan {
             .operations()
             .map(series_view)
             .collect::<Option<Vec<_>>>()?;
-        let view = *views.first()?;
         let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::Add);
         let values = PatchValues::from_site(&site);
         let image = compose_fragment_chain(&views, &values).ok()?;
+        #[cfg(test)]
+        let witness = linear_witness(&image, &views)?;
         Some(Self {
             owner,
             image,
             cache: crate::stencil_select::RenderedRegionCache::new(),
             installed: None,
-            view,
+            #[cfg(test)]
+            witness,
             #[cfg(test)]
             entries: 0,
             #[cfg(test)]
@@ -97,9 +108,22 @@ impl NativeLinearF64Plan {
     }
 
     #[cfg(test)]
-    pub(crate) fn last_native_view(&self) -> Option<PhysicalStencilView> {
-        self.last_entered.then_some(self.view)
+    pub(crate) fn last_native_witness(&self) -> Option<NativeLinearWitness> {
+        self.last_entered.then_some(self.witness)
     }
+}
+
+#[cfg(test)]
+fn linear_witness(
+    image: &VerifiedRegionImage,
+    views: &[PhysicalStencilView],
+) -> Option<NativeLinearWitness> {
+    Some(NativeLinearWitness {
+        identity: image.identity(),
+        fragments: u8::try_from(views.len()).ok()?,
+        generated_fragments: u8::try_from(views.iter().filter(|view| view.generated).count())
+            .ok()?,
+    })
 }
 
 fn series_view(operator: crate::ops::BinaryOp) -> Option<PhysicalStencilView> {
