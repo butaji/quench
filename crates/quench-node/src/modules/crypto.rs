@@ -2334,6 +2334,19 @@ fn display_number(value: f64) -> String {
 
 fn ec_nid_from_name(name: &str) -> Option<Nid> {
     let name = name.to_ascii_lowercase();
+    // Node accepts the WebCrypto/NIST aliases in addition to OpenSSL's short
+    // names. Keep aliases as one data table, then use the OpenSSL registry for
+    // every other spelling rather than scattering curve branches through the
+    // key-generation and import paths.
+    const ALIASES: &[(&str, Nid)] = &[
+        ("p-256", Nid::X9_62_PRIME256V1),
+        ("p-384", Nid::SECP384R1),
+        ("p-521", Nid::SECP521R1),
+        ("secp256k1", Nid::SECP256K1),
+    ];
+    if let Some((_, nid)) = ALIASES.iter().find(|(alias, _)| *alias == name) {
+        return Some(*nid);
+    }
     // OpenSSL exposes its curve table through numeric NIDs rather than a
     // reverse name lookup in the Rust bindings. The table is small and this
     // path is only used during explicit key generation/import validation.
