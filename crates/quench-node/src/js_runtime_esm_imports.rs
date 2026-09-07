@@ -376,6 +376,29 @@ fn convert_import_spec(spec: &str) -> Option<String> {
     Some(format!("const {left} = globalThis.require(\"{module}\");"))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{transform_esm_imports, transform_esm_module};
+
+    #[test]
+    fn semicolonless_import_stops_at_line_end() {
+        let output = transform_esm_imports("import { value } from './dep.js'\nconst next = 1;");
+        assert!(output.contains("globalThis.require(\"./dep\")"));
+        assert!(output.contains("const next = 1;"));
+    }
+
+    #[test]
+    fn multiline_export_assignment_waits_for_declaration_end() {
+        let output = transform_esm_module(
+            "export const vectors = {\n  sign: [[true]],\n};\nconst after = 1;",
+        );
+        let export_at = output.find("exports.vectors = vectors;").unwrap();
+        let declaration_end = output.find("};").unwrap();
+        assert!(export_at > declaration_end);
+        assert!(output.contains("const after = 1;"));
+    }
+}
+
 /// First comma outside of brace/bracket/paren depth and string literals, or
 /// `None` when the binding list has no top-level separator.
 fn top_level_comma(input: &str) -> Option<usize> {
