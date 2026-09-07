@@ -13,35 +13,21 @@ impl StencilArena {
         rhs: f64,
         fallback: impl FnOnce() -> Result<f64, ArenaError>,
     ) -> Result<f64, ArenaError> {
-        let Some(view) = crate::stencil_select::select_physical(key) else {
-            return fallback();
-        };
-        if !view.contract().executable {
-            return fallback();
-        }
-        let address = match self.render_physical_view_or_get(cache, view, values) {
-            Ok(address) => address,
-            Err(_) => return fallback(),
-        };
-        let signature = view.cache_signature(values);
-        if self.make_executable().is_err() {
-            cache.remove(key, signature, address);
-            return fallback();
-        }
         let entry_rhs = if key == crate::stencil_select::add_const_region_key() {
             values.constant_bits().map(f64::from_bits).unwrap_or(rhs)
         } else {
             rhs
         };
-        match self.execute_f64(address, lhs, entry_rhs) {
-            Ok(value) => {
-                self.mark_physical_execution(view);
-                Ok(value)
-            }
-            Err(_) => {
-                cache.remove(key, signature, address);
-                fallback()
-            }
+        match self.render_selected_scalar(
+            cache,
+            key,
+            values,
+            crate::stencil_select::RegionAbi::ScalarF64Binary,
+            true,
+            |arena, address| arena.execute_f64(address, lhs, entry_rhs),
+        ) {
+            Ok(value) => Ok(value),
+            Err(_) => fallback(),
         }
     }
 
@@ -53,28 +39,14 @@ impl StencilArena {
         lhs: f64,
         rhs: f64,
     ) -> Result<bool, ArenaError> {
-        let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.executable)
-        else {
-            return Err(ArenaError::ProtectionFailed);
-        };
-        if view.contract().abi != crate::stencil_select::RegionAbi::ScalarBool
-            || view.fallthrough.is_some()
-        {
-            return Err(ArenaError::ProtectionFailed);
-        }
-        let stencil = view.stencil;
-        let address = self.render_physical_view_or_get(cache, view, values)?;
-        self.make_executable()?;
-        match self.execute_bool(address, lhs, rhs) {
-            Ok(value) => {
-                self.mark_physical_execution(view);
-                Ok(value)
-            }
-            Err(error) => {
-                cache.remove(key, view.cache_signature(values), address);
-                Err(error)
-            }
-        }
+        self.render_selected_scalar(
+            cache,
+            key,
+            values,
+            crate::stencil_select::RegionAbi::ScalarBool,
+            false,
+            |arena, address| arena.execute_bool(address, lhs, rhs),
+        )
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -86,28 +58,14 @@ impl StencilArena {
         lhs: i32,
         rhs: i32,
     ) -> Result<i32, ArenaError> {
-        let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.executable)
-        else {
-            return Err(ArenaError::ProtectionFailed);
-        };
-        if view.contract().abi != crate::stencil_select::RegionAbi::ScalarI32
-            || view.fallthrough.is_some()
-        {
-            return Err(ArenaError::ProtectionFailed);
-        }
-        let stencil = view.stencil;
-        let address = self.render_physical_view_or_get(cache, view, values)?;
-        self.make_executable()?;
-        match self.execute_i32(address, lhs, rhs) {
-            Ok(value) => {
-                self.mark_physical_execution(view);
-                Ok(value)
-            }
-            Err(error) => {
-                cache.remove(key, view.cache_signature(values), address);
-                Err(error)
-            }
-        }
+        self.render_selected_scalar(
+            cache,
+            key,
+            values,
+            crate::stencil_select::RegionAbi::ScalarI32,
+            false,
+            |arena, address| arena.execute_i32(address, lhs, rhs),
+        )
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -119,19 +77,53 @@ impl StencilArena {
         lhs: u32,
         rhs: u32,
     ) -> Result<u32, ArenaError> {
+        self.render_selected_scalar(
+            cache,
+            key,
+            values,
+            crate::stencil_select::RegionAbi::ScalarU32,
+            false,
+            |arena, address| arena.execute_u32(address, lhs, rhs),
+        )
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn render_selected_scalar<const N: usize, T>(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        key: crate::stencil_fact::RegionKey,
+        values: &PatchValues<'_, N>,
+        abi: crate::stencil_select::RegionAbi,
+        allow_fallthrough: bool,
+        invoke: impl FnOnce(&Self, usize) -> Result<T, ArenaError>,
+    ) -> Result<T, ArenaError> {
         let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.executable)
         else {
             return Err(ArenaError::ProtectionFailed);
         };
-        if view.contract().abi != crate::stencil_select::RegionAbi::ScalarU32
-            || view.fallthrough.is_some()
-        {
+        self.render_selected_scalar_view(cache, view, values, abi, allow_fallthrough, invoke)
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn render_selected_scalar_view<const N: usize, T>(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        view: crate::stencil_select::PhysicalStencilView,
+        values: &PatchValues<'_, N>,
+        abi: crate::stencil_select::RegionAbi,
+        allow_fallthrough: bool,
+        invoke: impl FnOnce(&Self, usize) -> Result<T, ArenaError>,
+    ) -> Result<T, ArenaError> {
+        if view.contract().abi != abi || (!allow_fallthrough && view.fallthrough.is_some()) {
             return Err(ArenaError::ProtectionFailed);
         }
-        let stencil = view.stencil;
+        let key = view.key;
         let address = self.render_physical_view_or_get(cache, view, values)?;
-        self.make_executable()?;
-        match self.execute_u32(address, lhs, rhs) {
+        if let Err(error) = self.make_executable() {
+            cache.remove(key, view.cache_signature(values), address);
+            return Err(error);
+        }
+        match invoke(self, address) {
             Ok(value) => {
                 self.mark_physical_execution(view);
                 Ok(value)
@@ -186,12 +178,17 @@ impl StencilArena {
         {
             return Err(ArenaError::ProtectionFailed);
         }
-        let address = self.render_physical_view_or_get(cache, view, values)?;
-        self.make_executable()?;
-        let entry = self.f64x3_entry(address)?;
-        let value = entry(lhs, rhs, third);
-        self.mark_physical_execution(view);
-        Ok(value)
+        self.render_selected_scalar_view(
+            cache,
+            view,
+            values,
+            crate::stencil_select::RegionAbi::ScalarF64x3,
+            false,
+            |arena, address| {
+                let entry = arena.f64x3_entry(address)?;
+                Ok(entry(lhs, rhs, third))
+            },
+        )
     }
 
     pub(super) fn cached_executable(
