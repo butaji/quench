@@ -221,6 +221,7 @@ mod tests {
             outputs: &OUTPUTS,
             entry: 0,
             external_entries: &[0],
+            links: &[],
             fallthrough: None,
             continuation_abi: crate::stencil_select::ContinuationAbi::None,
             abi: crate::stencil_select::RegionAbi::ArrayNumericLoop,

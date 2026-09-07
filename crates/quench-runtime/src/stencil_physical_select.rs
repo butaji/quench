@@ -37,6 +37,7 @@ fn legacy_physical_view(key: RegionKey, record: &'static RegionRecord) -> Physic
         abi: record.abi,
         entry: record.entry,
         external_entries: record.external_entries,
+        links: record.links,
         fallthrough: record.fallthrough,
         continuation_abi: record.continuation_abi,
         executable: record.executable,
@@ -65,6 +66,7 @@ fn generated_physical_view(
         || !effects_match
         || !artifact.stencil.validate()
         || !relocations_match(artifact.stencil, artifact.relocations)
+        || !links_match(record.links, artifact.relocations)
         || !artifact
             .fallthrough
             .is_none_or(|stencil| stencil.validate())
@@ -83,6 +85,7 @@ fn generated_physical_view(
         abi: artifact.abi,
         entry: artifact.entry,
         external_entries: artifact.external_entries,
+        links: record.links,
         fallthrough,
         continuation_abi: artifact.continuation_abi,
         executable: artifact.executable,
@@ -90,6 +93,22 @@ fn generated_physical_view(
         target: Some(artifact.target),
         fingerprint: Some(artifact.fingerprint),
     })
+}
+
+fn links_match(links: &[PhysicalLink], relocations: &[PhysicalRelocation]) -> bool {
+    links.len() == relocations.len()
+        && links.iter().all(|link| {
+            relocations
+                .iter()
+                .filter(|relocation| {
+                    relocation.offset == link.offset
+                        && relocation.kind == link.kind
+                        && relocation.target == link.target
+                        && relocation.addend == 0
+                })
+                .count()
+                == 1
+        })
 }
 
 fn generated_contract_matches(
