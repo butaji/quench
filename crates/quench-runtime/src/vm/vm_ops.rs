@@ -447,8 +447,12 @@ pub fn execute_optional_call(
         && this_value
             .as_ref()
             .is_some_and(|value| matches!(value, Value::Null | Value::Undefined));
-    let callee_nullish =
-        receiver.is_none() && matches!(callee_value, Value::Null | Value::Undefined);
+    // An optional call short-circuits on an absent callee even when the
+    // callee came from a member expression (`object.method?.()`).  A
+    // receiver guard belongs to the preceding optional member chain
+    // (`object?.method()`); in that form a present receiver with a missing
+    // method must still throw the ordinary not-callable error.
+    let callee_nullish = !guard_receiver && matches!(callee_value, Value::Null | Value::Undefined);
     if receiver_nullish || callee_nullish {
         super::write_value(registers, dst, Value::Undefined);
         return Ok(());

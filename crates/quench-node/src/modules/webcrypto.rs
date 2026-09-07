@@ -4307,6 +4307,86 @@ pub fn to_crypto_key(
         crate::modules::crypto::KEY_TYPE_PROP,
     ))
     .unwrap_or_else(|_| "secret".into());
+    let name = execute::to_js_string(&execute::get_property(&algorithm, "name"))
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    let requested = all_usage_names(&usages);
+    if key_type == "secret" {
+        if requested.is_empty() {
+            return Err(syntax_error("Usages cannot be empty when importing a secret key."));
+        }
+        if name == "HMAC" {
+            if data.is_empty() {
+                return Err(named_import_error("DataError", "Zero-length key is not supported"));
+            }
+            if let Value::Number(length) = execute::get_property(&algorithm, "length") {
+                if length != (data.len() * 8) as f64 {
+                    return Err(named_import_error(
+                        "DataError",
+                        "HmacImportParams.length cannot be 0",
+                    ));
+                }
+            }
+        }
+    } else {
+        let asymmetric = execute::to_js_string(&execute::get_property(
+            receiver,
+            "asymmetricKeyType",
+        ))
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+        let expected = match name.as_str() {
+            "ECDH" | "ECDSA" => "ec",
+            "ED25519" => "ed25519",
+            "ED448" => "ed448",
+            "X25519" => "x25519",
+            "X448" => "x448",
+            "RSA-OAEP" | "RSA-PSS" | "RSASSA-PKCS1-V1_5" => "rsa",
+            _ => "",
+        };
+        if !expected.is_empty()
+            && asymmetric != expected
+            && !(expected == "rsa" && asymmetric == "rsa-pss")
+        {
+            return Err(named_import_error("DataError", "Invalid key type"));
+        }
+        if key_type == "private" && requested.is_empty() {
+            return Err(syntax_error(
+                "Usages cannot be empty when importing a private key.",
+            ));
+        }
+        let public_only = matches!(name.as_str(), "ECDH" | "X25519" | "X448");
+        let private_only = matches!(name.as_str(), "ECDSA" | "ED25519" | "ED448");
+        if (public_only && requested.iter().any(|usage| usage == "sign"))
+            || (private_only && requested.iter().any(|usage| usage == "deriveBits" || usage == "deriveKey"))
+        {
+            return Err(syntax_error("Unsupported key usage"));
+        }
+        if matches!(name.as_str(), "ECDH" | "ECDSA") {
+            let requested_curve = execute::to_js_string(&execute::get_property(&algorithm, "namedCurve"))
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let actual_curve = execute::to_js_string(&execute::get_property(
+                &execute::get_property(receiver, "asymmetricKeyDetails"),
+                "namedCurve",
+            ))
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+            let canonical = |curve: &str| match curve {
+                "prime256v1" | "p-256" => "p-256".to_string(),
+                "secp384r1" | "p-384" => "p-384".to_string(),
+                "secp521r1" | "p-521" => "p-521".to_string(),
+                "secp256k1" => "secp256k1".to_string(),
+                other => other.to_string(),
+            };
+            if !requested_curve.is_empty()
+                && !actual_curve.is_empty()
+                && canonical(&requested_curve) != canonical(&actual_curve)
+            {
+                return Err(named_import_error("DataError", "Named curve mismatch"));
+            }
+        }
+    }
     Ok(key_metadata(
         key(&prototype, algorithm, extractable, usages, Some(data)),
         &key_type,
