@@ -52,6 +52,21 @@ is not the dominant throughput lever. The paired uninstrumented lane remains
 frame initialization and operand traffic across useful guarded callees rather
 than tune the allocator or native arithmetic leaf.
 
+At `6e6cb844a0`, the call IC and cold-call gateway consume the same immutable
+physical-body fact instead of the hot `execute_direct` path bypassing it.  A
+bounded named-method affine loop derived from the ordinary 28-op CFG validates
+own data slots and a pure affine callee once, then executes the loop without
+per-iteration property, call, or residual dispatch.  On `calls/direct`, the
+Quench/Bun ratio changes from roughly 838x/404x/370x to
+115x/12.8x/5.7x at small/medium/large sizes.  A matching trace records 33
+`PrecompiledAffineNamedLoop` entries and reduces compact handlers from about
+1.28 million to 7,181.  All 18 development and 36 reserved call scenarios are
+correct.  This is currently a Rust precompiled region, not a generated native
+body; the remaining gap and native routing are open rather than credited as a
+completed stencil win.  Evidence:
+`target/micros/calls-{direct,all}-hot-specialization-measure-*.json` and
+`target/micros/calls-direct-hot-specialization-diagnostic-1788815600.json`.
+
 At `94586e4d01`, leaf and composed publication share one transactional finalized
 image carrying exact bytes, identity, ABI and callable-entry offset. A real
 prefixed-entry image executes correctly; invalid entry offsets and cache-image
@@ -91,7 +106,7 @@ Focused lifecycle tests pass and the default runtime is 1000 passed/1 ignored.
 | Prototype property get (G) | Native guarded prototype-owner slot read validates receiver, owner/layout and absence of invalidating shadowing. | Ordinary-source prototype hit plus shadowing, accessor and prototype-mutation fallback tests. |
 | Shape transition set (B) | Capacity/layout-changing stores remain ordinary; native store handles only proven existing writable data slots. | Creation order, extensibility, descriptor, receiver and strict failure tests. |
 | Indexed elements (N/B) | Guarded dense f64 load/store/update and the composed numeric loop are native; holes, sparse/prototype and unsupported typed-memory cases remain ordinary. | Actual ARM64 array block/loop, aliases, bounds, holes, inherited access and mutation controls. |
-| Calls/construct (B) | Existing call/construct/frame machinery owns receiver, arguments, `newTarget`, roots and reentry; regions exit before unsupported calls. | Call/constructor/receiver tests and native-to-helper-to-nested-native boundary coverage. |
+| Calls/construct (B/G) | Existing call/construct/frame machinery owns receiver, arguments, `newTarget`, roots and reentry. A guarded precompiled region consumes the existing pure affine-callee fact; unsupported calls remain exact boundaries. | Call/constructor/receiver tests, hot-IC physical-body reuse, guarded named-loop clones and native-to-helper-to-nested-native boundary coverage. |
 | Objects/closures (B) | Existing allocation/capture semantics and code-owner leases remain authoritative; no unrooted native object intermediate is supported. | Closure/code-store lifetime, collection, repeated compilation and final-owner drop tests. |
 | Frames/returns (N/B) | Frozen operand-role frame widths, same-frame structured fragments and exact region live-outs; dynamic calls retain canonical frames. | Zero/one/many argument windows, absent-argument sentinel, nested callee width, OSR retirement and return tests. |
 | Exceptions (B) | Exact fault PC, committed state and canonical catch/finally paths; no generated-frame unwind. | Effect-then-throw, allocating finalizer, malformed status and exactly-once tests. |
