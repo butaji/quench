@@ -1174,7 +1174,7 @@ impl CodeArena {
 /// ordinary fragment path until it has an explicit region declaration.
 fn ops_are_stitchable_numeric(ops: &[Op]) -> bool {
     ops.iter().all(|op| {
-        matches!(
+        trace_source(op).is_some() || matches!(
             op,
             Op::Const { .. }
                 | Op::StoreLocal { .. }
