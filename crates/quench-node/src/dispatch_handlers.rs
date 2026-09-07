@@ -8442,6 +8442,33 @@ pub fn cp_spawn(
         Some(prototype) => execute::set_prototype_of(&child, &prototype).unwrap_or(child),
         None => child,
     };
+    // Node's public `spawn()` enters through the internal
+    // `ChildProcess.prototype.spawn` hook.  Keep that boundary observable for
+    // internal consumers (and monkey patches) while retaining the Rust-owned
+    // process state assembled above.  The normal hook is allowed to own the
+    // spawn event; the output transition below therefore skips its duplicate
+    // event when a replacement was invoked.
+    let hook = execute::get_property(&child, "spawn");
+    if quench_runtime::is_callable(&hook)
+        && !is_child_process_capability(&hook, crate::registry::SPEC_CP_INSTANCE_SPAWN.cap)
+        && matches!(
+            execute::get_property(&child, "\0childSpawnHookInvoked"),
+            Value::Undefined
+        )
+    {
+        let mut hook_options = execute::own_enumerable_keys(&options)
+            .into_iter()
+            .map(|key| (key.clone(), execute::get_property(&options, &key)))
+            .collect::<Vec<_>>();
+        hook_options.push(("file".into(), Value::String(command.clone())));
+        hook_options.push(("args".into(), spawnargs.clone()));
+        execute::set_property_in_place(
+            &child,
+            "\0childSpawnHookInvoked",
+            Value::Boolean(true),
+        );
+        execute::call(&hook, &child, &[host_api::object(hook_options)])?;
+    }
     state.borrow_mut().identity_roots.push(child.clone());
     if let Ok(signal) = execute::get_property_result(&options, "signal") {
         let abort_like = matches!(signal, Value::Object(_) | Value::ObjectAlias(_))
@@ -8995,7 +9022,12 @@ pub fn cp_spawn_output_emit(
         event_args.extend(values);
         crate::modules::events::method_emit(state, Some(target), &event_args)
     };
-    emit(child, "spawn", Vec::new())?;
+    if !matches!(
+        execute::get_property(child, "\0childSpawnHookInvoked"),
+        Value::Boolean(true)
+    ) {
+        emit(child, "spawn", Vec::new())?;
+    }
     // `fork()` owns the logical child lifecycle.  Its initial source runs
     // synchronously before the caller can attach listeners, while the
     // regular spawn-output transition would otherwise close the IPC channel
