@@ -686,7 +686,9 @@ fn resume_suspended_contexts(
         .is_some_and(|frame| {
             matches!(
                 frame,
-                crate::machine::Frame::Loop { .. } | crate::machine::Frame::Iterator { .. }
+                crate::machine::Frame::Loop { .. }
+                    | crate::machine::Frame::Iterator { .. }
+                    | crate::machine::Frame::Branch { .. }
             )
         })
     {

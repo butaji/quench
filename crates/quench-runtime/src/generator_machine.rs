@@ -177,18 +177,27 @@ fn push_branch_frame(generator: &GeneratorData, state: &GeneratorState) -> Resul
     if generator.machine.borrow().frame_count() != 0 {
         return Ok(());
     }
-    let Some(Op::Conditional {
-        dst,
-        condition,
-        consequent,
-        alternate,
-    }) = generator
+    let Some(branch) = generator
         .function
         .code
         .code()
         .and_then(|code| code.cold_at(machine_pc(generator).wrapping_sub(1)))
     else {
         return Ok(());
+    };
+    let (condition, consequent, alternate, destination) = match branch {
+        Op::Conditional {
+            dst,
+            condition,
+            consequent,
+            alternate,
+        } => (condition, consequent, alternate, Some(*dst)),
+        Op::Branch {
+            condition,
+            then_ops,
+            else_ops,
+        } => (condition, then_ops, else_ops, None),
+        _ => return Ok(()),
     };
     let test = crate::execute::read_register(&registers(generator), *condition)?;
     let branch = if crate::execute::is_truthy(&test) {
@@ -199,9 +208,14 @@ fn push_branch_frame(generator: &GeneratorData, state: &GeneratorState) -> Resul
     let Some(ops) = branch.code() else {
         return Ok(());
     };
-    let Some((index, Op::Yield { src })) = ops.find_cold(|op| matches!(op, Op::Yield { .. }))
+    let Some((index, op)) =
+        ops.find_cold(|op| matches!(op, Op::Yield { .. } | Op::Await { .. }))
     else {
         return Ok(());
+    };
+    let src = match op {
+        Op::Yield { src } | Op::Await { dst: src, .. } => *src,
+        _ => return Ok(()),
     };
     let resume = parent_resume_range(generator, state);
     let branch_resume = crate::machine::CodeRange {
@@ -215,8 +229,8 @@ fn push_branch_frame(generator: &GeneratorData, state: &GeneratorState) -> Resul
             phase: crate::machine::BranchPhase::Body,
             branch_resume,
             resume,
-            dst: *dst,
-            yield_dst: *src,
+            dst: destination,
+            yield_dst: src,
         },
     )
 }
@@ -437,8 +451,12 @@ fn advance_frame_after_yield(
         .clone()
         .ok_or(VmError::MissingReturn)?;
     let code = store.code(range).ok_or(VmError::MissingReturn)?;
-    let Some(Op::Yield { src }) = next.checked_sub(1).and_then(|index| code.cold_at(index)) else {
+    let Some(op) = next.checked_sub(1).and_then(|index| code.cold_at(index)) else {
         return Err(VmError::MissingReturn);
+    };
+    let src = match op {
+        Op::Yield { src } | Op::Await { dst: src, .. } => *src,
+        _ => return Err(VmError::MissingReturn),
     };
     let resume = crate::machine::CodeRange {
         code: range.code,
@@ -448,7 +466,7 @@ fn advance_frame_after_yield(
     generator
         .machine
         .borrow_mut()
-        .advance_frame_resume(resume, *src)
+        .advance_frame_resume(resume, src)
         .then_some(())
         .ok_or(VmError::MissingReturn)
 }

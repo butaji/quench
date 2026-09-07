@@ -1,7 +1,7 @@
 struct BranchFrameResume {
     branch_resume: crate::machine::CodeRange,
     resume: crate::machine::CodeRange,
-    dst: u16,
+    dst: Option<u16>,
     yield_dst: u16,
 }
 
@@ -25,6 +25,12 @@ fn resume_branch_frame(
         generator.machine.borrow_mut().pop_frame();
         return Ok(Some(resume));
     }
+    let _private = crate::private_environment::Guard::install_environment(
+        generator.function.private_environment.clone(),
+    );
+    let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
+    let _with = crate::with_scope::FunctionGuard::install(&generator.function.with_captures);
+    let _locals = crate::locals::EnvironmentGuard::install(machine_environment(generator)?);
     let store = generator.machine.borrow().store.clone().ok_or(VmError::MissingReturn)?;
     let ops = store.code(frame.branch_resume).ok_or(VmError::MissingReturn)?;
     let step = execute_with_generator_registers(generator, |registers| {
@@ -35,10 +41,13 @@ fn resume_branch_frame(
         advance_frame_after_yield(generator, frame.branch_resume, step.next)?;
         return Ok(Some(completion));
     }
-    let crate::completion::Completion::Return(value) = completion else {
+    if let crate::completion::Completion::Return(value) = completion {
+        if let Some(dst) = frame.dst {
+            crate::execute::write_value(&mut registers_mut(generator), dst, value);
+        }
+    } else if !matches!(completion, crate::completion::Completion::Normal) {
         return Ok(Some(completion));
-    };
-    crate::execute::write_value(&mut registers_mut(generator), frame.dst, value);
+    }
     generator.machine.borrow_mut().pop_frame();
     resume_generator_range(generator, state, frame.resume, crate::completion::Completion::Normal).map(Some)
 }
