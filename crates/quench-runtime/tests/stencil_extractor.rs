@@ -25,10 +25,10 @@ mod leaf_catalog {
 
 mod assembly_catalog {
     use super::build_stencil_contract::{
-        equal, operand, value, AssemblyContinuation, AssemblyControlLink, AssemblySuccessor,
-        AssemblySuccessorRole, DeclAbi, DeclContinuationAbi, PhysicalBinding, PhysicalBindingValue,
-        PhysicalOperand, PhysicalOperandField, PhysicalOutput, PhysicalOutputDestination,
-        PhysicalOutputValue, RecipeComposition, RegionDeclaration,
+        equal, operand, value, AssemblyContinuation, AssemblyControlLink, AssemblyPatchHole,
+        AssemblySuccessor, AssemblySuccessorRole, DeclAbi, DeclContinuationAbi, PhysicalBinding,
+        PhysicalBindingValue, PhysicalOperand, PhysicalOperandField, PhysicalOutput,
+        PhysicalOutputDestination, PhysicalOutputValue, RecipeComposition, RegionDeclaration,
     };
 
     include!(concat!(
@@ -225,4 +225,16 @@ fn boolean_control_recipe_owns_both_successor_contracts() {
     let terminal_recipe = rust_assembly_recipe(terminal).expect("return fragment recipe");
     assert_eq!(terminal_recipe.internal_abi(), DeclContinuationAbi::WordX0);
     assert_eq!(terminal_recipe.composition(), RecipeComposition::Whole);
+
+    let constant = rust_assembly_declaration(RustAssemblyRecipe::WordConstFragment);
+    let constant_recipe = rust_assembly_recipe(constant).expect("word constant recipe");
+    assert_eq!(constant.operations, ["LoadConst"]);
+    assert_eq!(constant_recipe.internal_abi(), DeclContinuationAbi::WordX0);
+    assert_eq!(constant_recipe.patch_holes().len(), 1);
+    assert_eq!(constant_recipe.patch_holes()[0].kind, "Literal64");
+    assert_eq!(constant_recipe.control_links().len(), 1);
+    assert_eq!(
+        constant_recipe.control_links()[0].role,
+        AssemblySuccessorRole::Next
+    );
 }

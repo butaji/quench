@@ -65,3 +65,26 @@ fn generated_boolean_branch_preserves_typed_successor_metadata() {
         .iter()
         .any(|link| link.role == SuccessorRole::True && link.offset == 8));
 }
+
+#[cfg(quench_generated_stencil_artifacts)]
+#[test]
+fn generated_word_constant_owns_patch_and_successor_layout() {
+    use quench_runtime::stencil_fact::HoleKind;
+    use quench_runtime::stencil_select::SuccessorRole;
+
+    let artifact = BUILD_STENCIL_ARTIFACTS
+        .iter()
+        .find(|artifact| artifact.name == "word_const_fragment")
+        .expect("generated word constant artifact");
+    let selected = select_physical(artifact.key).expect("selected word constant");
+    assert!(selected.generated);
+    assert_eq!(selected.artifact_id, artifact.artifact_id);
+    assert!(selected
+        .stencil
+        .holes
+        .iter()
+        .any(|hole| hole.kind == HoleKind::Literal64 && hole.offset == 8));
+    assert!(selected.links.iter().any(|link| {
+        link.kind == HoleKind::Branch26 && link.role == SuccessorRole::Next && link.offset == 4
+    }));
+}

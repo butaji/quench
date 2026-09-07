@@ -43,9 +43,16 @@ pub(crate) fn fragment_sources(
 }
 
 pub(crate) fn control_fragment_source(recipe: super::RustAssemblyRecipe) -> Option<&'static str> {
-    (recipe == super::RustAssemblyRecipe::BoolBranch).then_some(
-        "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_bool_branch\nq_bool_branch:\n  cbnz w0, 1f\n  b q_bool_branch_false\n1:\n  b q_bool_branch_true\nq_bool_branch_end:\n\"#);\n",
-    )
+    use super::RustAssemblyRecipe::{BoolBranch, WordConstFragment};
+    match recipe {
+        BoolBranch => Some(
+            "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_bool_branch\nq_bool_branch:\n  cbnz w0, 1f\n  b q_bool_branch_false\n1:\n  b q_bool_branch_true\nq_bool_branch_end:\n\"#);\n",
+        ),
+        WordConstFragment => Some(
+            "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_word_const_fragment\nq_word_const_fragment:\n  ldr x0, 1f\n  b q_word_const_fragment_next\n.p2align 3\nq_word_const_fragment_hole_0:\n1:\n  .quad 0\nq_word_const_fragment_end:\n\"#);\n",
+        ),
+        _ => None,
+    }
 }
 
 const AARCH64_ARRAY_LOOP: &str = r##"#![no_std]
@@ -317,7 +324,7 @@ pub(crate) fn assembly_source(recipe: super::RustAssemblyRecipe) -> String {
                 .map(|(head, tail)| head.to_owned() + tail)
                 .expect("declared fragment pair")
         }
-        BoolBranch => control_fragment_source(recipe)
+        BoolBranch | WordConstFragment => control_fragment_source(recipe)
             .expect("declared control fragment")
             .to_owned(),
         ReturnWord => return_word_source(recipe.name()),
