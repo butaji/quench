@@ -258,6 +258,34 @@ pub(crate) fn execute_function_code_completion_in_current_frame(
     execute_function_code_completion_with_context(owner, code, registers, &context)
 }
 
+/// Execute an owned structured fragment while retaining the exact operation
+/// that suspended. Calls are consumed here, but yields/awaits remain explicit
+/// boundaries for the enclosing control-flow frame.
+pub(crate) fn execute_function_code_completion_step_in_current_frame(
+    owner: &crate::machine::FunctionCode,
+    registers: &mut crate::register_file::RegisterFile,
+) -> Result<CompletionStep, VmError> {
+    let code = owner.code().ok_or(VmError::MissingReturn)?;
+    let context = current_context_or_default();
+    let _ = owner.enter_invocation();
+    let mut pc = 0;
+    loop {
+        let step = execute_code_completion_step_with_owner(code, owner, pc, registers)?;
+        let crate::completion::Completion::Call(continuation) = step.completion else {
+            return Ok(step);
+        };
+        match crate::vm::vm_ops::execute_call_continuation(registers, continuation) {
+            Ok(()) => pc = step.next,
+            Err(VmError::Thrown(value)) => return Ok(CompletionStep {
+                completion: crate::completion::Completion::Throw(value),
+                next: step.next,
+                suspended_pc: None,
+            }),
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 pub(crate) fn execute_function_code_completion_with_context(
     owner: &crate::machine::FunctionCode,
     code: crate::machine::CodeView<'_>,
@@ -325,7 +353,8 @@ pub(crate) fn execute_code_completion_step_with_owner(
             registers,
             &context,
         )?;
-        return Ok(CompletionStep { completion, next, suspended_pc: None });
+        let suspended_pc = completion.is_suspension().then(|| next.saturating_sub(1));
+        return Ok(CompletionStep { completion, next, suspended_pc });
     }
     if let Some(plan) = owner.baseline_plan() {
         return crate::vm::execute_baseline_completion_step_from_with_owner(
