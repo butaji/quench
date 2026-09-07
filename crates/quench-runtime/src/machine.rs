@@ -2572,7 +2572,7 @@ fn invoke_compare_branch(
         .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)
 }
 
-fn constant_word_bits(constant: &crate::ops::Constant) -> Option<u64> {
+pub(crate) fn constant_word_bits(constant: &crate::ops::Constant) -> Option<u64> {
     let value = match constant {
         crate::ops::Constant::Number(value) => crate::value::Value::Number(*value),
         crate::ops::Constant::Boolean(value) => crate::value::Value::Boolean(*value),
@@ -5684,6 +5684,7 @@ fn local_property_admission(
 }
 
 fn local_predicate_admission(
+    code: CodeView<'_>,
     entries: &[BaselineEntry],
     cfg: &ControlFlowFacts,
     pc: usize,
@@ -5712,6 +5713,9 @@ fn local_predicate_admission(
                 entry.instruction,
                 policy,
                 Rc::clone(arena),
+                code,
+                entries,
+                branch_pc,
             )?;
             return Some(NativeAdmission::LocalPredicate(Rc::new(RefCell::new(plan))));
         }
@@ -5943,7 +5947,7 @@ fn collect_admissions_at(
     );
     builder.push_optional(
         pc,
-        local_predicate_admission(entries, cfg, pc, policy, arena),
+        local_predicate_admission(code, entries, cfg, pc, policy, arena),
     );
     collect_memory_admissions(builder, pc, entry.instruction, policy, arena);
     builder.push_optional(pc, region_admission(entries, cfg, pc, policy, arena));

@@ -43,6 +43,23 @@ impl RegionControlPlan {
         })
     }
 
+    /// Construct a bounded physical layout from already-verified relative
+    /// CFG edges. Canonical source admission must validate semantics first;
+    /// this value only describes how selected fragments are stitched.
+    pub(crate) fn from_relative_edges(len: usize, edges: &[(usize, usize)]) -> Option<Self> {
+        (len > 0).then_some(())?;
+        let mut plan = empty_region_control(0, len);
+        push_block(&mut plan, 0)?;
+        for &(from, to) in edges {
+            (from < len && to < len).then_some(())?;
+            let edge = RegionEdge { from, to };
+            (!plan.edges().contains(&edge)).then_some(())?;
+            push_edge(&mut plan, edge)?;
+            push_block(&mut plan, to)?;
+        }
+        Some(plan)
+    }
+
     pub(crate) fn blocks(&self) -> &[usize] {
         &self.blocks[..usize::from(self.block_len)]
     }

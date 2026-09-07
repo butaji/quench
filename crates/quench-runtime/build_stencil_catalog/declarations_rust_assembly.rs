@@ -53,6 +53,29 @@ const BOOL_BRANCH_LINKS: &[AssemblyControlLink] = &[
     },
 ];
 
+const TRUTHY_BOOL_BRANCH_LINKS: &[AssemblyControlLink] = &[
+    AssemblyControlLink {
+        offset: 12,
+        width: 4,
+        kind: "Branch26",
+        target: "q_truthy_bool_branch_false",
+        role: AssemblySuccessorRole::False,
+    },
+    AssemblyControlLink {
+        offset: 16,
+        width: 4,
+        kind: "Branch26",
+        target: "q_truthy_bool_branch_true",
+        role: AssemblySuccessorRole::True,
+    },
+];
+
+const TRUTHY_BOOL_BRANCH_HOLES: &[AssemblyPatchHole] = &[AssemblyPatchHole {
+    offset: 24,
+    width: 8,
+    kind: "Literal64",
+}];
+
 const WORD_CONST_LINKS: &[AssemblyControlLink] = &[AssemblyControlLink {
     offset: 4,
     width: 4,
@@ -116,6 +139,15 @@ rust_assembly_catalog! {
         x86: &[], aarch64: &[],
         x86_holes: &[], aarch64_holes: &[],
         control_links: BOOL_BRANCH_LINKS,
+        internal_abi: WordX0,
+        composition: ControlFragment
+    },
+    TruthyBoolBranch {
+        name: "truthy_bool_branch", abi: ScalarWordBool, ops: ["JumpIfFalse"],
+        x86: &[], aarch64: &[],
+        x86_holes: &[], aarch64_holes: &[],
+        control_links: TRUTHY_BOOL_BRANCH_LINKS,
+        patch_holes: TRUTHY_BOOL_BRANCH_HOLES,
         internal_abi: WordX0,
         composition: ControlFragment
     },
