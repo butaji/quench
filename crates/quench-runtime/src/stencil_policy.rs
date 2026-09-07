@@ -20,6 +20,7 @@ enum ArmMode {
     Leaves,
     Fusion,
     FusionNumeric,
+    FusionProperty,
     FusionPredicate,
     Kernels,
     ArrayLoop,
@@ -34,6 +35,7 @@ impl ArmMode {
             Ok("leaves") => Self::Leaves,
             Ok("fusion") => Self::Fusion,
             Ok("fusion-numeric") => Self::FusionNumeric,
+            Ok("fusion-property") => Self::FusionProperty,
             Ok("fusion-predicate") => Self::FusionPredicate,
             Ok("kernels") => Self::Kernels,
             Ok("array-loop") => Self::ArrayLoop,
@@ -49,8 +51,9 @@ impl ArmMode {
 
 const fn local_fusion_policy(mode: ArmMode) -> LocalFusionPolicy {
     match mode {
-        ArmMode::Fusion | ArmMode::All => LocalFusionPolicy::SAFE,
+        ArmMode::Fusion | ArmMode::All => LocalFusionPolicy::ALL,
         ArmMode::FusionNumeric => LocalFusionPolicy::NUMERIC_ONLY,
+        ArmMode::FusionProperty => LocalFusionPolicy::PROPERTY_ONLY,
         ArmMode::FusionPredicate => LocalFusionPolicy::PREDICATE_ONLY,
         _ => LocalFusionPolicy::NONE,
     }
@@ -66,8 +69,8 @@ impl LocalFusionPolicy {
 
     pub(crate) const NONE: Self = Self(0);
     pub(crate) const ALL: Self = Self(Self::NUMERIC | Self::PROPERTY | Self::PREDICATE);
-    const SAFE: Self = Self(Self::NUMERIC | Self::PREDICATE);
     const NUMERIC_ONLY: Self = Self(Self::NUMERIC);
+    const PROPERTY_ONLY: Self = Self(Self::PROPERTY);
     const PREDICATE_ONLY: Self = Self(Self::PREDICATE);
 
     pub(crate) const fn any(self) -> bool {
@@ -191,7 +194,7 @@ impl ExecutionPolicy {
         match arch {
             Architecture::X86_64 => Self {
                 native_leaves: true,
-                local_fusions: LocalFusionPolicy::SAFE,
+                local_fusions: LocalFusionPolicy::ALL,
                 native_dispatch: true,
                 fused_regions: true,
                 array_kernels: true,
@@ -258,7 +261,7 @@ mod tests {
             ExecutionPolicy::from_architecture(Architecture::X86_64, false),
             ExecutionPolicy {
                 native_leaves: true,
-                local_fusions: super::LocalFusionPolicy::SAFE,
+                local_fusions: super::LocalFusionPolicy::ALL,
                 native_dispatch: true,
                 fused_regions: true,
                 array_kernels: true,
@@ -284,7 +287,7 @@ mod tests {
             ExecutionPolicy::from_architecture(Architecture::Aarch64, true),
             ExecutionPolicy {
                 native_leaves: true,
-                local_fusions: super::LocalFusionPolicy::SAFE,
+                local_fusions: super::LocalFusionPolicy::ALL,
                 native_dispatch: false,
                 fused_regions: false,
                 array_kernels: true,
@@ -310,7 +313,6 @@ mod tests {
         let fusion =
             ExecutionPolicy::from_architecture_and_mode(Architecture::Aarch64, ArmMode::Fusion);
         assert!(fusion.local_fusions.any() && !fusion.native_leaves);
-        assert!(!fusion.local_fusions.property());
         assert_isolated_fusion_modes();
         assert!(!composed.native_leaves && composed.array_kernels);
         assert!(composed.array_numeric_loops && composed.affine_i32_loops);
@@ -318,7 +320,6 @@ mod tests {
         let all = ExecutionPolicy::from_architecture_and_mode(Architecture::Aarch64, ArmMode::All);
         assert!(!leaves.optimizing_view && !composed.optimizing_view);
         assert!(all.native_leaves && all.local_fusions.any() && all.array_kernels);
-        assert!(!all.local_fusions.property());
         assert!(all.array_numeric_loops && all.affine_i32_loops);
         assert!(!all.optimizing_view);
     }
@@ -346,6 +347,8 @@ mod tests {
             |mode| ExecutionPolicy::from_architecture_and_mode(Architecture::Aarch64, mode);
         let numeric = policy(ArmMode::FusionNumeric).local_fusions;
         assert!(numeric.numeric() && !numeric.property() && !numeric.predicate());
+        let property = policy(ArmMode::FusionProperty).local_fusions;
+        assert!(!property.numeric() && property.property() && !property.predicate());
         let predicate = policy(ArmMode::FusionPredicate).local_fusions;
         assert!(!predicate.numeric() && !predicate.property() && predicate.predicate());
     }
