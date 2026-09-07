@@ -18,8 +18,8 @@ use object::{
 };
 
 use super::{
-    region_key_name, AssemblySuccessor, AssemblySuccessorRole, RecipeComposition,
-    RegionDeclaration, RustAssemblyRecipe,
+    region_key_name, AssemblySuccessorRole, RecipeComposition, RegionDeclaration,
+    RustAssemblyRecipe,
 };
 
 const HEADER: &str = "/// Rust object artifacts generated at build time.\n";

@@ -107,6 +107,84 @@ fn compile_fragment_pair(
     }
 }
 
+fn compile_control_fragment(
+    root: &Path,
+    target: &str,
+    compiler: &str,
+    flags: &[&str],
+    rustflags: &[String],
+    declaration: &RegionDeclaration,
+    recipe: RustAssemblyRecipe,
+) -> ExtractedObject {
+    let source = super::build_stencil_templates::control_fragment_source(recipe)
+        .expect("declared control-fragment source");
+    let expected = expected_successor_relocations(declaration, recipe);
+    let parsed = compile_assembly_fragment(
+        root,
+        target,
+        compiler,
+        flags,
+        rustflags,
+        declaration.name,
+        source,
+        &expected,
+        &[],
+    );
+    extracted_head(parsed)
+}
+
+fn expected_successor_relocations(
+    _declaration: &RegionDeclaration,
+    recipe: RustAssemblyRecipe,
+) -> Vec<ExpectedRelocation> {
+    recipe
+        .control_links()
+        .iter()
+        .map(|link| ExpectedRelocation {
+            section: SectionKind::Text,
+            offset: u64::from(link.offset),
+            width: link.width,
+            kind: link.kind,
+            target: link.target,
+            addend: 0,
+        })
+        .collect()
+}
+
+fn compile_whole_assembly(
+    root: &Path,
+    target: &str,
+    compiler: &str,
+    flags: &[&str],
+    rustflags: &[String],
+    declaration: &RegionDeclaration,
+    recipe: RustAssemblyRecipe,
+) -> ExtractedObject {
+    let source = super::build_stencil_templates::assembly_source(recipe);
+    let holes = expected_holes(declaration, target);
+    let parsed = compile_assembly_fragment(
+        root,
+        target,
+        compiler,
+        flags,
+        rustflags,
+        declaration.name,
+        &source,
+        &[],
+        &holes,
+    );
+    extracted_head(parsed)
+}
+
+fn extracted_head(parsed: ParsedFragment) -> ExtractedObject {
+    ExtractedObject {
+        bytes: parsed.bytes,
+        fallthrough: None,
+        relocations: parsed.relocations,
+        holes: parsed.holes,
+    }
+}
+
 fn compile_assembly_fragment(
     root: &Path,
     target: &str,
