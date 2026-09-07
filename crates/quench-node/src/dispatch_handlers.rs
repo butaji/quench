@@ -9435,6 +9435,11 @@ pub fn cp_spawn_output_emit(
                 execute::get_property(child, "\0childTimerIds"),
                 Value::Array(ref timers) if timers.logical_len() > 0
             )
+            // A process-level message listener is a referenced IPC handle in
+            // Node.  The spawn phase runs in the parent scope, so inspect the
+            // child scope directly instead of changing global scope merely to
+            // decide whether the channel may be retired.
+            || crate::modules::process::has_listener_in_scope(state, "message", scope)
     });
     if fork_ipc_live || spawn_ipc_live
     {
