@@ -89,13 +89,13 @@ pub fn build(state: &Rc<std::cell::RefCell<HostState>>) -> Result<Value, VmError
                     .find_map(|arg| arg.strip_prefix("--quench-worker-data=").map(str::to_owned))
             })
             .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-            .map(from_json)
+            .map(|value| from_json(value, state))
             .unwrap_or(Value::Null)
     };
     if !main {
         if let Ok(message) = std::env::var("QUENCH_WORKER_MESSAGE") {
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(&message) {
-                let event = from_json(value);
+                let event = from_json(value, state);
                 state
                     .borrow_mut()
                     .event_loop
@@ -810,7 +810,10 @@ fn parse_messages(state: &Rc<RefCell<HostState>>, worker: &Value, text: &str) {
             let _ = crate::modules::events::method_emit(
                 state,
                 Some(worker),
-                &[Value::String("message".into()), from_json(json)],
+                &[
+                    Value::String("message".into()),
+                    from_json(json, state),
+                ],
             );
         }
     }
@@ -1024,6 +1027,9 @@ fn to_json(value: &Value) -> serde_json::Value {
     if let Some(wire) = crate::modules::crypto::key_object_to_wire(value) {
         return wire;
     }
+    if let Some(wire) = crate::modules::crypto::x509_to_wire(value) {
+        return wire;
+    }
     match value {
         Value::Undefined => serde_json::Value::Null,
         Value::Null => serde_json::Value::Null,
@@ -1062,14 +1068,14 @@ fn to_json(value: &Value) -> serde_json::Value {
     }
 }
 
-fn from_json(value: serde_json::Value) -> Value {
+fn from_json(value: serde_json::Value, state: &Rc<RefCell<HostState>>) -> Value {
     match value {
         serde_json::Value::Null => Value::Null,
         serde_json::Value::Bool(value) => Value::Boolean(value),
         serde_json::Value::Number(value) => Value::Number(value.as_f64().unwrap_or(0.0)),
         serde_json::Value::String(value) => Value::String(value),
         serde_json::Value::Array(values) => {
-            host_api::array(values.into_iter().map(from_json).collect())
+            host_api::array(values.into_iter().map(|value| from_json(value, state)).collect())
         }
         serde_json::Value::Object(values) => {
             if let Some(key) = crate::modules::webcrypto::key_from_wire(&values) {
@@ -1077,6 +1083,9 @@ fn from_json(value: serde_json::Value) -> Value {
             }
             if let Some(key) = crate::modules::crypto::key_object_from_wire(&values) {
                 return key;
+            }
+            if let Some(certificate) = crate::modules::crypto::x509_from_wire(&values, state) {
+                return certificate;
             }
             if values
                 .get("__quench_typed_array")
@@ -1099,7 +1108,7 @@ fn from_json(value: serde_json::Value) -> Value {
             host_api::object(
                 values
                     .into_iter()
-                    .map(|(key, value)| (key, from_json(value)))
+                    .map(|(key, value)| (key, from_json(value, state)))
                     .collect(),
             )
         }
