@@ -3109,7 +3109,11 @@ fn create_asymmetric_key(args: &[Value], key_type: &str) -> Result<Value, VmErro
     if key_type == "private" && is_encrypted_private_key(&data) {
         match passphrase.as_deref() {
             None => {
-                if data.starts_with(b"-----") {
+                // The STORE loader reports a missing passphrase for an
+                // encrypted file: URI. Direct PEM decoding on OpenSSL 3
+                // instead surfaces its interrupted/cancelled prompt error;
+                // preserve that distinction at this shared boundary.
+                if url_value.is_none() && data.starts_with(b"-----") {
                     return Err(VmError::Thrown(native_error(
                         quench_runtime::ops::Builtin::Error,
                         "ERR_OSSL_CRYPTO_INTERRUPTED_OR_CANCELLED",
