@@ -150,25 +150,26 @@ fn set_proven_own_data(
             return true;
         }
     }
-    let (crate::value::Value::Object(target), crate::value::Value::Object(receiver)) =
-        (target, receiver)
-    else {
-        return false;
-    };
-    if !std::rc::Rc::ptr_eq(target, receiver) || !plain_writable_own_data(target, key) {
-        return false;
-    }
-    if let Some(slot) = target.hot_properties().position_rev(key) {
-        if let Some(crate::value::Value::BindingCell(cell)) =
-            target.hot_properties().slot_value(slot)
-        {
-            cell.store(value.clone());
-            return true;
+    match (target, receiver) {
+        (crate::value::Value::Object(target), crate::value::Value::Object(receiver)) => {
+            std::rc::Rc::ptr_eq(target, receiver)
+                && store_plain_writable_own_data(target, key, value)
         }
-        target.hot_properties().store_slot(slot, value.clone());
-        return true;
+        _ => {
+            let Some(target) = object_target(target) else { return false };
+            let Some(receiver) = object_target(receiver) else { return false };
+            std::rc::Rc::ptr_eq(&target, &receiver)
+                && store_plain_writable_own_data(&target, key, value)
+        }
     }
-    false
+}
+
+fn object_target(value: &crate::value::Value) -> Option<std::rc::Rc<crate::value::ObjectData>> {
+    match value {
+        crate::value::Value::Object(value) => Some(std::rc::Rc::clone(value)),
+        crate::value::Value::ObjectAlias(value) => value.target(),
+        _ => None,
+    }
 }
 
 fn inherited_descriptor(
