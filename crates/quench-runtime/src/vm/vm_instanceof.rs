@@ -287,12 +287,14 @@ fn instanceof_callable(value: &Value) -> bool {
 }
 
 fn prototype_chain_contains(value: &Value, expected: &Value) -> bool {
-    let mut current = internal_prototype(value);
+    let expected = crate::locals::resolved_replacement(expected.clone());
+    let mut current = internal_prototype(&crate::locals::resolved_replacement(value.clone()));
     for _ in 0..1_024 {
         let Some(prototype) = current else {
             return false;
         };
-        if crate::builtins::same_value(Some(&prototype), Some(expected)) {
+        let prototype = crate::locals::resolved_replacement(prototype);
+        if crate::builtins::same_value(Some(&prototype), Some(&expected)) {
             return true;
         }
         current = internal_prototype(&prototype);
