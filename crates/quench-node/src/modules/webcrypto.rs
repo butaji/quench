@@ -19,29 +19,35 @@ use ed25519_dalek::{
     VerifyingKey as Ed25519VerifyingKey,
 };
 use ed448_goldilocks_plus::{
-    SecretKey as Ed448SecretKey, Signature as Ed448Signature,
-    SigningKey as Ed448SigningKey, VerifyingKey as Ed448VerifyingKey,
+    SecretKey as Ed448SecretKey, Signature as Ed448Signature, SigningKey as Ed448SigningKey,
+    VerifyingKey as Ed448VerifyingKey,
 };
 use hmac::{Hmac, Mac};
 use openssl::{bn::BigNum, pkey::PKey, rsa::Rsa};
+use p256::ecdsa::{
+    Signature as P256Signature, SigningKey as P256SigningKey, VerifyingKey as P256VerifyingKey,
+};
 use p256::elliptic_curve::sec1::ToEncodedPoint as P256ToEncodedPoint;
 use p256::{
     ecdh::diffie_hellman as p256_diffie_hellman, PublicKey as P256PublicKey,
     SecretKey as P256SecretKey,
 };
-use p256::ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey, VerifyingKey as P256VerifyingKey};
+use p384::ecdsa::{
+    Signature as P384Signature, SigningKey as P384SigningKey, VerifyingKey as P384VerifyingKey,
+};
 use p384::elliptic_curve::sec1::ToEncodedPoint as P384ToEncodedPoint;
 use p384::{
     ecdh::diffie_hellman as p384_diffie_hellman, PublicKey as P384PublicKey,
     SecretKey as P384SecretKey,
 };
-use p384::ecdsa::{Signature as P384Signature, SigningKey as P384SigningKey, VerifyingKey as P384VerifyingKey};
+use p521::ecdsa::{
+    Signature as P521Signature, SigningKey as P521SigningKey, VerifyingKey as P521VerifyingKey,
+};
 use p521::elliptic_curve::sec1::ToSec1Point as P521ToSec1Point;
 use p521::{
     ecdh::diffie_hellman as p521_diffie_hellman, PublicKey as P521PublicKey,
     SecretKey as P521SecretKey,
 };
-use p521::ecdsa::{Signature as P521Signature, SigningKey as P521SigningKey, VerifyingKey as P521VerifyingKey};
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
 use quench_runtime::ops::Builtin;
@@ -58,9 +64,7 @@ use tiny_keccak::{CShake, Hasher as TinyHasher};
 use rsa::pkcs1::DecodeRsaPublicKey;
 use rsa::pkcs8::{DecodePrivateKey, DecodePublicKey};
 use rsa::traits::PublicKeyParts;
-use rsa::{
-    BigUint as RsaBigUint, Pkcs1v15Sign, Pss, RsaPrivateKey, RsaPublicKey,
-};
+use rsa::{BigUint as RsaBigUint, Pkcs1v15Sign, Pss, RsaPrivateKey, RsaPublicKey};
 
 use crate::host::HostState;
 
@@ -1255,36 +1259,36 @@ fn rsa_oaep_crypt(
 fn rsa_pkcs1_digest_info(hash: &str, digest: &[u8]) -> Option<Vec<u8>> {
     let prefix: &[u8] = match hash {
         "SHA-1" => &[
-            0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a, 0x05, 0x00,
-            0x04, 0x14,
+            0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a, 0x05, 0x00, 0x04,
+            0x14,
         ],
         "SHA-224" => &[
-            0x30, 0x2d, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04,
-            0x02, 0x04, 0x05, 0x00, 0x04, 0x1c,
+            0x30, 0x2d, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02,
+            0x04, 0x05, 0x00, 0x04, 0x1c,
         ],
         "SHA-256" => &[
-            0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04,
-            0x02, 0x01, 0x05, 0x00, 0x04, 0x20,
+            0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02,
+            0x01, 0x05, 0x00, 0x04, 0x20,
         ],
         "SHA-384" => &[
-            0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04,
-            0x02, 0x02, 0x05, 0x00, 0x04, 0x30,
+            0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02,
+            0x02, 0x05, 0x00, 0x04, 0x30,
         ],
         "SHA-512" => &[
-            0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04,
-            0x02, 0x03, 0x05, 0x00, 0x04, 0x40,
+            0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02,
+            0x03, 0x05, 0x00, 0x04, 0x40,
         ],
         "SHA3-256" => &[
-            0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04,
-            0x02, 0x08, 0x05, 0x00, 0x04, 0x20,
+            0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02,
+            0x08, 0x05, 0x00, 0x04, 0x20,
         ],
         "SHA3-384" => &[
-            0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04,
-            0x02, 0x09, 0x05, 0x00, 0x04, 0x30,
+            0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02,
+            0x09, 0x05, 0x00, 0x04, 0x30,
         ],
         "SHA3-512" => &[
-            0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04,
-            0x02, 0x0a, 0x05, 0x00, 0x04, 0x40,
+            0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02,
+            0x0a, 0x05, 0x00, 0x04, 0x40,
         ],
         _ => return None,
     };
@@ -1296,9 +1300,7 @@ fn rsa_pkcs1_digest_info(hash: &str, digest: &[u8]) -> Option<Vec<u8>> {
 
 fn rsa_pss_salt_length(algorithm: &Value) -> Result<usize, VmError> {
     match execute::get_property(algorithm, "saltLength") {
-        Value::Number(value)
-            if value.is_finite() && value.fract() == 0.0 && value >= 0.0 =>
-        {
+        Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value >= 0.0 => {
             usize::try_from(value as u64)
                 .map_err(|_| operation_error("algorithm.saltLength is out of range"))
         }
@@ -1309,7 +1311,9 @@ fn rsa_pss_salt_length(algorithm: &Value) -> Result<usize, VmError> {
 fn rsa_pss_salt_length_error(maximum: usize, received: usize) -> VmError {
     let outer = quench_runtime::builtins::error(
         Builtin::Error,
-        &[Value::String("The operation failed for an operation-specific reason".into())],
+        &[Value::String(
+            "The operation failed for an operation-specific reason".into(),
+        )],
     );
     let outer = execute::set_property(outer, "name", Value::String("OperationError".into()));
     let message = format!(
@@ -1320,18 +1324,14 @@ fn rsa_pss_salt_length_error(maximum: usize, received: usize) -> VmError {
     VmError::Thrown(execute::set_property(outer, "cause", cause))
 }
 
-fn rsa_signature(
-    algorithm: &Value,
-    key: &Value,
-    data: &[u8],
-) -> Result<Vec<u8>, VmError> {
+fn rsa_signature(algorithm: &Value, key: &Value, data: &[u8]) -> Result<Vec<u8>, VmError> {
     let name = algorithm_name(algorithm).to_ascii_uppercase();
     let key_algorithm = execute::get_property(key, "algorithm");
     let hash = algorithm_hash(&key_algorithm)
         .or_else(|| algorithm_hash(algorithm))
         .ok_or_else(|| not_supported("Unrecognized hash algorithm"))?;
-    let digest = rsa_hash_bytes(&hash, data)
-        .ok_or_else(|| not_supported("Unrecognized hash algorithm"))?;
+    let digest =
+        rsa_hash_bytes(&hash, data).ok_or_else(|| not_supported("Unrecognized hash algorithm"))?;
     let private = rsa_private_key(key)
         .ok_or_else(|| operation_error("The operation failed for an operation-specific reason"))?;
     let mut rng = rand::thread_rng();
@@ -1339,11 +1339,7 @@ fn rsa_signature(
         "RSASSA-PKCS1-V1_5" => {
             let digest_info = rsa_pkcs1_digest_info(&hash, &digest)
                 .ok_or_else(|| not_supported("Unrecognized hash algorithm"))?;
-            private.sign_with_rng(
-                &mut rng,
-                Pkcs1v15Sign::new_unprefixed(),
-                &digest_info,
-            )
+            private.sign_with_rng(&mut rng, Pkcs1v15Sign::new_unprefixed(), &digest_info)
         }
         "RSA-PSS" => {
             let salt_length = rsa_pss_salt_length(algorithm)?;
@@ -1352,14 +1348,46 @@ fn rsa_signature(
                 return Err(rsa_pss_salt_length_error(maximum, salt_length));
             }
             match hash.as_str() {
-                "SHA-1" => private.sign_with_rng(&mut rng, Pss::new_with_salt::<Sha1>(salt_length), &digest),
-                "SHA-224" => private.sign_with_rng(&mut rng, Pss::new_with_salt::<Sha224>(salt_length), &digest),
-                "SHA-256" => private.sign_with_rng(&mut rng, Pss::new_with_salt::<Sha256>(salt_length), &digest),
-                "SHA-384" => private.sign_with_rng(&mut rng, Pss::new_with_salt::<Sha384>(salt_length), &digest),
-                "SHA-512" => private.sign_with_rng(&mut rng, Pss::new_with_salt::<Sha512>(salt_length), &digest),
-                "SHA3-256" => private.sign_with_rng(&mut rng, Pss::new_with_salt::<Sha3_256>(salt_length), &digest),
-                "SHA3-384" => private.sign_with_rng(&mut rng, Pss::new_with_salt::<Sha3_384>(salt_length), &digest),
-                "SHA3-512" => private.sign_with_rng(&mut rng, Pss::new_with_salt::<Sha3_512>(salt_length), &digest),
+                "SHA-1" => private.sign_with_rng(
+                    &mut rng,
+                    Pss::new_with_salt::<Sha1>(salt_length),
+                    &digest,
+                ),
+                "SHA-224" => private.sign_with_rng(
+                    &mut rng,
+                    Pss::new_with_salt::<Sha224>(salt_length),
+                    &digest,
+                ),
+                "SHA-256" => private.sign_with_rng(
+                    &mut rng,
+                    Pss::new_with_salt::<Sha256>(salt_length),
+                    &digest,
+                ),
+                "SHA-384" => private.sign_with_rng(
+                    &mut rng,
+                    Pss::new_with_salt::<Sha384>(salt_length),
+                    &digest,
+                ),
+                "SHA-512" => private.sign_with_rng(
+                    &mut rng,
+                    Pss::new_with_salt::<Sha512>(salt_length),
+                    &digest,
+                ),
+                "SHA3-256" => private.sign_with_rng(
+                    &mut rng,
+                    Pss::new_with_salt::<Sha3_256>(salt_length),
+                    &digest,
+                ),
+                "SHA3-384" => private.sign_with_rng(
+                    &mut rng,
+                    Pss::new_with_salt::<Sha3_384>(salt_length),
+                    &digest,
+                ),
+                "SHA3-512" => private.sign_with_rng(
+                    &mut rng,
+                    Pss::new_with_salt::<Sha3_512>(salt_length),
+                    &digest,
+                ),
                 _ => return Err(not_supported("Unrecognized hash algorithm")),
             }
         }
@@ -1399,14 +1427,44 @@ fn rsa_verify_signature(
                 return Err(rsa_pss_salt_length_error(maximum, salt_length));
             }
             match hash.as_str() {
-                "SHA-1" => public.verify(Pss::new_with_salt::<Sha1>(salt_length), &digest, signature),
-                "SHA-224" => public.verify(Pss::new_with_salt::<Sha224>(salt_length), &digest, signature),
-                "SHA-256" => public.verify(Pss::new_with_salt::<Sha256>(salt_length), &digest, signature),
-                "SHA-384" => public.verify(Pss::new_with_salt::<Sha384>(salt_length), &digest, signature),
-                "SHA-512" => public.verify(Pss::new_with_salt::<Sha512>(salt_length), &digest, signature),
-                "SHA3-256" => public.verify(Pss::new_with_salt::<Sha3_256>(salt_length), &digest, signature),
-                "SHA3-384" => public.verify(Pss::new_with_salt::<Sha3_384>(salt_length), &digest, signature),
-                "SHA3-512" => public.verify(Pss::new_with_salt::<Sha3_512>(salt_length), &digest, signature),
+                "SHA-1" => {
+                    public.verify(Pss::new_with_salt::<Sha1>(salt_length), &digest, signature)
+                }
+                "SHA-224" => public.verify(
+                    Pss::new_with_salt::<Sha224>(salt_length),
+                    &digest,
+                    signature,
+                ),
+                "SHA-256" => public.verify(
+                    Pss::new_with_salt::<Sha256>(salt_length),
+                    &digest,
+                    signature,
+                ),
+                "SHA-384" => public.verify(
+                    Pss::new_with_salt::<Sha384>(salt_length),
+                    &digest,
+                    signature,
+                ),
+                "SHA-512" => public.verify(
+                    Pss::new_with_salt::<Sha512>(salt_length),
+                    &digest,
+                    signature,
+                ),
+                "SHA3-256" => public.verify(
+                    Pss::new_with_salt::<Sha3_256>(salt_length),
+                    &digest,
+                    signature,
+                ),
+                "SHA3-384" => public.verify(
+                    Pss::new_with_salt::<Sha3_384>(salt_length),
+                    &digest,
+                    signature,
+                ),
+                "SHA3-512" => public.verify(
+                    Pss::new_with_salt::<Sha3_512>(salt_length),
+                    &digest,
+                    signature,
+                ),
                 _ => return Ok(false),
             }
         }
@@ -1874,14 +1932,15 @@ fn validate_okp_jwk(
     }
     let decode = |field: &str| {
         let value = execute::to_js_string(&execute::get_property(jwk, field)).ok()?;
-        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(value).ok()?;
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(value)
+            .ok()?;
         (bytes.len() == size).then_some(bytes)
     };
-    let public = decode("x")
-        .ok_or_else(|| named_import_error("DataError", "Invalid keyData"))?;
+    let public = decode("x").ok_or_else(|| named_import_error("DataError", "Invalid keyData"))?;
     if key_type == "private" {
-        let private = decode("d")
-            .ok_or_else(|| named_import_error("DataError", "Invalid keyData"))?;
+        let private =
+            decode("d").ok_or_else(|| named_import_error("DataError", "Invalid keyData"))?;
         if let Value::String(use_value) = execute::get_property(jwk, "use") {
             let expected = if name.starts_with("ED") { "sig" } else { "enc" };
             if use_value != expected {
@@ -1892,7 +1951,11 @@ fn validate_okp_jwk(
             }
         }
         if name.starts_with("ED") {
-            let expected_alg = if name == "ED25519" { "Ed25519" } else { "Ed448" };
+            let expected_alg = if name == "ED25519" {
+                "Ed25519"
+            } else {
+                "Ed448"
+            };
             if let Value::String(alg) = execute::get_property(jwk, "alg") {
                 if alg != expected_alg && alg != "EdDSA" {
                     return Err(named_import_error(
@@ -1914,7 +1977,11 @@ fn validate_okp_jwk(
         }
     }
     if name.starts_with("ED") {
-        let expected_alg = if name == "ED25519" { "Ed25519" } else { "Ed448" };
+        let expected_alg = if name == "ED25519" {
+            "Ed25519"
+        } else {
+            "Ed448"
+        };
         if let Value::String(alg) = execute::get_property(jwk, "alg") {
             if alg != expected_alg && alg != "EdDSA" {
                 return Err(named_import_error(
@@ -2362,9 +2429,13 @@ pub(crate) fn key_to_wire(value: &Value) -> Option<serde_json::Value> {
         return None;
     }
     let metadata = execute::get_property(value, KEY_META_PROP);
-    let data = crate::modules::crypto::bytes_from_value(&execute::get_property(value, KEY_DATA_PROP))?;
+    let data =
+        crate::modules::crypto::bytes_from_value(&execute::get_property(value, KEY_DATA_PROP))?;
     let mut wire = serde_json::Map::new();
-    wire.insert("__quench_webcrypto_key".into(), serde_json::Value::Bool(true));
+    wire.insert(
+        "__quench_webcrypto_key".into(),
+        serde_json::Value::Bool(true),
+    );
     wire.insert("metadata".into(), value_to_wire_json(&metadata));
     wire.insert(
         "data".into(),
@@ -2385,9 +2456,7 @@ pub(crate) fn key_to_wire(value: &Value) -> Option<serde_json::Value> {
 }
 
 /// Rebuild a CryptoKey received through the worker JSON boundary.
-pub(crate) fn key_from_wire(
-    wire: &serde_json::Map<String, serde_json::Value>,
-) -> Option<Value> {
+pub(crate) fn key_from_wire(wire: &serde_json::Map<String, serde_json::Value>) -> Option<Value> {
     if wire
         .get("__quench_webcrypto_key")
         .and_then(serde_json::Value::as_bool)
@@ -2449,14 +2518,21 @@ fn value_to_wire_json(value: &Value) -> serde_json::Value {
             };
             serde_json::Value::Array(
                 (0..length)
-                    .map(|index| value_to_wire_json(&execute::get_property(value, &index.to_string())))
+                    .map(|index| {
+                        value_to_wire_json(&execute::get_property(value, &index.to_string()))
+                    })
                     .collect(),
             )
         }
         Value::Object(_) | Value::ObjectAlias(_) => serde_json::Value::Object(
             execute::own_enumerable_keys(value)
                 .into_iter()
-                .map(|key| (key.clone(), value_to_wire_json(&execute::get_property(value, &key))))
+                .map(|key| {
+                    (
+                        key.clone(),
+                        value_to_wire_json(&execute::get_property(value, &key)),
+                    )
+                })
                 .collect(),
         ),
         _ => serde_json::Value::Null,
@@ -3718,7 +3794,11 @@ pub fn import_key(
                 Err(error) => return Ok(settled(Err(error))),
             }
         } else if matches!(format.as_str(), "spki" | "pkcs8") {
-            if !okp_der_key(data.as_deref().unwrap_or_default(), &format, &algorithm_name_upper) {
+            if !okp_der_key(
+                data.as_deref().unwrap_or_default(),
+                &format,
+                &algorithm_name_upper,
+            ) {
                 return Ok(settled(Err(named_import_error(
                     "DataError",
                     "Invalid key type",
@@ -3727,7 +3807,10 @@ pub fn import_key(
             data.clone().unwrap_or_default()
         } else if format == "raw" {
             let Some(raw) = data.as_deref() else {
-                return Ok(settled(Err(named_import_error("DataError", "Invalid keyData"))));
+                return Ok(settled(Err(named_import_error(
+                    "DataError",
+                    "Invalid keyData",
+                ))));
             };
             let Some((_, size)) = okp_facts(&algorithm_name_upper) else {
                 unreachable!("algorithm was checked above");
@@ -4008,20 +4091,17 @@ pub fn export_key(
                 let jwk = execute::set_property(
                     jwk,
                     "key_ops",
-                    crate::modules::clone::deep_clone(execute::get_property(
-                        &metadata, "usages",
-                    )),
+                    crate::modules::clone::deep_clone(execute::get_property(&metadata, "usages")),
                 );
                 let jwk = execute::set_property(jwk, "ext", Value::Boolean(true));
-                let crv = execute::to_js_string(&execute::get_property(&jwk, "crv"))
-                    .unwrap_or_default();
-                let alg = if crv.eq_ignore_ascii_case("Ed25519")
-                    || crv.eq_ignore_ascii_case("Ed448")
-                {
-                    Value::String(crv)
-                } else {
-                    Value::Undefined
-                };
+                let crv =
+                    execute::to_js_string(&execute::get_property(&jwk, "crv")).unwrap_or_default();
+                let alg =
+                    if crv.eq_ignore_ascii_case("Ed25519") || crv.eq_ignore_ascii_case("Ed448") {
+                        Value::String(crv)
+                    } else {
+                        Value::Undefined
+                    };
                 return Ok(settled(Ok(execute::set_property(jwk, "alg", alg))));
             }
             let alg = match name.to_ascii_uppercase().as_str() {
@@ -4314,11 +4394,16 @@ pub fn to_crypto_key(
     let requested = all_usage_names(&usages);
     if key_type == "secret" {
         if requested.is_empty() {
-            return Err(syntax_error("Usages cannot be empty when importing a secret key."));
+            return Err(syntax_error(
+                "Usages cannot be empty when importing a secret key.",
+            ));
         }
         if name == "HMAC" {
             if data.is_empty() {
-                return Err(named_import_error("DataError", "Zero-length key is not supported"));
+                return Err(named_import_error(
+                    "DataError",
+                    "Zero-length key is not supported",
+                ));
             }
             if let Value::Number(length) = execute::get_property(&algorithm, "length") {
                 if length != (data.len() * 8) as f64 {
@@ -4330,12 +4415,10 @@ pub fn to_crypto_key(
             }
         }
     } else {
-        let asymmetric = execute::to_js_string(&execute::get_property(
-            receiver,
-            "asymmetricKeyType",
-        ))
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+        let asymmetric =
+            execute::to_js_string(&execute::get_property(receiver, "asymmetricKeyType"))
+                .unwrap_or_default()
+                .to_ascii_lowercase();
         let expected = match name.as_str() {
             "ECDH" | "ECDSA" => "ec",
             "ED25519" => "ed25519",
@@ -4359,14 +4442,18 @@ pub fn to_crypto_key(
         let public_only = matches!(name.as_str(), "ECDH" | "X25519" | "X448");
         let private_only = matches!(name.as_str(), "ECDSA" | "ED25519" | "ED448");
         if (public_only && requested.iter().any(|usage| usage == "sign"))
-            || (private_only && requested.iter().any(|usage| usage == "deriveBits" || usage == "deriveKey"))
+            || (private_only
+                && requested
+                    .iter()
+                    .any(|usage| usage == "deriveBits" || usage == "deriveKey"))
         {
             return Err(syntax_error("Unsupported key usage"));
         }
         if matches!(name.as_str(), "ECDH" | "ECDSA") {
-            let requested_curve = execute::to_js_string(&execute::get_property(&algorithm, "namedCurve"))
-                .unwrap_or_default()
-                .to_ascii_lowercase();
+            let requested_curve =
+                execute::to_js_string(&execute::get_property(&algorithm, "namedCurve"))
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
             let actual_curve = execute::to_js_string(&execute::get_property(
                 &execute::get_property(receiver, "asymmetricKeyDetails"),
                 "namedCurve",
@@ -5495,13 +5582,13 @@ pub fn verify(
         "RSA-PSS" | "RSASSA-PKCS1-V1_5"
     ) {
         return Ok(settled(
-            rsa_verify_signature(algorithm, key, &data, &signature)
-                .map(Value::Boolean),
+            rsa_verify_signature(algorithm, key, &data, &signature).map(Value::Boolean),
         ));
     }
     if algorithm_name(algorithm).eq_ignore_ascii_case("ECDSA") {
-        return Ok(settled(ecdsa_verify(algorithm, key, &signature, &data)
-            .map(Value::Boolean)));
+        return Ok(settled(
+            ecdsa_verify(algorithm, key, &signature, &data).map(Value::Boolean),
+        ));
     }
     if algorithm_name(algorithm).eq_ignore_ascii_case("ED25519") {
         let verified = ed25519_public_key(key).map(|public| {
@@ -5517,7 +5604,9 @@ pub fn verify(
         return Ok(settled(verified.map(Value::Boolean)));
     }
     if algorithm_name(algorithm).eq_ignore_ascii_case("ED448") {
-        return Ok(settled(ed448_verify(algorithm, key, &signature, &data).map(Value::Boolean)));
+        return Ok(settled(
+            ed448_verify(algorithm, key, &signature, &data).map(Value::Boolean),
+        ));
     }
     let expected = signature_bytes(algorithm, key, &data);
     Ok(settled(
@@ -5618,11 +5707,9 @@ fn signature_bytes(algorithm: &Value, key: &Value, data: &[u8]) -> Result<Vec<u8
     }
     if name.eq_ignore_ascii_case("ED25519") {
         let signing = ed25519_private_key(key)?;
-        return Ok(
-            ed25519_dalek::Signer::sign(&signing, data)
-                .to_bytes()
-                .to_vec(),
-        );
+        return Ok(ed25519_dalek::Signer::sign(&signing, data)
+            .to_bytes()
+            .to_vec());
     }
     if name.eq_ignore_ascii_case("ED448") {
         return ed448_sign(algorithm, key, data);
@@ -5634,8 +5721,8 @@ fn signature_bytes(algorithm: &Value, key: &Value, data: &[u8]) -> Result<Vec<u8
 }
 
 fn ecdsa_digest(algorithm: &Value, data: &[u8]) -> Result<Vec<u8>, VmError> {
-    let hash = ecdsa_hash_name(algorithm)
-        .ok_or_else(|| not_supported("Unrecognized algorithm name"))?;
+    let hash =
+        ecdsa_hash_name(algorithm).ok_or_else(|| not_supported("Unrecognized algorithm name"))?;
     Ok(match hash.as_str() {
         "SHA-1" => Sha1::digest(data).to_vec(),
         "SHA-224" => Sha224::digest(data).to_vec(),
@@ -5715,8 +5802,8 @@ fn okp_material(key: &Value, private: bool) -> Option<Vec<u8>> {
     if data.len() == size {
         return Some(data);
     }
-    let format = execute::to_js_string(&execute::get_property(key, KEY_FORMAT_PROP))
-        .unwrap_or_default();
+    let format =
+        execute::to_js_string(&execute::get_property(key, KEY_FORMAT_PROP)).unwrap_or_default();
     let mut outer = DerReader::new(&data);
     let sequence = outer.take(0x30)?;
     if outer.offset != data.len() {
@@ -5802,7 +5889,8 @@ fn okp_der_export(name: &str, format: &str, data: &[u8]) -> Option<Vec<u8>> {
 }
 
 fn ed25519_private_key(key: &Value) -> Result<Ed25519SigningKey, VmError> {
-    let seed = okp_material(key, true).ok_or_else(|| operation_error("Invalid private key data"))?;
+    let seed =
+        okp_material(key, true).ok_or_else(|| operation_error("Invalid private key data"))?;
     let seed: [u8; 32] = seed
         .try_into()
         .map_err(|_| operation_error("Invalid private key data"))?;
@@ -5810,16 +5898,17 @@ fn ed25519_private_key(key: &Value) -> Result<Ed25519SigningKey, VmError> {
 }
 
 fn ed25519_public_key(key: &Value) -> Result<Ed25519VerifyingKey, VmError> {
-    let public = okp_material(key, false).ok_or_else(|| operation_error("Invalid public key data"))?;
+    let public =
+        okp_material(key, false).ok_or_else(|| operation_error("Invalid public key data"))?;
     let public: [u8; 32] = public
         .try_into()
         .map_err(|_| operation_error("Invalid public key data"))?;
-    Ed25519VerifyingKey::from_bytes(&public)
-        .map_err(|_| operation_error("Invalid public key data"))
+    Ed25519VerifyingKey::from_bytes(&public).map_err(|_| operation_error("Invalid public key data"))
 }
 
 fn ed448_private_key(key: &Value) -> Result<Ed448SigningKey, VmError> {
-    let seed = okp_material(key, true).ok_or_else(|| operation_error("Invalid private key data"))?;
+    let seed =
+        okp_material(key, true).ok_or_else(|| operation_error("Invalid private key data"))?;
     let seed: [u8; 57] = seed
         .try_into()
         .map_err(|_| operation_error("Invalid private key data"))?;
@@ -5827,12 +5916,12 @@ fn ed448_private_key(key: &Value) -> Result<Ed448SigningKey, VmError> {
 }
 
 fn ed448_public_key(key: &Value) -> Result<Ed448VerifyingKey, VmError> {
-    let public = okp_material(key, false).ok_or_else(|| operation_error("Invalid public key data"))?;
+    let public =
+        okp_material(key, false).ok_or_else(|| operation_error("Invalid public key data"))?;
     let public: [u8; 57] = public
         .try_into()
         .map_err(|_| operation_error("Invalid public key data"))?;
-    Ed448VerifyingKey::from_bytes(&public)
-        .map_err(|_| operation_error("Invalid public key data"))
+    Ed448VerifyingKey::from_bytes(&public).map_err(|_| operation_error("Invalid public key data"))
 }
 
 fn ed448_context(algorithm: &Value) -> Result<Option<Vec<u8>>, VmError> {
@@ -5840,13 +5929,22 @@ fn ed448_context(algorithm: &Value) -> Result<Option<Vec<u8>>, VmError> {
     if matches!(context, Value::Undefined) {
         return Ok(None);
     }
-    let context = bytes(&context)
-        .ok_or_else(|| error(Builtin::TypeError, Some("ERR_INVALID_ARG_TYPE"), "context must be an ArrayBuffer or a view"))?;
+    let context = bytes(&context).ok_or_else(|| {
+        error(
+            Builtin::TypeError,
+            Some("ERR_INVALID_ARG_TYPE"),
+            "context must be an ArrayBuffer or a view",
+        )
+    })?;
     if context.len() > 255 {
-        return Err(operation_error("ContextParams.context must be at most 255 bytes"));
+        return Err(operation_error(
+            "ContextParams.context must be at most 255 bytes",
+        ));
     }
     if !openssl_version_at_least(3, 2) && !context.is_empty() {
-        return Err(not_supported("Ed448 context is not supported by this OpenSSL"));
+        return Err(not_supported(
+            "Ed448 context is not supported by this OpenSSL",
+        ));
     }
     Ok(Some(context))
 }
@@ -5862,7 +5960,9 @@ fn openssl_version_at_least(major: u32, minor: u32) -> bool {
     else {
         return false;
     };
-    let mut parts = version.split('.').filter_map(|part| part.parse::<u32>().ok());
+    let mut parts = version
+        .split('.')
+        .filter_map(|part| part.parse::<u32>().ok());
     let Some(found_major) = parts.next() else {
         return false;
     };
@@ -5917,8 +6017,8 @@ fn ecdsa_sign(algorithm: &Value, key: &Value, data: &[u8]) -> Result<Vec<u8>, Vm
         "P-521" => 66,
         _ => return Err(not_supported("Unrecognized named curve")),
     };
-    let private = ec_material(key, true, size)
-        .ok_or_else(|| operation_error("Invalid private key data"))?;
+    let private =
+        ec_material(key, true, size).ok_or_else(|| operation_error("Invalid private key data"))?;
     let digest = ecdsa_prehash(ecdsa_digest(algorithm, data)?, size);
     match curve.as_str() {
         "P-256" => {
@@ -5966,8 +6066,8 @@ fn ecdsa_verify(
         "P-521" => 66,
         _ => return Err(not_supported("Unrecognized named curve")),
     };
-    let public = ec_material(key, false, size)
-        .ok_or_else(|| operation_error("Invalid public key data"))?;
+    let public =
+        ec_material(key, false, size).ok_or_else(|| operation_error("Invalid public key data"))?;
     let digest = ecdsa_prehash(ecdsa_digest(algorithm, data)?, size);
     Ok(match curve.as_str() {
         "P-256" => {
@@ -5978,9 +6078,7 @@ fn ecdsa_verify(
                 return Ok(false);
             };
             p256::ecdsa::signature::hazmat::PrehashVerifier::verify_prehash(
-                &verifying,
-                &digest,
-                &signature,
+                &verifying, &digest, &signature,
             )
             .is_ok()
         }
@@ -5992,9 +6090,7 @@ fn ecdsa_verify(
                 return Ok(false);
             };
             p384::ecdsa::signature::hazmat::PrehashVerifier::verify_prehash(
-                &verifying,
-                &digest,
-                &signature,
+                &verifying, &digest, &signature,
             )
             .is_ok()
         }
@@ -6006,9 +6102,7 @@ fn ecdsa_verify(
                 return Ok(false);
             };
             p521::ecdsa::signature::hazmat::PrehashVerifier::verify_prehash(
-                &verifying,
-                &digest,
-                &signature,
+                &verifying, &digest, &signature,
             )
             .is_ok()
         }
@@ -6049,6 +6143,231 @@ fn algorithm_name(value: &Value) -> String {
     }
 }
 
+fn supports_aead_shape(algorithm: &Value, name: &str) -> bool {
+    if !matches!(algorithm, Value::Object(_) | Value::ObjectAlias(_)) {
+        return false;
+    }
+    let iv = bytes(&execute::get_property(algorithm, "iv"));
+    let iv_valid = match name {
+        "CHACHA20-POLY1305" => iv.is_some_and(|iv| iv.len() == 12),
+        "AES-OCB" => iv.is_some_and(|iv| (1..=15).contains(&iv.len())),
+        _ => iv.is_some_and(|iv| !iv.is_empty()),
+    };
+    if !iv_valid {
+        return false;
+    }
+    let tag_length = execute::get_property(algorithm, "tagLength");
+    match name {
+        "CHACHA20-POLY1305" => match tag_length {
+            Value::Undefined => true,
+            Value::Number(value) => value == 128.0,
+            _ => false,
+        },
+        "AES-OCB" => match tag_length {
+            Value::Undefined => true,
+            Value::Number(value) => {
+                value.is_finite() && value.fract() == 0.0 && matches!(value as usize, 64 | 96 | 128)
+            }
+            _ => false,
+        },
+        _ => true,
+    }
+}
+
+fn supports_modern_digest_shape(algorithm: &Value, name: &str) -> bool {
+    if !matches!(algorithm, Value::Object(_) | Value::ObjectAlias(_)) {
+        return false;
+    }
+    let output_length = execute::get_property(algorithm, "outputLength");
+    let valid_output = matches!(
+        output_length,
+        Value::Number(value)
+            if value.is_finite()
+                && value.fract() == 0.0
+                && value > 0.0
+                && value <= 2_147_483_647.0
+                && value % 8.0 == 0.0
+    );
+    if !valid_output {
+        return false;
+    }
+    match name {
+        "TURBOSHAKE128" | "TURBOSHAKE256" => {
+            match execute::get_property(algorithm, "domainSeparation") {
+                Value::Undefined => true,
+                Value::Number(value) => {
+                    value.is_finite() && value.fract() == 0.0 && (1.0..=127.0).contains(&value)
+                }
+                _ => false,
+            }
+        }
+        "KT128" | "KT256" => match execute::get_property(algorithm, "customization") {
+            Value::Undefined => true,
+            value => bytes(&value).is_some_and(|customization| customization.len() <= 512),
+        },
+        _ => true,
+    }
+}
+
+fn supports_rsa_keygen_shape(algorithm: &Value) -> bool {
+    if !matches!(algorithm, Value::Object(_) | Value::ObjectAlias(_)) {
+        return false;
+    }
+    let modulus = execute::get_property(algorithm, "modulusLength");
+    let modulus_valid = matches!(
+        modulus,
+        Value::Number(value)
+            if value.is_finite() && value.fract() == 0.0 && value >= 512.0
+    );
+    let exponent_valid = bytes(&execute::get_property(algorithm, "publicExponent"))
+        .is_some_and(|exponent| exponent == [1, 0, 1]);
+    modulus_valid && exponent_valid && algorithm_hash(algorithm).is_some()
+}
+
+fn supports_symmetric_keygen_shape(algorithm: &Value, name: &str) -> bool {
+    if !matches!(algorithm, Value::Object(_) | Value::ObjectAlias(_)) {
+        return false;
+    }
+    match name {
+        "HMAC" => {
+            let Some(hash) = algorithm_hash(algorithm) else {
+                return false;
+            };
+            match execute::get_property(algorithm, "length") {
+                Value::Undefined => !hash.starts_with("SHA3-"),
+                Value::Number(value) => value.is_finite() && value.fract() == 0.0 && value > 0.0,
+                _ => false,
+            }
+        }
+        "AES-CBC" | "AES-CTR" | "AES-GCM" | "AES-KW" => matches!(
+            execute::get_property(algorithm, "length"),
+            Value::Number(value)
+                if value.is_finite() && value.fract() == 0.0
+                    && matches!(value as usize, 128 | 192 | 256)
+        ),
+        "AES-OCB" => matches!(
+            execute::get_property(algorithm, "length"),
+            Value::Number(value)
+                if value.is_finite() && value.fract() == 0.0
+                    && matches!(value as usize, 128 | 256)
+        ),
+        _ => true,
+    }
+}
+
+fn supports_ec_keygen_shape(algorithm: &Value) -> bool {
+    if !matches!(algorithm, Value::Object(_) | Value::ObjectAlias(_)) {
+        return false;
+    }
+    matches!(
+        execute::to_js_string(&execute::get_property(algorithm, "namedCurve"))
+            .ok()
+            .as_deref(),
+        Some("P-256" | "P-384" | "P-521")
+    )
+}
+
+fn supports_derive_bits_shape(algorithm: &Value, name: &str, length: Option<&Value>) -> bool {
+    let maximum = match name {
+        "ECDH" | "X25519" => 256.0,
+        "X448" => 448.0,
+        "HKDF" | "PBKDF2" => 65_280.0,
+        _ => return false,
+    };
+    if let Some(length) = length {
+        if let Value::Number(length) = length {
+            if *length < 0.0 || length.fract() != 0.0 || *length > maximum || *length % 8.0 != 0.0 {
+                return false;
+            }
+        } else if !matches!(length, Value::Undefined) {
+            return false;
+        }
+    }
+    if !matches!(algorithm, Value::Object(_) | Value::ObjectAlias(_)) {
+        return false;
+    }
+    match name {
+        "HKDF" => algorithm_hash(algorithm).is_some(),
+        "PBKDF2" => {
+            algorithm_hash(algorithm).is_some()
+                && matches!(
+                    execute::get_property(algorithm, "iterations"),
+                    Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0
+                )
+        }
+        "ECDH" | "X25519" | "X448" => {
+            let public = execute::get_property(algorithm, "public");
+            (matches!(public, Value::Object(_) | Value::ObjectAlias(_))
+                && (!matches!(
+                    execute::get_property(&public, KEY_MARKER_PROP),
+                    Value::Boolean(true)
+                ) || (execute::to_js_string(&key_slot(&public, "type"))
+                    .ok()
+                    .as_deref()
+                    == Some("public")
+                    && algorithm_name(&key_slot(&public, "algorithm")).eq_ignore_ascii_case(name))))
+        }
+        _ => false,
+    }
+}
+
+fn supports_derive_key_shape(source: &Value, source_name: &str, target: Option<&Value>) -> bool {
+    let Some(target) = target else {
+        return false;
+    };
+    let source_limit = match source_name {
+        "ECDH" | "X25519" => 256.0,
+        "X448" => 448.0,
+        "HKDF" | "PBKDF2" => 65_280.0,
+        _ => return false,
+    };
+    if matches!(target, Value::String(_)) {
+        return matches!(source_name, "ECDH" | "X25519" | "X448")
+            && algorithm_name(target).eq_ignore_ascii_case("HKDF");
+    }
+    if !matches!(target, Value::Object(_) | Value::ObjectAlias(_)) {
+        return false;
+    }
+    let target_name = algorithm_name(target).to_ascii_uppercase();
+    match target_name.as_str() {
+        "AES-CBC" | "AES-CTR" | "AES-GCM" | "AES-KW" => matches!(
+            execute::get_property(target, "length"),
+            Value::Number(value)
+                if value.is_finite() && value.fract() == 0.0
+                    && matches!(value as usize, 128 | 192 | 256)
+                && (value <= source_limit)
+        ),
+        "AES-OCB" => matches!(
+            execute::get_property(target, "length"),
+            Value::Number(value)
+                if value.is_finite() && value.fract() == 0.0
+                    && matches!(value as usize, 128 | 256)
+                && (value <= source_limit)
+        ),
+        "HMAC" => {
+            let Some(hash) = algorithm_hash(target) else {
+                return false;
+            };
+            let length = match execute::get_property(target, "length") {
+                Value::Undefined => hmac_default_length(target).map(|value| value as f64),
+                Value::Number(value)
+                    if value.is_finite() && value.fract() == 0.0 && value > 0.0 =>
+                {
+                    Some(value)
+                }
+                _ => None,
+            };
+            let Some(length) = length else {
+                return false;
+            };
+            source_limit >= length
+                && !(hash.starts_with("SHA3-")
+                    && matches!(execute::get_property(target, "length"), Value::Undefined))
+        }
+        _ => false,
+    }
+}
+
 /// Rust-owned implementation of `SubtleCrypto.supports`.
 ///
 /// The bootstrap surface must not decide algorithm support: that is an
@@ -6063,22 +6382,20 @@ pub fn supports(
 ) -> Result<Value, VmError> {
     let operation =
         execute::to_js_string(args.first().unwrap_or(&Value::Undefined)).unwrap_or_default();
-    if matches!(operation.as_str(), "deriveBits" | "deriveKey") {
+    if operation == "deriveBits" {
         if let Some(length) = args.get(2) {
-            let valid = matches!(
-                length,
-                Value::Number(value)
-                    if value.is_finite()
+            let valid = match length {
+                Value::Undefined => true,
+                Value::Number(value) => {
+                    value.is_finite()
                         && value.fract() == 0.0
                         && *value >= 0.0
                         && *value <= 2_147_483_647.0
-            );
+                }
+                _ => false,
+            };
             if !valid {
-                return Err(error(
-                    Builtin::TypeError,
-                    Some("ERR_OUT_OF_RANGE"),
-                    "The requested length is outside the supported range",
-                ));
+                return Ok(Value::Boolean(false));
             }
         }
     }
@@ -6091,15 +6408,43 @@ pub fn supports(
     // example, a string `AES-CBC` lacks the required `iv`).
     let object_algorithm = matches!(algorithm, Value::Object(_) | Value::ObjectAlias(_));
     let required_member = |member: &str| {
-        object_algorithm
-            && !matches!(execute::get_property(algorithm, member), Value::Undefined)
+        object_algorithm && !matches!(execute::get_property(algorithm, member), Value::Undefined)
     };
     let shape_supported = match (operation.as_str(), upper.as_str()) {
         ("encrypt" | "decrypt", "AES-CBC" | "AES-GCM") => required_member("iv"),
         ("encrypt" | "decrypt", "AES-CTR") => {
             required_member("counter") && required_member("length")
         }
-        ("sign" | "verify", "ECDSA") => required_member("hash"),
+        ("encrypt" | "decrypt", "AES-OCB" | "CHACHA20-POLY1305") => {
+            supports_aead_shape(algorithm, upper.as_str())
+        }
+        ("sign" | "verify", "ECDSA") => {
+            required_member("hash") && algorithm_hash(algorithm).is_some()
+        }
+        ("sign" | "verify", "ED448") => match execute::get_property(algorithm, "context") {
+            Value::Undefined => true,
+            value => bytes(&value).is_some_and(|context| {
+                context.len() <= 255 && (context.is_empty() || openssl_version_at_least(3, 2))
+            }),
+        },
+        ("sign" | "verify", "KMAC128" | "KMAC256") => object_algorithm,
+        ("digest", "TURBOSHAKE128" | "TURBOSHAKE256" | "KT128" | "KT256") => {
+            supports_modern_digest_shape(algorithm, upper.as_str())
+        }
+        ("generateKey", "RSA-OAEP" | "RSA-PSS" | "RSASSA-PKCS1-V1_5") => {
+            supports_rsa_keygen_shape(algorithm)
+        }
+        ("generateKey", "ECDSA" | "ECDH") => supports_ec_keygen_shape(algorithm),
+        ("generateKey", "AES-CBC" | "AES-CTR" | "AES-GCM" | "AES-KW" | "AES-OCB" | "HMAC") => {
+            supports_symmetric_keygen_shape(algorithm, upper.as_str())
+        }
+        ("deriveBits", "HKDF" | "PBKDF2" | "ECDH" | "X25519" | "X448") => {
+            supports_derive_bits_shape(algorithm, upper.as_str(), args.get(2))
+        }
+        ("deriveKey", "HKDF" | "PBKDF2" | "ECDH" | "X25519" | "X448") => {
+            supports_derive_bits_shape(algorithm, upper.as_str(), None)
+                && supports_derive_key_shape(algorithm, upper.as_str(), args.get(2))
+        }
         ("sign" | "verify", "RSA-PSS") => required_member("saltLength"),
         ("encrypt" | "decrypt", "RSA-OAEP") => {
             !object_algorithm
@@ -6159,6 +6504,10 @@ pub fn supports(
                 | "SHA3-256"
                 | "SHA3-384"
                 | "SHA3-512"
+                | "TURBOSHAKE128"
+                | "TURBOSHAKE256"
+                | "KT128"
+                | "KT256"
         ),
         "generateKey" => matches!(
             upper.as_str(),
