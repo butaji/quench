@@ -1472,7 +1472,7 @@ fn native_unary_shared_entry_reuses_live_owner_and_recovers_after_eviction() {
     assert_eq!(plan.execute(1.5), Ok(-2.0));
     let used = shared.borrow().used();
     assert!(matches!(
-        plan.installed,
+        plan.physical.installed(),
         super::InstalledUnaryEntry::NumberShared(_) | super::InstalledUnaryEntry::IntegerShared(_)
     ));
     assert_eq!(plan.execute(1.5), Ok(-2.0));
@@ -1481,7 +1481,7 @@ fn native_unary_shared_entry_reuses_live_owner_and_recovers_after_eviction() {
     assert_eq!(plan.execute(1.5), Ok(-2.0));
     assert!(
         matches!(
-            plan.installed,
+            plan.physical.installed(),
             super::InstalledUnaryEntry::NumberShared(_)
                 | super::InstalledUnaryEntry::IntegerShared(_)
         ),
@@ -2778,32 +2778,32 @@ fn ordinary_source_lowering_executes_tagged_identity_inequality() {
 #[test]
 fn native_add_chain_executes_two_ops_with_one_entry() {
     let mut plan = super::NativeAddChainPlan {
-        storage: super::PhysicalStorage::Local(None),
-        physical: super::PhysicalState::new(),
+        physical: super::PhysicalInstallation::local(
+            super::InstalledF64x3Entry::Unpublished,
+        ),
         bindings: crate::stencil_plan::F64x3Bindings {
             inputs: [0, 1, 2],
             output: 3,
         },
         control: crate::stencil_cfg::RegionControlPlan::linear(0, 2).expect("linear control"),
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
-        installed: super::InstalledF64x3Entry::Unpublished,
         last_native_view: None,
         native_entry_count: 0,
     };
     assert_eq!(plan.execute(1.5, 2.25, 4.0), Ok(7.75));
     assert!(matches!(
-        plan.installed,
+        plan.physical.installed(),
         super::InstalledF64x3Entry::Local(_)
     ));
     assert_eq!(plan.native_entry_count(), 1);
-    let used = plan.storage.used();
+    let used = plan.physical.storage.used();
     let view =
         crate::stencil_select::select_physical(crate::stencil_select::add_chain_region_key())
             .expect("selected chain");
     let tail = view.fallthrough.expect("declared native successor");
     assert_eq!(used, view.stencil.bytes.len() + tail.stencil.bytes.len());
     assert_eq!(plan.execute(-2.0, 3.0, 5.0), Ok(6.0));
-    assert_eq!(plan.storage.used(), used);
+    assert_eq!(plan.physical.storage.used(), used);
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -2861,7 +2861,7 @@ fn native_add_chain_shared_entry_reuses_owner_after_eviction() {
     assert_eq!(plan.execute(1.0, 2.0, 3.0), Ok(6.0));
     let used = shared.borrow().used();
     assert!(matches!(
-        plan.installed,
+        plan.physical.installed(),
         super::InstalledF64x3Entry::Shared(_)
     ));
     assert_eq!(plan.execute(2.0, 4.0, 8.0), Ok(14.0));
@@ -2869,7 +2869,7 @@ fn native_add_chain_shared_entry_reuses_owner_after_eviction() {
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert_eq!(plan.execute(2.0, 4.0, 8.0), Ok(14.0));
     assert!(matches!(
-        plan.installed,
+        plan.physical.installed(),
         super::InstalledF64x3Entry::Shared(_)
     ));
 }

@@ -2892,27 +2892,20 @@ enum InstalledNullishEntry {
 
 pub(crate) struct NativeNullishPlan {
     key: crate::stencil_fact::RegionKey,
-    storage: PhysicalStorage,
-    physical: PhysicalState,
+    physical: PhysicalInstallation<InstalledNullishEntry>,
     site: crate::quickening::QuickeningSite<4>,
-    installed: InstalledNullishEntry,
     #[cfg(test)]
     native_entry_count: u64,
 }
 
 impl NativeNullishPlan {
-    #[inline]
-    fn clear_shared_capabilities(&mut self) {
-        reset_installed!(self, InstalledNullishEntry::Unpublished);
-    }
-
     pub(crate) fn new_with_shared(
         instruction: crate::ir::Instruction,
         policy: crate::stencil_policy::ExecutionPolicy,
         shared: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
     ) -> Option<Self> {
         let mut plan = Self::new(instruction, policy)?;
-        plan.storage = PhysicalStorage::Shared(shared);
+        plan.physical.use_shared(shared);
         Some(plan)
     }
 
@@ -2931,10 +2924,8 @@ impl NativeNullishPlan {
             }))
         .then_some(Self {
             key,
-            storage: PhysicalStorage::Local(None),
-            physical: PhysicalState::new(),
+            physical: PhysicalInstallation::local(InstalledNullishEntry::Unpublished),
             site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Unary),
-            installed: InstalledNullishEntry::Unpublished,
             #[cfg(test)]
             native_entry_count: 0,
         })
@@ -2947,8 +2938,8 @@ impl NativeNullishPlan {
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn execute(&mut self, bits: u64) -> Result<bool, crate::stencil_arena::ArenaError> {
-        if let Some(shared) = self.storage.shared() {
-            if let InstalledNullishEntry::Shared(owned) = self.installed {
+        if let Some(shared) = self.physical.storage.shared() {
+            if let InstalledNullishEntry::Shared(owned) = self.physical.installed() {
                 if let Ok(result) = invoke_shared_entry!(shared, owned, |entry| entry(bits)) {
                     #[cfg(test)]
                     {
@@ -2956,9 +2947,9 @@ impl NativeNullishPlan {
                     }
                     return Ok(result != 0);
                 }
-                self.clear_shared_capabilities();
+                self.physical.clear(InstalledNullishEntry::Unpublished);
             }
-            let (address, entry) = {
+            let address = {
                 let values = crate::stencil_fact::PatchValues::from_site(&self.site)
                     .with_constant_bits(0x7ff8_4000_0000_0003);
                 let mut slab = shared.borrow_mut();
@@ -2968,12 +2959,17 @@ impl NativeNullishPlan {
                 )
                 .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
                 let address =
-                    slab.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
+                    slab.render_physical_view_or_get(
+                        &mut self.physical.state.cache,
+                        view,
+                        &values,
+                    )?;
                 slab.make_executable(address)?;
-                (address, slab.word_bool_entry(address)?)
+                slab.word_bool_entry(address)?;
+                address
             };
             let owned = shared.borrow().owned_word_bool_entry(address)?;
-            self.installed = InstalledNullishEntry::Shared(owned);
+            self.physical.publish(InstalledNullishEntry::Shared(owned));
             let result =
                 invoke_shared_entry!(shared, owned, |entry| entry(bits)).map(|result| result != 0);
             if result.is_ok() {
@@ -2982,12 +2978,12 @@ impl NativeNullishPlan {
                     self.native_entry_count = self.native_entry_count.saturating_add(1);
                 }
             } else {
-                self.clear_shared_capabilities();
+                self.physical.clear(InstalledNullishEntry::Unpublished);
             }
             return result;
         }
-        if let InstalledNullishEntry::Local(address) = self.installed {
-            if let Some(arena) = self.storage.local() {
+        if let InstalledNullishEntry::Local(address) = self.physical.installed() {
+            if let Some(arena) = self.physical.storage.local() {
                 if let Ok(entry) = arena.word_bool_entry(address) {
                     #[cfg(test)]
                     {
@@ -2996,25 +2992,28 @@ impl NativeNullishPlan {
                     return Ok(entry(bits) != 0);
                 }
             }
-            self.installed = InstalledNullishEntry::Unpublished;
+            self.physical.publish(InstalledNullishEntry::Unpublished);
         }
         let values = crate::stencil_fact::PatchValues::from_site(&self.site)
             .with_constant_bits(0x7ff8_4000_0000_0003);
-        let arena = self.storage.local_mut()?;
         let view = crate::stencil_select::select_physical_for_abi(
             self.key,
             crate::stencil_select::RegionAbi::ScalarWordBool,
         )
         .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-        let address = arena.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
-        arena.make_executable()?;
-        let entry = arena.word_bool_entry(address)?;
-        self.installed = InstalledNullishEntry::Local(address);
+        let (address, result) = {
+            let arena = self.physical.storage.local_mut()?;
+            let address =
+                arena.render_physical_view_or_get(&mut self.physical.state.cache, view, &values)?;
+            arena.make_executable()?;
+            (address, arena.word_bool_entry(address)?(bits) != 0)
+        };
+        self.physical.publish(InstalledNullishEntry::Local(address));
         #[cfg(test)]
         {
             self.native_entry_count = self.native_entry_count.saturating_add(1);
         }
-        Ok(entry(bits) != 0)
+        Ok(result)
     }
 
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -3028,7 +3027,7 @@ impl std::fmt::Debug for NativeNullishPlan {
         formatter
             .debug_struct("NativeNullishPlan")
             .field("key", &self.key)
-            .field("cache_len", &self.physical.cache.len())
+            .field("cache_len", &self.physical.state.cache.len())
             .finish()
     }
 }
@@ -3210,12 +3209,10 @@ enum InstalledUnaryEntry {
 }
 
 pub(crate) struct NativeUnaryPlan {
-    storage: PhysicalStorage,
-    physical: PhysicalState,
+    physical: PhysicalInstallation<InstalledUnaryEntry>,
     site: crate::quickening::QuickeningSite<4>,
     key: crate::stencil_fact::RegionKey,
     kind: NativeUnaryKind,
-    installed: InstalledUnaryEntry,
     #[cfg(test)]
     native_entry_count: u64,
 }
@@ -3225,24 +3222,19 @@ impl std::fmt::Debug for NativeUnaryPlan {
         formatter
             .debug_struct("NativeUnaryPlan")
             .field("key", &self.key)
-            .field("cache_len", &self.physical.cache.len())
+            .field("cache_len", &self.physical.state.cache.len())
             .finish()
     }
 }
 
 impl NativeUnaryPlan {
-    #[inline]
-    fn clear_shared_capabilities(&mut self) {
-        reset_installed!(self, InstalledUnaryEntry::Unpublished);
-    }
-
     fn new_with_shared(
         instruction: crate::ir::Instruction,
         policy: crate::stencil_policy::ExecutionPolicy,
         shared: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
     ) -> Option<Self> {
         let mut plan = Self::new(instruction, policy)?;
-        plan.storage = PhysicalStorage::Shared(shared);
+        plan.physical.use_shared(shared);
         Some(plan)
     }
 
@@ -3269,13 +3261,10 @@ impl NativeUnaryPlan {
                 record.executable && record.abi == abi && validate_physical_template(record).is_ok()
             }))
         .then_some(Self {
-            storage: PhysicalStorage::Local(None),
-            physical: PhysicalState::new(),
+            physical: PhysicalInstallation::local(InstalledUnaryEntry::Unpublished),
             site: crate::quickening::QuickeningSite::new(instruction.opcode),
             key,
             kind,
-            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            installed: InstalledUnaryEntry::Unpublished,
             #[cfg(test)]
             native_entry_count: 0,
         })
@@ -3295,12 +3284,12 @@ impl NativeUnaryPlan {
         shared: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
         value: f64,
     ) -> Result<f64, crate::stencil_arena::ArenaError> {
-        if let InstalledUnaryEntry::NumberShared(owned) = self.installed {
+        if let InstalledUnaryEntry::NumberShared(owned) = self.physical.installed() {
             if let Ok(result) = invoke_shared_entry!(shared, owned, |entry| entry(value)) {
                 self.note_entry();
                 return Ok(result);
             }
-            self.clear_shared_capabilities();
+            self.physical.clear(InstalledUnaryEntry::Unpublished);
         }
         let values = crate::stencil_fact::PatchValues::from_site(&self.site)
             .with_constant_bits(0x8000_0000_0000_0000);
@@ -3312,19 +3301,19 @@ impl NativeUnaryPlan {
             )
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
             let address =
-                slab.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
+                slab.render_physical_view_or_get(&mut self.physical.state.cache, view, &values)?;
             slab.make_executable(address)?;
             address
         };
         let owned = shared.borrow().owned_f64_unary_entry(address)?;
-        self.installed = InstalledUnaryEntry::NumberShared(owned);
+        self.physical.publish(InstalledUnaryEntry::NumberShared(owned));
         match invoke_shared_entry!(shared, owned, |entry| entry(value)) {
             Ok(result) => {
                 self.note_entry();
                 Ok(result)
             }
             Err(error) => {
-                self.clear_shared_capabilities();
+                self.physical.clear(InstalledUnaryEntry::Unpublished);
                 Err(error)
             }
         }
@@ -3337,32 +3326,35 @@ impl NativeUnaryPlan {
     ) -> Result<f64, crate::stencil_arena::ArenaError> {
         let values = crate::stencil_fact::PatchValues::from_site(&self.site)
             .with_constant_bits(0x8000_0000_0000_0000);
-        if let InstalledUnaryEntry::NumberLocal(address) = self.installed {
-            if let Some(arena) = self.storage.local() {
+        if let InstalledUnaryEntry::NumberLocal(address) = self.physical.installed() {
+            if let Some(arena) = self.physical.storage.local() {
                 if let Ok(entry) = arena.f64_unary_entry(address) {
                     self.note_entry();
                     return Ok(entry(value));
                 }
             }
-            self.installed = InstalledUnaryEntry::Unpublished;
+            self.physical.publish(InstalledUnaryEntry::Unpublished);
         }
-        let arena = self.storage.local_mut()?;
         let view = crate::stencil_select::select_physical_for_abi(
             self.key,
             crate::stencil_select::RegionAbi::ScalarF64Unary,
         )
         .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-        let address = arena.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
-        arena.make_executable()?;
-        let entry = arena.f64_unary_entry(address)?;
-        self.installed = InstalledUnaryEntry::NumberLocal(address);
+        let (address, result) = {
+            let arena = self.physical.storage.local_mut()?;
+            let address =
+                arena.render_physical_view_or_get(&mut self.physical.state.cache, view, &values)?;
+            arena.make_executable()?;
+            (address, arena.f64_unary_entry(address)?(value))
+        };
+        self.physical.publish(InstalledUnaryEntry::NumberLocal(address));
         self.note_entry();
-        Ok(entry(value))
+        Ok(result)
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn execute_number(&mut self, value: f64) -> Result<f64, crate::stencil_arena::ArenaError> {
-        if let Some(shared) = self.storage.shared() {
+        if let Some(shared) = self.physical.storage.shared() {
             return self.execute_number_shared(shared, value);
         }
         self.execute_number_local(value)
@@ -3376,15 +3368,15 @@ impl NativeUnaryPlan {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
         }
         let operand = number_to_int32(value);
-        if let Some(shared) = self.storage.shared() {
+        if let Some(shared) = self.physical.storage.shared() {
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            if let InstalledUnaryEntry::IntegerShared(owned) = self.installed {
+            if let InstalledUnaryEntry::IntegerShared(owned) = self.physical.installed() {
                 match invoke_shared_entry!(shared, owned, |entry| entry(operand)) {
                     Ok(result) => {
                         self.note_entry();
                         return Ok(f64::from(result));
                     }
-                    Err(_) => self.clear_shared_capabilities(),
+                    Err(_) => self.physical.clear(InstalledUnaryEntry::Unpublished),
                 }
             }
             let values = crate::stencil_fact::PatchValues::from_site(&self.site);
@@ -3396,41 +3388,49 @@ impl NativeUnaryPlan {
                 )
                 .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
                 let address =
-                    slab.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
+                    slab.render_physical_view_or_get(
+                        &mut self.physical.state.cache,
+                        view,
+                        &values,
+                    )?;
                 slab.make_executable(address)?;
                 Ok(address)
             })();
             let address = rendered.map_err(|error| {
-                self.physical.clear();
+                self.physical.clear(InstalledUnaryEntry::Unpublished);
                 error
             })?;
             let owned = shared.borrow().owned_i32_unary_entry(address)?;
             let result = match invoke_shared_entry!(shared, owned, |entry| entry(operand)) {
                 Ok(result) => result,
                 Err(error) => {
-                    self.clear_shared_capabilities();
+                    self.physical.clear(InstalledUnaryEntry::Unpublished);
                     return Err(error);
                 }
             };
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             {
-                self.installed = InstalledUnaryEntry::IntegerShared(owned);
+                self.physical
+                    .publish(InstalledUnaryEntry::IntegerShared(owned));
             }
             self.note_entry();
             return Ok(f64::from(result));
         }
         let values = crate::stencil_fact::PatchValues::from_site(&self.site);
-        let arena = self.storage.local_mut()?;
         let view = crate::stencil_select::select_physical_for_abi(
             self.key,
             crate::stencil_select::RegionAbi::ScalarI32,
         )
         .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-        let address = arena.render_physical_view_or_get(&mut self.physical.cache, view, &values)?;
-        arena.make_executable()?;
-        let entry = arena.i32_unary_entry(address)?;
-        self.installed = InstalledUnaryEntry::IntegerLocal(address);
-        let result = entry(operand);
+        let (address, result) = {
+            let arena = self.physical.storage.local_mut()?;
+            let address =
+                arena.render_physical_view_or_get(&mut self.physical.state.cache, view, &values)?;
+            arena.make_executable()?;
+            (address, arena.i32_unary_entry(address)?(operand))
+        };
+        self.physical
+            .publish(InstalledUnaryEntry::IntegerLocal(address));
         self.note_entry();
         Ok(f64::from(result))
     }
@@ -3448,12 +3448,10 @@ enum InstalledF64x3Entry {
 }
 
 pub(crate) struct NativeAddChainPlan {
-    storage: PhysicalStorage,
-    physical: PhysicalState,
+    physical: PhysicalInstallation<InstalledF64x3Entry>,
     bindings: crate::stencil_plan::F64x3Bindings,
     control: crate::stencil_cfg::RegionControlPlan,
     site: crate::quickening::QuickeningSite<4>,
-    installed: InstalledF64x3Entry,
     #[cfg(test)]
     last_native_view: Option<crate::stencil_select::PhysicalStencilView>,
     #[cfg(test)]
@@ -3463,7 +3461,7 @@ pub(crate) struct NativeAddChainPlan {
 impl NativeAddChainPlan {
     #[inline]
     fn clear_shared_capabilities(&mut self) {
-        reset_installed!(self, InstalledF64x3Entry::Unpublished);
+        self.physical.clear(InstalledF64x3Entry::Unpublished);
         #[cfg(test)]
         {
             self.last_native_view = None;
@@ -3477,7 +3475,7 @@ impl NativeAddChainPlan {
         control: crate::stencil_cfg::RegionControlPlan,
     ) -> Option<Self> {
         let mut plan = Self::new(policy, bindings, control)?;
-        plan.storage = PhysicalStorage::Shared(shared_arena);
+        plan.physical.use_shared(shared_arena);
         Some(plan)
     }
 
@@ -3505,12 +3503,10 @@ impl NativeAddChainPlan {
             && crate::stencil_region_layout::validate_selected_control(view, &control).is_ok())
         .then_some(())?;
         Some(Self {
-            storage: PhysicalStorage::Local(None),
-            physical: PhysicalState::new(),
+            physical: PhysicalInstallation::local(InstalledF64x3Entry::Unpublished),
             bindings,
             control,
             site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
-            installed: InstalledF64x3Entry::Unpublished,
             #[cfg(test)]
             last_native_view: None,
             #[cfg(test)]
@@ -3548,7 +3544,7 @@ impl NativeAddChainPlan {
         third: f64,
     ) -> Result<Option<f64>, crate::stencil_arena::ArenaError> {
         let (Some(shared), InstalledF64x3Entry::Shared(owned)) =
-            (self.storage.shared(), self.installed)
+            (self.physical.storage.shared(), self.physical.installed())
         else {
             return Ok(None);
         };
@@ -3577,6 +3573,7 @@ impl NativeAddChainPlan {
         crate::stencil_arena::ArenaError,
     > {
         let shared = self
+            .physical
             .storage
             .shared()
             .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
@@ -3590,7 +3587,7 @@ impl NativeAddChainPlan {
             crate::stencil_region_layout::validate_selected_control(view, &self.control)
                 .map_err(|_| crate::stencil_arena::ArenaError::ProtectionFailed)?;
             let address = slab.render_controlled_physical_view_or_get(
-                &mut self.physical.cache,
+                &mut self.physical.state.cache,
                 view,
                 values,
                 &self.control,
@@ -3601,12 +3598,12 @@ impl NativeAddChainPlan {
         let (address, _view) = match rendered {
             Ok(rendered) => rendered,
             Err(error) => {
-                self.physical.clear();
+                self.physical.clear(InstalledF64x3Entry::Unpublished);
                 return Err(error);
             }
         };
         let owned = shared.borrow().owned_f64x3_entry(address)?;
-        self.installed = InstalledF64x3Entry::Shared(owned);
+        self.physical.publish(InstalledF64x3Entry::Shared(owned));
         #[cfg(test)]
         {
             self.last_native_view = Some(_view);
@@ -3624,6 +3621,7 @@ impl NativeAddChainPlan {
         third: f64,
     ) -> Result<f64, crate::stencil_arena::ArenaError> {
         let shared = self
+            .physical
             .storage
             .shared()
             .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
@@ -3664,9 +3662,9 @@ impl NativeAddChainPlan {
         crate::stencil_region_layout::validate_selected_control(view, &self.control)
             .map_err(|_| crate::stencil_arena::ArenaError::ProtectionFailed)?;
         let result = (|| {
-            let arena = self.storage.local_mut()?;
+            let arena = self.physical.storage.local_mut()?;
             let address = arena.render_controlled_physical_view_or_get(
-                &mut self.physical.cache,
+                &mut self.physical.state.cache,
                 view,
                 values,
                 &self.control,
@@ -3684,21 +3682,22 @@ impl NativeAddChainPlan {
                 );
             }
             self.note_entry();
-            if let Some(arena) = self.storage.local() {
+            if let Some(arena) = self.physical.storage.local() {
                 let signature = crate::stencil_select::select_physical(key)
                     .expect("installed view")
                     .cache_signature(&values);
-                if let Some(address) = self.physical.cache.get_owned(key, signature, arena.id()) {
-                    self.installed = arena
+                if let Some(address) = self.physical.state.cache.get_owned(key, signature, arena.id()) {
+                    let installed = arena
                         .f64x3_entry(address)
                         .ok()
                         .map(|_| InstalledF64x3Entry::Local(address))
                         .unwrap_or(InstalledF64x3Entry::Unpublished);
+                    self.physical.publish(installed);
                 }
             }
         } else {
-            self.storage.reset_local();
-            self.physical.clear();
+            self.physical.storage.reset_local();
+            self.physical.clear(InstalledF64x3Entry::Unpublished);
         }
         result
     }
@@ -3711,20 +3710,20 @@ impl NativeAddChainPlan {
         rhs: f64,
         third: f64,
     ) -> Result<f64, crate::stencil_arena::ArenaError> {
-        if self.storage.shared().is_none() {
-            if let InstalledF64x3Entry::Local(address) = self.installed {
-                if let Some(arena) = self.storage.local() {
+        if self.physical.storage.shared().is_none() {
+            if let InstalledF64x3Entry::Local(address) = self.physical.installed() {
+                if let Some(arena) = self.physical.storage.local() {
                     if let Ok(entry) = arena.f64x3_entry(address) {
                         let result = unsafe { invoke_f64x3_entry(entry, lhs, rhs, third) };
                         self.note_entry();
                         return Ok(result);
                     }
                 }
-                self.installed = InstalledF64x3Entry::Unpublished;
+                self.physical.publish(InstalledF64x3Entry::Unpublished);
             }
         }
         let key = crate::stencil_select::add_chain_region_key();
-        if self.physical.lifecycle.observe_site(&self.site, key, true)
+        if self.physical.state.lifecycle.observe_site(&self.site, key, true)
             == crate::stencil_lifecycle::StencilState::Retired
         {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
@@ -3734,7 +3733,7 @@ impl NativeAddChainPlan {
         }
         let site = self.site.clone();
         let values = crate::stencil_fact::PatchValues::from_site(&site);
-        if self.storage.shared().is_some() {
+        if self.physical.storage.shared().is_some() {
             return self.render_shared(key, &values, lhs, rhs, third);
         }
         self.render_local(key, &values, lhs, rhs, third)
@@ -3745,8 +3744,8 @@ impl std::fmt::Debug for NativeAddChainPlan {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("NativeAddChainPlan")
-            .field("used_bytes", &self.storage.used())
-            .field("cache_len", &self.physical.cache.len())
+            .field("used_bytes", &self.physical.storage.used())
+            .field("cache_len", &self.physical.state.cache.len())
             .finish()
     }
 }
