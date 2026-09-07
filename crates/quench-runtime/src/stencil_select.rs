@@ -91,6 +91,10 @@ macro_rules! region_abi_catalog {
         pub enum RegionAbi { $( $name ),+ }
 
         impl RegionAbi {
+            pub const fn identity_name(self) -> &'static str {
+                match self { $(Self::$name => stringify!($name)),+ }
+            }
+
             pub const fn accepts_region_context(self) -> bool {
                 match self { $(Self::$name => $region_context),+ }
             }
@@ -348,20 +352,67 @@ impl PhysicalStencilView {
 
 fn physical_identity_hash(view: PhysicalStencilView, patch: u64) -> u64 {
     let mut hash = patch.wrapping_add(0xcbf2_9ce4_8422_2325);
-    let identity = view
-        .artifact_id
-        .as_bytes()
-        .iter()
-        .chain(view.fingerprint.unwrap_or_default().as_bytes());
-    for byte in identity {
-        hash = hash
-            .wrapping_mul(0x1000_0000_01b3)
-            .wrapping_add(u64::from(*byte));
+    hash = hash_bytes(hash, view.artifact_id.as_bytes());
+    hash = hash_bytes(hash, view.fingerprint.unwrap_or_default().as_bytes());
+    hash = hash_bytes(hash, view.compiler.unwrap_or_default().as_bytes());
+    hash = hash_bytes(hash, view.target.unwrap_or_default().as_bytes());
+    hash = hash_bytes(hash, view.abi.identity_name().as_bytes());
+    hash = hash_bytes(hash, view.stencil.bytes);
+    hash = hash_bytes(hash, view.data);
+    hash = hash_u64(hash, u64::from(view.entry));
+    hash = hash_u64(hash, continuation_tag(view.continuation_abi));
+    hash = hash_u64(hash, u64::from(view.executable));
+    hash = hash_u64(hash, u64::from(view.template_calls_helper));
+    for entry in view.external_entries {
+        hash = hash_u64(hash, u64::from(*entry));
+    }
+    for hole in view.stencil.holes {
+        hash = hash_hole(hash, *hole);
+    }
+    for relocation in view.relocations {
+        hash = hash_relocation(hash, *relocation);
     }
     for link in view.links {
         hash = hash_physical_link(hash, *link);
     }
+    if let Some(fallthrough) = view.fallthrough {
+        hash = hash_bytes(hash, fallthrough.target.as_bytes());
+        hash = hash_bytes(hash, fallthrough.stencil.bytes);
+    }
     hash.max(1)
+}
+
+fn hash_hole(mut hash: u64, hole: crate::stencil_fact::Hole) -> u64 {
+    hash = hash_u64(hash, u64::from(hole.offset));
+    hash_u64(hash, u64::from(hole.kind as u8))
+}
+
+fn hash_relocation(mut hash: u64, relocation: PhysicalRelocation) -> u64 {
+    hash = hash_u64(hash, u64::from(relocation.offset));
+    hash = hash_u64(hash, u64::from(relocation.kind as u8));
+    hash = hash_bytes(hash, relocation.target.as_bytes());
+    hash_u64(hash, relocation.addend as u64)
+}
+
+fn continuation_tag(abi: ContinuationAbi) -> u64 {
+    match abi {
+        ContinuationAbi::None => 0,
+        ContinuationAbi::F64AccumulatorD0AddD1 => 1,
+        ContinuationAbi::F64AccumulatorD0ThenD2 => 2,
+        ContinuationAbi::WordX0 => 3,
+    }
+}
+
+fn hash_bytes(mut hash: u64, bytes: &[u8]) -> u64 {
+    hash = hash_u64(hash, bytes.len() as u64);
+    for byte in bytes {
+        hash = hash_u64(hash, u64::from(*byte));
+    }
+    hash
+}
+
+fn hash_u64(hash: u64, value: u64) -> u64 {
+    hash.wrapping_mul(0x1000_0000_01b3).wrapping_add(value)
 }
 
 fn hash_physical_link(mut hash: u64, link: PhysicalLink) -> u64 {
