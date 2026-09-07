@@ -147,9 +147,18 @@ remain bounded Rust data and resolution stays transactional. Do not import
 AsmJit's instruction builder, compiler, allocator or runtime dependency: those
 would duplicate the canonical Rust catalog and the existing slab/lease lifecycle.
 The first reusable builder deliberately accepts only repeated fragments sharing
-one declared internal register convention. Equal external ABIs alone do not make
-two arbitrary function bodies composable; additional fragment roles must be
-declared and verified before the builder may mix them.
+one declared internal register convention. That continuation ABI is a canonical
+assembly-recipe fact, is fingerprinted into the extracted artifact, travels in
+the selected physical view and is checked by the builder. Equal external ABIs
+alone do not make two arbitrary function bodies composable; additional fragment
+roles must be declared and verified before the builder may mix them.
+
+AsmJit's allocator reinforces two existing boundaries worth retaining: executable
+memory contains code rather than allocator metadata, and writes happen through a
+scoped publication operation that owns cache maintenance. Quench keeps allocation
+metadata in the slab authority and uses retaining leases for active calls. Its
+bounded pools already provide the useful small-span packing; importing AsmJit's
+allocator would duplicate that ownership state rather than simplify it.
 
 ### Bounded stencil-selection optimizer
 
@@ -539,6 +548,7 @@ follow merely from infrastructure tests.
 - [rustc code generation](https://doc.rust-lang.org/rustc/codegen-options/index.html) and [Rust function ABIs](https://doc.rust-lang.org/reference/items/functions.html): compiler controls and explicit ABI boundaries.
 - [AsmJit `CodeHolder`](https://asmjit.com/doc/classasmjit_1_1CodeHolder.html): target-bound sections, labels, relocations, flattening and relocation as one code-data container.
 - [AsmJit `JitRuntime`](https://asmjit.com/doc/classasmjit_1_1JitRuntime.html): a distinct allocation/publication/release edge, used here only as an organizational comparison.
+- [AsmJit `JitAllocator`](https://asmjit.com/doc/classasmjit_1_1JitAllocator.html): external span metadata, granular pools and scoped writes with explicit cache policy.
 - [ECMAScript ordinary/exotic object behavior](https://tc39.es/ecma262/2024/multipage/ordinary-and-exotic-objects-behaviours.html): observable get/set/receiver semantics.
 
 These inform the design; they establish neither Quench performance nor a required
