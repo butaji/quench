@@ -291,6 +291,8 @@ fn generated_key_rejects_legacy_layout_before_publication() {
     assert_eq!(arena.used(), 0);
     assert_eq!(cache.len(), 0);
 }
+
+#[test]
 fn physical_view_mismatch_is_rejected_before_allocation() {
     let key = crate::stencil_select::add_const_region_key();
     let view = crate::stencil_select::select_physical(key).expect("physical view");
