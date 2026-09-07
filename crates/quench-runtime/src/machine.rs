@@ -1184,10 +1184,12 @@ fn ops_are_stitchable_numeric(ops: &[Op]) -> bool {
                 | Op::LoadBinding { .. }
                 | Op::LoadResolvedBinding { .. }
                 | Op::LoadResolvedLocalBinding { .. }
+                | Op::InitializeLocal { .. }
                 | Op::Binary { .. }
                 | Op::Unary { .. }
                 | Op::CheckInitialized { .. }
                 | Op::RequireObjectCoercible { .. }
+                | Op::GetProperty { .. }
                 | Op::GetPropertyDynamic { .. }
                 | Op::SetPropertyDynamic { .. }
                 | Op::Return { .. }
