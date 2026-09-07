@@ -43,7 +43,10 @@ fn plain_own_property(
     })
 }
 
-fn plain_own_property_value(value: &crate::value::Value, key: &str) -> Option<PlainOwnProperty> {
+fn plain_own_property_value(
+    value: &crate::value::Value,
+    key: &str,
+) -> Option<PlainOwnProperty> {
     match value {
         crate::value::Value::Object(properties) => plain_own_property(properties, key),
         crate::value::Value::ObjectAlias(alias) => {
@@ -54,7 +57,11 @@ fn plain_own_property_value(value: &crate::value::Value, key: &str) -> Option<Pl
 }
 
 #[cfg(feature = "execution-trace")]
-fn record_named_set_fact(target: &crate::value::Value, key: &str, assigned: &crate::value::Value) {
+fn record_named_set_fact(
+    target: &crate::value::Value,
+    key: &str,
+    assigned: &crate::value::Value,
+) {
     let fact = plain_own_property_value(target, key);
     let name = match target {
         crate::value::Value::Object(_) => object_set_fact(fact),
@@ -212,12 +219,12 @@ fn store_plain_writable_own_data(
 
 #[cfg(test)]
 mod own_data_tests {
-    #[cfg(feature = "execution-trace")]
-    use super::{alias_set_fact, array_set_fact, object_set_fact};
     use super::{
         plain_own_property, plain_own_property_value, plain_writable_own_data,
         store_plain_writable_own_data, PlainOwnProperty,
     };
+    #[cfg(feature = "execution-trace")]
+    use super::{alias_set_fact, array_set_fact, object_set_fact};
     use crate::value::{ObjectAliasValue, ObjectData, Value};
     use std::{cell::RefCell, rc::Rc};
 
@@ -267,10 +274,7 @@ mod own_data_tests {
             "field",
             &Value::Number(9.0)
         ));
-        assert_eq!(
-            owner.hot_properties().slot_value(0),
-            Some(Value::Number(9.0))
-        );
+        assert_eq!(owner.hot_properties().slot_value(0), Some(Value::Number(9.0)));
     }
 
     #[test]
