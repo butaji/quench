@@ -67,3 +67,14 @@ const ARRAY_NUMERIC_LOOP_OUTPUTS: &[PhysicalOutput] = &[
         destination: Register(operand(0, A)),
     },
 ];
+
+const AFFINE_I32_LOOP_OUTPUTS: &[PhysicalOutput] = &[
+    PhysicalOutput {
+        value: Index,
+        destination: LocalSlot(operand(16, A)),
+    },
+    PhysicalOutput {
+        value: Result,
+        destination: LocalSlot(operand(11, A)),
+    },
+];

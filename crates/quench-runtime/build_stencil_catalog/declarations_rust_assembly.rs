@@ -36,6 +36,36 @@ const ARRAY_NUMERIC_LOOP_BINDINGS: &[PhysicalBinding] = &[
     PhysicalBinding::AllDistinct(ARRAY_NUMERIC_LOOP_DISTINCT),
 ];
 
+const AFFINE_I32_LOOP_DISTINCT: &[PhysicalOperand] = &[
+    operand(0, A), operand(1, A), operand(2, A), operand(3, A),
+    operand(5, A), operand(6, A), operand(7, A), operand(8, A),
+    operand(9, A), operand(10, A), operand(12, A), operand(13, A),
+    operand(14, A), operand(15, A), operand(17, A),
+];
+
+const AFFINE_I32_LOOP_BINDINGS: &[PhysicalBinding] = &[
+    equal(value(2, B), value(1, A)),
+    equal(value(3, B), value(0, A)),
+    equal(value(3, C), value(2, A)),
+    equal(value(4, A), value(3, A)),
+    equal(value(4, B), RegionEnd),
+    equal(value(7, B), value(5, A)),
+    equal(value(7, C), value(6, A)),
+    equal(value(8, B), value(7, A)),
+    equal(value(10, B), value(8, A)),
+    equal(value(10, C), value(9, A)),
+    equal(value(11, B), value(10, A)),
+    equal(value(12, B), value(10, A)),
+    equal(value(15, B), value(13, A)),
+    equal(value(15, C), value(14, A)),
+    equal(value(16, B), value(15, A)),
+    equal(value(16, A), value(0, B)),
+    equal(value(13, B), value(0, B)),
+    equal(value(17, B), value(13, A)),
+    equal(value(18, A), RegionStart),
+    PhysicalBinding::AllDistinct(AFFINE_I32_LOOP_DISTINCT),
+];
+
 const BOOL_BRANCH_LINKS: &[AssemblyControlLink] = &[
     AssemblyControlLink {
         offset: 4,
@@ -207,6 +237,16 @@ rust_assembly_catalog! {
         x86: &X86_DISPATCH_BYTES, aarch64: &AARCH64_ARRAY_LOOP_BYTES,
         x86_holes: &[], aarch64_holes: &[],
         bindings: &ARRAY_NUMERIC_LOOP_BINDINGS, outputs: &ARRAY_NUMERIC_LOOP_OUTPUTS
+    },
+    AffineI32Loop {
+        name: "affine_i32_loop", abi: AffineI32Loop,
+        ops: ["LoadLocal", "LoadLocal", "GetN", "Binary", "JumpIfFalse",
+            "LoadLocal", "LoadConst", "Mul", "AddConst", "LoadConst",
+            "Binary", "StoreLocal", "Move", "LoadLocal", "LoadConst",
+            "Binary", "StoreLocal", "Unary", "Jump"],
+        x86: &X86_DISPATCH_BYTES, aarch64: &AARCH64_AFFINE_I32_LOOP_BYTES,
+        x86_holes: &[], aarch64_holes: &[],
+        bindings: &AFFINE_I32_LOOP_BINDINGS, outputs: &AFFINE_I32_LOOP_OUTPUTS
     },
     Property {
         name: "property", abi: PropertyGuard, ops: ["GetN"],

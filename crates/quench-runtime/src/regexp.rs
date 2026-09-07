@@ -1196,8 +1196,8 @@ fn fast_set_last_index(receiver: &Value, value: &Value) -> bool {
     else {
         return false;
     };
-    let writable = crate::builtins::descriptor_flag(receiver, "lastIndex", "writable")
-        == Some(true);
+    let writable =
+        crate::builtins::descriptor_flag(receiver, "lastIndex", "writable") == Some(true);
     if writable {
         cell.replace(value.clone());
     }

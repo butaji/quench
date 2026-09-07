@@ -5,6 +5,18 @@
 
 use crate::stencil_fact::{Hole, HoleKind, PatchValues};
 
+const AARCH64_INSTRUCTION_BYTES: usize = 4;
+const AARCH64_BRANCH26_OPCODE_MASK: u32 = 0x7C00_0000;
+const AARCH64_BRANCH26_OPCODE: u32 = 0x1400_0000;
+const AARCH64_BRANCH26_IMMEDIATE_MASK: u32 = 0x03FF_FFFF;
+const AARCH64_BRANCH26_PRESERVED_MASK: u32 = 0xFC00_0000;
+const AARCH64_COND_BRANCH19_OPCODE_MASK: u32 = 0xFF00_0010;
+const AARCH64_COND_BRANCH19_OPCODE: u32 = 0x5400_0000;
+const AARCH64_COND_BRANCH19_IMMEDIATE_MASK: u32 = 0x00FF_FFE0;
+const AARCH64_COND_BRANCH19_WORD_MASK: u32 = 0x7_FFFF;
+const AARCH64_BRANCH26_WORD_BITS: u32 = 25;
+const AARCH64_COND_BRANCH19_WORD_BITS: u32 = 18;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PatchError {
     OutOfBounds,
@@ -68,24 +80,25 @@ pub fn write_branch26<const N: usize>(
     values: &PatchValues<'_, N>,
 ) -> Result<(), PatchError> {
     if dst
-        .get(usize::from(offset)..usize::from(offset).saturating_add(4))
+        .get(usize::from(offset)..usize::from(offset).saturating_add(AARCH64_INSTRUCTION_BYTES))
         .is_none()
     {
         return Err(PatchError::OutOfBounds);
     }
     validate_branch26(dst, offset, values)?;
     let start = usize::from(offset);
-    let slot = &mut dst[start..start + 4];
-    let words = (values.value_for(HoleKind::Branch26) as i64) / 4;
+    let slot = &mut dst[start..start + AARCH64_INSTRUCTION_BYTES];
+    let words = (values.value_for(HoleKind::Branch26) as i64) / AARCH64_INSTRUCTION_BYTES as i64;
     let mut instruction = u32::from_le_bytes(slot.try_into().expect("validated width"));
     // A Branch26 hole is only valid in an AArch64 unconditional `B` word.
     // Refuse to patch arbitrary data or a conditional/register branch: keeping
     // the high bits would otherwise turn a malformed template into callable
     // code with an unrelated control-flow encoding.
-    if instruction & 0x7c00_0000 != 0x1400_0000 {
+    if instruction & AARCH64_BRANCH26_OPCODE_MASK != AARCH64_BRANCH26_OPCODE {
         return Err(PatchError::UnsupportedOffset);
     }
-    instruction = (instruction & 0xfc00_0000) | (words as u32 & 0x03ff_ffff);
+    instruction = (instruction & AARCH64_BRANCH26_PRESERVED_MASK)
+        | (words as u32 & AARCH64_BRANCH26_IMMEDIATE_MASK);
     slot.copy_from_slice(&instruction.to_le_bytes());
     Ok(())
 }
@@ -100,11 +113,12 @@ pub(crate) fn write_cond_branch19(
 ) -> Result<(), PatchError> {
     validate_cond_branch19(dst, offset, displacement)?;
     let slot = dst
-        .get_mut(offset..offset.saturating_add(4))
+        .get_mut(offset..offset.saturating_add(AARCH64_INSTRUCTION_BYTES))
         .ok_or(PatchError::OutOfBounds)?;
-    let words = displacement / 4;
+    let words = displacement / AARCH64_INSTRUCTION_BYTES as i64;
     let mut instruction = u32::from_le_bytes(slot.try_into().expect("validated width"));
-    instruction = (instruction & !0x00ff_ffe0) | ((words as u32 & 0x7_ffff) << 5);
+    instruction = (instruction & !AARCH64_COND_BRANCH19_IMMEDIATE_MASK)
+        | ((words as u32 & AARCH64_COND_BRANCH19_WORD_MASK) << 5);
     slot.copy_from_slice(&instruction.to_le_bytes());
     Ok(())
 }
@@ -170,14 +184,18 @@ fn validate_hole<const N: usize>(
 
 fn validate_cond_branch19(dst: &[u8], offset: usize, displacement: i64) -> Result<(), PatchError> {
     let slot = dst
-        .get(offset..offset.saturating_add(4))
+        .get(offset..offset.saturating_add(AARCH64_INSTRUCTION_BYTES))
         .ok_or(PatchError::OutOfBounds)?;
-    if offset % 4 != 0 || displacement % 4 != 0 {
+    if offset % AARCH64_INSTRUCTION_BYTES != 0
+        || displacement % AARCH64_INSTRUCTION_BYTES as i64 != 0
+    {
         return Err(PatchError::UnsupportedOffset);
     }
-    let words = displacement / 4;
+    let words = displacement / AARCH64_INSTRUCTION_BYTES as i64;
     let instruction = u32::from_le_bytes(slot.try_into().expect("validated width"));
-    if !(-(1_i64 << 18)..(1_i64 << 18)).contains(&words) || instruction & 0xff00_0010 != 0x5400_0000
+    if !(-(1_i64 << AARCH64_COND_BRANCH19_WORD_BITS)..(1_i64 << AARCH64_COND_BRANCH19_WORD_BITS))
+        .contains(&words)
+        || instruction & AARCH64_COND_BRANCH19_OPCODE_MASK != AARCH64_COND_BRANCH19_OPCODE
     {
         return Err(PatchError::UnsupportedOffset);
     }
@@ -190,20 +208,23 @@ fn validate_branch26<const N: usize>(
     values: &PatchValues<'_, N>,
 ) -> Result<(), PatchError> {
     let start = usize::from(offset);
-    if start % 4 != 0 {
+    if start % AARCH64_INSTRUCTION_BYTES != 0 {
         return Err(PatchError::UnsupportedOffset);
     }
     let displacement = values.value_for(HoleKind::Branch26) as i64;
-    let words = displacement / 4;
-    if displacement % 4 != 0 || !(-(1_i64 << 25)..(1_i64 << 25)).contains(&words) {
+    let words = displacement / AARCH64_INSTRUCTION_BYTES as i64;
+    if displacement % AARCH64_INSTRUCTION_BYTES as i64 != 0
+        || !(-(1_i64 << AARCH64_BRANCH26_WORD_BITS)..(1_i64 << AARCH64_BRANCH26_WORD_BITS))
+            .contains(&words)
+    {
         return Err(PatchError::UnsupportedOffset);
     }
     let instruction = u32::from_le_bytes(
-        dst[start..start + 4]
+        dst[start..start + AARCH64_INSTRUCTION_BYTES]
             .try_into()
             .map_err(|_| PatchError::OutOfBounds)?,
     );
-    if instruction & 0x7c00_0000 != 0x1400_0000 {
+    if instruction & AARCH64_BRANCH26_OPCODE_MASK != AARCH64_BRANCH26_OPCODE {
         return Err(PatchError::UnsupportedOffset);
     }
     Ok(())

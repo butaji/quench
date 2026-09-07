@@ -1174,26 +1174,27 @@ impl CodeArena {
 /// ordinary fragment path until it has an explicit region declaration.
 fn ops_are_stitchable_numeric(ops: &[Op]) -> bool {
     ops.iter().all(|op| {
-        trace_source(op).is_some() || matches!(
-            op,
-            Op::Const { .. }
-                | Op::StoreLocal { .. }
-                | Op::Move { .. }
-                | Op::LoadLocal { .. }
-                | Op::LoadParameter { .. }
-                | Op::LoadBinding { .. }
-                | Op::LoadResolvedBinding { .. }
-                | Op::LoadResolvedLocalBinding { .. }
-                | Op::InitializeLocal { .. }
-                | Op::Binary { .. }
-                | Op::Unary { .. }
-                | Op::CheckInitialized { .. }
-                | Op::RequireObjectCoercible { .. }
-                | Op::GetProperty { .. }
-                | Op::GetPropertyDynamic { .. }
-                | Op::SetPropertyDynamic { .. }
-                | Op::Return { .. }
-        )
+        trace_source(op).is_some()
+            || matches!(
+                op,
+                Op::Const { .. }
+                    | Op::StoreLocal { .. }
+                    | Op::Move { .. }
+                    | Op::LoadLocal { .. }
+                    | Op::LoadParameter { .. }
+                    | Op::LoadBinding { .. }
+                    | Op::LoadResolvedBinding { .. }
+                    | Op::LoadResolvedLocalBinding { .. }
+                    | Op::InitializeLocal { .. }
+                    | Op::Binary { .. }
+                    | Op::Unary { .. }
+                    | Op::CheckInitialized { .. }
+                    | Op::RequireObjectCoercible { .. }
+                    | Op::GetProperty { .. }
+                    | Op::GetPropertyDynamic { .. }
+                    | Op::SetPropertyDynamic { .. }
+                    | Op::Return { .. }
+            )
     })
 }
 
@@ -1949,13 +1950,17 @@ impl NativeBinaryPlan {
                     crate::stencil_select::RegionAbi::ScalarWordPairBool,
                 )
                 .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-                let address =
-                    slab.render_physical_view_or_get(&mut self.physical.state.cache, view, &values)?;
+                let address = slab.render_physical_view_or_get(
+                    &mut self.physical.state.cache,
+                    view,
+                    &values,
+                )?;
                 slab.make_executable(address)?;
                 address
             };
             let owned = shared.borrow().owned_word_pair_bool_entry(address)?;
-            self.physical.publish(InstalledBinaryEntry::TaggedShared(owned));
+            self.physical
+                .publish(InstalledBinaryEntry::TaggedShared(owned));
             return match invoke_shared_entry!(shared, owned, |entry| entry(lhs, rhs)) {
                 Ok(result) => {
                     self.note_native_entry();
@@ -1975,15 +1980,13 @@ impl NativeBinaryPlan {
         .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
         let (address, result) = {
             let arena = self.physical.storage.local_mut()?;
-            let address = arena.render_physical_view_or_get(
-                &mut self.physical.state.cache,
-                view,
-                &values,
-            )?;
+            let address =
+                arena.render_physical_view_or_get(&mut self.physical.state.cache, view, &values)?;
             arena.make_executable()?;
             (address, arena.word_pair_bool_entry(address)?(lhs, rhs) != 0)
         };
-        self.physical.publish(InstalledBinaryEntry::TaggedLocal(address));
+        self.physical
+            .publish(InstalledBinaryEntry::TaggedLocal(address));
         self.note_native_entry();
         Ok(result)
     }
@@ -2094,7 +2097,8 @@ impl NativeBinaryPlan {
                             return Err(error);
                         }
                     };
-                    self.physical.publish(InstalledBinaryEntry::U32Shared(owned));
+                    self.physical
+                        .publish(InstalledBinaryEntry::U32Shared(owned));
                     self.note_native_entry();
                     return Ok(f64::from(result));
                 }
@@ -2105,8 +2109,11 @@ impl NativeBinaryPlan {
                         crate::stencil_select::RegionAbi::ScalarI32,
                     )
                     .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-                    let address =
-                        slab.render_physical_view_or_get(&mut self.physical.state.cache, view, &values)?;
+                    let address = slab.render_physical_view_or_get(
+                        &mut self.physical.state.cache,
+                        view,
+                        &values,
+                    )?;
                     slab.make_executable(address)?;
                     Ok(address)
                 })();
@@ -2125,7 +2132,8 @@ impl NativeBinaryPlan {
                         return Err(error);
                     }
                 };
-                self.physical.publish(InstalledBinaryEntry::I32Shared(owned));
+                self.physical
+                    .publish(InstalledBinaryEntry::I32Shared(owned));
                 self.note_native_entry();
                 return Ok(f64::from(result));
             }
@@ -2249,7 +2257,11 @@ impl NativeBinaryPlan {
         if !crate::stencil_select::select_region(key).is_some_and(|record| record.executable) {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
         }
-        if self.physical.state.lifecycle.observe_site(&self.site, key, true)
+        if self
+            .physical
+            .state
+            .lifecycle
+            .observe_site(&self.site, key, true)
             == crate::stencil_lifecycle::StencilState::Retired
         {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
@@ -2264,15 +2276,19 @@ impl NativeBinaryPlan {
                         crate::stencil_select::RegionAbi::ScalarBool,
                     )
                     .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-                    let address =
-                        slab.render_physical_view_or_get(&mut self.physical.state.cache, view, &values)?;
+                    let address = slab.render_physical_view_or_get(
+                        &mut self.physical.state.cache,
+                        view,
+                        &values,
+                    )?;
                     slab.make_executable(address)?;
                     Ok(address)
                 })();
                 return match rendered {
                     Ok(address) => {
                         let owned = shared.borrow().owned_bool_entry(address)?;
-                        self.physical.publish(InstalledBinaryEntry::BoolShared(owned));
+                        self.physical
+                            .publish(InstalledBinaryEntry::BoolShared(owned));
                         match invoke_shared_entry!(shared, owned, |entry| entry(lhs, rhs) != 0) {
                             Ok(value) => {
                                 self.note_native_entry();
@@ -2297,8 +2313,11 @@ impl NativeBinaryPlan {
                     crate::stencil_select::RegionAbi::ScalarF64Binary,
                 )
                 .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-                let address =
-                    slab.render_physical_view_or_get(&mut self.physical.state.cache, view, &values)?;
+                let address = slab.render_physical_view_or_get(
+                    &mut self.physical.state.cache,
+                    view,
+                    &values,
+                )?;
                 slab.make_executable(address)?;
                 Ok(address)
             })();
@@ -2310,7 +2329,8 @@ impl NativeBinaryPlan {
                 }
             };
             let owned = shared.borrow().owned_f64_entry(address)?;
-            self.physical.publish(InstalledBinaryEntry::F64Shared(owned));
+            self.physical
+                .publish(InstalledBinaryEntry::F64Shared(owned));
             return match invoke_shared_entry!(shared, owned, |entry| unsafe {
                 invoke_f64x2_entry(entry, lhs, rhs)
             }) {
@@ -2337,9 +2357,14 @@ impl NativeBinaryPlan {
                 .render_selected_bool(&mut self.physical.state.cache, key, &values, lhs, rhs)
                 .map(|value| if value { 1.0 } else { 0.0 })
         } else {
-            arena.render_selected_f64(&mut self.physical.state.cache, key, &values, lhs, rhs, || {
-                Err(crate::stencil_arena::ArenaError::ProtectionFailed)
-            })
+            arena.render_selected_f64(
+                &mut self.physical.state.cache,
+                key,
+                &values,
+                lhs,
+                rhs,
+                || Err(crate::stencil_arena::ArenaError::ProtectionFailed),
+            )
         };
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if result.is_ok() && !self.returns_boolean() {
@@ -2351,7 +2376,11 @@ impl NativeBinaryPlan {
                 // on every iteration.
                 let signature = view.cache_signature(&values);
                 if let Some(arena) = self.physical.storage.local() {
-                    if let Some(address) = self.physical.state.cache.get_owned(key, signature, arena.id())
+                    if let Some(address) =
+                        self.physical
+                            .state
+                            .cache
+                            .get_owned(key, signature, arena.id())
                     {
                         let installed = arena
                             .f64_entry(address)
@@ -2653,13 +2682,17 @@ impl NativeTruthinessPlan {
                     crate::stencil_select::RegionAbi::ScalarBool,
                 )
                 .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-                let address =
-                    slab.render_physical_view_or_get(&mut self.physical.state.cache, view, &values)?;
+                let address = slab.render_physical_view_or_get(
+                    &mut self.physical.state.cache,
+                    view,
+                    &values,
+                )?;
                 slab.make_executable(address)?;
                 address
             };
             let owned = shared.borrow().owned_bool_unary_entry(address)?;
-            self.physical.publish(InstalledTruthinessEntry::NumberShared(owned));
+            self.physical
+                .publish(InstalledTruthinessEntry::NumberShared(owned));
             return match invoke_shared_entry!(shared, owned, |entry| entry(value)) {
                 Ok(result) => {
                     #[cfg(test)]
@@ -2694,15 +2727,13 @@ impl NativeTruthinessPlan {
         .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
         let (address, result) = {
             let arena = self.physical.storage.local_mut()?;
-            let address = arena.render_physical_view_or_get(
-                &mut self.physical.state.cache,
-                view,
-                &values,
-            )?;
+            let address =
+                arena.render_physical_view_or_get(&mut self.physical.state.cache, view, &values)?;
             arena.make_executable()?;
             (address, arena.bool_unary_entry(address)?(value) != 0)
         };
-        self.physical.publish(InstalledTruthinessEntry::NumberLocal(address));
+        self.physical
+            .publish(InstalledTruthinessEntry::NumberLocal(address));
         #[cfg(test)]
         {
             self.native_entry_count = self.native_entry_count.saturating_add(1);
@@ -2741,7 +2772,8 @@ impl NativeTruthinessPlan {
             let entry = slab.word_bool_entry(address)?;
             drop(slab);
             let owned = shared.borrow().owned_word_bool_entry(address)?;
-            self.physical.publish(InstalledTruthinessEntry::WordShared(owned));
+            self.physical
+                .publish(InstalledTruthinessEntry::WordShared(owned));
             let result = match invoke_shared_entry!(shared, owned, |entry| entry(value)) {
                 Ok(result) => result,
                 Err(error) => {
@@ -2774,15 +2806,13 @@ impl NativeTruthinessPlan {
         .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
         let (address, result) = {
             let arena = self.physical.storage.local_mut()?;
-            let address = arena.render_physical_view_or_get(
-                &mut self.physical.state.cache,
-                view,
-                &values,
-            )?;
+            let address =
+                arena.render_physical_view_or_get(&mut self.physical.state.cache, view, &values)?;
             arena.make_executable()?;
             (address, arena.word_bool_entry(address)?(value) != 0)
         };
-        self.physical.publish(InstalledTruthinessEntry::WordLocal(address));
+        self.physical
+            .publish(InstalledTruthinessEntry::WordLocal(address));
         #[cfg(test)]
         {
             self.native_entry_count = self.native_entry_count.saturating_add(1);
@@ -2816,7 +2846,8 @@ impl NativeTruthinessPlan {
             let entry = slab.word_bool_entry(address)?;
             drop(slab);
             let owned = shared.borrow().owned_word_bool_entry(address)?;
-            self.physical.publish(InstalledTruthinessEntry::PointerShared(owned));
+            self.physical
+                .publish(InstalledTruthinessEntry::PointerShared(owned));
             let result = match invoke_shared_entry!(shared, owned, |entry| entry(value)) {
                 Ok(result) => result,
                 Err(error) => {
@@ -2843,15 +2874,13 @@ impl NativeTruthinessPlan {
         .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
         let (address, result) = {
             let arena = self.physical.storage.local_mut()?;
-            let address = arena.render_physical_view_or_get(
-                &mut self.physical.state.cache,
-                view,
-                &values,
-            )?;
+            let address =
+                arena.render_physical_view_or_get(&mut self.physical.state.cache, view, &values)?;
             arena.make_executable()?;
             (address, arena.word_bool_entry(address)?(value) != 0)
         };
-        self.physical.publish(InstalledTruthinessEntry::PointerLocal(address));
+        self.physical
+            .publish(InstalledTruthinessEntry::PointerLocal(address));
         self.note_entry();
         Ok(result)
     }
@@ -2975,12 +3004,11 @@ impl NativeNullishPlan {
                     crate::stencil_select::RegionAbi::ScalarWordBool,
                 )
                 .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-                let address =
-                    slab.render_physical_view_or_get(
-                        &mut self.physical.state.cache,
-                        view,
-                        &values,
-                    )?;
+                let address = slab.render_physical_view_or_get(
+                    &mut self.physical.state.cache,
+                    view,
+                    &values,
+                )?;
                 slab.make_executable(address)?;
                 slab.word_bool_entry(address)?;
                 address
@@ -3323,7 +3351,8 @@ impl NativeUnaryPlan {
             address
         };
         let owned = shared.borrow().owned_f64_unary_entry(address)?;
-        self.physical.publish(InstalledUnaryEntry::NumberShared(owned));
+        self.physical
+            .publish(InstalledUnaryEntry::NumberShared(owned));
         match invoke_shared_entry!(shared, owned, |entry| entry(value)) {
             Ok(result) => {
                 self.note_entry();
@@ -3364,7 +3393,8 @@ impl NativeUnaryPlan {
             arena.make_executable()?;
             (address, arena.f64_unary_entry(address)?(value))
         };
-        self.physical.publish(InstalledUnaryEntry::NumberLocal(address));
+        self.physical
+            .publish(InstalledUnaryEntry::NumberLocal(address));
         self.note_entry();
         Ok(result)
     }
@@ -3404,12 +3434,11 @@ impl NativeUnaryPlan {
                     crate::stencil_select::RegionAbi::ScalarI32,
                 )
                 .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-                let address =
-                    slab.render_physical_view_or_get(
-                        &mut self.physical.state.cache,
-                        view,
-                        &values,
-                    )?;
+                let address = slab.render_physical_view_or_get(
+                    &mut self.physical.state.cache,
+                    view,
+                    &values,
+                )?;
                 slab.make_executable(address)?;
                 Ok(address)
             })();
@@ -3703,7 +3732,12 @@ impl NativeAddChainPlan {
                 let signature = crate::stencil_select::select_physical(key)
                     .expect("installed view")
                     .cache_signature(&values);
-                if let Some(address) = self.physical.state.cache.get_owned(key, signature, arena.id()) {
+                if let Some(address) =
+                    self.physical
+                        .state
+                        .cache
+                        .get_owned(key, signature, arena.id())
+                {
                     let installed = arena
                         .f64x3_entry(address)
                         .ok()
@@ -3740,7 +3774,11 @@ impl NativeAddChainPlan {
             }
         }
         let key = crate::stencil_select::add_chain_region_key();
-        if self.physical.state.lifecycle.observe_site(&self.site, key, true)
+        if self
+            .physical
+            .state
+            .lifecycle
+            .observe_site(&self.site, key, true)
             == crate::stencil_lifecycle::StencilState::Retired
         {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
@@ -4163,8 +4201,11 @@ impl NativePropertyPlan {
                     crate::stencil_select::RegionAbi::PropertyGuard,
                 )
                 .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-                let address =
-                    slab.render_physical_view_or_get(&mut self.physical.state.cache, view, &values)?;
+                let address = slab.render_physical_view_or_get(
+                    &mut self.physical.state.cache,
+                    view,
+                    &values,
+                )?;
                 slab.make_executable(address)?;
                 Ok::<_, crate::stencil_arena::ArenaError>((address, view))
             })();
@@ -4233,7 +4274,12 @@ impl NativePropertyPlan {
                 let signature = crate::stencil_select::select_physical(key)
                     .expect("installed view")
                     .cache_signature(&values);
-                if let Some(address) = self.physical.state.cache.get_owned(key, signature, arena.id()) {
+                if let Some(address) =
+                    self.physical
+                        .state
+                        .cache
+                        .get_owned(key, signature, arena.id())
+                {
                     let installed = arena
                         .property_guard_entry(address)
                         .ok()
@@ -4347,7 +4393,8 @@ impl NativePropertyPlan {
         };
         let owned = shared.borrow().owned_property_write_guard_entry(address)?;
         let result = invoke_shared_entry!(shared, owned, |entry| entry(context));
-        self.physical.publish(InstalledPropertyEntry::WriteShared(owned));
+        self.physical
+            .publish(InstalledPropertyEntry::WriteShared(owned));
         #[cfg(not(test))]
         let _ = view;
         #[cfg(test)]
@@ -4370,15 +4417,13 @@ impl NativePropertyPlan {
         .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
         let (address, result) = {
             let arena = self.physical.storage.local_mut()?;
-            let address = arena.render_physical_view_or_get(
-                &mut self.physical.state.cache,
-                view,
-                values,
-            )?;
+            let address =
+                arena.render_physical_view_or_get(&mut self.physical.state.cache, view, values)?;
             arena.make_executable()?;
             (address, arena.property_write_guard_entry(address)?(context))
         };
-        self.physical.publish(InstalledPropertyEntry::WriteLocal(address));
+        self.physical
+            .publish(InstalledPropertyEntry::WriteLocal(address));
         #[cfg(not(test))]
         let _ = view;
         #[cfg(test)]
@@ -4523,7 +4568,11 @@ impl NativeDispatchPlan {
         let key = view.key;
         let values = crate::stencil_fact::PatchValues::from_site(&self.site)
             .with_pointer_bits(crate::vm::native_dispatch_bridge as *const () as usize);
-        if self.physical.state.lifecycle.observe_site(&self.site, key, true)
+        if self
+            .physical
+            .state
+            .lifecycle
+            .observe_site(&self.site, key, true)
             == crate::stencil_lifecycle::StencilState::Retired
         {
             return Err(NativeDispatchError::Physical(
@@ -4533,9 +4582,8 @@ impl NativeDispatchPlan {
         if let Some(shared) = self.physical.storage.shared() {
             if let InstalledDispatchEntry::Shared(token) = self.physical.installed() {
                 if shared.borrow().entry_token_is_live(token) {
-                    let result = invoke_shared_dispatch(
-                        &shared, token, code, pc, entry, registers, context,
-                    );
+                    let result =
+                        invoke_shared_dispatch(&shared, token, code, pc, entry, registers, context);
                     self.physical.apply_dispatch_outcome(
                         &result,
                         None,
@@ -4564,11 +4612,14 @@ impl NativeDispatchPlan {
             let mut published_address = None;
             let result = rendered.and_then(|address| {
                 published_address = Some(address);
-                let token = shared.borrow().owned_bridge_entry(address).map_err(|error| {
-                    NativeDispatchError::Physical(format!(
-                        "native baseline lease failed: {error:?}"
-                    ))
-                })?;
+                let token = shared
+                    .borrow()
+                    .owned_bridge_entry(address)
+                    .map_err(|error| {
+                        NativeDispatchError::Physical(format!(
+                            "native baseline lease failed: {error:?}"
+                        ))
+                    })?;
                 self.physical.publish(InstalledDispatchEntry::Shared(token));
                 invoke_shared_dispatch(&shared, token, code, pc, entry, registers, context)
             });
@@ -4585,9 +4636,8 @@ impl NativeDispatchPlan {
                     .dispatch_entry_with_abi(address, crate::stencil_select::RegionAbi::Bridge)
                     .is_ok()
                 {
-                    let result = invoke_local_dispatch(
-                        arena, address, code, pc, entry, registers, context,
-                    );
+                    let result =
+                        invoke_local_dispatch(arena, address, code, pc, entry, registers, context);
                     self.physical.apply_dispatch_outcome(
                         &result,
                         None,
@@ -4618,7 +4668,8 @@ impl NativeDispatchPlan {
                 .map(|transition| (address, transition))
         })();
         let result = result.map(|(address, transition)| {
-            self.physical.publish(InstalledDispatchEntry::Local(address));
+            self.physical
+                .publish(InstalledDispatchEntry::Local(address));
             transition
         });
         if matches!(
@@ -4630,11 +4681,8 @@ impl NativeDispatchPlan {
             // make the caller use the complete ordinary path next time.
             self.physical.storage.reset_local();
         }
-        self.physical.apply_dispatch_outcome(
-            &result,
-            None,
-            InstalledDispatchEntry::Unpublished,
-        );
+        self.physical
+            .apply_dispatch_outcome(&result, None, InstalledDispatchEntry::Unpublished);
         result
     }
 }
@@ -4668,15 +4716,17 @@ enum InstalledRegionEntry {
     Bridge(crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>),
     ArrayKernel(crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>),
     ArrayNumericLoop(crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>),
+    AffineI32Loop(crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>),
 }
 
 impl InstalledRegionEntry {
     fn address(self) -> Option<usize> {
         match self {
             Self::Unpublished => None,
-            Self::Bridge(token) | Self::ArrayKernel(token) | Self::ArrayNumericLoop(token) => {
-                Some(token.address())
-            }
+            Self::Bridge(token)
+            | Self::ArrayKernel(token)
+            | Self::ArrayNumericLoop(token)
+            | Self::AffineI32Loop(token) => Some(token.address()),
         }
     }
 
@@ -4685,18 +4735,18 @@ impl InstalledRegionEntry {
             Self::Unpublished => None,
             Self::Bridge(_) => Some(crate::stencil_select::RegionAbi::Bridge),
             Self::ArrayKernel(_) => Some(crate::stencil_select::RegionAbi::ArrayKernel),
-            Self::ArrayNumericLoop(_) => {
-                Some(crate::stencil_select::RegionAbi::ArrayNumericLoop)
-            }
+            Self::ArrayNumericLoop(_) => Some(crate::stencil_select::RegionAbi::ArrayNumericLoop),
+            Self::AffineI32Loop(_) => Some(crate::stencil_select::RegionAbi::AffineI32Loop),
         }
     }
 
     fn is_live(self, slab: &crate::stencil_arena::SharedStencilSlab) -> bool {
         match self {
             Self::Unpublished => false,
-            Self::Bridge(token) | Self::ArrayKernel(token) | Self::ArrayNumericLoop(token) => {
-                slab.entry_token_is_live(token)
-            }
+            Self::Bridge(token)
+            | Self::ArrayKernel(token)
+            | Self::ArrayNumericLoop(token)
+            | Self::AffineI32Loop(token) => slab.entry_token_is_live(token),
         }
     }
 }
@@ -4748,7 +4798,7 @@ fn validate_region_window(
         let instruction = code.instruction(window_pc).ok_or_else(|| {
             NativeDispatchError::Physical("native region window is incomplete".into())
         })?;
-        if instruction.opcode != expected
+        if !expected.matches_physical_contract(instruction.opcode)
             || !expected.operands_are_canonical([instruction.a, instruction.b, instruction.c])
         {
             return Err(NativeDispatchError::Physical(
@@ -4812,7 +4862,10 @@ fn validate_admitted_region_control(
 /// Constructors for scalar/tagged leaves use this same proof before retaining
 /// an entry pointer; region execution repeats it at the full-window boundary.
 fn validate_physical_template(record: &crate::stencil_select::RegionRecord) -> Result<(), String> {
-    validate_physical_view(record, &record.stencil)
+    let stencil = crate::stencil_select::select_physical(record.key)
+        .filter(|view| std::ptr::eq(view.record, record))
+        .map_or(&record.stencil, |view| view.stencil);
+    validate_physical_view(record, stencil)
 }
 
 fn validate_physical_view(
@@ -4877,6 +4930,7 @@ fn validate_physical_view(
         contract.abi,
         crate::stencil_select::RegionAbi::ArrayKernel
             | crate::stencil_select::RegionAbi::ArrayNumericLoop
+            | crate::stencil_select::RegionAbi::AffineI32Loop
     ) {
         crate::stencil_physical::validate_raw_instruction_stream(stencil.bytes)?;
         let actual = crate::stencil_physical::simd_clobber_mask(stencil.bytes);
@@ -4917,6 +4971,7 @@ fn raw_region_declares_allocation(contract: crate::stencil_select::RegionContrac
         contract.abi,
         crate::stencil_select::RegionAbi::ArrayKernel
             | crate::stencil_select::RegionAbi::ArrayNumericLoop
+            | crate::stencil_select::RegionAbi::AffineI32Loop
     ) && contract.has_effect(crate::facts::OperationEffect::Allocate)
 }
 
@@ -4926,15 +4981,18 @@ fn installed_region_entry(
     abi: crate::stencil_select::RegionAbi,
 ) -> Result<InstalledRegionEntry, crate::stencil_arena::ArenaError> {
     match abi {
-        crate::stencil_select::RegionAbi::Bridge => {
-            slab.owned_bridge_entry(address).map(InstalledRegionEntry::Bridge)
-        }
+        crate::stencil_select::RegionAbi::Bridge => slab
+            .owned_bridge_entry(address)
+            .map(InstalledRegionEntry::Bridge),
         crate::stencil_select::RegionAbi::ArrayKernel => slab
             .owned_array_kernel_entry(address)
             .map(InstalledRegionEntry::ArrayKernel),
         crate::stencil_select::RegionAbi::ArrayNumericLoop => slab
             .owned_array_numeric_loop_entry(address)
             .map(InstalledRegionEntry::ArrayNumericLoop),
+        crate::stencil_select::RegionAbi::AffineI32Loop => slab
+            .owned_affine_i32_loop_entry(address)
+            .map(InstalledRegionEntry::AffineI32Loop),
         _ => Err(crate::stencil_arena::ArenaError::ProtectionFailed),
     }
 }
@@ -4957,10 +5015,14 @@ impl NativeRegionPlan {
         let address = slab
             .render_physical_view_or_get(&mut self.physical.state.cache, view, values)
             .map_err(|error| {
-                NativeDispatchError::Physical(format!("native fused region render failed: {error:?}"))
+                NativeDispatchError::Physical(format!(
+                    "native fused region render failed: {error:?}"
+                ))
             })?;
         slab.make_executable(address).map_err(|error| {
-            NativeDispatchError::Physical(format!("native fused region protection failed: {error:?}"))
+            NativeDispatchError::Physical(format!(
+                "native fused region protection failed: {error:?}"
+            ))
         })?;
         let installed = installed_region_entry(&slab, address, view.abi).map_err(|error| {
             NativeDispatchError::Physical(format!("native fused region entry failed: {error:?}"))
@@ -4981,6 +5043,7 @@ impl NativeRegionPlan {
                 record.abi,
                 crate::stencil_select::RegionAbi::ArrayKernel
                     | crate::stencil_select::RegionAbi::ArrayNumericLoop
+                    | crate::stencil_select::RegionAbi::AffineI32Loop
             )
         });
         Self::new_inner(
@@ -5072,6 +5135,7 @@ impl NativeRegionPlan {
         pc: usize,
         registers: &mut crate::register_file::RegisterFile,
         context: &crate::vm::VmContext,
+        environment: Option<&crate::environment::Environment>,
     ) -> Result<crate::vm::DispatchTransition, NativeDispatchError> {
         self.last_native_execution = false;
         #[cfg(test)]
@@ -5103,7 +5167,11 @@ impl NativeRegionPlan {
         }
         validate_region_window(code, pc, view)?;
         if !record.executable
-            || self.physical.state.lifecycle.observe_site(&self.site, key, true)
+            || self
+                .physical
+                .state
+                .lifecycle
+                .observe_site(&self.site, key, true)
                 == crate::stencil_lifecycle::StencilState::Retired
         {
             return Err(NativeDispatchError::Physical(
@@ -5136,14 +5204,21 @@ impl NativeRegionPlan {
             }
             let storage_kind = record.name;
             crate::execution_trace::stencil_storage(code, pc, storage_kind, &arena.borrow());
-            let mut region = crate::vm::NativeRegionContext::new_with_abi(
-                code, pc, operations, view.abi, registers, context,
+            let mut region = crate::vm::NativeRegionContext::new_with_environment(
+                code,
+                pc,
+                operations,
+                view.abi,
+                registers,
+                context,
+                environment,
             );
             #[cfg(not(target_arch = "aarch64"))]
             if matches!(
                 record.abi,
                 crate::stencil_select::RegionAbi::ArrayKernel
                     | crate::stencil_select::RegionAbi::ArrayNumericLoop
+                    | crate::stencil_select::RegionAbi::AffineI32Loop
             ) {
                 return crate::vm::execute_region_fallback(&mut region);
             }
@@ -5179,6 +5254,25 @@ impl NativeRegionPlan {
                     let physical =
                         crate::vm::execute_composed_array_numeric_loop(&mut region, |raw| {
                             let InstalledRegionEntry::ArrayNumericLoop(token) = installed else {
+                                return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
+                            };
+                            crate::stencil_arena::SharedStencilSlab::acquire_owned(&arena, token)?
+                                .invoke(|entry| entry(raw))
+                        });
+                    self.last_native_execution |= region.native_entered;
+                    #[cfg(test)]
+                    if region.native_entered {
+                        self.last_native_view = Some(view);
+                    }
+                    if let Some(result) = physical? {
+                        return Ok(result);
+                    }
+                    return crate::vm::execute_region_fallback(&mut region);
+                }
+                crate::stencil_select::RegionAbi::AffineI32Loop => {
+                    let physical =
+                        crate::vm::execute_composed_affine_i32_loop(&mut region, |raw| {
+                            let InstalledRegionEntry::AffineI32Loop(token) = installed else {
                                 return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
                             };
                             crate::stencil_arena::SharedStencilSlab::acquire_owned(&arena, token)?
@@ -5263,10 +5357,10 @@ impl NativeRegionPlan {
             let status = crate::stencil_arena::SharedStencilSlab::acquire_owned(&arena, token)
                 .and_then(|lease| lease.invoke(|entry| entry(raw)))
                 .map_err(|error| {
-                NativeDispatchError::Physical(format!(
-                    "native fused region lease failed: {error:?}"
-                ))
-            })?;
+                    NativeDispatchError::Physical(format!(
+                        "native fused region lease failed: {error:?}"
+                    ))
+                })?;
             #[cfg(test)]
             {
                 self.physical_entry_count = self.physical_entry_count.saturating_add(1);
@@ -7758,11 +7852,14 @@ mod tests {
     #[test]
     fn physical_templates_match_declared_abi_before_entry() {
         for record in crate::stencil_select::region_records() {
-            if record.executable {
+            let executable = crate::stencil_select::select_physical(record.key)
+                .is_some_and(|view| view.executable);
+            if executable {
                 let validation = super::validate_physical_template(record);
                 assert!(
                     validation.is_ok(),
-                    "generated ABI/template mismatch for {:?} abi={:?} ops={:?} holes={:?} error={:?}",
+                    "generated ABI/template mismatch for {} {:?} abi={:?} ops={:?} holes={:?} error={:?}",
+                    record.name,
                     record.key,
                     record.abi,
                     record.operations,

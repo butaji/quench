@@ -765,11 +765,8 @@ fn set_plain_numeric_array_index(
     key: &str,
     value: &crate::value::Value,
 ) -> bool {
-    let (
-        crate::value::Value::Array(array),
-        Some(index),
-        crate::value::Value::Number(number),
-    ) = (target, crate::arrays::array_index(key), value)
+    let (crate::value::Value::Array(array), Some(index), crate::value::Value::Number(number)) =
+        (target, crate::arrays::array_index(key), value)
     else {
         return false;
     };
@@ -1351,13 +1348,10 @@ mod named_write_cache_tests {
             &owner,
         )))));
 
-        assert!(super::set_with_receiver(
-            &alias,
-            "field",
-            &Value::Number(7.0),
-            &alias,
-        )
-        .expect("alias write"));
+        assert!(
+            super::set_with_receiver(&alias, "field", &Value::Number(7.0), &alias,)
+                .expect("alias write")
+        );
         assert_eq!(
             owner.hot_properties().slot_value(0),
             Some(Value::Number(7.0))
@@ -1376,13 +1370,10 @@ mod array_identity_write_tests {
         let array = Rc::new(ArrayData::new(vec![Value::Number(1.0)]));
         let value = Value::Array(Rc::clone(&array));
 
-        assert!(super::set_with_receiver(
-            &value,
-            "0",
-            &Value::Number(2.5),
-            &value,
-        )
-        .expect("ordinary dense write"));
+        assert!(
+            super::set_with_receiver(&value, "0", &Value::Number(2.5), &value,)
+                .expect("ordinary dense write")
+        );
 
         assert!(crate::locals::array_word_is_current(&array));
         assert!(crate::locals::replacement(&value).is_none());
@@ -1399,13 +1390,10 @@ mod array_identity_write_tests {
         let array = Rc::new(ArrayData::new(vec![Value::Number(1.0)]));
         let value = Value::Array(Rc::clone(&array));
 
-        assert!(super::set_with_receiver(
-            &value,
-            "0",
-            &Value::String("changed".into()),
-            &value,
-        )
-        .expect("representation-changing write"));
+        assert!(
+            super::set_with_receiver(&value, "0", &Value::String("changed".into()), &value,)
+                .expect("representation-changing write")
+        );
 
         assert!(!crate::locals::array_word_is_current(&array));
         let current = crate::locals::resolved_replacement(value);

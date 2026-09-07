@@ -97,6 +97,41 @@ q_array_numeric_loop_end:
 "#);
 "##;
 
+const AARCH64_AFFINE_I32_LOOP: &str = r##"#![no_std]
+use core::arch::global_asm;
+global_asm!(r#"
+.text
+.p2align 2
+.globl q_affine_i32_loop
+q_affine_i32_loop:
+  ldr x1, [x0]
+  ldr x2, [x0, #8]
+  ldr w3, [x0, #16]
+  ldr w4, [x0, #20]
+  ldr w5, [x0, #24]
+1:
+  cmp x1, x2
+  b.hs 2f
+  mul w3, w3, w4
+  add w3, w3, w5
+  add x1, x1, #1
+  str x1, [x0]
+  ldr x6, [x0, #32]
+  ldrb w7, [x6]
+  cbnz w7, 3f
+  b 1b
+2:
+  str w3, [x0, #16]
+  mov w0, #1
+  ret
+3:
+  str w3, [x0, #16]
+  mov w0, #4
+  ret
+q_affine_i32_loop_end:
+"#);
+"##;
+
 fn compare_branch_source(name: &str, condition: &str, unordered_true: bool) -> String {
     let unordered = if unordered_true { "1f" } else { "2f" };
     format!(
@@ -338,6 +373,7 @@ pub(crate) fn assembly_source(recipe: super::RustAssemblyRecipe) -> String {
         CompareGreaterBranch => compare_branch_source(recipe.name(), "gt", false),
         CompareGreaterEqualBranch => compare_branch_source(recipe.name(), "ge", false),
         ArrayNumericLoop => AARCH64_ARRAY_LOOP.to_owned(),
+        AffineI32Loop => AARCH64_AFFINE_I32_LOOP.to_owned(),
         Property => AARCH64_PROPERTY_READ.to_owned(),
         PrototypeProperty => AARCH64_PROTOTYPE_PROPERTY.to_owned(),
         StoreProperty => AARCH64_PROPERTY_WRITE.to_owned(),

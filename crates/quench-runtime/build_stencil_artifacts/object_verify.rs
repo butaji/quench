@@ -1,3 +1,9 @@
+const AARCH64_INSTRUCTION_BYTES: usize = 4;
+const AARCH64_BRANCH26_IMMEDIATE_MASK: u32 = 0x03FF_FFFF;
+const AARCH64_COND_BRANCH19_OPCODE_MASK: u32 = 0xFF00_0010;
+const AARCH64_COND_BRANCH19_OPCODE: u32 = 0x5400_0000;
+const AARCH64_COND_BRANCH19_IMMEDIATE_MASK: u32 = 0x00FF_FFE0;
+
 fn parse_object(path: &Path, name: &str) -> Vec<u8> {
     let data = fs::read(path).expect("read Rust stencil object");
     let file = object::File::parse(&*data).expect("parse Rust stencil object");
@@ -202,14 +208,22 @@ fn validate_hole_bytes(bytes: &[u8], offset: usize, kind: &str) {
 }
 
 fn validate_cond_branch_hole(bytes: &[u8], offset: usize) {
-    let slot: [u8; 4] = bytes
-        .get(offset..offset + 4)
+    let slot: [u8; AARCH64_INSTRUCTION_BYTES] = bytes
+        .get(offset..offset + AARCH64_INSTRUCTION_BYTES)
         .expect("conditional branch hole bounds")
         .try_into()
         .expect("conditional branch width");
     let word = u32::from_le_bytes(slot);
-    assert_eq!(word & 0xff00_0010, 0x5400_0000, "invalid B.cond hole");
-    assert_eq!(word & 0x00ff_ffe0, 0, "B.cond hole is prepatched");
+    assert_eq!(
+        word & AARCH64_COND_BRANCH19_OPCODE_MASK,
+        AARCH64_COND_BRANCH19_OPCODE,
+        "invalid B.cond hole"
+    );
+    assert_eq!(
+        word & AARCH64_COND_BRANCH19_IMMEDIATE_MASK,
+        0,
+        "B.cond hole is prepatched"
+    );
 }
 
 fn validate_fragment_relocations(
@@ -293,11 +307,15 @@ fn assert_macho_zero_branch_addend(
         .expect("read relocation section");
     let start = usize::try_from(offset).expect("relocation offset");
     let instruction = bytes
-        .get(start..start + 4)
+        .get(start..start + AARCH64_INSTRUCTION_BYTES)
         .and_then(|slice| slice.try_into().ok())
         .map(u32::from_le_bytes)
         .expect("branch relocation lies within text");
-    assert_eq!(instruction & 0x03ff_ffff, 0, "nonzero implicit addend");
+    assert_eq!(
+        instruction & AARCH64_BRANCH26_IMMEDIATE_MASK,
+        0,
+        "nonzero implicit addend"
+    );
 }
 
 fn observe_generic_relocations(file: &object::File<'_>, context: &str) -> Vec<ObservedRelocation> {

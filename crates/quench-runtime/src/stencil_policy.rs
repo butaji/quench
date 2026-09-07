@@ -92,6 +92,11 @@ impl ExecutionPolicy {
         Self::from_architecture(Architecture::Aarch64, true)
     }
 
+    #[cfg(test)]
+    pub(crate) fn arm_composed_opt_in_for_test() -> Self {
+        Self::from_architecture_and_mode(Architecture::Aarch64, ArmMode::Composed)
+    }
+
     /// Exercise a helper-capable region through the normal baseline driver
     /// without enabling it in the production AArch64 policy.
     #[cfg(test)]
@@ -208,26 +213,17 @@ mod tests {
 
     #[test]
     fn arm_diagnostic_modes_isolate_physical_families() {
-        let leaves = ExecutionPolicy::from_architecture_and_mode(
-            Architecture::Aarch64,
-            ArmMode::Leaves,
-        );
-        let composed = ExecutionPolicy::from_architecture_and_mode(
-            Architecture::Aarch64,
-            ArmMode::Composed,
-        );
+        let leaves =
+            ExecutionPolicy::from_architecture_and_mode(Architecture::Aarch64, ArmMode::Leaves);
+        let composed =
+            ExecutionPolicy::from_architecture_and_mode(Architecture::Aarch64, ArmMode::Composed);
         assert!(leaves.native_leaves && !leaves.composed_regions);
         assert!(!leaves.local_fusions);
-        let fusion = ExecutionPolicy::from_architecture_and_mode(
-            Architecture::Aarch64,
-            ArmMode::Fusion,
-        );
+        let fusion =
+            ExecutionPolicy::from_architecture_and_mode(Architecture::Aarch64, ArmMode::Fusion);
         assert!(fusion.local_fusions && !fusion.native_leaves);
         assert!(!composed.native_leaves && composed.composed_regions);
-        let all = ExecutionPolicy::from_architecture_and_mode(
-            Architecture::Aarch64,
-            ArmMode::All,
-        );
+        let all = ExecutionPolicy::from_architecture_and_mode(Architecture::Aarch64, ArmMode::All);
         assert!(!leaves.optimizing_view && !composed.optimizing_view);
         assert!(all.native_leaves && all.local_fusions && all.composed_regions);
         assert!(!all.optimizing_view);

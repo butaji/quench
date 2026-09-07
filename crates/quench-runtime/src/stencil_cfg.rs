@@ -360,7 +360,7 @@ fn entry_matches_region(
     end: usize,
     pc: usize,
 ) -> bool {
-    entry.instruction.opcode == expected
+    expected.matches_physical_contract(entry.instruction.opcode)
         && expected.operands_are_canonical([
             entry.instruction.a,
             entry.instruction.b,
