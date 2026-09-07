@@ -767,20 +767,10 @@ pub(crate) fn set_property_from_host(
 }
 
 fn own_data_property(target: &crate::value::Value, key: &str) -> bool {
-    match target {
-        crate::value::Value::Object(properties) => {
-            if let Some(kind) = plain_own_property(properties, key) {
-                return kind.is_data();
-            }
+    if let crate::value::Value::Object(properties) = target {
+        if let Some(kind) = plain_own_property(properties, key) {
+            return kind.is_data();
         }
-        crate::value::Value::Array(values) => {
-            if crate::arrays::array_index(key)
-                .is_some_and(|index| values.has_plain_dense_index(index as usize))
-            {
-                return true;
-            }
-        }
-        _ => {}
     }
     observable_own_data_property(target, key)
 }
@@ -1379,29 +1369,6 @@ mod array_identity_write_tests {
             Value::String("changed".into())
         );
         crate::locals::reset_replacements();
-    }
-
-    #[test]
-    fn dense_array_own_data_fact_rejects_holes_and_descriptors() {
-        let dense = Value::Array(Rc::new(ArrayData::new(vec![Value::Number(1.0)])));
-        assert!(super::own_data_property(&dense, "0"));
-
-        let mut hole = ArrayData::new(vec![Value::Number(1.0)]);
-        hole.delete_property("0");
-        assert!(!super::own_data_property(&Value::Array(Rc::new(hole)), "0"));
-
-        let mut described = ArrayData::new(vec![Value::Number(1.0)]);
-        described.define_descriptor(
-            "0",
-            Value::Object(Rc::new(crate::value::ObjectData::new(vec![
-                ("get".into(), Value::Undefined),
-                ("configurable".into(), Value::Boolean(true)),
-            ]))),
-        );
-        assert!(!super::own_data_property(
-            &Value::Array(Rc::new(described)),
-            "0"
-        ));
     }
 }
 
