@@ -74,6 +74,22 @@ mod tests {
     }
 
     #[test]
+    fn selected_entry_must_be_inside_the_finalized_image() {
+        let key = crate::stencil_select::fallthrough_region_key();
+        let view = crate::stencil_select::select_physical(key).expect("fallthrough view");
+        let invalid = PhysicalStencilView {
+            entry: u16::MAX,
+            ..view
+        };
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let values = PatchValues::from_site(&site);
+        assert_eq!(
+            compose_selected_region(invalid, &values).map(|_| ()),
+            Err(LayoutError::TargetOutOfBounds)
+        );
+    }
+
+    #[test]
     fn selected_control_must_match_the_residual_span() {
         let key = crate::stencil_select::fallthrough_region_key();
         let view = crate::stencil_select::select_physical(key).expect("fallthrough view");
