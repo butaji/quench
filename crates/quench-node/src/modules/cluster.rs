@@ -677,6 +677,18 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
     let Some(module) = state.borrow().cluster.module.clone() else {
         return;
     };
+    // A cluster worker is a separate Node process. Keep the primary's global
+    // object as the restoration target while the worker bootstrap runs, so
+    // worker-only globals and polyfill bindings cannot leak back into the
+    // parent after re-entry.
+    let parent_global = quench_runtime::vm::current_global_object();
+    let parent_global_entries = match &parent_global {
+        Value::Object(object) => object
+            .iter()
+            .map(|(name, value)| (name.to_string(), value))
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
     for (key, value) in [
         ("isPrimary", Value::Boolean(false)),
         ("isMaster", Value::Boolean(false)),
@@ -767,11 +779,26 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
                 .map(|_| ())
                 .map_err(|error| vec![error.render()])
         });
+    // Promise-backed fallbacks used by worker bootstrap APIs (for example
+    // dgram's setImmediate compatibility path) must settle while the worker
+    // process view is still installed. Otherwise their callbacks observe the
+    // primary's `cluster.worker === null` after this re-entry returns.
+    for _ in 0..8 {
+        if !quench_runtime::has_pending_promise_jobs() { break; }
+        quench_runtime::drain_promise_jobs();
+    }
     // Child bootstrap and its first I/O notification run before `fork()`
     // returns, but under the child's module identity. Drain only the bounded
     // work made visible by this script; persistent work remains in the host
     // loop after the worker transitions back to primary mode.
-    for _ in 0..64 {
+    for _ in 0..256 {
+        if let Err(error) = crate::modules::pump::drain_immediates(state) {
+            if crate::modules::pump::handle_uncaught(state, error).is_ok() {
+                let _ = crate::modules::pump::run_uncaught(state);
+            } else {
+                break;
+            }
+        }
         if let Err(error) = crate::modules::net::poll(state) {
             if crate::modules::pump::handle_uncaught(state, error).is_ok() {
                 let _ = crate::modules::pump::run_uncaught(state);
@@ -781,7 +808,44 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
         }
         match crate::modules::pump::drain_one_tick(state) {
             Ok(true) => {}
-            Ok(false) | Err(_) => break,
+            Ok(false) => continue,
+            Err(_) => break,
+        }
+    }
+    let worker_global = quench_runtime::vm::current_global_object();
+    if worker_global.object_identity() != parent_global.object_identity() {
+        quench_runtime::execute::replace_global_object(&worker_global, &parent_global);
+    }
+    // Worker bootstrap and its required modules may have added or replaced
+    // properties on the shared host object. Restore the complete parent
+    // property projection so worker-only globals cannot escape into primary;
+    // this is a generic process-boundary rule, not a list of fixture names.
+    let mut restored_global = parent_global.clone();
+    if let Value::Object(global) = &restored_global {
+        let original_names = parent_global_entries
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        let current_names = global
+            .iter()
+            .map(|(name, _)| name.to_string())
+            .collect::<Vec<_>>();
+        for name in current_names {
+            if !original_names.contains(name.as_str()) {
+                let (updated, deleted) =
+                    quench_runtime::execute::delete_property(restored_global.clone(), &name);
+                if deleted {
+                    quench_runtime::execute::replace_global_object(&restored_global, &updated);
+                    restored_global = updated;
+                }
+            }
+        }
+        for (name, value) in &parent_global_entries {
+            let _ = quench_runtime::execute::set_property_in_place(
+                &restored_global,
+                name,
+                value.clone(),
+            );
         }
     }
     let child_exit_code = state.borrow().process.exit_code.or_else(|| {
@@ -811,7 +875,7 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
     ] {
         let _ = execute::set_property_in_place(&module, key, value);
     }
-    let global = quench_runtime::vm::current_global_object();
+    let global = restored_global;
     if let Ok(process) = execute::get_property_result(&global, "process") {
         if let Some(previous_argv) = previous_argv {
             let _ = execute::set_property_in_place(&process, "argv", previous_argv);
