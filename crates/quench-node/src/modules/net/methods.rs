@@ -1690,12 +1690,19 @@ pub fn socket_abort(
         return Ok(Value::Undefined);
     };
     if let Some(id) = net_id(socket) {
-        state
-            .borrow_mut()
-            .net
+        let mut net = state.borrow_mut();
+        net.net
             .pending_lookups
             .retain(|pending| net_id(&pending.socket) != Some(id));
-        state.borrow_mut().net.pending_connect_writes.remove(&id);
+        net.net.pending_connect_writes.remove(&id);
+        // Cancellation wins over transport failures that were discovered
+        // synchronously while the socket was being constructed (for example
+        // TLS verification).  Drop those deferred socket errors so the
+        // AbortSignal contract exposes one ABORT_ERR rather than a stale
+        // pre-abort failure on the next pump turn.
+        net.net.pending_events.retain(|(receiver, event, _)| {
+            !(event == "error" && net_id(receiver) == Some(id))
+        });
     }
     // `AbortSignal` dispatch is synchronous, but net errors are delivered on
     // the next loop turn so listeners attached immediately after `abort()`
