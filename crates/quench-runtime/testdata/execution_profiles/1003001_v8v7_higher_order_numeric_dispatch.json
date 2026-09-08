@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "warmup": 1,
+  "result": { "kind": "number", "value": 140 },
+  "plan": {
+    "execution_kind": "native_machine_code",
+    "operation_route": ["callable_identity_guard", "direct_call", "number_multiply", "loop_backedge"],
+    "fallback": false
+  },
+  "profile": {
+    "residual": {},
+    "slow": {},
+    "stencils": { "monomorphic_higher_order_loop": { "entries": 1, "fallbacks": 0 } },
+    "events": { "leaf_hit": 1 }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "warmup": 1,
+  "result": { "kind": "number", "value": 4 },
+  "plan": {
+    "execution_kind": "native_machine_code",
+    "operation_route": ["f64_arithmetic_region", "comparison_branch", "sqrt_helper_boundary", "exact_return"],
+    "fallback": false
+  },
+  "profile": {
+    "residual": {},
+    "slow": { "sqrt_helper": 1 },
+    "stencils": { "guarded_f64_intersection": { "entries": 1, "fallbacks": 0 } },
+    "events": { "leaf_hit": 1 }
+  }
+}
