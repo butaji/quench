@@ -31,6 +31,7 @@ const PROFILE_CASE_FILTER: &str = "QUENCH_EXECUTION_PROFILE_CASE";
 const PROFILE_CHILD_PROCESS: &str = "QUENCH_EXECUTION_PROFILE_CHILD";
 const PROFILE_DETAILS: &str = "QUENCH_EXECUTION_PROFILE_DETAILS";
 const PROFILE_MISMATCH_MARKER: &str = "QUENCH_PROFILE_MISMATCH:";
+const MAX_PROFILE_STRUCTURE_DEPTH: usize = 8;
 
 struct PreparedExecution {
     run: crate::value::Value,
@@ -486,10 +487,7 @@ pub(crate) fn executed_code(code: crate::machine::CodeView<'_>) {
             .filter_map(|pc| code.instruction(pc).map(|instruction| (pc, instruction)))
             .collect::<Vec<_>>();
         if std::env::var_os(PROFILE_DETAILS).is_some() {
-            eprintln!("execution-profile code:");
-            for (pc, instruction) in &instructions {
-                eprintln!("  {pc}: {instruction:?}");
-            }
+            dump_code(code, 0);
         }
         let route = instructions
             .into_iter()
@@ -500,6 +498,50 @@ pub(crate) fn executed_code(code: crate::machine::CodeView<'_>) {
             profile.lowered_routes.push(route);
         }
     });
+}
+
+fn dump_code(code: crate::machine::CodeView<'_>, depth: usize) {
+    if depth > MAX_PROFILE_STRUCTURE_DEPTH {
+        return;
+    }
+    let indent = "  ".repeat(depth);
+    eprintln!("{indent}execution-profile code {:?}:", code.range());
+    for pc in 0..code.len() {
+        let Some(instruction) = code.instruction(pc) else {
+            continue;
+        };
+        eprintln!("{indent}  {pc}: {instruction:?}");
+        let Some(operation) = code.cold_at(pc) else {
+            continue;
+        };
+        dump_cold_operation(operation, &indent);
+        operation.visit_bodies(&mut |body| {
+            if let Some(body) = body.code() {
+                dump_code(body, depth + 1);
+            }
+        });
+    }
+}
+
+fn dump_cold_operation(operation: &crate::ops::Op, indent: &str) {
+    let crate::ops::Op::Loop {
+        init,
+        test,
+        body,
+        update,
+        post_test,
+        dst,
+        per_iteration,
+        ..
+    } = operation
+    else {
+        eprintln!("{indent}    cold: non-loop boundary");
+        return;
+    };
+    eprintln!(
+        "{indent}    cold: Loop init={:?} test={:?} body={:?} update={:?} post_test={post_test} dst={dst} per_iteration={per_iteration:?}",
+        init.range, test.range, body.range, update.range
+    );
 }
 
 pub(crate) fn local_numeric_route(code: crate::machine::CodeView<'_>, start: usize, span: usize) {
