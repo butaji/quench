@@ -14,12 +14,15 @@ pub(crate) const CONSTANT_LOOP_BACKEDGE: usize = 25;
 pub(crate) const CONSTANT_LOOP_EXIT: usize = 26;
 pub(crate) const NAMED_REGION_END: usize = 28;
 pub(crate) const NAMED_LOOP_BACKEDGE: usize = 23;
+pub(crate) const POLYMORPHIC_REGION_END: usize = 37;
+pub(crate) const POLYMORPHIC_LOOP_BACKEDGE: usize = 32;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum IntegerRecurrence {
     Index,
     Constant(i32),
     NamedCallee(std::rc::Rc<str>),
+    EquivalentCallees([std::rc::Rc<str>; 2]),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -27,13 +30,14 @@ pub(crate) enum IntegerLoopProfile {
     Numeric,
     Affine,
     CallsInline,
+    CallsChanging,
 }
 
 impl IntegerRecurrence {
     fn physical_key(&self) -> crate::stencil_fact::RegionKey {
         match self {
             Self::Index => crate::stencil_select::numeric_integer_loop_region_key(),
-            Self::Constant(_) | Self::NamedCallee(_) => {
+            Self::Constant(_) | Self::NamedCallee(_) | Self::EquivalentCallees(_) => {
                 crate::stencil_select::affine_i32_loop_region_key()
             }
         }
@@ -43,7 +47,7 @@ impl IntegerRecurrence {
         match self {
             Self::Index => Some((multiplier, 0)),
             Self::Constant(value) => Some((multiplier, *value)),
-            Self::NamedCallee(_) => None,
+            Self::NamedCallee(_) | Self::EquivalentCallees(_) => None,
         }
     }
 
@@ -52,6 +56,7 @@ impl IntegerRecurrence {
             Self::Index => INDEX_LOOP_BACKEDGE,
             Self::Constant(_) => CONSTANT_LOOP_BACKEDGE,
             Self::NamedCallee(_) => NAMED_LOOP_BACKEDGE,
+            Self::EquivalentCallees(_) => POLYMORPHIC_LOOP_BACKEDGE,
         }
     }
 
@@ -60,6 +65,7 @@ impl IntegerRecurrence {
             Self::Index => INDEX_REGION_END,
             Self::Constant(_) => CONSTANT_REGION_END,
             Self::NamedCallee(_) => NAMED_REGION_END,
+            Self::EquivalentCallees(_) => POLYMORPHIC_REGION_END,
         }
     }
 
@@ -68,6 +74,7 @@ impl IntegerRecurrence {
             Self::Index => IntegerLoopProfile::Numeric,
             Self::Constant(_) => IntegerLoopProfile::Affine,
             Self::NamedCallee(_) => IntegerLoopProfile::CallsInline,
+            Self::EquivalentCallees(_) => IntegerLoopProfile::CallsChanging,
         }
     }
 }
@@ -197,14 +204,14 @@ impl NativeIntegerLoopPlan {
         {
             return Some(formula);
         }
-        let IntegerRecurrence::NamedCallee(key) = &self.selection.recurrence else {
-            return None;
-        };
-        let function = own_function(object, key)?;
-        crate::functions::direct_call_eligible(&function).then_some(())?;
-        let fact = function.code.numeric_affine_i32()?;
-        (usize::from(fact.parameter_slot) == function.captures.len())
-            .then_some((fact.multiplier, fact.addend))
+        match &self.selection.recurrence {
+            IntegerRecurrence::NamedCallee(key) => affine_callee_formula(object, key),
+            IntegerRecurrence::EquivalentCallees(keys) => {
+                let first = affine_callee_formula(object, &keys[0])?;
+                (affine_callee_formula(object, &keys[1])? == first).then_some(first)
+            }
+            IntegerRecurrence::Index | IntegerRecurrence::Constant(_) => None,
+        }
     }
 
     fn invoke(&mut self, context: &mut IntegerLoopContext) -> Result<u64, NativeDispatchError> {
@@ -289,6 +296,14 @@ impl NativeIntegerLoopPlan {
         self.installed = Some(entry);
         Ok(entry)
     }
+}
+
+fn affine_callee_formula(object: &crate::value::ObjectData, key: &str) -> Option<(i32, i32)> {
+    let function = own_function(object, key)?;
+    crate::functions::direct_call_eligible(&function).then_some(())?;
+    let fact = function.code.numeric_affine_i32()?;
+    (usize::from(fact.parameter_slot) == function.captures.len())
+        .then_some((fact.multiplier, fact.addend))
 }
 
 fn own_function(
