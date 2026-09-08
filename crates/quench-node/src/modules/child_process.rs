@@ -113,7 +113,11 @@ pub(crate) fn needs_shell(command: &str) -> bool {
 /// `worker_threads` bootstrap and must not leak into ordinary child
 /// processes, otherwise a child recursively re-enters worker mode.
 pub(crate) fn clear_worker_markers(command: &mut Command) {
-    for key in ["QUENCH_WORKER", "QUENCH_WORKER_DATA", "QUENCH_WORKER_MESSAGE"] {
+    for key in [
+        "QUENCH_WORKER",
+        "QUENCH_WORKER_DATA",
+        "QUENCH_WORKER_MESSAGE",
+    ] {
         command.env_remove(key);
     }
 }
@@ -529,6 +533,11 @@ pub fn spawn_sync(
         }
         if let Some(env) = opt_env(options) {
             cmd.env_clear().envs(env);
+        }
+        if is_host_exec {
+            if let Some(cwd) = opt_str(options, "cwd") {
+                cmd.env("QUENCH_CWD", cwd);
+            }
         }
         if let Ok(input_value) = execute::get_property_result(options, "input") {
             if !matches!(input_value, Value::Undefined) {
@@ -1013,7 +1022,10 @@ pub fn get_valid_stdio(args: &[Value]) -> Result<Value, VmError> {
         Value::String(kind)
             if matches!(kind.as_str(), "pipe" | "ignore" | "inherit" | "overlapped") =>
         {
-            (host_api::array((0..3).map(|_| Value::String(kind.clone())).collect()), false)
+            (
+                host_api::array((0..3).map(|_| Value::String(kind.clone())).collect()),
+                false,
+            )
         }
         Value::String(_) => return Err(stdio_error("TypeError", "ERR_INVALID_ARG_VALUE")),
         Value::Array(array) => (Value::Array(array), true),
@@ -1034,39 +1046,29 @@ pub fn get_valid_stdio(args: &[Value]) -> Result<Value, VmError> {
     for index in 0..3 {
         let value = execute::get_property(&stdio, &index.to_string());
         let descriptor = match value {
-            Value::Undefined => host_api::object(vec![(
-                "type".into(),
-                Value::String("pipe".into()),
-            )]),
+            Value::Undefined => {
+                host_api::object(vec![("type".into(), Value::String("pipe".into()))])
+            }
             Value::String(kind) => match kind.as_str() {
-                "pipe" => host_api::object(vec![(
-                    "type".into(),
-                    Value::String("pipe".into()),
-                )]),
-                "overlapped" => host_api::object(vec![(
-                    "type".into(),
-                    Value::String("overlapped".into()),
-                )]),
-                "ignore" => host_api::object(vec![(
-                    "type".into(),
-                    Value::String("ignore".into()),
-                )]),
+                "pipe" => host_api::object(vec![("type".into(), Value::String("pipe".into()))]),
+                "overlapped" => {
+                    host_api::object(vec![("type".into(), Value::String("overlapped".into()))])
+                }
+                "ignore" => host_api::object(vec![("type".into(), Value::String("ignore".into()))]),
                 "inherit" => host_api::object(vec![
                     ("type".into(), Value::String("fd".into())),
                     ("fd".into(), Value::Number(index as f64)),
                 ]),
                 "ipc" => {
                     if !matches!(&ipc, Value::Undefined) {
-                        let code = if sync { "ERR_IPC_SYNC_FORK" } else { "ERR_IPC_ONE_PIPE" };
-                        return Err(stdio_error(
-                            if sync { "Error" } else { "Error" },
-                            code,
-                        ));
+                        let code = if sync {
+                            "ERR_IPC_SYNC_FORK"
+                        } else {
+                            "ERR_IPC_ONE_PIPE"
+                        };
+                        return Err(stdio_error(if sync { "Error" } else { "Error" }, code));
                     }
-                    ipc = host_api::object(vec![(
-                        "type".into(),
-                        Value::String("ipc".into()),
-                    )]);
+                    ipc = host_api::object(vec![("type".into(), Value::String("ipc".into()))]);
                     host_api::object(vec![
                         ("type".into(), Value::String("ipc".into())),
                         ("ipc".into(), Value::Boolean(true)),
@@ -1368,8 +1370,14 @@ fn opt_env(value: &Value) -> Option<std::collections::HashMap<String, String>> {
         })
     {
         if let Ok(item) = execute::get_property_result(&value, &key) {
-            if let Ok(s) = execute::to_js_string(&item) {
-                env.insert(key, s);
+            // An explicit `undefined` in spawn options' `env` object means
+            // the variable is omitted.  It must not be stringified into the
+            // child environment: Node uses that distinction for startup
+            // controls such as NODE_COMPILE_CACHE.
+            if !matches!(item, Value::Undefined) {
+                if let Ok(s) = execute::to_js_string(&item) {
+                    env.insert(key, s);
+                }
             }
         }
     }

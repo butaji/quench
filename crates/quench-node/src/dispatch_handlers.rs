@@ -8940,6 +8940,12 @@ fn cp_run_host_child(
         process.env_clear().envs(values);
         process.env("QUENCH_CHILD_RUNNER", "1");
     }
+    if let Value::String(cwd) = execute::get_property(options, "cwd") {
+        // `env_clear` above intentionally removes inherited transport
+        // variables; restore the lexical cwd after applying the requested
+        // child environment.
+        process.env("QUENCH_CWD", cwd);
+    }
     if let Some(eval_index) = args.iter().position(|arg| {
         matches!(
             arg.as_str(),
