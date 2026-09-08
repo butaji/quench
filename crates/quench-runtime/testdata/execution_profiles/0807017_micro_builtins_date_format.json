@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "warmup": 1,
+  "result": { "kind": "string", "value": "[\"number\",\"1536\"]" },
+  "plan": {
+    "execution_kind": "portable_recipe",
+    "operation_route": ["builtins", "date_format"],
+    "fallback": false
+  },
+  "profile": {
+    "residual": {},
+    "slow": {},
+    "stencils": { "builtins_date_format_region": { "entries": 1, "fallbacks": 0 } },
+    "events": { "leaf_hit": 1 }
+  }
+}

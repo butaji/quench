@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "warmup": 1,
+  "result": { "kind": "string", "value": "[\"number\",\"96\"]" },
+  "plan": {
+    "execution_kind": "native_machine_code",
+    "operation_route": ["prototypes", "method_replacement"],
+    "fallback": false
+  },
+  "profile": {
+    "residual": {},
+    "slow": {},
+    "stencils": { "prototypes_method_replacement_region": { "entries": 1, "fallbacks": 0 } },
+    "events": { "leaf_hit": 1 }
+  }
+}
