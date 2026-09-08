@@ -776,9 +776,6 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
         } else {
             let _ = execute::set_property_in_place(&global, "__quench_argv", worker_argv.clone());
         }
-        if std::env::var_os("QUENCH_DEBUG_FORK").is_some() {
-            eprintln!("cluster worker {id} argv={:?} process.argv={:?} qargv={:?}", values, execute::get_property(process, "argv"), execute::get_property(&global, "__quench_argv"));
-        }
     }
     if let Ok(process) = execute::get_property_result(&global, "process") {
         let _ = execute::set_property_in_place(&process, ID, Value::Number(id as f64));
@@ -834,9 +831,6 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
                 .map(|_| ())
                 .map_err(|error| vec![error.render()])
         });
-    if std::env::var_os("QUENCH_DEBUG_FORK").is_some() {
-        eprintln!("cluster worker {id} after bootstrap result={:?} process.argv={:?} qargv={:?} isPrimary={:?}", result.as_ref().map(|_| "ok"), execute::get_property(&execute::get_property(&global, "process"), "argv"), execute::get_property(&global, "__quench_argv"), execute::get_property(&module, "isPrimary"));
-    }
     // Promise-backed fallbacks used by worker bootstrap APIs (for example
     // dgram's setImmediate compatibility path) must settle while the worker
     // process view is still installed. Otherwise their callbacks observe the
