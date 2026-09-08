@@ -6,7 +6,7 @@
 //! wire state here means those layers consume one canonical representation of
 //! frame boundaries instead of each reparsing TCP chunks.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub const CONNECTION_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 pub const DEFAULT_MAX_FRAME_SIZE: u32 = 16_384;
@@ -179,6 +179,7 @@ pub struct Session {
     decoder: hpack::Decoder<'static>,
     encoder: hpack::Encoder<'static>,
     pending_headers: HashMap<u32, Vec<u8>>,
+    announced_headers: HashSet<u32>,
     pub max_frame_size: u32,
     pub goaway: bool,
     pub streams: HashMap<u32, Stream>,
@@ -199,6 +200,7 @@ impl Session {
             decoder: hpack::Decoder::new(),
             encoder: hpack::Encoder::new(),
             pending_headers: HashMap::new(),
+            announced_headers: HashSet::new(),
             max_frame_size: DEFAULT_MAX_FRAME_SIZE,
             goaway: false,
             streams: HashMap::new(),
@@ -377,6 +379,20 @@ impl Session {
     /// strings are valid HPACK; the decoder accepts indexed and Huffman forms.
     pub fn encode_headers(&mut self, headers: &[(&[u8], &[u8])]) -> Vec<u8> {
         self.encoder.encode(headers.iter().copied())
+    }
+
+    /// Return each newly completed header block once, leaving the decoded
+    /// representation available for diagnostics and protocol consumers.
+    pub fn take_new_headers(&mut self) -> Vec<(u32, Vec<(Vec<u8>, Vec<u8>)>)> {
+        let ids = self
+            .headers
+            .keys()
+            .copied()
+            .filter(|id| self.announced_headers.insert(*id))
+            .collect::<Vec<_>>();
+        ids.into_iter()
+            .filter_map(|id| self.headers.get(&id).cloned().map(|headers| (id, headers)))
+            .collect()
     }
 
     pub fn pending_bytes(&self) -> usize {
