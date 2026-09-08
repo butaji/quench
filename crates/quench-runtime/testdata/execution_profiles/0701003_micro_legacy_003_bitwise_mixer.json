@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "warmup": 1,
-  "result": { "kind": "string", "value": "3388529760" },
+  "result": { "kind": "number", "value": 3707827554 },
   "plan": {
     "execution_kind": "native_machine_code",
     "operation_route": ["bitwise_mixer"],
