@@ -220,6 +220,7 @@ mod stencil_switch_reduction;
 mod stencil_test_support;
 #[cfg(test)]
 mod stencil_truthiness_fusion_tests;
+mod stencil_value_cover;
 mod stencil_value_graph;
 mod stencil_word_composition;
 #[cfg(test)]
