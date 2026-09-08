@@ -4956,6 +4956,7 @@ fn validate_physical_view(
             | crate::stencil_select::RegionAbi::ArrayNumericLoop
             | crate::stencil_select::RegionAbi::AffineI32Loop
             | crate::stencil_select::RegionAbi::NumericI32BitwiseLoop
+            | crate::stencil_select::RegionAbi::NumericI32PairLoop
     ) {
         crate::stencil_physical::validate_raw_instruction_stream(stencil.bytes)?;
         let actual = crate::stencil_physical::simd_clobber_mask(stencil.bytes);
@@ -4998,6 +4999,7 @@ fn raw_region_declares_allocation(contract: crate::stencil_select::RegionContrac
             | crate::stencil_select::RegionAbi::ArrayNumericLoop
             | crate::stencil_select::RegionAbi::AffineI32Loop
             | crate::stencil_select::RegionAbi::NumericI32BitwiseLoop
+            | crate::stencil_select::RegionAbi::NumericI32PairLoop
     ) && contract.has_effect(crate::facts::OperationEffect::Allocate)
 }
 
@@ -5023,6 +5025,9 @@ fn installed_region_entry(
             Err(crate::stencil_arena::ArenaError::ProtectionFailed)
         }
         crate::stencil_select::RegionAbi::NumericI32BitwiseLoop => {
+            Err(crate::stencil_arena::ArenaError::ProtectionFailed)
+        }
+        crate::stencil_select::RegionAbi::NumericI32PairLoop => {
             Err(crate::stencil_arena::ArenaError::ProtectionFailed)
         }
         _ => Err(crate::stencil_arena::ArenaError::ProtectionFailed),
@@ -5274,6 +5279,7 @@ impl NativeRegionPlan {
                     | crate::stencil_select::RegionAbi::ArrayNumericLoop
                     | crate::stencil_select::RegionAbi::AffineI32Loop
                     | crate::stencil_select::RegionAbi::NumericI32BitwiseLoop
+                    | crate::stencil_select::RegionAbi::NumericI32PairLoop
             ) {
                 return crate::vm::execute_region_fallback(&mut region);
             }
@@ -5349,6 +5355,11 @@ impl NativeRegionPlan {
                 crate::stencil_select::RegionAbi::NumericI32BitwiseLoop => {
                     return Err(NativeDispatchError::Physical(
                         "numeric-i32-bitwise loop ABI requires its typed entry".into(),
+                    ));
+                }
+                crate::stencil_select::RegionAbi::NumericI32PairLoop => {
+                    return Err(NativeDispatchError::Physical(
+                        "numeric-i32-pair loop ABI requires its typed entry".into(),
                     ));
                 }
                 crate::stencil_select::RegionAbi::Bridge => {}
@@ -5521,6 +5532,7 @@ enum NativeAdmission {
     IntegerLoop(Rc<RefCell<crate::stencil_numeric_integer_loop::NativeIntegerLoopPlan>>),
     FloatingLoop(Rc<RefCell<crate::stencil_numeric_floating_loop::NativeFloatingLoopPlan>>),
     BitwiseLoop(Rc<RefCell<crate::stencil_numeric_bitwise_loop::NativeBitwiseLoopPlan>>),
+    IndependentLoop(Rc<RefCell<crate::stencil_numeric_independent_loop::NativeIndependentLoopPlan>>),
     DenseUpdate(Rc<RefCell<crate::stencil_dense_array_update::NativeDenseUpdatePlan>>),
     DenseCopy(Rc<RefCell<crate::stencil_dense_array_copy::NativeDenseCopyPlan>>),
     Reduction(Rc<RefCell<crate::stencil_ordered_reduction::NativeReductionPlan>>),
@@ -5581,6 +5593,9 @@ impl AdmissionEntry for NativeAdmission {
             Self::BitwiseLoop(_) => shared_value_bytes::<
                 RefCell<crate::stencil_numeric_bitwise_loop::NativeBitwiseLoopPlan>,
             >(),
+            Self::IndependentLoop(_) => shared_value_bytes::<
+                RefCell<crate::stencil_numeric_independent_loop::NativeIndependentLoopPlan>,
+            >(),
             Self::DenseUpdate(_) => shared_value_bytes::<
                 RefCell<crate::stencil_dense_array_update::NativeDenseUpdatePlan>,
             >(),
@@ -5637,6 +5652,7 @@ impl std::fmt::Debug for NativeAdmission {
             Self::IntegerLoop(_) => "integer_loop",
             Self::FloatingLoop(_) => "floating_loop",
             Self::BitwiseLoop(_) => "bitwise_loop",
+            Self::IndependentLoop(_) => "independent_loop",
             Self::DenseUpdate(_) => "dense_update",
             Self::DenseCopy(_) => "dense_copy",
             Self::Reduction(_) => "reduction",
@@ -6129,6 +6145,23 @@ fn bitwise_loop_admission(
         Rc::clone(arena),
     )?;
     Some(NativeAdmission::BitwiseLoop(Rc::new(RefCell::new(plan))))
+}
+
+fn independent_loop_admission(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    let selection = crate::stencil_numeric_independent_loop::select_independent_loop(
+        code, entries, cfg, pc,
+    )?;
+    let plan = crate::stencil_numeric_independent_loop::NativeIndependentLoopPlan::new(
+        selection, policy, Rc::clone(arena),
+    )?;
+    Some(NativeAdmission::IndependentLoop(Rc::new(RefCell::new(plan))))
 }
 
 fn dense_copy_admission(
@@ -6674,6 +6707,10 @@ fn collect_admissions_at(
     );
     builder.push_optional(
         pc,
+        independent_loop_admission(code, entries, cfg, pc, policy, arena),
+    );
+    builder.push_optional(
+        pc,
         dense_copy_admission(code, entries, cfg, pc, policy, arena),
     );
     builder.push_optional(
@@ -6920,6 +6957,12 @@ impl BaselinePlan {
         crate::stencil_numeric_bitwise_loop::NativeBitwiseLoopPlan
     );
     typed_admission_accessors!(
+        independent_loop_handle_at,
+        independent_loop_at,
+        IndependentLoop,
+        crate::stencil_numeric_independent_loop::NativeIndependentLoopPlan
+    );
+    typed_admission_accessors!(
         dense_update_handle_at,
         dense_update_at,
         DenseUpdate,
@@ -7111,6 +7154,11 @@ impl OptimizingEntry<'_> {
         bitwise_loop,
         BitwiseLoop,
         crate::stencil_numeric_bitwise_loop::NativeBitwiseLoopPlan
+    );
+    optimizing_admission_accessors!(
+        independent_loop,
+        IndependentLoop,
+        crate::stencil_numeric_independent_loop::NativeIndependentLoopPlan
     );
     optimizing_admission_accessors!(
         dense_update,
