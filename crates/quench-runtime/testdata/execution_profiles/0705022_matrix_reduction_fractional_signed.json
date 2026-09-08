@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "warmup": 1,
-  "result": { "kind": "number", "value": 192 },
+  "result": { "kind": "number", "value": 2.75 },
   "plan": {
     "execution_kind": "native_machine_code",
     "operation_route": ["dense_matrix_reduction"],

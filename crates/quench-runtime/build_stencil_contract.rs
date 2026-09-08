@@ -43,6 +43,7 @@ pub(crate) enum DeclAbi {
     BranchRecurrenceLoop,
     NestedXorLoop,
     SwitchReductionLoop,
+    MatrixReductionLoop,
     NumericI32BitwiseLoop,
     NumericI32PairLoop,
     NumericF64Loop,

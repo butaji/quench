@@ -151,6 +151,10 @@ fn generated_abi_classification_matches_physical_entry_shape() {
                 assert_eq!(record.name, "switch_reduction_loop");
                 assert!(record.operations.contains(&crate::ir::Opcode::Binary));
             }
+            RegionAbi::MatrixReductionLoop => {
+                assert_eq!(record.name, "matrix_reduction_loop");
+                assert!(record.operations.contains(&crate::ir::Opcode::AGetI));
+            }
             RegionAbi::NumericF64Loop => {
                 assert_eq!(record.name, "numeric_floating_loop");
                 assert!(record.operations.ends_with(&[crate::ir::Opcode::Jump]));
