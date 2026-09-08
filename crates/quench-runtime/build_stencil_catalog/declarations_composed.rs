@@ -1,5 +1,25 @@
 const COMPOSED_REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
+        name: "dense_numeric_copy_loop",
+        operations: &[
+            "LoadConst", "LoadConst", "StoreLocal", "LoadConst", "LoadLocal",
+            "LoadLocal", "GetN", "Binary", "JumpIfFalse", "LoadLocal", "Move",
+            "LoadLocal", "Move", "LoadLocal", "Slow", "LoadLocal", "AGetI",
+            "ASetI", "Move", "LoadLocal", "LoadConst", "Binary", "StoreLocal",
+            "Unary", "Jump", "LoadLocal", "Slow", "LoadConst", "AGetI",
+            "LoadLocal", "Slow", "LoadLocal", "GetN", "LoadConst", "Sub",
+            "AGetI", "Add", "Return",
+        ],
+        abi: DeclAbi::ArrayCopyLoop,
+        x86_bytes: &X86_DISPATCH_BYTES,
+        aarch64_bytes: &AARCH64_ARRAY_COPY_LOOP_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
         name: "dispatch",
         // Every compact opcode has an executable entry.  The entry is a
         // generated trampoline into the canonical Rust handler; it carries

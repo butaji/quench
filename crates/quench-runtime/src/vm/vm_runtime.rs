@@ -1983,6 +1983,15 @@ fn record_dense_update(code: crate::machine::CodeView<'_>, pc: usize) {
     );
 }
 
+fn record_dense_copy(code: crate::machine::CodeView<'_>, pc: usize) {
+    crate::execution_trace::stencil_observation(code, pc, "dense_numeric_copy_loop", true);
+    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+    #[cfg(test)]
+    crate::test_execution_profile::dynamic_region_route(
+        crate::stencil_dense_array_copy::NativeDenseCopyPlan::route(),
+    );
+}
+
 pub(crate) fn execute_baseline_completion_step_from_with_owner(
     code: crate::machine::CodeView<'_>,
     plan: &crate::machine::BaselinePlan,
@@ -2132,6 +2141,33 @@ pub(crate) fn execute_optimized_code_step_from(
             }
         }
         crate::execution_trace::stencil_observation(code, start, "dense_f64_update_loop", false);
+    }
+    if let Some(copy) = entry.dense_copy() {
+        let result = crate::locals::with_current_ref(|environment| {
+            let Some(environment) = environment else { return Ok(None) };
+            copy.borrow_mut().execute(environment, context)
+        });
+        match result {
+            Ok(Some(crate::stencil_dense_array_copy::DenseCopyOutcome::Completed(value))) => {
+                record_dense_copy(code, start);
+                return Ok((
+                    crate::completion::Completion::Return(crate::value::Value::Number(value)),
+                    crate::stencil_dense_array_copy::REGION_END,
+                ));
+            }
+            Ok(Some(crate::stencil_dense_array_copy::DenseCopyOutcome::Resume { pc })) => {
+                record_dense_copy(code, start);
+                return Ok((crate::completion::Completion::Normal, pc));
+            }
+            Ok(None) | Err(crate::machine::NativeDispatchError::Physical(_)) => {}
+            Err(crate::machine::NativeDispatchError::SemanticAt { error, .. }) => return Err(error),
+            Err(crate::machine::NativeDispatchError::Committed { pc, message }) => {
+                return Err(VmError::EvalError(format!(
+                    "committed dense copy failure at residual pc {pc}: {message}"
+                )))
+            }
+        }
+        crate::execution_trace::stencil_observation(code, start, "dense_numeric_copy_loop", false);
     }
     if let Some(dag) = entry.numeric_dag() {
         let value = crate::locals::with_current_ref(|environment| {
@@ -2795,6 +2831,42 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                 Err(crate::machine::NativeDispatchError::Committed { pc, message }) => {
                     return Err(VmError::EvalError(format!(
                         "committed dense update failure at residual pc {pc}: {message}"
+                    )));
+                }
+            }
+        }
+        if let (Some(environment), Some(copy)) = (environment, plan.dense_copy_at(pc)) {
+            match copy.borrow_mut().execute(environment, context) {
+                Ok(Some(crate::stencil_dense_array_copy::DenseCopyOutcome::Completed(value))) => {
+                    record_dense_copy(code, pc);
+                    return completion_step_after_transition(
+                        registers,
+                        crate::completion::Completion::Return(crate::value::Value::Number(value)),
+                        crate::stencil_dense_array_copy::REGION_END,
+                    );
+                }
+                Ok(Some(crate::stencil_dense_array_copy::DenseCopyOutcome::Resume { pc })) => {
+                    record_dense_copy(code, 0);
+                    return completion_step_after_transition(
+                        registers,
+                        crate::completion::Completion::Normal,
+                        pc,
+                    );
+                }
+                Ok(None) | Err(crate::machine::NativeDispatchError::Physical(_)) => {
+                    crate::execution_trace::stencil_observation(
+                        code,
+                        pc,
+                        "dense_numeric_copy_loop",
+                        false,
+                    )
+                }
+                Err(crate::machine::NativeDispatchError::SemanticAt { pc, error }) => {
+                    return completion_step_after_error(registers, error, pc + 1);
+                }
+                Err(crate::machine::NativeDispatchError::Committed { pc, message }) => {
+                    return Err(VmError::EvalError(format!(
+                        "committed dense copy failure at residual pc {pc}: {message}"
                     )));
                 }
             }

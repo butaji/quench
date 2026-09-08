@@ -120,6 +120,7 @@ fn generated_abi_classification_matches_physical_entry_shape() {
                 assert!(matches!(record.stencil.bytes.len(), 12 | 20 | 32 | 44))
             }
             RegionAbi::ArrayNumericLoop => assert_eq!(record.stencil.bytes.len(), 100),
+            RegionAbi::ArrayCopyLoop => assert!(matches!(record.stencil.bytes.len(), 12 | 80)),
             RegionAbi::AffineI32Loop => {
                 assert!(matches!(record.stencil.bytes.len(), 4 | 12 | 84));
                 assert!(record.operations.ends_with(&[crate::ir::Opcode::Jump]));
