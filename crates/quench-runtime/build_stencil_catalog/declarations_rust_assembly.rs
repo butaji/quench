@@ -298,6 +298,11 @@ rust_assembly_catalog! {
         ops: ["LoadLocal", "Add", "Binary", "InitLocal", "StoreLocal", "UpdateLocal", "Return"],
         x86: &[], aarch64: &[], x86_holes: &[], aarch64_holes: &[]
     },
+    CountedI32Recurrence {
+        name: "counted_i32_recurrence", abi: NumericI32BitwiseLoop,
+        ops: ["LoadLocal", "LoadConst", "Binary", "CallN", "StoreLocal", "UpdateLocal", "Return"],
+        x86: &[], aarch64: &[], x86_holes: &[], aarch64_holes: &[]
+    },
     NumericIntegerLoop {
         name: "numeric_integer_loop", abi: AffineI32Loop,
         ops: ["Mul", "Add", "Binary", "Jump"],
