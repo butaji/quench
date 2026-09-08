@@ -20,6 +20,24 @@ const COMPOSED_REGION_DECLARATIONS: &[RegionDeclaration] = &[
         external_entries: &[0],
     },
     RegionDeclaration {
+        name: "ordered_f64_reduction_loop",
+        operations: &[
+            "LoadConst", "StoreLocal", "LoadConst", "LoadConst", "StoreLocal",
+            "LoadConst", "LoadLocal", "LoadLocal", "GetN", "Binary",
+            "JumpIfFalse", "LoadLocal", "LoadLocal", "Slow", "LoadLocal",
+            "AGetI", "Add", "StoreLocal", "Move", "LoadLocal", "LoadConst",
+            "Binary", "StoreLocal", "Unary", "Jump", "LoadLocal", "Return",
+        ],
+        abi: DeclAbi::ArrayReductionLoop,
+        x86_bytes: &X86_DISPATCH_BYTES,
+        aarch64_bytes: &AARCH64_ARRAY_REDUCTION_LOOP_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
         name: "dispatch",
         // Every compact opcode has an executable entry.  The entry is a
         // generated trampoline into the canonical Rust handler; it carries
