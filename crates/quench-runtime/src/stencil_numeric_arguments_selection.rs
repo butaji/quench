@@ -93,7 +93,9 @@ fn call_formula(
         .try_into()
         .ok()?;
     (arguments[1..] == i[21..=25].iter().map(|op| op.a).collect::<Vec<_>>()).then_some(())?;
-    let addend = constants[1..]
+    let tail = &constants[1..];
+    (tail.iter().all(|value| *value >= 0) || tail.iter().all(|value| *value <= 0)).then_some(())?;
+    let addend = tail
         .iter()
         .try_fold(0_i32, |sum, value| sum.checked_add(*value))?;
     Some((constants[0], addend))
