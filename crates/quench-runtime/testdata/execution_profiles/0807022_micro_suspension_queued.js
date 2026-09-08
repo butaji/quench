@@ -1,52 +1,34 @@
-var __profileSpec; function registerMicro(spec) { __profileSpec = spec; }
-registerMicro({
-  id: "suspension",
-  question: "What changes with suspension and queued continuation count?",
-  requires: ["calls", "iteration"],
-  axes: ["size", "continuation form"],
-  async: true,
-  observations: [
-    "time to completed useful work",
-    "bounded pending continuation count"
-  ],
-  explanations: ["Promise creation", "Suspension", "Queue processing"],
-  setup: function (n, seed) {
+"use strict";
+function assert(condition, message) {
+  if (!condition) throw new Error("execution profile assertion failed: " + message);
+}
+function encode(value) {
+  if (value === undefined) return ["undefined"];
+  if (typeof value === "number") return ["number", Number.isNaN(value) ? "NaN" : Object.is(value, -0) ? "-0" : String(value)];
+  if (typeof value === "bigint") return ["bigint", String(value)];
+  if (value === null || typeof value !== "object") return [typeof value, value];
+  if (Array.isArray(value)) return ["array", value.map(encode)];
+  return ["object", Object.keys(value).map(function (key) { return [key, encode(value[key])]; })];
+}
+const setup = function (n, seed) {
     return { n: n, seed: seed };
-  },
-  equivalent: [["synchronous", "await", "chain", "queued"]],
-  variants: {
-    synchronous: function (s) {
-      var t = s.seed;
-      for (var i = 0; i < s.n; i++) t++;
-      return t;
-    },
-    await: async function (s) {
-      var t = s.seed;
-      for (var i = 0; i < s.n; i++) t = await Promise.resolve(t + 1);
-      return t;
-    },
-    chain: function (s) {
-      var p = Promise.resolve(s.seed);
-      for (var i = 0; i < s.n; i++)
-        p = p.then(function (x) {
-          return x + 1;
-        });
-      return p;
-    },
-    queued: async function (s) {
+  };
+const operation = async function (s) {
       var a = [];
       for (var i = 0; i < s.n; i++) a.push(Promise.resolve(1));
       var values = await Promise.all(a),
         t = s.seed;
       for (var j = 0; j < values.length; j++) t += values[j];
       return t;
-    }
-  }
-});
-
-function __profileAssert(condition,message){if(!condition)throw new Error("execution profile assertion failed: "+message);}
-function __profileEncode(x){if(x===undefined)return["undefined"];if(typeof x==="number")return["number",Number.isNaN(x)?"NaN":Object.is(x,-0)?"-0":String(x)];if(typeof x==="bigint")return["bigint",String(x)];if(x===null||typeof x!=="object")return[typeof x,x];if(Array.isArray(x))return["array",x.map(__profileEncode)];return["object",Object.keys(x).map(function(k){return[k,__profileEncode(x[k])];})];}
-__profileAssert(__profileSpec!==undefined,"micro registration");
-__profileAssert(typeof __profileSpec.setup==="function","setup is callable");
-var __profileState=__profileSpec.setup(64,17,"queued");var __profileOperation=__profileSpec.variants["queued"];__profileAssert(typeof __profileOperation==="function","selected variant is callable");async function __profileRun(){var value=await __profileOperation(__profileState);if(__profileSpec.check)__profileSpec.check(value,__profileState,"queued");var signature=JSON.stringify(__profileEncode(value));__profileAssert(signature==="[\"number\",\"81\"]","exact encoded result");return signature;}
-return __profileRun();
+    };
+const check = null;
+const state = setup(64, 17, "queued");
+assert(typeof operation === "function", "scenario operation is callable");
+async function run() {
+  const value = await operation(state);
+  if (check) check(value, state, "queued");
+  const signature = JSON.stringify(encode(value));
+  assert(signature === "[\"number\",\"81\"]", "exact encoded result");
+  return signature;
+}
+return run();
