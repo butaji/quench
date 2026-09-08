@@ -1049,6 +1049,15 @@ impl PropertyEntries for ObjectProperties {
         self.position_rev(key)
             .and_then(|slot| self.slot_value(slot))
     }
+
+    #[inline]
+    fn descriptor_metadata_for_key(&self, key: &str) -> Option<Value> {
+        let slot = self
+            .names
+            .iter()
+            .rposition(|name| crate::builtins::is_descriptor_key_for(name, key))?;
+        self.slot_value(slot)
+    }
 }
 
 impl PropertyEntries for [(PropertyName, Value)] {
@@ -1664,8 +1673,8 @@ impl PropertyEntries for ObjectData {
                     self.descriptor_metadata_state.set(2);
                 } else if !self
                     .properties
-                    .iter()
-                    .any(|(name, _)| crate::builtins::is_descriptor_key(name))
+                    .names()
+                    .any(|name| crate::builtins::is_descriptor_key(name))
                 {
                     self.descriptor_metadata_state.set(1);
                 }
