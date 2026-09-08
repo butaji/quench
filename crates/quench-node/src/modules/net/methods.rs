@@ -2830,12 +2830,13 @@ pub fn server_address(
         return Ok(Value::Null);
     };
     let server = server.borrow();
-    Ok(server
+    let address = server
         .path
         .clone()
         .map(Value::String)
         .or_else(|| server.bind_addr.map(address_value))
-        .unwrap_or(Value::Null))
+        .unwrap_or(Value::Null);
+    Ok(address)
 }
 
 /// `socket.write(data[, encoding][, cb])` — buffers bytes and flushes
@@ -3141,6 +3142,18 @@ pub fn socket_destroy(
     let Some(id) = net_id(&receiver) else {
         return Ok(receiver);
     };
+    // Destruction invalidates host-owned protocol/application write queues as
+    // one state transition. Leaving a queued frame behind lets the next pump
+    // tick call `write()` on the already-destroyed socket, producing a
+    // spurious ERR_STREAM_DESTROYED (not an observable Node close event).
+    {
+        let mut net = state.borrow_mut();
+        net.net.pending_writes.retain(|(socket, _)| net_id(socket) != Some(id));
+        net.net
+            .pending_request_writes
+            .retain(|(socket, _, _)| net_id(socket) != Some(id));
+        net.net.pending_connect_writes.remove(&id);
+    }
     let tracked_timer = state.borrow_mut().net.timeout_timers.remove(&id);
     if let Some(timer) = tracked_timer {
         crate::modules::timers::clear_timeout(state, &[timer])?;
@@ -3259,20 +3272,30 @@ pub fn socket_set_no_delay(
             execute::get_property(&handle, HANDLE_NO_DELAY_PROP),
             Value::Boolean(true)
         );
-        if enabled != previous || (handle_is_object && !applied) {
+        // A false value is already the default state.  Do not touch a
+        // user-supplied handle for that initial value: Node's JS wrapper
+        // only forwards transitions (and starts at `_noDelay === false`).
+        // A true value still needs forwarding when a newly-created native
+        // handle has not inherited the socket's setting yet.
+        if enabled != previous || (enabled && handle_is_object && !applied) {
             let binding = state.borrow().tcp_binding.clone().unwrap_or_else(|| {
                 let global = quench_runtime::vm::current_global_object();
                 execute::get_property(&global, TCP_WRAP_BINDING_PROP)
             });
             let prototype =
                 execute::get_property(&execute::get_property(&binding, "TCPWrap"), "prototype");
-            let set_no_delay = execute::get_property(&prototype, "setNoDelay");
-            let set_no_delay = if handle_is_object && quench_runtime::is_callable(&set_no_delay) {
-                set_no_delay
-            } else if handle_is_object {
+            // Handle-local methods are observable and may be patched by
+            // callers.  The TCP prototype is only the fallback for native
+            // handles that do not carry their own implementation.
+            let handle_set_no_delay = if handle_is_object {
                 execute::get_property(&handle, "setNoDelay")
             } else {
                 Value::Undefined
+            };
+            let set_no_delay = if quench_runtime::is_callable(&handle_set_no_delay) {
+                handle_set_no_delay
+            } else {
+                execute::get_property(&prototype, "setNoDelay")
             };
             if quench_runtime::is_callable(&set_no_delay) {
                 execute::call(&set_no_delay, &handle, &[Value::Boolean(enabled)])?;
@@ -3330,12 +3353,21 @@ pub fn socket_get_type_of_service(
 }
 
 pub fn socket_handle_close(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
-    _args: &[Value],
+    args: &[Value],
 ) -> Result<Value, VmError> {
     if let Some(receiver) = receiver {
         execute::set_property_in_place(receiver, super::HANDLE_CLOSED_PROP, Value::Boolean(true));
+    }
+    // Native handles invoke their optional completion callback after the
+    // close request has been accepted.  This is also used by cluster's
+    // round-robin handoff when a worker rejects an incoming handle.
+    if let Some(callback) = args.iter().find(|value| quench_runtime::is_callable(value)) {
+        state
+            .borrow_mut()
+            .event_loop
+            .queue_microtask(callback.clone(), Vec::new());
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
