@@ -274,7 +274,10 @@ fn hide_runtime_globals() {
     let global = quench_runtime::vm::current_global_object();
     for key in ["__nodeCurrentAsyncResource", "__nodeCallChecks"] {
         let descriptor = quench_runtime::host_api::object(vec![
-            ("value".into(), quench_runtime::execute::get_property(&global, key)),
+            (
+                "value".into(),
+                quench_runtime::execute::get_property(&global, key),
+            ),
             ("writable".into(), Value::Boolean(true)),
             ("configurable".into(), Value::Boolean(true)),
             ("enumerable".into(), Value::Boolean(false)),
@@ -694,7 +697,10 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
     };
     if process_scope != 0 {
         state.borrow_mut().cluster.set_process_scope(previous_scope);
-        state.borrow().event_loop.set_process_scope(previous_event_scope);
+        state
+            .borrow()
+            .event_loop
+            .set_process_scope(previous_event_scope);
     }
     quench_runtime::execute::set_property_in_place(&process, "\0forkChild", previous_fork_child);
     let converted = destroy
@@ -745,7 +751,7 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
     result
 }
 
-fn drain_immediates(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
+pub(crate) fn drain_immediates(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     let mut defer_ticks = false;
     let queued: Vec<crate::modules::event_loop::Immediate> = state
         .borrow()

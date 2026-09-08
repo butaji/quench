@@ -406,7 +406,18 @@ const __quenchDgramValidateType = (type) => {
     { code: "ERR_SOCKET_BAD_TYPE" },
   );
 };
+// Node exposes `dgram.Socket` as a constructible public entry point in
+// addition to `createSocket()`.  Keep one implementation for both forms;
+// returning the ordinary socket object from a function constructor preserves
+// the same handle/listener state without introducing a second socket model.
+function Socket(type, options) {
+  if (typeof type === "object" && type !== null && options === undefined) {
+    return __quenchDgramSocket(type.type, type);
+  }
+  return __quenchDgramSocket(type, options);
+}
 const __quenchDgram = {
+  Socket,
   createSocket: function createSocket(type, options) {
     if (
       type === null ||
