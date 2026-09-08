@@ -827,9 +827,6 @@ impl CodeArena {
                 let test = test.source_ops()?;
                 let loop_body = loop_body.source_ops()?;
                 let update = update.source_ops()?;
-                if update.is_empty() && init.is_empty() {
-                    return None;
-                }
                 if ops_contain_short_circuit(test)
                     || test_always_true(test)
                     || ops_use_arguments(init)
