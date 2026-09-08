@@ -15,6 +15,12 @@ pub(crate) struct OwnFieldAddMethod {
     pub(crate) field: std::rc::Rc<str>,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct OwnFieldAddReturn {
+    pub(crate) field: std::rc::Rc<str>,
+    pub(crate) addend: i32,
+}
+
 impl IntegerSwitchI32 {
     pub(crate) fn select(&self, discriminant: i32) -> NumericAffineI32 {
         self.branches
@@ -88,6 +94,30 @@ pub(crate) fn own_field_add_method(
     validate_field_add_ops(code, &ops, parameter, receiver)?;
     Some(OwnFieldAddMethod {
         field: code.metadata_at(4)?.name.clone()?,
+    })
+}
+
+pub(crate) fn own_field_add_return(
+    function: &crate::value::FunctionValue,
+) -> Option<OwnFieldAddReturn> {
+    (function.params == 1 && crate::functions::direct_call_eligible(function)).then_some(())?;
+    let code = function.code.code()?;
+    let [receiver, get, add, ret, _, _] = instruction_array::<6>(code)?;
+    let parameter = u16::try_from(function.captures.len()).ok()?;
+    (receiver.opcode == crate::ir::Opcode::LoadLocal
+        && receiver.b == parameter
+        && matches!(
+            get.opcode,
+            crate::ir::Opcode::GetN | crate::ir::Opcode::GetNQuickened
+        )
+        && get.b == receiver.a
+        && add.opcode == crate::ir::Opcode::AddConst
+        && add.b == get.a
+        && ret == crate::ir::Instruction::ret(add.a)
+        && has_undefined_tail(code, 4))
+    .then_some(OwnFieldAddReturn {
+        field: code.metadata_at(1)?.name.clone()?,
+        addend: integer_constant(code, add.c)?,
     })
 }
 
