@@ -24,10 +24,16 @@ use super::http2_facts::{
 /// state machine and the current endpoint boundary cannot diverge on the
 /// connection preface or the mandatory initial SETTINGS frame.
 pub(crate) fn client_preface() -> Vec<u8> {
-    let mut bytes = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".to_vec();
-    // A zero-length SETTINGS frame: 24-bit length, type=SETTINGS (0x4),
-    // flags=0, reserved bit clear, stream identifier 0.
-    bytes.extend_from_slice(&[0, 0, 0, 4, 0, 0, 0, 0, 0]);
+    let mut bytes = crate::modules::http2_protocol::CONNECTION_PREFACE.to_vec();
+    bytes.extend_from_slice(
+        &crate::modules::http2_protocol::Frame::new(
+            crate::modules::http2_protocol::FrameType::Settings,
+            0,
+            0,
+            Vec::new(),
+        )
+        .encode(),
+    );
     bytes
 }
 
@@ -548,6 +554,16 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
             &Value::Undefined,
             &[authority.clone(), target.clone()],
         )?;
+        execute::set_property_in_place(
+            &socket,
+            crate::modules::http2_protocol::CLIENT_MARKER,
+            Value::Boolean(true),
+        );
+        crate::modules::net::register_http2_session(
+            state,
+            &socket,
+            crate::modules::http2_protocol::Role::Client,
+        );
         let write = execute::get_property(&socket, "write");
         if quench_runtime::is_callable(&write) {
             let preface = crate::modules::buffer_proto::make_buffer(&client_preface());
@@ -571,6 +587,27 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
         net_args.push(callback);
     }
     let socket = execute::call(&net_connect, &Value::Undefined, &net_args)?;
+    execute::set_property_in_place(
+        &socket,
+        crate::modules::http2_protocol::CLIENT_MARKER,
+        Value::Boolean(true),
+    );
+    crate::modules::net::register_http2_session(
+        state,
+        &socket,
+        crate::modules::http2_protocol::Role::Client,
+    );
+    // `net.connect` buffers writes until its non-blocking endpoint is
+    // connected, so the protocol preface follows the same transport path as
+    // application writes and is not lost before the first pump tick.
+    let write = execute::get_property(&socket, "write");
+    if quench_runtime::is_callable(&write) {
+        execute::call(
+            &write,
+            &socket,
+            &[crate::modules::buffer_proto::make_buffer(&client_preface())],
+        )?;
+    }
     // A raw net.Socket has `destroy()` rather than the client-session
     // `close()` spelling. Keep endpoint teardown available to callers that
     // only need connection lifecycle management; request/session methods
@@ -771,7 +808,11 @@ fn create_server(
             request_listener,
         );
     }
-    execute::set_property_in_place(&server, "\0quench:http2-server", Value::Boolean(true));
+    execute::set_property_in_place(
+        &server,
+        crate::modules::http2_protocol::SERVER_MARKER,
+        Value::Boolean(true),
+    );
     Ok(server)
 }
 
