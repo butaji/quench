@@ -1364,11 +1364,38 @@ fn session_request(
             }
         }
     }
+    // An already-aborted signal destroys the request synchronously.  Do not
+    // submit its HEADERS after the cancellation RST_STREAM: the request
+    // state machine has already reached a terminal wire state.
     if !matches!(
         execute::get_property(&socket, "destroyed"),
         Value::Boolean(true)
+    ) && !matches!(
+        execute::get_property(&stream, "destroyed"),
+        Value::Boolean(true)
     ) {
-        write_http2_frame(&socket, &frame)?;
+        // A signal can be aborted later in this same JavaScript turn. Keep
+        // the initial HEADERS in the host queue until the next pump tick so
+        // synchronous cancellation wins before a request becomes visible to
+        // the peer. Requests without a signal retain immediate submission.
+        let has_signal = values
+            .get(1)
+            .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+            .is_some_and(|options| {
+                matches!(
+                    execute::get_property(options, "signal"),
+                    Value::Object(_) | Value::ObjectAlias(_)
+                )
+            });
+        if has_signal {
+            state
+                .borrow_mut()
+                .net
+                .pending_writes
+                .push((socket.clone(), frame.encode()));
+        } else {
+            write_http2_frame(&socket, &frame)?;
+        }
     }
     Ok(stream)
 }
@@ -1853,6 +1880,19 @@ fn stream_destroy(
             execute::set_property_in_place(&mapped, "closed", Value::Boolean(true));
             execute::set_property_in_place(&mapped, "destroyed", Value::Boolean(error.is_some()));
         }
+        // Drop any not-yet-flushed frames for this terminal stream. This is
+        // what makes same-turn AbortSignal cancellation win over the queued
+        // request HEADERS (and also prevents a queued final DATA frame from
+        // overtaking the RST_STREAM).
+        state.borrow_mut().net.pending_writes.retain(|(queued, bytes)| {
+            if crate::modules::net::net_id(queued) != Some(socket_id) {
+                return true;
+            }
+            match crate::modules::http2_protocol::FrameHeader::decode(bytes) {
+                Ok(Some(header)) => header.stream_id != stream_id,
+                _ => true,
+            }
+        });
     }
     execute::set_property_in_place(&stream, "rstCode", Value::Number(code as f64));
     execute::set_property_in_place(&stream, "closed", Value::Boolean(true));

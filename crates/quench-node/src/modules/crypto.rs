@@ -6042,7 +6042,11 @@ pub fn set_fips(
     let global = quench_runtime::vm::current_global_object();
     let process = execute::get_property(&global, "process");
     let env = execute::get_property(&process, "env");
-    if matches!(execute::get_property(&env, "QUENCH_WORKER"), Value::String(ref value) if value == "1")
+    let worker_env = matches!(
+        execute::get_property(&env, "QUENCH_WORKER"),
+        Value::String(ref value) if value == "1"
+    ) || std::env::var_os("QUENCH_WORKER").is_some_and(|value| value == "1");
+    if worker_env
     {
         return Err(VmError::Thrown(quench_runtime::builtins::error(
             quench_runtime::ops::Builtin::Error,

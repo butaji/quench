@@ -787,6 +787,8 @@ pub const SPEC_STREAM_WRITABLE_WRITE_ADAPTER: NodeSpec =
 pub const CAP_STREAM_WRITABLE_WRITE_ADAPTER: CapId = SPEC_STREAM_WRITABLE_WRITE_ADAPTER.cap;
 pub const SPEC_STREAM_READABLE_BUFFER: NodeSpec =
     NodeSpec::new("stream:Readable.readableBuffer", 2518);
+pub const SPEC_STREAM_WRITABLE_HAS_INSTANCE: NodeSpec =
+    NodeSpec::new("stream:Writable.hasInstance", 2519);
 node_api! {
     (SPEC_STREAM_FINISHED_EVENT, "stream:finished:event", 0x0C06),
     (SPEC_STREAM_FINISHED_ABORT, "stream:finished:abort", 0x0C07),
