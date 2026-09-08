@@ -19,6 +19,8 @@ pub(crate) struct NumericAffineI32 {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NumericAffineNamedLoop {
     pub(crate) parameter_slot: u16,
+    pub(crate) value_slot: u16,
+    pub(crate) index_slot: u16,
     pub(crate) seed_key: std::rc::Rc<str>,
     pub(crate) bound_key: std::rc::Rc<str>,
     pub(crate) method_key: std::rc::Rc<str>,
@@ -59,6 +61,8 @@ pub(crate) fn numeric_affine_named_loop(code: CodeView<'_>) -> Option<NumericAff
     validate_named_loop_exit(code, &ops)?;
     Some(NumericAffineNamedLoop {
         parameter_slot: ops[0].b,
+        value_slot: ops[2].a,
+        index_slot: ops[5].a,
         seed_key: metadata_name(code, 1)?,
         bound_key: metadata_name(code, 9)?,
         method_key: metadata_name(code, 13)?,
@@ -84,7 +88,7 @@ fn validate_named_loop_prefix(
 ) -> Option<()> {
     use crate::ir::Opcode;
     (ops[0].opcode == Opcode::LoadLocal
-        && ops[1].opcode == Opcode::GetN
+        && is_named_get(ops[1].opcode)
         && ops[1].b == ops[0].a
         && ops[2].opcode == Opcode::StoreLocal
         && ops[2].b == ops[1].a
@@ -105,7 +109,7 @@ fn validate_named_loop_test(
         && ops[7].b == ops[5].a
         && ops[8].opcode == Opcode::LoadLocal
         && ops[8].b == ops[0].b
-        && ops[9].opcode == Opcode::GetN
+        && is_named_get(ops[9].opcode)
         && ops[9].b == ops[8].a
         && metadata_name(code, 9).is_some()
         && ops[10].opcode == Opcode::Binary
@@ -125,7 +129,7 @@ fn validate_named_loop_body(
     let arguments = code.operand_window_at(15)?;
     (ops[12].opcode == Opcode::LoadLocal
         && ops[12].b == ops[0].b
-        && ops[13].opcode == Opcode::GetN
+        && is_named_get(ops[13].opcode)
         && ops[13].b == ops[12].a
         && ops[14].opcode == Opcode::LoadLocal
         && ops[14].b == ops[2].a
@@ -141,6 +145,13 @@ fn validate_named_loop_body(
         && ops[17].opcode == Opcode::Move
         && ops[17].b == ops[15].a)
         .then_some(())
+}
+
+fn is_named_get(opcode: crate::ir::Opcode) -> bool {
+    matches!(
+        opcode,
+        crate::ir::Opcode::GetN | crate::ir::Opcode::GetNQuickened
+    )
 }
 
 fn validate_named_loop_update(
