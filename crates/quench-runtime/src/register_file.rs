@@ -512,6 +512,14 @@ fn decode_owned(word: TaggedValue) -> Option<Value> {
     }
 }
 
+/// Materialize an owned VM value from a borrowed tagged word at an execution
+/// boundary. Native regions use this when a live result exits directly rather
+/// than round-tripping through a register slot.
+#[inline(always)]
+pub(crate) fn own_tagged_bits(bits: u64) -> Option<Value> {
+    decode_owned(TaggedValue::from_bits(bits))
+}
+
 /// Canonical active-frame register storage.
 ///
 /// Registers are one copyable word. Heap pointers fit losslessly in the word's
