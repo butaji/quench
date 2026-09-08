@@ -432,6 +432,89 @@ q_branch_recurrence_loop_end:
 );
 "##;
 
+const AARCH64_NESTED_XOR_LOOP: &str = r##"#![no_std]
+use core::arch::global_asm;
+
+#[repr(C)]
+struct NestedXorContext {
+    indices: [i32; 3],
+    starts: [i32; 3],
+    ends: [i32; 3],
+    mask: u32,
+    total: i64,
+    interrupt: *const u8,
+}
+
+global_asm!(r#"
+.text
+.p2align 2
+.globl q_nested_xor_loop
+q_nested_xor_loop:
+  ldr w1, [x0, #{index0}]
+  ldr w2, [x0, #{index1}]
+  ldr w3, [x0, #{index2}]
+  ldr x4, [x0, #{total}]
+1:
+  ldr w5, [x0, #{end0}]
+  cmp w1, w5
+  b.ge 6f
+  ldr w5, [x0, #{end1}]
+  cmp w2, w5
+  b.ge 5f
+  ldr w5, [x0, #{end2}]
+  cmp w3, w5
+  b.ge 4f
+  eor w5, w1, w2
+  eor w5, w5, w3
+  ldr w6, [x0, #{mask}]
+  and w5, w5, w6
+  add x4, x4, x5
+  add w3, w3, #1
+  b 8f
+4:
+  add w2, w2, #1
+  ldr w3, [x0, #{start2}]
+  b 8f
+5:
+  add w1, w1, #1
+  ldr w2, [x0, #{start1}]
+  ldr w3, [x0, #{start2}]
+  b 8f
+6:
+  str w1, [x0, #{index0}]
+  str w2, [x0, #{index1}]
+  str w3, [x0, #{index2}]
+  str x4, [x0, #{total}]
+  mov w0, #1
+  ret
+7:
+  mov w0, #4
+  ret
+8:
+  str w1, [x0, #{index0}]
+  str w2, [x0, #{index1}]
+  str w3, [x0, #{index2}]
+  str x4, [x0, #{total}]
+  ldr x7, [x0, #{interrupt}]
+  ldrb w8, [x7]
+  cbnz w8, 7b
+  b 1b
+q_nested_xor_loop_end:
+"#,
+    index0 = const core::mem::offset_of!(NestedXorContext, indices),
+    index1 = const core::mem::offset_of!(NestedXorContext, indices) + core::mem::size_of::<i32>(),
+    index2 = const core::mem::offset_of!(NestedXorContext, indices) + 2 * core::mem::size_of::<i32>(),
+    start1 = const core::mem::offset_of!(NestedXorContext, starts) + core::mem::size_of::<i32>(),
+    start2 = const core::mem::offset_of!(NestedXorContext, starts) + 2 * core::mem::size_of::<i32>(),
+    end0 = const core::mem::offset_of!(NestedXorContext, ends),
+    end1 = const core::mem::offset_of!(NestedXorContext, ends) + core::mem::size_of::<i32>(),
+    end2 = const core::mem::offset_of!(NestedXorContext, ends) + 2 * core::mem::size_of::<i32>(),
+    mask = const core::mem::offset_of!(NestedXorContext, mask),
+    total = const core::mem::offset_of!(NestedXorContext, total),
+    interrupt = const core::mem::offset_of!(NestedXorContext, interrupt),
+);
+"##;
+
 const AARCH64_NUMERIC_INTEGER_LOOP: &str = r##"#![no_std]
 use core::arch::global_asm;
 
@@ -962,6 +1045,7 @@ pub(crate) fn assembly_source(recipe: super::RustAssemblyRecipe) -> String {
         I32CounterLoop => AARCH64_I32_COUNTER_LOOP.to_owned(),
         BooleanReductionLoop => AARCH64_BOOLEAN_REDUCTION_LOOP.to_owned(),
         BranchRecurrenceLoop => AARCH64_BRANCH_RECURRENCE_LOOP.to_owned(),
+        NestedXorLoop => AARCH64_NESTED_XOR_LOOP.to_owned(),
         NumericIntegerLoop => AARCH64_NUMERIC_INTEGER_LOOP.to_owned(),
         NumericFloatingLoop => AARCH64_NUMERIC_FLOATING_LOOP.to_owned(),
         NumericBitwiseLoop => AARCH64_NUMERIC_BITWISE_LOOP.to_owned(),
