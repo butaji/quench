@@ -63,6 +63,12 @@ pub struct ProcessState {
     pub permission_audit: bool,
     pub permissions: HashSet<String>,
     pub dropped_permissions: HashSet<String>,
+    /// Path-qualified filesystem grants from `--allow-fs-read` and
+    /// `--allow-fs-write`.  Keep the coarse scope set above for APIs whose
+    /// contract is only capability-shaped, while filesystem APIs can make a
+    /// precise descendant check without reconstructing argv.
+    pub fs_read_paths: Vec<String>,
+    pub fs_write_paths: Vec<String>,
     /// Invocation-scoped secure-heap facts. OpenSSL's allocator counters are
     /// not exposed by the embedded backend, so crypto APIs update this small
     /// process-owned accounting record instead of sharing a global counter
@@ -124,6 +130,8 @@ impl ProcessState {
             permission_audit: false,
             permissions: HashSet::new(),
             dropped_permissions: HashSet::new(),
+            fs_read_paths: Vec::new(),
+            fs_write_paths: Vec::new(),
             secure_heap_total: 0,
             secure_heap_min: 0,
             secure_heap_used: 0,
@@ -352,30 +360,53 @@ pub fn configure_permissions(state: &Rc<RefCell<HostState>>, exec_argv: &[String
         .any(|flag| flag == "--permission" || flag == "--permission-audit");
     let audit = flags.iter().any(|flag| flag == "--permission-audit");
     let mut permissions = HashSet::new();
-    for flag in flags {
-        let scope = match flag.as_str() {
-            "--allow-child-process" => Some("child"),
-            "--allow-fs-read" => Some("fs.read"),
-            "--allow-fs-write" => Some("fs.write"),
-            "--allow-net" => Some("net"),
-            "--allow-worker" => Some("worker"),
-            "--allow-wasi" => Some("wasi"),
-            "--allow-inspector" => Some("inspector"),
-            "--allow-addons" => Some("addon"),
-            "--allow-ffi" => Some("ffi"),
-            "--allow-openssl-store" => Some("openssl.store"),
-            value if value.starts_with("--allow-fs-read=") => Some("fs.read"),
-            value if value.starts_with("--allow-fs-write=") => Some("fs.write"),
-            _ => None,
+    let mut fs_read_paths = Vec::new();
+    let mut fs_write_paths = Vec::new();
+    let mut index = 0;
+    while index < flags.len() {
+        let flag = &flags[index];
+        let (scope, path) = match flag.as_str() {
+            "--allow-child-process" => (Some("child"), None),
+            "--allow-fs-read" => {
+                index += 1;
+                (Some("fs.read"), flags.get(index).cloned())
+            }
+            "--allow-fs-write" => {
+                index += 1;
+                (Some("fs.write"), flags.get(index).cloned())
+            }
+            "--allow-net" => (Some("net"), None),
+            "--allow-worker" => (Some("worker"), None),
+            "--allow-wasi" => (Some("wasi"), None),
+            "--allow-inspector" => (Some("inspector"), None),
+            "--allow-addons" => (Some("addon"), None),
+            "--allow-ffi" => (Some("ffi"), None),
+            "--allow-openssl-store" => (Some("openssl.store"), None),
+            value if value.starts_with("--allow-fs-read=") => {
+                (Some("fs.read"), Some(value["--allow-fs-read=".len()..].to_string()))
+            }
+            value if value.starts_with("--allow-fs-write=") => (
+                Some("fs.write"),
+                Some(value["--allow-fs-write=".len()..].to_string()),
+            ),
+            _ => (None, None),
         };
         if let Some(scope) = scope {
             permissions.insert(scope.to_string());
+            match (scope, path) {
+                ("fs.read", Some(path)) => fs_read_paths.push(path),
+                ("fs.write", Some(path)) => fs_write_paths.push(path),
+                _ => {}
+            }
         }
+        index += 1;
     }
     let mut process = state.borrow_mut();
     process.process.permission_enabled = enabled;
     process.process.permission_audit = audit;
     process.process.permissions = permissions;
+    process.process.fs_read_paths = fs_read_paths;
+    process.process.fs_write_paths = fs_write_paths;
 }
 
 /// Return whether a process-owned permission is currently granted.  This
@@ -388,6 +419,47 @@ pub fn permission_allows(state: &Rc<RefCell<HostState>>, scope: &str) -> bool {
     }
     process.process.permissions.contains(scope)
         && !process.process.dropped_permissions.contains(scope)
+}
+
+/// Return whether a filesystem resource is covered by a path-qualified
+/// permission grant.  Relative grants and resources are interpreted against
+/// the host's current working directory, and `*` retains Node's unrestricted
+/// grant spelling.  The check is lexical so it also works before a cache
+/// directory exists.
+pub fn permission_allows_path(
+    state: &Rc<RefCell<HostState>>,
+    scope: &str,
+    resource: &std::path::Path,
+) -> bool {
+    let process = state.borrow();
+    if !process.process.permission_enabled {
+        return true;
+    }
+    if process.process.dropped_permissions.contains(scope) {
+        return false;
+    }
+    let grants = match scope {
+        "fs.read" => &process.process.fs_read_paths,
+        "fs.write" => &process.process.fs_write_paths,
+        _ => return process.process.permissions.contains(scope),
+    };
+    let cwd = &process.process.cwd;
+    let resource = absolute_permission_path(cwd, resource);
+    grants.iter().any(|grant| {
+        if grant == "*" {
+            return true;
+        }
+        let grant = absolute_permission_path(cwd, std::path::Path::new(grant));
+        resource == grant || resource.starts_with(&grant)
+    })
+}
+
+fn absolute_permission_path(cwd: &std::path::Path, path: &std::path::Path) -> std::path::PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    }
 }
 
 pub fn permission_enabled(state: &Rc<RefCell<HostState>>) -> bool {
