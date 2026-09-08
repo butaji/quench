@@ -274,10 +274,7 @@ pub(crate) fn current() -> ExecutionPolicy {
 }
 
 #[cfg(test)]
-pub(crate) fn with_policy_for_test<R>(
-    policy: ExecutionPolicy,
-    execute: impl FnOnce() -> R,
-) -> R {
+pub(crate) fn with_policy_for_test<R>(policy: ExecutionPolicy, execute: impl FnOnce() -> R) -> R {
     TEST_OVERRIDE.with(|slot| {
         let previous = slot.replace(Some(policy));
         let guard = TestPolicyGuard(previous);

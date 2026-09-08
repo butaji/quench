@@ -5019,6 +5019,11 @@ fn installed_region_entry(
 }
 
 impl NativeRegionPlan {
+    pub(crate) fn trace_kind(&self) -> &'static str {
+        crate::stencil_select::select_region(self.key)
+            .map_or("unknown_region", |record| record.name)
+    }
+
     fn prepare_entry(
         &mut self,
         view: crate::stencil_select::PhysicalStencilView,

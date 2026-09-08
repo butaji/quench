@@ -1763,7 +1763,7 @@ pub(crate) fn execute_composed_affine_i32_loop(
     crate::execution_trace::stencil_iterations(
         region.code,
         region.pc,
-        "baseline_region",
+        "affine_i32_loop",
         iterations,
     );
     if status == NATIVE_DISPATCH_INTERRUPT && admission.context.index < admission.context.end {
@@ -2615,17 +2615,12 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
         // pre-entry miss and falls through to the existing per-op handlers;
         // every post-entry outcome is propagated without replay.
         if let Some(native) = plan.native_region_at(pc) {
-            let (region_result, native_executed) = {
+            let (region_result, native_executed, region_kind) = {
                 let mut native = native.borrow_mut();
                 let result = native.execute(code, pc, registers, context, environment);
-                (result, native.last_native_execution())
+                (result, native.last_native_execution(), native.trace_kind())
             };
-            crate::execution_trace::stencil_observation(
-                code,
-                pc,
-                "baseline_region",
-                native_executed,
-            );
+            crate::execution_trace::stencil_observation(code, pc, region_kind, native_executed);
             match region_result {
                 Ok(transition) => {
                     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
