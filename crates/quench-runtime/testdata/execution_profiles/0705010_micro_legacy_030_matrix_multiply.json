@@ -1,16 +1,16 @@
 {
   "schema": 1,
   "warmup": 1,
-  "result": { "kind": "string", "value": "14520" },
+  "result": { "kind": "number", "value": 192 },
   "plan": {
     "execution_kind": "native_machine_code",
-    "operation_route": ["matrix_multiply"],
+    "operation_route": ["dense_matrix_reduction"],
     "fallback": false
   },
   "profile": {
     "residual": {},
     "slow": {},
-    "stencils": { "matrix_multiply_region": { "entries": 1, "fallbacks": 0 } },
+    "stencils": { "dense_matrix_reduction_region": { "entries": 1, "fallbacks": 0 } },
     "events": { "leaf_hit": 1 }
   }
 }

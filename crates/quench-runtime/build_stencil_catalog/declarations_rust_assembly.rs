@@ -283,6 +283,11 @@ rust_assembly_catalog! {
             "StoreLocal", "UpdateLocal", "Return"],
         x86: &[], aarch64: &[], x86_holes: &[], aarch64_holes: &[]
     },
+    MatrixReductionLoop {
+        name: "matrix_reduction_loop", abi: MatrixReductionLoop,
+        ops: ["LoadLocal", "AGetI", "Mul", "Add", "StoreLocal", "UpdateLocal", "Return"],
+        x86: &[], aarch64: &[], x86_holes: &[], aarch64_holes: &[]
+    },
     NumericIntegerLoop {
         name: "numeric_integer_loop", abi: AffineI32Loop,
         ops: ["Mul", "Add", "Binary", "Jump"],
