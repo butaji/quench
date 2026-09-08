@@ -65,6 +65,43 @@ enum LocalNumericPhysical {
     BinarySeries(crate::stencil_region_builder::NativeLinearF64Plan),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LocalNumericRecipe {
+    General,
+    DivideReturn,
+}
+
+impl LocalNumericRecipe {
+    fn from_selection(selection: LocalBinarySelection) -> Self {
+        let local_pair = matches!(
+            selection.inputs,
+            LocalNumericInputs::Sources([NumericSource::Local(_), NumericSource::Local(_)])
+        );
+        let divide = crate::stencil_plan::numeric_operation(selection.operation)
+            == Some(crate::ops::BinaryOp::Divide);
+        if local_pair && divide && selection.returns && selection.span == 4 {
+            Self::DivideReturn
+        } else {
+            Self::General
+        }
+    }
+
+    const fn trace_name(self) -> &'static str {
+        match self {
+            Self::General => "local_binary",
+            Self::DivideReturn => "number_divide_return",
+        }
+    }
+
+    #[cfg(test)]
+    const fn profile_route(self) -> Option<&'static [&'static str]> {
+        match self {
+            Self::General => None,
+            Self::DivideReturn => Some(&["LoadLocalChecked", "LoadLocalChecked", "Div", "Return"]),
+        }
+    }
+}
+
 pub(crate) struct LocalPropertyExecution {
     pub result: crate::stencil_plan::LocalResultBinding,
     pub bits: u64,
@@ -234,6 +271,15 @@ impl NativeLocalBinaryPlan {
 
     pub(crate) const fn selection(&self) -> LocalBinarySelection {
         self.selection
+    }
+
+    pub(crate) fn trace_name(&self) -> &'static str {
+        LocalNumericRecipe::from_selection(self.selection).trace_name()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn profile_route(&self) -> Option<&'static [&'static str]> {
+        LocalNumericRecipe::from_selection(self.selection).profile_route()
     }
 
     pub(crate) fn execute(
