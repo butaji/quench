@@ -2001,6 +2001,15 @@ fn record_ordered_reduction(code: crate::machine::CodeView<'_>, pc: usize) {
     );
 }
 
+fn record_i32_pattern(code: crate::machine::CodeView<'_>, pc: usize) {
+    crate::execution_trace::stencil_observation(code, pc, "bitwise_shift_mask_return", true);
+    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+    #[cfg(test)]
+    crate::test_execution_profile::dynamic_region_route(
+        crate::stencil_i32_pattern::NativeI32PatternPlan::route(),
+    );
+}
+
 pub(crate) fn execute_baseline_completion_step_from_with_owner(
     code: crate::machine::CodeView<'_>,
     plan: &crate::machine::BaselinePlan,
@@ -2204,6 +2213,25 @@ pub(crate) fn execute_optimized_code_step_from(
             }
         }
         crate::execution_trace::stencil_observation(code, start, "ordered_f64_reduction_loop", false);
+    }
+    if let Some(pattern) = entry.i32_pattern() {
+        let value = crate::locals::with_current_ref(|environment| {
+            pattern.borrow_mut().execute(environment?)
+        });
+        if let Some(value) = value {
+            record_i32_pattern(code, start);
+            return Ok((
+                crate::completion::Completion::Return(crate::value::Value::Number(value)),
+                start + pattern.borrow().span(),
+            ));
+        }
+        crate::execution_trace::stencil_observation(
+            code,
+            start,
+            "bitwise_shift_mask_return",
+            false,
+        );
+        crate::execution_trace::leaf_rejection("bitwise_shift_mask_return");
     }
     if let Some(dag) = entry.numeric_dag() {
         let value = crate::locals::with_current_ref(|environment| {
@@ -2942,6 +2970,25 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                     )));
                 }
             }
+        }
+        if let (Some(environment), Some(pattern)) = (environment, plan.i32_pattern_at(pc)) {
+            let value = pattern.borrow_mut().execute(environment);
+            if let Some(value) = value {
+                let span = pattern.borrow().span();
+                record_i32_pattern(code, pc);
+                return completion_step_after_transition(
+                    registers,
+                    crate::completion::Completion::Return(crate::value::Value::Number(value)),
+                    pc + span,
+                );
+            }
+            crate::execution_trace::stencil_observation(
+                code,
+                pc,
+                "bitwise_shift_mask_return",
+                false,
+            );
+            crate::execution_trace::leaf_rejection("bitwise_shift_mask_return");
         }
         if let (Some(environment), Some(dag)) = (environment, plan.numeric_dag_at(pc)) {
             let value = {
