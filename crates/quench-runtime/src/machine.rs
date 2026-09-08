@@ -5570,6 +5570,7 @@ enum NativeAdmission {
     CallReturn(Rc<RefCell<crate::stencil_call_return::NativeCallReturnPlan>>),
     ForwardCall(Rc<RefCell<crate::stencil_forward_call::NativeForwardCallPlan>>),
     ForwardPair(Rc<RefCell<crate::stencil_forward_call::NativeForwardPairPlan>>),
+    FreshObjectCall(Rc<RefCell<crate::stencil_fresh_object_call::NativeFreshObjectCallPlan>>),
     MethodCall(Rc<RefCell<crate::stencil_method_call::NativeMethodCallPlan>>),
     PropertyPair(Rc<RefCell<crate::stencil_property_pair::NativePropertyPairPlan>>),
     PrototypeCall(Rc<RefCell<crate::stencil_prototype_call::NativePrototypeCallPlan>>),
@@ -5655,6 +5656,9 @@ impl AdmissionEntry for NativeAdmission {
             Self::ForwardPair(_) => {
                 shared_value_bytes::<RefCell<crate::stencil_forward_call::NativeForwardPairPlan>>()
             }
+            Self::FreshObjectCall(_) => shared_value_bytes::<
+                RefCell<crate::stencil_fresh_object_call::NativeFreshObjectCallPlan>,
+            >(),
             Self::MethodCall(_) => {
                 shared_value_bytes::<RefCell<crate::stencil_method_call::NativeMethodCallPlan>>()
             }
@@ -5714,6 +5718,7 @@ impl std::fmt::Debug for NativeAdmission {
             Self::CallReturn(_) => "call_return",
             Self::ForwardCall(_) => "forward_call",
             Self::ForwardPair(_) => "forward_pair",
+            Self::FreshObjectCall(_) => "fresh_object_call",
             Self::MethodCall(_) => "method_call",
             Self::PropertyPair(_) => "property_pair",
             Self::PrototypeCall(_) => "prototype_call",
@@ -6327,6 +6332,21 @@ fn forward_pair_admission(
     Some(NativeAdmission::ForwardPair(Rc::new(RefCell::new(plan))))
 }
 
+fn fresh_object_call_admission(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+) -> Option<NativeAdmission> {
+    policy.local_fusions.numeric().then_some(())?;
+    let selection = crate::stencil_fresh_object_call::select_fresh_object_call(
+        code, entries, cfg, pc,
+    )?;
+    let plan = crate::stencil_fresh_object_call::NativeFreshObjectCallPlan::new(selection);
+    Some(NativeAdmission::FreshObjectCall(Rc::new(RefCell::new(plan))))
+}
+
 fn method_call_admission(
     code: CodeView<'_>,
     entries: &[BaselineEntry],
@@ -6701,6 +6721,7 @@ fn eager_straight_line_candidate(code: CodeView<'_>) -> bool {
         || eager_method_call_candidate(code)
         || eager_property_pair_candidate(code)
         || eager_prototype_call_candidate(code)
+        || eager_fresh_object_call_candidate(code)
         || eager_string_concat_call_candidate(code)
         || eager_string_case_candidate(code)
         || eager_string_search_candidate(code)
@@ -6734,6 +6755,27 @@ fn eager_property_pair_candidate(code: CodeView<'_>) -> bool {
     expected.iter().enumerate().all(|(pc, opcode)| {
         code.instruction(pc).is_some_and(|op| op.opcode == *opcode)
     })
+}
+
+fn eager_fresh_object_call_candidate(code: CodeView<'_>) -> bool {
+    if code.instruction(0).is_none_or(|op| op.opcode != crate::ir::Opcode::LoadLocal) {
+        return false;
+    }
+    let mut objects = 0;
+    for pc in 1..code.len().min(EAGER_STRAIGHT_LINE_MAX_INSTRUCTIONS) {
+        match code.instruction(pc).map(|op| op.opcode) {
+            Some(crate::ir::Opcode::Slow)
+                if matches!(code.cold_at(pc), Some(crate::ops::Op::MakeObject { .. })) =>
+            {
+                objects += 1;
+            }
+            Some(crate::ir::Opcode::Call) if objects == 2 => {
+                return code.instruction(pc + 1).is_some_and(|op| op.opcode == crate::ir::Opcode::Return);
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 fn eager_prototype_call_candidate(code: CodeView<'_>) -> bool {
@@ -6923,6 +6965,10 @@ fn collect_admissions_at(
         pc,
         forward_pair_admission(code, entries, cfg, pc, policy, arena),
     );
+    builder.push_optional(
+        pc,
+        fresh_object_call_admission(code, entries, cfg, pc, policy),
+    );
     builder.push_optional(pc, string_concat_admission(code, entries, cfg, pc, policy));
     builder.push_optional(pc, string_builtin_admission(code, entries, cfg, pc, policy));
     collect_numeric_admissions(builder, entries, cfg, pc, entry, code, policy, arena);
@@ -7053,6 +7099,7 @@ impl BaselinePlan {
         let call_return = self.call_return_at(0).is_some();
         let forward_call = (0..self.len()).any(|pc| self.forward_call_at(pc).is_some());
         let forward_pair = self.forward_pair_at(0).is_some();
+        let fresh_object_call = self.fresh_object_call_at(0).is_some();
         let method_call = self.method_call_at(0).is_some();
         let property_pair = self.property_pair_at(0).is_some();
         let prototype_call = self.prototype_call_at(0).is_some();
@@ -7077,6 +7124,7 @@ impl BaselinePlan {
             || call_return
             || forward_call
             || forward_pair
+            || fresh_object_call
             || method_call
             || property_pair
             || prototype_call
@@ -7220,6 +7268,12 @@ impl BaselinePlan {
         forward_pair_at,
         ForwardPair,
         crate::stencil_forward_call::NativeForwardPairPlan
+    );
+    typed_admission_accessors!(
+        fresh_object_call_handle_at,
+        fresh_object_call_at,
+        FreshObjectCall,
+        crate::stencil_fresh_object_call::NativeFreshObjectCallPlan
     );
     typed_admission_accessors!(
         method_call_handle_at,
@@ -7446,6 +7500,11 @@ impl OptimizingEntry<'_> {
         forward_pair,
         ForwardPair,
         crate::stencil_forward_call::NativeForwardPairPlan
+    );
+    optimizing_admission_accessors!(
+        fresh_object_call,
+        FreshObjectCall,
+        crate::stencil_fresh_object_call::NativeFreshObjectCallPlan
     );
     optimizing_admission_accessors!(
         method_call,

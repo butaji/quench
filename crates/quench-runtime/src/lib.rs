@@ -146,6 +146,7 @@ mod stencil_bridge_tests;
 mod stencil_cache;
 mod stencil_call_return;
 mod stencil_forward_call;
+mod stencil_fresh_object_call;
 mod stencil_method_call;
 mod stencil_property_pair;
 mod stencil_prototype_call;
