@@ -4,13 +4,13 @@
   "result": { "kind": "number", "value": 23.962890625 },
   "plan": {
     "execution_kind": "native_machine_code",
-    "operation_route": ["dense_f64_guards", "indexed_addressing", "ordered_f64_arithmetic", "element_store", "native_backedge"],
+    "operation_route": ["ordered_f64_recurrence"],
     "fallback": false
   },
   "profile": {
     "residual": {},
     "slow": {},
-    "stencils": { "ordered_f64_neighbor_update": { "entries": 1, "fallbacks": 0 } },
+    "stencils": { "ordered_f64_recurrence": { "entries": 1, "fallbacks": 0 } },
     "events": { "leaf_hit": 1 }
   }
 }

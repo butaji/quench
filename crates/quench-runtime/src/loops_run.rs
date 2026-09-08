@@ -81,6 +81,13 @@ fn run_loop_inner(
     config: (bool, u16, &[u16]),
     registers: &mut crate::register_file::RegisterFile,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    if label.is_none() && !config.0 {
+        if let Some(result) = crate::stencil_ordered_neighbor::execute_structured(
+            init, test, body, update, config.1, config.2, registers,
+        ) {
+            return result;
+        }
+    }
     crate::execution_trace::event(crate::execution_trace::Event::LoopEntry);
     let loop_shape = crate::execution_trace::loop_shape(body);
     let (post_test, dst, per_iteration) = config;
@@ -288,7 +295,7 @@ fn point_destination(point: &crate::continuation::SuspensionPoint) -> Option<u16
         | crate::continuation::SuspensionPoint::Loop { yield_dst: src, .. }
         | crate::continuation::SuspensionPoint::Branch { yield_dst: src, .. }
         | crate::continuation::SuspensionPoint::Try { yield_dst: src, .. } => Some(*src),
-        | crate::continuation::SuspensionPoint::Iterator { yield_dst: src, .. } => Some(*src),
+        crate::continuation::SuspensionPoint::Iterator { yield_dst: src, .. } => Some(*src),
         crate::continuation::SuspensionPoint::YieldStar { dst, .. } => Some(*dst),
         crate::continuation::SuspensionPoint::Nested { inner, .. } => point_destination(inner),
     }
