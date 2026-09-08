@@ -7,6 +7,9 @@
 
 use std::sync::OnceLock;
 
+#[cfg(test)]
+use std::cell::Cell;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Architecture {
     X86_64,
@@ -247,8 +250,41 @@ impl ExecutionPolicy {
 
 static CURRENT: OnceLock<ExecutionPolicy> = OnceLock::new();
 
+#[cfg(test)]
+thread_local! {
+    static TEST_OVERRIDE: Cell<Option<ExecutionPolicy>> = const { Cell::new(None) };
+}
+
+#[cfg(test)]
+struct TestPolicyGuard(Option<ExecutionPolicy>);
+
+#[cfg(test)]
+impl Drop for TestPolicyGuard {
+    fn drop(&mut self) {
+        TEST_OVERRIDE.with(|slot| slot.set(self.0));
+    }
+}
+
 pub(crate) fn current() -> ExecutionPolicy {
+    #[cfg(test)]
+    if let Some(policy) = TEST_OVERRIDE.with(Cell::get) {
+        return policy;
+    }
     *CURRENT.get_or_init(ExecutionPolicy::current_uncached)
+}
+
+#[cfg(test)]
+pub(crate) fn with_policy_for_test<R>(
+    policy: ExecutionPolicy,
+    execute: impl FnOnce() -> R,
+) -> R {
+    TEST_OVERRIDE.with(|slot| {
+        let previous = slot.replace(Some(policy));
+        let guard = TestPolicyGuard(previous);
+        let result = execute();
+        drop(guard);
+        result
+    })
 }
 
 #[cfg(test)]
