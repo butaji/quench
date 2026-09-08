@@ -1107,6 +1107,29 @@ fn connect_target_options(
         if !matches!(hostname, Value::Undefined) {
             execute::set_property_in_place(&target, "host", hostname);
         }
+    } else if let (
+        Value::String(host),
+        Value::String(hostname),
+        Value::String(port),
+    ) = (
+        execute::get_property(&target, "host"),
+        execute::get_property(&target, "hostname"),
+        execute::get_property(&target, "port"),
+    ) {
+        // URL.host includes the port, whereas net/tls expect host and port
+        // as separate options. Keep explicit option objects untouched and
+        // only split the canonical URL-derived form.
+        if host == format!("{hostname}:{port}")
+            || host == format!("[{hostname}]:{port}")
+        {
+            execute::set_property_in_place(&target, "host", Value::String(hostname));
+        } else if host.starts_with('[') && host.ends_with(']') {
+            execute::set_property_in_place(
+                &target,
+                "host",
+                Value::String(host.trim_matches(['[', ']']).into()),
+            );
+        }
     }
     if let Value::String(protocol) = execute::get_property(&target, "protocol") {
         if !protocol.ends_with(':') {
