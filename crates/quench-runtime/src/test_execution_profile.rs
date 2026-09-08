@@ -18,6 +18,7 @@ pub(crate) struct ExecutionProfile {
     pub(crate) slow_ops: BTreeMap<&'static str, u64>,
     pub(crate) stencils: BTreeMap<&'static str, RouteCount>,
     pub(crate) events: BTreeMap<&'static str, u64>,
+    region_routes: Vec<Vec<&'static str>>,
 }
 
 const EXECUTION_CASE_SCHEMA: u32 = 1;
@@ -284,6 +285,35 @@ impl ExpectedProfile {
     }
 }
 
+impl ExpectedPlan {
+    fn differences(&self, actual: &ExecutionProfile) -> Vec<String> {
+        let kind = actual.execution_kind();
+        let route = actual.region_routes.first().cloned().unwrap_or_default();
+        let route = route.into_iter().map(str::to_owned).collect::<Vec<_>>();
+        let fallback = kind == ExecutionKind::OrdinaryFallback;
+        let mut differences = Vec::new();
+        if kind != self.execution_kind {
+            differences.push(format!(
+                "plan kind: expected {:?}, actual {kind:?}",
+                self.execution_kind
+            ));
+        }
+        if route != self.operation_route {
+            differences.push(format!(
+                "plan route: expected {:?}, actual {route:?}",
+                self.operation_route
+            ));
+        }
+        if fallback != self.fallback {
+            differences.push(format!(
+                "plan fallback: expected {}, actual {fallback}",
+                self.fallback
+            ));
+        }
+        differences
+    }
+}
+
 impl ScaledExpectation {
     fn assert(&self, profile: &ExecutionProfile) {
         let scaled = profile.scaled(self.executions);
@@ -335,6 +365,16 @@ fn string_routes(input: &BTreeMap<&'static str, RouteCount>) -> BTreeMap<String,
 }
 
 impl ExecutionProfile {
+    fn execution_kind(&self) -> ExecutionKind {
+        if self.stencils.values().any(|count| count.entries != 0) {
+            return ExecutionKind::NativeMachineCode;
+        }
+        if self.events.contains_key("portable_recipe_step") {
+            return ExecutionKind::PortableRecipe;
+        }
+        ExecutionKind::OrdinaryFallback
+    }
+
     pub(crate) fn scaled(&self, executions: u64) -> Self {
         Self {
             residual_ops: scaled_counts(&self.residual_ops, executions),
@@ -353,6 +393,7 @@ impl ExecutionProfile {
                 })
                 .collect(),
             events: scaled_counts(&self.events, executions),
+            region_routes: self.region_routes.clone(),
         }
     }
 }
@@ -409,6 +450,18 @@ pub(crate) fn event(name: &'static str) {
     update(|profile| increment(&mut profile.events, name));
 }
 
+pub(crate) fn region_route(operations: &'static [crate::ir::Opcode]) {
+    update(|profile| {
+        let route = operations
+            .iter()
+            .map(|opcode| opcode.name())
+            .collect::<Vec<_>>();
+        if !profile.region_routes.contains(&route) {
+            profile.region_routes.push(route);
+        }
+    });
+}
+
 fn update(apply: impl FnOnce(&mut ExecutionProfile)) {
     ACTIVE.with(|active| {
         if let Some(profile) = active.borrow_mut().as_mut() {
@@ -432,157 +485,5 @@ fn scaled_counts(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn execute_profile(
-        case: &ExecutionCase,
-    ) -> Result<(crate::value::Value, ExecutionProfile), String> {
-        let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
-        crate::stencil_policy::with_policy_for_test(policy, || execute_profile_with_policy(case))
-    }
-
-    fn execute_profile_with_policy(
-        case: &ExecutionCase,
-    ) -> Result<(crate::value::Value, ExecutionProfile), String> {
-        let program = crate::reduce::reduce_source(case.source())
-            .map_err(|errors| format!("lowering failed: {}", errors.join("; ")))?;
-        let context = crate::vm::current_context_or_default();
-        for _ in 0..case.warmup() {
-            execute_profile_once(program.code(), &context, false)
-                .map_err(|error| format!("warmup failed: {error:?}"))?;
-        }
-        execute_profile_once(program.code(), &context, true)
-            .map_err(|error| format!("profiled execution failed: {error:?}"))
-    }
-
-    fn execute_profile_once(
-        code: crate::machine::CodeView<'_>,
-        context: &crate::vm::VmContext,
-        measured: bool,
-    ) -> Result<(crate::value::Value, ExecutionProfile), crate::execute::VmError> {
-        let initialized = crate::vm::execute_code_with_context(code, context)?;
-        let Some(prepared) = prepare_execution(&initialized)? else {
-            return capture_result(measured, || Ok(initialized));
-        };
-        let (result, profile) = capture_result(measured, || {
-            invoke(context, &prepared.run, &prepared.arguments)
-        })?;
-        let verified = invoke(context, &prepared.verify, &[result])?;
-        Ok((verified, profile))
-    }
-
-    fn capture_result<T>(
-        measured: bool,
-        execute: impl FnOnce() -> Result<T, crate::execute::VmError>,
-    ) -> Result<(T, ExecutionProfile), crate::execute::VmError> {
-        if measured {
-            let (result, profile) = capture(execute);
-            return result.map(|result| (result, profile));
-        }
-        execute().map(|result| (result, ExecutionProfile::default()))
-    }
-
-    fn case_mismatch(name: &str) -> Option<String> {
-        let case = ExecutionCase::load(name);
-        let (result, profile) = match execute_profile(&case) {
-            Ok(execution) => execution,
-            Err(error) => return Some(format!("{name}: {error}")),
-        };
-        let mut differences = case.profile.differences(&profile);
-        if !case.result.matches(&result) {
-            differences.push(format!("result: actual {result:?}"));
-        }
-        (!differences.is_empty()).then(|| format!("{name}: {}", differences.join("; ")))
-    }
-
-    fn isolated_mismatch(name: &str) -> Option<String> {
-        let executable = std::env::current_exe().expect("current Rust test executable");
-        let output = std::process::Command::new(executable)
-            .args([
-                "--exact",
-                "test_execution_profile::tests::every_json_contract_matches_ideal_execution_profile",
-                "--nocapture",
-            ])
-            .env(PROFILE_CASE_FILTER, name)
-            .env(PROFILE_CHILD_PROCESS, "1")
-            .output()
-            .expect("isolated execution-profile process");
-        child_mismatch(name, &output)
-    }
-
-    fn child_mismatch(name: &str, output: &std::process::Output) -> Option<String> {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if let Some(line) = stdout.lines().find_map(profile_mismatch_line) {
-            return Some(line.to_owned());
-        }
-        (!output.status.success()).then(|| child_failure(name, output))
-    }
-
-    fn profile_mismatch_line(line: &str) -> Option<&str> {
-        line.strip_prefix(PROFILE_MISMATCH_MARKER)
-    }
-
-    fn child_failure(name: &str, output: &std::process::Output) -> String {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        format!(
-            "{name}: isolated process {:?}\n{stdout}{stderr}",
-            output.status
-        )
-    }
-
-    #[test]
-    fn capture_is_invocation_local_and_deterministic() {
-        let (_, first) = capture(|| {
-            residual("Add");
-            stencil("add", true);
-        });
-        let (_, second) = capture(|| residual("Return"));
-        assert_eq!(first.residual_ops.get("Add"), Some(&1));
-        assert_eq!(first.stencils.get("add").unwrap().entries, 1);
-        assert_eq!(second.residual_ops.get("Return"), Some(&1));
-        assert!(!second.stencils.contains_key("add"));
-    }
-
-    #[test]
-    fn every_json_contract_has_a_complete_standalone_js_case() {
-        let names = fixture_names();
-        assert!(!names.is_empty(), "execution-profile cases must exist");
-        for name in names {
-            let case = ExecutionCase::load(&name);
-            assert!(!case.source().trim().is_empty(), "empty JS case: {name}");
-            crate::reduce::reduce_source(case.source())
-                .unwrap_or_else(|errors| panic!("{name} does not lower: {}", errors.join("; ")));
-        }
-    }
-
-    #[test]
-    fn every_json_contract_matches_ideal_execution_profile() {
-        if std::env::var_os(PROFILE_CHILD_PROCESS).is_some() {
-            let name = std::env::var(PROFILE_CASE_FILTER).expect("selected profile case");
-            if let Some(mismatch) = case_mismatch(&name) {
-                println!("{PROFILE_MISMATCH_MARKER}{mismatch}");
-            }
-            return;
-        }
-        let names = fixture_names();
-        let isolated = std::env::var_os(PROFILE_CASE_FILTER).is_none();
-        let mismatches = names
-            .iter()
-            .filter_map(|name| {
-                if isolated {
-                    isolated_mismatch(name)
-                } else {
-                    case_mismatch(name)
-                }
-            })
-            .collect::<Vec<_>>();
-        assert!(
-            mismatches.is_empty(),
-            "{} execution-profile mismatches:\n{}",
-            mismatches.len(),
-            mismatches.join("\n")
-        );
-    }
-}
+#[path = "test_execution_profile_tests.rs"]
+mod tests;
