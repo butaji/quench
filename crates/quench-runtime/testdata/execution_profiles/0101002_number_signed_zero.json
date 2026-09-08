@@ -4,13 +4,13 @@
   "result": { "kind": "negative_zero" },
   "plan": {
     "execution_kind": "native_machine_code",
-    "operation_route": ["LoadLocalChecked", "MulConst", "Return"],
+    "operation_route": ["Mul", "Return"],
     "fallback": false
   },
   "profile": {
     "residual": {},
     "slow": {},
-    "stencils": { "local_mul_const_return": { "entries": 1, "fallbacks": 0 } },
+    "stencils": { "local_binary": { "entries": 1, "fallbacks": 0 } },
     "events": { "leaf_hit": 1 }
   }
 }

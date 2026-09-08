@@ -18,6 +18,9 @@ pub(crate) struct ValueId {
 pub(crate) enum ValueDefinition {
     Source(NumericSource),
     Alias(ValueId),
+    NegateConstant {
+        source: ValueId,
+    },
     AddConstant {
         source: ValueId,
         bits: u64,
@@ -135,7 +138,9 @@ impl BlockValueGraph {
         let definition = match node.definition {
             ValueDefinition::Source(source) => NumericDefinition::Source(source),
             ValueDefinition::Alias(id) => NumericDefinition::Alias(id.register),
-            ValueDefinition::AddConstant { .. } | ValueDefinition::Binary { .. } => return None,
+            ValueDefinition::NegateConstant { .. }
+            | ValueDefinition::AddConstant { .. }
+            | ValueDefinition::Binary { .. } => return None,
         };
         Some(NumericProducer {
             output: node.id.register,
@@ -180,6 +185,12 @@ impl BlockValueGraph {
             Opcode::Move if instruction.flags == 0 && pure(instruction.opcode) => {
                 ValueDefinition::Alias(self.canonical(self.current(instruction.b)?)?)
             }
+            Opcode::Unary
+                if instruction.flags
+                    == crate::ir::compact_unary_id(crate::ops::UnaryOp::Minus) =>
+            {
+                self.negate_constant_definition(instruction)?
+            }
             Opcode::AddConst => self.add_constant_definition(instruction, constant_bits)?,
             opcode if opcode.has_guard(crate::facts::OperationGuard::Number) => {
                 self.binary_definition(instruction)?
@@ -197,6 +208,12 @@ impl BlockValueGraph {
             lhs,
             rhs,
         })
+    }
+
+    fn negate_constant_definition(&self, instruction: Instruction) -> Option<ValueDefinition> {
+        let source = self.canonical(self.current(instruction.b)?)?;
+        matches!(self.resolve(source)?, NumericSource::Constant(_)).then_some(())?;
+        Some(ValueDefinition::NegateConstant { source })
     }
 
     fn add_constant_definition(
@@ -254,6 +271,13 @@ impl BlockValueGraph {
         match self.node(id)?.definition {
             ValueDefinition::Source(source) => Some(source),
             ValueDefinition::Alias(source) => self.resolve(source),
+            ValueDefinition::NegateConstant { source } => {
+                const NUMBER_SIGN_BIT: u64 = 1 << 63;
+                let NumericSource::Constant(bits) = self.resolve(source)? else {
+                    return None;
+                };
+                Some(NumericSource::Constant(bits ^ NUMBER_SIGN_BIT))
+            }
             ValueDefinition::AddConstant { source, bits, left } => {
                 let source = self.resolve(source)?;
                 let inputs = if left {
@@ -451,6 +475,7 @@ impl BlockValueGraph {
         }
         match self.nodes[index].definition {
             ValueDefinition::Alias(source) => self.mark(source, marked),
+            ValueDefinition::NegateConstant { source } => self.mark(source, marked),
             ValueDefinition::AddConstant { source, .. } => self.mark(source, marked),
             ValueDefinition::Binary { lhs, rhs, .. } => {
                 self.mark(lhs, marked);
