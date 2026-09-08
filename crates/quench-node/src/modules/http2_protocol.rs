@@ -180,6 +180,10 @@ pub struct Session {
     encoder: hpack::Encoder<'static>,
     pending_headers: HashMap<u32, Vec<u8>>,
     announced_headers: HashSet<u32>,
+    /// PUSH_PROMISE headers must survive a later response HEADERS block for
+    /// the same promised stream ID. Keep that wire event separate from the
+    /// ordinary latest-headers map.
+    push_promises: HashMap<u32, Vec<(Vec<u8>, Vec<u8>)>>,
     pub max_frame_size: u32,
     pub goaway: bool,
     pub streams: HashMap<u32, Stream>,
@@ -201,6 +205,7 @@ impl Session {
             encoder: hpack::Encoder::new(),
             pending_headers: HashMap::new(),
             announced_headers: HashSet::new(),
+            push_promises: HashMap::new(),
             max_frame_size: DEFAULT_MAX_FRAME_SIZE,
             goaway: false,
             streams: HashMap::new(),
@@ -354,6 +359,9 @@ impl Session {
                 let promised_id =
                     u32::from_be_bytes(frame.payload[..4].try_into().unwrap()) & 0x7fff_ffff;
                 self.decode_headers(promised_id, &frame.payload[4..])?;
+                if let Some(headers) = self.headers.get(&promised_id).cloned() {
+                    self.push_promises.insert(promised_id, headers);
+                }
             }
             _ => {}
         }
@@ -409,6 +417,10 @@ impl Session {
         ids.into_iter()
             .filter_map(|id| self.headers.get(&id).cloned().map(|headers| (id, headers)))
             .collect()
+    }
+
+    pub fn take_push_promises(&mut self) -> HashMap<u32, Vec<(Vec<u8>, Vec<u8>)>> {
+        std::mem::take(&mut self.push_promises)
     }
 
     pub fn pending_bytes(&self) -> usize {
