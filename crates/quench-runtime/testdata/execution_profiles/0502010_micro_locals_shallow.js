@@ -1,89 +1,34 @@
-var __profileSpec; function registerMicro(spec) { __profileSpec = spec; }
-registerMicro({
-  id: "locals",
-  question:
-    "Does equal useful work become more expensive with local state or call depth?",
-  requires: ["calls"],
-  axes: ["size", "local count", "depth"],
-  observations: [
-    "time per call",
-    "initialized frame bytes and environment allocations, if available"
-  ],
-  explanations: [
-    "State initialization",
-    "Register traffic",
-    "Recursion overhead"
-  ],
-  setup: function (n, seed) {
+"use strict";
+function assert(condition, message) {
+  if (!condition) throw new Error("execution profile assertion failed: " + message);
+}
+function encode(value) {
+  if (value === undefined) return ["undefined"];
+  if (typeof value === "number") return ["number", Number.isNaN(value) ? "NaN" : Object.is(value, -0) ? "-0" : String(value)];
+  if (typeof value === "bigint") return ["bigint", String(value)];
+  if (value === null || typeof value !== "object") return [typeof value, value];
+  if (Array.isArray(value)) return ["array", value.map(encode)];
+  return ["object", Object.keys(value).map(function (key) { return [key, encode(value[key])]; })];
+}
+const setup = function (n, seed) {
     return { n: n, seed: seed };
-  },
-  equivalent: [["small", "many", "body_size"]],
-  variants: {
-    small: function (s) {
-      function f(x) {
-        var a = x + 1;
-        return a;
-      }
-      var t = 0;
-      for (var i = 0; i < s.n; i++) t += f(i + s.seed);
-      return t;
-    },
-    many: function (s) {
-      function f(x) {
-        var a = x,
-          b = x,
-          c = x,
-          d = x,
-          e = x,
-          f = x,
-          g = x,
-          h = x;
-        return a + 1;
-      }
-      var t = 0;
-      for (var i = 0; i < s.n; i++) t += f(i + s.seed);
-      return t;
-    },
-    body_size: function (s) {
-      function f(x) {
-        if (x < 0) {
-          x += 1;
-          x *= 3;
-          x -= 7;
-          x ^= 3;
-          x += 9;
-          x *= 5;
-          x -= 1;
-          x ^= 17;
-        }
-        return x + 1;
-      }
-      var t = 0;
-      for (var i = 0; i < s.n; i++) t += f(i + s.seed);
-      return t;
-    },
-    shallow: function (s) {
+  };
+const operation = function (s) {
       function f(x, d) {
         return d ? f(x + 1, d - 1) : x;
       }
       var t = 0;
       for (var i = 0; i < s.n; i++) t += f(i, 2);
       return t;
-    },
-    deep: function (s) {
-      function f(x, d) {
-        return d ? f(x + 1, d - 1) : x;
-      }
-      var t = 0;
-      for (var i = 0; i < s.n; i++) t += f(i, 32);
-      return t;
-    }
-  }
-});
-
-function __profileAssert(condition,message){if(!condition)throw new Error("execution profile assertion failed: "+message);}
-function __profileEncode(x){if(x===undefined)return["undefined"];if(typeof x==="number")return["number",Number.isNaN(x)?"NaN":Object.is(x,-0)?"-0":String(x)];if(typeof x==="bigint")return["bigint",String(x)];if(x===null||typeof x!=="object")return[typeof x,x];if(Array.isArray(x))return["array",x.map(__profileEncode)];return["object",Object.keys(x).map(function(k){return[k,__profileEncode(x[k])];})];}
-__profileAssert(__profileSpec!==undefined,"micro registration");
-__profileAssert(typeof __profileSpec.setup==="function","setup is callable");
-var __profileState=__profileSpec.setup(64,17,"shallow");var __profileOperation=__profileSpec.variants["shallow"];__profileAssert(typeof __profileOperation==="function","selected variant is callable");function __profileRun(){var value=__profileOperation(__profileState);if(__profileSpec.check)__profileSpec.check(value,__profileState,"shallow");var signature=JSON.stringify(__profileEncode(value));__profileAssert(signature==="[\"number\",\"2144\"]","exact encoded result");return signature;}
-return __profileRun();
+    };
+const check = null;
+const state = setup(64, 17, "shallow");
+assert(typeof operation === "function", "scenario operation is callable");
+function run() {
+  const value = operation(state);
+  if (check) check(value, state, "shallow");
+  const signature = JSON.stringify(encode(value));
+  assert(signature === "[\"number\",\"2144\"]", "exact encoded result");
+  return signature;
+}
+return run();
