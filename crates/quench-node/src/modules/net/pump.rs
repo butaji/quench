@@ -59,6 +59,23 @@ pub fn poll(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     }
     poll_accept(state)?;
     poll_sockets(state)?;
+    // HTTP/2 stream errors are held until after socket polling so a buffered
+    // RST_STREAM is flushed (and can be read by the peer) before user error
+    // handlers are allowed to close the client session.
+    let http2_events = std::mem::take(&mut state.borrow_mut().net.pending_http2_events);
+    for (receiver, event, args) in http2_events {
+        let socket = super::net_id(&receiver)
+            .or_else(|| {
+                let owner = execute::get_property(&receiver, "\0quench:http2-socket");
+                super::net_id(&owner)
+            })
+            .and_then(|id| state.borrow().net.sockets.get(&id).cloned());
+        if let Some(socket) = socket {
+            emit_socket_scoped(state, &socket, &receiver, &event, args)?;
+        } else {
+            emit_server_scoped(state, &receiver, &event, args)?;
+        }
+    }
     finalize(state)?;
     let fork_scopes = state.borrow().cluster.fork_scopes();
     for scope in fork_scopes {

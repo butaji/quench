@@ -1161,16 +1161,20 @@ fn session_request(
                 .collect::<Vec<_>>(),
         )
     };
-    let end_stream = !matches!(
+    // Client requests stay writable until `end()` (or an explicit
+    // `endStream: true`) is observed. This is the stream contract needed for
+    // POST bodies and for AbortSignal cancellation to reach the peer before
+    // any terminal close event is surfaced.
+    let end_stream = matches!(
         values
             .get(1)
             .map(|value| execute::get_property(value, "endStream")),
-        Some(Value::Boolean(false))
+        Some(Value::Boolean(true))
     );
     let frame = crate::modules::http2_protocol::Frame::new(
         crate::modules::http2_protocol::FrameType::Headers,
-        // Node ends a request stream by default.  An explicit
-        // `endStream: false` leaves it open for DATA frames written later.
+        // An explicit END_STREAM option permits a header-only request;
+        // ordinary requests remain open for DATA frames and `.end()`.
         0x4 | u8::from(end_stream),
         stream_id,
         block,
@@ -1889,7 +1893,7 @@ fn stream_destroy(
         state
             .borrow_mut()
             .net
-            .pending_events
+            .pending_http2_events
             .push((receiver.clone(), "error".into(), vec![error]));
     }
     publish_http2_stream_diagnostic(
