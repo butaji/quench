@@ -1327,7 +1327,11 @@ impl ObjectData {
         ))
     }
 
-    fn cache_plain_metadata_state(&self) -> Option<()> {
+    /// Prove from property names alone that no descriptor or deletion metadata
+    /// can alter ordinary slot semantics. The cached state is invalidated by
+    /// every structural mutation; callers must retain their existing complete
+    /// path when this returns `None`.
+    pub(crate) fn cache_plain_metadata_state(&self) -> Option<()> {
         let descriptor = self.descriptor_metadata_state.get();
         let deleted = self.deleted_marker_state.get();
         if descriptor == 1 && deleted == 1 {
