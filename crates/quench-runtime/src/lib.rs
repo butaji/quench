@@ -174,6 +174,7 @@ mod stencil_predicate_fusion;
 mod stencil_property_integration_tests;
 mod stencil_property_numeric;
 mod stencil_string_concat;
+mod stencil_string_builtin;
 #[cfg(test)]
 mod stencil_property_store_tests;
 mod stencil_region_builder;

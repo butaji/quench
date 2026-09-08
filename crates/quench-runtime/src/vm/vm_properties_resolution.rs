@@ -891,14 +891,16 @@ pub(crate) fn proven_own_slot(
     object: &crate::value::ObjectData,
     key: &str,
 ) -> Option<usize> {
-    if object.has_deleted_key(key) {
+    let plain_metadata = object.cache_plain_metadata_state().is_some();
+    if !plain_metadata && object.has_deleted_key(key) {
         return None;
     }
     let slot = object.physical_slot_for_name(key)?;
-    if object
-        .descriptor_metadata_for_key(key)
-        .as_ref()
-        .is_some_and(accessor_descriptor)
+    if !plain_metadata
+        && object
+            .descriptor_metadata_for_key(key)
+            .as_ref()
+            .is_some_and(accessor_descriptor)
     {
         return None;
     }
