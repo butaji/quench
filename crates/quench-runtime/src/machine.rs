@@ -5024,6 +5024,10 @@ impl NativeRegionPlan {
             .map_or("unknown_region", |record| record.name)
     }
 
+    pub(crate) const fn trace_operations(&self) -> &'static [crate::ir::Opcode] {
+        self.operations
+    }
+
     fn prepare_entry(
         &mut self,
         view: crate::stencil_select::PhysicalStencilView,
