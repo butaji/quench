@@ -26,9 +26,14 @@ Object.defineProperty(source, "0", {
 Object.defineProperty(source, "1", {
   get: function getOne() { log.push("get1"); return 2; }
 });
-copy(source, log);
-var result = log.join(",");
+function run() {
+  copy(source, log);
+  return log.join(",");
+}
+function verify(result) {
 if (result !== "get0,define0,get1,define1,setlength") {
   throw new Error("array species order mismatch: " + result);
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

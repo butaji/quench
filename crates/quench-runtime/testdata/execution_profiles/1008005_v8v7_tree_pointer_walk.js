@@ -7,12 +7,17 @@ function Node(key, right) {
   this.right = right;
 }
 var tree = new Node(1, new Node(2, new Node(3, new Node(4, null))));
-var result = 0;
-var current = tree;
-while (current.right !== null) {
-  result += current.key;
-  current = current.right;
+function run() {
+  var result = 0;
+  var current = tree;
+  while (current.right !== null) {
+    result += current.key;
+    current = current.right;
+  }
+  return result + current.key;
 }
-result += current.key;
+function verify(result) {
 assert(result === 10, "right-spine traversal");
-return result;
+  return result;
+}
+return { run: run, verify: verify };

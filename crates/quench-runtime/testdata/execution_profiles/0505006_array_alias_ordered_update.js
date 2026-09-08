@@ -7,8 +7,13 @@ function update(values) {
 
 update([1, 1]);
 var values = [1, 2, 3, 4];
-var result = update(values);
+function run() {
+  return update(values);
+}
+function verify(result) {
 if (result !== 10 || values.join(",") !== "1,3,6,10") {
   throw new Error("ordered alias update mismatch");
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

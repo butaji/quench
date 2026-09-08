@@ -8,8 +8,13 @@ function dispatch(kind, value) {
 }
 
 dispatch(0, 1);
-var result = dispatch(1, 21) + dispatch(2, 10);
+function run() {
+  return dispatch(1, 21) + dispatch(2, 10);
+}
+function verify(result) {
 if (result !== 49) {
   throw new Error("integer switch dispatch mismatch");
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

@@ -6,8 +6,13 @@ function update(values, delta) {
 }
 
 update([0, 1, 2, 3], 1);
-var result = update([10, 20, 30, 40], 0.5);
+function run() {
+  return update([10, 20, 30, 40], 0.5);
+}
+function verify(result) {
 if (result !== 102) {
   throw new Error("dense array update mismatch");
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };
