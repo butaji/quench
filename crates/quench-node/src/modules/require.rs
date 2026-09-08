@@ -862,9 +862,15 @@ pub fn module_enable_compile_cache(
         }
     };
 
-    let mut host = state.borrow_mut();
-    if host.compile_cache.status == CompileCacheStatus::Disabled {
-        drop(host);
+    let (status, cwd, existing_directory) = {
+        let host = state.borrow();
+        (
+            host.compile_cache.status,
+            host.process.cwd.clone(),
+            host.compile_cache.directory.clone(),
+        )
+    };
+    if status == CompileCacheStatus::Disabled {
         if compile_cache_debug_enabled() {
             let _ = crate::modules::process::stream_write(
                 state,
@@ -876,10 +882,23 @@ pub fn module_enable_compile_cache(
         }
         return Ok(compile_cache_result(3.0, None, None));
     }
-    if host.compile_cache.status == CompileCacheStatus::Enabled {
+    if status == CompileCacheStatus::Enabled {
+        let directory = existing_directory
+            .as_deref()
+            .map(|directory| resolve_compile_cache_directory(&cwd, directory));
+        if let Some(directory) = directory.as_deref() {
+            if let Some(message) = compile_cache_permission_failure(state, directory) {
+                let mut host = state.borrow_mut();
+                host.compile_cache.status = CompileCacheStatus::Uninitialized;
+                host.compile_cache.directory = None;
+                drop(host);
+                emit_compile_cache_debug(state, &message);
+                return Ok(compile_cache_result(0.0, None, Some(message)));
+            }
+        }
         return Ok(compile_cache_result(
             2.0,
-            host.compile_cache.directory.clone(),
+            directory,
             None,
         ));
     }
@@ -895,6 +914,11 @@ pub fn module_enable_compile_cache(
                 .to_string_lossy()
                 .into_owned()
         });
+    let directory = resolve_compile_cache_directory(&cwd, &directory);
+    if let Some(message) = compile_cache_permission_failure(state, &directory) {
+        emit_compile_cache_debug(state, &message);
+        return Ok(compile_cache_result(0.0, None, Some(message)));
+    }
     if let Err(error) = std::fs::create_dir_all(&directory) {
         return Ok(compile_cache_result(
             0.0,
@@ -902,6 +926,7 @@ pub fn module_enable_compile_cache(
             Some(format!("Unable to create compile cache directory: {error}")),
         ));
     }
+    let mut host = state.borrow_mut();
     host.compile_cache.status = CompileCacheStatus::Enabled;
     host.compile_cache.directory = Some(directory.clone());
     Ok(compile_cache_result(1.0, Some(directory), None))
@@ -933,6 +958,48 @@ fn compile_cache_debug_enabled() -> bool {
             .split(',')
             .any(|scope| scope.trim().eq_ignore_ascii_case("COMPILE_CACHE"))
     })
+}
+
+fn resolve_compile_cache_directory(cwd: &std::path::Path, directory: &str) -> String {
+    let path = std::path::Path::new(directory);
+    if path.is_absolute() {
+        directory.to_string()
+    } else {
+        cwd.join(path).to_string_lossy().into_owned()
+    }
+}
+
+fn compile_cache_permission_failure(
+    state: &Rc<RefCell<HostState>>,
+    directory: &str,
+) -> Option<String> {
+    if !crate::modules::process::permission_enabled(state)
+        || crate::modules::process::permission_audit(state)
+    {
+        return None;
+    }
+    let path = std::path::Path::new(directory);
+    if !crate::modules::process::permission_allows_path(state, "fs.write", path) {
+        return Some(format!(
+            "Skipping compile cache because write permission for {directory} is not granted"
+        ));
+    }
+    if !crate::modules::process::permission_allows_path(state, "fs.read", path) {
+        return Some(format!(
+            "Skipping compile cache because read permission for {directory} is not granted"
+        ));
+    }
+    None
+}
+
+fn emit_compile_cache_debug(state: &Rc<RefCell<HostState>>, message: &str) {
+    if compile_cache_debug_enabled() {
+        let _ = crate::modules::process::stream_write(
+            state,
+            &[Value::String(format!("{message}.\n"))],
+            true,
+        );
+    }
 }
 
 pub fn module_get_compile_cache_dir(

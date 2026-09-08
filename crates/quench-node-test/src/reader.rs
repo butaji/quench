@@ -123,6 +123,10 @@ impl NodeRunner {
             &fixture.argv,
             &title,
         );
+        // Keep the fixture global rooted across initial evaluation and every
+        // event-loop continuation. Async jobs resume in fresh VM frames and
+        // must observe the same script-installed global properties.
+        let _shared_global = quench_runtime::vm::SharedGlobal::install();
         let fixture_source = strip_v8_native_probes(&fixture.source);
         self.host = host;
         let mut context = context

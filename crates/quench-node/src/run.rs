@@ -98,6 +98,11 @@ pub fn run_script_with_exec_argv(
         &title,
         &fixture_flags,
     );
+    // Keep the script's global object rooted across the initial evaluation and
+    // the subsequent event-loop pump. Async continuations run in a fresh VM
+    // frame; without this shared root their global lookup can fall back to the
+    // bootstrap frame and lose script-installed globals.
+    let _shared_global = quench_runtime::vm::SharedGlobal::install();
     // The upstream Node runner treats `// Flags:` as invocation metadata,
     // not as script arguments.  Keep that distinction in the canonical
     // runner: flags belong to `process.execArgv`, while `process.argv`

@@ -452,10 +452,6 @@ pub fn reset_global_object() {
 impl SharedGlobal {
     pub fn install() -> Self {
         let previous = GLOBAL_OBJECT.with(|global| global.borrow().clone());
-        if previous.is_none() {
-            let created = std::rc::Rc::new(crate::value::ObjectData::new(Vec::new()));
-            initialize_global_object(&Value::Object(created));
-        }
         SHARED_GLOBAL.with(|count| count.set(count.get().saturating_add(1)));
         Self { previous }
     }
