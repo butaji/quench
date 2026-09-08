@@ -5496,7 +5496,7 @@ enum NativeAdmission {
     I32Pattern(Rc<RefCell<crate::stencil_i32_pattern::NativeI32PatternPlan>>),
     CallReturn(Rc<RefCell<crate::stencil_call_return::NativeCallReturnPlan>>),
     StringConcat(Rc<RefCell<crate::stencil_string_concat::StringConcatPlan>>),
-    StringCase(Rc<RefCell<crate::stencil_string_builtin::StringCasePlan>>),
+    StringBuiltin(Rc<RefCell<crate::stencil_string_builtin::StringBuiltinPlan>>),
     PropertyNumeric(Rc<RefCell<crate::stencil_property_numeric::PropertyNumericPlan>>),
     Move(Rc<RefCell<NativeMovePlan>>),
     LoadLocal(Rc<RefCell<NativeMovePlan>>),
@@ -5547,8 +5547,8 @@ impl AdmissionEntry for NativeAdmission {
             Self::StringConcat(_) => {
                 shared_value_bytes::<RefCell<crate::stencil_string_concat::StringConcatPlan>>()
             }
-            Self::StringCase(_) => {
-                shared_value_bytes::<RefCell<crate::stencil_string_builtin::StringCasePlan>>()
+            Self::StringBuiltin(_) => {
+                shared_value_bytes::<RefCell<crate::stencil_string_builtin::StringBuiltinPlan>>()
             }
             Self::PropertyNumeric(_) => shared_value_bytes::<
                 RefCell<crate::stencil_property_numeric::PropertyNumericPlan>,
@@ -5584,7 +5584,7 @@ impl std::fmt::Debug for NativeAdmission {
             Self::I32Pattern(_) => "i32_pattern",
             Self::CallReturn(_) => "call_return",
             Self::StringConcat(_) => "string_concat",
-            Self::StringCase(_) => "string_case",
+            Self::StringBuiltin(_) => "string_builtin",
             Self::PropertyNumeric(_) => "property_numeric",
             Self::Move(_) => "move",
             Self::LoadLocal(_) => "load_local",
@@ -6022,7 +6022,7 @@ fn string_concat_admission(
     Some(NativeAdmission::StringConcat(Rc::new(RefCell::new(plan))))
 }
 
-fn string_case_admission(
+fn string_builtin_admission(
     code: CodeView<'_>,
     entries: &[BaselineEntry],
     cfg: &ControlFlowFacts,
@@ -6030,8 +6030,8 @@ fn string_case_admission(
     policy: crate::stencil_policy::ExecutionPolicy,
 ) -> Option<NativeAdmission> {
     policy.local_fusions.any().then_some(())?;
-    let plan = crate::stencil_string_builtin::select_string_case(code, entries, cfg, pc)?;
-    Some(NativeAdmission::StringCase(Rc::new(RefCell::new(plan))))
+    let plan = crate::stencil_string_builtin::select_string_builtin(code, entries, cfg, pc)?;
+    Some(NativeAdmission::StringBuiltin(Rc::new(RefCell::new(plan))))
 }
 
 fn local_property_admission(
@@ -6340,6 +6340,7 @@ fn eager_straight_line_candidate(code: CodeView<'_>) -> bool {
     if eager_call_return_candidate(code)
         || eager_string_concat_call_candidate(code)
         || eager_string_case_candidate(code)
+        || eager_string_search_candidate(code)
     {
         return true;
     }
@@ -6370,6 +6371,29 @@ fn eager_string_case_candidate(code: CodeView<'_>) -> bool {
         code.instruction(pc)
             .is_some_and(|op| op.opcode == expected[pc])
     })
+}
+
+fn eager_string_search_candidate(code: CodeView<'_>) -> bool {
+    let group = [
+        crate::ir::Opcode::LoadLocal,
+        crate::ir::Opcode::GetN,
+        crate::ir::Opcode::GetN,
+        crate::ir::Opcode::LoadConst,
+        crate::ir::Opcode::CallN,
+    ];
+    let groups = (0..3).all(|index| {
+        group.iter().enumerate().all(|(offset, expected)| {
+            code.instruction(index * group.len() + offset)
+                .is_some_and(|instruction| instruction.opcode == *expected)
+        })
+    });
+    groups
+        && code
+            .instruction(15)
+            .is_some_and(|op| op.opcode == crate::ir::Opcode::Slow)
+        && code
+            .instruction(16)
+            .is_some_and(|op| op.opcode == crate::ir::Opcode::Return)
 }
 
 fn eager_string_concat_call_candidate(code: CodeView<'_>) -> bool {
@@ -6464,7 +6488,7 @@ fn collect_admissions_at(
     );
     builder.push_optional(pc, call_return_admission(entries, cfg, pc, policy, arena));
     builder.push_optional(pc, string_concat_admission(code, entries, cfg, pc, policy));
-    builder.push_optional(pc, string_case_admission(code, entries, cfg, pc, policy));
+    builder.push_optional(pc, string_builtin_admission(code, entries, cfg, pc, policy));
     collect_numeric_admissions(builder, entries, cfg, pc, entry, code, policy, arena);
     builder.push_optional(pc, add_chain_admission(entries, cfg, pc, policy, arena));
     builder.push_optional(
@@ -6574,7 +6598,7 @@ impl BaselinePlan {
         let i32_pattern = self.i32_pattern_at(0).is_some();
         let call_return = self.call_return_at(0).is_some();
         let string_concat = self.string_concat_at(0).is_some();
-        let string_case = self.string_case_at(0).is_some();
+        let string_builtin = self.string_builtin_at(0).is_some();
         let numeric = self
             .native_local_binary_at(0)
             .is_some_and(|plan| plan.borrow().selection().returns);
@@ -6587,7 +6611,7 @@ impl BaselinePlan {
             || i32_pattern
             || call_return
             || string_concat
-            || string_case
+            || string_builtin
             || numeric
             || property
     }
@@ -6668,10 +6692,10 @@ impl BaselinePlan {
         crate::stencil_string_concat::StringConcatPlan
     );
     typed_admission_accessors!(
-        string_case_handle_at,
-        string_case_at,
-        StringCase,
-        crate::stencil_string_builtin::StringCasePlan
+        string_builtin_handle_at,
+        string_builtin_at,
+        StringBuiltin,
+        crate::stencil_string_builtin::StringBuiltinPlan
     );
     typed_admission_accessors!(
         property_numeric_handle_at,
@@ -6820,9 +6844,9 @@ impl OptimizingEntry<'_> {
         crate::stencil_string_concat::StringConcatPlan
     );
     optimizing_admission_accessors!(
-        string_case,
-        StringCase,
-        crate::stencil_string_builtin::StringCasePlan
+        string_builtin,
+        StringBuiltin,
+        crate::stencil_string_builtin::StringBuiltinPlan
     );
     optimizing_admission_accessors!(
         property_numeric,
