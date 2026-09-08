@@ -135,6 +135,10 @@ fn generated_abi_classification_matches_physical_entry_shape() {
                 assert!(record.operations.contains(&crate::ir::Opcode::Jump));
                 assert!(record.operations.contains(&crate::ir::Opcode::Return));
             }
+            RegionAbi::BooleanReductionLoop => {
+                assert_eq!(record.name, "boolean_reduction_loop");
+                assert!(record.operations.contains(&crate::ir::Opcode::JumpIfFalse));
+            }
             RegionAbi::NumericF64Loop => {
                 assert_eq!(record.name, "numeric_floating_loop");
                 assert!(record.operations.ends_with(&[crate::ir::Opcode::Jump]));

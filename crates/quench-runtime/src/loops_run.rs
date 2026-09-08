@@ -82,6 +82,11 @@ fn run_loop_inner(
     registers: &mut crate::register_file::RegisterFile,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     if label.is_none() && !config.0 {
+        if let Some(result) = crate::stencil_boolean_reduction::execute_structured(
+            init, test, body, update, config.1, config.2, registers,
+        ) {
+            return result;
+        }
         if let Some(result) = crate::stencil_ordered_neighbor::execute_structured(
             init, test, body, update, config.1, config.2, registers,
         ) {

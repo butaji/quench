@@ -144,6 +144,7 @@ mod stencil_arithmetic_integration_tests;
 mod stencil_binding;
 #[cfg(test)]
 mod stencil_bitwise_fusion_tests;
+mod stencil_boolean_reduction;
 #[cfg(test)]
 mod stencil_bridge_tests;
 mod stencil_cache;
