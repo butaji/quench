@@ -14,8 +14,13 @@ var root = {
   right: { key: 20, value: 7, left: null, right: null }
 };
 find(root, 20);
-var result = find(root, 5);
+function run() {
+  return find(root, 5);
+}
+function verify(result) {
 if (result !== 42) {
   throw new Error("tree numeric search mismatch");
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

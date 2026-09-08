@@ -5,8 +5,13 @@ function read(object) {
 var prototype = { value: 41 };
 var receiver = Object.create(prototype);
 read(receiver);
-var result = read(receiver);
+function run() {
+  return read(receiver);
+}
+function verify(result) {
 if (result !== 42) {
   throw new Error("prototype data read mismatch");
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

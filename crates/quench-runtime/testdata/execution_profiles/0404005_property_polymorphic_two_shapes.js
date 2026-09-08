@@ -8,8 +8,13 @@ read(compact);
 read(extended);
 var left = read(compact);
 var right = read(extended);
-var result = left + right;
+function run() {
+  return left + right;
+}
+function verify(result) {
 if (result !== 83) {
   throw new Error("bounded polymorphic property mismatch");
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

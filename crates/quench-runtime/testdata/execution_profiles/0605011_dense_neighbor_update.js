@@ -6,8 +6,13 @@ function update(source, target, coefficient) {
 }
 
 update([1, 2, 3], [0, 0, 0], 0.5);
-var result = update([1, 2, 4, 8, 16], [0, 0, 0, 0, 0], 0.25);
+function run() {
+  return update([1, 2, 4, 8, 16], [0, 0, 0, 0, 0], 0.25);
+}
+function verify(result) {
 if (result !== 22.75) {
   throw new Error("dense neighbor update mismatch: " + result);
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

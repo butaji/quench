@@ -24,6 +24,8 @@ const EXECUTION_CASE_SCHEMA: u32 = 1;
 const PROFILE_RUN_PROPERTY: &str = "run";
 const PROFILE_VERIFY_PROPERTY: &str = "verify";
 const PROFILE_CASE_FILTER: &str = "QUENCH_EXECUTION_PROFILE_CASE";
+const PROFILE_CHILD_PROCESS: &str = "QUENCH_EXECUTION_PROFILE_CHILD";
+const PROFILE_MISMATCH_MARKER: &str = "QUENCH_PROFILE_MISMATCH:";
 
 struct PreparedExecution {
     run: crate::value::Value,
@@ -159,7 +161,9 @@ fn prepare_execution(
 }
 
 fn settle(value: crate::value::Value) -> Result<crate::value::Value, crate::execute::VmError> {
-    let crate::value::Value::Promise(promise) = value else { return Ok(value) };
+    let crate::value::Value::Promise(promise) = value else {
+        return Ok(value);
+    };
     crate::promise::drain_microtasks_all();
     let state = promise.state.borrow().clone();
     match state {
@@ -185,7 +189,9 @@ fn execute_contract(
     context: &crate::vm::VmContext,
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     let initialized = crate::vm::execute_code_with_context(code, context)?;
-    let Some(prepared) = prepare_execution(&initialized)? else { return Ok(initialized) };
+    let Some(prepared) = prepare_execution(&initialized)? else {
+        return Ok(initialized);
+    };
     let result = invoke(context, &prepared.run, &[])?;
     invoke(context, &prepared.verify, &[result])
 }
@@ -213,7 +219,10 @@ impl ExpectedValue {
     }
 
     fn assert(&self, actual: &crate::value::Value, source: &str) {
-        assert!(self.matches(actual), "wrong JS result for {source}: {actual:?}");
+        assert!(
+            self.matches(actual),
+            "wrong JS result for {source}: {actual:?}"
+        );
     }
 }
 
@@ -227,18 +236,27 @@ impl ExpectedProfile {
 
     fn differences(&self, actual: &ExecutionProfile) -> Vec<String> {
         let comparisons = [
-            ("residual", string_counts(&actual.residual_ops), self.residual.clone()),
+            (
+                "residual",
+                string_counts(&actual.residual_ops),
+                self.residual.clone(),
+            ),
             ("slow", string_counts(&actual.slow_ops), self.slow.clone()),
             ("events", string_counts(&actual.events), self.events.clone()),
         ];
         let mut differences = comparisons
             .into_iter()
             .filter(|(_, actual, expected)| actual != expected)
-            .map(|(name, actual, expected)| format!("{name}: expected {expected:?}, actual {actual:?}"))
+            .map(|(name, actual, expected)| {
+                format!("{name}: expected {expected:?}, actual {actual:?}")
+            })
             .collect::<Vec<_>>();
         let actual = string_routes(&actual.stencils);
         if actual != self.stencils {
-            differences.push(format!("stencils: expected {:?}, actual {actual:?}", self.stencils));
+            differences.push(format!(
+                "stencils: expected {:?}, actual {actual:?}",
+                self.stencils
+            ));
         }
         differences
     }
@@ -395,7 +413,9 @@ fn scaled_counts(
 mod tests {
     use super::*;
 
-    fn execute_profile(case: &ExecutionCase) -> Result<(crate::value::Value, ExecutionProfile), String> {
+    fn execute_profile(
+        case: &ExecutionCase,
+    ) -> Result<(crate::value::Value, ExecutionProfile), String> {
         let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
         crate::stencil_policy::with_policy_for_test(policy, || execute_profile_with_policy(case))
     }
@@ -452,6 +472,42 @@ mod tests {
         (!differences.is_empty()).then(|| format!("{name}: {}", differences.join("; ")))
     }
 
+    fn isolated_mismatch(name: &str) -> Option<String> {
+        let executable = std::env::current_exe().expect("current Rust test executable");
+        let output = std::process::Command::new(executable)
+            .args([
+                "--exact",
+                "test_execution_profile::tests::every_json_contract_matches_ideal_execution_profile",
+                "--nocapture",
+            ])
+            .env(PROFILE_CASE_FILTER, name)
+            .env(PROFILE_CHILD_PROCESS, "1")
+            .output()
+            .expect("isolated execution-profile process");
+        child_mismatch(name, &output)
+    }
+
+    fn child_mismatch(name: &str, output: &std::process::Output) -> Option<String> {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Some(line) = stdout.lines().find_map(profile_mismatch_line) {
+            return Some(line.to_owned());
+        }
+        (!output.status.success()).then(|| child_failure(name, output))
+    }
+
+    fn profile_mismatch_line(line: &str) -> Option<&str> {
+        line.strip_prefix(PROFILE_MISMATCH_MARKER)
+    }
+
+    fn child_failure(name: &str, output: &std::process::Output) -> String {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        format!(
+            "{name}: isolated process {:?}\n{stdout}{stderr}",
+            output.status
+        )
+    }
+
     #[test]
     fn capture_is_invocation_local_and_deterministic() {
         let (_, first) = capture(|| {
@@ -472,15 +528,31 @@ mod tests {
         for name in names {
             let case = ExecutionCase::load(&name);
             assert!(!case.source().trim().is_empty(), "empty JS case: {name}");
-            case.assert_standalone();
+            crate::reduce::reduce_source(case.source())
+                .unwrap_or_else(|errors| panic!("{name} does not lower: {}", errors.join("; ")));
         }
     }
 
     #[test]
     fn every_json_contract_matches_ideal_execution_profile() {
-        let mismatches = fixture_names()
+        if std::env::var_os(PROFILE_CHILD_PROCESS).is_some() {
+            let name = std::env::var(PROFILE_CASE_FILTER).expect("selected profile case");
+            if let Some(mismatch) = case_mismatch(&name) {
+                println!("{PROFILE_MISMATCH_MARKER}{mismatch}");
+            }
+            return;
+        }
+        let names = fixture_names();
+        let isolated = std::env::var_os(PROFILE_CASE_FILTER).is_none();
+        let mismatches = names
             .iter()
-            .filter_map(|name| case_mismatch(name))
+            .filter_map(|name| {
+                if isolated {
+                    isolated_mismatch(name)
+                } else {
+                    case_mismatch(name)
+                }
+            })
             .collect::<Vec<_>>();
         assert!(
             mismatches.is_empty(),

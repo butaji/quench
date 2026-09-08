@@ -13,8 +13,13 @@ function run(shouldThrow) {
 }
 
 run(false);
-var result = run(true);
+function profileRun() {
+  return run(true);
+}
+function profileVerify(result) {
 if (result !== 105) {
   throw new Error("try/finally exactly-once mismatch: " + result);
 }
-return result;
+  return result;
+}
+return { run: profileRun, verify: profileVerify };

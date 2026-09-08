@@ -7,10 +7,15 @@ function makePair() {
 }
 
 var pair = makePair();
-pair[0]();
-pair[0]();
-var result = pair[1]();
+function run() {
+  pair[0]();
+  pair[0]();
+  return pair[1]();
+}
+function verify(result) {
 if (result !== 2) {
   throw new Error("shared closure cell mismatch");
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

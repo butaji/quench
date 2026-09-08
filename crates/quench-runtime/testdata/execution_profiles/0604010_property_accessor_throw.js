@@ -10,13 +10,18 @@ Object.defineProperty(receiver, "value", {
     throw new Error("boom");
   }
 });
-var result;
-try {
-  read(receiver);
-} catch (error) {
-  result = error.message + ":" + calls;
+function run() {
+  try {
+    read(receiver);
+  } catch (error) {
+    return error.message + ":" + calls;
+  }
+  return "missing throw:" + calls;
 }
+function verify(result) {
 if (result !== "boom:1") {
   throw new Error("accessor throw/replay mismatch: " + result);
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

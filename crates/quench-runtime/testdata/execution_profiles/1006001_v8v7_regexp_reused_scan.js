@@ -4,11 +4,17 @@ function assert(condition, message) {
 }
 var expression = /\d+/g;
 var input = "alpha=12 beta=345 gamma=6";
-var result = 0;
-var match;
-while ((match = expression.exec(input)) !== null) {
-  result += Number(match[0]);
+function run() {
+  var result = 0;
+  var match;
+  while ((match = expression.exec(input)) !== null) {
+    result += Number(match[0]);
+  }
+  return result;
 }
+function verify(result) {
 assert(result === 363, "all numeric matches in order");
 assert(expression.lastIndex === 0, "failed global exec resets lastIndex");
-return result;
+  return result;
+}
+return { run: run, verify: verify };
