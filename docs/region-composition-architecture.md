@@ -34,6 +34,12 @@ Recommend bounded composition plus measured fused templates. No second semantic
 IR, unrestricted optimization search or global register allocator. This is a
 trade-off, not evidence that arbitrary optimizing-JIT performance is attainable.
 
+The unit of reuse is a parameterized machine family, not an opcode and not a
+fixture. Whole-loop bodies are permitted only as terminal covers of the same
+graph. They consume the same induction, carried-value, memory, effect and exit
+facts as smaller fragments and use the same publication/lifetime path. This
+prevents “kernel” from becoming a second optimizer or semantic runtime.
+
 ## Data contract
 
 - Immutable code metadata supplies successors, operand roles, definitions/uses
@@ -91,6 +97,15 @@ OXC remains the syntax owner and residual PCs remain the exact fallback/throw
 authority. Interning may provide local CSE only within an effect-valid bounded
 region. Rewrites monotonically strengthen proven physical facts; calls,
 coercions, allocation, mutation and joins explicitly invalidate them.
+
+Keep one shallow term vocabulary for physical selection: value transfer, scalar
+expression, predicate/control, guarded memory access, call boundary, counted
+region and allocation boundary. Specialized recipes refine these terms with
+representations, locations, immediate classes, dependency sets and continuation
+roles. They do not add new JavaScript operations. Current named whole-function
+selectors are migration inputs: either express them as a cover over this data or
+retain them as an explicitly measured large terminal recipe; never grow a new
+selector vocabulary beside the graph.
 
 Prioritize known-fact specialization and dispatch/guard-removing fusion. They can
 remove generic lookup, decoding and materialization; full SSA or global allocation
