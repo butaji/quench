@@ -45,16 +45,34 @@ pub(crate) struct NativeForwardCallPlan {
 }
 
 #[derive(Clone, Copy)]
+enum PairCallSelection {
+    Forward {
+        callee_slot: u16,
+        target_slot: u16,
+        argument: i32,
+    },
+    IntegerSwitch {
+        callee_slot: u16,
+        discriminant: i32,
+        argument: i32,
+    },
+}
+
+#[derive(Clone, Copy)]
 pub(crate) struct ForwardPairSelection {
-    forwarder_slots: [u16; 2],
-    target_slots: [u16; 2],
-    arguments: [i32; 2],
+    calls: [PairCallSelection; 2],
 }
 
 pub(crate) struct NativeForwardPairPlan {
     selection: ForwardPairSelection,
     targets: Vec<crate::function_physical::NumericAffineI32>,
+    switches: Vec<InstalledSwitch>,
     machine: LazyAffineTransform,
+}
+
+struct InstalledSwitch {
+    target: Rc<crate::value::FunctionValue>,
+    fact: crate::function_call_fact::IntegerSwitchI32,
 }
 
 impl NativeForwardPairPlan {
@@ -65,23 +83,21 @@ impl NativeForwardPairPlan {
         Some(Self {
             selection,
             targets: Vec::with_capacity(MAX_TARGETS),
+            switches: Vec::with_capacity(MAX_TARGETS),
             machine: LazyAffineTransform::Cold(owner),
         })
     }
 
     pub(crate) fn execute(&mut self, environment: &crate::environment::Environment) -> Option<i32> {
-        let facts = self.facts(environment)?;
+        let calls = self.calls(environment)?;
+        let facts = [calls[0].0, calls[1].0];
         facts.iter().try_for_each(|fact| self.observe(*fact))?;
-        let left = self.machine.execute(
-            self.selection.arguments[0],
-            facts[0].multiplier,
-            facts[0].addend,
-        )?;
-        let right = self.machine.execute(
-            self.selection.arguments[1],
-            facts[1].multiplier,
-            facts[1].addend,
-        )?;
+        let left = self
+            .machine
+            .execute(calls[0].1, facts[0].multiplier, facts[0].addend)?;
+        let right = self
+            .machine
+            .execute(calls[1].1, facts[1].multiplier, facts[1].addend)?;
         left.checked_add(right)
     }
 
@@ -89,22 +105,80 @@ impl NativeForwardPairPlan {
         PAIR_REGION_LEN
     }
 
-    fn facts(
-        &self,
-        environment: &crate::environment::Environment,
-    ) -> Option<[crate::function_physical::NumericAffineI32; 2]> {
-        Some([self.fact_at(environment, 0)?, self.fact_at(environment, 1)?])
+    pub(crate) const fn profile_name(&self) -> &'static str {
+        match self.selection.calls {
+            [PairCallSelection::IntegerSwitch { .. }, PairCallSelection::IntegerSwitch { .. }] => {
+                "integer_switch_arithmetic_return"
+            }
+            _ => PROFILE_NAME,
+        }
     }
 
-    fn fact_at(
-        &self,
+    pub(crate) const fn route(&self) -> &'static [&'static str] {
+        match self.selection.calls {
+            [PairCallSelection::IntegerSwitch { .. }, PairCallSelection::IntegerSwitch { .. }] => {
+                &["Switch", "AddConst", "MulConst", "SubConst", "Return"]
+            }
+            _ => &["LoadLocalChecked", "Call", "Return"],
+        }
+    }
+
+    fn calls(
+        &mut self,
         environment: &crate::environment::Environment,
-        index: usize,
-    ) -> Option<crate::function_physical::NumericAffineI32> {
-        let forwarder = environment_function(environment, self.selection.forwarder_slots[index])?;
-        crate::function_physical::forwards_one_argument(&forwarder)?;
-        let target = environment_function(environment, self.selection.target_slots[index])?;
-        crate::function_physical::numeric_affine_callable(&target)
+    ) -> Option<[(crate::function_physical::NumericAffineI32, i32); 2]> {
+        Some([
+            self.call_at(environment, self.selection.calls[0])?,
+            self.call_at(environment, self.selection.calls[1])?,
+        ])
+    }
+
+    fn call_at(
+        &mut self,
+        environment: &crate::environment::Environment,
+        call: PairCallSelection,
+    ) -> Option<(crate::function_physical::NumericAffineI32, i32)> {
+        match call {
+            PairCallSelection::Forward {
+                callee_slot,
+                target_slot,
+                argument,
+            } => {
+                let forwarder = environment_function(environment, callee_slot)?;
+                crate::function_call_fact::forwards_one_argument(&forwarder)?;
+                let target = environment_function(environment, target_slot)?;
+                Some((
+                    crate::function_call_fact::numeric_affine_callable(&target)?,
+                    argument,
+                ))
+            }
+            PairCallSelection::IntegerSwitch {
+                callee_slot,
+                discriminant,
+                argument,
+            } => {
+                let callee = environment_function(environment, callee_slot)?;
+                let fact = self.switch_fact(callee)?;
+                Some((fact.select(discriminant), argument))
+            }
+        }
+    }
+
+    fn switch_fact(
+        &mut self,
+        target: Rc<crate::value::FunctionValue>,
+    ) -> Option<&crate::function_call_fact::IntegerSwitchI32> {
+        if let Some(index) = self
+            .switches
+            .iter()
+            .position(|installed| Rc::ptr_eq(&installed.target, &target))
+        {
+            return Some(&self.switches[index].fact);
+        }
+        (self.switches.len() < MAX_TARGETS).then_some(())?;
+        let fact = crate::function_call_fact::integer_switch_callable(&target)?;
+        self.switches.push(InstalledSwitch { target, fact });
+        self.switches.last().map(|installed| &installed.fact)
     }
 
     fn observe(&mut self, fact: crate::function_physical::NumericAffineI32) -> Option<()> {
@@ -145,9 +219,9 @@ impl NativeForwardCallPlan {
         registers: &crate::register_file::RegisterFile,
     ) -> Option<i32> {
         let forwarder = function_at(registers, self.selection.callee)?;
-        crate::function_physical::forwards_one_argument(&forwarder)?;
+        crate::function_call_fact::forwards_one_argument(&forwarder)?;
         let target = function_at(registers, self.selection.target)?;
-        let fact = crate::function_physical::numeric_affine_callable(&target)?;
+        let fact = crate::function_call_fact::numeric_affine_callable(&target)?;
         self.observe(fact)?;
         let input = number_at(registers, self.selection.argument)?;
         self.machine.execute(input, fact.multiplier, fact.addend)
@@ -192,22 +266,10 @@ pub(crate) fn select_forward_pair(
 ) -> Option<ForwardPairSelection> {
     let ops = entries.get(pc..pc.checked_add(PAIR_REGION_LEN)?)?;
     let op = |index: usize| ops[index].instruction;
-    let expected = [
-        Opcode::LoadLocal,
-        Opcode::LoadLocal,
-        Opcode::LoadConst,
-        Opcode::Call,
+    let calls = [
+        select_pair_call(code, pc, ops, 0)?,
+        select_pair_call(code, pc, ops, 4)?,
     ];
-    for base in [0, 4] {
-        expected
-            .iter()
-            .enumerate()
-            .try_for_each(|(offset, opcode)| (op(base + offset).opcode == *opcode).then_some(()))?;
-        let call = op(base + 3);
-        let window = code.operand_window_at(pc + base + 3)?;
-        (call.flags == 2 && call.b == op(base).a && window == [op(base + 1).a, op(base + 2).a])
-            .then_some(())?;
-    }
     let add = op(8);
     (add.opcode == Opcode::Add
         && add.b == op(3).a
@@ -215,14 +277,38 @@ pub(crate) fn select_forward_pair(
         && op(9) == crate::ir::Instruction::ret(add.a))
     .then_some(())?;
     cfg.region_control(pc, pc + PAIR_REGION_LEN)?;
-    Some(ForwardPairSelection {
-        forwarder_slots: [op(0).b, op(4).b],
-        target_slots: [op(1).b, op(5).b],
-        arguments: [
-            number_constant(code, op(2).b)?,
-            number_constant(code, op(6).b)?,
-        ],
-    })
+    Some(ForwardPairSelection { calls })
+}
+
+fn select_pair_call(
+    code: CodeView<'_>,
+    start: usize,
+    entries: &[BaselineEntry],
+    base: usize,
+) -> Option<PairCallSelection> {
+    let op = |offset: usize| entries.get(base + offset).map(|entry| entry.instruction);
+    let (callee, first, second, call) = (op(0)?, op(1)?, op(2)?, op(3)?);
+    (callee.opcode == Opcode::LoadLocal
+        && second.opcode == Opcode::LoadConst
+        && call.opcode == Opcode::Call
+        && call.flags == 2
+        && call.b == callee.a
+        && code.operand_window_at(start + base + 3)? == [first.a, second.a])
+    .then_some(())?;
+    let second = number_constant(code, second.b)?;
+    match first.opcode {
+        Opcode::LoadLocal => Some(PairCallSelection::Forward {
+            callee_slot: callee.b,
+            target_slot: first.b,
+            argument: second,
+        }),
+        Opcode::LoadConst => Some(PairCallSelection::IntegerSwitch {
+            callee_slot: callee.b,
+            discriminant: number_constant(code, first.b)?,
+            argument: second,
+        }),
+        _ => None,
+    }
 }
 
 fn function_at(

@@ -135,7 +135,7 @@ impl NativeCallReturnPlan {
                 constant_return_bits(target).map(TargetKey::Constant)
             }
             CallReturnSelection::One { .. } => {
-                crate::function_physical::numeric_affine_callable(target).map(TargetKey::Affine)
+                crate::function_call_fact::numeric_affine_callable(target).map(TargetKey::Affine)
             }
         }
     }

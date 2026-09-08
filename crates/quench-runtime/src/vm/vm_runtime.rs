@@ -2119,18 +2119,17 @@ fn record_forward_call(code: crate::machine::CodeView<'_>, pc: usize) {
     crate::test_execution_profile::dynamic_region_route(crate::stencil_forward_call::route());
 }
 
-fn record_forward_pair(code: crate::machine::CodeView<'_>, pc: usize) {
+fn record_forward_pair(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    plan: &crate::stencil_forward_call::NativeForwardPairPlan,
+) {
     for _ in 0..crate::stencil_forward_call::pair_profile_entries() {
-        crate::execution_trace::stencil_observation(
-            code,
-            pc,
-            crate::stencil_forward_call::PROFILE_NAME,
-            true,
-        );
+        crate::execution_trace::stencil_observation(code, pc, plan.profile_name(), true);
         crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
     }
     #[cfg(test)]
-    crate::test_execution_profile::dynamic_region_route(crate::stencil_forward_call::route());
+    crate::test_execution_profile::dynamic_region_route(plan.route().iter().copied());
 }
 
 fn record_string_concat(code: crate::machine::CodeView<'_>, pc: usize, constant_call: bool) {
@@ -2619,13 +2618,15 @@ pub(crate) fn execute_optimized_code_step_from(
         crate::execution_trace::leaf_rejection("bitwise_shift_mask_return");
     }
     if let Some(pair) = entry.forward_pair() {
-        let (value, span) = {
+        let (value, span, profile_name) = {
             let mut pair = pair.borrow_mut();
             let value = crate::locals::with_current_ref(|environment| pair.execute(environment?));
-            (value, pair.span())
+            if value.is_some() {
+                record_forward_pair(code, start, &pair);
+            }
+            (value, pair.span(), pair.profile_name())
         };
         if let Some(value) = value {
-            record_forward_pair(code, start);
             return Ok((
                 crate::completion::Completion::Return(crate::value::Value::Number(f64::from(
                     value,
@@ -2636,10 +2637,10 @@ pub(crate) fn execute_optimized_code_step_from(
         crate::execution_trace::stencil_observation(
             code,
             start,
-            crate::stencil_forward_call::PROFILE_NAME,
+            profile_name,
             false,
         );
-        crate::execution_trace::leaf_rejection(crate::stencil_forward_call::PROFILE_NAME);
+        crate::execution_trace::leaf_rejection(profile_name);
     }
     if let Some(call) = entry.call_return() {
         let mut call = call.borrow_mut();
@@ -3713,12 +3714,15 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
             crate::execution_trace::leaf_rejection("bitwise_shift_mask_return");
         }
         if let (Some(environment), Some(pair)) = (environment, plan.forward_pair_at(pc)) {
-            let (value, span) = {
+            let (value, span, profile_name) = {
                 let mut pair = pair.borrow_mut();
-                (pair.execute(environment), pair.span())
+                let value = pair.execute(environment);
+                if value.is_some() {
+                    record_forward_pair(code, pc, &pair);
+                }
+                (value, pair.span(), pair.profile_name())
             };
             if let Some(value) = value {
-                record_forward_pair(code, pc);
                 return completion_step_after_transition(
                     registers,
                     crate::completion::Completion::Return(crate::value::Value::Number(f64::from(
@@ -3730,10 +3734,10 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
             crate::execution_trace::stencil_observation(
                 code,
                 pc,
-                crate::stencil_forward_call::PROFILE_NAME,
+                profile_name,
                 false,
             );
-            crate::execution_trace::leaf_rejection(crate::stencil_forward_call::PROFILE_NAME);
+            crate::execution_trace::leaf_rejection(profile_name);
         }
         if let (Some(environment), Some(call)) = (environment, plan.call_return_at(pc)) {
             let mut call = call.borrow_mut();
