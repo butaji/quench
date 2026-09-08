@@ -91,6 +91,10 @@ fn try_execute_physical(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     arguments: &[crate::value::Value],
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
+    if let Some(value) = try_execute_increasing_i32(function) {
+        record_increasing_i32(function);
+        return Ok(Some(crate::value::Value::Number(value)));
+    }
     if let Some(value) = try_execute_typed_lane(function, arguments)? {
         record_typed_lane(function);
         return Ok(Some(crate::value::Value::Number(value)));
@@ -146,6 +150,22 @@ fn try_execute_physical(
     Ok(None)
 }
 
+fn try_execute_increasing_i32(function: &crate::value::FunctionValue) -> Option<f64> {
+    (function.params == 0 && crate::functions::direct_call_eligible(function)).then_some(())?;
+    let selected =
+        crate::stencil_increasing_i32_recurrence::select_function(function.code.code()?)?;
+    selected.execute_native()
+}
+
+fn record_increasing_i32(function: &crate::value::FunctionValue) {
+    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+    if let Some(code) = function.code.code() {
+        crate::execution_trace::stencil_observation(code, 0, "integer_recurrence_region", true);
+    }
+    #[cfg(test)]
+    crate::test_execution_profile::dynamic_region_route(["integer_recurrence"]);
+}
+
 fn try_execute_typed_lane(
     function: &crate::value::FunctionValue,
     arguments: &[crate::value::Value],
@@ -192,10 +212,7 @@ fn record_counted_i32(function: &crate::value::FunctionValue) {
         crate::execution_trace::stencil_observation(code, 0, "counted_i32_recurrence", true);
     }
     #[cfg(test)]
-    crate::test_execution_profile::dynamic_region_route([
-        "counted_region",
-        "i32_ushr_xor_imul",
-    ]);
+    crate::test_execution_profile::dynamic_region_route(["counted_region", "i32_ushr_xor_imul"]);
 }
 
 fn try_execute_two_state_i32(
@@ -551,24 +568,7 @@ fn execute_interpreter(
     let mut receiver = receiver;
     let mut arguments = std::borrow::Cow::Borrowed(arguments);
     loop {
-        let _ = function.code.enter_invocation();
-        let (mut registers, environment) =
-            build_registers(&function, &receiver, arguments.as_ref());
-        let _private_environment = crate::private_environment::Guard::install_environment(
-            function.private_environment.clone(),
-        );
-        let _home = crate::super_scope::Guard::install(&function, &receiver);
-        let _with_scope = crate::with_scope::FunctionGuard::install(&function.with_captures);
-        let completion = crate::vm::execute_code_frame_completion_with_owner(
-            function
-                .code
-                .code()
-                .ok_or(crate::execute::VmError::MissingReturn)?,
-            &function.code,
-            &mut registers,
-            &crate::vm::current_context(),
-            environment,
-        )?;
+        let completion = execute_one_frame(&function, &receiver, arguments.as_ref())?;
         let crate::completion::Completion::TailCall(request) = completion else {
             return crate::vm::completion_result(completion);
         };
@@ -579,10 +579,38 @@ fn execute_interpreter(
                 &request.arguments,
             );
         };
+        if let Some(value) = try_execute_specialized(&next, &request.receiver, &request.arguments)?
+        {
+            return Ok(value);
+        }
         function = next;
         receiver = crate::vm::bare_call_receiver(&function, &request.receiver);
         arguments = std::borrow::Cow::Owned(request.arguments.into_vec());
     }
+}
+
+fn execute_one_frame(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    receiver: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    let _ = function.code.enter_invocation();
+    let (mut registers, environment) = build_registers(function, receiver, arguments);
+    let _private_environment = crate::private_environment::Guard::install_environment(
+        function.private_environment.clone(),
+    );
+    let _home = crate::super_scope::Guard::install(function, receiver);
+    let _with_scope = crate::with_scope::FunctionGuard::install(&function.with_captures);
+    crate::vm::execute_code_frame_completion_with_owner(
+        function
+            .code
+            .code()
+            .ok_or(crate::execute::VmError::MissingReturn)?,
+        &function.code,
+        &mut registers,
+        &crate::vm::current_context(),
+        environment,
+    )
 }
 
 fn execute_with_dynamic_scope(

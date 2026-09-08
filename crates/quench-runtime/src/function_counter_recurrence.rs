@@ -6,6 +6,7 @@ use std::{cell::RefCell, rc::Rc};
 const BODY_LEN: usize = 24;
 const COUNTER_MACHINE_SLAB_BYTES: usize = 4096;
 const MAX_EXACT_JS_INTEGER: u128 = 9_007_199_254_740_991;
+const MAX_I32_MAGNITUDE: u128 = 1_u128 << 31;
 pub(super) const MAX_ITERATIONS: usize = 4096;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -39,6 +40,46 @@ impl I32CounterRecurrence {
         let context = CounterLoopContext::new(self, value, counter, end)?;
         COUNTER_MACHINE.with(|machine| execute_machine(machine, self, context))
     }
+}
+
+pub(crate) fn execute_increasing(
+    value: i32,
+    start: i32,
+    end: i32,
+    multiplier: i32,
+    addend: i32,
+) -> Option<(i32, bool)> {
+    let iterations = if start < end {
+        usize::try_from(end.checked_sub(start)?).ok()?
+    } else {
+        0
+    };
+    (iterations <= MAX_ITERATIONS).then_some(())?;
+    increasing_step_is_exact(start, end, multiplier, addend).then_some(())?;
+    let fact = I32CounterRecurrence {
+        value_parameter: 0,
+        counter_parameter: 0,
+        multiplier,
+        addend,
+        threshold: end,
+        decrement: -1,
+    };
+    let counter = if iterations == 0 {
+        start
+    } else {
+        start.checked_sub(1)?
+    };
+    let context = CounterLoopContext::new(fact, value, counter, iterations)?;
+    COUNTER_MACHINE.with(|machine| execute_machine(machine, fact, context))
+}
+
+fn increasing_step_is_exact(start: i32, end: i32, multiplier: i32, addend: i32) -> bool {
+    let product = MAX_I32_MAGNITUDE * u128::from(multiplier.unsigned_abs());
+    let induction = u128::from(start.unsigned_abs().max(end.unsigned_abs()));
+    product
+        .checked_add(induction)
+        .and_then(|bound| bound.checked_add(u128::from(addend.unsigned_abs())))
+        .is_some_and(|bound| bound <= MAX_EXACT_JS_INTEGER)
 }
 
 #[repr(C)]
