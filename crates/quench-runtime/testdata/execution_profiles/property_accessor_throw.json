@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "warmup": 0,
+  "result": { "kind": "string", "value": "boom:1" },
+  "plan": {
+    "execution_kind": "ordinary_fallback",
+    "operation_route": ["GetN", "Call", "Throw"],
+    "fallback": true
+  },
+  "profile": {
+    "residual": { "GetN": 1 },
+    "slow": { "GetN": 1, "Call": 1 },
+    "stencils": { "property": { "entries": 0, "fallbacks": 1 } },
+    "events": { "register_file_read": 1 }
+  }
+}
