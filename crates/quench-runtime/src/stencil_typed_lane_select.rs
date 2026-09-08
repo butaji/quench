@@ -29,97 +29,18 @@ struct Store {
 }
 
 pub(crate) fn select_function(code: CodeView<'_>) -> Option<FunctionTypedLane> {
-    let mut constants = BTreeMap::new();
-    let mut initial = None;
-    let mut selected = None;
-    let mut returned = None;
-    for pc in 0..code.len() {
-        let instruction = code.instruction(pc)?;
-        select_top(
-            code,
-            pc,
-            instruction,
-            &mut constants,
-            &mut initial,
-            &mut selected,
-            &mut returned,
-        )?;
-    }
-    finish_selection(initial?, selected?, returned?)
-}
-
-fn finish_selection(
-    (initial_slot, initial_total): (u16, f64),
-    selected: TypedLane,
-    returned: u16,
-) -> Option<FunctionTypedLane> {
-    (initial_slot == selected.total_slot && returned == selected.total_slot).then_some(())?;
+    let facts = crate::stencil_counted_function::select(code, |counted, body, per_iteration| {
+        (per_iteration == [counted.index_slot]).then_some(())?;
+        select_body(body, counted)
+    })?;
+    let selected = facts.loop_cover;
+    (facts.returned_slot == selected.total_slot).then_some(())?;
+    let initial_total =
+        crate::stencil_counted_function::initial_f64(&facts.initials, selected.total_slot)?;
     Some(FunctionTypedLane {
         selected,
         initial_total,
     })
-}
-
-fn select_top(
-    code: CodeView<'_>,
-    pc: usize,
-    instruction: crate::ir::Instruction,
-    constants: &mut BTreeMap<u16, f64>,
-    initial: &mut Option<(u16, f64)>,
-    selected: &mut Option<TypedLane>,
-    returned: &mut Option<u16>,
-) -> Option<()> {
-    match instruction.opcode {
-        Opcode::LoadConst => track_constant(code, instruction, constants)?,
-        Opcode::InitLocal if initial.is_none() => {
-            *initial = Some((instruction.a, *constants.get(&instruction.b)?));
-        }
-        Opcode::LoadLocal | Opcode::LoadLocalChecked => *returned = Some(instruction.b),
-        Opcode::Return => {}
-        Opcode::Slow => select_top_slow(code, pc, selected)?,
-        _ => return None,
-    }
-    Some(())
-}
-
-fn track_constant(
-    code: CodeView<'_>,
-    instruction: crate::ir::Instruction,
-    constants: &mut BTreeMap<u16, f64>,
-) -> Option<()> {
-    match code.constant(instruction.b)? {
-        crate::ops::Constant::Number(value) => {
-            constants.insert(instruction.a, *value);
-        }
-        crate::ops::Constant::Undefined => {
-            constants.remove(&instruction.a);
-        }
-        _ => return None,
-    }
-    Some(())
-}
-
-fn select_top_slow(code: CodeView<'_>, pc: usize, selected: &mut Option<TypedLane>) -> Option<()> {
-    match code.cold_at(pc)? {
-        crate::ops::Op::MarkUninitialized { .. } | crate::ops::Op::MarkImmutable { .. } => Some(()),
-        crate::ops::Op::Loop {
-            label: None,
-            init,
-            test,
-            body,
-            update,
-            post_test: false,
-            per_iteration,
-            ..
-        } if selected.is_none() => {
-            let counted =
-                crate::stencil_counted_loop::select(init.code()?, test.code()?, update.code()?)?;
-            (per_iteration.as_slice() == [counted.index_slot]).then_some(())?;
-            selected.replace(select_body(body.code()?, counted)?);
-            Some(())
-        }
-        _ => None,
-    }
 }
 
 fn select_body(

@@ -153,10 +153,11 @@ mod stencil_call_return;
 mod stencil_cfg;
 #[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
 mod stencil_compare_branch_tests;
-mod stencil_counted_loop;
-mod stencil_counted_i32_recurrence;
 #[cfg(test)]
 mod stencil_control_composition_tests;
+mod stencil_counted_loop;
+mod stencil_counted_function;
+mod stencil_counted_i32_recurrence;
 mod stencil_dense_array_copy;
 mod stencil_dense_array_fill;
 mod stencil_dense_array_update;
