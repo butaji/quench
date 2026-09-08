@@ -110,6 +110,7 @@ fn leaf_policy() -> crate::stencil_policy::ExecutionPolicy {
         numeric_i32_bitwise_loops: false,
         numeric_i32_pair_loops: false,
         numeric_f64_loops: false,
+        numeric_f64_mixed_loops: false,
         optimizing_view: false,
     }
 }
@@ -126,6 +127,7 @@ fn disabled_policy() -> crate::stencil_policy::ExecutionPolicy {
         numeric_i32_bitwise_loops: false,
         numeric_i32_pair_loops: false,
         numeric_f64_loops: false,
+        numeric_f64_mixed_loops: false,
         optimizing_view: false,
     }
 }

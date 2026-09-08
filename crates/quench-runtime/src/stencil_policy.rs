@@ -127,6 +127,7 @@ pub(crate) struct ExecutionPolicy {
     pub(crate) numeric_i32_bitwise_loops: bool,
     pub(crate) numeric_i32_pair_loops: bool,
     pub(crate) numeric_f64_loops: bool,
+    pub(crate) numeric_f64_mixed_loops: bool,
     pub(crate) optimizing_view: bool,
 }
 
@@ -142,6 +143,7 @@ impl ExecutionPolicy {
             || self.numeric_i32_bitwise_loops
             || self.numeric_i32_pair_loops
             || self.numeric_f64_loops
+            || self.numeric_f64_mixed_loops
     }
 
     /// Local fusions use leaf templates as implementation components without
@@ -165,6 +167,7 @@ impl ExecutionPolicy {
             RegionAbi::NumericI32BitwiseLoop => self.numeric_i32_bitwise_loops,
             RegionAbi::NumericI32PairLoop => self.numeric_i32_pair_loops,
             RegionAbi::NumericF64Loop => self.numeric_f64_loops,
+            RegionAbi::NumericF64MixedLoop => self.numeric_f64_mixed_loops,
             _ => false,
         }
     }
@@ -196,6 +199,7 @@ impl ExecutionPolicy {
             numeric_i32_bitwise_loops: false,
             numeric_i32_pair_loops: false,
             numeric_f64_loops: false,
+            numeric_f64_mixed_loops: false,
             optimizing_view: false,
         }
     }
@@ -222,6 +226,7 @@ impl ExecutionPolicy {
                 numeric_i32_bitwise_loops: true,
                 numeric_i32_pair_loops: true,
                 numeric_f64_loops: true,
+                numeric_f64_mixed_loops: true,
                 optimizing_view: true,
             },
             Architecture::Aarch64 => Self {
@@ -253,6 +258,10 @@ impl ExecutionPolicy {
                     arm_mode,
                     ArmMode::AffineLoop | ArmMode::Composed | ArmMode::All
                 ),
+                numeric_f64_mixed_loops: matches!(
+                    arm_mode,
+                    ArmMode::AffineLoop | ArmMode::Composed | ArmMode::All
+                ),
                 // The AArch64 optimizing driver is not a distinct physical
                 // contract: enabling it can re-enter structured fragments at
                 // the wrong semantic boundary. Keep the verified leaves and
@@ -272,6 +281,7 @@ impl ExecutionPolicy {
                 numeric_i32_bitwise_loops: false,
                 numeric_i32_pair_loops: false,
                 numeric_f64_loops: false,
+                numeric_f64_mixed_loops: false,
                 optimizing_view: false,
             },
         }
@@ -337,6 +347,7 @@ mod tests {
                 numeric_i32_bitwise_loops: true,
                 numeric_i32_pair_loops: true,
                 numeric_f64_loops: true,
+                numeric_f64_mixed_loops: true,
                 optimizing_view: true,
             }
         );
@@ -353,6 +364,7 @@ mod tests {
                 numeric_i32_bitwise_loops: false,
                 numeric_i32_pair_loops: false,
                 numeric_f64_loops: false,
+                numeric_f64_mixed_loops: false,
                 optimizing_view: false,
             }
         );
@@ -369,6 +381,7 @@ mod tests {
                 numeric_i32_bitwise_loops: true,
                 numeric_i32_pair_loops: true,
                 numeric_f64_loops: true,
+                numeric_f64_mixed_loops: true,
                 optimizing_view: false,
             }
         );
