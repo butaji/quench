@@ -143,6 +143,8 @@ const CAP_STREAM_WRITABLE: u16 = 0x0C01;
 const CAP_STREAM_DUPLEX: u16 = 0x0C02;
 const CAP_STREAM_TRANSFORM: u16 = 0x0C03;
 const CAP_STREAM_PIPELINE: u16 = 0x0C04;
+const CAP_STREAM_WRITABLE_HAS_INSTANCE: u16 =
+    crate::registry::SPEC_STREAM_WRITABLE_HAS_INSTANCE.cap;
 const CAP_STRING_DECODER: u16 = 0x0D00;
 const CAP_STRING_DECODER_WRITE: u16 = 0x0D01;
 const CAP_STRING_DECODER_END: u16 = 0x0D02;
@@ -1252,6 +1254,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_STREAM_PROMISES_CALLBACK => stream_promises_callback,
         CAP_STREAM_WRITABLE_WRITE_ADAPTER => crate::modules::stream::writable_write_adapter,
         CAP_STREAM_READABLE_BUFFER => crate::modules::stream::readable_buffer,
+        CAP_STREAM_WRITABLE_HAS_INSTANCE => crate::modules::stream::writable_has_instance,
         CAP_DNS_LOOKUP => dns_lookup,
         CAP_DNS_RESOLVE4 => dns_resolve4,
         CAP_HTTP_REQUEST => http_request,
