@@ -65,6 +65,9 @@ registerMicro({
   equivalent: [["call_property", "closure_allocation", "graph"]]
 });
 
+function __profileAssert(condition,message){if(!condition)throw new Error("execution profile assertion failed: "+message);}
 function __profileEncode(x){if(x===undefined)return["undefined"];if(typeof x==="number")return["number",Number.isNaN(x)?"NaN":Object.is(x,-0)?"-0":String(x)];if(typeof x==="bigint")return["bigint",String(x)];if(x===null||typeof x!=="object")return[typeof x,x];if(Array.isArray(x))return["array",x.map(__profileEncode)];return["object",Object.keys(x).map(function(k){return[k,__profileEncode(x[k])];})];}
-var __profileState=__profileSpec.setup(64,17,"call_property");var __profileOperation=__profileSpec.variants["call_property"];function __profileRun(){var value=__profileOperation(__profileState);if(__profileSpec.check)__profileSpec.check(value,__profileState,"call_property");var signature=JSON.stringify(__profileEncode(value));if(signature!=="[\"number\",\"3104\"]")throw new Error("micro exact result mismatch");return signature;}
+__profileAssert(__profileSpec!==undefined,"micro registration");
+__profileAssert(typeof __profileSpec.setup==="function","setup is callable");
+var __profileState=__profileSpec.setup(64,17,"call_property");var __profileOperation=__profileSpec.variants["call_property"];__profileAssert(typeof __profileOperation==="function","selected variant is callable");function __profileRun(){var value=__profileOperation(__profileState);if(__profileSpec.check)__profileSpec.check(value,__profileState,"call_property");var signature=JSON.stringify(__profileEncode(value));__profileAssert(signature==="[\"number\",\"3104\"]","exact encoded result");return signature;}
 return __profileRun();
