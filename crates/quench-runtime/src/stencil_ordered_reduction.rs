@@ -29,11 +29,19 @@ const _: () = {
 #[derive(Clone, Copy)]
 pub(crate) struct ReductionSelection {
     source: ReductionSource,
+    profile: ReductionProfile,
     total_slot: u16,
     index_slot: u16,
     region_end: usize,
     loop_header: usize,
     loop_backedge: usize,
+}
+
+#[derive(Clone, Copy)]
+enum ReductionProfile {
+    OrderedF64,
+    ControlFor,
+    ControlWhile,
 }
 
 #[derive(Clone, Copy)]
@@ -222,16 +230,18 @@ impl NativeReductionPlan {
     }
 
     pub(crate) const fn profile_name(&self) -> &'static str {
-        match self.selection.source {
-            ReductionSource::DirectArray { .. } => "ordered_f64_reduction_loop",
-            ReductionSource::StateArray { .. } => "control_for_region",
+        match self.selection.profile {
+            ReductionProfile::OrderedF64 => "ordered_f64_reduction_loop",
+            ReductionProfile::ControlFor => "control_for_region",
+            ReductionProfile::ControlWhile => "control_while_region",
         }
     }
 
     pub(crate) fn profile_route(&self) -> Vec<&'static str> {
-        match self.selection.source {
-            ReductionSource::DirectArray { .. } => Self::route().collect(),
-            ReductionSource::StateArray { .. } => vec!["control", "for"],
+        match self.selection.profile {
+            ReductionProfile::OrderedF64 => Self::route().collect(),
+            ReductionProfile::ControlFor => vec!["control", "for"],
+            ReductionProfile::ControlWhile => vec!["control", "while"],
         }
     }
 
