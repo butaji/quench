@@ -16,11 +16,116 @@ pub(crate) fn select_call_loop(
     cfg: &crate::stencil_cfg::ControlFlowFacts,
 ) -> Option<IntegerLoopSelection> {
     select_direct_loop(code, entries, cfg)
+        .or_else(|| select_bound_loop(code, entries, cfg))
         .or_else(|| select_named_loop(code, cfg))
         .or_else(|| select_polymorphic_loop(code, entries, cfg))
         .or_else(|| {
             crate::stencil_numeric_receiver_selection::select_receiver_loop(code, entries, cfg)
         })
+}
+
+const BOUND_REGION_END: usize = crate::stencil_numeric_integer_loop::BOUND_REGION_END;
+
+fn select_bound_loop(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    cfg: &crate::stencil_cfg::ControlFlowFacts,
+) -> Option<IntegerLoopSelection> {
+    cfg.region_control(0, BOUND_REGION_END)?;
+    let i = bound_operation_window(entries)?;
+    validate_bound_prefix(code, &i)?;
+    validate_bound_loop(code, &i)?;
+    Some(IntegerLoopSelection {
+        state_slot: i[0].b,
+        value_slot: i[8].a,
+        index_slot: i[11].a,
+        seed_pc: 7,
+        bound_pc: 15,
+        multiplier: 0,
+        recurrence: IntegerRecurrence::BoundCallee(metadata_name(code, 1)?),
+    })
+}
+
+fn validate_bound_prefix(code: CodeView<'_>, i: &[Instruction; BOUND_REGION_END]) -> Option<()> {
+    (i[1].b == i[0].a && metadata_name(code, 1)?.as_ref() == "f").then_some(())?;
+    (i[2].b == i[1].a && metadata_name(code, 2)?.as_ref() == "bind").then_some(())?;
+    matches!(code.constant(i[3].b), Some(crate::ops::Constant::Null)).then_some(())?;
+    (i[4].flags == 1 && i[4].b == i[1].a && i[4].c == i[2].a).then_some(())?;
+    (code.operand_window_at(4)? == [i[3].a] && i[5].b == i[4].a).then_some(())?;
+    (i[7].b == i[6].a && i[8].b == i[7].a).then_some(())?;
+    undefined_constant(code, i[9])?;
+    number_constant(code, i[10], 0.0)?;
+    (i[11].b == i[10].a).then_some(())?;
+    undefined_constant(code, i[12])
+}
+
+fn validate_bound_loop(code: CodeView<'_>, i: &[Instruction; BOUND_REGION_END]) -> Option<()> {
+    (i[13].b == i[11].a && i[15].b == i[14].a).then_some(())?;
+    binary_operator(i[16], crate::ops::BinaryOp::LessThan)?;
+    (i[16].b == i[13].a && i[16].c == i[15].a && i[17].a == i[16].a).then_some(())?;
+    (usize::from(i[17].b) == 29 && i[18].b == i[5].a && i[19].b == i[8].a).then_some(())?;
+    (i[20].flags == 1 && i[20].b == i[18].a && i[20].c == i[19].a).then_some(())?;
+    (i[21].a == i[8].a && i[21].b == i[20].a && i[22].b == i[20].a).then_some(())?;
+    validate_bound_update(code, i)
+}
+
+fn validate_bound_update(code: CodeView<'_>, i: &[Instruction; BOUND_REGION_END]) -> Option<()> {
+    number_constant(code, i[24], 1.0)?;
+    binary_operator(i[25], crate::ops::BinaryOp::NumericAdd)?;
+    (i[23].b == i[11].a && i[25].b == i[23].a && i[25].c == i[24].a).then_some(())?;
+    (i[26].a == i[11].a && i[26].b == i[25].a && i[27].b == i[23].a).then_some(())?;
+    (usize::from(i[28].a) == 13 && i[29].b == i[8].a && i[30].a == i[29].a).then_some(())?;
+    undefined_constant(code, i[31])?;
+    (i[32].a == i[31].a).then_some(())
+}
+
+fn bound_operation_window(entries: &[BaselineEntry]) -> Option<[Instruction; BOUND_REGION_END]> {
+    let i: [Instruction; BOUND_REGION_END] = entries
+        .get(..BOUND_REGION_END)?
+        .iter()
+        .map(|entry| entry.instruction)
+        .collect::<Vec<_>>()
+        .try_into()
+        .ok()?;
+    let expected = [
+        Opcode::LoadLocal,
+        Opcode::GetN,
+        Opcode::GetN,
+        Opcode::LoadConst,
+        Opcode::CallN,
+        Opcode::StoreLocal,
+        Opcode::LoadLocal,
+        Opcode::GetN,
+        Opcode::StoreLocal,
+        Opcode::LoadConst,
+        Opcode::LoadConst,
+        Opcode::StoreLocal,
+        Opcode::LoadConst,
+        Opcode::LoadLocal,
+        Opcode::LoadLocal,
+        Opcode::GetN,
+        Opcode::Binary,
+        Opcode::JumpIfFalse,
+        Opcode::LoadLocal,
+        Opcode::LoadLocal,
+        Opcode::Call,
+        Opcode::StoreLocal,
+        Opcode::Move,
+        Opcode::LoadLocal,
+        Opcode::LoadConst,
+        Opcode::Binary,
+        Opcode::StoreLocal,
+        Opcode::Unary,
+        Opcode::Jump,
+        Opcode::LoadLocal,
+        Opcode::Return,
+        Opcode::LoadConst,
+        Opcode::Return,
+    ];
+    i.iter()
+        .zip(expected)
+        .all(|(a, b)| a.opcode == b || (b == Opcode::GetN && a.opcode == Opcode::GetNQuickened))
+        .then_some(i)
 }
 
 fn select_direct_loop(
