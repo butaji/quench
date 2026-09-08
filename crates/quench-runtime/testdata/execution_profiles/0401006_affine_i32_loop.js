@@ -6,13 +6,11 @@ function affine(state) {
   return value;
 }
 
-function run() {
-  return affine({ seed: 1, n: 4 });
-}
+var state = { seed: 1, n: 4 };
 function verify(result) {
 if (result !== 1445341) {
   throw new Error("affine loop assertion failed: " + result);
 }
   return result;
 }
-return { run: run, verify: verify };
+return { run: affine, arguments: [state], verify: verify };

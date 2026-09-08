@@ -16,7 +16,7 @@
     "residual": {},
     "slow": {},
     "stencils": {
-      "baseline_region": { "entries": 1, "fallbacks": 0 }
+      "affine_i32_loop": { "entries": 1, "fallbacks": 0 }
     },
     "events": {
       "binding_load": 1,
