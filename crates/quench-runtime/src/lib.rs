@@ -212,6 +212,7 @@ mod stencil_region_links;
 pub mod stencil_select;
 mod stencil_string_builtin;
 mod stencil_string_concat;
+mod stencil_switch_reduction;
 #[cfg(test)]
 mod stencil_test_support;
 #[cfg(test)]
