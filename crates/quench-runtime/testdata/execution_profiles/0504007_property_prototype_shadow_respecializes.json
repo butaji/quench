@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "warmup": 2,
+  "result": { "kind": "number", "value": 42 },
+  "plan": {
+    "execution_kind": "portable_recipe",
+    "operation_route": ["GetNQuickened", "Return"],
+    "fallback": false
+  },
+  "profile": {
+    "residual": {},
+    "slow": {},
+    "stencils": {
+      "megamorphic_property_return": { "entries": 1, "fallbacks": 0 }
+    },
+    "events": { "leaf_hit": 1 }
+  }
+}
