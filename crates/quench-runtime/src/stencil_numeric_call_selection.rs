@@ -17,6 +17,9 @@ pub(crate) fn select_call_loop(
 ) -> Option<IntegerLoopSelection> {
     select_direct_loop(code, entries, cfg)
         .or_else(|| select_bound_loop(code, entries, cfg))
+        .or_else(|| {
+            crate::stencil_numeric_arguments_selection::select_arguments_loop(code, entries, cfg)
+        })
         .or_else(|| select_named_loop(code, cfg))
         .or_else(|| select_polymorphic_loop(code, entries, cfg))
         .or_else(|| {

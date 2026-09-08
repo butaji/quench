@@ -24,6 +24,8 @@ pub(crate) const RECEIVER_REGION_END: usize = 33;
 pub(crate) const RECEIVER_LOOP_BACKEDGE: usize = 28;
 pub(crate) const BOUND_REGION_END: usize = 33;
 pub(crate) const BOUND_LOOP_BACKEDGE: usize = 28;
+pub(crate) const ARGUMENTS_REGION_END: usize = 39;
+pub(crate) const ARGUMENTS_LOOP_BACKEDGE: usize = 34;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum IntegerRecurrence {
@@ -34,6 +36,7 @@ pub(crate) enum IntegerRecurrence {
     EquivalentCallees([std::rc::Rc<str>; 2]),
     ReceiverConstant(i32),
     BoundCallee(std::rc::Rc<str>),
+    ArgumentConstants(i32),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -45,6 +48,7 @@ pub(crate) enum IntegerLoopProfile {
     CallsChanging,
     CallsReceiver,
     CallsBound,
+    CallsArguments,
 }
 
 impl IntegerRecurrence {
@@ -57,6 +61,7 @@ impl IntegerRecurrence {
             | Self::EquivalentCallees(_)
             | Self::ReceiverConstant(_) => crate::stencil_select::affine_i32_loop_region_key(),
             Self::BoundCallee(_) => crate::stencil_select::affine_i32_loop_region_key(),
+            Self::ArgumentConstants(_) => crate::stencil_select::affine_i32_loop_region_key(),
         }
     }
 
@@ -65,6 +70,7 @@ impl IntegerRecurrence {
             Self::Index => Some((multiplier, 0)),
             Self::Constant(value) => Some((multiplier, *value)),
             Self::ReceiverConstant(value) => Some((multiplier, *value)),
+            Self::ArgumentConstants(value) => Some((multiplier, *value)),
             Self::NamedCallee(_)
             | Self::DirectCallee(_)
             | Self::EquivalentCallees(_)
@@ -81,6 +87,7 @@ impl IntegerRecurrence {
             Self::EquivalentCallees(_) => POLYMORPHIC_LOOP_BACKEDGE,
             Self::ReceiverConstant(_) => RECEIVER_LOOP_BACKEDGE,
             Self::BoundCallee(_) => BOUND_LOOP_BACKEDGE,
+            Self::ArgumentConstants(_) => ARGUMENTS_LOOP_BACKEDGE,
         }
     }
 
@@ -92,6 +99,7 @@ impl IntegerRecurrence {
             }
             Self::ReceiverConstant(_) => 12,
             Self::BoundCallee(_) => 13,
+            Self::ArgumentConstants(_) => 14,
         }
     }
 
@@ -104,6 +112,7 @@ impl IntegerRecurrence {
             Self::EquivalentCallees(_) => POLYMORPHIC_REGION_END,
             Self::ReceiverConstant(_) => RECEIVER_REGION_END,
             Self::BoundCallee(_) => BOUND_REGION_END,
+            Self::ArgumentConstants(_) => ARGUMENTS_REGION_END,
         }
     }
 
@@ -116,6 +125,7 @@ impl IntegerRecurrence {
             Self::EquivalentCallees(_) => IntegerLoopProfile::CallsChanging,
             Self::ReceiverConstant(_) => IntegerLoopProfile::CallsReceiver,
             Self::BoundCallee(_) => IntegerLoopProfile::CallsBound,
+            Self::ArgumentConstants(_) => IntegerLoopProfile::CallsArguments,
         }
     }
 }
@@ -263,7 +273,8 @@ impl NativeIntegerLoopPlan {
             }
             IntegerRecurrence::Index
             | IntegerRecurrence::Constant(_)
-            | IntegerRecurrence::ReceiverConstant(_) => None,
+            | IntegerRecurrence::ReceiverConstant(_)
+            | IntegerRecurrence::ArgumentConstants(_) => None,
         }
     }
 
