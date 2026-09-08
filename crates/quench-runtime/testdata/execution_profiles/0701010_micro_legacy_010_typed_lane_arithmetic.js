@@ -1,18 +1,17 @@
-// VM micro-case 010
-// family=numeric; operation=typed-lane-arithmetic; variant=10; work_units=4545; memory=external
 "use strict";
-const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
-function microRun() {
-  const values = new Int32Array(4545); let total = 0; for (let i = 0; i < values.length; i++) { values[i] = (i ^ 279) - 9; total += values[i] * values[i]; } return total;
-}
-function run() {
-  return microRun();
+const assert = (condition, message) => { if (!condition) throw new Error(message); };
+const values = new Int32Array(8);
+function run(values) {
+  let total = 0;
+  for (let index = 0; index < 8; index++) {
+    values[index] = (index ^ 279) - 9;
+    total += values[index] * values[index];
+  }
+  return total;
 }
 function verify(result) {
-assert(Number.isFinite(result), "result");
-assert(typeof microRun === "function", "scenario entry is callable");
-const __profileResult = JSON.stringify(result);
-assert(__profileResult === "31242942692", "exact encoded result");
-  return __profileResult;
+  assert(result === 568220, "typed lanes use exact int32 writes and ordered Number sum");
+  assert(values[0] === 270 && values[7] === 263, "typed lane stores remain observable");
+  return result;
 }
-return { run: run, verify: verify };
+return { run, verify, arguments: [values] };
