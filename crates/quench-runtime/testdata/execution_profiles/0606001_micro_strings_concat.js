@@ -1,60 +1,32 @@
-var __profileSpec; function registerMicro(spec) { __profileSpec = spec; }
-registerMicro({
-  id: "strings",
-  question:
-    "How do length, encoding, and string operations affect time and retention?",
-  requires: [],
-  axes: ["size", "encoding", "operation"],
-  memory: true,
-  observations: [
-    "time versus string length",
-    "RSS under repeated construction"
-  ],
-  explanations: ["Copying", "Encoding conversion", "Search cost", "Retention"],
-  setup: function (n, seed, v) {
+"use strict";
+function assert(condition, message) {
+  if (!condition) throw new Error("execution profile assertion failed: " + message);
+}
+function encode(value) {
+  if (value === undefined) return ["undefined"];
+  if (typeof value === "number") return ["number", Number.isNaN(value) ? "NaN" : Object.is(value, -0) ? "-0" : String(value)];
+  if (typeof value === "bigint") return ["bigint", String(value)];
+  if (value === null || typeof value !== "object") return [typeof value, value];
+  if (Array.isArray(value)) return ["array", value.map(encode)];
+  return ["object", Object.keys(value).map(function (key) { return [key, encode(value[key])]; })];
+}
+const setup = function (n, seed, v) {
     var unit = v === "unicode" ? "é😀" : v === "surrogate" ? "x\ud800" : "abc";
     return { n: n, seed: seed, unit: unit, text: unit.repeat(n) };
-  },
-  variants: {
-    concat: function (s) {
+  };
+const operation = function (s) {
       var t = String(s.seed);
       for (var i = 0; i < s.n; i++) t += s.unit;
       return [t.length, t.charCodeAt(t.length - 1)];
-    },
-    unicode: function (s) {
-      var t = 0;
-      for (var i = 0; i < s.text.length; i++) t += s.text.charCodeAt(i);
-      return t;
-    },
-    surrogate: function (s) {
-      var t = 0;
-      for (var i = 0; i < s.text.length; i++) t += s.text.charCodeAt(i);
-      return t;
-    },
-    substring: function (s) {
-      var t = 0;
-      for (var i = 0; i < s.n; i++) t += s.text.slice(i, i + 16).charCodeAt(0);
-      return t;
-    },
-    search: function (s) {
-      return [
-        s.text.indexOf("bc"),
-        s.text.indexOf("missing"),
-        s.text.lastIndexOf("bc")
-      ];
-    },
-    equality: function (s) {
-      var other = ("!" + s.text).slice(1);
-      var t = 0;
-      for (var i = 0; i < s.n; i++) if (s.text === other) t++;
-      return t;
-    }
-  }
-});
-
-function __profileAssert(condition,message){if(!condition)throw new Error("execution profile assertion failed: "+message);}
-function __profileEncode(x){if(x===undefined)return["undefined"];if(typeof x==="number")return["number",Number.isNaN(x)?"NaN":Object.is(x,-0)?"-0":String(x)];if(typeof x==="bigint")return["bigint",String(x)];if(x===null||typeof x!=="object")return[typeof x,x];if(Array.isArray(x))return["array",x.map(__profileEncode)];return["object",Object.keys(x).map(function(k){return[k,__profileEncode(x[k])];})];}
-__profileAssert(__profileSpec!==undefined,"micro registration");
-__profileAssert(typeof __profileSpec.setup==="function","setup is callable");
-var __profileState=__profileSpec.setup(64,17,"concat");var __profileOperation=__profileSpec.variants["concat"];__profileAssert(typeof __profileOperation==="function","selected variant is callable");function __profileRun(){var value=__profileOperation(__profileState);if(__profileSpec.check)__profileSpec.check(value,__profileState,"concat");var signature=JSON.stringify(__profileEncode(value));__profileAssert(signature==="[\"array\",[[\"number\",\"194\"],[\"number\",\"99\"]]]","exact encoded result");return signature;}
-return __profileRun();
+    };
+const check = null;
+const state = setup(64, 17, "concat");
+assert(typeof operation === "function", "scenario operation is callable");
+function run() {
+  const value = operation(state);
+  if (check) check(value, state, "concat");
+  const signature = JSON.stringify(encode(value));
+  assert(signature === "[\"array\",[[\"number\",\"194\"],[\"number\",\"99\"]]]", "exact encoded result");
+  return signature;
+}
+return run();

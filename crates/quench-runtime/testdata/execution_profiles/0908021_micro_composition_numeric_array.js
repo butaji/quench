@@ -1,73 +1,33 @@
-var __profileSpec; function registerMicro(spec) { __profileSpec = spec; }
-registerMicro({
-  id: "composition",
-  question:
-    "Do isolated improvements survive combinations of ordinary language behavior?",
-  requires: ["calls", "objects", "arrays", "strings", "regexp", "closures"],
-  axes: ["size", "composition"],
-  memory: true,
-  observations: [
-    "time per workload",
-    "RSS",
-    "cross-mechanism evidence, if available"
-  ],
-  explanations: [
-    "Interaction effects",
-    "Intermediate allocation",
-    "Repeated boundaries"
-  ],
-  setup: function (n, seed) {
+"use strict";
+function assert(condition, message) {
+  if (!condition) throw new Error("execution profile assertion failed: " + message);
+}
+function encode(value) {
+  if (value === undefined) return ["undefined"];
+  if (typeof value === "number") return ["number", Number.isNaN(value) ? "NaN" : Object.is(value, -0) ? "-0" : String(value)];
+  if (typeof value === "bigint") return ["bigint", String(value)];
+  if (value === null || typeof value !== "object") return [typeof value, value];
+  if (Array.isArray(value)) return ["array", value.map(encode)];
+  return ["object", Object.keys(value).map(function (key) { return [key, encode(value[key])]; })];
+}
+const setup = function (n, seed) {
     return { n: n, seed: seed };
-  },
-  variants: {
-    call_property: function (s) {
-      function f(o) {
-        return o.x + o.y;
-      }
-      var t = 0;
-      for (var i = 0; i < s.n; i++) t += f({ x: i, y: s.seed });
-      return t;
-    },
-    closure_allocation: function (s) {
-      function make(x) {
-        return function (y) {
-          return x + y;
-        };
-      }
-      var t = 0;
-      for (var i = 0; i < s.n; i++) t += make(i)(s.seed);
-      return t;
-    },
-    numeric_array: function (s) {
+  };
+const operation = function (s) {
       var a = [s.seed],
         t = 0;
       for (var i = 1; i < s.n; i++) a[i] = a[i - 1] * 0.5 + i;
       for (var j = 0; j < a.length; j++) t += a[j];
       return t;
-    },
-    string_regexp: function (s) {
-      var t = 0;
-      for (var i = 0; i < s.n; i++)
-        t += ("key=" + (i + s.seed)).replace(/\d+/g, "x").length;
-      return t;
-    },
-    graph: function (s) {
-      var node = null;
-      for (var i = 0; i < s.n; i++) node = { value: i + s.seed, next: node };
-      var t = 0;
-      while (node) {
-        t += node.value;
-        node = node.next;
-      }
-      return t;
-    }
-  },
-  equivalent: [["call_property", "closure_allocation", "graph"]]
-});
-
-function __profileAssert(condition,message){if(!condition)throw new Error("execution profile assertion failed: "+message);}
-function __profileEncode(x){if(x===undefined)return["undefined"];if(typeof x==="number")return["number",Number.isNaN(x)?"NaN":Object.is(x,-0)?"-0":String(x)];if(typeof x==="bigint")return["bigint",String(x)];if(x===null||typeof x!=="object")return[typeof x,x];if(Array.isArray(x))return["array",x.map(__profileEncode)];return["object",Object.keys(x).map(function(k){return[k,__profileEncode(x[k])];})];}
-__profileAssert(__profileSpec!==undefined,"micro registration");
-__profileAssert(typeof __profileSpec.setup==="function","setup is callable");
-var __profileState=__profileSpec.setup(64,17,"numeric_array");var __profileOperation=__profileSpec.variants["numeric_array"];__profileAssert(typeof __profileOperation==="function","selected variant is callable");function __profileRun(){var value=__profileOperation(__profileState);if(__profileSpec.check)__profileSpec.check(value,__profileState,"numeric_array");var signature=JSON.stringify(__profileEncode(value));__profileAssert(signature==="[\"number\",\"3941.9999999999995\"]","exact encoded result");return signature;}
-return __profileRun();
+    };
+const check = null;
+const state = setup(64, 17, "numeric_array");
+assert(typeof operation === "function", "scenario operation is callable");
+function run() {
+  const value = operation(state);
+  if (check) check(value, state, "numeric_array");
+  const signature = JSON.stringify(encode(value));
+  assert(signature === "[\"number\",\"3941.9999999999995\"]", "exact encoded result");
+  return signature;
+}
+return run();
