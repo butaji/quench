@@ -173,16 +173,20 @@ impl GuardedPropertySlot {
     /// Read an own data slot immediately after admission established its
     /// owner and guards. No JavaScript or allocating helper may intervene.
     pub(crate) fn load_own_now(self) -> Option<u64> {
-        if self.prototype_depth != 0 {
-            return None;
-        }
+        unsafe { self.valid_own_slot()?.as_ref() }?.plain_tagged_bits()
+    }
+
+    pub(crate) fn load_own_number_now(self) -> Option<f64> {
+        unsafe { self.valid_own_slot()?.as_ref() }?.number()
+    }
+
+    fn valid_own_slot(self) -> Option<*const crate::register_file::SlotWord> {
+        (self.prototype_depth == 0).then_some(())?;
         let layout = unsafe { self.layout.as_ref() }?;
         let descriptor = unsafe { self.descriptor_state.as_ref() }?;
         let deleted = unsafe { self.deleted_state.as_ref() }?;
-        if *layout != self.expected_layout || *descriptor != 1 || *deleted != 1 {
-            return None;
-        }
-        unsafe { self.slot.as_ref() }?.plain_tagged_bits()
+        (*layout == self.expected_layout && *descriptor == 1 && *deleted == 1).then_some(())?;
+        Some(self.slot)
     }
 }
 

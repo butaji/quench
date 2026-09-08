@@ -28,7 +28,7 @@ pub fn current_call_stack_frames() -> Vec<String> {
 pub fn current_call_stack_source_names() -> Vec<Option<String>> {
     Vec::new()
 }
-pub(crate) use vm_arithmetic::numeric_to_int32;
+pub(crate) use vm_arithmetic::{arithmetic_number, numeric_to_int32};
 
 pub fn reset_host_agent_state() {
     reset_agent_state();

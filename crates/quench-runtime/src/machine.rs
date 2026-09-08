@@ -5456,6 +5456,7 @@ enum NativeAdmission {
     LocalBinary(Rc<RefCell<crate::stencil_fusion::NativeLocalBinaryPlan>>),
     LocalPredicate(Rc<RefCell<crate::stencil_fusion::NativeLocalPredicatePlan>>),
     LocalProperty(Rc<RefCell<crate::stencil_fusion::NativeLocalPropertyPlan>>),
+    PropertyNumeric(Rc<RefCell<crate::stencil_property_numeric::PropertyNumericPlan>>),
     Move(Rc<RefCell<NativeMovePlan>>),
     LoadLocal(Rc<RefCell<NativeMovePlan>>),
     StoreLocal(Rc<RefCell<NativeMovePlan>>),
@@ -5484,6 +5485,9 @@ impl AdmissionEntry for NativeAdmission {
             Self::LocalProperty(_) => {
                 shared_value_bytes::<RefCell<crate::stencil_fusion::NativeLocalPropertyPlan>>()
             }
+            Self::PropertyNumeric(_) => shared_value_bytes::<
+                RefCell<crate::stencil_property_numeric::PropertyNumericPlan>,
+            >(),
             Self::Move(_) | Self::LoadLocal(_) | Self::StoreLocal(_) => {
                 shared_value_bytes::<RefCell<NativeMovePlan>>()
             }
@@ -5508,6 +5512,7 @@ impl std::fmt::Debug for NativeAdmission {
             Self::LocalBinary(_) => "local_binary",
             Self::LocalPredicate(_) => "local_predicate",
             Self::LocalProperty(_) => "local_property",
+            Self::PropertyNumeric(_) => "property_numeric",
             Self::Move(_) => "move",
             Self::LoadLocal(_) => "load_local",
             Self::StoreLocal(_) => "store_local",
@@ -5836,6 +5841,22 @@ fn local_property_admission(
     Some(NativeAdmission::LocalProperty(Rc::new(RefCell::new(plan))))
 }
 
+fn property_numeric_admission(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+) -> Option<NativeAdmission> {
+    policy.local_fusions.property().then_some(())?;
+    let selection =
+        crate::stencil_property_numeric::select_property_numeric_return(code, entries, cfg, pc)?;
+    let plan = crate::stencil_property_numeric::PropertyNumericPlan::new(selection);
+    Some(NativeAdmission::PropertyNumeric(Rc::new(RefCell::new(
+        plan,
+    ))))
+}
+
 fn local_predicate_admission(
     code: CodeView<'_>,
     entries: &[BaselineEntry],
@@ -6100,6 +6121,10 @@ fn collect_admissions_at(
     );
     builder.push_optional(
         pc,
+        property_numeric_admission(code, entries, cfg, pc, policy),
+    );
+    builder.push_optional(
+        pc,
         local_predicate_admission(code, entries, cfg, pc, policy, arena),
     );
     collect_memory_admissions(builder, pc, entry.instruction, policy, arena);
@@ -6215,6 +6240,12 @@ impl BaselinePlan {
         crate::stencil_fusion::NativeLocalPropertyPlan
     );
     typed_admission_accessors!(
+        property_numeric_handle_at,
+        property_numeric_at,
+        PropertyNumeric,
+        crate::stencil_property_numeric::PropertyNumericPlan
+    );
+    typed_admission_accessors!(
         truthiness_handle_at,
         native_truthiness_at,
         Truthiness,
@@ -6318,6 +6349,11 @@ impl OptimizingEntry<'_> {
         native_local_property,
         LocalProperty,
         crate::stencil_fusion::NativeLocalPropertyPlan
+    );
+    optimizing_admission_accessors!(
+        property_numeric,
+        PropertyNumeric,
+        crate::stencil_property_numeric::PropertyNumericPlan
     );
     optimizing_admission_accessors!(native_move, Move, NativeMovePlan);
     optimizing_admission_accessors!(native_load_local, LoadLocal, NativeMovePlan);
