@@ -6761,7 +6761,7 @@ fn eager_straight_line_candidate(code: CodeView<'_>) -> bool {
         || eager_property_pair_candidate(code)
         || eager_property_store_call_candidate(code)
         || eager_prototype_call_candidate(code)
-        || eager_fresh_object_call_candidate(code)
+        || crate::stencil_fresh_object_call::eager_candidate(code)
         || eager_string_concat_call_candidate(code)
         || eager_string_case_candidate(code)
         || eager_string_search_candidate(code)
@@ -6803,27 +6803,6 @@ fn eager_property_store_call_candidate(code: CodeView<'_>) -> bool {
     expected.iter().enumerate().all(|(pc, opcode)| {
         code.instruction(pc).is_some_and(|op| op.opcode == *opcode)
     })
-}
-
-fn eager_fresh_object_call_candidate(code: CodeView<'_>) -> bool {
-    if code.instruction(0).is_none_or(|op| op.opcode != crate::ir::Opcode::LoadLocal) {
-        return false;
-    }
-    let mut objects = 0;
-    for pc in 1..code.len().min(EAGER_STRAIGHT_LINE_MAX_INSTRUCTIONS) {
-        match code.instruction(pc).map(|op| op.opcode) {
-            Some(crate::ir::Opcode::Slow)
-                if matches!(code.cold_at(pc), Some(crate::ops::Op::MakeObject { .. })) =>
-            {
-                objects += 1;
-            }
-            Some(crate::ir::Opcode::Call) if objects == 2 => {
-                return code.instruction(pc + 1).is_some_and(|op| op.opcode == crate::ir::Opcode::Return);
-            }
-            _ => {}
-        }
-    }
-    false
 }
 
 fn eager_prototype_call_candidate(code: CodeView<'_>) -> bool {
