@@ -5,7 +5,6 @@
 
 use std::io::Write;
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use quench_runtime::execute::{self, VmError};
@@ -354,7 +353,7 @@ pub fn spawn_sync(
                 ),
             ]));
         }
-        return run_print_eval(source);
+        return run_print_eval(&child_args, options);
     }
 
     if command == state.borrow().process.exec_path && child_args.iter().any(|flag| flag == "-e") {
@@ -1295,37 +1294,92 @@ fn value_to_string(value: &Value) -> String {
     }
 }
 
-fn run_print_eval(source: &str) -> Result<Value, VmError> {
-    let lines = Arc::new(Mutex::new(Vec::<String>::new()));
-    let sink_lines = Arc::clone(&lines);
-    let sink: quench_runtime::vm::OutputSink = Arc::new(move |line| {
-        if let Ok(mut lines) = sink_lines.lock() {
-            lines.push(line.to_string());
-        }
-    });
-    let outcome = crate::run::eval_script(&format!("console.log({source});"), sink);
-    let output = lines
-        .lock()
-        .map(|lines| {
-            lines.iter().fold(String::new(), |mut output, line| {
-                output.push_str(line);
-                if !line.ends_with('\n') {
-                    output.push('\n');
-                }
-                output
-            })
+fn run_print_eval(child_args: &[String], options: Option<&Value>) -> Result<Value, VmError> {
+    // `process.execPath -p` is a real child boundary.  Evaluating in the
+    // parent's VM loses the child's process stream bindings (and therefore
+    // cannot capture stdout reliably), so re-enter the canonical Rust runner
+    // just as ordinary host-exec children do.
+    let executable = std::env::current_exe()
+        .ok()
+        .and_then(|path| {
+            path.parent()
+                .map(|parent| parent.join("run"))
+                .filter(|runner| runner.is_file())
+                .or(Some(path))
         })
-        .unwrap_or_default();
-    let (status, stderr) = match outcome.error {
-        Some(error) => (1.0, error),
-        None => (0.0, String::new()),
-    };
+        .ok_or_else(|| {
+            VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("Error".into())),
+                (
+                    "message".into(),
+                    Value::String("unable to locate compatibility runner".into()),
+                ),
+            ]))
+        })?;
+    let mut process = Command::new(executable);
+    process.args(child_args).env("QUENCH_CHILD_RUNNER", "1");
+    clear_worker_markers(&mut process);
+    if let Some(index) = child_args.iter().position(|arg| arg == "-p") {
+        let exec_argv = serde_json::to_string(&child_args[..index]).unwrap_or_else(|_| "[]".into());
+        process.env("QUENCH_EXEC_ARGV", exec_argv);
+    }
+    if let Some(options) = options {
+        if let Some(cwd) = opt_str(options, "cwd") {
+            process.current_dir(&cwd).env("QUENCH_CWD", cwd);
+        }
+        if let Some(env) = opt_env(options) {
+            process.env_clear().envs(env).env("QUENCH_CHILD_RUNNER", "1");
+        } else {
+            apply_process_env(&mut process);
+            process.env("QUENCH_CHILD_RUNNER", "1");
+        }
+    } else {
+        apply_process_env(&mut process);
+        process.env("QUENCH_CHILD_RUNNER", "1");
+    }
+    // `env_clear` above intentionally removes inherited transport variables;
+    // restore the runner-private facts after applying the requested child
+    // environment.
+    process.env("QUENCH_CHILD_RUNNER", "1");
+    if let Some(index) = child_args.iter().position(|arg| arg == "-p") {
+        let exec_argv = serde_json::to_string(&child_args[..index]).unwrap_or_else(|_| "[]".into());
+        process.env("QUENCH_EXEC_ARGV", exec_argv);
+    }
+    if let Some(options) = options {
+        if let Some(cwd) = opt_str(options, "cwd") {
+            process.env("QUENCH_CWD", cwd);
+        }
+    }
+    let process = process
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("Error".into())),
+            ("message".into(), Value::String(error.to_string())),
+        ])))?;
+    let output = wait_with_timeout(process, options).map_err(|error| {
+        VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("Error".into())),
+            ("message".into(), Value::String(error.to_string())),
+        ]))
+    })?;
+    let stdout = output_value(&output.stdout, options);
+    let stderr = output_value(&output.stderr, options);
+    let status = output
+        .status
+        .code()
+        .map_or(Value::Null, |code| Value::Number(code as f64));
     Ok(host_api::object(vec![
         ("pid".into(), Value::Number(0.0)),
-        ("status".into(), Value::Number(status)),
+        ("status".into(), status),
         ("signal".into(), Value::Null),
-        ("stdout".into(), Value::String(output)),
-        ("stderr".into(), Value::String(stderr)),
+        ("stdout".into(), stdout.clone()),
+        ("stderr".into(), stderr.clone()),
+        (
+            "output".into(),
+            host_api::array(vec![Value::Null, stdout, stderr]),
+        ),
     ]))
 }
 
