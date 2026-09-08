@@ -185,6 +185,58 @@ q_affine_i32_loop_end:
 "#);
 "##;
 
+const AARCH64_NUMERIC_INTEGER_LOOP: &str = r##"#![no_std]
+use core::arch::global_asm;
+
+#[repr(C)]
+struct IntegerLoopContext {
+    index: usize,
+    end: usize,
+    value: i32,
+    multiplier: i32,
+    _unused: i32,
+    _padding: u32,
+    interrupt: *const u8,
+}
+
+global_asm!(r#"
+.text
+.p2align 2
+.globl q_numeric_integer_loop
+q_numeric_integer_loop:
+  ldr x1, [x0, #{index}]
+  ldr x2, [x0, #{end}]
+  ldr w3, [x0, #{value}]
+  ldr w4, [x0, #{multiplier}]
+1:
+  cmp x1, x2
+  b.hs 2f
+  mul w3, w3, w4
+  add w3, w3, w1
+  add x1, x1, #1
+  str x1, [x0, #{index}]
+  ldr x5, [x0, #{interrupt}]
+  ldrb w6, [x5]
+  cbnz w6, 3f
+  b 1b
+2:
+  str w3, [x0, #{value}]
+  mov w0, #1
+  ret
+3:
+  str w3, [x0, #{value}]
+  mov w0, #4
+  ret
+q_numeric_integer_loop_end:
+"#,
+    index = const core::mem::offset_of!(IntegerLoopContext, index),
+    end = const core::mem::offset_of!(IntegerLoopContext, end),
+    value = const core::mem::offset_of!(IntegerLoopContext, value),
+    multiplier = const core::mem::offset_of!(IntegerLoopContext, multiplier),
+    interrupt = const core::mem::offset_of!(IntegerLoopContext, interrupt),
+);
+"##;
+
 fn compare_branch_source(name: &str, condition: &str, unordered_true: bool) -> String {
     let unordered = if unordered_true { "1f" } else { "2f" };
     format!(
@@ -428,6 +480,7 @@ pub(crate) fn assembly_source(recipe: super::RustAssemblyRecipe) -> String {
         ArrayNumericLoop => AARCH64_ARRAY_LOOP.to_owned(),
         ArrayNumericFillLoop => AARCH64_ARRAY_FILL_LOOP.to_owned(),
         AffineI32Loop => AARCH64_AFFINE_I32_LOOP.to_owned(),
+        NumericIntegerLoop => AARCH64_NUMERIC_INTEGER_LOOP.to_owned(),
         Property => AARCH64_PROPERTY_READ.to_owned(),
         PrototypeProperty => AARCH64_PROTOTYPE_PROPERTY.to_owned(),
         StoreProperty => AARCH64_PROPERTY_WRITE.to_owned(),

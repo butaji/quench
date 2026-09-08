@@ -167,6 +167,7 @@ mod stencil_missing_property;
 mod stencil_move_integration_tests;
 mod stencil_nullish_truthy;
 mod stencil_number_classify;
+mod stencil_numeric_integer_loop;
 mod stencil_numeric_dag;
 mod stencil_ordered_reduction;
 pub mod stencil_patch;
