@@ -152,6 +152,7 @@ pub enum ProtocolError {
     InvalidStream(FrameType),
     InvalidSettings,
     InvalidWindowIncrement,
+    InvalidHeaderBlock,
     FrameAfterGoAway,
 }
 
@@ -171,14 +172,18 @@ pub struct Stream {
     pub send_window: i64,
 }
 
-#[derive(Clone, Debug)]
 pub struct Session {
     role: Role,
     input: Vec<u8>,
     preface_offset: usize,
+    decoder: hpack::Decoder<'static>,
+    encoder: hpack::Encoder<'static>,
+    pending_headers: HashMap<u32, Vec<u8>>,
     pub max_frame_size: u32,
     pub goaway: bool,
     pub streams: HashMap<u32, Stream>,
+    /// Decoded header fields, keyed by stream ID.
+    pub headers: HashMap<u32, Vec<(Vec<u8>, Vec<u8>)>>,
 }
 
 impl Session {
@@ -191,9 +196,13 @@ impl Session {
             } else {
                 0
             },
+            decoder: hpack::Decoder::new(),
+            encoder: hpack::Encoder::new(),
+            pending_headers: HashMap::new(),
             max_frame_size: DEFAULT_MAX_FRAME_SIZE,
             goaway: false,
             streams: HashMap::new(),
+            headers: HashMap::new(),
         }
     }
 
@@ -242,6 +251,9 @@ impl Session {
     fn validate_and_apply(&mut self, frame: &Frame) -> Result<(), ProtocolError> {
         if self.goaway {
             return Err(ProtocolError::FrameAfterGoAway);
+        }
+        if !self.pending_headers.is_empty() && frame.header.kind != FrameType::Continuation {
+            return Err(ProtocolError::InvalidStream(frame.header.kind));
         }
         let stream_zero = frame.header.stream_id == 0;
         let length = frame.payload.len();
@@ -296,6 +308,7 @@ impl Session {
             let id = u16::from_be_bytes([setting[0], setting[1]]);
             let value = u32::from_be_bytes([setting[2], setting[3], setting[4], setting[5]]);
             match id {
+                1 => self.decoder.set_max_table_size(value as usize),
                 2 if value > 1 => return Err(ProtocolError::InvalidSettings),
                 4 if value > 0x7fff_ffff => return Err(ProtocolError::InvalidSettings),
                 5 if !(16_384..=MAX_MAX_FRAME_SIZE).contains(&value) => {
@@ -321,7 +334,49 @@ impl Session {
         if frame.header.flags & 0x1 != 0 {
             stream.state = StreamState::HalfClosedRemote;
         }
+        match frame.header.kind {
+            FrameType::Headers => self.apply_headers(id, frame)?,
+            FrameType::Continuation => self.apply_continuation(id, frame)?,
+            _ => {}
+        }
         Ok(())
+    }
+
+    fn apply_headers(&mut self, id: u32, frame: &Frame) -> Result<(), ProtocolError> {
+        let payload = header_block_payload(frame)?;
+        if frame.header.flags & 0x4 != 0 {
+            self.decode_headers(id, payload)
+        } else {
+            self.pending_headers.insert(id, payload.to_vec());
+            Ok(())
+        }
+    }
+
+    fn apply_continuation(&mut self, id: u32, frame: &Frame) -> Result<(), ProtocolError> {
+        let Some(mut block) = self.pending_headers.remove(&id) else {
+            return Err(ProtocolError::InvalidStream(FrameType::Continuation));
+        };
+        block.extend_from_slice(&frame.payload);
+        if frame.header.flags & 0x4 == 0 {
+            self.pending_headers.insert(id, block);
+            return Ok(());
+        }
+        self.decode_headers(id, &block)
+    }
+
+    fn decode_headers(&mut self, id: u32, block: &[u8]) -> Result<(), ProtocolError> {
+        let decoded = self
+            .decoder
+            .decode(block)
+            .map_err(|_| ProtocolError::InvalidHeaderBlock)?;
+        self.headers.insert(id, decoded);
+        Ok(())
+    }
+
+    /// Encode a header block using the session's compression context.  Literal
+    /// strings are valid HPACK; the decoder accepts indexed and Huffman forms.
+    pub fn encode_headers(&mut self, headers: &[(&[u8], &[u8])]) -> Vec<u8> {
+        self.encoder.encode(headers.iter().copied())
     }
 
     pub fn pending_bytes(&self) -> usize {
@@ -331,6 +386,34 @@ impl Session {
     pub fn role(&self) -> Role {
         self.role
     }
+}
+
+fn header_block_payload(frame: &Frame) -> Result<&[u8], ProtocolError> {
+    let mut start = 0;
+    let mut end = frame.payload.len();
+    if frame.header.flags & 0x8 != 0 {
+        let Some(&padding) = frame.payload.first() else {
+            return Err(ProtocolError::InvalidFrameLength(FrameType::Headers, 0));
+        };
+        start = 1;
+        if padding as usize > end.saturating_sub(start) {
+            return Err(ProtocolError::InvalidFrameLength(
+                FrameType::Headers,
+                frame.payload.len(),
+            ));
+        }
+        end -= padding as usize;
+    }
+    if frame.header.flags & 0x20 != 0 {
+        if end.saturating_sub(start) < 5 {
+            return Err(ProtocolError::InvalidFrameLength(
+                FrameType::Headers,
+                frame.payload.len(),
+            ));
+        }
+        start += 5;
+    }
+    Ok(&frame.payload[start..end])
 }
 
 #[cfg(test)]
@@ -361,5 +444,64 @@ mod tests {
         let mut session = Session::new(Role::Client);
         session.feed(&frame.encode()).unwrap();
         assert_eq!(session.max_frame_size, 32_768);
+    }
+
+    #[test]
+    fn decodes_indexed_and_literal_header_block() {
+        let block = [0x82, 0x84, 0x00, 0x01, b'x', 0x01, b'y'];
+        let frame = Frame::new(FrameType::Headers, 0x4, 1, block.to_vec());
+        let mut session = Session::new(Role::Client);
+        session.feed(&frame.encode()).unwrap();
+        assert_eq!(
+            session.headers.get(&1).unwrap(),
+            &vec![
+                (b":method".to_vec(), b"GET".to_vec()),
+                (b":path".to_vec(), b"/".to_vec()),
+                (b"x".to_vec(), b"y".to_vec()),
+            ]
+        );
+    }
+
+    #[test]
+    fn decodes_huffman_string_literal() {
+        let block = [
+            0x41, 0x8c, 0xf1, 0xe3, 0xc2, 0xe5, 0xf2, 0x3a, 0x6b, 0xa0, 0xab, 0x90, 0xf4,
+            0xff,
+        ];
+        let frame = Frame::new(FrameType::Headers, 0x4, 1, block.to_vec());
+        let mut session = Session::new(Role::Client);
+        session.feed(&frame.encode()).unwrap();
+        assert_eq!(
+            session.headers.get(&1).unwrap(),
+            &vec![(b":authority".to_vec(), b"www.example.com".to_vec())]
+        );
+    }
+
+    #[test]
+    fn assembles_continuation_and_round_trips_encoder() {
+        let mut session = Session::new(Role::Client);
+        let block = session.encode_headers(&[(b":method", b"GET"), (b":path", b"/")]);
+        let split = block.len() / 2;
+        let first = Frame::new(FrameType::Headers, 0, 3, block[..split].to_vec());
+        let second = Frame::new(FrameType::Continuation, 0x4, 3, block[split..].to_vec());
+        assert_eq!(session.feed(&first.encode()).unwrap().len(), 1);
+        session.feed(&second.encode()).unwrap();
+        assert_eq!(
+            session.headers.get(&3).unwrap(),
+            &vec![
+                (b":method".to_vec(), b"GET".to_vec()),
+                (b":path".to_vec(), b"/".to_vec()),
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_padded_header_without_payload() {
+        let frame = Frame::new(FrameType::Headers, 0xC, 1, vec![1]);
+        let mut session = Session::new(Role::Client);
+        assert!(matches!(
+            session.feed(&frame.encode()),
+            Err(ProtocolError::InvalidFrameLength(FrameType::Headers, 1))
+        ));
     }
 }
