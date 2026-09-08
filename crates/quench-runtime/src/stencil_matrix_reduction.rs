@@ -30,10 +30,20 @@ impl FunctionMatrixReduction {
         self,
         function: &crate::value::FunctionValue,
         arguments: &[crate::value::Value],
-    ) -> Option<f64> {
-        validate_loop_bounds(self.reduction.loops)?;
-        let left = numeric_rows(input_value(function, arguments, self.reduction.left_slot)?)?;
-        let right = numeric_rows(input_value(function, arguments, self.reduction.right_slot)?)?;
+    ) -> Result<Option<f64>, crate::execute::VmError> {
+        let Some(()) = validate_loop_bounds(self.reduction.loops) else {
+            return Ok(None);
+        };
+        let Some(left) =
+            input_value(function, arguments, self.reduction.left_slot).and_then(numeric_rows)
+        else {
+            return Ok(None);
+        };
+        let Some(right) =
+            input_value(function, arguments, self.reduction.right_slot).and_then(numeric_rows)
+        else {
+            return Ok(None);
+        };
         execute_with_rows(self, &left, &right)
     }
 }
@@ -69,11 +79,19 @@ fn execute_with_rows(
     fact: FunctionMatrixReduction,
     left: &[Rc<crate::value::ArrayData>],
     right: &[Rc<crate::value::ArrayData>],
-) -> Option<f64> {
-    let dimensions = dimensions(fact.reduction.loops)?;
-    validate_rows(left, right, dimensions)?;
-    let left_words = borrow_rows(left)?;
-    let right_words = borrow_rows(right)?;
+) -> Result<Option<f64>, crate::execute::VmError> {
+    let Some(dimensions) = dimensions(fact.reduction.loops) else {
+        return Ok(None);
+    };
+    let Some(()) = validate_rows(left, right, dimensions) else {
+        return Ok(None);
+    };
+    let Some(left_words) = borrow_rows(left) else {
+        return Ok(None);
+    };
+    let Some(right_words) = borrow_rows(right) else {
+        return Ok(None);
+    };
     let left_ptrs = left_words
         .iter()
         .map(|row| row.as_ptr())
@@ -83,9 +101,7 @@ fn execute_with_rows(
         .map(|row| row.as_ptr())
         .collect::<Vec<_>>();
     let context = MatrixReductionContext::new(fact, &left_ptrs, &right_ptrs);
-    MATRIX_MACHINE
-        .with(|machine| execute_machine(machine, context))
-        .map(|context| context.total)
+    MATRIX_MACHINE.with(|machine| execute_machine(machine, context))
 }
 
 fn borrow_rows<'a>(
@@ -233,22 +249,31 @@ impl MatrixMachine {
 fn execute_machine(
     machine: &RefCell<Option<MatrixMachine>>,
     mut context: MatrixReductionContext,
-) -> Option<MatrixReductionContext> {
+) -> Result<Option<f64>, crate::execute::VmError> {
     let mut machine = machine.borrow_mut();
     if machine.is_none() {
         *machine = MatrixMachine::new();
     }
-    let status = machine.as_mut()?.invoke(&mut context)?;
+    let Some(status) = machine
+        .as_mut()
+        .and_then(|machine| machine.invoke(&mut context))
+    else {
+        return Ok(None);
+    };
     drop(machine);
     if status == crate::vm::NATIVE_DISPATCH_INTERRUPT {
         crate::vm::current_context_or_default().clear_interrupt();
         finish_portable(&mut context);
     }
-    matches!(
+    if matches!(
         status,
         crate::vm::NATIVE_DISPATCH_OK | crate::vm::NATIVE_DISPATCH_INTERRUPT
-    )
-    .then_some(context)
+    ) {
+        return Ok(Some(context.total));
+    }
+    Err(crate::execute::VmError::EvalError(
+        "matrix reduction returned an invalid post-entry status".into(),
+    ))
 }
 
 fn finish_portable(context: &mut MatrixReductionContext) {
