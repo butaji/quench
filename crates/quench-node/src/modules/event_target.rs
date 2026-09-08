@@ -146,6 +146,25 @@ pub(crate) fn target_identity(receiver: &Value) -> Option<u64> {
     target_id(receiver).map(|id| id.0)
 }
 
+/// Deliver a message to a port retained by the host registry. Worker
+/// subprocesses use this boundary for transferred-port wire messages.
+pub(crate) fn post_message_to_target_id(
+    state: &Rc<RefCell<HostState>>,
+    id: u64,
+    value: Value,
+) -> Result<(), VmError> {
+    let port = state
+        .borrow()
+        .targets
+        .objects
+        .get(&TargetId(id))
+        .cloned();
+    if let Some(port) = port {
+        message_port_post_message(state, Some(&port), &[value])?;
+    }
+    Ok(())
+}
+
 pub(crate) fn is_message_port(state: &Rc<RefCell<HostState>>, value: &Value) -> bool {
     target_id(value)
         .and_then(|id| state.borrow().targets.get(id))
