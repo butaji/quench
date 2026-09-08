@@ -1,6 +1,6 @@
 #![cfg(not(test))]
 
-use quench_node::run::eval_script;
+use quench_node::run::{eval_script, eval_script_with_exec_argv, run_script_with_exec_argv};
 use quench_runtime::vm::OutputSink;
 use std::{
     env, fs,
@@ -33,10 +33,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().skip(1).collect();
+    if let Some(script_index) = args.iter().position(|arg| {
+        arg.ends_with(".js") || arg.ends_with(".mjs") || arg.ends_with(".cjs")
+    }) {
+        return run_file(
+            Path::new(&args[script_index]),
+            &args[script_index + 1..],
+            &args[..script_index],
+        );
+    }
     let mode_index = args
         .iter()
         .position(|arg| {
-                !arg.starts_with("--experimental-")
+            !arg.starts_with("--experimental-")
                 && !arg.starts_with("--network-family-autoselection")
                 && !arg.starts_with("--title=")
         })
@@ -53,10 +62,12 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
         Some("-e") | Some("--eval") => {
             let source = args.get(mode_index + 1).map_or("", String::as_str);
             let sink: OutputSink = std::sync::Arc::new(|line| println!("{line}"));
-            match eval_script(source, sink).error {
-                Some(error) => Err(error.into()),
-                None => Ok(()),
-            }
+            finish_outcome(eval_script_with_exec_argv(
+                source,
+                sink,
+                false,
+                &args[..mode_index],
+            ))
         }
         Some("--stage") => run_directory(&PathBuf::from(format!(
             "tests/node-compat/stage-{}",
@@ -67,7 +78,7 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
                 .cloned()
                 .unwrap_or_else(|| "tests/node-compat".into()),
         )),
-        Some(path) => run_file(Path::new(path), &args[mode_index + 1..]),
+        Some(path) => run_file(Path::new(path), &args[mode_index + 1..], &args[..mode_index]),
         None => {
             let sink: OutputSink = std::sync::Arc::new(|line| println!("{line}"));
             match eval_script("", sink).error {
@@ -78,21 +89,35 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-fn run_file(path: &Path, _script_args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+fn run_file(
+    path: &Path,
+    script_args: &[String],
+    exec_argv: &[String],
+) -> Result<(), Box<dyn std::error::Error>> {
     let source = fs::read_to_string(path)?;
     let sink: OutputSink = std::sync::Arc::new(|line| println!("{line}"));
-    // Script files run as global programs, matching the CLI's ordinary file semantics.
-    let outcome = eval_script(&source, sink);
-    match outcome.error {
-        Some(error) => Err(error.into()),
-        None if outcome.exit_code == 0 => Ok(()),
-        None => Err(format!("script exited with status {}", outcome.exit_code).into()),
+    finish_outcome(run_script_with_exec_argv(
+        path,
+        script_args,
+        exec_argv,
+        &source,
+        sink,
+    ))
+}
+
+fn finish_outcome(outcome: quench_node::run::RunOutcome) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(error) = outcome.error {
+        eprintln!("{error}");
     }
+    if outcome.exit_code != 0 {
+        process::exit(outcome.exit_code.clamp(0, 255) as i32);
+    }
+    Ok(())
 }
 
 fn run_directory(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     if dir.is_file() {
-        return run_file(dir, &[]);
+        return run_file(dir, &[], &[]);
     }
     let mut failed = 0;
     let mut total = 0;
@@ -104,7 +129,7 @@ fn run_directory(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
                 .is_some_and(|e| e == "js" || e == "mjs")
         {
             total += 1;
-            match run_file(entry.path(), &[]) {
+            match run_file(entry.path(), &[], &[]) {
                 Ok(()) => println!("ok {}", entry.path().display()),
                 Err(error) => {
                     failed += 1;
