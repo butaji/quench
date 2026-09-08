@@ -10,6 +10,11 @@ function intersect(originZ, directionZ, centerZ, radius) {
   if (discriminant <= 0) return null;
   return -b - Math.sqrt(discriminant);
 }
-var result = intersect(-5, 1, 0, 1);
+function run() {
+  return intersect(-5, 1, 0, 1);
+}
+function verify(result) {
 assert(result === 4, "nearest positive intersection");
-return result;
+  return result;
+}
+return { run: run, verify: verify };

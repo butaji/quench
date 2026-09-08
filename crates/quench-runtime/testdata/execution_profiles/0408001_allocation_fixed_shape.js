@@ -9,8 +9,13 @@ function create(x, y) {
 }
 
 create(1, 2);
-var result = create(19, 23);
+function run() {
+  return create(19, 23);
+}
+function verify(result) {
 if (result !== 42) {
   throw new Error("fixed-shape allocation mismatch");
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

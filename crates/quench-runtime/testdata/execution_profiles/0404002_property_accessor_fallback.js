@@ -6,8 +6,13 @@ var receiver = { value: 19 };
 read(receiver);
 read(receiver);
 Object.defineProperty(receiver, "value", { get: undefined });
-var result = read(receiver);
+function run() {
+  return read(receiver);
+}
+function verify(result) {
 if (result !== undefined) {
   throw new Error("property accessor fallback mismatch");
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

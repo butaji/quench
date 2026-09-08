@@ -6,8 +6,13 @@ function classify(value) {
 }
 
 classify(1);
-var result = classify(NaN) * 100 + classify(-0) * 10 + classify(-1);
+function run() {
+  return classify(NaN) * 100 + classify(-0) * 10 + classify(-1);
+}
+function verify(result) {
 if (result !== 123) {
   throw new Error("comparison edge classification mismatch");
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

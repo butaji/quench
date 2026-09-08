@@ -22,8 +22,14 @@ function schedule(tasks, rounds) {
   }
   return total;
 }
-var result = schedule([
+var tasks = [
   new Task(1, 0), new Task(2, 1), new Task(3, 2), new Task(4, 3)
-], 4);
+];
+function run() {
+  return schedule(tasks, 4);
+}
+function verify(result) {
 assert(result === 30, "exact scheduler state result");
-return result;
+  return result;
+}
+return { run: run, verify: verify };

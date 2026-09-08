@@ -4,8 +4,13 @@ function factorial(value) {
 }
 
 factorial(3);
-var result = factorial(5);
+function run() {
+  return factorial(5);
+}
+function verify(result) {
 if (result !== 120) {
   throw new Error("recursive numeric call mismatch");
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

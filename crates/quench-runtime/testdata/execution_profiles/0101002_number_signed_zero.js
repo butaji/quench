@@ -3,8 +3,13 @@ function negate(value) {
 }
 
 negate(1);
-var result = negate(0);
+function run() {
+  return negate(0);
+}
+function verify(result) {
 if (!Object.is(result, -0)) {
   throw new Error("signed zero was not preserved");
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

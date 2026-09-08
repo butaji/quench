@@ -4,8 +4,13 @@ function invoke(fn, value) { return fn(value); }
 
 invoke(add, 1);
 invoke(multiply, 1);
-var result = invoke(add, 20) + invoke(multiply, 10);
+function run() {
+  return invoke(add, 20) + invoke(multiply, 10);
+}
+function verify(result) {
 if (result !== 41) {
   throw new Error("polymorphic call mismatch");
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

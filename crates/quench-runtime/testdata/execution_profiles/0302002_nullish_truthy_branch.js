@@ -5,8 +5,13 @@ function choose(value, fallback) {
 choose(1, false);
 var zero = choose(0, true);
 var missing = choose(null, true);
-var result = zero + missing;
+function run() {
+  return zero + missing;
+}
+function verify(result) {
 if (result !== 41) {
   throw new Error("nullish/truthy branch mismatch");
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

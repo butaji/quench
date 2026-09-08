@@ -6,8 +6,13 @@ function write(object, value) {
 
 var receiver = { value: 0 };
 write(receiver, 1);
-var result = write(receiver, 42);
+function run() {
+  return write(receiver, 42);
+}
+function verify(result) {
 if (result !== 42 || receiver.value !== 42) {
   throw new Error("strict own-property store mismatch");
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

@@ -3,8 +3,13 @@ function read(object) {
 }
 
 read({ value: 1 });
-var result = read({ value: 2 });
+function run() {
+  return read({ value: 2 });
+}
+function verify(result) {
 if (result !== undefined) {
   throw new Error("missing-property fallback mismatch");
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

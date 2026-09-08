@@ -5,8 +5,13 @@ function fill(values, value) {
 
 fill([0, 0], 1);
 var values = [0, 0, 0, 0, 0];
-var result = fill(values, 21);
+function run() {
+  return fill(values, 21);
+}
+function verify(result) {
 if (result !== 42 || values.join(",") !== "21,21,21,21,21") {
   throw new Error("numeric fill mismatch");
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

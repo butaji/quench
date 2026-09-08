@@ -13,8 +13,14 @@ function rotateRight(root) {
   next.right = root;
   return next;
 }
-var root = new Node(3, new Node(2, new Node(1, null, null), null), null);
-root = rotateRight(root);
-var result = root.key * 100 + root.left.key * 10 + root.right.key;
+var root;
+function run() {
+  root = new Node(3, new Node(2, new Node(1, null, null), null), null);
+  root = rotateRight(root);
+  return root.key * 100 + root.left.key * 10 + root.right.key;
+}
+function verify(result) {
 assert(result === 213, "rotation preserves links");
-return result;
+  return result;
+}
+return { run: run, verify: verify };
