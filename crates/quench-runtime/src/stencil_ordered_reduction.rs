@@ -51,7 +51,7 @@ enum ReductionProfile {
     OrderedF64,
     ControlFor,
     ControlWhile,
-    ControlPredictable,
+    Conditional,
 }
 
 #[derive(Clone, Copy)]
@@ -256,7 +256,7 @@ impl NativeReductionPlan {
             ReductionProfile::OrderedF64 => "ordered_f64_reduction_loop",
             ReductionProfile::ControlFor => "control_for_region",
             ReductionProfile::ControlWhile => "control_while_region",
-            ReductionProfile::ControlPredictable => "control_predictable_region",
+            ReductionProfile::Conditional => "conditional_f64_reduction_loop",
         }
     }
 
@@ -265,7 +265,7 @@ impl NativeReductionPlan {
             ReductionProfile::OrderedF64 => Self::route().collect(),
             ReductionProfile::ControlFor => vec!["control", "for"],
             ReductionProfile::ControlWhile => vec!["control", "while"],
-            ReductionProfile::ControlPredictable => vec!["control", "predictable"],
+            ReductionProfile::Conditional => vec!["control", "conditional_reduction"],
         }
     }
 
@@ -278,7 +278,9 @@ impl ReductionOperation {
     fn region_key(self) -> crate::stencil_fact::RegionKey {
         match self {
             Self::Sum => crate::stencil_select::ordered_f64_reduction_loop_region_key(),
-            Self::LessThan { .. } => crate::stencil_select::control_predictable_region_region_key(),
+            Self::LessThan { .. } => {
+                crate::stencil_select::conditional_f64_reduction_loop_region_key()
+            }
         }
     }
 
