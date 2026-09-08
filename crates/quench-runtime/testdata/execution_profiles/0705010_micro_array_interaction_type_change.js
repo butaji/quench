@@ -1,0 +1,72 @@
+var __profileSpec; function registerMicro(spec) { __profileSpec = spec; }
+registerMicro({
+  id: "array-interaction",
+  question:
+    "What happens when indexed operations interact with aliasing or changing semantics?",
+  requires: ["arrays", "conversion"],
+  axes: ["size", "aliasing", "transition"],
+  observations: ["time per index", "dependent outputs", "accessor effects"],
+  explanations: [
+    "Dependency handling",
+    "Element transitions",
+    "Inherited indexed access"
+  ],
+  setup: function (n, seed) {
+    return { n: n, seed: seed };
+  },
+  variants: {
+    independent: function (s) {
+      var a = [],
+        b = [];
+      for (var i = 0; i < s.n; i++) {
+        a[i] = i;
+        b[i] = a[i] + 1;
+      }
+      return b[s.n - 1];
+    },
+    dependent: function (s) {
+      var a = [s.seed];
+      for (var i = 1; i < s.n; i++) a[i] = (a[i - 1] + i) | 0;
+      return a[s.n - 1];
+    },
+    alias: function (s) {
+      var a = [s.seed],
+        b = a;
+      for (var i = 1; i < s.n; i++) {
+        b[i] = a[i - 1] + 1;
+      }
+      return a[s.n - 1];
+    },
+    type_change: function (s) {
+      var a = [],
+        t = 0;
+      for (var i = 0; i < s.n; i++) a[i] = i;
+      a[s.n >> 1] = "7";
+      for (var j = 0; j < s.n; j++) t += +a[j];
+      return t;
+    },
+    inherited_index: function (s) {
+      var calls = 0,
+        p = Object.create(Array.prototype);
+      Object.defineProperty(p, "0", {
+        get: function () {
+          calls++;
+          return s.seed;
+        }
+      });
+      var a = [];
+      Object.setPrototypeOf(a, p);
+      var t = 0;
+      for (var i = 0; i < s.n; i++) t += a[0];
+      return [t, calls];
+    }
+  },
+  check: function (r, s, v) {
+    if (v === "inherited_index" && r[1] !== s.n)
+      throw new Error("indexed getter count");
+  }
+});
+
+function __profileEncode(x){if(x===undefined)return["undefined"];if(typeof x==="number")return["number",Number.isNaN(x)?"NaN":Object.is(x,-0)?"-0":String(x)];if(typeof x==="bigint")return["bigint",String(x)];if(x===null||typeof x!=="object")return[typeof x,x];if(Array.isArray(x))return["array",x.map(__profileEncode)];return["object",Object.keys(x).map(function(k){return[k,__profileEncode(x[k])];})];}
+var __profileState=__profileSpec.setup(64,17,"type_change");var __profileOperation=__profileSpec.variants["type_change"];function __profileRun(){var value=__profileOperation(__profileState);if(__profileSpec.check)__profileSpec.check(value,__profileState,"type_change");var signature=JSON.stringify(__profileEncode(value));if(signature!=="[\"number\",\"1991\"]")throw new Error("micro exact result mismatch");return signature;}
+return __profileRun();

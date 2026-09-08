@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "warmup": 1,
+  "result": { "kind": "number", "value": 123 },
+  "plan": {
+    "execution_kind": "native_machine_code",
+    "operation_route": ["Binary", "JumpIfFalse", "CallN", "JumpIfFalse", "Binary", "JumpIfFalse", "Return"],
+    "fallback": false
+  },
+  "profile": {
+    "residual": {},
+    "slow": {},
+    "stencils": { "number_classify_branch_return": { "entries": 3, "fallbacks": 0 } },
+    "events": { "leaf_hit": 3 }
+  }
+}

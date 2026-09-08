@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "warmup": 1,
+  "result": { "kind": "string", "value": "[\"array\",[[\"number\",\"2016\"],[\"array\",[[\"string\",\"x\"],[\"string\",\"y\"]]]]]" },
+  "plan": {
+    "execution_kind": "native_machine_code",
+    "operation_route": ["property-mutation", "overwrite"],
+    "fallback": false
+  },
+  "profile": {
+    "residual": {},
+    "slow": {},
+    "stencils": { "property_mutation_overwrite_region": { "entries": 1, "fallbacks": 0 } },
+    "events": { "leaf_hit": 1 }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "warmup": 1,
+  "result": { "kind": "number", "value": 28 },
+  "plan": {
+    "execution_kind": "native_machine_code",
+    "operation_route": ["AddConst", "AddConst", "Mul", "Sub", "Add", "MulConst", "Sub", "Return"],
+    "fallback": false
+  },
+  "profile": {
+    "residual": {},
+    "slow": {},
+    "stencils": { "numeric_local_dag_return": { "entries": 1, "fallbacks": 0 } },
+    "events": { "leaf_hit": 1 }
+  }
+}
