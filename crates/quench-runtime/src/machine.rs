@@ -5017,6 +5017,9 @@ fn installed_region_entry(
         crate::stencil_select::RegionAbi::AffineI32Loop => slab
             .owned_affine_i32_loop_entry(address)
             .map(InstalledRegionEntry::AffineI32Loop),
+        crate::stencil_select::RegionAbi::NumericF64Loop => {
+            Err(crate::stencil_arena::ArenaError::ProtectionFailed)
+        }
         _ => Err(crate::stencil_arena::ArenaError::ProtectionFailed),
     }
 }
@@ -5332,6 +5335,11 @@ impl NativeRegionPlan {
                         "array-reduction ABI requires its typed entry".into(),
                     ));
                 }
+                crate::stencil_select::RegionAbi::NumericF64Loop => {
+                    return Err(NativeDispatchError::Physical(
+                        "numeric-f64 loop ABI requires its typed entry".into(),
+                    ));
+                }
                 crate::stencil_select::RegionAbi::Bridge => {}
                 crate::stencil_select::RegionAbi::ScalarF64Binary
                 | crate::stencil_select::RegionAbi::ScalarF64Unary
@@ -5500,6 +5508,7 @@ enum NativeAdmission {
     MissingProperty(Rc<RefCell<crate::stencil_missing_property::NativeMissingPropertyPlan>>),
     DenseFill(Rc<RefCell<crate::stencil_dense_array_fill::NativeDenseFillPlan>>),
     IntegerLoop(Rc<RefCell<crate::stencil_numeric_integer_loop::NativeIntegerLoopPlan>>),
+    FloatingLoop(Rc<RefCell<crate::stencil_numeric_floating_loop::NativeFloatingLoopPlan>>),
     DenseUpdate(Rc<RefCell<crate::stencil_dense_array_update::NativeDenseUpdatePlan>>),
     DenseCopy(Rc<RefCell<crate::stencil_dense_array_copy::NativeDenseCopyPlan>>),
     Reduction(Rc<RefCell<crate::stencil_ordered_reduction::NativeReductionPlan>>),
@@ -5553,6 +5562,9 @@ impl AdmissionEntry for NativeAdmission {
             >(),
             Self::IntegerLoop(_) => shared_value_bytes::<
                 RefCell<crate::stencil_numeric_integer_loop::NativeIntegerLoopPlan>,
+            >(),
+            Self::FloatingLoop(_) => shared_value_bytes::<
+                RefCell<crate::stencil_numeric_floating_loop::NativeFloatingLoopPlan>,
             >(),
             Self::DenseUpdate(_) => shared_value_bytes::<
                 RefCell<crate::stencil_dense_array_update::NativeDenseUpdatePlan>,
@@ -5608,6 +5620,7 @@ impl std::fmt::Debug for NativeAdmission {
             Self::MissingProperty(_) => "missing_property",
             Self::DenseFill(_) => "dense_fill",
             Self::IntegerLoop(_) => "integer_loop",
+            Self::FloatingLoop(_) => "floating_loop",
             Self::DenseUpdate(_) => "dense_update",
             Self::DenseCopy(_) => "dense_copy",
             Self::Reduction(_) => "reduction",
@@ -6061,6 +6074,23 @@ fn integer_loop_admission(
         selection, policy, Rc::clone(arena),
     )?;
     Some(NativeAdmission::IntegerLoop(Rc::new(RefCell::new(plan))))
+}
+
+fn floating_loop_admission(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    let selection = crate::stencil_numeric_floating_loop::select_floating_loop(
+        code, entries, cfg, pc,
+    )?;
+    let plan = crate::stencil_numeric_floating_loop::NativeFloatingLoopPlan::new(
+        selection, policy, Rc::clone(arena),
+    )?;
+    Some(NativeAdmission::FloatingLoop(Rc::new(RefCell::new(plan))))
 }
 
 fn dense_copy_admission(
@@ -6598,6 +6628,10 @@ fn collect_admissions_at(
     );
     builder.push_optional(
         pc,
+        floating_loop_admission(code, entries, cfg, pc, policy, arena),
+    );
+    builder.push_optional(
+        pc,
         dense_copy_admission(code, entries, cfg, pc, policy, arena),
     );
     builder.push_optional(
@@ -6731,6 +6765,7 @@ impl BaselinePlan {
         let missing_property = self.missing_property_at(0).is_some();
         let fill = self.dense_fill_at(0).is_some();
         let integer_loop = self.integer_loop_at(0).is_some();
+        let floating_loop = self.floating_loop_at(0).is_some();
         let dense = self.dense_update_at(0).is_some();
         let copy = self.dense_copy_at(0).is_some();
         let reduction = self.reduction_at(0).is_some();
@@ -6744,7 +6779,8 @@ impl BaselinePlan {
         let property = self
             .native_local_property_at(0)
             .is_some_and(|plan| plan.borrow().returns());
-        dag || classify || nullish_truthy || missing_property || fill || integer_loop || dense
+        dag || classify || nullish_truthy || missing_property || fill || integer_loop
+            || floating_loop || dense
             || copy
             || reduction
             || i32_pattern
@@ -6823,6 +6859,12 @@ impl BaselinePlan {
         integer_loop_at,
         IntegerLoop,
         crate::stencil_numeric_integer_loop::NativeIntegerLoopPlan
+    );
+    typed_admission_accessors!(
+        floating_loop_handle_at,
+        floating_loop_at,
+        FloatingLoop,
+        crate::stencil_numeric_floating_loop::NativeFloatingLoopPlan
     );
     typed_admission_accessors!(
         dense_update_handle_at,
@@ -7006,6 +7048,11 @@ impl OptimizingEntry<'_> {
         integer_loop,
         IntegerLoop,
         crate::stencil_numeric_integer_loop::NativeIntegerLoopPlan
+    );
+    optimizing_admission_accessors!(
+        floating_loop,
+        FloatingLoop,
+        crate::stencil_numeric_floating_loop::NativeFloatingLoopPlan
     );
     optimizing_admission_accessors!(
         dense_update,
