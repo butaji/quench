@@ -63,6 +63,8 @@ fn invoke_f64x3_entry(
 
 const OPTIMIZATION_WARMUP_MULTIPLIER: u32 = 8;
 const BASELINE_RETIREMENT_THRESHOLD: u32 = 32;
+const EAGER_STRAIGHT_LINE_MAX_INSTRUCTIONS: usize =
+    crate::stencil_plan::MAX_BLOCK_VALUES + 2;
 
 // Code stores are isolate-local and never shared across runtime threads. The
 // OnceLock is retained only for the construction cycle: nested FunctionCode
@@ -6153,6 +6155,26 @@ fn baseline_osr_entries(code: CodeView<'_>) -> Rc<[u32]> {
         .into()
 }
 
+fn eager_straight_line_candidate(code: CodeView<'_>) -> bool {
+    use crate::facts::{ControlFlow, OperationEffect};
+    for pc in 0..code.len().min(EAGER_STRAIGHT_LINE_MAX_INSTRUCTIONS) {
+        let Some(instruction) = code.instruction(pc) else {
+            return false;
+        };
+        if instruction.opcode.control_flow() == ControlFlow::Return {
+            return pc > 0;
+        }
+        if instruction.opcode.control_flow() != ControlFlow::Next
+            || instruction.opcode.has_effect(OperationEffect::Observable)
+            || instruction.opcode.has_effect(OperationEffect::ReadHeap)
+            || instruction.opcode.has_effect(OperationEffect::WriteHeap)
+        {
+            return false;
+        }
+    }
+    false
+}
+
 fn collect_admissions_at(
     builder: &mut AdmissionBuilder<NativeAdmission>,
     code: CodeView<'_>,
@@ -6258,6 +6280,11 @@ impl BaselinePlan {
         self.admission
             .as_deref()
             .map_or(&[], |storage| storage.entries_at(pc))
+    }
+
+    fn has_eager_numeric_entry(&self) -> bool {
+        self.native_local_binary_at(0)
+            .is_some_and(|plan| plan.borrow().selection().returns)
     }
 
     fn native_handle<T>(
@@ -6483,6 +6510,7 @@ struct TierState {
     tier: ExecutionTier,
     plan: Option<Rc<BaselinePlan>>,
     optimizing: Option<Rc<OptimizingPlan>>,
+    eager_checked: bool,
 }
 
 impl TierState {
@@ -6495,6 +6523,7 @@ impl TierState {
             tier: ExecutionTier::Interpreter,
             plan: None,
             optimizing: None,
+            eager_checked: false,
         }
     }
 }
@@ -7002,6 +7031,15 @@ impl FunctionCode {
             .clone()
     }
 
+    fn eager_baseline_plan(&self) -> Option<Rc<BaselinePlan>> {
+        let policy = crate::stencil_policy::current();
+        policy.local_fusions.numeric().then_some(())?;
+        let code = self.code()?;
+        eager_straight_line_candidate(code).then_some(())?;
+        let plan = Rc::new(BaselinePlan::compile(code, policy));
+        plan.has_eager_numeric_entry().then_some(plan)
+    }
+
     /// Account one function entry and compile the baseline plan when prior
     /// execution has crossed the bytecode-retirement threshold.  The paper's
     /// profiler measures executed bytecodes rather than call frequency, so a
@@ -7034,6 +7072,14 @@ impl FunctionCode {
             )));
             state.tier = ExecutionTier::Optimizing;
             return TierTransition::CompileOptimizing;
+        }
+        if !state.eager_checked {
+            state.eager_checked = true;
+            if let Some(plan) = self.eager_baseline_plan() {
+                state.plan = Some(plan);
+                state.tier = ExecutionTier::Baseline;
+                return TierTransition::CompileBaseline;
+            }
         }
         if state.retired < u64::from(state.threshold) {
             return TierTransition::Cold;

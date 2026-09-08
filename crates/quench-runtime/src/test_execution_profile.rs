@@ -464,6 +464,31 @@ pub(crate) fn region_route(operations: &'static [crate::ir::Opcode]) {
     });
 }
 
+pub(crate) fn local_numeric_route(
+    code: crate::machine::CodeView<'_>,
+    start: usize,
+    span: usize,
+) {
+    update(|profile| {
+        let route = (start..start.saturating_add(span))
+            .filter_map(|pc| code.instruction(pc))
+            .filter(|instruction| local_numeric_route_instruction(*instruction))
+            .map(|instruction| instruction.opcode.name())
+            .collect::<Vec<_>>();
+        if !route.is_empty() && !profile.region_routes.contains(&route) {
+            profile.region_routes.push(route);
+        }
+    });
+}
+
+fn local_numeric_route_instruction(instruction: crate::ir::Instruction) -> bool {
+    crate::stencil_plan::numeric_operation(instruction).is_some()
+        || matches!(
+            instruction.opcode,
+            crate::ir::Opcode::AddConst | crate::ir::Opcode::IncI | crate::ir::Opcode::Return
+        )
+}
+
 fn update(apply: impl FnOnce(&mut ExecutionProfile)) {
     ACTIVE.with(|active| {
         if let Some(profile) = active.borrow_mut().as_mut() {

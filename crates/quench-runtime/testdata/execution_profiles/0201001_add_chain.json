@@ -14,8 +14,7 @@
       "local_binary": { "entries": 1, "fallbacks": 0 }
     },
     "events": {
-      "leaf_hit": 1,
-      "register_file_read": 1
+      "leaf_hit": 1
     }
   }
 }
