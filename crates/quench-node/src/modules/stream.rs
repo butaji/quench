@@ -18,7 +18,8 @@ use crate::registry::{
     SPEC_STREAM_PROMISES_CALLBACK, SPEC_STREAM_PROMISES_FINISHED, SPEC_STREAM_PROMISES_PIPELINE,
     SPEC_STREAM_READABLE, SPEC_STREAM_READABLE_BUFFER, SPEC_STREAM_TRANSFORM,
     SPEC_STREAM_WEB_PIPELINE_COMPLETE, SPEC_STREAM_WEB_PIPELINE_ERROR, SPEC_STREAM_WRITABLE,
-    SPEC_STREAM_WRITABLE_WRITE_ADAPTER, SPEC_FS_WRITE_STREAM_AUTO_CLOSE_GET,
+    SPEC_STREAM_WRITABLE_HAS_INSTANCE, SPEC_STREAM_WRITABLE_WRITE_ADAPTER,
+    SPEC_FS_WRITE_STREAM_AUTO_CLOSE_GET,
     SPEC_FS_WRITE_STREAM_AUTO_CLOSE_SET,
 };
 
@@ -609,6 +610,62 @@ pub fn is_writable(
     args: &[Value],
 ) -> Result<Value, VmError> {
     Ok(args.first().map(is_writable_value).unwrap_or(Value::Null))
+}
+
+/// Implement Writable's cross-family `instanceof` contract without making
+/// subclasses inherit a structural brand. Duplex and Transform copy the
+/// writable methods/state because JavaScript has no multiple inheritance, so
+/// the canonical Writable constructor accepts those instances as well. A
+/// subclass that inherits Writable's `@@hasInstance`, however, must still be
+/// checked against its own prototype rather than every object carrying a
+/// `_writableState` slot.
+pub fn writable_has_instance(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Ok(Value::Boolean(false));
+    };
+    let Some(value) = args.first() else {
+        return Ok(Value::Boolean(false));
+    };
+    if matches!(value, Value::Null | Value::Undefined | Value::Boolean(_) | Value::Number(_)
+        | Value::String(_) | Value::StringUnits(_) | Value::BigInt(_))
+    {
+        return Ok(Value::Boolean(false));
+    }
+    let prototype = execute::get_property(receiver, "prototype");
+    let mut current = execute::get_prototype_of(value).ok();
+    for _ in 0..1_024 {
+        let Some(current_value) = current else {
+            break;
+        };
+        if execute::same_value(&current_value, &prototype) {
+            return Ok(Value::Boolean(true));
+        }
+        current = match current_value {
+            Value::Null | Value::Undefined => None,
+            value => execute::get_prototype_of(&value).ok(),
+        };
+        if matches!(current, Some(Value::Null | Value::Undefined)) {
+            current = None;
+        }
+    }
+
+    let canonical_writable = state
+        .borrow()
+        .stream_module
+        .as_ref()
+        .map(|module| execute::get_property(module, "Writable"));
+    if canonical_writable
+        .as_ref()
+        .is_some_and(|writable| execute::same_value(receiver, writable))
+        && !matches!(execute::get_property(value, "_writableState"), Value::Null | Value::Undefined)
+    {
+        return Ok(Value::Boolean(true));
+    }
+    Ok(Value::Boolean(false))
 }
 
 fn is_writable_value(value: &Value) -> Value {
@@ -1565,6 +1622,11 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     // Install the shared autoClose accessor at that semantic boundary so the
     // property survives the constructor's prototype replacement.
     let writable = execute::get_property(&module, "Writable");
+    let _ = execute::set_callable_property(
+        &writable,
+        "Symbol.hasInstance",
+        crate::host::capability(SPEC_STREAM_WRITABLE_HAS_INSTANCE),
+    );
     let writable_prototype = execute::get_property(&writable, "prototype");
     let auto_close = host_api::object(vec![
         (
