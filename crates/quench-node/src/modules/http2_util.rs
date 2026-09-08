@@ -841,6 +841,21 @@ pub(crate) fn publish_http2_stream_diagnostic(
     flags: Option<u8>,
     error: Option<Value>,
 ) -> Result<(), VmError> {
+    // Host-side property updates may publish a COW representative while a
+    // stream is retained by the transport map.  Resolve that replacement
+    // before building the diagnostic message so observers see the same
+    // `closed`/`destroyed` state that the lifecycle transition just wrote.
+    let stream = execute::canonical_value(stream);
+    let destroyed = execute::get_property(&stream, "destroyed");
+    if event == HTTP2_DIAG_CLOSE {
+        // Closing is observable on the diagnostic record itself, even when
+        // the transport reached this boundary through a terminal DATA frame
+        // rather than the JS `close()` capability.
+        execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
+        if matches!(destroyed, Value::Boolean(_)) {
+            execute::set_property_in_place(&stream, "destroyed", destroyed);
+        }
+    }
     let marker = match event {
         HTTP2_DIAG_CREATED => HTTP2_DIAG_CREATED_PROP,
         HTTP2_DIAG_START => HTTP2_DIAG_START_PROP,
@@ -849,10 +864,10 @@ pub(crate) fn publish_http2_stream_diagnostic(
         HTTP2_DIAG_ERROR => HTTP2_DIAG_ERROR_PROP,
         _ => return Ok(()),
     };
-    if matches!(execute::get_property(stream, marker), Value::Boolean(true)) {
+    if matches!(execute::get_property(&stream, marker), Value::Boolean(true)) {
         return Ok(());
     }
-    execute::set_property_in_place(stream, marker, Value::Boolean(true));
+    execute::set_property_in_place(&stream, marker, Value::Boolean(true));
     let mut message = vec![("stream".into(), stream.clone())];
     if let Some(headers) = headers {
         message.push(("headers".into(), headers));
@@ -1332,8 +1347,8 @@ fn stream_destroy(
     receiver: Option<&Value>,
     values: &[Value],
 ) -> Result<Value, VmError> {
-    let stream = receiver.ok_or(VmError::NotCallable)?;
-    let (socket, stream_id) = stream_socket(Some(stream))?;
+    let stream = execute::canonical_value(receiver.ok_or(VmError::NotCallable)?);
+    let (socket, stream_id) = stream_socket(Some(&stream))?;
     let error = values
         .first()
         .filter(|value| !matches!(value, Value::Undefined | Value::Null))
@@ -1346,9 +1361,9 @@ fn stream_destroy(
     } else {
         2_u32 // NGHTTP2_INTERNAL_ERROR
     };
-    execute::set_property_in_place(stream, "rstCode", Value::Number(code as f64));
-    execute::set_property_in_place(stream, "closed", Value::Boolean(true));
-    execute::set_property_in_place(stream, "destroyed", Value::Boolean(error.is_some()));
+    execute::set_property_in_place(&stream, "rstCode", Value::Number(code as f64));
+    execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
+    execute::set_property_in_place(&stream, "destroyed", Value::Boolean(error.is_some()));
     let is_server = matches!(
         execute::get_property(&socket, crate::modules::http2_protocol::SERVER_MARKER),
         Value::Boolean(true)
@@ -1356,7 +1371,7 @@ fn stream_destroy(
     if let Some(error) = error.clone() {
         publish_http2_stream_diagnostic(
             state,
-            stream,
+            &stream,
             is_server,
             HTTP2_DIAG_ERROR,
             None,
@@ -1373,7 +1388,7 @@ fn stream_destroy(
     }
     publish_http2_stream_diagnostic(
         state,
-        stream,
+        &stream,
         is_server,
         HTTP2_DIAG_CLOSE,
         None,
@@ -1387,7 +1402,7 @@ fn stream_destroy(
         code.to_be_bytes().to_vec(),
     );
     write_http2_frame(&socket, &frame)?;
-    Ok(stream.clone())
+    Ok(stream)
 }
 
 fn stream_push_stream(
@@ -1516,12 +1531,14 @@ fn stream_push_stream(
     decorate_http2_stream(state, &stream, true);
     let socket_id = crate::modules::net::net_id(&socket).ok_or(VmError::NotCallable)?;
     state.borrow_mut().net.http2_streams.insert((socket_id, promised_id), stream.clone());
+    write_http2_frame(&socket, &frame)?;
     if let Some(callback) = values.get(1).filter(|value| quench_runtime::is_callable(value)) {
-        // Node's pushStream callback is error-first.  `common.mustSucceed`
-        // relies on the leading null before receiving the stream object.
+        // Node's pushStream callback is error-first.  The PUSH_PROMISE must
+        // be queued before user code can respond on the promised stream;
+        // otherwise response HEADERS can overtake the promise on the wire
+        // and the peer creates the stream before its `stream` notification.
         execute::call(callback, &Value::Undefined, &[Value::Null, stream.clone()])?;
     }
-    write_http2_frame(&socket, &frame)?;
     Ok(stream)
 }
 
