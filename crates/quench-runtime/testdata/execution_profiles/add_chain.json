@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "warmup": 0,
+  "result": { "kind": "number", "value": 7 },
+  "plan": {
+    "execution_kind": "native_machine_code",
+    "operation_route": ["add", "add", "return"],
+    "fallback": false
+  },
+  "profile": {
+    "residual": { "Return": 1 },
+    "slow": {},
+    "stencils": {
+      "local_binary": { "entries": 1, "fallbacks": 0 }
+    },
+    "events": {
+      "leaf_hit": 1,
+      "register_file_read": 2
+    }
+  }
+}
