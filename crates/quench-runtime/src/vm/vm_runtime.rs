@@ -2132,6 +2132,18 @@ fn record_forward_pair(
     crate::test_execution_profile::dynamic_region_route(plan.route().iter().copied());
 }
 
+fn record_method_call(code: crate::machine::CodeView<'_>, pc: usize) {
+    crate::execution_trace::stencil_observation(
+        code,
+        pc,
+        crate::stencil_method_call::PROFILE_NAME,
+        true,
+    );
+    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+    #[cfg(test)]
+    crate::test_execution_profile::dynamic_region_route(crate::stencil_method_call::route());
+}
+
 fn record_string_concat(code: crate::machine::CodeView<'_>, pc: usize, constant_call: bool) {
     crate::execution_trace::stencil_observation(code, pc, "string_concat_chain_return", true);
     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
@@ -2641,6 +2653,28 @@ pub(crate) fn execute_optimized_code_step_from(
             false,
         );
         crate::execution_trace::leaf_rejection(profile_name);
+    }
+    if let Some(method) = entry.method_call() {
+        let (value, span) = {
+            let mut method = method.borrow_mut();
+            let value = crate::locals::with_current_ref(|environment| {
+                method.execute(code, environment?)
+            });
+            (value, method.span())
+        };
+        if let Some(value) = value {
+            record_method_call(code, start);
+            return Ok((
+                crate::completion::Completion::Return(crate::value::Value::Number(f64::from(value))),
+                start + span,
+            ));
+        }
+        crate::execution_trace::stencil_observation(
+            code,
+            start,
+            crate::stencil_method_call::PROFILE_NAME,
+            false,
+        );
     }
     if let Some(call) = entry.call_return() {
         let mut call = call.borrow_mut();
@@ -3738,6 +3772,26 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                 false,
             );
             crate::execution_trace::leaf_rejection(profile_name);
+        }
+        if let (Some(environment), Some(method)) = (environment, plan.method_call_at(pc)) {
+            let (value, span) = {
+                let mut method = method.borrow_mut();
+                (method.execute(code, environment), method.span())
+            };
+            if let Some(value) = value {
+                record_method_call(code, pc);
+                return completion_step_after_transition(
+                    registers,
+                    crate::completion::Completion::Return(crate::value::Value::Number(f64::from(value))),
+                    pc + span,
+                );
+            }
+            crate::execution_trace::stencil_observation(
+                code,
+                pc,
+                crate::stencil_method_call::PROFILE_NAME,
+                false,
+            );
         }
         if let (Some(environment), Some(call)) = (environment, plan.call_return_at(pc)) {
             let mut call = call.borrow_mut();

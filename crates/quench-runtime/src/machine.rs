@@ -5570,6 +5570,7 @@ enum NativeAdmission {
     CallReturn(Rc<RefCell<crate::stencil_call_return::NativeCallReturnPlan>>),
     ForwardCall(Rc<RefCell<crate::stencil_forward_call::NativeForwardCallPlan>>),
     ForwardPair(Rc<RefCell<crate::stencil_forward_call::NativeForwardPairPlan>>),
+    MethodCall(Rc<RefCell<crate::stencil_method_call::NativeMethodCallPlan>>),
     StringConcat(Rc<RefCell<crate::stencil_string_concat::StringConcatPlan>>),
     StringBuiltin(Rc<RefCell<crate::stencil_string_builtin::StringBuiltinPlan>>),
     PropertyNumeric(Rc<RefCell<crate::stencil_property_numeric::PropertyNumericPlan>>),
@@ -5652,6 +5653,9 @@ impl AdmissionEntry for NativeAdmission {
             Self::ForwardPair(_) => {
                 shared_value_bytes::<RefCell<crate::stencil_forward_call::NativeForwardPairPlan>>()
             }
+            Self::MethodCall(_) => {
+                shared_value_bytes::<RefCell<crate::stencil_method_call::NativeMethodCallPlan>>()
+            }
             Self::StringConcat(_) => {
                 shared_value_bytes::<RefCell<crate::stencil_string_concat::StringConcatPlan>>()
             }
@@ -5702,6 +5706,7 @@ impl std::fmt::Debug for NativeAdmission {
             Self::CallReturn(_) => "call_return",
             Self::ForwardCall(_) => "forward_call",
             Self::ForwardPair(_) => "forward_pair",
+            Self::MethodCall(_) => "method_call",
             Self::StringConcat(_) => "string_concat",
             Self::StringBuiltin(_) => "string_builtin",
             Self::PropertyNumeric(_) => "property_numeric",
@@ -6312,6 +6317,24 @@ fn forward_pair_admission(
     Some(NativeAdmission::ForwardPair(Rc::new(RefCell::new(plan))))
 }
 
+fn method_call_admission(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    policy.local_fusions.numeric().then_some(())?;
+    let selection = crate::stencil_method_call::select_method_call(code, entries, cfg, pc)?;
+    let plan = crate::stencil_method_call::NativeMethodCallPlan::new(
+        selection,
+        policy,
+        Rc::clone(arena),
+    )?;
+    Some(NativeAdmission::MethodCall(Rc::new(RefCell::new(plan))))
+}
+
 fn string_concat_admission(
     code: CodeView<'_>,
     entries: &[BaselineEntry],
@@ -6640,6 +6663,7 @@ fn baseline_osr_entries(code: CodeView<'_>) -> Rc<[u32]> {
 
 fn eager_straight_line_candidate(code: CodeView<'_>) -> bool {
     if eager_call_return_candidate(code)
+        || eager_method_call_candidate(code)
         || eager_string_concat_call_candidate(code)
         || eager_string_case_candidate(code)
         || eager_string_search_candidate(code)
@@ -6665,6 +6689,19 @@ fn eager_straight_line_candidate(code: CodeView<'_>) -> bool {
         }
     }
     false
+}
+
+fn eager_method_call_candidate(code: CodeView<'_>) -> bool {
+    let expected = [
+        crate::ir::Opcode::LoadLocal,
+        crate::ir::Opcode::GetN,
+        crate::ir::Opcode::LoadConst,
+        crate::ir::Opcode::CallN,
+        crate::ir::Opcode::Return,
+    ];
+    expected.iter().enumerate().all(|(pc, opcode)| {
+        code.instruction(pc).is_some_and(|op| op.opcode == *opcode)
+    })
 }
 
 fn eager_string_case_candidate(code: CodeView<'_>) -> bool {
@@ -6778,6 +6815,10 @@ fn collect_admissions_at(
     arena: &SharedStencilPool,
 ) {
     let entry = entries[pc];
+    builder.push_optional(
+        pc,
+        method_call_admission(code, entries, cfg, pc, policy, arena),
+    );
     builder.push_optional(
         pc,
         dense_update_admission(code, entries, cfg, pc, policy, arena),
@@ -6956,6 +6997,8 @@ impl BaselinePlan {
         let i32_pattern = self.i32_pattern_at(0).is_some();
         let call_return = self.call_return_at(0).is_some();
         let forward_call = (0..self.len()).any(|pc| self.forward_call_at(pc).is_some());
+        let forward_pair = self.forward_pair_at(0).is_some();
+        let method_call = self.method_call_at(0).is_some();
         let string_concat = self.string_concat_at(0).is_some();
         let string_builtin = self.string_builtin_at(0).is_some();
         let numeric = self
@@ -6976,6 +7019,8 @@ impl BaselinePlan {
             || i32_pattern
             || call_return
             || forward_call
+            || forward_pair
+            || method_call
             || string_concat
             || string_builtin
             || numeric
@@ -7116,6 +7161,12 @@ impl BaselinePlan {
         forward_pair_at,
         ForwardPair,
         crate::stencil_forward_call::NativeForwardPairPlan
+    );
+    typed_admission_accessors!(
+        method_call_handle_at,
+        method_call_at,
+        MethodCall,
+        crate::stencil_method_call::NativeMethodCallPlan
     );
     typed_admission_accessors!(
         string_concat_handle_at,
@@ -7324,6 +7375,11 @@ impl OptimizingEntry<'_> {
         forward_pair,
         ForwardPair,
         crate::stencil_forward_call::NativeForwardPairPlan
+    );
+    optimizing_admission_accessors!(
+        method_call,
+        MethodCall,
+        crate::stencil_method_call::NativeMethodCallPlan
     );
     optimizing_admission_accessors!(
         string_concat,

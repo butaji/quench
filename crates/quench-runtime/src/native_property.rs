@@ -67,6 +67,13 @@ pub(crate) struct NativePropertyWriteContext {
     value: u64,
 }
 
+#[repr(C)]
+pub(crate) struct NativeMethodAddContext {
+    access: GuardedPropertySlot,
+    addend: i32,
+    result: i32,
+}
+
 impl NativePropertyReadContext {
     pub(crate) fn new(access: GuardedPropertySlot) -> Self {
         Self {
@@ -102,12 +109,50 @@ impl NativePropertyWriteContext {
     }
 }
 
+impl NativeMethodAddContext {
+    pub(crate) fn new(access: GuardedPropertySlot, addend: i32) -> Self {
+        Self {
+            access,
+            addend,
+            result: 0,
+        }
+    }
+
+    pub(crate) fn result(&self, status: u32) -> Option<i32> {
+        (status == 1).then_some(self.result)
+    }
+}
+
+#[inline(never)]
+pub(crate) extern "C" fn execute_method_add_i32(context: *mut NativeMethodAddContext) -> u32 {
+    let Some(context) = (unsafe { context.as_mut() }) else {
+        return 0;
+    };
+    let Some(slot) = context.access.valid_own_slot() else {
+        return 0;
+    };
+    let Some(value) = (unsafe { slot.as_ref() }).and_then(crate::register_file::SlotWord::number)
+    else {
+        return 0;
+    };
+    let Some(value) = crate::stencil_numeric_integer_selection::exact_i32(value) else {
+        return 0;
+    };
+    let Some(result) = value.checked_add(context.addend) else {
+        return 0;
+    };
+    unsafe { &*slot }.store_number(f64::from(result));
+    context.result = result;
+    1
+}
+
 /// A synchronous borrow-free view of one guarded slot.
 ///
 /// The owning `ObjectData` must remain alive during entry. Structural mutation
 /// invalidates `layout` before native code can dereference `slot`; callers must
 /// never retain this value across JavaScript reentry.
 #[derive(Clone, Copy)]
+#[repr(C)]
 pub(crate) struct GuardedPropertySlot {
     layout: *const u32,
     expected_layout: u32,
