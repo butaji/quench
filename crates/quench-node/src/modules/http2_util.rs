@@ -19,6 +19,18 @@ use super::http2_facts::{
     SINGLE_VALUE_HEADERS, STATUS_CONSTANTS,
 };
 
+/// Bytes emitted at the start of every clear-text HTTP/2 client connection.
+/// Keep the wire framing in one Rust-owned helper so the eventual session
+/// state machine and the current endpoint boundary cannot diverge on the
+/// connection preface or the mandatory initial SETTINGS frame.
+pub(crate) fn client_preface() -> Vec<u8> {
+    let mut bytes = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".to_vec();
+    // A zero-length SETTINGS frame: 24-bit length, type=SETTINGS (0x4),
+    // flags=0, reserved bit clear, stream identifier 0.
+    bytes.extend_from_slice(&[0, 0, 0, 4, 0, 0, 0, 0, 0]);
+    bytes
+}
+
 pub(crate) fn coded_error(
     kind: quench_runtime::ops::Builtin,
     code: &str,
@@ -538,7 +550,7 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
         )?;
         let write = execute::get_property(&socket, "write");
         if quench_runtime::is_callable(&write) {
-            let preface = crate::modules::buffer_proto::make_buffer(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+            let preface = crate::modules::buffer_proto::make_buffer(&client_preface());
             execute::call(&write, &socket, &[preface])?;
         }
         if matches!(execute::get_property(&socket, "close"), Value::Undefined) {
@@ -1077,6 +1089,13 @@ mod tests {
                 0, 64, 0, 0, 0, 5, 0, 0, 64, 0, 0, 6, 0, 0, 255, 255, 0, 8, 0, 0, 0, 0,
             ]
         );
+    }
+
+    #[test]
+    fn client_preface_includes_initial_settings_frame() {
+        let bytes = client_preface();
+        assert_eq!(&bytes[..24], b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+        assert_eq!(&bytes[24..], &[0, 0, 0, 4, 0, 0, 0, 0, 0]);
     }
 
     #[test]
