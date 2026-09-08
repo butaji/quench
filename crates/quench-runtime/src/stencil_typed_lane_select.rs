@@ -34,7 +34,10 @@ pub(crate) fn select_function(code: CodeView<'_>) -> Option<FunctionTypedLane> {
         select_body(body, counted)
     })?;
     let selected = facts.loop_cover;
-    (facts.returned_slot == selected.total_slot).then_some(())?;
+    (facts.returned.slot == selected.total_slot
+        && facts.returned.representation
+            == crate::stencil_counted_function::ReturnedRepresentation::Direct)
+        .then_some(())?;
     let initial_total =
         crate::stencil_counted_function::initial_f64(&facts.initials, selected.total_slot)?;
     Some(FunctionTypedLane {

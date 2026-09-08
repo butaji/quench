@@ -35,7 +35,10 @@ fn select_counted(
 pub(crate) fn select_function(code: CodeView<'_>) -> Option<FunctionReduction> {
     let facts = crate::stencil_counted_function::select(code, select_counted)?;
     let reduction = facts.loop_cover;
-    (facts.returned_slot == reduction.count_slot).then_some(())?;
+    (facts.returned.slot == reduction.count_slot
+        && facts.returned.representation
+            == crate::stencil_counted_function::ReturnedRepresentation::Direct)
+        .then_some(())?;
     let initial =
         crate::stencil_counted_function::initial_f64(&facts.initials, reduction.count_slot)?;
     let initial_count = crate::stencil_numeric_integer_selection::exact_i32(initial)?;
