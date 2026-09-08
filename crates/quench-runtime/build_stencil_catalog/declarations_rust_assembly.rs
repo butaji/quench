@@ -277,6 +277,12 @@ rust_assembly_catalog! {
             "UpdateLocal", "Return"],
         x86: &[], aarch64: &[], x86_holes: &[], aarch64_holes: &[]
     },
+    SwitchReductionLoop {
+        name: "switch_reduction_loop", abi: SwitchReductionLoop,
+        ops: ["LoadLocal", "LoadConst", "AddConst", "Sub", "Binary",
+            "StoreLocal", "UpdateLocal", "Return"],
+        x86: &[], aarch64: &[], x86_holes: &[], aarch64_holes: &[]
+    },
     NumericIntegerLoop {
         name: "numeric_integer_loop", abi: AffineI32Loop,
         ops: ["Mul", "Add", "Binary", "Jump"],
