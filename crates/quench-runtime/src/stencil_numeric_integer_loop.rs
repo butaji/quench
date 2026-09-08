@@ -22,6 +22,8 @@ pub(crate) const DIRECT_LOOP_HEADER: usize = 10;
 pub(crate) const DIRECT_LOOP_EXIT: usize = 26;
 pub(crate) const RECEIVER_REGION_END: usize = 33;
 pub(crate) const RECEIVER_LOOP_BACKEDGE: usize = 28;
+pub(crate) const BOUND_REGION_END: usize = 33;
+pub(crate) const BOUND_LOOP_BACKEDGE: usize = 28;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum IntegerRecurrence {
@@ -31,6 +33,7 @@ pub(crate) enum IntegerRecurrence {
     DirectCallee(std::rc::Rc<str>),
     EquivalentCallees([std::rc::Rc<str>; 2]),
     ReceiverConstant(i32),
+    BoundCallee(std::rc::Rc<str>),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -41,6 +44,7 @@ pub(crate) enum IntegerLoopProfile {
     CallsDirect,
     CallsChanging,
     CallsReceiver,
+    CallsBound,
 }
 
 impl IntegerRecurrence {
@@ -52,6 +56,7 @@ impl IntegerRecurrence {
             | Self::DirectCallee(_)
             | Self::EquivalentCallees(_)
             | Self::ReceiverConstant(_) => crate::stencil_select::affine_i32_loop_region_key(),
+            Self::BoundCallee(_) => crate::stencil_select::affine_i32_loop_region_key(),
         }
     }
 
@@ -60,7 +65,10 @@ impl IntegerRecurrence {
             Self::Index => Some((multiplier, 0)),
             Self::Constant(value) => Some((multiplier, *value)),
             Self::ReceiverConstant(value) => Some((multiplier, *value)),
-            Self::NamedCallee(_) | Self::DirectCallee(_) | Self::EquivalentCallees(_) => None,
+            Self::NamedCallee(_)
+            | Self::DirectCallee(_)
+            | Self::EquivalentCallees(_)
+            | Self::BoundCallee(_) => None,
         }
     }
 
@@ -72,6 +80,7 @@ impl IntegerRecurrence {
             Self::DirectCallee(_) => DIRECT_LOOP_BACKEDGE,
             Self::EquivalentCallees(_) => POLYMORPHIC_LOOP_BACKEDGE,
             Self::ReceiverConstant(_) => RECEIVER_LOOP_BACKEDGE,
+            Self::BoundCallee(_) => BOUND_LOOP_BACKEDGE,
         }
     }
 
@@ -82,6 +91,7 @@ impl IntegerRecurrence {
                 LOOP_HEADER
             }
             Self::ReceiverConstant(_) => 12,
+            Self::BoundCallee(_) => 13,
         }
     }
 
@@ -93,6 +103,7 @@ impl IntegerRecurrence {
             Self::DirectCallee(_) => DIRECT_REGION_END,
             Self::EquivalentCallees(_) => POLYMORPHIC_REGION_END,
             Self::ReceiverConstant(_) => RECEIVER_REGION_END,
+            Self::BoundCallee(_) => BOUND_REGION_END,
         }
     }
 
@@ -104,6 +115,7 @@ impl IntegerRecurrence {
             Self::DirectCallee(_) => IntegerLoopProfile::CallsDirect,
             Self::EquivalentCallees(_) => IntegerLoopProfile::CallsChanging,
             Self::ReceiverConstant(_) => IntegerLoopProfile::CallsReceiver,
+            Self::BoundCallee(_) => IntegerLoopProfile::CallsBound,
         }
     }
 }
@@ -240,6 +252,11 @@ impl NativeIntegerLoopPlan {
         match &self.selection.recurrence {
             IntegerRecurrence::NamedCallee(key) => affine_callee_formula(object, key),
             IntegerRecurrence::DirectCallee(key) => affine_callee_formula(object, key),
+            IntegerRecurrence::BoundCallee(key) => {
+                let function = own_function(object, key)?;
+                intrinsic_bind_is_current(&function).then_some(())?;
+                affine_function_formula(&function)
+            }
             IntegerRecurrence::EquivalentCallees(keys) => {
                 let first = affine_callee_formula(object, &keys[0])?;
                 (affine_callee_formula(object, &keys[1])? == first).then_some(first)
@@ -336,10 +353,40 @@ impl NativeIntegerLoopPlan {
 
 fn affine_callee_formula(object: &crate::value::ObjectData, key: &str) -> Option<(i32, i32)> {
     let function = own_function(object, key)?;
+    affine_function_formula(&function)
+}
+
+fn affine_function_formula(function: &crate::value::FunctionValue) -> Option<(i32, i32)> {
     crate::functions::direct_call_eligible(&function).then_some(())?;
     let fact = function.code.numeric_affine_i32()?;
     (usize::from(fact.parameter_slot) == function.captures.len())
         .then_some((fact.multiplier, fact.addend))
+}
+
+fn intrinsic_bind_is_current(function: &crate::value::FunctionValue) -> bool {
+    let properties = function.properties.borrow();
+    if properties.iter().any(|(name, _)| name == "bind") {
+        return false;
+    }
+    let prototype = properties.iter().rev().find_map(|(name, value)| {
+        matches!(name.as_str(), "\0function_prototype" | "\0prototype").then_some(value)
+    });
+    let prototype = prototype.cloned().unwrap_or_else(|| {
+        crate::vm::realm_intrinsic_for(
+            crate::construct::function_realm_id(function),
+            crate::ops::Builtin::FunctionPrototype,
+        )
+    });
+    drop(properties);
+    match prototype {
+        crate::value::Value::Builtin(crate::ops::Builtin::FunctionPrototype) => matches!(
+            crate::builtins::property(crate::ops::Builtin::FunctionPrototype, "bind"),
+            crate::value::Value::Builtin(crate::ops::Builtin::FunctionBind)
+        ),
+        crate::value::Value::Object(object) => crate::vm::proven_own_word(&object, "bind")
+            .is_some_and(|word| word.is_builtin(crate::ops::Builtin::FunctionBind)),
+        _ => false,
+    }
 }
 
 fn own_function(
