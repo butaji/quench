@@ -441,6 +441,39 @@ pub(crate) fn get_named_cached_prototype_guard(
     })
 }
 
+pub(crate) fn derive_plain_prototype_function(
+    receiver: &crate::value::ObjectData,
+    key: &str,
+) -> Option<std::rc::Rc<crate::value::FunctionValue>> {
+    prototype_owner_is_plain(receiver).then_some(())?;
+    (!shadows_named_property(receiver, key)).then_some(())?;
+    let prototype_slot = receiver.hot_properties().position_rev("\0prototype")?;
+    let owner = retain_object_slot(receiver, prototype_slot)?;
+    prototype_owner_is_plain(&owner).then_some(())?;
+    let word = plain_function_slot(&owner, key)?;
+    let pointer = word.function_ptr()?;
+    unsafe { std::rc::Rc::increment_strong_count(pointer) };
+    Some(unsafe { std::rc::Rc::from_raw(pointer) })
+}
+
+fn plain_function_slot<'a>(
+    object: &'a crate::value::ObjectData,
+    key: &str,
+) -> Option<&'a crate::register_file::SlotWord> {
+    let mut found = None;
+    for (slot, name) in object.hot_properties().names().enumerate().rev() {
+        if crate::builtins::is_deleted_key_for(name, key)
+            || crate::builtins::is_descriptor_key_for(name, key)
+        {
+            return None;
+        }
+        if name == key && found.is_none() {
+            found = object.hot_properties().slot_word(slot);
+        }
+    }
+    found.filter(|word| word.function_ptr().is_some())
+}
+
 fn prototype_entry_guard(
     receiver: &crate::value::ObjectData,
     key: &str,
@@ -517,9 +550,7 @@ fn cacheable_immediate_prototype(
         let Some(prototype_slot) = owner.hot_properties().position_rev("\0prototype") else {
             return cacheable_default_object_missing(receiver, key, depth, links, owner);
         };
-        let Value::Object(prototype) = owner.hot_properties().slot_value(prototype_slot)? else {
-            return None;
-        };
+        let prototype = retain_object_slot(owner, prototype_slot)?;
         links[depth] = Some(PrototypeLink {
             prototype_slot: u32::try_from(prototype_slot).ok()?,
             prototype: std::rc::Rc::downgrade(&prototype),
@@ -538,6 +569,18 @@ fn cacheable_immediate_prototype(
         retained[depth] = Some(prototype);
     }
     None
+}
+
+fn retain_object_slot(
+    owner: &crate::value::ObjectData,
+    slot: usize,
+) -> Option<std::rc::Rc<crate::value::ObjectData>> {
+    let pointer = owner
+        .hot_properties()
+        .slot_word(slot)?
+        .object_or_null_ptr()??;
+    unsafe { std::rc::Rc::increment_strong_count(pointer) };
+    Some(unsafe { std::rc::Rc::from_raw(pointer) })
 }
 
 fn cacheable_missing_prototype(
