@@ -12533,9 +12533,7 @@ pub fn cp_exec_file(
     // process boundary. Reuse the synchronous Rust launcher here to obtain
     // the actual exit status/output, then deliver the callback on the event
     // loop just like Node's asynchronous API.
-    if command.as_deref() == Some(state.borrow().process.exec_path.as_str())
-        && args.iter().any(|value| matches!(value, Value::Array(_)))
-    {
+    if command.as_deref() == Some(state.borrow().process.exec_path.as_str()) {
         let result = crate::modules::child_process::spawn_sync(state, &spawn_args)?;
         let status = execute::get_property(&result, "status");
         let stdout = execute::get_property(&result, "stdout");
@@ -12544,6 +12542,8 @@ pub fn cp_exec_file(
             Value::Number(code) if code != 0.0 => Some(code),
             _ => None,
         };
+        let stdout = execute::to_js_string(&stdout).unwrap_or_default();
+        let stderr = execute::to_js_string(&stderr).unwrap_or_default();
         let command_line = {
             let values = args
                 .iter()
@@ -12569,9 +12569,18 @@ pub fn cp_exec_file(
                 .join(" ")
         };
         let error = status_code.map(|code| {
+            // Node includes the child's stderr after the command header in
+            // execFile's Error#message. Preserve that boundary fact for any
+            // real self-reexec (including CLI option validation), rather
+            // than dropping diagnostics while converting spawnSync output.
+            let message = if stderr.is_empty() {
+                format!("Command failed: {command_line}")
+            } else {
+                format!("Command failed: {command_line}\n{stderr}")
+            };
             let error = quench_runtime::builtins::error(
                 quench_runtime::ops::Builtin::Error,
-                &[Value::String(format!("Command failed: {command_line}"))],
+                &[Value::String(message)],
             );
             execute::set_property(
                 execute::set_property(error, "code", Value::Number(code)),
@@ -12579,8 +12588,6 @@ pub fn cp_exec_file(
                 Value::String(command.clone().unwrap_or_default()),
             )
         });
-        let stdout = execute::to_js_string(&stdout).unwrap_or_default();
-        let stderr = execute::to_js_string(&stderr).unwrap_or_default();
         let mut completion_error = error;
         let options = args
             .iter()
