@@ -153,6 +153,10 @@ pub struct NetState {
     pub pending_writes: Vec<(Value, Vec<u8>)>,
     pub pending_connect_writes: HashMap<u64, Vec<u8>>,
     pub pending_request_writes: Vec<(Value, Vec<u8>, Value)>,
+    /// Framing state for sockets owned by the HTTP/2 endpoint.  Keeping this
+    /// beside the canonical socket registry lets arbitrary TCP read chunks be
+    /// reduced into complete frames without duplicating net transport state.
+    pub http2_sessions: HashMap<u64, crate::modules::http2_protocol::Session>,
     /// Canonical socket timeout timers, independent of VM alias properties.
     pub timeout_timers: HashMap<u64, Value>,
     pub pipe_fds: HashMap<i64, String>,
@@ -203,6 +207,7 @@ impl NetState {
             pending_writes: Vec::new(),
             pending_connect_writes: HashMap::new(),
             pending_request_writes: Vec::new(),
+            http2_sessions: HashMap::new(),
             timeout_timers: HashMap::new(),
             pipe_fds: HashMap::new(),
             fd_streams: HashMap::new(),
@@ -634,6 +639,23 @@ pub(crate) fn net_id(receiver: &Value) -> Option<u64> {
     match execute::get_property(receiver, NET_ID_PROP) {
         Value::Number(n) if n.is_finite() && n >= 0.0 => Some(n as u64),
         _ => None,
+    }
+}
+
+/// Attach one protocol state machine to a canonical net socket.  The socket
+/// remains an ordinary transport object; HTTP/2 consumes the same bytes at
+/// the pump edge and owns only the framing/session facts here.
+pub(crate) fn register_http2_session(
+    state: &Rc<RefCell<HostState>>,
+    socket: &Value,
+    role: crate::modules::http2_protocol::Role,
+) {
+    if let Some(id) = net_id(socket) {
+        state
+            .borrow_mut()
+            .net
+            .http2_sessions
+            .insert(id, crate::modules::http2_protocol::Session::new(role));
     }
 }
 
