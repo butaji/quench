@@ -1,7 +1,6 @@
 //! Two-shape property/call composition over canonical residual and IC facts.
 
 use crate::machine::{BaselineEntry, CodeView};
-use std::rc::Rc;
 
 const REGION_LEN: usize = 8;
 pub(crate) const PROFILE_NAME: &str = "polymorphic_property_pair_sum_return";
@@ -26,7 +25,7 @@ impl NativePropertyPairPlan {
     }
 
     pub(crate) fn execute(&mut self, environment: &crate::environment::Environment) -> Option<i32> {
-        let target = environment_function(environment, self.selection.callee_slot)?;
+        let target = environment.retain_proven_function(self.selection.callee_slot)?;
         let fact = self.target_fact(&target)?;
         environment.with_proven_object(self.selection.receiver_slots[0], |left| {
             environment.with_proven_object(self.selection.receiver_slots[1], |right| {
@@ -37,11 +36,9 @@ impl NativePropertyPairPlan {
 
     fn target_fact(
         &mut self,
-        target: &Rc<crate::value::FunctionValue>,
+        target: &crate::value::FunctionValue,
     ) -> Option<crate::function_call_fact::OwnFieldAddReturn> {
-        let fact = crate::function_call_fact::own_field_add_return(target)?;
-        let installed = self.fact.get_or_insert_with(|| fact.clone());
-        (*installed == fact).then_some(fact)
+        crate::function_call_fact::stable_own_field_add_return(&mut self.fact, target)
     }
 
     pub(crate) const fn span(&self) -> usize {
@@ -79,19 +76,6 @@ fn guarded_slot(
         .borrow_mut()
         .probe_shape(shape, property)?;
     object.guarded_plain_slot(shape.0, slot, key)
-}
-
-fn environment_function(
-    environment: &crate::environment::Environment,
-    slot: u16,
-) -> Option<Rc<crate::value::FunctionValue>> {
-    let bits = environment.proven_tagged_bits(slot)?;
-    let crate::tagged_value::DecodedValue::FunctionPtr(pointer) =
-        crate::tagged_value::TaggedValue::from_bits(bits).decode()
-    else {
-        return None;
-    };
-    unsafe { crate::locals::resolved_function_ptr(pointer as *const crate::value::FunctionValue) }
 }
 
 pub(crate) fn select_property_pair(

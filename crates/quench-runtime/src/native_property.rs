@@ -81,6 +81,13 @@ pub(crate) struct NativePropertyPairContext {
     result: i32,
 }
 
+#[repr(C)]
+pub(crate) struct NativePrototypeAddContext {
+    access: GuardedPropertySlot,
+    addend: i32,
+    result: i32,
+}
+
 impl NativePropertyReadContext {
     pub(crate) fn new(access: GuardedPropertySlot) -> Self {
         Self {
@@ -142,6 +149,39 @@ impl NativePropertyPairContext {
     pub(crate) fn result(&self, status: u32) -> Option<i32> {
         (status == 1).then_some(self.result)
     }
+}
+
+impl NativePrototypeAddContext {
+    pub(crate) fn new(access: GuardedPropertySlot, addend: i32) -> Self {
+        Self {
+            access,
+            addend,
+            result: 0,
+        }
+    }
+
+    pub(crate) fn result(&self, status: u32) -> Option<i32> {
+        (status == 1).then_some(self.result)
+    }
+}
+
+#[inline(never)]
+pub(crate) extern "C" fn execute_prototype_add_i32(context: *mut NativePrototypeAddContext) -> u32 {
+    let Some(context) = (unsafe { context.as_mut() }) else {
+        return 0;
+    };
+    let Some(value) = context
+        .access
+        .load_number_now()
+        .and_then(crate::stencil_numeric_integer_selection::exact_i32)
+    else {
+        return 0;
+    };
+    let Some(result) = value.checked_add(context.addend) else {
+        return 0;
+    };
+    context.result = result;
+    1
 }
 
 #[inline(never)]
@@ -274,6 +314,25 @@ impl GuardedPropertySlot {
 
     pub(crate) fn load_own_number_now(self) -> Option<f64> {
         unsafe { self.valid_own_slot()?.as_ref() }?.number()
+    }
+
+    pub(crate) fn load_number_now(self) -> Option<f64> {
+        unsafe { self.valid_read_slot()?.as_ref() }?.number()
+    }
+
+    fn valid_read_slot(self) -> Option<*const crate::register_file::SlotWord> {
+        let layout = unsafe { self.layout.as_ref() }?;
+        (*layout == self.expected_layout).then_some(())?;
+        let depth = usize::try_from(self.prototype_depth).ok()?;
+        (depth <= self.prototype_links.len()).then_some(())?;
+        for link in self.prototype_links.iter().take(depth) {
+            let word = unsafe { link.slot.as_ref() }?.plain_tagged_bits()?;
+            let layout = unsafe { link.layout.as_ref() }?;
+            (word == link.expected_word && *layout == link.expected_layout).then_some(())?;
+        }
+        let descriptor = unsafe { self.descriptor_state.as_ref() }?;
+        let deleted = unsafe { self.deleted_state.as_ref() }?;
+        (*descriptor == 1 && *deleted == 1).then_some(self.slot)
     }
 
     fn valid_own_slot(self) -> Option<*const crate::register_file::SlotWord> {
