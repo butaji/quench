@@ -604,6 +604,9 @@ pub fn reduce_unary(
     if unary.operator == UnaryOperator::Delete {
         return crate::unary::reduce_delete(&unary.argument, ops, facts, next_register, locals);
     }
+    if let Some(register) = reduce_negative_number(unary, ops, facts, next_register) {
+        return Some(register);
+    }
     let operator = match unary.operator {
         UnaryOperator::UnaryPlus => crate::ops::UnaryOp::Plus,
         UnaryOperator::UnaryNegation => crate::ops::UnaryOp::Minus,
@@ -627,6 +630,29 @@ pub fn reduce_unary(
     *next_register = next_register.saturating_add(1);
     ops.push(Op::Unary { dst, operator, src });
     Some(dst)
+}
+
+fn reduce_negative_number(
+    unary: &oxc::ast::ast::UnaryExpression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+) -> Option<u16> {
+    (unary.operator == UnaryOperator::UnaryNegation).then_some(())?;
+    let Expression::NumericLiteral(number) = &unary.argument else {
+        return None;
+    };
+    let value = -number.value;
+    Some(reduce_literal_atom(
+        crate::literal::Literal {
+            span: unary.span,
+            fact: crate::facts::Constant::Number(value),
+            op: crate::ops::Constant::Number(value),
+        },
+        ops,
+        facts,
+        next_register,
+    ))
 }
 
 fn emit_optional_name_lookup(
