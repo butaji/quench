@@ -51,10 +51,23 @@ fn main() -> ExitCode {
             .get(index + 1)
             .map(String::as_str)
             .unwrap_or_default();
-        let source = if input_type == Some("module") {
-            quench_node::esm_imports::transform_esm_imports(source)
+        // `-p/--print` evaluates its expression and writes the resulting
+        // value. The compatibility runner shares this CLI with self-reexec
+        // child processes, so make the print contract explicit at the Rust
+        // boundary instead of asking each child-process caller to emulate it.
+        let is_print = matches!(
+            arguments.get(index).map(String::as_str),
+            Some("--print" | "-p" | "-pe" | "-ep")
+        );
+        let source = if is_print {
+            format!("console.log({source});")
         } else {
             source.to_string()
+        };
+        let source = if input_type == Some("module") {
+            quench_node::esm_imports::transform_esm_imports(&source)
+        } else {
+            source
         };
         let source = if input_type == Some("module") && source.contains("await ") {
             format!("(async () => {{\n{source}\n}})();")
