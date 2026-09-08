@@ -37,6 +37,12 @@ pub(crate) fn client_preface() -> Vec<u8> {
     bytes
 }
 
+/// Shared private key used by Node's internal HTTP/2 tests to retrieve the
+/// transport socket backing a ClientHttp2Session.  Quench represents
+/// well-known symbols as private string keys; exporting the same key from the
+/// internal util module keeps session and test-side property access identical.
+pub(crate) const HTTP2_SOCKET_SYMBOL: &str = "Symbol.nodejs.http2.kSocket\0quench";
+
 pub(crate) fn coded_error(
     kind: quench_runtime::ops::Builtin,
     code: &str,
@@ -94,6 +100,10 @@ pub fn module() -> Value {
         ("buildNgHeaderString".into(), make("buildNgHeaderString")),
         ("toHeaderObject".into(), make("toHeaderObject")),
         ("NghttpError".into(), constructor),
+        (
+            "kSocket".into(),
+            Value::String(HTTP2_SOCKET_SYMBOL.into()),
+        ),
     ]);
     let global = quench_runtime::vm::current_global_object();
     execute::set_property_in_place(&global, "__quenchHttp2Binding", binding());
@@ -532,6 +542,7 @@ pub fn dispatch(
         "sessionRequest" => session_request(state, _receiver, values),
         "sessionConnect" => session_connect(values),
         "sessionClose" => session_close(state, _receiver, values),
+        "sessionInvalidMethod" => session_invalid_method(_receiver),
         "streamWrite" => stream_write(state, _receiver, values),
         "streamEnd" => stream_end(state, _receiver, values),
         "streamClose" => stream_close(state, _receiver, values),
@@ -760,7 +771,21 @@ fn session_capability(kind: &str) -> Value {
 fn decorate_client_session(socket: &Value, secure: bool) -> Result<(), VmError> {
     execute::set_property_in_place(socket, "request", session_capability("sessionRequest"));
     execute::set_property_in_place(socket, "close", session_capability("sessionClose"));
+    for name in [
+        "setNextStreamID",
+        "setLocalWindowSize",
+        "ping",
+        "settings",
+        "goaway",
+    ] {
+        execute::set_property_in_place(socket, name, session_capability("sessionInvalidMethod"));
+    }
     execute::set_property_in_place(socket, "pendingSettingsAck", Value::Boolean(false));
+    execute::set_property_in_place(
+        socket,
+        HTTP2_SOCKET_SYMBOL,
+        socket.clone(),
+    );
     execute::set_property_in_place(
         socket,
         "alpnProtocol",
@@ -818,6 +843,19 @@ pub(crate) fn decorate_http2_stream(
     let _ = execute::define_property(stream.clone(), "constructor", constructor_descriptor);
     let _ = execute::set_property_in_place(stream, "closed", Value::Boolean(false));
     let _ = execute::set_property_in_place(stream, "destroyed", Value::Boolean(false));
+    // Duplex exposes an `aborted` accessor on its prototype. Define an own
+    // writable data property so HTTP/2 streams retain Node's boolean state
+    // instead of silently routing the write through a getter-only slot.
+    let _ = execute::define_property(
+        stream.clone(),
+        "aborted",
+        host_api::object(vec![
+            ("value".into(), Value::Boolean(false)),
+            ("writable".into(), Value::Boolean(true)),
+            ("enumerable".into(), Value::Boolean(true)),
+            ("configurable".into(), Value::Boolean(true)),
+        ]),
+    );
     let _ = execute::set_property_in_place(stream, "bufferSize", Value::Number(0.0));
 }
 
@@ -1190,7 +1228,9 @@ fn session_request(
             }
         }
     }
-    write_http2_frame(&socket, &frame)?;
+    if !matches!(execute::get_property(&socket, "destroyed"), Value::Boolean(true)) {
+        write_http2_frame(&socket, &frame)?;
+    }
     Ok(stream)
 }
 
@@ -1278,7 +1318,9 @@ fn stream_write(
         stream_id,
         bytes,
     );
-    write_http2_frame(&socket, &frame)?;
+    if !matches!(execute::get_property(&socket, "destroyed"), Value::Boolean(true)) {
+        write_http2_frame(&socket, &frame)?;
+    }
     if let Some(receiver) = receiver {
         let stream = execute::canonical_value(receiver);
         let current = match execute::get_property(&stream, "bufferSize") {
@@ -1298,7 +1340,7 @@ fn stream_write(
 }
 
 fn stream_end(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     values: &[Value],
 ) -> Result<Value, VmError> {
@@ -1331,7 +1373,17 @@ fn stream_end(
         stream_id,
         bytes,
     );
-    write_http2_frame(&socket, &frame)?;
+    // Match Node's writable-stream ordering: `end(chunk)` queues its final
+    // DATA frame, allowing writes made later in the same callback turn to be
+    // flushed first. The host pump drains this queue in FIFO order on the
+    // next transport tick.
+    if !matches!(execute::get_property(&socket, "destroyed"), Value::Boolean(true)) {
+        state
+            .borrow_mut()
+            .net
+            .pending_writes
+            .push((socket.clone(), frame.encode()));
+    }
     if let Some(receiver) = receiver {
         let stream = execute::canonical_value(receiver);
         let current = match execute::get_property(&stream, "bufferSize") {
@@ -1369,7 +1421,9 @@ fn stream_close(
         stream_id,
         code.to_be_bytes().to_vec(),
     );
-    write_http2_frame(&socket, &frame)?;
+    if !matches!(execute::get_property(&socket, "destroyed"), Value::Boolean(true)) {
+        write_http2_frame(&socket, &frame)?;
+    }
     if let Some(stream) = receiver {
         execute::set_property_in_place(stream, "rstCode", Value::Number(code as f64));
     }
@@ -1399,6 +1453,26 @@ fn stream_destroy(
     execute::set_property_in_place(&stream, "rstCode", Value::Number(code as f64));
     execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
     execute::set_property_in_place(&stream, "destroyed", Value::Boolean(error.is_some()));
+    // Preserve the public receiver's lifecycle fields when a property write
+    // promotes a copy-on-write representative. Abort-before-connect returns
+    // this original object synchronously, so callers must observe the same
+    // `aborted`/`destroyed` facts before the canonical transport alias is
+    // revisited by the next pump tick.
+    let _ = execute::define_property(
+        receiver.clone(),
+        "aborted",
+        host_api::object(vec![
+            ("value".into(), Value::Boolean(false)),
+            ("writable".into(), Value::Boolean(true)),
+            ("enumerable".into(), Value::Boolean(true)),
+            ("configurable".into(), Value::Boolean(true)),
+        ]),
+    );
+    execute::set_property_in_place(
+        &receiver,
+        "destroyed",
+        Value::Boolean(error.is_some()),
+    );
     let is_server = matches!(
         execute::get_property(&socket, crate::modules::http2_protocol::SERVER_MARKER),
         Value::Boolean(true)
@@ -1706,6 +1780,18 @@ fn session_close(
         execute::call(&destroy, socket, &[])?;
     }
     Ok(socket.clone())
+}
+
+fn session_invalid_method(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let socket = receiver.ok_or(VmError::NotCallable)?;
+    if matches!(execute::get_property(socket, "destroyed"), Value::Boolean(true)) {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::Error,
+            "ERR_HTTP2_INVALID_SESSION",
+            "The session has been destroyed".into(),
+        ));
+    }
+    Ok(Value::Undefined)
 }
 
 fn connect_target_options(
