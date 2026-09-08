@@ -143,9 +143,7 @@ impl NativeIndependentLoopPlan {
             crate::value::Value::Number(f64::from(context.left)),
             crate::value::Value::Number(f64::from(context.right)),
         ];
-        Ok(IndependentLoopOutcome::Completed(
-            crate::value::Value::Array(Rc::new(crate::value::ArrayData::new(values))),
-        ))
+        Ok(IndependentLoopOutcome::Completed(crate::value::Value::array(values)))
     }
 
     fn commit(
