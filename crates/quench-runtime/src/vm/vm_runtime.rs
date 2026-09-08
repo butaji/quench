@@ -2041,6 +2041,16 @@ fn record_string_concat(code: crate::machine::CodeView<'_>, pc: usize, constant_
     let _ = constant_call;
 }
 
+fn record_string_case(code: crate::machine::CodeView<'_>, pc: usize) {
+    crate::execution_trace::stencil_observation(code, pc, "builtins_string_case_region", true);
+    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+    #[cfg(test)]
+    {
+        crate::test_execution_profile::portable_recipe();
+        crate::test_execution_profile::dynamic_region_route(["builtins", "string_case"]);
+    }
+}
+
 pub(crate) fn execute_baseline_completion_step_from_with_owner(
     code: crate::machine::CodeView<'_>,
     plan: &crate::machine::BaselinePlan,
@@ -2302,6 +2312,17 @@ pub(crate) fn execute_optimized_code_step_from(
                 crate::completion::Completion::Return(outcome.value),
                 start + span,
             ));
+        }
+    }
+    if let Some(plan) = entry.string_case() {
+        let result = crate::locals::with_current_ref(|environment| match environment {
+            Some(environment) => plan.borrow().execute(environment),
+            None => Ok(None),
+        })?;
+        if let Some(value) = result {
+            let span = plan.borrow().span();
+            record_string_case(code, start);
+            return Ok((crate::completion::Completion::Return(value), start + span));
         }
     }
     if let Some(dag) = entry.numeric_dag() {
@@ -3084,6 +3105,17 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                 return completion_step_after_transition(
                     registers,
                     crate::completion::Completion::Return(outcome.value),
+                    pc + span,
+                );
+            }
+        }
+        if let (Some(environment), Some(string_case)) = (environment, plan.string_case_at(pc)) {
+            if let Some(value) = string_case.borrow().execute(environment)? {
+                let span = string_case.borrow().span();
+                record_string_case(code, pc);
+                return completion_step_after_transition(
+                    registers,
+                    crate::completion::Completion::Return(value),
                     pc + span,
                 );
             }
