@@ -95,6 +95,12 @@ pub(crate) struct NativeVectorDotContext {
     result: f64,
 }
 
+#[repr(C)]
+pub(crate) struct NativeOwnStoreContext {
+    access: GuardedPropertySlot,
+    value: f64,
+}
+
 impl NativePropertyReadContext {
     pub(crate) fn new(access: GuardedPropertySlot) -> Self {
         Self {
@@ -194,6 +200,27 @@ pub(crate) extern "C" fn execute_vector_dot(context: *mut NativeVectorDotContext
     let xy = context.left[0] * context.right[0] + context.left[1] * context.right[1];
     context.result = xy + context.left[2] * context.right[2];
     1
+}
+
+#[inline(never)]
+pub(crate) extern "C" fn execute_own_store_number(context: *mut NativeOwnStoreContext) -> u32 {
+    let Some(context) = (unsafe { context.as_mut() }) else {
+        return 0;
+    };
+    if !context.access.accepts_non_owning_store() {
+        return 0;
+    }
+    let Some(slot) = context.access.valid_own_slot() else {
+        return 0;
+    };
+    unsafe { &*slot }.store_number(context.value);
+    1
+}
+
+impl NativeOwnStoreContext {
+    pub(crate) const fn new(access: GuardedPropertySlot, value: f64) -> Self {
+        Self { access, value }
+    }
 }
 
 #[inline(never)]
