@@ -4,7 +4,7 @@
   "result": { "kind": "number", "value": 7 },
   "plan": {
     "execution_kind": "native_machine_code",
-    "operation_route": ["add", "add", "return"],
+    "operation_route": ["Add", "Add", "Return"],
     "fallback": false
   },
   "profile": {
