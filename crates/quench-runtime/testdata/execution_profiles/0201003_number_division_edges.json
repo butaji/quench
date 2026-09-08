@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "warmup": 1,
-  "result": { "kind": "boolean", "value": true },
+  "result": { "kind": "positive_infinity" },
   "plan": {
     "execution_kind": "native_machine_code",
     "operation_route": ["LoadLocalChecked", "LoadLocalChecked", "Div", "Return"],
@@ -10,7 +10,7 @@
   "profile": {
     "residual": {},
     "slow": {},
-    "stencils": { "number_divide_return": { "entries": 3, "fallbacks": 0 } },
-    "events": { "leaf_hit": 3 }
+    "stencils": { "number_divide_return": { "entries": 1, "fallbacks": 0 } },
+    "events": { "leaf_hit": 1 }
   }
 }
