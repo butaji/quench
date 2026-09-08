@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "warmup": 1,
+  "result": { "kind": "number", "value": 42 },
+  "plan": {
+    "execution_kind": "native_machine_code",
+    "operation_route": ["Binary", "JumpIfFalse", "GetNQuickened", "Add", "GetNQuickened", "Jump", "Return"],
+    "fallback": false
+  },
+  "profile": {
+    "residual": { "Return": 1 },
+    "slow": {},
+    "stencils": { "monomorphic_linked_list_sum": { "entries": 1, "fallbacks": 0 } },
+    "events": { "leaf_hit": 1 }
+  }
+}
