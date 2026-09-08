@@ -1,18 +1,17 @@
 function classify(value) {
   if (value !== value) return 1;
-  if (Object.is(value, -0)) return 2;
+  if (value === 0 && 1 / value === -Infinity) return 2;
   if (value < 0) return 3;
   return 4;
 }
 
 classify(1);
-function run() {
-  return classify(NaN) * 100 + classify(-0) * 10 + classify(-1);
-}
 function verify(result) {
-if (result !== 123) {
-  throw new Error("comparison edge classification mismatch");
-}
+  if (classify(NaN) !== 1) throw new Error("NaN classification mismatch");
+  if (classify(-0) !== 2) throw new Error("negative-zero classification mismatch");
+  if (classify(-1) !== 3) throw new Error("negative classification mismatch");
+  if (classify(1) !== 4) throw new Error("positive classification mismatch");
+  if (result !== 1) throw new Error("measured NaN classification mismatch");
   return result;
 }
-return { run: run, verify: verify };
+return { run: classify, verify: verify, arguments: [NaN] };
