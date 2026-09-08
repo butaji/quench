@@ -15,6 +15,10 @@ use super::*;
 /// Poll every server and socket once: accept connections, announce
 /// connects, read available bytes, flush writes, and finalize closes.
 pub fn poll(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
+    // The QUIC transport shares the host pump with TCP.  It only moves bytes
+    // between non-blocking UDP sockets and the host-owned queue here; session
+    // and packet semantics remain above this transport boundary.
+    crate::modules::quic_transport::poll(state);
     let events = std::mem::take(&mut state.borrow_mut().net.pending_events);
     for (receiver, event, args) in events {
         let socket = super::net_id(&receiver)

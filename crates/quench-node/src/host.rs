@@ -44,6 +44,10 @@ pub struct HostState {
     pub process: crate::modules::process::ProcessState,
     pub fs: crate::modules::fs::FsState,
     pub net: crate::modules::net::NetState,
+    /// Host-owned UDP edge reserved for the QUIC endpoint/session layer.
+    /// `process.features.quic` remains false until a protocol implementation
+    /// consumes these datagrams.
+    pub quic: crate::modules::quic_transport::QuicTransportState,
     pub http: crate::modules::http::HttpState,
     pub emitters: crate::modules::emitter::EmitterRegistry,
     pub targets: crate::modules::event_target::TargetRegistry,
@@ -162,6 +166,7 @@ impl NodeHost {
             process: crate::modules::process::ProcessState::new(argv),
             fs: crate::modules::fs::FsState::new(),
             net: crate::modules::net::NetState::new(),
+            quic: crate::modules::quic_transport::QuicTransportState::new(),
             http: crate::modules::http::HttpState::new(),
             emitters: crate::modules::emitter::EmitterRegistry::new(),
             targets: crate::modules::event_target::TargetRegistry::new(),
