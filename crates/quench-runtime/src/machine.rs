@@ -5480,6 +5480,7 @@ enum NativeAdmission {
     LocalPredicate(Rc<RefCell<crate::stencil_fusion::NativeLocalPredicatePlan>>),
     LocalProperty(Rc<RefCell<crate::stencil_fusion::NativeLocalPropertyPlan>>),
     NumericDag(Rc<RefCell<crate::stencil_numeric_dag::NativeNumericDagPlan>>),
+    DenseUpdate(Rc<RefCell<crate::stencil_dense_array_update::NativeDenseUpdatePlan>>),
     PropertyNumeric(Rc<RefCell<crate::stencil_property_numeric::PropertyNumericPlan>>),
     Move(Rc<RefCell<NativeMovePlan>>),
     LoadLocal(Rc<RefCell<NativeMovePlan>>),
@@ -5512,6 +5513,9 @@ impl AdmissionEntry for NativeAdmission {
             Self::NumericDag(_) => {
                 shared_value_bytes::<RefCell<crate::stencil_numeric_dag::NativeNumericDagPlan>>()
             }
+            Self::DenseUpdate(_) => shared_value_bytes::<
+                RefCell<crate::stencil_dense_array_update::NativeDenseUpdatePlan>,
+            >(),
             Self::PropertyNumeric(_) => shared_value_bytes::<
                 RefCell<crate::stencil_property_numeric::PropertyNumericPlan>,
             >(),
@@ -5540,6 +5544,7 @@ impl std::fmt::Debug for NativeAdmission {
             Self::LocalPredicate(_) => "local_predicate",
             Self::LocalProperty(_) => "local_property",
             Self::NumericDag(_) => "numeric_dag",
+            Self::DenseUpdate(_) => "dense_update",
             Self::PropertyNumeric(_) => "property_numeric",
             Self::Move(_) => "move",
             Self::LoadLocal(_) => "load_local",
@@ -5887,6 +5892,23 @@ fn numeric_dag_admission(
     Some(NativeAdmission::NumericDag(Rc::new(RefCell::new(plan))))
 }
 
+fn dense_update_admission(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    let selection = crate::stencil_dense_array_update::select_dense_update(code, entries, cfg, pc)?;
+    let plan = crate::stencil_dense_array_update::NativeDenseUpdatePlan::new(
+        selection,
+        policy,
+        Rc::clone(arena),
+    )?;
+    Some(NativeAdmission::DenseUpdate(Rc::new(RefCell::new(plan))))
+}
+
 fn local_property_admission(
     code: CodeView<'_>,
     entries: &[BaselineEntry],
@@ -6231,6 +6253,10 @@ fn collect_admissions_at(
     arena: &SharedStencilPool,
 ) {
     let entry = entries[pc];
+    builder.push_optional(
+        pc,
+        dense_update_admission(code, entries, cfg, pc, policy, arena),
+    );
     collect_numeric_admissions(builder, entries, cfg, pc, entry, code, policy, arena);
     builder.push_optional(pc, add_chain_admission(entries, cfg, pc, policy, arena));
     builder.push_optional(
@@ -6334,13 +6360,14 @@ impl BaselinePlan {
 
     fn has_eager_return_entry(&self) -> bool {
         let dag = self.numeric_dag_at(0).is_some();
+        let dense = self.dense_update_at(0).is_some();
         let numeric = self
             .native_local_binary_at(0)
             .is_some_and(|plan| plan.borrow().selection().returns);
         let property = self
             .native_local_property_at(0)
             .is_some_and(|plan| plan.borrow().returns());
-        dag || numeric || property
+        dag || dense || numeric || property
     }
 
     fn native_handle<T>(
@@ -6381,6 +6408,12 @@ impl BaselinePlan {
         numeric_dag_at,
         NumericDag,
         crate::stencil_numeric_dag::NativeNumericDagPlan
+    );
+    typed_admission_accessors!(
+        dense_update_handle_at,
+        dense_update_at,
+        DenseUpdate,
+        crate::stencil_dense_array_update::NativeDenseUpdatePlan
     );
     typed_admission_accessors!(
         property_numeric_handle_at,
@@ -6497,6 +6530,11 @@ impl OptimizingEntry<'_> {
         numeric_dag,
         NumericDag,
         crate::stencil_numeric_dag::NativeNumericDagPlan
+    );
+    optimizing_admission_accessors!(
+        dense_update,
+        DenseUpdate,
+        crate::stencil_dense_array_update::NativeDenseUpdatePlan
     );
     optimizing_admission_accessors!(
         property_numeric,
