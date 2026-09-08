@@ -73,6 +73,7 @@ mod finalization_registry;
 mod function_code;
 mod function_parameters;
 mod function_physical;
+mod function_call_fact;
 mod functions;
 mod functions_dynamic;
 mod functions_write;
