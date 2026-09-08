@@ -1009,6 +1009,24 @@ pub(crate) unsafe fn resolved_function_ptr(
     }
 }
 
+/// Retain the current semantic object represented by one owning slot word.
+///
+/// # Safety
+/// `pointer` must come from a live owning tagged slot for the duration of this
+/// call. The returned `Rc` retains the resolved representative afterwards.
+pub(crate) unsafe fn resolved_object_ptr(
+    pointer: *const crate::value::ObjectData,
+) -> Option<Rc<crate::value::ObjectData>> {
+    let original = unsafe {
+        Rc::increment_strong_count(pointer);
+        Rc::from_raw(pointer)
+    };
+    match resolved_replacement(Value::Object(original)) {
+        Value::Object(object) => Some(object),
+        _ => None,
+    }
+}
+
 pub(crate) fn reset_replacements() {
     REPLACEMENTS.with(|replacements| replacements.borrow_mut().clear());
     REPLACEMENT_ROOTS.with(|roots| roots.borrow_mut().clear());

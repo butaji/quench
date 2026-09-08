@@ -1070,6 +1070,20 @@ impl Environment {
         unsafe { crate::locals::resolved_function_ptr(pointer as *const _) }
     }
 
+    /// Retain the current object representative from a proven owning slot.
+    #[inline(always)]
+    pub(crate) fn retain_proven_object(&self, slot: u16) -> Option<Rc<crate::value::ObjectData>> {
+        let bits = self.proven_tagged_bits(slot)?;
+        let crate::tagged_value::DecodedValue::ObjectPtr(pointer) =
+            crate::tagged_value::TaggedValue::from_bits(bits).decode()
+        else {
+            return None;
+        };
+        // SAFETY: the environment owns the tagged slot during resolution; the
+        // returned Rc independently retains the current representative.
+        unsafe { crate::locals::resolved_object_ptr(pointer as *const _) }
+    }
+
     /// Borrow an array from a proven non-cell slot for one non-reentrant
     /// region. The environment owns the tagged word throughout the closure;
     /// callers may not allocate, invoke JavaScript, or expose the reference.
