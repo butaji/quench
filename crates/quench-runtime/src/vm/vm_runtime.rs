@@ -1992,6 +1992,13 @@ fn record_dense_fill(code: crate::machine::CodeView<'_>, pc: usize) {
     ]);
 }
 
+fn record_integer_loop(code: crate::machine::CodeView<'_>, pc: usize) {
+    crate::execution_trace::stencil_observation(code, pc, "numeric_integer_region", true);
+    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+    #[cfg(test)]
+    crate::test_execution_profile::dynamic_region_route(["numeric", "integer"]);
+}
+
 fn record_dense_copy(code: crate::machine::CodeView<'_>, pc: usize) {
     crate::execution_trace::stencil_observation(code, pc, "dense_numeric_copy_loop", true);
     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
@@ -2258,6 +2265,33 @@ pub(crate) fn execute_optimized_code_step_from(
             }
         }
         crate::execution_trace::stencil_observation(code, start, "dense_numeric_fill_loop", false);
+    }
+    if let Some(integer_loop) = entry.integer_loop() {
+        let result = crate::locals::with_current_ref(|environment| {
+            let Some(environment) = environment else { return Ok(None) };
+            integer_loop.borrow_mut().execute(code, environment, context)
+        });
+        match result {
+            Ok(Some(crate::stencil_numeric_integer_loop::IntegerLoopOutcome::Completed(value))) => {
+                record_integer_loop(code, start);
+                return Ok((
+                    crate::completion::Completion::Return(crate::value::Value::Number(f64::from(value))),
+                    crate::stencil_numeric_integer_loop::REGION_END,
+                ));
+            }
+            Ok(Some(crate::stencil_numeric_integer_loop::IntegerLoopOutcome::Resume { pc })) => {
+                record_integer_loop(code, start);
+                return Ok((crate::completion::Completion::Normal, pc));
+            }
+            Ok(None) | Err(crate::machine::NativeDispatchError::Physical(_)) => {}
+            Err(crate::machine::NativeDispatchError::SemanticAt { error, .. }) => return Err(error),
+            Err(crate::machine::NativeDispatchError::Committed { pc, message }) => {
+                return Err(VmError::EvalError(format!(
+                    "committed integer loop failure at residual pc {pc}: {message}"
+                )))
+            }
+        }
+        crate::execution_trace::stencil_observation(code, start, "numeric_integer_region", false);
     }
     if let Some(dense) = entry.dense_update() {
         let result = crate::locals::with_current_ref(|environment| {
@@ -3143,6 +3177,39 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                 Err(crate::machine::NativeDispatchError::Committed { pc, message }) => {
                     return Err(VmError::EvalError(format!(
                         "committed dense fill failure at residual pc {pc}: {message}"
+                    )));
+                }
+            }
+        }
+        if let (Some(environment), Some(integer_loop)) = (environment, plan.integer_loop_at(pc)) {
+            match integer_loop.borrow_mut().execute(code, environment, context) {
+                Ok(Some(crate::stencil_numeric_integer_loop::IntegerLoopOutcome::Completed(value))) => {
+                    record_integer_loop(code, pc);
+                    return completion_step_after_transition(
+                        registers,
+                        crate::completion::Completion::Return(crate::value::Value::Number(f64::from(value))),
+                        crate::stencil_numeric_integer_loop::REGION_END,
+                    );
+                }
+                Ok(Some(crate::stencil_numeric_integer_loop::IntegerLoopOutcome::Resume { pc })) => {
+                    record_integer_loop(code, 0);
+                    return completion_step_after_transition(
+                        registers,
+                        crate::completion::Completion::Normal,
+                        pc,
+                    );
+                }
+                Ok(None) | Err(crate::machine::NativeDispatchError::Physical(_)) => {
+                    crate::execution_trace::stencil_observation(
+                        code, pc, "numeric_integer_region", false,
+                    )
+                }
+                Err(crate::machine::NativeDispatchError::SemanticAt { pc, error }) => {
+                    return completion_step_after_error(registers, error, pc + 1);
+                }
+                Err(crate::machine::NativeDispatchError::Committed { pc, message }) => {
+                    return Err(VmError::EvalError(format!(
+                        "committed integer loop failure at residual pc {pc}: {message}"
                     )));
                 }
             }
@@ -5320,6 +5387,18 @@ fn cached_property_number(
     quickened_native_own_slot(code, pc, object, key)
         .and_then(crate::native_property::GuardedPropertySlot::load_own_number_now)
         .or_else(|| get_named_cached_number(object, key, &metadata.named_cache))
+}
+
+pub(crate) fn cached_own_property_number(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    object: &crate::value::ObjectData,
+) -> Option<f64> {
+    let object = native_property_object_guard(object)?;
+    let metadata = code.metadata_at(pc)?;
+    let key = metadata.name.as_deref()?;
+    quickened_native_own_slot(code, pc, object, key)
+        .and_then(crate::native_property::GuardedPropertySlot::load_own_number_now)
 }
 
 fn native_property_object_guard(
