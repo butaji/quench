@@ -271,11 +271,20 @@ pub fn new_message_channel(state: &Rc<RefCell<HostState>>) -> Result<Value, VmEr
         let _ = execute::set_property_in_place(&port1, "\0prototype", prototype.clone());
         let _ = execute::set_property_in_place(&port2, "\0prototype", prototype.clone());
     }
+    // `set_prototype_of` may return a copy-on-write wrapper.  Replace the
+    // canonical registry entries with the final values before linking peers;
+    // delivery resolves through this registry and must observe handlers set
+    // on the objects returned by MessageChannel, not the pre-prototype aliases.
+    remember_target_object(state, &port1)?;
+    remember_target_object(state, &port2)?;
     for (port, peer) in [(&port1, port2.clone()), (&port2, port1.clone())] {
         if let Some(id) = target_id(port) {
             if let Some(target) = state.borrow().targets.get(id) {
                 let mut target = target.borrow_mut();
                 target.message_peer = Some(peer);
+                // MessagePort instances start unref'd; adding a message
+                // listener (or calling `ref()`) opts into keeping the loop
+                // alive.
                 target.message_refed = false;
                 target.message_closed = false;
             }
@@ -292,10 +301,16 @@ pub fn new_message_channel(state: &Rc<RefCell<HostState>>) -> Result<Value, VmEr
 pub fn new_message_port(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     let mut port = allocate_target(state, false)?;
     port = execute::set_property(port, HOST_MUTABLE_PROP, Value::Boolean(true));
+    // The mutability marker may itself produce a new host wrapper. Keep the
+    // registry pointed at that final identity so later `onmessage` writes are
+    // visible to host-driven delivery.
+    remember_target_object(state, &port)?;
     if let Some(id) = target_id(&port) {
         if let Some(target) = state.borrow().targets.get(id) {
             let mut target = target.borrow_mut();
             target.message_port = true;
+            // A newly-created MessagePort starts unref'd, matching Node's
+            // `hasRef()` contract; listeners and `ref()` opt in explicitly.
             target.message_refed = false;
             target.message_closed = false;
         }
@@ -563,7 +578,53 @@ fn contains_uncloneable(value: &Value) -> bool {
     quench_runtime::is_callable(value)
 }
 
+/// Deliver every message currently queued for a MessagePort peer.  A single
+/// host wake-up may represent several `postMessage()` calls; draining the
+/// FIFO here avoids depending on one event-loop wake-up per call.
 pub fn message_port_deliver(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(raw_peer) = args.first() else {
+        return message_port_deliver_one(state, receiver, args);
+    };
+    // Resolve the latest wrapper retained by the target registry.  Property
+    // writes on host objects may produce copy-on-write aliases; using the
+    // callback's captured alias can therefore lose a subsequently assigned
+    // `onmessage` handler on the second queued delivery.
+    let peer = target_id(raw_peer)
+        .and_then(|id| state.borrow().targets.objects.get(&id).cloned())
+        .unwrap_or_else(|| raw_peer.clone());
+    let result = message_port_deliver_one(state, receiver, std::slice::from_ref(&peer))?;
+    for _ in 0..1024 {
+        // Invoke the one-item primitive even when the queue-length projection
+        // is unavailable on a moved/copy-on-write wrapper; it is a no-op when
+        // no message remains and avoids losing a post created during a
+        // listener callback.
+        let before = target_id(&peer).and_then(|id| {
+            state
+                .borrow()
+                .targets
+                .get(id)
+                .map(|target| target.borrow().message_queue.len())
+        });
+        message_port_deliver_one(state, None, std::slice::from_ref(&peer))?;
+        let after = target_id(&peer).and_then(|id| {
+            state
+                .borrow()
+                .targets
+                .get(id)
+                .map(|target| target.borrow().message_queue.len())
+        });
+        if before.is_none() || before == after || after == Some(0) {
+            break;
+        }
+    }
+    Ok(result)
+}
+
+fn message_port_deliver_one(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     args: &[Value],

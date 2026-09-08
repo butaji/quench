@@ -386,6 +386,14 @@ pub fn method_on(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let result = add_listener(state, receiver, args, false, false)?;
+    // Node's EventEmitter-style `port.on('message', ...)` keeps a
+    // MessagePort referenced.  Track that host fact at registration time so
+    // `hasRef()` and loop liveness agree with the public listener surface.
+    if matches!(args.first(), Some(Value::String(event)) if event == "message")
+        && receiver.is_some_and(|value| crate::modules::event_target::is_message_port(state, value))
+    {
+        let _ = crate::modules::event_target::message_port_ref(state, receiver, &[])?;
+    }
     // Native zlib streams expose backpressure through the same EventEmitter
     // surface.  A flush can clear `needDrain` before user code attaches its
     // listener; consume that one pending transition at registration time so
