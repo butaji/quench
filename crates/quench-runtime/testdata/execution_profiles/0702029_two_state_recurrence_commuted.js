@@ -2,18 +2,18 @@
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 
 function run() {
-  let a = 10;
-  let b = 11;
-  for (let i = 0; i < 32; i++) {
-    const next = (a + b) & 0xffff;
+  let a = 7;
+  let b = -9;
+  for (let i = 4; i < 29; i++) {
+    const next = 0x7fff & (b + a);
     a = b;
-    b = next ^ (i & 31);
+    b = (15 & i) ^ next;
   }
   return b;
 }
 
 function verify(result) {
-  assert(result === 21453, "masked two-state recurrence result");
+  assert(result === 5946, "commuted recurrence operands preserve dataflow");
   return result;
 }
 
