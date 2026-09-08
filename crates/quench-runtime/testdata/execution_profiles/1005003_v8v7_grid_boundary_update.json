@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "warmup": 1,
+  "result": { "kind": "number", "value": 30 },
+  "plan": {
+    "execution_kind": "native_machine_code",
+    "operation_route": ["dense_f64_guards", "affine_index", "guarded_element_copy", "nested_loop_backedge"],
+    "fallback": false
+  },
+  "profile": {
+    "residual": {},
+    "slow": {},
+    "stencils": { "affine_grid_boundary_update": { "entries": 1, "fallbacks": 0 } },
+    "events": { "leaf_hit": 1 }
+  }
+}
