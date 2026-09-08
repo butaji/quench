@@ -9,6 +9,14 @@ pub(super) fn select(
     per_iteration: &[u16],
 ) -> Option<Reduction> {
     let counted = crate::stencil_counted_loop::select(init, test, update)?;
+    select_counted(counted, body, per_iteration)
+}
+
+fn select_counted(
+    counted: crate::stencil_counted_loop::CountedLoop,
+    body: CodeView<'_>,
+    per_iteration: &[u16],
+) -> Option<Reduction> {
     let (index_slot, start, end) = (counted.index_slot, counted.start, counted.end);
     let (count_slot, left_slot, left, right_slot, right, truth_table) =
         select_body(body, index_slot)?;
@@ -25,91 +33,16 @@ pub(super) fn select(
 }
 
 pub(crate) fn select_function(code: CodeView<'_>) -> Option<FunctionReduction> {
-    let mut initial = None;
-    let mut initialized = None;
-    let mut loaded_count = None;
-    let mut reduction = None;
-    let mut returned_count = false;
-    for pc in 0..code.len() {
-        let instruction = code.instruction(pc)?;
-        match instruction.opcode {
-            Opcode::LoadConst => select_function_constant(code, instruction, &mut initial)?,
-            Opcode::InitLocal if initialized.is_none() => {
-                initialized = Some((instruction.a, instruction.b));
-            }
-            Opcode::LoadLocal | Opcode::LoadLocalChecked => {
-                if loaded_count.is_some_and(|(_, slot)| slot != instruction.b) {
-                    return None;
-                }
-                loaded_count = Some((instruction.a, instruction.b));
-            }
-            Opcode::Slow => select_function_slow(code, pc, &mut reduction)?,
-            Opcode::Return => {
-                returned_count |=
-                    loaded_count.is_some_and(|(register, _)| register == instruction.a);
-            }
-            _ => return None,
-        }
-    }
-    let (register, initial_count) = initial?;
-    let (count_slot, source) = initialized?;
-    (register == source && returned_count && loaded_count?.1 == count_slot).then_some(())?;
-    let reduction = reduction?;
-    (reduction.count_slot == count_slot).then_some(FunctionReduction {
+    let facts = crate::stencil_counted_function::select(code, select_counted)?;
+    let reduction = facts.loop_cover;
+    (facts.returned_slot == reduction.count_slot).then_some(())?;
+    let initial =
+        crate::stencil_counted_function::initial_f64(&facts.initials, reduction.count_slot)?;
+    let initial_count = crate::stencil_numeric_integer_selection::exact_i32(initial)?;
+    Some(FunctionReduction {
         reduction,
         initial_count,
     })
-}
-
-fn select_function_constant(
-    code: CodeView<'_>,
-    instruction: crate::ir::Instruction,
-    initial: &mut Option<(u16, i32)>,
-) -> Option<()> {
-    match code.constant(instruction.b)? {
-        crate::ops::Constant::Number(value) => {
-            initial.is_none().then_some(())?;
-            *initial = Some((
-                instruction.a,
-                crate::stencil_numeric_integer_selection::exact_i32(*value)?,
-            ));
-        }
-        crate::ops::Constant::Undefined => {}
-        _ => return None,
-    }
-    Some(())
-}
-
-fn select_function_slow(
-    code: CodeView<'_>,
-    pc: usize,
-    selected: &mut Option<Reduction>,
-) -> Option<()> {
-    match code.cold_at(pc)? {
-        crate::ops::Op::MarkUninitialized { .. } | crate::ops::Op::MarkImmutable { .. } => Some(()),
-        crate::ops::Op::Loop {
-            label,
-            init,
-            test,
-            body,
-            update,
-            post_test,
-            per_iteration,
-            ..
-        } if label.is_none() && !post_test => {
-            selected.is_none().then_some(())?;
-            let value = select(
-                init.code()?,
-                test.code()?,
-                body.code()?,
-                update.code()?,
-                per_iteration,
-            )?;
-            selected.replace(value);
-            Some(())
-        }
-        _ => None,
-    }
 }
 
 fn select_body(code: CodeView<'_>, index_slot: u16) -> Option<(u16, u16, Atom, u16, Atom, u8)> {
