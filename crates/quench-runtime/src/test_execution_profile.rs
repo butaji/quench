@@ -464,6 +464,15 @@ pub(crate) fn region_route(operations: &'static [crate::ir::Opcode]) {
     });
 }
 
+pub(crate) fn dynamic_region_route(route: impl IntoIterator<Item = &'static str>) {
+    update(|profile| {
+        let route = route.into_iter().collect::<Vec<_>>();
+        if !route.is_empty() && !profile.region_routes.contains(&route) {
+            profile.region_routes.push(route);
+        }
+    });
+}
+
 pub(crate) fn local_numeric_route(code: crate::machine::CodeView<'_>, start: usize, span: usize) {
     update(|profile| {
         let route = (start..start.saturating_add(span))
