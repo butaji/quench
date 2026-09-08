@@ -5375,6 +5375,11 @@ impl NativeRegionPlan {
                         "scalar-word-bool ABI cannot enter a region context".into(),
                     ));
                 }
+                crate::stencil_select::RegionAbi::ScalarWordPair => {
+                    return Err(NativeDispatchError::Physical(
+                        "scalar-word-pair ABI cannot enter a region context".into(),
+                    ));
+                }
                 crate::stencil_select::RegionAbi::ScalarWordPairBool => {
                     return Err(NativeDispatchError::Physical(
                         "scalar-word-pair-bool ABI cannot enter a region context".into(),
@@ -5491,6 +5496,7 @@ enum NativeAdmission {
     LocalProperty(Rc<RefCell<crate::stencil_fusion::NativeLocalPropertyPlan>>),
     NumericDag(Rc<RefCell<crate::stencil_numeric_dag::NativeNumericDagPlan>>),
     NumberClassify(Rc<RefCell<crate::stencil_number_classify::NativeNumberClassifyPlan>>),
+    NullishTruthy(Rc<RefCell<crate::stencil_nullish_truthy::NativeNullishTruthyPlan>>),
     DenseUpdate(Rc<RefCell<crate::stencil_dense_array_update::NativeDenseUpdatePlan>>),
     DenseCopy(Rc<RefCell<crate::stencil_dense_array_copy::NativeDenseCopyPlan>>),
     Reduction(Rc<RefCell<crate::stencil_ordered_reduction::NativeReductionPlan>>),
@@ -5532,6 +5538,9 @@ impl AdmissionEntry for NativeAdmission {
             }
             Self::NumberClassify(_) => shared_value_bytes::<
                 RefCell<crate::stencil_number_classify::NativeNumberClassifyPlan>,
+            >(),
+            Self::NullishTruthy(_) => shared_value_bytes::<
+                RefCell<crate::stencil_nullish_truthy::NativeNullishTruthyPlan>,
             >(),
             Self::DenseUpdate(_) => shared_value_bytes::<
                 RefCell<crate::stencil_dense_array_update::NativeDenseUpdatePlan>,
@@ -5583,6 +5592,7 @@ impl std::fmt::Debug for NativeAdmission {
             Self::LocalProperty(_) => "local_property",
             Self::NumericDag(_) => "numeric_dag",
             Self::NumberClassify(_) => "number_classify",
+            Self::NullishTruthy(_) => "nullish_truthy",
             Self::DenseUpdate(_) => "dense_update",
             Self::DenseCopy(_) => "dense_copy",
             Self::Reduction(_) => "reduction",
@@ -5952,6 +5962,23 @@ fn number_classify_admission(
         selection, policy, Rc::clone(arena),
     )?;
     Some(NativeAdmission::NumberClassify(Rc::new(RefCell::new(plan))))
+}
+
+fn nullish_truthy_admission(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    let selection = crate::stencil_nullish_truthy::select_nullish_truthy(
+        code, entries, cfg, pc,
+    )?;
+    let plan = crate::stencil_nullish_truthy::NativeNullishTruthyPlan::new(
+        selection, policy, Rc::clone(arena),
+    )?;
+    Some(NativeAdmission::NullishTruthy(Rc::new(RefCell::new(plan))))
 }
 
 fn dense_update_admission(
@@ -6523,6 +6550,10 @@ fn collect_admissions_at(
     );
     builder.push_optional(
         pc,
+        nullish_truthy_admission(code, entries, cfg, pc, policy, arena),
+    );
+    builder.push_optional(
+        pc,
         local_binary_admission(code, entries, cfg, pc, policy, arena),
     );
     builder.push_optional(
@@ -6619,6 +6650,7 @@ impl BaselinePlan {
     fn has_eager_return_entry(&self) -> bool {
         let dag = self.numeric_dag_at(0).is_some();
         let classify = self.number_classify_at(0).is_some();
+        let nullish_truthy = self.nullish_truthy_at(0).is_some();
         let dense = self.dense_update_at(0).is_some();
         let copy = self.dense_copy_at(0).is_some();
         let reduction = self.reduction_at(0).is_some();
@@ -6632,7 +6664,7 @@ impl BaselinePlan {
         let property = self
             .native_local_property_at(0)
             .is_some_and(|plan| plan.borrow().returns());
-        dag || classify || dense
+        dag || classify || nullish_truthy || dense
             || copy
             || reduction
             || i32_pattern
@@ -6687,6 +6719,12 @@ impl BaselinePlan {
         number_classify_at,
         NumberClassify,
         crate::stencil_number_classify::NativeNumberClassifyPlan
+    );
+    typed_admission_accessors!(
+        nullish_truthy_handle_at,
+        nullish_truthy_at,
+        NullishTruthy,
+        crate::stencil_nullish_truthy::NativeNullishTruthyPlan
     );
     typed_admission_accessors!(
         dense_update_handle_at,
@@ -6850,6 +6888,11 @@ impl OptimizingEntry<'_> {
         number_classify,
         NumberClassify,
         crate::stencil_number_classify::NativeNumberClassifyPlan
+    );
+    optimizing_admission_accessors!(
+        nullish_truthy,
+        NullishTruthy,
+        crate::stencil_nullish_truthy::NativeNullishTruthyPlan
     );
     optimizing_admission_accessors!(
         dense_update,

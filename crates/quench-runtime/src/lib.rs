@@ -166,6 +166,7 @@ pub mod stencil_lifecycle;
 mod stencil_move_integration_tests;
 mod stencil_numeric_dag;
 mod stencil_number_classify;
+mod stencil_nullish_truthy;
 pub mod stencil_patch;
 mod stencil_physical;
 mod stencil_plan;

@@ -89,6 +89,10 @@ fn generated_abi_classification_matches_physical_entry_shape() {
             RegionAbi::ScalarWordBool => {
                 assert_scalar_word_shape(record);
             }
+            RegionAbi::ScalarWordPair => {
+                assert!(!record.stencil.bytes.is_empty());
+                assert_eq!(record.name, "nullish_truthy_branch_return");
+            }
             RegionAbi::ScalarWordPairBool => {
                 assert!(matches!(record.stencil.bytes.len(), 10 | 12));
                 assert!(matches!(

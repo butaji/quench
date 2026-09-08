@@ -235,6 +235,7 @@ fn abi_expr(declaration: &RegionDeclaration) -> &'static str {
         DeclAbi::ConstantWord => "crate::stencil_select::RegionAbi::ConstantWord",
         DeclAbi::ScalarBool => "crate::stencil_select::RegionAbi::ScalarBool",
         DeclAbi::ScalarWordBool => "crate::stencil_select::RegionAbi::ScalarWordBool",
+        DeclAbi::ScalarWordPair => "crate::stencil_select::RegionAbi::ScalarWordPair",
         DeclAbi::ScalarWordPairBool => "crate::stencil_select::RegionAbi::ScalarWordPairBool",
         DeclAbi::ScalarI32 => "crate::stencil_select::RegionAbi::ScalarI32",
         DeclAbi::ScalarU32 => "crate::stencil_select::RegionAbi::ScalarU32",
@@ -302,6 +303,7 @@ fn abi_contract_fields(abi: DeclAbi) -> (&'static str, bool, &'static str) {
         | DeclAbi::ConstantWord
         | DeclAbi::ScalarBool
         | DeclAbi::ScalarWordBool
+        | DeclAbi::ScalarWordPair
         | DeclAbi::ScalarWordPairBool
         | DeclAbi::ScalarI32
         | DeclAbi::ScalarU32 => (
@@ -366,6 +368,7 @@ fn abi_variant_name(abi: DeclAbi) -> &'static str {
         DeclAbi::ConstantWord => "ConstantWord",
         DeclAbi::ScalarBool => "ScalarBool",
         DeclAbi::ScalarWordBool => "ScalarWordBool",
+        DeclAbi::ScalarWordPair => "ScalarWordPair",
         DeclAbi::ScalarWordPairBool => "ScalarWordPairBool",
         DeclAbi::ScalarI32 => "ScalarI32",
         DeclAbi::ScalarU32 => "ScalarU32",
