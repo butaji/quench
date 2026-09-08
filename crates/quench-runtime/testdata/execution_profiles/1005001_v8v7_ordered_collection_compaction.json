@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "warmup": 1,
+  "result": { "kind": "number", "value": 16 },
+  "plan": {
+    "execution_kind": "native_machine_code",
+    "operation_route": ["dense_element_load", "bitwise_test", "guarded_element_store", "array_length_store"],
+    "fallback": false
+  },
+  "profile": {
+    "residual": {},
+    "slow": {},
+    "stencils": { "ordered_dense_array_compaction": { "entries": 1, "fallbacks": 0 } },
+    "events": { "leaf_hit": 1 }
+  }
+}
