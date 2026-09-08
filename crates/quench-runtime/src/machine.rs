@@ -5327,6 +5327,11 @@ impl NativeRegionPlan {
                         "array-copy ABI requires its typed entry".into(),
                     ));
                 }
+                crate::stencil_select::RegionAbi::ArrayReductionLoop => {
+                    return Err(NativeDispatchError::Physical(
+                        "array-reduction ABI requires its typed entry".into(),
+                    ));
+                }
                 crate::stencil_select::RegionAbi::Bridge => {}
                 crate::stencil_select::RegionAbi::ScalarF64Binary
                 | crate::stencil_select::RegionAbi::ScalarF64Unary
@@ -5487,6 +5492,7 @@ enum NativeAdmission {
     NumericDag(Rc<RefCell<crate::stencil_numeric_dag::NativeNumericDagPlan>>),
     DenseUpdate(Rc<RefCell<crate::stencil_dense_array_update::NativeDenseUpdatePlan>>),
     DenseCopy(Rc<RefCell<crate::stencil_dense_array_copy::NativeDenseCopyPlan>>),
+    Reduction(Rc<RefCell<crate::stencil_ordered_reduction::NativeReductionPlan>>),
     PropertyNumeric(Rc<RefCell<crate::stencil_property_numeric::PropertyNumericPlan>>),
     Move(Rc<RefCell<NativeMovePlan>>),
     LoadLocal(Rc<RefCell<NativeMovePlan>>),
@@ -5525,6 +5531,9 @@ impl AdmissionEntry for NativeAdmission {
             Self::DenseCopy(_) => shared_value_bytes::<
                 RefCell<crate::stencil_dense_array_copy::NativeDenseCopyPlan>,
             >(),
+            Self::Reduction(_) => shared_value_bytes::<
+                RefCell<crate::stencil_ordered_reduction::NativeReductionPlan>,
+            >(),
             Self::PropertyNumeric(_) => shared_value_bytes::<
                 RefCell<crate::stencil_property_numeric::PropertyNumericPlan>,
             >(),
@@ -5555,6 +5564,7 @@ impl std::fmt::Debug for NativeAdmission {
             Self::NumericDag(_) => "numeric_dag",
             Self::DenseUpdate(_) => "dense_update",
             Self::DenseCopy(_) => "dense_copy",
+            Self::Reduction(_) => "reduction",
             Self::PropertyNumeric(_) => "property_numeric",
             Self::Move(_) => "move",
             Self::LoadLocal(_) => "load_local",
@@ -5936,6 +5946,23 @@ fn dense_copy_admission(
     Some(NativeAdmission::DenseCopy(Rc::new(RefCell::new(plan))))
 }
 
+fn reduction_admission(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    let selection = crate::stencil_ordered_reduction::select_reduction(code, entries, cfg, pc)?;
+    let plan = crate::stencil_ordered_reduction::NativeReductionPlan::new(
+        selection,
+        policy,
+        Rc::clone(arena),
+    )?;
+    Some(NativeAdmission::Reduction(Rc::new(RefCell::new(plan))))
+}
+
 fn local_property_admission(
     code: CodeView<'_>,
     entries: &[BaselineEntry],
@@ -6288,6 +6315,10 @@ fn collect_admissions_at(
         pc,
         dense_copy_admission(code, entries, cfg, pc, policy, arena),
     );
+    builder.push_optional(
+        pc,
+        reduction_admission(code, entries, cfg, pc, policy, arena),
+    );
     collect_numeric_admissions(builder, entries, cfg, pc, entry, code, policy, arena);
     builder.push_optional(pc, add_chain_admission(entries, cfg, pc, policy, arena));
     builder.push_optional(
@@ -6393,13 +6424,14 @@ impl BaselinePlan {
         let dag = self.numeric_dag_at(0).is_some();
         let dense = self.dense_update_at(0).is_some();
         let copy = self.dense_copy_at(0).is_some();
+        let reduction = self.reduction_at(0).is_some();
         let numeric = self
             .native_local_binary_at(0)
             .is_some_and(|plan| plan.borrow().selection().returns);
         let property = self
             .native_local_property_at(0)
             .is_some_and(|plan| plan.borrow().returns());
-        dag || dense || copy || numeric || property
+        dag || dense || copy || reduction || numeric || property
     }
 
     fn native_handle<T>(
@@ -6452,6 +6484,12 @@ impl BaselinePlan {
         dense_copy_at,
         DenseCopy,
         crate::stencil_dense_array_copy::NativeDenseCopyPlan
+    );
+    typed_admission_accessors!(
+        reduction_handle_at,
+        reduction_at,
+        Reduction,
+        crate::stencil_ordered_reduction::NativeReductionPlan
     );
     typed_admission_accessors!(
         property_numeric_handle_at,
@@ -6578,6 +6616,11 @@ impl OptimizingEntry<'_> {
         dense_copy,
         DenseCopy,
         crate::stencil_dense_array_copy::NativeDenseCopyPlan
+    );
+    optimizing_admission_accessors!(
+        reduction,
+        Reduction,
+        crate::stencil_ordered_reduction::NativeReductionPlan
     );
     optimizing_admission_accessors!(
         property_numeric,

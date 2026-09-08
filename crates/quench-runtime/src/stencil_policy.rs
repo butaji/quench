@@ -154,6 +154,7 @@ impl ExecutionPolicy {
             // Copy loops use their own typed two-backing context and custom
             // admission; the generic NativeRegionContext route must reject it.
             RegionAbi::ArrayCopyLoop => false,
+            RegionAbi::ArrayReductionLoop => false,
             RegionAbi::AffineI32Loop => self.affine_i32_loops,
             _ => false,
         }
