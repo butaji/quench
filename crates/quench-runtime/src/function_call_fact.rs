@@ -32,8 +32,14 @@ pub(crate) struct OwnFieldStoreReturn {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum NumericComparatorFact {
-    Subtract,
+pub(crate) enum NumericSortDirection {
+    Ascending,
+    Descending,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct NumericComparatorFact {
+    pub(crate) direction: NumericSortDirection,
 }
 
 impl IntegerSwitchI32 {
@@ -59,7 +65,7 @@ pub(crate) fn numeric_affine_callable(
 /// This is a semantic fact about canonical residual code, not a source-text
 /// pattern. Consumers must still guard the argument representations before
 /// replacing calls with native Number subtraction.
-pub(crate) fn numeric_subtract_comparator(
+pub(crate) fn numeric_comparator(
     function: &crate::value::FunctionValue,
 ) -> Option<NumericComparatorFact> {
     (function.params == 2 && crate::functions::direct_call_eligible(function)).then_some(())?;
@@ -70,15 +76,20 @@ pub(crate) fn numeric_subtract_comparator(
     let subtract = code.instruction(2)?;
     let ret = code.instruction(3)?;
     let first = u16::try_from(function.captures.len()).ok()?;
+    let second = first.checked_add(1)?;
     (left.opcode == crate::ir::Opcode::LoadLocal
-        && left.b == first
         && right.opcode == crate::ir::Opcode::LoadLocal
-        && right.b == first.checked_add(1)?
         && subtract.opcode == crate::ir::Opcode::Sub
         && subtract.b == left.a
         && subtract.c == right.a
         && ret == crate::ir::Instruction::ret(subtract.a))
-    .then_some(NumericComparatorFact::Subtract)
+    .then_some(())?;
+    let direction = match (left.b, right.b) {
+        (lhs, rhs) if lhs == first && rhs == second => NumericSortDirection::Ascending,
+        (lhs, rhs) if lhs == second && rhs == first => NumericSortDirection::Descending,
+        _ => return None,
+    };
+    Some(NumericComparatorFact { direction })
 }
 
 pub(crate) fn forwards_one_argument(function: &crate::value::FunctionValue) -> Option<()> {
