@@ -144,6 +144,7 @@ mod stencil_bitwise_fusion_tests;
 mod stencil_bridge_tests;
 mod stencil_cache;
 mod stencil_call_return;
+mod stencil_forward_call;
 mod stencil_cfg;
 #[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
 mod stencil_compare_branch_tests;
