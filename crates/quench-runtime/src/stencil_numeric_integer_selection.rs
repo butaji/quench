@@ -5,6 +5,7 @@ use crate::machine::{BaselineEntry, CodeView};
 use crate::stencil_numeric_integer_loop::{
     IntegerLoopSelection, IntegerRecurrence, CONSTANT_LOOP_BACKEDGE, CONSTANT_LOOP_EXIT,
     CONSTANT_REGION_END, INDEX_LOOP_BACKEDGE, INDEX_LOOP_EXIT, INDEX_REGION_END, LOOP_HEADER,
+    NAMED_REGION_END,
 };
 
 const MAX_ITERATIONS: usize = 1 << 20;
@@ -17,7 +18,24 @@ pub(crate) fn select_integer_loop(
     start: usize,
 ) -> Option<IntegerLoopSelection> {
     (start == 0).then_some(())?;
-    select_index_loop(code, entries, cfg).or_else(|| select_constant_loop(code, entries, cfg))
+    select_index_loop(code, entries, cfg)
+        .or_else(|| select_constant_loop(code, entries, cfg))
+        .or_else(|| select_named_loop(code, cfg))
+}
+
+fn select_named_loop(
+    code: CodeView<'_>,
+    cfg: &crate::stencil_cfg::ControlFlowFacts,
+) -> Option<IntegerLoopSelection> {
+    cfg.region_control(0, NAMED_REGION_END)?;
+    let fact = crate::function_physical::numeric_affine_named_loop(code)?;
+    Some(IntegerLoopSelection {
+        state_slot: fact.parameter_slot,
+        value_slot: fact.value_slot,
+        index_slot: fact.index_slot,
+        multiplier: 0,
+        recurrence: IntegerRecurrence::NamedCallee(fact.method_key),
+    })
 }
 
 fn select_index_loop(
@@ -289,14 +307,12 @@ pub(crate) fn exact_bound(value: f64) -> Option<usize> {
 
 pub(crate) fn exact_for_all_iterations(
     seed: i32,
-    selection: IntegerLoopSelection,
+    multiplier: i32,
+    addend: i32,
     end: usize,
 ) -> Option<()> {
-    let product = i128::from(seed).abs().max(i128::from(i32::MIN).abs())
-        * i128::from(selection.multiplier).abs();
-    let addend = match selection.recurrence {
-        IntegerRecurrence::Index => end as i128,
-        IntegerRecurrence::Constant(value) => i128::from(value).abs(),
-    };
-    (product + addend <= MAX_EXACT_INTEGER).then_some(())
+    let product =
+        i128::from(seed).abs().max(i128::from(i32::MIN).abs()) * i128::from(multiplier).abs();
+    let maximum_addend = i128::from(addend).abs().max(end as i128);
+    (product + maximum_addend <= MAX_EXACT_INTEGER).then_some(())
 }

@@ -91,6 +91,7 @@ fn try_execute_physical(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     arguments: &[crate::value::Value],
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
+    #[cfg(not(target_arch = "aarch64"))]
     if let Some(fact) = function.code.numeric_affine_named_loop() {
         match execute_numeric_affine_named_loop(function, arguments, &fact) {
             Ok(value) => {
