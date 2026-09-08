@@ -10,6 +10,11 @@ pub(crate) struct IntegerSwitchI32 {
     default: NumericAffineI32,
 }
 
+#[derive(Clone)]
+pub(crate) struct OwnFieldAddMethod {
+    pub(crate) field: std::rc::Rc<str>,
+}
+
 impl IntegerSwitchI32 {
     pub(crate) fn select(&self, discriminant: i32) -> NumericAffineI32 {
         self.branches
@@ -70,6 +75,76 @@ pub(crate) fn integer_switch_callable(
     };
     (*discriminant == kind.a).then_some(())?;
     switch_cases(cases, value_slot)
+}
+
+pub(crate) fn own_field_add_method(
+    function: &crate::value::FunctionValue,
+) -> Option<OwnFieldAddMethod> {
+    (function.params == 1 && crate::functions::direct_call_eligible(function)).then_some(())?;
+    let code = function.code.code()?;
+    let ops = instruction_array::<13>(code)?;
+    let parameter = u16::try_from(function.captures.len()).ok()?;
+    let receiver = parameter.checked_add(function.params)?.checked_add(1)?;
+    validate_field_add_ops(code, &ops, parameter, receiver)?;
+    Some(OwnFieldAddMethod {
+        field: code.metadata_at(4)?.name.clone()?,
+    })
+}
+
+fn validate_field_add_ops(
+    code: CodeView<'_>,
+    ops: &[crate::ir::Instruction; 13],
+    parameter: u16,
+    receiver: u16,
+) -> Option<()> {
+    use crate::ir::Opcode;
+    let expected = [
+        Opcode::LoadLocalChecked,
+        Opcode::Move,
+        Opcode::Move,
+        Opcode::LoadLocalChecked,
+        Opcode::GetNQuickened,
+        Opcode::LoadLocal,
+        Opcode::Add,
+        Opcode::SetN,
+        Opcode::LoadLocalChecked,
+        Opcode::GetNQuickened,
+        Opcode::Return,
+        Opcode::LoadConst,
+        Opcode::Return,
+    ];
+    ops.iter()
+        .zip(expected)
+        .all(|(op, expected)| op.opcode == expected)
+        .then_some(())?;
+    let field = code.metadata_at(4)?.name.as_deref()?;
+    (ops[0].b == receiver
+        && ops[3].b == receiver
+        && ops[5].b == parameter
+        && ops[8].b == receiver
+        && ops[4].b == ops[3].a
+        && ops[6].b == ops[4].a
+        && ops[6].c == ops[5].a
+        && aliases_receiver(&ops[..3], ops[7].a, ops[0].a)
+        && ops[7].b == ops[6].a
+        && ops[9].b == ops[8].a
+        && ops[10] == crate::ir::Instruction::ret(ops[9].a)
+        && code.metadata_at(7)?.name.as_deref() == Some(field)
+        && code.metadata_at(9)?.name.as_deref() == Some(field)
+        && has_undefined_tail(code, 11))
+    .then_some(())
+}
+
+fn aliases_receiver(ops: &[crate::ir::Instruction], mut register: u16, receiver: u16) -> bool {
+    for op in ops.iter().rev() {
+        if register == receiver {
+            return true;
+        }
+        if op.opcode == crate::ir::Opcode::Move && op.a == register {
+            register = op.b;
+        }
+    }
+    register == receiver
 }
 
 fn switch_cases(
