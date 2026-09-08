@@ -1110,7 +1110,20 @@ fn dispatch_http2_frames(
                                 execute::get_property(&server, "\0quench:http2-request-listener")
                             });
                         if quench_runtime::is_callable(&request_listener) {
-                            execute::call(&request_listener, &server, &args)?;
+                            // `createServer` is the compatibility API: its
+                            // callback receives request/response views, while
+                            // the raw stream remains available through the
+                            // server's `stream` event. Both views retain the
+                            // canonical transport socket identity.
+                            let (request, response) =
+                                crate::modules::http2_util::compat_server_request_response(
+                                    state, &stream, &headers,
+                                )?;
+                            execute::call(
+                                &request_listener,
+                                &server,
+                                &[request, response],
+                            )?;
                         } else {
                             emit_server_scoped(state, &server, "stream", args)?;
                         }
