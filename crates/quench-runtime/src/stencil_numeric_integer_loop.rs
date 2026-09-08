@@ -16,12 +16,17 @@ pub(crate) const NAMED_REGION_END: usize = 28;
 pub(crate) const NAMED_LOOP_BACKEDGE: usize = 23;
 pub(crate) const POLYMORPHIC_REGION_END: usize = 37;
 pub(crate) const POLYMORPHIC_LOOP_BACKEDGE: usize = 32;
+pub(crate) const DIRECT_REGION_END: usize = 30;
+pub(crate) const DIRECT_LOOP_BACKEDGE: usize = 25;
+pub(crate) const DIRECT_LOOP_HEADER: usize = 10;
+pub(crate) const DIRECT_LOOP_EXIT: usize = 26;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum IntegerRecurrence {
     Index,
     Constant(i32),
     NamedCallee(std::rc::Rc<str>),
+    DirectCallee(std::rc::Rc<str>),
     EquivalentCallees([std::rc::Rc<str>; 2]),
 }
 
@@ -30,6 +35,7 @@ pub(crate) enum IntegerLoopProfile {
     Numeric,
     Affine,
     CallsInline,
+    CallsDirect,
     CallsChanging,
 }
 
@@ -37,9 +43,10 @@ impl IntegerRecurrence {
     fn physical_key(&self) -> crate::stencil_fact::RegionKey {
         match self {
             Self::Index => crate::stencil_select::numeric_integer_loop_region_key(),
-            Self::Constant(_) | Self::NamedCallee(_) | Self::EquivalentCallees(_) => {
-                crate::stencil_select::affine_i32_loop_region_key()
-            }
+            Self::Constant(_)
+            | Self::NamedCallee(_)
+            | Self::DirectCallee(_)
+            | Self::EquivalentCallees(_) => crate::stencil_select::affine_i32_loop_region_key(),
         }
     }
 
@@ -47,7 +54,7 @@ impl IntegerRecurrence {
         match self {
             Self::Index => Some((multiplier, 0)),
             Self::Constant(value) => Some((multiplier, *value)),
-            Self::NamedCallee(_) | Self::EquivalentCallees(_) => None,
+            Self::NamedCallee(_) | Self::DirectCallee(_) | Self::EquivalentCallees(_) => None,
         }
     }
 
@@ -56,7 +63,17 @@ impl IntegerRecurrence {
             Self::Index => INDEX_LOOP_BACKEDGE,
             Self::Constant(_) => CONSTANT_LOOP_BACKEDGE,
             Self::NamedCallee(_) => NAMED_LOOP_BACKEDGE,
+            Self::DirectCallee(_) => DIRECT_LOOP_BACKEDGE,
             Self::EquivalentCallees(_) => POLYMORPHIC_LOOP_BACKEDGE,
+        }
+    }
+
+    const fn loop_header(&self) -> usize {
+        match self {
+            Self::DirectCallee(_) => DIRECT_LOOP_HEADER,
+            Self::Index | Self::Constant(_) | Self::NamedCallee(_) | Self::EquivalentCallees(_) => {
+                LOOP_HEADER
+            }
         }
     }
 
@@ -65,6 +82,7 @@ impl IntegerRecurrence {
             Self::Index => INDEX_REGION_END,
             Self::Constant(_) => CONSTANT_REGION_END,
             Self::NamedCallee(_) => NAMED_REGION_END,
+            Self::DirectCallee(_) => DIRECT_REGION_END,
             Self::EquivalentCallees(_) => POLYMORPHIC_REGION_END,
         }
     }
@@ -74,6 +92,7 @@ impl IntegerRecurrence {
             Self::Index => IntegerLoopProfile::Numeric,
             Self::Constant(_) => IntegerLoopProfile::Affine,
             Self::NamedCallee(_) => IntegerLoopProfile::CallsInline,
+            Self::DirectCallee(_) => IntegerLoopProfile::CallsDirect,
             Self::EquivalentCallees(_) => IntegerLoopProfile::CallsChanging,
         }
     }
@@ -84,6 +103,8 @@ pub(crate) struct IntegerLoopSelection {
     pub(crate) state_slot: u16,
     pub(crate) value_slot: u16,
     pub(crate) index_slot: u16,
+    pub(crate) seed_pc: usize,
+    pub(crate) bound_pc: usize,
     pub(crate) multiplier: i32,
     pub(crate) recurrence: IntegerRecurrence,
 }
@@ -180,8 +201,10 @@ impl NativeIntegerLoopPlan {
     ) -> Option<IntegerLoopInputs> {
         environment
             .with_proven_object(self.selection.state_slot, |object| {
-                let seed = crate::vm::cached_own_property_number(code, 1, object)?;
-                let end = crate::vm::cached_own_property_number(code, 9, object)?;
+                let seed =
+                    crate::vm::cached_own_property_number(code, self.selection.seed_pc, object)?;
+                let end =
+                    crate::vm::cached_own_property_number(code, self.selection.bound_pc, object)?;
                 let seed = exact_i32(seed)?;
                 let end = exact_bound(end)?;
                 let (multiplier, addend) = self.formula(object)?;
@@ -206,6 +229,7 @@ impl NativeIntegerLoopPlan {
         }
         match &self.selection.recurrence {
             IntegerRecurrence::NamedCallee(key) => affine_callee_formula(object, key),
+            IntegerRecurrence::DirectCallee(key) => affine_callee_formula(object, key),
             IntegerRecurrence::EquivalentCallees(keys) => {
                 let first = affine_callee_formula(object, &keys[0])?;
                 (affine_callee_formula(object, &keys[1])? == first).then_some(first)
@@ -238,7 +262,7 @@ impl NativeIntegerLoopPlan {
             vm.clear_interrupt();
             self.commit(&context, environment);
             return Ok(IntegerLoopOutcome::Resume {
-                pc: LOOP_HEADER,
+                pc: self.selection.recurrence.loop_header(),
                 profile: self.selection.recurrence.profile(),
             });
         }
