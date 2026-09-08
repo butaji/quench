@@ -96,11 +96,19 @@ const AARCH64_PROPERTY_GUARD_BYTES: [u8; 80] = {
     put32(&mut out, 4, aarch64_ldr_w(2, 1, 0));
     put32(&mut out, 8, aarch64_ldr_w(3, 0, 8));
     put32(&mut out, 12, aarch64_cmp_w(2, 3));
-    put32(&mut out, 16, aarch64_b_cond(14, AARCH64_CONDITION_NOT_EQUAL));
+    put32(
+        &mut out,
+        16,
+        aarch64_b_cond(14, AARCH64_CONDITION_NOT_EQUAL),
+    );
     put32(&mut out, 20, aarch64_ldr_x(1, 0, 16));
     put32(&mut out, 24, aarch64_ldr_byte(2, 1, 0));
     put32(&mut out, 28, aarch64_cmp_w_imm(2, 1));
-    put32(&mut out, 32, aarch64_b_cond(10, AARCH64_CONDITION_NOT_EQUAL));
+    put32(
+        &mut out,
+        32,
+        aarch64_b_cond(10, AARCH64_CONDITION_NOT_EQUAL),
+    );
     put32(&mut out, 36, aarch64_ldr_x(1, 0, 24));
     put32(&mut out, 40, aarch64_ldr_byte(2, 1, 0));
     put32(&mut out, 44, aarch64_cmp_w_imm(2, 1));
@@ -237,36 +245,30 @@ const AARCH64_COMPARE_LESS_EQUAL_BYTES: [u8; 20] =
 const AARCH64_COMPARE_GREATER_BYTES: [u8; 20] = aarch64_ordered_compare_bytes(aarch64_cset_gt_w0());
 const AARCH64_COMPARE_GREATER_EQUAL_BYTES: [u8; 20] =
     aarch64_ordered_compare_bytes(aarch64_cset_ge_w0());
-const AARCH64_BITWISE_AND_BYTES: [u8; 8] =
-    aarch64_pair(
-        aarch64_bitop_w(AARCH64_BITWISE_AND_W_BASE, 0, 0, 1),
-        aarch64_ret(),
-    );
-const AARCH64_BITWISE_OR_BYTES: [u8; 8] =
-    aarch64_pair(
-        aarch64_bitop_w(AARCH64_BITWISE_OR_W_BASE, 0, 0, 1),
-        aarch64_ret(),
-    );
-const AARCH64_BITWISE_XOR_BYTES: [u8; 8] =
-    aarch64_pair(
-        aarch64_bitop_w(AARCH64_BITWISE_XOR_W_BASE, 0, 0, 1),
-        aarch64_ret(),
-    );
-const AARCH64_SHIFT_LEFT_BYTES: [u8; 8] =
-    aarch64_pair(
-        aarch64_shift_w(AARCH64_SHIFT_LEFT_W_BASE, 0, 0, 1),
-        aarch64_ret(),
-    );
-const AARCH64_SHIFT_RIGHT_BYTES: [u8; 8] =
-    aarch64_pair(
-        aarch64_shift_w(AARCH64_SHIFT_RIGHT_UNSIGNED_W_BASE, 0, 0, 1),
-        aarch64_ret(),
-    );
-const AARCH64_SHIFT_RIGHT_ZERO_BYTES: [u8; 8] =
-    aarch64_pair(
-        aarch64_shift_w(AARCH64_SHIFT_RIGHT_W_BASE, 0, 0, 1),
-        aarch64_ret(),
-    );
+const AARCH64_BITWISE_AND_BYTES: [u8; 8] = aarch64_pair(
+    aarch64_bitop_w(AARCH64_BITWISE_AND_W_BASE, 0, 0, 1),
+    aarch64_ret(),
+);
+const AARCH64_BITWISE_OR_BYTES: [u8; 8] = aarch64_pair(
+    aarch64_bitop_w(AARCH64_BITWISE_OR_W_BASE, 0, 0, 1),
+    aarch64_ret(),
+);
+const AARCH64_BITWISE_XOR_BYTES: [u8; 8] = aarch64_pair(
+    aarch64_bitop_w(AARCH64_BITWISE_XOR_W_BASE, 0, 0, 1),
+    aarch64_ret(),
+);
+const AARCH64_SHIFT_LEFT_BYTES: [u8; 8] = aarch64_pair(
+    aarch64_shift_w(AARCH64_SHIFT_LEFT_W_BASE, 0, 0, 1),
+    aarch64_ret(),
+);
+const AARCH64_SHIFT_RIGHT_BYTES: [u8; 8] = aarch64_pair(
+    aarch64_shift_w(AARCH64_SHIFT_RIGHT_UNSIGNED_W_BASE, 0, 0, 1),
+    aarch64_ret(),
+);
+const AARCH64_SHIFT_RIGHT_ZERO_BYTES: [u8; 8] = aarch64_pair(
+    aarch64_shift_w(AARCH64_SHIFT_RIGHT_W_BASE, 0, 0, 1),
+    aarch64_ret(),
+);
 const AARCH64_BITWISE_NOT_BYTES: [u8; 8] = aarch64_pair(aarch64_mvn_w0(), aarch64_ret());
 const AARCH64_NEGATE_BYTES: [u8; 8] = aarch64_pair(aarch64_fneg_d(0, 0), aarch64_ret());
 const X86_NEGATE_BYTES: [u8; 24] = x86_negate_bytes();
@@ -358,10 +360,7 @@ const AARCH64_ARRAY_LOOP_BYTES: [u8; 100] = {
     put32(
         &mut out,
         24,
-        aarch64_b_cond(
-            (DONE - 24) / 4,
-            AARCH64_CONDITION_UNSIGNED_HIGH_OR_SAME,
-        ),
+        aarch64_b_cond((DONE - 24) / 4, AARCH64_CONDITION_UNSIGNED_HIGH_OR_SAME),
     );
     put32(&mut out, 28, aarch64_ldr_x(3, 0, 0));
     put32(&mut out, 32, aarch64_add_x_shifted(4, 3, 1, 3));
@@ -467,6 +466,53 @@ const AARCH64_ARRAY_REDUCTION_LOOP_BYTES: [u8; 84] = {
     out
 };
 
+/// Ordered dense-Number conditional reduction ABI extends the reduction
+/// record with `{threshold,on_true,on_false}` at offsets 40, 48, and 56.
+const AARCH64_CONDITIONAL_REDUCTION_LOOP_BYTES: [u8; 108] = {
+    const LOOP_HEADER: i32 = 12;
+    const TRUE_VALUE: i32 = 52;
+    const ADD_VALUE: i32 = 56;
+    const DONE: i32 = 84;
+    const INTERRUPTED: i32 = 96;
+    let mut out = [0; 108];
+    put32(&mut out, 0, aarch64_ldr_x(1, 0, 16));
+    put32(&mut out, 4, aarch64_ldr_x(2, 0, 8));
+    put32(&mut out, 8, aarch64_ldr_d(0, 0, 24));
+    put32(&mut out, 12, aarch64_cmp_x(1, 2));
+    put32(
+        &mut out,
+        16,
+        aarch64_b_cond((DONE - 16) / 4, AARCH64_CONDITION_UNSIGNED_HIGH_OR_SAME),
+    );
+    put32(&mut out, 20, aarch64_ldr_x(3, 0, 0));
+    put32(&mut out, 24, aarch64_add_x_shifted(4, 3, 1, 3));
+    put32(&mut out, 28, aarch64_ldr_d(1, 4, 0));
+    put32(&mut out, 32, aarch64_ldr_d(2, 0, 40));
+    put32(&mut out, 36, aarch64_fcmp_d_regs(1, 2));
+    put32(
+        &mut out,
+        40,
+        aarch64_b_cond((TRUE_VALUE - 40) / 4, AARCH64_CONDITION_NEGATIVE),
+    );
+    put32(&mut out, 44, aarch64_ldr_d(3, 0, 56));
+    put32(&mut out, 48, aarch64_b_imm26((ADD_VALUE - 48) / 4));
+    put32(&mut out, 52, aarch64_ldr_d(3, 0, 48));
+    put32(&mut out, 56, aarch64_fadd_d(0, 0, 3));
+    put32(&mut out, 60, aarch64_add_x_imm(1, 1, 1));
+    put32(&mut out, 64, aarch64_str_x(1, 0, 16));
+    put32(&mut out, 68, aarch64_ldr_x(5, 0, 32));
+    put32(&mut out, 72, aarch64_ldr_byte(5, 5, 0));
+    put32(&mut out, 76, aarch64_cbnz_w(5, (INTERRUPTED - 76) / 4));
+    put32(&mut out, 80, aarch64_b_imm26((LOOP_HEADER - 80) / 4));
+    put32(&mut out, 84, aarch64_str_d(0, 0, 24));
+    put32(&mut out, 88, aarch64_mov_w_imm0(NATIVE_STATUS_COMPLETED));
+    put32(&mut out, 92, aarch64_ret());
+    put32(&mut out, 96, aarch64_str_d(0, 0, 24));
+    put32(&mut out, 100, aarch64_mov_w_imm0(NATIVE_STATUS_INTERRUPTED));
+    put32(&mut out, 104, aarch64_ret());
+    out
+};
+
 // The affine loop is supplied by the Rust object-artifact pipeline. The
 // legacy catalog view remains a non-callable return until that exact generated
 // identity is selected; its interruptible ABI validator rejects this fallback.
@@ -511,6 +557,7 @@ const AARCH64_CONDITION_EQUAL: u8 = 0;
 const AARCH64_CONDITION_NOT_EQUAL: u8 = 1;
 const AARCH64_CONDITION_UNSIGNED_HIGH_OR_SAME: u8 = 2;
 const AARCH64_CONDITION_CARRY_CLEAR: u8 = 3;
+const AARCH64_CONDITION_NEGATIVE: u8 = 4;
 const AARCH64_CONDITION_OVERFLOW_SET: u8 = 6;
 const AARCH64_CONDITION_UNSIGNED_HIGH: u8 = 8;
 const AARCH64_CONDITION_SIGNED_GREATER_EQUAL: u8 = 10;
