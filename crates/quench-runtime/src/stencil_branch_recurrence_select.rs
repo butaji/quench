@@ -37,26 +37,15 @@ enum Numeric {
 mod arms;
 
 pub(crate) fn select_function(code: CodeView<'_>) -> Option<FunctionRecurrence> {
-    let mut constants = BTreeMap::new();
-    let mut locals = Vec::new();
-    let mut recurrence = None;
-    let mut returned_slot = None;
-    for pc in 0..code.len() {
-        let instruction = code.instruction(pc)?;
-        select_function_instruction(
-            code,
-            pc,
-            instruction,
-            &mut constants,
-            &mut locals,
-            &mut recurrence,
-            &mut returned_slot,
-        )?;
-    }
-    let recurrence = recurrence?;
-    (returned_slot? == recurrence.score_slot).then_some(())?;
-    let initial_score = initialized_i64(&locals, recurrence.score_slot)?;
-    let initial_state = initialized_u32(&locals, recurrence.state_slot)?;
+    let facts = crate::stencil_counted_function::select(code, |counted, body, per_iteration| {
+        (per_iteration == [counted.index_slot]).then_some(())?;
+        select_body(body, counted)
+    })?;
+    let recurrence = facts.loop_cover;
+    (facts.returned_slot == recurrence.score_slot).then_some(())?;
+    let initial_score =
+        crate::stencil_counted_function::initial_i64(&facts.initials, recurrence.score_slot)?;
+    let initial_state = initialized_u32(&facts.initials, recurrence.state_slot)?;
     Some(FunctionRecurrence {
         recurrence,
         initial_score,
@@ -64,70 +53,11 @@ pub(crate) fn select_function(code: CodeView<'_>) -> Option<FunctionRecurrence> 
     })
 }
 
-fn select_function_instruction(
-    code: CodeView<'_>,
-    pc: usize,
-    instruction: crate::ir::Instruction,
-    constants: &mut BTreeMap<u16, f64>,
-    locals: &mut Vec<(u16, f64)>,
-    recurrence: &mut Option<Recurrence>,
-    returned_slot: &mut Option<u16>,
-) -> Option<()> {
-    match instruction.opcode {
-        Opcode::LoadConst => match code.constant(instruction.b)? {
-            crate::ops::Constant::Number(value) => {
-                constants.insert(instruction.a, *value);
-            }
-            crate::ops::Constant::Undefined => {
-                constants.remove(&instruction.a);
-            }
-            _ => return None,
-        },
-        Opcode::InitLocal => locals.push((instruction.a, *constants.get(&instruction.b)?)),
-        Opcode::LoadLocal | Opcode::LoadLocalChecked => *returned_slot = Some(instruction.b),
-        Opcode::Return => {}
-        Opcode::Slow => select_slow(code, pc, recurrence)?,
-        _ => return None,
-    }
-    Some(())
-}
-
-fn select_slow(code: CodeView<'_>, pc: usize, selected: &mut Option<Recurrence>) -> Option<()> {
-    match code.cold_at(pc)? {
-        crate::ops::Op::MarkUninitialized { .. } | crate::ops::Op::MarkImmutable { .. } => Some(()),
-        crate::ops::Op::Loop {
-            label,
-            init,
-            test,
-            body,
-            update,
-            post_test,
-            per_iteration,
-            ..
-        } if label.is_none() && !post_test && selected.is_none() => {
-            let counted =
-                crate::stencil_counted_loop::select(init.code()?, test.code()?, update.code()?)?;
-            (per_iteration.as_slice() == [counted.index_slot]).then_some(())?;
-            selected.replace(select_body(body.code()?, counted)?);
-            Some(())
-        }
-        _ => None,
-    }
-}
-
-fn initialized_i64(locals: &[(u16, f64)], slot: u16) -> Option<i64> {
-    let value = locals
-        .iter()
-        .find_map(|(local, value)| (*local == slot).then_some(*value))?;
-    (value.is_finite()
-        && value.fract() == 0.0
-        && value >= i64::MIN as f64
-        && value <= i64::MAX as f64)
-        .then_some(value as i64)
-}
-
-fn initialized_u32(locals: &[(u16, f64)], slot: u16) -> Option<u32> {
-    let value = initialized_i64(locals, slot)?;
+fn initialized_u32(
+    locals: &[crate::stencil_counted_function::InitialNumber],
+    slot: u16,
+) -> Option<u32> {
+    let value = crate::stencil_counted_function::initial_i64(locals, slot)?;
     u32::try_from(value).ok()
 }
 
