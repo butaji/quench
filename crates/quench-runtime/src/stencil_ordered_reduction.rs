@@ -5,6 +5,8 @@ use std::{cell::RefCell, rc::Rc};
 
 #[path = "stencil_ordered_reduction_select.rs"]
 mod selection;
+#[path = "stencil_ordered_reduction_shapes.rs"]
+mod shapes;
 pub(crate) use selection::select_reduction;
 
 #[repr(C)]
@@ -14,6 +16,9 @@ pub(crate) struct NativeReductionContext {
     index: usize,
     total: f64,
     interrupt: *const std::sync::atomic::AtomicBool,
+    threshold: f64,
+    on_true: f64,
+    on_false: f64,
 }
 
 const _: () = {
@@ -23,13 +28,17 @@ const _: () = {
     assert!(std::mem::offset_of!(NativeReductionContext, index) == 16);
     assert!(std::mem::offset_of!(NativeReductionContext, total) == 24);
     assert!(std::mem::offset_of!(NativeReductionContext, interrupt) == 32);
-    assert!(std::mem::size_of::<NativeReductionContext>() == 40);
+    assert!(std::mem::offset_of!(NativeReductionContext, threshold) == 40);
+    assert!(std::mem::offset_of!(NativeReductionContext, on_true) == 48);
+    assert!(std::mem::offset_of!(NativeReductionContext, on_false) == 56);
+    assert!(std::mem::size_of::<NativeReductionContext>() == 64);
 };
 
 #[derive(Clone, Copy)]
 pub(crate) struct ReductionSelection {
     source: ReductionSource,
     profile: ReductionProfile,
+    operation: ReductionOperation,
     total_slot: u16,
     index_slot: u16,
     region_end: usize,
@@ -42,6 +51,17 @@ enum ReductionProfile {
     OrderedF64,
     ControlFor,
     ControlWhile,
+    ControlPredictable,
+}
+
+#[derive(Clone, Copy)]
+enum ReductionOperation {
+    Sum,
+    LessThan {
+        threshold: f64,
+        on_true: f64,
+        on_false: f64,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -77,9 +97,7 @@ impl NativeReductionPlan {
         owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
     ) -> Option<Self> {
         policy.array_numeric_loops.then_some(())?;
-        let view = crate::stencil_select::select_physical(
-            crate::stencil_select::ordered_f64_reduction_loop_region_key(),
-        )?;
+        let view = crate::stencil_select::select_physical(selection.operation.region_key())?;
         (view.abi == crate::stencil_select::RegionAbi::ArrayReductionLoop
             && view.executable
             && view.stencil.validate())
@@ -164,7 +182,11 @@ impl NativeReductionPlan {
             index: 0,
             total: 0.0,
             interrupt: context.interrupt_flag(),
+            threshold: 0.0,
+            on_true: 0.0,
+            on_false: 0.0,
         };
+        self.selection.operation.configure(&mut native);
         let status = self.invoke(&mut native)?;
         let outcome = finish_native(status, &native, self.selection)?;
         if status == crate::vm::NATIVE_DISPATCH_INTERRUPT {
@@ -234,6 +256,7 @@ impl NativeReductionPlan {
             ReductionProfile::OrderedF64 => "ordered_f64_reduction_loop",
             ReductionProfile::ControlFor => "control_for_region",
             ReductionProfile::ControlWhile => "control_while_region",
+            ReductionProfile::ControlPredictable => "control_predictable_region",
         }
     }
 
@@ -242,11 +265,34 @@ impl NativeReductionPlan {
             ReductionProfile::OrderedF64 => Self::route().collect(),
             ReductionProfile::ControlFor => vec!["control", "for"],
             ReductionProfile::ControlWhile => vec!["control", "while"],
+            ReductionProfile::ControlPredictable => vec!["control", "predictable"],
         }
     }
 
     pub(crate) const fn region_end(&self) -> usize {
         self.selection.region_end
+    }
+}
+
+impl ReductionOperation {
+    fn region_key(self) -> crate::stencil_fact::RegionKey {
+        match self {
+            Self::Sum => crate::stencil_select::ordered_f64_reduction_loop_region_key(),
+            Self::LessThan { .. } => crate::stencil_select::control_predictable_region_region_key(),
+        }
+    }
+
+    fn configure(self, context: &mut NativeReductionContext) {
+        if let Self::LessThan {
+            threshold,
+            on_true,
+            on_false,
+        } = self
+        {
+            context.threshold = threshold;
+            context.on_true = on_true;
+            context.on_false = on_false;
+        }
     }
 }
 
