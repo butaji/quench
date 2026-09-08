@@ -819,6 +819,7 @@ fn decorate_client_session(socket: &Value, secure: bool) -> Result<(), VmError> 
             ("effectiveLocalWindowSize".into(), Value::Number(4_194_304.0)),
             ("localWindowSize".into(), Value::Number(33_554_432.0)),
             ("remoteWindowSize".into(), Value::Number(65_535.0)),
+            ("nextStreamID".into(), Value::Number(1.0)),
         ]),
     );
     execute::set_property_in_place(
@@ -1132,14 +1133,17 @@ fn session_request(
         };
         fields.push((b":authority".to_vec(), host.into_bytes()));
     }
-    let stream_id = state
-        .borrow()
-        .net
-        .http2_sessions
-        .get(&socket_id)
-        .and_then(|session| session.streams.keys().copied().max())
-        .map(|id| id.saturating_add(2))
-        .unwrap_or(1);
+    let stream_id = match execute::get_property(&socket, "\0quench:http2-next-stream-id") {
+        Value::Number(id) if id.is_finite() && id.fract() == 0.0 && id >= 1.0 => id as u32,
+        _ => state
+            .borrow()
+            .net
+            .http2_sessions
+            .get(&socket_id)
+            .and_then(|session| session.streams.keys().copied().max())
+            .map(|id| id.saturating_add(2))
+            .unwrap_or(1),
+    };
     let block = {
         let mut host = state.borrow_mut();
         let session = host
@@ -1212,6 +1216,26 @@ fn session_request(
         "priority",
         session_capability("streamPriority"),
     );
+    if stream_id > 0x7fff_ffff {
+        let error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String(
+                "No stream ID is available because maximum stream ID has been reached".into(),
+            )],
+        );
+        let error = execute::set_property(
+            error,
+            "code",
+            Value::String("ERR_HTTP2_OUT_OF_STREAMS".into()),
+        );
+        execute::set_property_in_place(&stream, "destroyed", Value::Boolean(true));
+        state
+            .borrow_mut()
+            .net
+            .pending_events
+            .push((stream.clone(), "error".into(), vec![error]));
+        return Ok(stream);
+    }
     state
         .borrow_mut()
         .net
@@ -1256,6 +1280,19 @@ fn session_request(
         &request_diagnostics,
         &stream_id.to_string(),
         diagnostic_headers.clone(),
+    );
+    // Consume an explicit setNextStreamID override once; subsequent requests
+    // continue with the next client-initiated odd identifier.
+    execute::set_property_in_place(
+        &socket,
+        "\0quench:http2-next-stream-id",
+        Value::Number(stream_id.saturating_add(2) as f64),
+    );
+    let session_state = execute::get_property(&socket, "state");
+    execute::set_property_in_place(
+        &session_state,
+        "nextStreamID",
+        Value::Number(stream_id.saturating_add(2) as f64),
     );
     publish_http2_stream_diagnostic(
         state,
@@ -2114,6 +2151,8 @@ fn session_method(
                 "\0quench:http2-next-stream-id",
                 Value::Number(*id),
             );
+            let session_state = execute::get_property(socket, "state");
+            execute::set_property_in_place(&session_state, "nextStreamID", Value::Number(*id));
         }
         "setLocalWindowSize" => {
             let value = args.first().unwrap_or(&Value::Undefined);
