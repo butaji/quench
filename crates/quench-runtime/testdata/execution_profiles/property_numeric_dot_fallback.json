@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "warmup": 0,
+  "result": { "kind": "nan" },
+  "plan": {
+    "execution_kind": "ordinary_fallback",
+    "operation_route": [
+      "local", "guarded_property_number", "local", "guarded_property_number",
+      "number_multiply", "local", "guarded_property_number", "local",
+      "guarded_property_number", "number_multiply", "number_add", "local",
+      "guarded_property_number", "local", "guarded_property_number",
+      "number_multiply", "number_add", "return"
+    ],
+    "fallback": true
+  },
+  "profile": {
+    "residual": { "GetN": 3, "Mul": 3, "Return": 1 },
+    "slow": {},
+    "stencils": {
+      "binary": { "entries": 2, "fallbacks": 3 },
+      "load_local": { "entries": 0, "fallbacks": 6 },
+      "local_property": { "entries": 0, "fallbacks": 6 },
+      "property": { "entries": 3, "fallbacks": 3 },
+      "property_numeric_portable": { "entries": 0, "fallbacks": 1 }
+    },
+    "events": {
+      "binding_load": 6,
+      "leaf_hit": 5,
+      "leaf_reject": 3,
+      "local_word_read": 6,
+      "named_property_miss": 3,
+      "owned_word_read": 12,
+      "portable_recipe_step": 2,
+      "register_file_read": 20
+    }
+  }
+}

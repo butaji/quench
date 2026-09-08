@@ -311,6 +311,7 @@ impl BlockValueGraph {
             result: crate::stencil_plan::LocalResultBinding::register(operation.a),
             operation,
             span: u8::try_from(self.len() + 1).ok()?,
+            returns: false,
             discarded: self.discarded_registers(operation.a),
             cost,
         })
@@ -365,6 +366,7 @@ impl BlockValueGraph {
             result: crate::stencil_plan::LocalResultBinding::register(operation.a),
             operation,
             span: u8::try_from(self.len() + 1).ok()?,
+            returns: false,
             discarded: self.discarded_registers(operation.a),
             cost,
         })
@@ -416,6 +418,7 @@ impl BlockValueGraph {
             result: crate::stencil_plan::LocalResultBinding::register(operation.a),
             operation,
             span: u8::try_from(self.len() + 1).ok()?,
+            returns: false,
             discarded: self.discarded_registers(operation.a),
             cost,
         })
