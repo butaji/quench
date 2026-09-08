@@ -74,6 +74,13 @@ pub(crate) struct NativeMethodAddContext {
     result: i32,
 }
 
+#[repr(C)]
+pub(crate) struct NativePropertyPairContext {
+    access: [GuardedPropertySlot; 2],
+    addend: i32,
+    result: i32,
+}
+
 impl NativePropertyReadContext {
     pub(crate) fn new(access: GuardedPropertySlot) -> Self {
         Self {
@@ -121,6 +128,50 @@ impl NativeMethodAddContext {
     pub(crate) fn result(&self, status: u32) -> Option<i32> {
         (status == 1).then_some(self.result)
     }
+}
+
+impl NativePropertyPairContext {
+    pub(crate) fn new(access: [GuardedPropertySlot; 2], addend: i32) -> Self {
+        Self {
+            access,
+            addend,
+            result: 0,
+        }
+    }
+
+    pub(crate) fn result(&self, status: u32) -> Option<i32> {
+        (status == 1).then_some(self.result)
+    }
+}
+
+#[inline(never)]
+pub(crate) extern "C" fn execute_property_pair_i32(context: *mut NativePropertyPairContext) -> u32 {
+    let Some(context) = (unsafe { context.as_mut() }) else {
+        return 0;
+    };
+    let Some(left) = guarded_i32(context.access[0]) else {
+        return 0;
+    };
+    let Some(right) = guarded_i32(context.access[1]) else {
+        return 0;
+    };
+    let Some(left) = left.checked_add(context.addend) else {
+        return 0;
+    };
+    let Some(right) = right.checked_add(context.addend) else {
+        return 0;
+    };
+    let Some(result) = left.checked_add(right) else {
+        return 0;
+    };
+    context.result = result;
+    1
+}
+
+fn guarded_i32(access: GuardedPropertySlot) -> Option<i32> {
+    let slot = access.valid_own_slot()?;
+    let value = unsafe { slot.as_ref() }?.number()?;
+    crate::stencil_numeric_integer_selection::exact_i32(value)
 }
 
 #[inline(never)]
