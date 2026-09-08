@@ -856,7 +856,12 @@ impl Instruction {
                 complete: true,
             },
             InitLocal | StoreLocal | StoreLocalChecked => RegisterFlow::store(self.b),
-            Jump | Slow => RegisterFlow::none(),
+            Jump => RegisterFlow::none(),
+            Slow => RegisterFlow {
+                uses: [None; 3],
+                definition: None,
+                complete: false,
+            },
             ForI => RegisterFlow {
                 uses: [None; 3],
                 definition: None,
