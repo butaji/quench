@@ -140,7 +140,14 @@ fn packed_settings(values: &[Value]) -> Result<Value, VmError> {
     }
 
     let mut entries = Vec::new();
-    push_numeric_setting(settings, "headerTableSize", 1, 0.0, u32::MAX as f64, &mut entries)?;
+    push_numeric_setting(
+        settings,
+        "headerTableSize",
+        1,
+        0.0,
+        u32::MAX as f64,
+        &mut entries,
+    )?;
     push_boolean_setting(settings, "enablePush", 2, &mut entries)?;
     push_numeric_setting(
         settings,
@@ -333,7 +340,11 @@ fn unpacked_settings(values: &[Value]) -> Result<Value, VmError> {
             3 => set_number(&mut result, "maxConcurrentStreams", value),
             4 => {
                 if validate && value > 2_147_483_647 {
-                    return invalid_setting("initialWindowSize", &Value::Number(value as f64), false);
+                    return invalid_setting(
+                        "initialWindowSize",
+                        &Value::Number(value as f64),
+                        false,
+                    );
                 }
                 set_number(&mut result, "initialWindowSize", value)
             }
@@ -392,22 +403,18 @@ fn typed_array_elements(value: &Value) -> Option<Vec<u8>> {
     };
     Some(
         (0..length)
-            .filter_map(|index| match quench_runtime::to_number(&execute::get_property(
-                value,
-                &index.to_string(),
-            )) {
-                Ok(number) if number.is_finite() => Some(number as u8),
-                _ => None,
+            .filter_map(|index| {
+                match quench_runtime::to_number(&execute::get_property(value, &index.to_string())) {
+                    Ok(number) if number.is_finite() => Some(number as u8),
+                    _ => None,
+                }
             })
             .collect(),
     )
 }
 
 pub fn binding() -> Value {
-    let session = host_api::bound_builtin(
-        quench_runtime::ops::Builtin::Object,
-        Value::Undefined,
-    );
+    let session = host_api::bound_builtin(quench_runtime::ops::Builtin::Object, Value::Undefined);
     let error_string = host_api::bound_capability_with_arguments(
         crate::host::capability_ref(crate::registry::SPEC_INTERNAL_HTTP2_UTIL),
         vec![Value::String("errorString".into())],
@@ -546,9 +553,9 @@ pub fn dispatch(
 /// stopped at that explicit capability boundary.
 fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, VmError> {
     let authority = values.first().unwrap_or(&Value::Undefined);
-    let extra_options = values.get(1).filter(|value| {
-        matches!(value, Value::Object(_) | Value::ObjectAlias(_))
-    });
+    let extra_options = values
+        .get(1)
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)));
     let callback = values
         .iter()
         .skip(1)
@@ -597,11 +604,7 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
             } else {
                 let once = execute::get_property(&socket, "once");
                 if quench_runtime::is_callable(&once) {
-                    execute::call(
-                        &once,
-                        &socket,
-                        &[Value::String("connect".into()), callback],
-                    )?;
+                    execute::call(&once, &socket, &[Value::String("connect".into()), callback])?;
                 }
             }
         }
@@ -677,7 +680,10 @@ fn session_request(
         return Err(VmError::NotCallable);
     };
     let headers = values.first().unwrap_or(&Value::Undefined);
-    if !matches!(headers, Value::Undefined | Value::Object(_) | Value::ObjectAlias(_)) {
+    if !matches!(
+        headers,
+        Value::Undefined | Value::Object(_) | Value::ObjectAlias(_)
+    ) {
         return Err(coded_error(
             quench_runtime::ops::Builtin::TypeError,
             "ERR_INVALID_ARG_TYPE",
@@ -698,7 +704,9 @@ fn session_request(
         .map(|(_, value)| value.clone())
         .unwrap_or_else(|| b"GET".to_vec());
     if method.as_slice() == b"CONNECT" {
-        let authority = fields.iter().any(|(name, _)| name.as_slice() == b":authority");
+        let authority = fields
+            .iter()
+            .any(|(name, _)| name.as_slice() == b":authority");
         let scheme = fields.iter().any(|(name, _)| name.as_slice() == b":scheme");
         let path = fields.iter().any(|(name, _)| name.as_slice() == b":path");
         if !authority {
@@ -736,7 +744,10 @@ fn session_request(
     {
         fields.push((b":scheme".to_vec(), b"http".to_vec()));
     }
-    if !fields.iter().any(|(name, _)| name.as_slice() == b":authority") {
+    if !fields
+        .iter()
+        .any(|(name, _)| name.as_slice() == b":authority")
+    {
         let host = match execute::get_property(&socket, "host") {
             Value::String(host) if !host.is_empty() => host,
             _ => "localhost".into(),
@@ -779,11 +790,12 @@ fn session_request(
     };
     let frame = crate::modules::http2_protocol::Frame::new(
         crate::modules::http2_protocol::FrameType::Headers,
-        // The common `request().end()` path is header-only; advertise
-        // END_STREAM on the initial block so the server observes Node's
-        // documented flags value (5).  The compact host stream state still
-        // accepts subsequent DATA for callers that write a body.
-        0x5,
+        // Keep END_STREAM on the DATA frame produced by `end()`.  A request
+        // may still receive a body through `write()` after this call, so the
+        // initial HEADERS block only carries END_HEADERS.  The pump derives
+        // the observable stream flags from both frames when they share a
+        // read, while delivering `end` exactly once from DATA.
+        0x4,
         stream_id,
         block,
     );
@@ -807,6 +819,11 @@ fn session_request(
     execute::set_property_in_place(&stream, "pause", session_capability("streamPause"));
     execute::set_property_in_place(&stream, "session", socket.clone());
     execute::set_property_in_place(&stream, "rstCode", Value::Number(0.0));
+    state
+        .borrow_mut()
+        .net
+        .http2_streams
+        .insert((socket_id, stream_id), stream.clone());
     let streams = match execute::get_property(&socket, "\0quench:http2-streams") {
         Value::Object(_) | Value::ObjectAlias(_) => {
             execute::get_property(&socket, "\0quench:http2-streams")
@@ -962,10 +979,7 @@ fn stream_respond(
     // Keep this host-owned response fact in the encoded header block so
     // clients observe the same shape as the HTTP/1 response path.
     if !fields.iter().any(|(name, _)| name.as_slice() == b"date") {
-        fields.push((
-            b"date".to_vec(),
-            b"Thu, 01 Jan 1970 00:00:00 GMT".to_vec(),
-        ));
+        fields.push((b"date".to_vec(), b"Thu, 01 Jan 1970 00:00:00 GMT".to_vec()));
     }
     let block = {
         let mut host = state.borrow_mut();
@@ -1111,8 +1125,10 @@ fn create_server(
     secure: bool,
 ) -> Result<Value, VmError> {
     let options = values.first().unwrap_or(&Value::Undefined);
-    if !matches!(options, Value::Undefined | Value::Object(_) | Value::ObjectAlias(_))
-        && !quench_runtime::is_callable(options)
+    if !matches!(
+        options,
+        Value::Undefined | Value::Object(_) | Value::ObjectAlias(_)
+    ) && !quench_runtime::is_callable(options)
     {
         return Err(coded_error(
             quench_runtime::ops::Builtin::TypeError,
@@ -1125,7 +1141,10 @@ fn create_server(
     }
     if matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
         let settings = execute::get_property(options, "settings");
-        if !matches!(settings, Value::Undefined | Value::Object(_) | Value::ObjectAlias(_)) {
+        if !matches!(
+            settings,
+            Value::Undefined | Value::Object(_) | Value::ObjectAlias(_)
+        ) {
             return Err(coded_error(
                 quench_runtime::ops::Builtin::TypeError,
                 "ERR_INVALID_ARG_TYPE",
@@ -1505,8 +1524,8 @@ mod tests {
         assert_eq!(
             bytes(&packed),
             vec![
-                0, 1, 0, 0, 16, 0, 0, 2, 0, 0, 0, 1, 0, 3, 255, 255, 255, 255, 0, 4,
-                0, 64, 0, 0, 0, 5, 0, 0, 64, 0, 0, 6, 0, 0, 255, 255, 0, 8, 0, 0, 0, 0,
+                0, 1, 0, 0, 16, 0, 0, 2, 0, 0, 0, 1, 0, 3, 255, 255, 255, 255, 0, 4, 0, 64, 0, 0,
+                0, 5, 0, 0, 64, 0, 0, 6, 0, 0, 255, 255, 0, 8, 0, 0, 0, 0,
             ]
         );
     }

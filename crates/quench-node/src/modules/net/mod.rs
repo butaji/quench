@@ -162,6 +162,10 @@ pub struct NetState {
     /// value cannot reliably identify the transport owner after COW.
     pub http2_servers: HashSet<u64>,
     pub http2_request_listeners: HashMap<u64, Value>,
+    /// Canonical stream emitters keyed by transport/session identity. JS
+    /// properties remain a public convenience, but COW object updates must
+    /// not be allowed to lose a stream between request and response events.
+    pub http2_streams: HashMap<(u64, u32), Value>,
     /// Canonical socket timeout timers, independent of VM alias properties.
     pub timeout_timers: HashMap<u64, Value>,
     pub pipe_fds: HashMap<i64, String>,
@@ -215,6 +219,7 @@ impl NetState {
             http2_sessions: HashMap::new(),
             http2_servers: HashSet::new(),
             http2_request_listeners: HashMap::new(),
+            http2_streams: HashMap::new(),
             timeout_timers: HashMap::new(),
             pipe_fds: HashMap::new(),
             fd_streams: HashMap::new(),
@@ -1628,12 +1633,10 @@ pub fn block_list_construct(
 /// BlockList's native check handle. The handle remains Rust-owned; callers
 /// only receive the symbol and the callable `check` view attached above.
 pub fn block_list_internal_module() -> Value {
-    crate::host::namespace_object_from_pairs(vec![
-        (
-            "kHandle".into(),
-            Value::String(BLOCKLIST_HANDLE_PROP.into()),
-        ),
-    ])
+    crate::host::namespace_object_from_pairs(vec![(
+        "kHandle".into(),
+        Value::String(BLOCKLIST_HANDLE_PROP.into()),
+    )])
 }
 
 pub fn block_list_add_address(
