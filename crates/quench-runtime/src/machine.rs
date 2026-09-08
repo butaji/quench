@@ -5573,6 +5573,7 @@ enum NativeAdmission {
     FreshObjectCall(Rc<RefCell<crate::stencil_fresh_object_call::NativeFreshObjectCallPlan>>),
     MethodCall(Rc<RefCell<crate::stencil_method_call::NativeMethodCallPlan>>),
     PropertyPair(Rc<RefCell<crate::stencil_property_pair::NativePropertyPairPlan>>),
+    PropertyReturnCall(Rc<RefCell<crate::stencil_property_return_call::NativePropertyReturnCallPlan>>),
     PropertyStoreCall(Rc<RefCell<crate::stencil_property_store_call::NativePropertyStoreCallPlan>>),
     PrototypeCall(Rc<RefCell<crate::stencil_prototype_call::NativePrototypeCallPlan>>),
     StringConcat(Rc<RefCell<crate::stencil_string_concat::StringConcatPlan>>),
@@ -5666,6 +5667,9 @@ impl AdmissionEntry for NativeAdmission {
             Self::PropertyPair(_) => shared_value_bytes::<
                 RefCell<crate::stencil_property_pair::NativePropertyPairPlan>,
             >(),
+            Self::PropertyReturnCall(_) => shared_value_bytes::<
+                RefCell<crate::stencil_property_return_call::NativePropertyReturnCallPlan>,
+            >(),
             Self::PropertyStoreCall(_) => shared_value_bytes::<
                 RefCell<crate::stencil_property_store_call::NativePropertyStoreCallPlan>,
             >(),
@@ -5725,6 +5729,7 @@ impl std::fmt::Debug for NativeAdmission {
             Self::FreshObjectCall(_) => "fresh_object_call",
             Self::MethodCall(_) => "method_call",
             Self::PropertyPair(_) => "property_pair",
+            Self::PropertyReturnCall(_) => "property_return_call",
             Self::PropertyStoreCall(_) => "property_store_call",
             Self::PrototypeCall(_) => "prototype_call",
             Self::StringConcat(_) => "string_concat",
@@ -6383,6 +6388,20 @@ fn property_pair_admission(
     Some(NativeAdmission::PropertyPair(Rc::new(RefCell::new(plan))))
 }
 
+fn property_return_call_admission(
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+) -> Option<NativeAdmission> {
+    policy.local_fusions.any().then_some(())?;
+    let selection = crate::stencil_property_return_call::select_property_return_call(
+        entries, cfg, pc,
+    )?;
+    let plan = crate::stencil_property_return_call::NativePropertyReturnCallPlan::new(selection);
+    Some(NativeAdmission::PropertyReturnCall(Rc::new(RefCell::new(plan))))
+}
+
 fn property_store_call_admission(
     code: CodeView<'_>,
     entries: &[BaselineEntry],
@@ -6405,7 +6424,7 @@ fn prototype_call_admission(
     policy: crate::stencil_policy::ExecutionPolicy,
 ) -> Option<NativeAdmission> {
     policy.local_fusions.numeric().then_some(())?;
-    let selection = crate::stencil_prototype_call::select_prototype_call(entries, cfg, pc)?;
+    let selection = crate::stencil_prototype_call::select_single_argument_call(entries, cfg, pc)?;
     let plan = crate::stencil_prototype_call::NativePrototypeCallPlan::new(selection);
     Some(NativeAdmission::PrototypeCall(Rc::new(RefCell::new(plan))))
 }
@@ -6944,6 +6963,7 @@ fn collect_admissions_at(
         method_call_admission(code, entries, cfg, pc, policy, arena),
     );
     builder.push_optional(pc, property_pair_admission(code, entries, cfg, pc, policy));
+    builder.push_optional(pc, property_return_call_admission(entries, cfg, pc, policy));
     builder.push_optional(
         pc,
         property_store_call_admission(code, entries, cfg, pc, policy),
@@ -7135,6 +7155,7 @@ impl BaselinePlan {
         let fresh_object_call = self.fresh_object_call_at(0).is_some();
         let method_call = self.method_call_at(0).is_some();
         let property_pair = self.property_pair_at(0).is_some();
+        let property_return_call = self.property_return_call_at(0).is_some();
         let property_store_call = self.property_store_call_at(0).is_some();
         let prototype_call = self.prototype_call_at(0).is_some();
         let string_concat = self.string_concat_at(0).is_some();
@@ -7161,6 +7182,7 @@ impl BaselinePlan {
             || fresh_object_call
             || method_call
             || property_pair
+            || property_return_call
             || property_store_call
             || prototype_call
             || string_concat
@@ -7321,6 +7343,12 @@ impl BaselinePlan {
         property_pair_at,
         PropertyPair,
         crate::stencil_property_pair::NativePropertyPairPlan
+    );
+    typed_admission_accessors!(
+        property_return_call_handle_at,
+        property_return_call_at,
+        PropertyReturnCall,
+        crate::stencil_property_return_call::NativePropertyReturnCallPlan
     );
     typed_admission_accessors!(
         property_store_call_handle_at,
@@ -7556,6 +7584,11 @@ impl OptimizingEntry<'_> {
         property_pair,
         PropertyPair,
         crate::stencil_property_pair::NativePropertyPairPlan
+    );
+    optimizing_admission_accessors!(
+        property_return_call,
+        PropertyReturnCall,
+        crate::stencil_property_return_call::NativePropertyReturnCallPlan
     );
     optimizing_admission_accessors!(
         property_store_call,
