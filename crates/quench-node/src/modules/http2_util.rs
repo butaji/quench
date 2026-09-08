@@ -1165,12 +1165,18 @@ fn session_request(
     // `endStream: true`) is observed. This is the stream contract needed for
     // POST bodies and for AbortSignal cancellation to reach the peer before
     // any terminal close event is surfaced.
-    let end_stream = matches!(
-        values
-            .get(1)
-            .map(|value| execute::get_property(value, "endStream")),
-        Some(Value::Boolean(true))
-    );
+    // Node closes header-only requests immediately for methods that do not
+    // normally carry a body, while body-bearing methods stay open until
+    // `end()` (unless the caller explicitly overrides `endStream`). Keep this
+    // method fact in the single request state used by both the wire flags and
+    // the later `end()` no-op check.
+    let end_stream = match values
+        .get(1)
+        .map(|value| execute::get_property(value, "endStream"))
+    {
+        Some(Value::Boolean(value)) => value,
+        _ => !matches!(method.as_slice(), b"POST" | b"PUT" | b"PATCH"),
+    };
     let frame = crate::modules::http2_protocol::Frame::new(
         crate::modules::http2_protocol::FrameType::Headers,
         // An explicit END_STREAM option permits a header-only request;
