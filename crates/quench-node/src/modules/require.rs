@@ -3603,6 +3603,21 @@ pub(crate) fn http2_module_value() -> Value {
             "Http2ServerResponse".into(),
             constructor("Http2ServerResponse"),
         ),
+        ("Http2Server".into(), constructor("Http2Server")),
+        (
+            "Http2SecureServer".into(),
+            constructor("Http2SecureServer"),
+        ),
+        ("Http2Session".into(), constructor("Http2Session")),
+        (
+            "ClientHttp2Session".into(),
+            constructor("ClientHttp2Session"),
+        ),
+        ("Http2Stream".into(), constructor("Http2Stream")),
+        (
+            "ClientHttp2Stream".into(),
+            constructor("ClientHttp2Stream"),
+        ),
         (
             "sensitiveHeaders".into(),
             crate::modules::http2_util::sensitive_headers(),
