@@ -2406,7 +2406,11 @@ pub(crate) fn execute_optimized_code_step_from(
     }
     if instruction.opcode == crate::ir::Opcode::GetN && instruction.flags == 0 {
         if let Some(native) = entry.native_property() {
-            if try_native_property_get(native, code, start, registers, instruction) {
+            if let Some(bits) = try_native_property_get(native, code, start, registers, instruction)
+            {
+                registers
+                    .write_tagged_bits(usize::from(instruction.a), bits)
+                    .ok_or(VmError::MissingReturn)?;
                 crate::execution_trace::stencil_observation(code, start, "property", true);
                 crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
                 return Ok((crate::completion::Completion::Normal, start + 1));
@@ -2742,8 +2746,9 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
             crate::execution_trace::leaf_rejection("native_local_property");
         }
         if let (Some(environment), Some(native)) = (environment, plan.native_local_binary_at(pc)) {
-            if let Some(committed) = crate::stencil_fusion::execute_local_binary(native, environment)
-                .and_then(|result| result.commit(registers, environment))
+            if let Some(committed) =
+                crate::stencil_fusion::execute_local_binary(native, environment)
+                    .and_then(|result| result.commit(registers, environment))
             {
                 crate::execution_trace::stencil_observation(code, pc, "local_binary", true);
                 crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
@@ -2928,9 +2933,24 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
         }
         if instruction.opcode == crate::ir::Opcode::GetN && instruction.flags == 0 {
             if let Some(native) = plan.native_property_at(pc) {
-                if try_native_property_get(native, code, pc, registers, instruction) {
+                let returns = native.borrow().returns();
+                if let Some(bits) =
+                    try_native_property_get(native, code, pc, registers, instruction)
+                {
                     crate::execution_trace::stencil_observation(code, pc, "property", true);
                     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                    if returns {
+                        let value = crate::register_file::own_tagged_bits(bits)
+                            .ok_or(VmError::MissingReturn)?;
+                        return completion_step_after_transition(
+                            registers,
+                            crate::completion::Completion::Return(value),
+                            pc + 2,
+                        );
+                    }
+                    registers
+                        .write_tagged_bits(usize::from(instruction.a), bits)
+                        .ok_or(VmError::MissingReturn)?;
                     pc += 1;
                     continue;
                 }
@@ -4518,11 +4538,12 @@ fn execute_property_numeric(
     environment: &crate::environment::Environment,
 ) -> Option<f64> {
     let mut receivers = [None; crate::stencil_property_numeric::MAX_PROPERTY_NUMERIC_VALUES];
-    plan.borrow_mut().execute(environment, |offset, receiver_slot| {
-        let pc = start.checked_add(usize::from(offset))?;
-        let object = property_numeric_receiver(&mut receivers, environment, receiver_slot)?;
-        cached_property_number(code, pc, object)
-    })
+    plan.borrow_mut()
+        .execute(environment, |offset, receiver_slot| {
+            let pc = start.checked_add(usize::from(offset))?;
+            let object = property_numeric_receiver(&mut receivers, environment, receiver_slot)?;
+            cached_property_number(code, pc, object)
+        })
 }
 
 fn property_numeric_receiver<'a>(
@@ -4603,13 +4624,12 @@ fn try_native_property_get(
     pc: usize,
     registers: &mut crate::register_file::RegisterFile,
     instruction: crate::ir::Instruction,
-) -> bool {
+) -> Option<u64> {
     let bits = registers
         .read_object(usize::from(instruction.b))
         .and_then(native_property_object_guard)
         .and_then(|object| native_property_bits(native, code, pc, object));
-    bits.and_then(|bits| registers.write_tagged_bits(usize::from(instruction.a), bits))
-        .is_some()
+    bits
 }
 
 #[inline(always)]

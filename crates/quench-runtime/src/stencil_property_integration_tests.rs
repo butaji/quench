@@ -54,6 +54,10 @@ fn named_get_pc(code: CodeView<'_>) -> Option<usize> {
     (0..code.len()).find(|pc| {
         code.instruction(*pc)
             .is_some_and(|instruction| instruction.opcode == crate::ir::Opcode::GetN)
+            && code
+                .metadata_at(*pc)
+                .and_then(|metadata| metadata.name.as_deref())
+                == Some("value")
     })
 }
 
@@ -135,7 +139,7 @@ fn run_get(code: CodeView<'_>, plan: &BaselinePlan, pc: usize, receiver: &Rc<Obj
     )
     .expect("named get execution");
     let Completion::Return(value) = completion else {
-        panic!("named get must return")
+        panic!("named get must return, got {completion:?}")
     };
     value
 }
@@ -187,8 +191,11 @@ fn assert_generated_own_entry(plan: &BaselinePlan, pc: usize) {
 fn assert_generated_own_entry(_plan: &BaselinePlan, _pc: usize) {}
 
 fn source_plan() -> (FunctionCode, BaselinePlan, usize) {
-    let program = crate::reduce::reduce_source("function read(o){return o.value}")
-        .expect("ordinary prototype get lowers");
+    source_plan_for("function read(o){return o.value}")
+}
+
+fn source_plan_for(source: &str) -> (FunctionCode, BaselinePlan, usize) {
+    let program = crate::reduce::reduce_source(source).expect("ordinary prototype get lowers");
     let body = source_named_get_body(program.code());
     let code = body.code().expect("linked source function");
     let pc = named_get_pc(code).expect("GetN instruction");
@@ -359,14 +366,59 @@ fn ordinary_source_prototype_get_executes_native_and_invalidates_chain() {
 #[cfg(target_arch = "aarch64")]
 #[test]
 fn ordinary_source_own_get_executes_native_and_rejects_accessor() {
-    let (body, plan, pc) = source_plan();
+    let case = crate::test_execution_profile::ExecutionCase::load("property_own_monomorphic");
+    case.assert_standalone();
+    let (body, plan, pc) = source_plan_for(case.source());
     let code = body.code().unwrap();
     let receiver = Rc::new(ObjectData::new(vec![("value".into(), Value::Number(19.0))]));
+    assert_eq!(case.warmup(), 1);
     assert_eq!(run_get(code, &plan, pc, &receiver), Value::Number(19.0));
-    assert_eq!(run_get(code, &plan, pc, &receiver), Value::Number(19.0));
+    let (value, profile) =
+        crate::test_execution_profile::capture(|| run_get(code, &plan, pc, &receiver));
+    assert_eq!(value, Value::Number(19.0));
+    case.assert(&value, &profile);
+    case.assert_plan(
+        crate::test_execution_profile::ExecutionKind::NativeMachineCode,
+        &[code.instruction(pc).unwrap().opcode.name(), "Return"],
+    );
     let before = native_count(&plan, pc);
     assert!(before > 0, "warm own-data lookup must execute native bytes");
     assert_generated_own_entry(&plan, pc);
+    assert_accessor_fallback(&plan, code, pc, &receiver, before);
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn fused_property_return_retains_heap_result_once() {
+    let (body, plan, pc) = source_plan();
+    let code = body.code().unwrap();
+    let child = Rc::new(ObjectData::new(vec![]));
+    let weak = Rc::downgrade(&child);
+    let receiver = Rc::new(ObjectData::new(vec![(
+        "value".into(),
+        Value::Object(Rc::clone(&child)),
+    )]));
+    drop(child);
+    let result = run_get(code, &plan, pc, &receiver);
+    drop(receiver);
+    let Value::Object(result) = result else {
+        panic!("fused property return must preserve object value")
+    };
+    assert!(weak.upgrade().is_some());
+    drop(result);
+    assert!(weak.upgrade().is_none());
+}
+
+fn assert_accessor_fallback(
+    plan: &BaselinePlan,
+    code: CodeView<'_>,
+    pc: usize,
+    receiver: &Rc<ObjectData>,
+    before: u64,
+) {
+    let case = crate::test_execution_profile::ExecutionCase::load("property_accessor_fallback");
+    case.assert_standalone();
+    assert_eq!(case.warmup(), 2);
     let descriptor = Value::Object(Rc::new(ObjectData::new(vec![(
         "get".into(),
         Value::Undefined,
@@ -377,12 +429,15 @@ fn ordinary_source_own_get_executes_native_and_rejects_accessor() {
         &crate::builtins::descriptor_key("value"),
         descriptor,
     ));
-    assert_eq!(run_get(code, &plan, pc, &receiver), Value::Undefined);
-    assert_eq!(
-        native_count(&plan, pc),
-        before,
-        "accessor must reject entry"
+    let (value, profile) =
+        crate::test_execution_profile::capture(|| run_get(code, plan, pc, receiver));
+    assert_eq!(value, Value::Undefined);
+    case.assert(&value, &profile);
+    case.assert_plan(
+        crate::test_execution_profile::ExecutionKind::OrdinaryFallback,
+        &[code.instruction(pc).unwrap().opcode.name(), "Return"],
     );
+    assert_eq!(native_count(plan, pc), before, "accessor must reject entry");
 }
 
 fn shaped_receiver(prefix: usize, value: f64) -> Rc<ObjectData> {
@@ -396,7 +451,9 @@ fn shaped_receiver(prefix: usize, value: f64) -> Rc<ObjectData> {
 #[cfg(target_arch = "aarch64")]
 #[test]
 fn ordinary_source_property_site_degrades_from_native_to_bounded_fallback() {
-    let (body, plan, pc) = source_plan();
+    let case = crate::test_execution_profile::ExecutionCase::load("property_megamorphic_fallback");
+    case.assert_standalone();
+    let (body, plan, pc) = source_plan_for(case.source());
     let code = body.code().unwrap();
     let receivers = [
         shaped_receiver(0, 10.0),
@@ -420,7 +477,14 @@ fn ordinary_source_property_site_degrades_from_native_to_bounded_fallback() {
         crate::quickening::QuickeningTier::Megamorphic
     );
     let before = native_count(&plan, pc);
-    assert_eq!(run_get(code, &plan, pc, &receivers[2]), Value::Number(12.0));
+    assert_eq!(case.warmup(), 3);
+    let (value, profile) =
+        crate::test_execution_profile::capture(|| run_get(code, &plan, pc, &receivers[2]));
+    case.assert(&value, &profile);
+    case.assert_plan(
+        crate::test_execution_profile::ExecutionKind::OrdinaryFallback,
+        &[code.instruction(pc).unwrap().opcode.name(), "Return"],
+    );
     assert_eq!(native_count(&plan, pc), before, "megamorphic site degrades");
     let descriptor = Value::Object(Rc::new(ObjectData::new(vec![(
         "get".into(),

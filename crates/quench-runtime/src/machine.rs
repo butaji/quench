@@ -4069,6 +4069,7 @@ enum InstalledPropertyEntry {
 pub(crate) struct NativePropertyPlan {
     physical: PhysicalInstallation<InstalledPropertyEntry>,
     opcode: crate::ir::Opcode,
+    returns: bool,
     #[cfg(test)]
     native_entry_count: u64,
     #[cfg(test)]
@@ -4111,11 +4112,21 @@ impl NativePropertyPlan {
         Some(Self {
             physical: PhysicalInstallation::local(InstalledPropertyEntry::Unpublished),
             opcode,
+            returns: false,
             #[cfg(test)]
             native_entry_count: 0,
             #[cfg(test)]
             last_native_view: None,
         })
+    }
+
+    pub(crate) const fn returns(&self) -> bool {
+        self.returns
+    }
+
+    fn with_return(mut self) -> Self {
+        self.returns = true;
+        self
     }
 
     #[cfg(test)]
@@ -5765,11 +5776,24 @@ fn move_admission(
 }
 
 fn property_admission(
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
     instruction: crate::ir::Instruction,
     policy: crate::stencil_policy::ExecutionPolicy,
     arena: &SharedStencilPool,
 ) -> Option<NativeAdmission> {
-    let plan = NativePropertyPlan::new_with_arena(instruction, policy, Rc::clone(arena))?;
+    let mut plan = NativePropertyPlan::new_with_arena(instruction, policy, Rc::clone(arena))?;
+    if instruction.opcode == crate::ir::Opcode::GetN {
+        let return_pc = pc.checked_add(1)?;
+        let next = entries.get(return_pc)?.instruction;
+        if next.opcode == crate::ir::Opcode::Return
+            && next.a == instruction.a
+            && cfg.region_control(pc, return_pc.checked_add(1)?).is_some()
+        {
+            plan = plan.with_return();
+        }
+    }
     let plan = Rc::new(RefCell::new(plan));
     match instruction.opcode {
         crate::ir::Opcode::GetN => Some(NativeAdmission::Property(plan)),
@@ -5780,13 +5804,18 @@ fn property_admission(
 
 fn collect_memory_admissions(
     builder: &mut AdmissionBuilder<NativeAdmission>,
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
     pc: usize,
     instruction: crate::ir::Instruction,
     policy: crate::stencil_policy::ExecutionPolicy,
     arena: &SharedStencilPool,
 ) {
     builder.push_optional(pc, move_admission(instruction, policy, arena));
-    builder.push_optional(pc, property_admission(instruction, policy, arena));
+    builder.push_optional(
+        pc,
+        property_admission(entries, cfg, pc, instruction, policy, arena),
+    );
     builder.push_optional(
         pc,
         native_admission!(
@@ -6142,7 +6171,7 @@ fn collect_admissions_at(
         pc,
         local_predicate_admission(code, entries, cfg, pc, policy, arena),
     );
-    collect_memory_admissions(builder, pc, entry.instruction, policy, arena);
+    collect_memory_admissions(builder, entries, cfg, pc, entry.instruction, policy, arena);
     builder.push_optional(pc, region_admission(entries, cfg, pc, policy, arena));
 }
 

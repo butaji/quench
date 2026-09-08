@@ -3326,6 +3326,7 @@ fn native_property_uses_rendered_address_without_remapping() {
     let mut plan = super::NativePropertyPlan {
         physical: super::PhysicalInstallation::local(super::InstalledPropertyEntry::Unpublished),
         opcode: crate::ir::Opcode::GetN,
+        returns: false,
         native_entry_count: 0,
         last_native_view: None,
     };
@@ -3395,6 +3396,7 @@ fn native_property_rejects_stale_layout_before_loading_slot() {
     let mut plan = super::NativePropertyPlan {
         physical: super::PhysicalInstallation::local(super::InstalledPropertyEntry::Unpublished),
         opcode: crate::ir::Opcode::GetN,
+        returns: false,
         native_entry_count: 0,
         last_native_view: None,
     };
