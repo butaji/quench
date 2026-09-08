@@ -8,9 +8,7 @@ function microRun() {
 globalThis.microRun = microRun;
 const result = microRun();
 assert(Number.isFinite(result), "result");
-const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
-emit("ok:" + JSON.stringify(result));
-
+assert(typeof microRun === "function", "scenario entry is callable");
 const __profileResult = JSON.stringify(result);
-if (__profileResult !== "11520") throw new Error("legacy exact result mismatch");
+assert(__profileResult === "11520", "exact encoded result");
 return __profileResult;
