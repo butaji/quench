@@ -5,10 +5,14 @@ const assert = (condition, message) => { if (!condition) throw new Error("micro 
 function microRun() {
   const left = Array.from({ length: 225 }, (_, i) => i); const right = Array.from({ length: 225 }, (_, i) => i + 3); const merged = [...left, ...right, 3]; return merged.filter((value) => (value & 1) === 0).length;
 }
-globalThis.microRun = microRun;
-const result = microRun();
+function run() {
+  return microRun();
+}
+function verify(result) {
 assert(Number.isFinite(result), "result");
 assert(typeof microRun === "function", "scenario entry is callable");
 const __profileResult = JSON.stringify(result);
 assert(__profileResult === "225", "exact encoded result");
-return __profileResult;
+  return __profileResult;
+}
+return { run: run, verify: verify };

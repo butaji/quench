@@ -5,10 +5,14 @@ const assert = (condition, message) => { if (!condition) throw new Error("micro 
 function microRun() {
   let total = 0; for (let i = 0; i < 260; i++) { const [a = 1, b = 2, c = 3] = (i & 1) ? [i] : []; total += a + b + c; } return total;
 }
-globalThis.microRun = microRun;
-const result = microRun();
+function run() {
+  return microRun();
+}
+function verify(result) {
 assert(Number.isFinite(result), "result");
 assert(typeof microRun === "function", "scenario entry is callable");
 const __profileResult = JSON.stringify(result);
 assert(__profileResult === "18330", "exact encoded result");
-return __profileResult;
+  return __profileResult;
+}
+return { run: run, verify: verify };

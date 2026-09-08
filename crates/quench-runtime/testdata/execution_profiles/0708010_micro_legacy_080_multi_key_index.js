@@ -6,10 +6,14 @@ const index = new Map();
 function microRun() {
   for (let i = 0; i < 600; i++) { const key = (i % 7) + ":" + (i % 11); index.set(key, i); } let total = 0; for (const key of index.keys()) total += index.get(key); return total + index.size;
 }
-globalThis.microRun = microRun;
-const result = microRun();
+function run() {
+  return microRun();
+}
+function verify(result) {
 assert(Number.isFinite(result), "result");
 assert(typeof microRun === "function", "scenario entry is callable");
 const __profileResult = JSON.stringify(result);
 assert(__profileResult === "43274", "exact encoded result");
-return __profileResult;
+  return __profileResult;
+}
+return { run: run, verify: verify };

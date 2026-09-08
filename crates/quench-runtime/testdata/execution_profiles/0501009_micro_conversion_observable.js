@@ -36,10 +36,12 @@ const check = function (result, s, variant) {
 const state = setup(64, 17, "observable");
 assert(typeof operation === "function", "scenario operation is callable");
 function run() {
-  const value = operation(state);
+  return operation(state);
+}
+function verify(value) {
   if (check) check(value, state, "observable");
   const signature = JSON.stringify(encode(value));
   assert(signature === "[\"array\",[[\"number\",\"965\"],[\"number\",\"64\"]]]", "exact encoded result");
   return signature;
 }
-return run();
+return { run: run, verify: verify };

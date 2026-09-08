@@ -25,10 +25,12 @@ const check = null;
 const state = setup(64, 17, "queued");
 assert(typeof operation === "function", "scenario operation is callable");
 async function run() {
-  const value = await operation(state);
+  return operation(state);
+}
+function verify(value) {
   if (check) check(value, state, "queued");
   const signature = JSON.stringify(encode(value));
   assert(signature === "[\"number\",\"81\"]", "exact encoded result");
   return signature;
 }
-return run();
+return { run: run, verify: verify };
