@@ -24,7 +24,7 @@ const setup = function (n, seed) {
   };
 const operation = function (s) {
       var x = s.seed;
-      for (var i = 0; i < s.n; i++) x = (x * 33 + 7) | 0;
+      for (var i = 0; i < s.n; i++) x = s.f(x);
       return x;
     };
 const check = null;

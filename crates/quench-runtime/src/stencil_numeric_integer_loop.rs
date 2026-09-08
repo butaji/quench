@@ -12,63 +12,80 @@ pub(crate) const INDEX_LOOP_BACKEDGE: usize = 26;
 pub(crate) const INDEX_LOOP_EXIT: usize = 27;
 pub(crate) const CONSTANT_LOOP_BACKEDGE: usize = 25;
 pub(crate) const CONSTANT_LOOP_EXIT: usize = 26;
+pub(crate) const NAMED_REGION_END: usize = 28;
+pub(crate) const NAMED_LOOP_BACKEDGE: usize = 23;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum IntegerRecurrence {
     Index,
     Constant(i32),
+    NamedCallee(std::rc::Rc<str>),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum IntegerLoopProfile {
     Numeric,
     Affine,
+    CallsInline,
 }
 
 impl IntegerRecurrence {
-    fn physical_key(self) -> crate::stencil_fact::RegionKey {
+    fn physical_key(&self) -> crate::stencil_fact::RegionKey {
         match self {
             Self::Index => crate::stencil_select::numeric_integer_loop_region_key(),
-            Self::Constant(_) => crate::stencil_select::affine_i32_loop_region_key(),
+            Self::Constant(_) | Self::NamedCallee(_) => {
+                crate::stencil_select::affine_i32_loop_region_key()
+            }
         }
     }
 
-    const fn constant_addend(self) -> i32 {
+    fn static_formula(&self, multiplier: i32) -> Option<(i32, i32)> {
         match self {
-            Self::Index => 0,
-            Self::Constant(value) => value,
+            Self::Index => Some((multiplier, 0)),
+            Self::Constant(value) => Some((multiplier, *value)),
+            Self::NamedCallee(_) => None,
         }
     }
 
-    const fn backedge(self) -> usize {
+    const fn backedge(&self) -> usize {
         match self {
             Self::Index => INDEX_LOOP_BACKEDGE,
             Self::Constant(_) => CONSTANT_LOOP_BACKEDGE,
+            Self::NamedCallee(_) => NAMED_LOOP_BACKEDGE,
         }
     }
 
-    const fn region_end(self) -> usize {
+    const fn region_end(&self) -> usize {
         match self {
             Self::Index => INDEX_REGION_END,
             Self::Constant(_) => CONSTANT_REGION_END,
+            Self::NamedCallee(_) => NAMED_REGION_END,
         }
     }
 
-    const fn profile(self) -> IntegerLoopProfile {
+    const fn profile(&self) -> IntegerLoopProfile {
         match self {
             Self::Index => IntegerLoopProfile::Numeric,
             Self::Constant(_) => IntegerLoopProfile::Affine,
+            Self::NamedCallee(_) => IntegerLoopProfile::CallsInline,
         }
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct IntegerLoopSelection {
     pub(crate) state_slot: u16,
     pub(crate) value_slot: u16,
     pub(crate) index_slot: u16,
     pub(crate) multiplier: i32,
     pub(crate) recurrence: IntegerRecurrence,
+}
+
+struct IntegerLoopInputs {
+    seed: i32,
+    end: usize,
+    multiplier: i32,
+    addend: i32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -133,15 +150,15 @@ impl NativeIntegerLoopPlan {
         environment: &crate::environment::Environment,
         vm: &crate::vm::VmContext,
     ) -> Result<Option<IntegerLoopOutcome>, NativeDispatchError> {
-        let Some((seed, end)) = self.inputs(code, environment) else {
+        let Some(inputs) = self.inputs(code, environment) else {
             return Ok(None);
         };
         let mut context = IntegerLoopContext {
             index: 0,
-            end,
-            value: seed,
-            multiplier: self.selection.multiplier,
-            addend: self.selection.recurrence.constant_addend(),
+            end: inputs.end,
+            value: inputs.seed,
+            multiplier: inputs.multiplier,
+            addend: inputs.addend,
             _padding: 0,
             interrupt: vm.interrupt_flag(),
         };
@@ -153,17 +170,41 @@ impl NativeIntegerLoopPlan {
         &self,
         code: CodeView<'_>,
         environment: &crate::environment::Environment,
-    ) -> Option<(i32, usize)> {
+    ) -> Option<IntegerLoopInputs> {
         environment
             .with_proven_object(self.selection.state_slot, |object| {
                 let seed = crate::vm::cached_own_property_number(code, 1, object)?;
                 let end = crate::vm::cached_own_property_number(code, 9, object)?;
                 let seed = exact_i32(seed)?;
                 let end = exact_bound(end)?;
-                exact_for_all_iterations(seed, self.selection, end)?;
-                Some((seed, end))
+                let (multiplier, addend) = self.formula(object)?;
+                exact_for_all_iterations(seed, multiplier, addend, end)?;
+                Some(IntegerLoopInputs {
+                    seed,
+                    end,
+                    multiplier,
+                    addend,
+                })
             })
             .flatten()
+    }
+
+    fn formula(&self, object: &crate::value::ObjectData) -> Option<(i32, i32)> {
+        if let Some(formula) = self
+            .selection
+            .recurrence
+            .static_formula(self.selection.multiplier)
+        {
+            return Some(formula);
+        }
+        let IntegerRecurrence::NamedCallee(key) = &self.selection.recurrence else {
+            return None;
+        };
+        let function = own_function(object, key)?;
+        crate::functions::direct_call_eligible(&function).then_some(())?;
+        let fact = function.code.numeric_affine_i32()?;
+        (usize::from(fact.parameter_slot) == function.captures.len())
+            .then_some((fact.multiplier, fact.addend))
     }
 
     fn invoke(&mut self, context: &mut IntegerLoopContext) -> Result<u64, NativeDispatchError> {
@@ -248,6 +289,15 @@ impl NativeIntegerLoopPlan {
         self.installed = Some(entry);
         Ok(entry)
     }
+}
+
+fn own_function(
+    object: &crate::value::ObjectData,
+    key: &str,
+) -> Option<Rc<crate::value::FunctionValue>> {
+    let pointer = crate::vm::proven_own_word(object, key)?.function_ptr()?;
+    unsafe { Rc::increment_strong_count(pointer) };
+    Some(unsafe { Rc::from_raw(pointer) })
 }
 
 pub(crate) use crate::stencil_numeric_integer_selection::select_integer_loop;
