@@ -2100,13 +2100,15 @@ fn record_dense_copy(code: crate::machine::CodeView<'_>, pc: usize) {
     );
 }
 
-fn record_ordered_reduction(code: crate::machine::CodeView<'_>, pc: usize) {
-    crate::execution_trace::stencil_observation(code, pc, "ordered_f64_reduction_loop", true);
+fn record_ordered_reduction(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    plan: &crate::stencil_ordered_reduction::NativeReductionPlan,
+) {
+    crate::execution_trace::stencil_observation(code, pc, plan.profile_name(), true);
     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
     #[cfg(test)]
-    crate::test_execution_profile::dynamic_region_route(
-        crate::stencil_ordered_reduction::NativeReductionPlan::route(),
-    );
+    crate::test_execution_profile::dynamic_region_route(plan.profile_route());
 }
 
 fn record_i32_pattern(code: crate::machine::CodeView<'_>, pc: usize) {
@@ -2700,18 +2702,19 @@ pub(crate) fn execute_optimized_code_step_from(
             let Some(environment) = environment else {
                 return Ok(None);
             };
-            reduction.borrow_mut().execute(environment, context)
+            reduction.borrow_mut().execute(code, environment, context)
         });
         match result {
             Ok(Some(crate::stencil_ordered_reduction::ReductionOutcome::Completed(value))) => {
-                record_ordered_reduction(code, start);
+                let plan = reduction.borrow();
+                record_ordered_reduction(code, start, &plan);
                 return Ok((
                     crate::completion::Completion::Return(crate::value::Value::Number(value)),
-                    crate::stencil_ordered_reduction::REGION_END,
+                    plan.region_end(),
                 ));
             }
             Ok(Some(crate::stencil_ordered_reduction::ReductionOutcome::Resume { pc })) => {
-                record_ordered_reduction(code, start);
+                record_ordered_reduction(code, start, &reduction.borrow());
                 return Ok((crate::completion::Completion::Normal, pc));
             }
             Ok(None) | Err(crate::machine::NativeDispatchError::Physical(_)) => {}
@@ -2727,7 +2730,7 @@ pub(crate) fn execute_optimized_code_step_from(
         crate::execution_trace::stencil_observation(
             code,
             start,
-            "ordered_f64_reduction_loop",
+            reduction.borrow().profile_name(),
             false,
         );
     }
@@ -3948,17 +3951,19 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
             }
         }
         if let (Some(environment), Some(reduction)) = (environment, plan.reduction_at(pc)) {
-            match reduction.borrow_mut().execute(environment, context) {
+            let result = reduction.borrow_mut().execute(code, environment, context);
+            match result {
                 Ok(Some(crate::stencil_ordered_reduction::ReductionOutcome::Completed(value))) => {
-                    record_ordered_reduction(code, pc);
+                    let plan = reduction.borrow();
+                    record_ordered_reduction(code, pc, &plan);
                     return completion_step_after_transition(
                         registers,
                         crate::completion::Completion::Return(crate::value::Value::Number(value)),
-                        crate::stencil_ordered_reduction::REGION_END,
+                        plan.region_end(),
                     );
                 }
                 Ok(Some(crate::stencil_ordered_reduction::ReductionOutcome::Resume { pc })) => {
-                    record_ordered_reduction(code, 0);
+                    record_ordered_reduction(code, 0, &reduction.borrow());
                     return completion_step_after_transition(
                         registers,
                         crate::completion::Completion::Normal,
@@ -3969,7 +3974,7 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                     crate::execution_trace::stencil_observation(
                         code,
                         pc,
-                        "ordered_f64_reduction_loop",
+                        reduction.borrow().profile_name(),
                         false,
                     )
                 }
@@ -6224,6 +6229,25 @@ pub(crate) fn cached_own_property_number(
     let key = metadata.name.as_deref()?;
     quickened_native_own_slot(code, pc, object, key)
         .and_then(crate::native_property::GuardedPropertySlot::load_own_number_now)
+}
+
+pub(crate) fn with_cached_own_property_array<R>(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    object: &crate::value::ObjectData,
+    use_array: impl FnOnce(&crate::value::ArrayData) -> R,
+) -> Option<R> {
+    let object = native_property_object_guard(object)?;
+    let metadata = code.metadata_at(pc)?;
+    let key = metadata.name.as_deref()?;
+    let bits = quickened_native_own_slot(code, pc, object, key)?.load_own_now()?;
+    let crate::tagged_value::DecodedValue::ArrayPtr(pointer) =
+        crate::tagged_value::TaggedValue::from_bits(bits).decode()
+    else {
+        return None;
+    };
+    let array = unsafe { &*(pointer as *const crate::value::ArrayData) };
+    crate::locals::array_word_is_current(array).then(|| use_array(array))
 }
 
 fn native_property_object_guard(
