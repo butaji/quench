@@ -1122,7 +1122,11 @@ fn connect_target_options(
         if host == format!("{hostname}:{port}")
             || host == format!("[{hostname}]:{port}")
         {
-            execute::set_property_in_place(&target, "host", Value::String(hostname));
+            execute::set_property_in_place(
+                &target,
+                "host",
+                Value::String(hostname.trim_matches(['[', ']']).into()),
+            );
         } else if let Some(host) = host.strip_prefix('[') {
             if let Some(end) = host.find(']') {
                 execute::set_property_in_place(
