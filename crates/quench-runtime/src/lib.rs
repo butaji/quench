@@ -149,6 +149,7 @@ mod stencil_forward_call;
 mod stencil_fresh_object_call;
 mod stencil_method_call;
 mod stencil_property_pair;
+mod stencil_property_store_call;
 mod stencil_prototype_call;
 mod stencil_cfg;
 #[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]

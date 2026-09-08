@@ -26,6 +26,11 @@ pub(crate) struct VectorDotReturn {
     pub(crate) fields: [std::rc::Rc<str>; 3],
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct OwnFieldStoreReturn {
+    pub(crate) field: std::rc::Rc<str>,
+}
+
 impl IntegerSwitchI32 {
     pub(crate) fn select(&self, discriminant: i32) -> NumericAffineI32 {
         self.branches
@@ -142,6 +147,59 @@ pub(crate) fn stable_vector_dot_return(
     let fact = vector_dot_return(function)?;
     let expected = installed.get_or_insert_with(|| fact.clone());
     (*expected == fact).then_some(fact)
+}
+
+pub(crate) fn stable_own_field_store_return(
+    installed: &mut Option<OwnFieldStoreReturn>,
+    function: &crate::value::FunctionValue,
+) -> Option<OwnFieldStoreReturn> {
+    let fact = own_field_store_return(function)?;
+    let expected = installed.get_or_insert_with(|| fact.clone());
+    (*expected == fact).then_some(fact)
+}
+
+fn own_field_store_return(function: &crate::value::FunctionValue) -> Option<OwnFieldStoreReturn> {
+    (function.params == 2 && crate::functions::direct_call_eligible(function)).then_some(())?;
+    let code = function.code.code()?;
+    let ops = instruction_array::<10>(code)?;
+    validate_field_store_shape(&ops)?;
+    let receiver = u16::try_from(function.captures.len()).ok()?;
+    let value = receiver.checked_add(1)?;
+    validate_field_store_flow(&ops, receiver, value)?;
+    let field = code.metadata_at(4)?.name.clone()?;
+    (code.metadata_at(6)?.name == Some(field.clone()) && has_undefined_tail(code, 8))
+        .then_some(OwnFieldStoreReturn { field })
+}
+
+fn validate_field_store_shape(ops: &[crate::ir::Instruction; 10]) -> Option<()> {
+    use crate::ir::Opcode::{GetN, GetNQuickened, LoadLocal, Move, Return, SetN};
+    let expected = [
+        LoadLocal, Move, Move, LoadLocal, SetN, LoadLocal, GetN, Return,
+    ];
+    ops[..8]
+        .iter()
+        .zip(expected)
+        .all(|(op, expected)| {
+            op.opcode == expected || (expected == GetN && op.opcode == GetNQuickened)
+        })
+        .then_some(())
+}
+
+fn validate_field_store_flow(
+    ops: &[crate::ir::Instruction; 10],
+    receiver: u16,
+    value: u16,
+) -> Option<()> {
+    (ops[0].b == receiver
+        && ops[1].b == ops[0].a
+        && ops[2].b == ops[1].a
+        && ops[3].b == value
+        && aliases_receiver(&ops[..3], ops[4].a, ops[0].a)
+        && ops[4].b == ops[3].a
+        && ops[5].b == receiver
+        && ops[6].b == ops[5].a
+        && ops[7] == crate::ir::Instruction::ret(ops[6].a))
+    .then_some(())
 }
 
 fn vector_dot_return(function: &crate::value::FunctionValue) -> Option<VectorDotReturn> {

@@ -2168,6 +2168,20 @@ fn record_property_pair(code: crate::machine::CodeView<'_>, pc: usize) {
     crate::test_execution_profile::dynamic_region_route(crate::stencil_property_pair::route());
 }
 
+fn record_property_store_call(code: crate::machine::CodeView<'_>, pc: usize) {
+    crate::execution_trace::stencil_observation(
+        code,
+        pc,
+        crate::stencil_property_store_call::PROFILE_NAME,
+        true,
+    );
+    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+    #[cfg(test)]
+    crate::test_execution_profile::dynamic_region_route(
+        crate::stencil_property_store_call::route(),
+    );
+}
+
 fn record_prototype_call(code: crate::machine::CodeView<'_>, pc: usize) {
     crate::execution_trace::stencil_observation(
         code,
@@ -2749,6 +2763,26 @@ pub(crate) fn execute_optimized_code_step_from(
             code,
             start,
             crate::stencil_property_pair::PROFILE_NAME,
+            false,
+        );
+    }
+    if let Some(call) = entry.property_store_call() {
+        let (value, span) = {
+            let mut call = call.borrow_mut();
+            let value = crate::locals::with_current_ref(|environment| call.execute(environment?));
+            (value, call.span())
+        };
+        if let Some(value) = value {
+            record_property_store_call(code, start);
+            return Ok((
+                crate::completion::Completion::Return(crate::value::Value::Number(value)),
+                start + span,
+            ));
+        }
+        crate::execution_trace::stencil_observation(
+            code,
+            start,
+            crate::stencil_property_store_call::PROFILE_NAME,
             false,
         );
     }
@@ -3928,6 +3962,26 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                 code,
                 pc,
                 crate::stencil_property_pair::PROFILE_NAME,
+                false,
+            );
+        }
+        if let (Some(environment), Some(call)) = (environment, plan.property_store_call_at(pc)) {
+            let (value, span) = {
+                let mut call = call.borrow_mut();
+                (call.execute(environment), call.span())
+            };
+            if let Some(value) = value {
+                record_property_store_call(code, pc);
+                return completion_step_after_transition(
+                    registers,
+                    crate::completion::Completion::Return(crate::value::Value::Number(value)),
+                    pc + span,
+                );
+            }
+            crate::execution_trace::stencil_observation(
+                code,
+                pc,
+                crate::stencil_property_store_call::PROFILE_NAME,
                 false,
             );
         }
