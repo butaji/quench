@@ -91,7 +91,7 @@ const COMPOSED_REGION_DECLARATIONS: &[RegionDeclaration] = &[
         external_entries: &[0],
     },
     RegionDeclaration {
-        name: "control_predictable_region",
+        name: "conditional_f64_reduction_loop",
         operations: &[
             "LoadConst",
             "StoreLocal",

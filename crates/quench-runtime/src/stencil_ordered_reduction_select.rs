@@ -96,7 +96,7 @@ fn select_predictable(
     cfg: &crate::stencil_cfg::ControlFlowFacts,
 ) -> Option<ReductionSelection> {
     cfg.region_control(0, PREDICTABLE_REGION_END)?;
-    let key = crate::stencil_select::control_predictable_region_region_key();
+    let key = crate::stencil_select::conditional_f64_reduction_loop_region_key();
     let operations = crate::stencil_select::select_physical(key)?
         .record
         .operations;
@@ -109,7 +109,7 @@ fn select_predictable(
             array_pc: PREDICTABLE_ARRAY_PC,
             bound_pc: PREDICTABLE_BOUND_PC,
         },
-        profile: ReductionProfile::ControlPredictable,
+        profile: ReductionProfile::Conditional,
         operation: ReductionOperation::LessThan {
             threshold,
             on_true,

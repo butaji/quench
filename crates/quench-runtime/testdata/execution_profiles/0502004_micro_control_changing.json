@@ -4,13 +4,13 @@
   "result": { "kind": "string", "value": "[\"number\",\"0\"]" },
   "plan": {
     "execution_kind": "native_machine_code",
-    "operation_route": ["control", "changing"],
+    "operation_route": ["control", "conditional_reduction"],
     "fallback": false
   },
   "profile": {
     "residual": {},
     "slow": {},
-    "stencils": { "control_changing_region": { "entries": 1, "fallbacks": 0 } },
+    "stencils": { "conditional_f64_reduction_loop": { "entries": 1, "fallbacks": 0 } },
     "events": { "leaf_hit": 1 }
   }
 }
