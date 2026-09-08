@@ -247,6 +247,9 @@ fn abi_expr(declaration: &RegionDeclaration) -> &'static str {
         DeclAbi::ArrayNumericLoop if target_is_aarch64 => {
             "crate::stencil_select::RegionAbi::ArrayNumericLoop"
         }
+        DeclAbi::ArrayCopyLoop if target_is_aarch64 => {
+            "crate::stencil_select::RegionAbi::ArrayCopyLoop"
+        }
         DeclAbi::AffineI32Loop if target_is_aarch64 => {
             "crate::stencil_select::RegionAbi::AffineI32Loop"
         }
@@ -257,6 +260,7 @@ fn abi_expr(declaration: &RegionDeclaration) -> &'static str {
         // the same semantic declaration but route through the typed bridge.
         DeclAbi::ArrayKernel
         | DeclAbi::ArrayNumericLoop
+        | DeclAbi::ArrayCopyLoop
         | DeclAbi::AffineI32Loop
         | DeclAbi::CompareBranch => {
             "crate::stencil_select::RegionAbi::Bridge"
@@ -316,6 +320,11 @@ fn abi_contract_fields(abi: DeclAbi) -> (&'static str, bool, &'static str) {
             true,
             "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x0007, hardware_gpr_clobber_mask: 0x007f, live_out_mask: 0x0003, root_materialization_required: false",
         ),
+        DeclAbi::ArrayCopyLoop => (
+            "ArrayCopyLoop",
+            true,
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x0001, hardware_gpr_clobber_mask: 0x00ff, live_out_mask: 0x0001, root_materialization_required: false",
+        ),
         DeclAbi::AffineI32Loop => (
             "AffineI32Loop",
             true,
@@ -354,6 +363,7 @@ fn abi_variant_name(abi: DeclAbi) -> &'static str {
         DeclAbi::Bridge => "Bridge",
         DeclAbi::ArrayKernel => "ArrayKernel",
         DeclAbi::ArrayNumericLoop => "ArrayNumericLoop",
+        DeclAbi::ArrayCopyLoop => "ArrayCopyLoop",
         DeclAbi::AffineI32Loop => "AffineI32Loop",
         DeclAbi::CompareBranch => "CompareBranch",
         DeclAbi::PropertyGuard => "PropertyGuard",

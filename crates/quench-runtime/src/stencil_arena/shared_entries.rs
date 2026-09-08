@@ -199,6 +199,10 @@ impl SharedStencilSlab {
         crate::stencil_select::RegionAbi::ArrayNumericLoop
     );
     typed_dispatch_entry!(
+        owned_array_copy_loop_entry,
+        crate::stencil_select::RegionAbi::ArrayCopyLoop
+    );
+    typed_dispatch_entry!(
         owned_affine_i32_loop_entry,
         crate::stencil_select::RegionAbi::AffineI32Loop
     );
