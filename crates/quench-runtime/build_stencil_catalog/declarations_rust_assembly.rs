@@ -288,6 +288,11 @@ rust_assembly_catalog! {
         ops: ["LoadLocal", "AGetI", "Mul", "Add", "StoreLocal", "UpdateLocal", "Return"],
         x86: &[], aarch64: &[], x86_holes: &[], aarch64_holes: &[]
     },
+    TypedLaneLoop {
+        name: "typed_lane_loop", abi: TypedLaneLoop,
+        ops: ["LoadLocal", "Binary", "Sub", "ASetI", "AGetI", "Mul", "Add", "StoreLocal", "UpdateLocal", "Return"],
+        x86: &[], aarch64: &[], x86_holes: &[], aarch64_holes: &[]
+    },
     NumericIntegerLoop {
         name: "numeric_integer_loop", abi: AffineI32Loop,
         ops: ["Mul", "Add", "Binary", "Jump"],
