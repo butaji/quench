@@ -5558,7 +5558,9 @@ enum NativeAdmission {
     IntegerLoop(Rc<RefCell<crate::stencil_numeric_integer_loop::NativeIntegerLoopPlan>>),
     FloatingLoop(Rc<RefCell<crate::stencil_numeric_floating_loop::NativeFloatingLoopPlan>>),
     BitwiseLoop(Rc<RefCell<crate::stencil_numeric_bitwise_loop::NativeBitwiseLoopPlan>>),
-    IndependentLoop(Rc<RefCell<crate::stencil_numeric_independent_loop::NativeIndependentLoopPlan>>),
+    IndependentLoop(
+        Rc<RefCell<crate::stencil_numeric_independent_loop::NativeIndependentLoopPlan>>,
+    ),
     MixedLoop(Rc<RefCell<crate::stencil_numeric_mixed_loop::NativeMixedLoopPlan>>),
     DenseUpdate(Rc<RefCell<crate::stencil_dense_array_update::NativeDenseUpdatePlan>>),
     DenseCopy(Rc<RefCell<crate::stencil_dense_array_copy::NativeDenseCopyPlan>>),
@@ -5572,7 +5574,9 @@ enum NativeAdmission {
     FreshObjectCall(Rc<RefCell<crate::stencil_fresh_object_call::NativeFreshObjectCallPlan>>),
     MethodCall(Rc<RefCell<crate::stencil_method_call::NativeMethodCallPlan>>),
     PropertyPair(Rc<RefCell<crate::stencil_property_pair::NativePropertyPairPlan>>),
-    PropertyReturnCall(Rc<RefCell<crate::stencil_property_return_call::NativePropertyReturnCallPlan>>),
+    PropertyReturnCall(
+        Rc<RefCell<crate::stencil_property_return_call::NativePropertyReturnCallPlan>>,
+    ),
     PropertyStoreCall(Rc<RefCell<crate::stencil_property_store_call::NativePropertyStoreCallPlan>>),
     PrototypeCall(Rc<RefCell<crate::stencil_prototype_call::NativePrototypeCallPlan>>),
     StringConcat(Rc<RefCell<crate::stencil_string_concat::StringConcatPlan>>),
@@ -5648,9 +5652,9 @@ impl AdmissionEntry for NativeAdmission {
             Self::I32Pattern(_) => {
                 shared_value_bytes::<RefCell<crate::stencil_i32_pattern::NativeI32PatternPlan>>()
             }
-            Self::LocalAffineSum(_) => {
-                shared_value_bytes::<RefCell<crate::stencil_local_affine_sum::NativeLocalAffineSumPlan>>()
-            }
+            Self::LocalAffineSum(_) => shared_value_bytes::<
+                RefCell<crate::stencil_local_affine_sum::NativeLocalAffineSumPlan>,
+            >(),
             Self::LocalRecursiveSum(_) => shared_value_bytes::<
                 RefCell<crate::stencil_local_recursive_sum::NativeLocalRecursiveSumPlan>,
             >(),
@@ -6199,9 +6203,8 @@ fn local_affine_sum_admission(
     pc: usize,
     policy: crate::stencil_policy::ExecutionPolicy,
 ) -> Option<NativeAdmission> {
-    let selection = crate::stencil_local_affine_sum::select_local_affine_sum(
-        code, entries, cfg, pc,
-    )?;
+    let selection =
+        crate::stencil_local_affine_sum::select_local_affine_sum(code, entries, cfg, pc)?;
     let plan = crate::stencil_local_affine_sum::NativeLocalAffineSumPlan::new(selection, policy)?;
     Some(NativeAdmission::LocalAffineSum(Rc::new(RefCell::new(plan))))
 }
@@ -6213,13 +6216,13 @@ fn local_recursive_sum_admission(
     pc: usize,
     policy: crate::stencil_policy::ExecutionPolicy,
 ) -> Option<NativeAdmission> {
-    let selection = crate::stencil_local_recursive_sum::select_local_recursive_sum(
-        code, entries, cfg, pc,
-    )?;
-    let plan = crate::stencil_local_recursive_sum::NativeLocalRecursiveSumPlan::new(
-        selection, policy,
-    )?;
-    Some(NativeAdmission::LocalRecursiveSum(Rc::new(RefCell::new(plan))))
+    let selection =
+        crate::stencil_local_recursive_sum::select_local_recursive_sum(code, entries, cfg, pc)?;
+    let plan =
+        crate::stencil_local_recursive_sum::NativeLocalRecursiveSumPlan::new(selection, policy)?;
+    Some(NativeAdmission::LocalRecursiveSum(Rc::new(RefCell::new(
+        plan,
+    ))))
 }
 
 fn floating_loop_admission(
@@ -6266,13 +6269,16 @@ fn independent_loop_admission(
     policy: crate::stencil_policy::ExecutionPolicy,
     arena: &SharedStencilPool,
 ) -> Option<NativeAdmission> {
-    let selection = crate::stencil_numeric_independent_loop::select_independent_loop(
-        code, entries, cfg, pc,
-    )?;
+    let selection =
+        crate::stencil_numeric_independent_loop::select_independent_loop(code, entries, cfg, pc)?;
     let plan = crate::stencil_numeric_independent_loop::NativeIndependentLoopPlan::new(
-        selection, policy, Rc::clone(arena),
+        selection,
+        policy,
+        Rc::clone(arena),
     )?;
-    Some(NativeAdmission::IndependentLoop(Rc::new(RefCell::new(plan))))
+    Some(NativeAdmission::IndependentLoop(Rc::new(RefCell::new(
+        plan,
+    ))))
 }
 
 fn mixed_loop_admission(
@@ -6285,7 +6291,9 @@ fn mixed_loop_admission(
 ) -> Option<NativeAdmission> {
     let selection = crate::stencil_numeric_mixed_loop::select_mixed_loop(code, entries, cfg, pc)?;
     let plan = crate::stencil_numeric_mixed_loop::NativeMixedLoopPlan::new(
-        selection, policy, Rc::clone(arena),
+        selection,
+        policy,
+        Rc::clone(arena),
     )?;
     Some(NativeAdmission::MixedLoop(Rc::new(RefCell::new(plan))))
 }
@@ -6361,7 +6369,8 @@ fn forward_call_admission(
 ) -> Option<NativeAdmission> {
     policy.local_fusions.numeric().then_some(())?;
     let selection = crate::stencil_forward_call::select_forward_call(code, entries, cfg, pc)?;
-    let plan = crate::stencil_forward_call::NativeForwardCallPlan::new(selection, Rc::clone(arena))?;
+    let plan =
+        crate::stencil_forward_call::NativeForwardCallPlan::new(selection, Rc::clone(arena))?;
     Some(NativeAdmission::ForwardCall(Rc::new(RefCell::new(plan))))
 }
 
@@ -6375,7 +6384,8 @@ fn forward_pair_admission(
 ) -> Option<NativeAdmission> {
     policy.local_fusions.numeric().then_some(())?;
     let selection = crate::stencil_forward_call::select_forward_pair(code, entries, cfg, pc)?;
-    let plan = crate::stencil_forward_call::NativeForwardPairPlan::new(selection, Rc::clone(arena))?;
+    let plan =
+        crate::stencil_forward_call::NativeForwardPairPlan::new(selection, Rc::clone(arena))?;
     Some(NativeAdmission::ForwardPair(Rc::new(RefCell::new(plan))))
 }
 
@@ -6387,11 +6397,12 @@ fn fresh_object_call_admission(
     policy: crate::stencil_policy::ExecutionPolicy,
 ) -> Option<NativeAdmission> {
     policy.local_fusions.numeric().then_some(())?;
-    let selection = crate::stencil_fresh_object_call::select_fresh_object_call(
-        code, entries, cfg, pc,
-    )?;
+    let selection =
+        crate::stencil_fresh_object_call::select_fresh_object_call(code, entries, cfg, pc)?;
     let plan = crate::stencil_fresh_object_call::NativeFreshObjectCallPlan::new(selection);
-    Some(NativeAdmission::FreshObjectCall(Rc::new(RefCell::new(plan))))
+    Some(NativeAdmission::FreshObjectCall(Rc::new(RefCell::new(
+        plan,
+    ))))
 }
 
 fn method_call_admission(
@@ -6404,11 +6415,8 @@ fn method_call_admission(
 ) -> Option<NativeAdmission> {
     policy.local_fusions.numeric().then_some(())?;
     let selection = crate::stencil_method_call::select_method_call(code, entries, cfg, pc)?;
-    let plan = crate::stencil_method_call::NativeMethodCallPlan::new(
-        selection,
-        policy,
-        Rc::clone(arena),
-    )?;
+    let plan =
+        crate::stencil_method_call::NativeMethodCallPlan::new(selection, policy, Rc::clone(arena))?;
     Some(NativeAdmission::MethodCall(Rc::new(RefCell::new(plan))))
 }
 
@@ -6432,11 +6440,12 @@ fn property_return_call_admission(
     policy: crate::stencil_policy::ExecutionPolicy,
 ) -> Option<NativeAdmission> {
     policy.local_fusions.any().then_some(())?;
-    let selection = crate::stencil_property_return_call::select_property_return_call(
-        entries, cfg, pc,
-    )?;
+    let selection =
+        crate::stencil_property_return_call::select_property_return_call(entries, cfg, pc)?;
     let plan = crate::stencil_property_return_call::NativePropertyReturnCallPlan::new(selection);
-    Some(NativeAdmission::PropertyReturnCall(Rc::new(RefCell::new(plan))))
+    Some(NativeAdmission::PropertyReturnCall(Rc::new(RefCell::new(
+        plan,
+    ))))
 }
 
 fn property_store_call_admission(
@@ -6447,11 +6456,12 @@ fn property_store_call_admission(
     policy: crate::stencil_policy::ExecutionPolicy,
 ) -> Option<NativeAdmission> {
     policy.local_fusions.numeric().then_some(())?;
-    let selection = crate::stencil_property_store_call::select_property_store_call(
-        code, entries, cfg, pc,
-    )?;
+    let selection =
+        crate::stencil_property_store_call::select_property_store_call(code, entries, cfg, pc)?;
     let plan = crate::stencil_property_store_call::NativePropertyStoreCallPlan::new(selection);
-    Some(NativeAdmission::PropertyStoreCall(Rc::new(RefCell::new(plan))))
+    Some(NativeAdmission::PropertyStoreCall(Rc::new(RefCell::new(
+        plan,
+    ))))
 }
 
 fn prototype_call_admission(
@@ -6815,7 +6825,9 @@ fn eager_straight_line_candidate(code: CodeView<'_>) -> bool {
         }
         if instruction.opcode == crate::ir::Opcode::Call
             && instruction.flags == 2
-            && code.operand_window_at(pc).is_some_and(|window| window.len() == 2)
+            && code
+                .operand_window_at(pc)
+                .is_some_and(|window| window.len() == 2)
         {
             continue;
         }
@@ -6828,26 +6840,31 @@ fn eager_straight_line_candidate(code: CodeView<'_>) -> bool {
 
 fn eager_property_pair_candidate(code: CodeView<'_>) -> bool {
     use crate::ir::Opcode::{Add, Call, LoadLocal, Return};
-    let expected = [LoadLocal, LoadLocal, Call, LoadLocal, LoadLocal, Call, Add, Return];
-    expected.iter().enumerate().all(|(pc, opcode)| {
-        code.instruction(pc).is_some_and(|op| op.opcode == *opcode)
-    })
+    let expected = [
+        LoadLocal, LoadLocal, Call, LoadLocal, LoadLocal, Call, Add, Return,
+    ];
+    expected
+        .iter()
+        .enumerate()
+        .all(|(pc, opcode)| code.instruction(pc).is_some_and(|op| op.opcode == *opcode))
 }
 
 fn eager_property_store_call_candidate(code: CodeView<'_>) -> bool {
     use crate::ir::Opcode::{Call, LoadConst, LoadLocal, Return};
     let expected = [LoadLocal, LoadLocal, LoadConst, Call, Return];
-    expected.iter().enumerate().all(|(pc, opcode)| {
-        code.instruction(pc).is_some_and(|op| op.opcode == *opcode)
-    })
+    expected
+        .iter()
+        .enumerate()
+        .all(|(pc, opcode)| code.instruction(pc).is_some_and(|op| op.opcode == *opcode))
 }
 
 fn eager_prototype_call_candidate(code: CodeView<'_>) -> bool {
     use crate::ir::Opcode::{Call, LoadLocal, Return};
     let expected = [LoadLocal, LoadLocal, Call, Return];
-    expected.iter().enumerate().all(|(pc, opcode)| {
-        code.instruction(pc).is_some_and(|op| op.opcode == *opcode)
-    })
+    expected
+        .iter()
+        .enumerate()
+        .all(|(pc, opcode)| code.instruction(pc).is_some_and(|op| op.opcode == *opcode))
 }
 
 fn eager_method_call_candidate(code: CodeView<'_>) -> bool {
@@ -6858,9 +6875,10 @@ fn eager_method_call_candidate(code: CodeView<'_>) -> bool {
         crate::ir::Opcode::CallN,
         crate::ir::Opcode::Return,
     ];
-    expected.iter().enumerate().all(|(pc, opcode)| {
-        code.instruction(pc).is_some_and(|op| op.opcode == *opcode)
-    })
+    expected
+        .iter()
+        .enumerate()
+        .all(|(pc, opcode)| code.instruction(pc).is_some_and(|op| op.opcode == *opcode))
 }
 
 fn eager_string_case_candidate(code: CodeView<'_>) -> bool {
@@ -8093,6 +8111,8 @@ pub struct FunctionCode {
     numeric_affine_i32: Rc<OnceLock<Option<crate::function_physical::NumericAffineI32>>>,
     numeric_affine_named_loop:
         Rc<OnceLock<Option<Rc<crate::function_physical::NumericAffineNamedLoop>>>>,
+    numeric_counter_recurrence:
+        Rc<OnceLock<Option<crate::function_counter_recurrence::I32CounterRecurrence>>>,
     tier: Rc<RefCell<TierState>>,
 }
 
@@ -8107,6 +8127,7 @@ impl Clone for FunctionCode {
             facts: self.facts.clone(),
             numeric_affine_i32: self.numeric_affine_i32.clone(),
             numeric_affine_named_loop: self.numeric_affine_named_loop.clone(),
+            numeric_counter_recurrence: self.numeric_counter_recurrence.clone(),
             tier: self.tier.clone(),
         }
     }
@@ -8125,6 +8146,7 @@ impl FunctionCode {
             facts: Rc::default(),
             numeric_affine_i32: Rc::default(),
             numeric_affine_named_loop: Rc::default(),
+            numeric_counter_recurrence: Rc::default(),
             tier: Rc::new(RefCell::new(TierState::new())),
         }
     }
@@ -8141,6 +8163,7 @@ impl FunctionCode {
             facts: Rc::default(),
             numeric_affine_i32: Rc::default(),
             numeric_affine_named_loop: Rc::default(),
+            numeric_counter_recurrence: Rc::default(),
             tier: Rc::new(RefCell::new(TierState::new())),
         }
     }
@@ -8171,6 +8194,7 @@ impl FunctionCode {
             facts: Rc::default(),
             numeric_affine_i32: Rc::default(),
             numeric_affine_named_loop: Rc::default(),
+            numeric_counter_recurrence: Rc::default(),
             tier: Rc::new(RefCell::new(TierState::new())),
         }
     }
@@ -8204,6 +8228,7 @@ impl FunctionCode {
                 facts: Rc::default(),
                 numeric_affine_i32: Rc::default(),
                 numeric_affine_named_loop: Rc::default(),
+                numeric_counter_recurrence: Rc::default(),
                 tier: Rc::new(RefCell::new(TierState::new())),
             })
             .collect()
@@ -8221,6 +8246,7 @@ impl FunctionCode {
             facts: Rc::default(),
             numeric_affine_i32: Rc::default(),
             numeric_affine_named_loop: Rc::default(),
+            numeric_counter_recurrence: Rc::default(),
             tier: Rc::new(RefCell::new(TierState::new())),
         }
     }
@@ -8258,6 +8284,15 @@ impl FunctionCode {
                     .map(Rc::new)
             })
             .clone()
+    }
+
+    pub(crate) fn numeric_counter_recurrence(
+        &self,
+    ) -> Option<crate::function_counter_recurrence::I32CounterRecurrence> {
+        *self.numeric_counter_recurrence.get_or_init(|| {
+            self.code()
+                .and_then(crate::function_counter_recurrence::select)
+        })
     }
 
     fn eager_baseline_plan(&self) -> Option<Rc<BaselinePlan>> {
