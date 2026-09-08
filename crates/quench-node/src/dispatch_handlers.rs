@@ -11752,18 +11752,29 @@ pub fn cp_exec_sync(
     // probes above. Passing the shell explicitly lets `spawn_sync` retain
     // ordinary cwd/env/input/encoding semantics.
     if let Some(command) = command.as_deref() {
+        // `process.execPath` identifies the engine, while the compatibility
+        // test launcher owns the canonical script runner. Keep shell-backed
+        // self-reexecs on that same real runner boundary as spawn/exec.
+        let command = if matches!(
+            execute::get_property(&shell_options, "env"),
+            Value::Object(_) | Value::ObjectAlias(_)
+        ) {
+            crate::host::rewrite_host_exec_command(&expand_shell_env(command, &shell_options))
+        } else {
+            crate::host::rewrite_host_exec_command(command)
+        };
         let shell = if cfg!(windows) { "cmd.exe" } else { "/bin/sh" };
         let shell_args = if cfg!(windows) {
             host_api::array(vec![
                 Value::String("/d".into()),
                 Value::String("/s".into()),
                 Value::String("/c".into()),
-                Value::String(command.into()),
+                Value::String(command.clone()),
             ])
         } else {
             host_api::array(vec![
                 Value::String("-c".into()),
-                Value::String(command.into()),
+                Value::String(command.clone()),
             ])
         };
         let options = match args.get(1).cloned().unwrap_or(Value::Undefined) {
@@ -11776,7 +11787,7 @@ pub fn cp_exec_sync(
         };
         let result = crate::modules::child_process::spawn_sync(
             state,
-            &[Value::String(shell.into()), shell_args, options],
+                &[Value::String(shell.into()), shell_args, options],
         )?;
         if let Some(error) = match execute::get_property(&result, "error") {
             Value::Undefined => None,
