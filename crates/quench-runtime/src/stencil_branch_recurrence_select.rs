@@ -42,7 +42,10 @@ pub(crate) fn select_function(code: CodeView<'_>) -> Option<FunctionRecurrence> 
         select_body(body, counted)
     })?;
     let recurrence = facts.loop_cover;
-    (facts.returned_slot == recurrence.score_slot).then_some(())?;
+    (facts.returned.slot == recurrence.score_slot
+        && facts.returned.representation
+            == crate::stencil_counted_function::ReturnedRepresentation::Direct)
+        .then_some(())?;
     let initial_score =
         crate::stencil_counted_function::initial_i64(&facts.initials, recurrence.score_slot)?;
     let initial_state = initialized_u32(&facts.initials, recurrence.state_slot)?;

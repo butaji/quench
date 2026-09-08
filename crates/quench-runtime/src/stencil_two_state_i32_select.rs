@@ -36,7 +36,10 @@ pub(crate) fn select_function(code: CodeView<'_>) -> Option<FunctionTwoState> {
         select_body(body, counted, per_iteration)
     })?;
     let selected = facts.loop_cover;
-    (facts.returned_slot == selected.second_slot).then_some(())?;
+    (facts.returned.slot == selected.second_slot
+        && facts.returned.representation
+            == crate::stencil_counted_function::ReturnedRepresentation::Direct)
+        .then_some(())?;
     Some(FunctionTwoState {
         selected,
         first: initial_i32(&facts.initials, selected.first_slot)?,
