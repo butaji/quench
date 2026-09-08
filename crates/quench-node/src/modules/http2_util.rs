@@ -1079,6 +1079,10 @@ fn session_request(
         .find(|(name, _)| name.as_slice() == b":method")
         .map(|(_, value)| value.clone())
         .unwrap_or_else(|| b"GET".to_vec());
+    let invalid_path = fields.iter().any(|(name, value)| {
+        name.as_slice() == b":path"
+            && value.iter().any(|byte| *byte <= 0x20 || *byte == 0x7f)
+    });
     if method.as_slice() == b"CONNECT" {
         let authority = fields
             .iter()
@@ -1216,6 +1220,30 @@ fn session_request(
         "priority",
         session_capability("streamPriority"),
     );
+    if invalid_path {
+        let error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String("Stream closed with error code NGHTTP2_PROTOCOL_ERROR".into())],
+        );
+        let error = execute::set_property(
+            error,
+            "code",
+            Value::String("ERR_HTTP2_STREAM_ERROR".into()),
+        );
+        execute::set_property_in_place(&stream, "rstCode", Value::Number(1.0));
+        execute::set_property_in_place(&stream, "destroyed", Value::Boolean(true));
+        state
+            .borrow_mut()
+            .net
+            .pending_events
+            .push((stream.clone(), "error".into(), vec![error]));
+        state
+            .borrow_mut()
+            .net
+            .pending_events
+            .push((stream.clone(), "close".into(), Vec::new()));
+        return Ok(stream);
+    }
     if stream_id > 0x7fff_ffff {
         let error = quench_runtime::builtins::error(
             quench_runtime::ops::Builtin::Error,
