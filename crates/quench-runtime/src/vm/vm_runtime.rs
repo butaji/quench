@@ -2758,6 +2758,8 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
             {
                 crate::execution_trace::stencil_observation(code, pc, "local_binary", true);
                 crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                #[cfg(test)]
+                crate::test_execution_profile::local_numeric_route(code, pc, committed.span);
                 if let Some(completion) = committed.completion {
                     return completion_step_after_transition(
                         registers,
