@@ -2004,6 +2004,7 @@ fn record_integer_loop(
         IntegerLoopProfile::CallsInline => "calls_inline_region",
         IntegerLoopProfile::CallsDirect => "calls_direct_region",
         IntegerLoopProfile::CallsChanging => "calls_changing_region",
+        IntegerLoopProfile::CallsReceiver => "calls_receiver_region",
     };
     crate::execution_trace::stencil_observation(code, pc, name, true);
     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
@@ -2025,6 +2026,9 @@ fn record_integer_loop(
         }
         IntegerLoopProfile::CallsChanging => {
             crate::test_execution_profile::dynamic_region_route(["calls", "changing"])
+        }
+        IntegerLoopProfile::CallsReceiver => {
+            crate::test_execution_profile::dynamic_region_route(["calls", "receiver"])
         }
     }
 }
