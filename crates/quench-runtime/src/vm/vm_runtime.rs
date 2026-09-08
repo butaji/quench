@@ -2088,6 +2088,30 @@ pub(crate) fn execute_optimized_code_step_from(
     let _decode_guard = crate::execution_trace::compact(instruction.opcode);
     crate::execution_trace::compact_site(code, start);
     crate::execution_trace::operands(instruction);
+    if let Some(dag) = entry.numeric_dag() {
+        let value = crate::locals::with_current_ref(|environment| {
+            let mut plan = dag.borrow_mut();
+            plan.execute(environment?)
+        });
+        if let Some(value) = value {
+            let dag = dag.borrow();
+            crate::execution_trace::stencil_observation(
+                code,
+                start,
+                "numeric_local_dag_return",
+                true,
+            );
+            crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+            #[cfg(test)]
+            crate::test_execution_profile::dynamic_region_route(dag.route());
+            return Ok((
+                crate::completion::Completion::Return(crate::value::Value::Number(value)),
+                start + dag.span(),
+            ));
+        }
+        crate::execution_trace::stencil_observation(code, start, "numeric_local_dag_return", false);
+        crate::execution_trace::leaf_rejection("numeric_local_dag_return");
+    }
     if let Some(plan) = entry.property_numeric() {
         let span = plan.borrow().span();
         let value = crate::locals::with_current_ref(|environment| {
@@ -2692,6 +2716,36 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
             pc += 1;
             continue;
         }
+        if let (Some(environment), Some(dag)) = (environment, plan.numeric_dag_at(pc)) {
+            let value = {
+                let mut dag = dag.borrow_mut();
+                dag.execute(environment)
+            };
+            if let Some(value) = value {
+                let dag = dag.borrow();
+                crate::execution_trace::stencil_observation(
+                    code,
+                    pc,
+                    "numeric_local_dag_return",
+                    true,
+                );
+                crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                #[cfg(test)]
+                crate::test_execution_profile::dynamic_region_route(dag.route());
+                return completion_step_after_transition(
+                    registers,
+                    crate::completion::Completion::Return(crate::value::Value::Number(value)),
+                    pc + dag.span(),
+                );
+            }
+            crate::execution_trace::stencil_observation(
+                code,
+                pc,
+                "numeric_local_dag_return",
+                false,
+            );
+            crate::execution_trace::leaf_rejection("numeric_local_dag_return");
+        }
         if let (Some(environment), Some(native)) = (environment, plan.native_local_predicate_at(pc))
         {
             if let Some(next) = crate::stencil_fusion::execute_local_predicate(native, environment)
@@ -2739,7 +2793,8 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                 environment,
                 |property, object| native_property_bits_plan(property, code, property_pc, object),
             );
-            if let Some(committed) = result.and_then(|result| result.commit(registers, environment)) {
+            if let Some(committed) = result.and_then(|result| result.commit(registers, environment))
+            {
                 crate::execution_trace::stencil_observation(code, pc, "local_property", true);
                 crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
                 #[cfg(test)]
