@@ -485,6 +485,7 @@ fn disabled_native_policy_keeps_admission_and_executable_storage_empty() {
         numeric_i32_bitwise_loops: false,
         numeric_i32_pair_loops: false,
         numeric_f64_loops: false,
+        numeric_f64_mixed_loops: false,
         optimizing_view: false,
     };
     let plan =
@@ -748,6 +749,7 @@ fn native_dispatch_rebuilds_evicted_typed_entry_in_normal_driver() {
         numeric_i32_bitwise_loops: false,
         numeric_i32_pair_loops: false,
         numeric_f64_loops: false,
+        numeric_f64_mixed_loops: false,
         optimizing_view: false,
     };
     let plan = super::BaselinePlan::compile_for_test(executable.code(), policy);
