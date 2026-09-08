@@ -8,14 +8,14 @@
     "fallback": false
   },
   "profile": {
-    "residual": { "Return": 1 },
+    "residual": {},
     "slow": {},
     "stencils": {
       "local_binary": { "entries": 1, "fallbacks": 0 }
     },
     "events": {
       "leaf_hit": 1,
-      "register_file_read": 2
+      "register_file_read": 1
     }
   }
 }

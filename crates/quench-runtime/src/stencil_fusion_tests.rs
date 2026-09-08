@@ -409,7 +409,7 @@ fn canonical_driver_eliminates_dead_move_in_numeric_window() {
             .borrow()
             .selection()
             .span,
-        4
+        5
     );
 }
 
@@ -441,7 +441,7 @@ fn canonical_driver_eliminates_bounded_dead_pure_producers() {
             .borrow()
             .selection()
             .span,
-        6
+        7
     );
 }
 
@@ -492,7 +492,7 @@ fn optimizing_driver_reuses_the_same_local_binary_plan() {
         &crate::vm::current_context_or_default(),
     )
     .unwrap();
-    assert_eq!(result, (Completion::Normal, 3));
+    assert_eq!(result, (Completion::Return(Value::Number(42.0)), 4));
     assert_eq!(registers.read(3), Some(Value::Number(42.0)));
     let entry = optimizing.entry(0).unwrap();
     let native = entry.native_local_binary().unwrap();

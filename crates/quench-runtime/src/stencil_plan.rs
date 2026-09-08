@@ -198,8 +198,18 @@ pub(crate) struct LocalBinarySelection {
     pub result: LocalResultBinding,
     pub operation: Instruction,
     pub span: u8,
+    pub returns: bool,
     pub discarded: DiscardedRegisters,
     pub cost: FusionCost,
+}
+
+impl LocalBinarySelection {
+    pub(crate) fn with_return(mut self) -> Option<Self> {
+        self.span = self.span.checked_add(1)?;
+        self.returns = true;
+        self.cost.removed_dispatches = self.cost.removed_dispatches.saturating_add(1);
+        Some(self)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -322,6 +332,7 @@ pub(crate) fn select_local_binary(
         result: LocalResultBinding::register(operation.a),
         operation,
         span: u8::try_from(producers.len() + 1).ok()?,
+        returns: false,
         discarded: discarded_registers(producers, operation.a),
         cost,
     })
@@ -393,6 +404,7 @@ pub(crate) fn select_source_add_const(
         result: LocalResultBinding::register(operation.a),
         operation,
         span: 2,
+        returns: false,
         discarded: discarded_registers(&[producer], operation.a),
         cost: FusionCost::LOCAL_CONSTANT,
     })

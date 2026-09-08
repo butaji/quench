@@ -5951,7 +5951,22 @@ fn select_local_numeric(
             graph.select(operation, live)
         }
     })?;
-    extend_local_store(entries, cfg, pc, selection).or(Some(selection))
+    let selection = extend_local_store(entries, cfg, pc, selection).unwrap_or(selection);
+    extend_local_return(entries, cfg, pc, selection).or(Some(selection))
+}
+
+fn extend_local_return(
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    selection: crate::stencil_plan::LocalBinarySelection,
+) -> Option<crate::stencil_plan::LocalBinarySelection> {
+    let return_pc = pc.checked_add(usize::from(selection.span))?;
+    let instruction = entries.get(return_pc)?.instruction;
+    (instruction.opcode == crate::ir::Opcode::Return && instruction.a == selection.result.register)
+        .then_some(())?;
+    cfg.region_control(pc, return_pc.checked_add(1)?)?;
+    selection.with_return()
 }
 
 fn extend_local_store<T: crate::stencil_plan::LocalStoreSelection>(

@@ -16,6 +16,7 @@ pub(crate) struct LocalNumericExecution {
     pub result: crate::stencil_plan::LocalResultBinding,
     pub value: f64,
     pub span: usize,
+    pub returns: bool,
     pub discarded: crate::stencil_plan::DiscardedRegisters,
 }
 
@@ -24,7 +25,7 @@ impl LocalNumericExecution {
         self,
         registers: &mut crate::register_file::RegisterFile,
         environment: &crate::environment::Environment,
-    ) -> Option<usize> {
+    ) -> Option<LocalNumericCommit> {
         registers.word_ptr(usize::from(self.result.register))?;
         if let Some(slot) = self.result.store_slot {
             let bits = crate::tagged_value::TaggedValue::number(self.value).bits();
@@ -36,8 +37,18 @@ impl LocalNumericExecution {
             registers.clear_word(usize::from(register));
         }
         registers.write_number(usize::from(self.result.register), self.value);
-        Some(self.span)
+        Some(LocalNumericCommit {
+            span: self.span,
+            completion: self.returns.then(|| {
+                crate::completion::Completion::Return(crate::value::Value::Number(self.value))
+            }),
+        })
     }
+}
+
+pub(crate) struct LocalNumericCommit {
+    pub(crate) span: usize,
+    pub(crate) completion: Option<crate::completion::Completion>,
 }
 
 pub(crate) struct NativeLocalBinaryPlan {
@@ -264,6 +275,7 @@ impl NativeLocalBinaryPlan {
             result: self.selection.result,
             value: result,
             span: usize::from(self.selection.span),
+            returns: self.selection.returns,
             discarded: self.selection.discarded,
         })
     }
