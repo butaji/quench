@@ -5495,6 +5495,7 @@ enum NativeAdmission {
     Reduction(Rc<RefCell<crate::stencil_ordered_reduction::NativeReductionPlan>>),
     I32Pattern(Rc<RefCell<crate::stencil_i32_pattern::NativeI32PatternPlan>>),
     CallReturn(Rc<RefCell<crate::stencil_call_return::NativeCallReturnPlan>>),
+    StringConcat(Rc<RefCell<crate::stencil_string_concat::StringConcatPlan>>),
     PropertyNumeric(Rc<RefCell<crate::stencil_property_numeric::PropertyNumericPlan>>),
     Move(Rc<RefCell<NativeMovePlan>>),
     LoadLocal(Rc<RefCell<NativeMovePlan>>),
@@ -5536,12 +5537,15 @@ impl AdmissionEntry for NativeAdmission {
             Self::Reduction(_) => shared_value_bytes::<
                 RefCell<crate::stencil_ordered_reduction::NativeReductionPlan>,
             >(),
-            Self::I32Pattern(_) => shared_value_bytes::<
-                RefCell<crate::stencil_i32_pattern::NativeI32PatternPlan>,
-            >(),
-            Self::CallReturn(_) => shared_value_bytes::<
-                RefCell<crate::stencil_call_return::NativeCallReturnPlan>,
-            >(),
+            Self::I32Pattern(_) => {
+                shared_value_bytes::<RefCell<crate::stencil_i32_pattern::NativeI32PatternPlan>>()
+            }
+            Self::CallReturn(_) => {
+                shared_value_bytes::<RefCell<crate::stencil_call_return::NativeCallReturnPlan>>()
+            }
+            Self::StringConcat(_) => {
+                shared_value_bytes::<RefCell<crate::stencil_string_concat::StringConcatPlan>>()
+            }
             Self::PropertyNumeric(_) => shared_value_bytes::<
                 RefCell<crate::stencil_property_numeric::PropertyNumericPlan>,
             >(),
@@ -5575,6 +5579,7 @@ impl std::fmt::Debug for NativeAdmission {
             Self::Reduction(_) => "reduction",
             Self::I32Pattern(_) => "i32_pattern",
             Self::CallReturn(_) => "call_return",
+            Self::StringConcat(_) => "string_concat",
             Self::PropertyNumeric(_) => "property_numeric",
             Self::Move(_) => "move",
             Self::LoadLocal(_) => "load_local",
@@ -5982,11 +5987,8 @@ fn i32_pattern_admission(
     arena: &SharedStencilPool,
 ) -> Option<NativeAdmission> {
     let selection = crate::stencil_i32_pattern::select_i32_pattern(code, entries, cfg, pc)?;
-    let plan = crate::stencil_i32_pattern::NativeI32PatternPlan::new(
-        selection,
-        policy,
-        Rc::clone(arena),
-    )?;
+    let plan =
+        crate::stencil_i32_pattern::NativeI32PatternPlan::new(selection, policy, Rc::clone(arena))?;
     Some(NativeAdmission::I32Pattern(Rc::new(RefCell::new(plan))))
 }
 
@@ -5998,12 +6000,21 @@ fn call_return_admission(
     arena: &SharedStencilPool,
 ) -> Option<NativeAdmission> {
     let selection = crate::stencil_call_return::select_call_return(entries, cfg, pc)?;
-    let plan = crate::stencil_call_return::NativeCallReturnPlan::new(
-        selection,
-        policy,
-        Rc::clone(arena),
-    )?;
+    let plan =
+        crate::stencil_call_return::NativeCallReturnPlan::new(selection, policy, Rc::clone(arena))?;
     Some(NativeAdmission::CallReturn(Rc::new(RefCell::new(plan))))
+}
+
+fn string_concat_admission(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+) -> Option<NativeAdmission> {
+    policy.local_fusions.any().then_some(())?;
+    let plan = crate::stencil_string_concat::select_string_concat(code, entries, cfg, pc)?;
+    Some(NativeAdmission::StringConcat(Rc::new(RefCell::new(plan))))
 }
 
 fn local_property_admission(
@@ -6309,7 +6320,7 @@ fn baseline_osr_entries(code: CodeView<'_>) -> Rc<[u32]> {
 }
 
 fn eager_straight_line_candidate(code: CodeView<'_>) -> bool {
-    if eager_call_return_candidate(code) {
+    if eager_call_return_candidate(code) || eager_string_concat_call_candidate(code) {
         return true;
     }
     use crate::facts::ControlFlow;
@@ -6325,6 +6336,36 @@ fn eager_straight_line_candidate(code: CodeView<'_>) -> bool {
         }
     }
     false
+}
+
+fn eager_string_concat_call_candidate(code: CodeView<'_>) -> bool {
+    let Some(load) = code.instruction(0) else {
+        return false;
+    };
+    let Some(a) = code.instruction(1) else {
+        return false;
+    };
+    let Some(b) = code.instruction(2) else {
+        return false;
+    };
+    let Some(c) = code.instruction(3) else {
+        return false;
+    };
+    let Some(call) = code.instruction(4) else {
+        return false;
+    };
+    let Some(ret) = code.instruction(5) else {
+        return false;
+    };
+    load.opcode == crate::ir::Opcode::LoadLocal
+        && [a, b, c]
+            .iter()
+            .all(|instruction| instruction.opcode == crate::ir::Opcode::LoadConst)
+        && call.opcode == crate::ir::Opcode::Call
+        && call.b == load.a
+        && code.operand_window_at(4) == Some([a.a, b.a, c.a].as_slice())
+        && ret.opcode == crate::ir::Opcode::Return
+        && ret.a == call.a
 }
 
 fn eager_call_return_candidate(code: CodeView<'_>) -> bool {
@@ -6387,10 +6428,8 @@ fn collect_admissions_at(
         pc,
         i32_pattern_admission(code, entries, cfg, pc, policy, arena),
     );
-    builder.push_optional(
-        pc,
-        call_return_admission(entries, cfg, pc, policy, arena),
-    );
+    builder.push_optional(pc, call_return_admission(entries, cfg, pc, policy, arena));
+    builder.push_optional(pc, string_concat_admission(code, entries, cfg, pc, policy));
     collect_numeric_admissions(builder, entries, cfg, pc, entry, code, policy, arena);
     builder.push_optional(pc, add_chain_admission(entries, cfg, pc, policy, arena));
     builder.push_optional(
@@ -6499,13 +6538,21 @@ impl BaselinePlan {
         let reduction = self.reduction_at(0).is_some();
         let i32_pattern = self.i32_pattern_at(0).is_some();
         let call_return = self.call_return_at(0).is_some();
+        let string_concat = self.string_concat_at(0).is_some();
         let numeric = self
             .native_local_binary_at(0)
             .is_some_and(|plan| plan.borrow().selection().returns);
         let property = self
             .native_local_property_at(0)
             .is_some_and(|plan| plan.borrow().returns());
-        dag || dense || copy || reduction || i32_pattern || call_return || numeric || property
+        dag || dense
+            || copy
+            || reduction
+            || i32_pattern
+            || call_return
+            || string_concat
+            || numeric
+            || property
     }
 
     fn native_handle<T>(
@@ -6576,6 +6623,12 @@ impl BaselinePlan {
         call_return_at,
         CallReturn,
         crate::stencil_call_return::NativeCallReturnPlan
+    );
+    typed_admission_accessors!(
+        string_concat_handle_at,
+        string_concat_at,
+        StringConcat,
+        crate::stencil_string_concat::StringConcatPlan
     );
     typed_admission_accessors!(
         property_numeric_handle_at,
@@ -6717,6 +6770,11 @@ impl OptimizingEntry<'_> {
         call_return,
         CallReturn,
         crate::stencil_call_return::NativeCallReturnPlan
+    );
+    optimizing_admission_accessors!(
+        string_concat,
+        StringConcat,
+        crate::stencil_string_concat::StringConcatPlan
     );
     optimizing_admission_accessors!(
         property_numeric,
