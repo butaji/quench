@@ -410,6 +410,65 @@ q_numeric_independent_loop_end:
 );
 "##;
 
+const AARCH64_NUMERIC_MIXED_LOOP: &str = r##"#![no_std]
+use core::arch::global_asm;
+
+#[repr(C)]
+struct MixedLoopContext {
+    index: usize,
+    end: usize,
+    value: f64,
+    exceptional_increment: f64,
+    ordinary_increment: f64,
+    period: usize,
+    interrupt: *const u8,
+}
+
+global_asm!(r#"
+.text
+.p2align 2
+.globl q_numeric_mixed_loop
+q_numeric_mixed_loop:
+  ldr x1, [x0, #{index}]
+  ldr x2, [x0, #{end}]
+  ldr d0, [x0, #{value}]
+  ldr d1, [x0, #{exceptional_increment}]
+  ldr d2, [x0, #{ordinary_increment}]
+  ldr x3, [x0, #{period}]
+1:
+  cmp x1, x2
+  b.hs 2f
+  udiv x4, x1, x3
+  msub x4, x4, x3, x1
+  cmp x4, #0
+  fcsel d3, d1, d2, eq
+  fadd d0, d0, d3
+  add x1, x1, #1
+  str x1, [x0, #{index}]
+  ldr x5, [x0, #{interrupt}]
+  ldrb w6, [x5]
+  cbnz w6, 3f
+  b 1b
+2:
+  str d0, [x0, #{value}]
+  mov w0, #1
+  ret
+3:
+  str d0, [x0, #{value}]
+  mov w0, #4
+  ret
+q_numeric_mixed_loop_end:
+"#,
+    index = const core::mem::offset_of!(MixedLoopContext, index),
+    end = const core::mem::offset_of!(MixedLoopContext, end),
+    value = const core::mem::offset_of!(MixedLoopContext, value),
+    exceptional_increment = const core::mem::offset_of!(MixedLoopContext, exceptional_increment),
+    ordinary_increment = const core::mem::offset_of!(MixedLoopContext, ordinary_increment),
+    period = const core::mem::offset_of!(MixedLoopContext, period),
+    interrupt = const core::mem::offset_of!(MixedLoopContext, interrupt),
+);
+"##;
+
 fn compare_branch_source(name: &str, condition: &str, unordered_true: bool) -> String {
     let unordered = if unordered_true { "1f" } else { "2f" };
     format!(
@@ -657,6 +716,7 @@ pub(crate) fn assembly_source(recipe: super::RustAssemblyRecipe) -> String {
         NumericFloatingLoop => AARCH64_NUMERIC_FLOATING_LOOP.to_owned(),
         NumericBitwiseLoop => AARCH64_NUMERIC_BITWISE_LOOP.to_owned(),
         NumericIndependentLoop => AARCH64_NUMERIC_INDEPENDENT_LOOP.to_owned(),
+        NumericMixedLoop => AARCH64_NUMERIC_MIXED_LOOP.to_owned(),
         Property => AARCH64_PROPERTY_READ.to_owned(),
         PrototypeProperty => AARCH64_PROTOTYPE_PROPERTY.to_owned(),
         StoreProperty => AARCH64_PROPERTY_WRITE.to_owned(),

@@ -41,6 +41,7 @@ pub(crate) enum DeclAbi {
     NumericI32BitwiseLoop,
     NumericI32PairLoop,
     NumericF64Loop,
+    NumericF64MixedLoop,
     CompareBranch,
     PropertyGuard,
     PropertyWriteGuard,

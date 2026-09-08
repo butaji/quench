@@ -273,6 +273,11 @@ rust_assembly_catalog! {
         ops: ["Mul", "Add", "Binary", "Jump"],
         x86: &[], aarch64: &[], x86_holes: &[], aarch64_holes: &[]
     },
+    NumericMixedLoop {
+        name: "numeric_mixed_loop", abi: NumericF64MixedLoop,
+        ops: ["Binary", "JumpIfFalse", "Jump", "Add", "Return"],
+        x86: &[], aarch64: &[], x86_holes: &[], aarch64_holes: &[]
+    },
     Property {
         name: "property", abi: PropertyGuard, ops: ["GetN"],
         x86: &X86_PROPERTY_BYTES, aarch64: &AARCH64_PROPERTY_GUARD_BYTES,
