@@ -350,6 +350,28 @@ fn accept_one(
         .servers
         .get(&server_id)
         .map(|server| server.borrow().js.clone());
+    let is_http2 = server_js.as_ref().is_some_and(|server| {
+        matches!(
+            execute::get_property(
+                server,
+                crate::modules::http2_protocol::SERVER_MARKER,
+            ),
+            Value::Boolean(true)
+        )
+    });
+    if is_http2 {
+        execute::set_property_in_place(
+            &object,
+            crate::modules::http2_protocol::SERVER_MARKER,
+            Value::Boolean(true),
+        );
+        crate::modules::net::register_http2_session(
+            state,
+            &object,
+            crate::modules::http2_protocol::Role::Server,
+        );
+    }
+    let tls_server = server_js.clone();
     if let Some(js) = server_js {
         let previous_scope = state.borrow().cluster.process_scope();
         let previous_event_scope = state.borrow().event_loop.process_scope();
@@ -472,6 +494,26 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     }
     for (sock, bytes) in events.datas {
         let js = sock.borrow().js.clone();
+        let protocol_error = {
+            let id = sock.borrow().id;
+            state
+                .borrow_mut()
+                .net
+                .http2_sessions
+                .get_mut(&id)
+                .and_then(|session| session.feed(&bytes).err())
+        };
+        if protocol_error.is_some() {
+            // Preserve ordinary net data delivery while retaining a
+            // host-owned diagnostic fact.  The eventual HTTP/2 session layer
+            // can turn this fact into a protocol error/GOAWAY without having
+            // to reparse the same TCP chunk.
+            execute::set_property_in_place(
+                &js,
+                crate::modules::http2_protocol::PROTOCOL_ERROR_MARKER,
+                Value::Boolean(true),
+            );
+        }
         let visible_read = match execute::get_property(&js, "bytesRead") {
             Value::Number(value) if value.is_finite() && value >= 0.0 => value,
             _ => 0.0,
@@ -858,7 +900,9 @@ pub fn finalize(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     }
     let mut host = state.borrow_mut();
     for sock in &to_close {
-        host.net.sockets.remove(&sock.borrow().id);
+        let id = sock.borrow().id;
+        host.net.sockets.remove(&id);
+        host.net.http2_sessions.remove(&id);
     }
     drop(host);
     // Finalization is the other terminal path besides `socket.destroy()`.
