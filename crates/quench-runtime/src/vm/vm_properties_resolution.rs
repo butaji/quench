@@ -181,6 +181,21 @@ pub(crate) fn get_named_cached_payload(
     Some(payload)
 }
 
+/// Read an already-guarded numeric property without materializing `Value`.
+/// A miss is side-effect-free and lets a fused region retry canonically at its
+/// entry; accessors, proxies, stale layouts and non-numeric values never enter.
+#[inline(always)]
+pub(crate) fn get_named_cached_number(
+    object: &crate::value::ObjectData,
+    key: &str,
+    cache: &std::cell::Cell<u64>,
+) -> Option<f64> {
+    match get_named_cached_payload(object, key, cache)? {
+        NamedCachedPayload::Word(word) => unsafe { &*word }.number(),
+        NamedCachedPayload::Cell(_) | NamedCachedPayload::Value(_) => None,
+    }
+}
+
 #[inline(always)]
 fn named_cached_payload(value: &Value) -> NamedCachedPayload {
     match value {

@@ -166,6 +166,7 @@ mod stencil_policy;
 mod stencil_predicate_fusion;
 #[cfg(test)]
 mod stencil_property_integration_tests;
+mod stencil_property_numeric;
 #[cfg(test)]
 mod stencil_property_store_tests;
 mod stencil_region_builder;
@@ -178,6 +179,8 @@ mod stencil_test_support;
 mod stencil_truthiness_fusion_tests;
 mod stencil_value_graph;
 mod stencil_word_composition;
+#[cfg(test)]
+mod test_execution_profile;
 
 #[cfg(test)]
 mod architecture_invariants;

@@ -33,3 +33,5 @@ object = "0.39.1"
 
 [dev-dependencies]
 object = { version = "0.39.1", features = ["write"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
