@@ -1,84 +1,33 @@
-var __profileSpec; function registerMicro(spec) { __profileSpec = spec; }
-registerMicro({
-  id: "control",
-  question: "How do branch diversity and equivalent loop forms scale?",
-  requires: ["numeric"],
-  axes: ["size", "branch diversity"],
-  observations: [
-    "time per iteration",
-    "branch and dispatch observations, if available"
-  ],
-  explanations: [
-    "Branch predictability",
-    "Loop orchestration",
-    "Dispatch overhead"
-  ],
-  setup: function (n, seed) {
+"use strict";
+function assert(condition, message) {
+  if (!condition) throw new Error("execution profile assertion failed: " + message);
+}
+function encode(value) {
+  if (value === undefined) return ["undefined"];
+  if (typeof value === "number") return ["number", Number.isNaN(value) ? "NaN" : Object.is(value, -0) ? "-0" : String(value)];
+  if (typeof value === "bigint") return ["bigint", String(value)];
+  if (value === null || typeof value !== "object") return [typeof value, value];
+  if (Array.isArray(value)) return ["array", value.map(encode)];
+  return ["object", Object.keys(value).map(function (key) { return [key, encode(value[key])]; })];
+}
+const setup = function (n, seed) {
     var a = [];
     for (var i = 0; i < n; i++) a.push(((i * 1103515245 + seed) >>> 8) & 7);
     return { n: n, a: a };
-  },
-  equivalent: [["for", "while"]],
-  variants: {
-    for: function (s) {
-      var sum = 0;
-      for (var i = 0; i < s.n; i++) sum += s.a[i];
-      return sum;
-    },
-    while: function (s) {
-      var sum = 0,
-        i = 0;
-      while (i < s.n) {
-        sum += s.a[i];
-        i++;
-      }
-      return sum;
-    },
-    predictable: function (s) {
-      var sum = 0;
-      for (var i = 0; i < s.n; i++) sum += s.a[i] < 8 ? 1 : -1;
-      return sum;
-    },
-    changing: function (s) {
+  };
+const operation = function (s) {
       var sum = 0;
       for (var i = 0; i < s.n; i++) sum += s.a[i] < 4 ? 1 : -1;
       return sum;
-    },
-    switch: function (s) {
-      var sum = 0;
-      for (var i = 0; i < s.n; i++) {
-        switch (s.a[i]) {
-          case 0:
-            sum += 3;
-            break;
-          case 1:
-            sum += 7;
-            break;
-          case 2:
-            sum -= 1;
-            break;
-          default:
-            sum += 2;
-        }
-      }
-      return sum;
-    },
-    early_exit: function (s) {
-      var at = -1;
-      for (var i = 0; i < s.n; i++) {
-        if (s.a[i] === 7) {
-          at = i;
-          break;
-        }
-      }
-      return at;
-    }
-  }
-});
-
-function __profileAssert(condition,message){if(!condition)throw new Error("execution profile assertion failed: "+message);}
-function __profileEncode(x){if(x===undefined)return["undefined"];if(typeof x==="number")return["number",Number.isNaN(x)?"NaN":Object.is(x,-0)?"-0":String(x)];if(typeof x==="bigint")return["bigint",String(x)];if(x===null||typeof x!=="object")return[typeof x,x];if(Array.isArray(x))return["array",x.map(__profileEncode)];return["object",Object.keys(x).map(function(k){return[k,__profileEncode(x[k])];})];}
-__profileAssert(__profileSpec!==undefined,"micro registration");
-__profileAssert(typeof __profileSpec.setup==="function","setup is callable");
-var __profileState=__profileSpec.setup(64,17,"changing");var __profileOperation=__profileSpec.variants["changing"];__profileAssert(typeof __profileOperation==="function","selected variant is callable");function __profileRun(){var value=__profileOperation(__profileState);if(__profileSpec.check)__profileSpec.check(value,__profileState,"changing");var signature=JSON.stringify(__profileEncode(value));__profileAssert(signature==="[\"number\",\"0\"]","exact encoded result");return signature;}
-return __profileRun();
+    };
+const check = null;
+const state = setup(64, 17, "changing");
+assert(typeof operation === "function", "scenario operation is callable");
+function run() {
+  const value = operation(state);
+  if (check) check(value, state, "changing");
+  const signature = JSON.stringify(encode(value));
+  assert(signature === "[\"number\",\"0\"]", "exact encoded result");
+  return signature;
+}
+return run();

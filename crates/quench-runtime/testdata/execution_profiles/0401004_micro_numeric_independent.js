@@ -1,39 +1,19 @@
-var __profileSpec; function registerMicro(spec) { __profileSpec = spec; }
-registerMicro({
-  id: "numeric",
-  question:
-    "How do numeric representation and dependency chains affect useful arithmetic?",
-  axes: ["size", "representation", "dependency"],
-  requires: [],
-  observations: [
-    "execution time per iteration",
-    "numeric conversion and decode counts, if available"
-  ],
-  explanations: [
-    "Representation-dependent costs",
-    "Dependency-limited execution",
-    "Repeated conversion"
-  ],
-  setup: function (n, seed) {
+"use strict";
+function assert(condition, message) {
+  if (!condition) throw new Error("execution profile assertion failed: " + message);
+}
+function encode(value) {
+  if (value === undefined) return ["undefined"];
+  if (typeof value === "number") return ["number", Number.isNaN(value) ? "NaN" : Object.is(value, -0) ? "-0" : String(value)];
+  if (typeof value === "bigint") return ["bigint", String(value)];
+  if (value === null || typeof value !== "object") return [typeof value, value];
+  if (Array.isArray(value)) return ["array", value.map(encode)];
+  return ["object", Object.keys(value).map(function (key) { return [key, encode(value[key])]; })];
+}
+const setup = function (n, seed) {
     return { n: n, seed: seed };
-  },
-  variants: {
-    integer: function (s) {
-      var a = s.seed;
-      for (var i = 0; i < s.n; i++) a = (a * 33 + i) | 0;
-      return a;
-    },
-    floating: function (s) {
-      var a = s.seed / 17;
-      for (var i = 0; i < s.n; i++) a = a * 0.999 + (i % 17) / 19;
-      return a;
-    },
-    bitwise: function (s) {
-      var a = s.seed;
-      for (var i = 0; i < s.n; i++) a = ((a << 5) ^ (a >>> 3) ^ i) | 0;
-      return a;
-    },
-    independent: function (s) {
+  };
+const operation = function (s) {
       var a = s.seed,
         b = s.seed + 1;
       for (var i = 0; i < s.n; i++) {
@@ -41,23 +21,15 @@ registerMicro({
         b = (b * 33 + i) | 0;
       }
       return [a, b];
-    },
-    mixed: function (s) {
-      var a = s.seed;
-      for (var i = 0; i < s.n; i++) a = (a + (i % 31 === 0 ? 0.5 : 1)) % 100003;
-      return a;
-    },
-    bigint: function (s) {
-      var a = BigInt(s.seed);
-      for (var i = 0; i < s.n; i++) a = (a * 33n + BigInt(i)) & 0xffffffffn;
-      return a;
-    }
-  }
-});
-
-function __profileAssert(condition,message){if(!condition)throw new Error("execution profile assertion failed: "+message);}
-function __profileEncode(x){if(x===undefined)return["undefined"];if(typeof x==="number")return["number",Number.isNaN(x)?"NaN":Object.is(x,-0)?"-0":String(x)];if(typeof x==="bigint")return["bigint",String(x)];if(x===null||typeof x!=="object")return[typeof x,x];if(Array.isArray(x))return["array",x.map(__profileEncode)];return["object",Object.keys(x).map(function(k){return[k,__profileEncode(x[k])];})];}
-__profileAssert(__profileSpec!==undefined,"micro registration");
-__profileAssert(typeof __profileSpec.setup==="function","setup is callable");
-var __profileState=__profileSpec.setup(64,17,"independent");var __profileOperation=__profileSpec.variants["independent"];__profileAssert(typeof __profileOperation==="function","selected variant is callable");function __profileRun(){var value=__profileOperation(__profileState);if(__profileSpec.check)__profileSpec.check(value,__profileState,"independent");var signature=JSON.stringify(__profileEncode(value));__profileAssert(signature==="[\"array\",[[\"number\",\"351545329\"],[\"number\",\"91467762\"]]]","exact encoded result");return signature;}
-return __profileRun();
+    };
+const check = null;
+const state = setup(64, 17, "independent");
+assert(typeof operation === "function", "scenario operation is callable");
+function run() {
+  const value = operation(state);
+  if (check) check(value, state, "independent");
+  const signature = JSON.stringify(encode(value));
+  assert(signature === "[\"array\",[[\"number\",\"351545329\"],[\"number\",\"91467762\"]]]", "exact encoded result");
+  return signature;
+}
+return run();

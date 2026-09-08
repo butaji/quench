@@ -1,70 +1,34 @@
-var __profileSpec; function registerMicro(spec) { __profileSpec = spec; }
-registerMicro({
-  id: "typed-memory",
-  question:
-    "How do element types, view aliasing, and copying affect memory access?",
-  requires: ["arrays", "numeric"],
-  axes: ["size", "view type", "aliasing"],
-  memory: true,
-  observations: ["time per element", "peak RSS", "aliased results"],
-  explanations: ["Conversion", "Bounds handling", "Copying"],
-  setup: function (n, seed) {
+"use strict";
+function assert(condition, message) {
+  if (!condition) throw new Error("execution profile assertion failed: " + message);
+}
+function encode(value) {
+  if (value === undefined) return ["undefined"];
+  if (typeof value === "number") return ["number", Number.isNaN(value) ? "NaN" : Object.is(value, -0) ? "-0" : String(value)];
+  if (typeof value === "bigint") return ["bigint", String(value)];
+  if (value === null || typeof value !== "object") return [typeof value, value];
+  if (Array.isArray(value)) return ["array", value.map(encode)];
+  return ["object", Object.keys(value).map(function (key) { return [key, encode(value[key])]; })];
+}
+const setup = function (n, seed) {
     return { n: n, seed: seed };
-  },
-  variants: {
-    uint: function (s) {
-      var a = new Uint32Array(s.n),
-        t = 0;
-      for (var i = 0; i < s.n; i++) {
-        a[i] = i + s.seed;
-        t += a[i];
-      }
-      return t;
-    },
-    float: function (s) {
-      var a = new Float64Array(s.n),
-        t = 0;
-      for (var i = 0; i < s.n; i++) {
-        a[i] = (i + s.seed) / 7;
-        t += a[i];
-      }
-      return t;
-    },
-    dataview: function (s) {
-      var d = new DataView(new ArrayBuffer(s.n * 4)),
-        t = 0;
-      for (var i = 0; i < s.n; i++) {
-        d.setUint32(i * 4, i + s.seed, true);
-        t += d.getUint32(i * 4, true);
-      }
-      return t;
-    },
-    alias: function (s) {
-      var b = new ArrayBuffer(s.n * 4),
-        words = new Uint32Array(b),
-        bytes = new Uint8Array(b),
-        t = 0;
-      for (var i = 0; i < s.n; i++) {
-        words[i] = 0x01010101;
-        t += bytes[i * 4];
-      }
-      return t;
-    },
-    copy: function (s) {
+  };
+const operation = function (s) {
       var a = new Uint8Array(s.n);
       for (var i = 0; i < s.n; i++) a[i] = i + s.seed;
       var b = a.slice();
       var t = 0;
       for (var j = 0; j < b.length; j++) t += b[j];
       return t;
-    }
-  },
-  equivalent: [["uint", "dataview"]]
-});
-
-function __profileAssert(condition,message){if(!condition)throw new Error("execution profile assertion failed: "+message);}
-function __profileEncode(x){if(x===undefined)return["undefined"];if(typeof x==="number")return["number",Number.isNaN(x)?"NaN":Object.is(x,-0)?"-0":String(x)];if(typeof x==="bigint")return["bigint",String(x)];if(x===null||typeof x!=="object")return[typeof x,x];if(Array.isArray(x))return["array",x.map(__profileEncode)];return["object",Object.keys(x).map(function(k){return[k,__profileEncode(x[k])];})];}
-__profileAssert(__profileSpec!==undefined,"micro registration");
-__profileAssert(typeof __profileSpec.setup==="function","setup is callable");
-var __profileState=__profileSpec.setup(64,17,"copy");var __profileOperation=__profileSpec.variants["copy"];__profileAssert(typeof __profileOperation==="function","selected variant is callable");function __profileRun(){var value=__profileOperation(__profileState);if(__profileSpec.check)__profileSpec.check(value,__profileState,"copy");var signature=JSON.stringify(__profileEncode(value));__profileAssert(signature==="[\"number\",\"3104\"]","exact encoded result");return signature;}
-return __profileRun();
+    };
+const check = null;
+const state = setup(64, 17, "copy");
+assert(typeof operation === "function", "scenario operation is callable");
+function run() {
+  const value = operation(state);
+  if (check) check(value, state, "copy");
+  const signature = JSON.stringify(encode(value));
+  assert(signature === "[\"number\",\"3104\"]", "exact encoded result");
+  return signature;
+}
+return run();
