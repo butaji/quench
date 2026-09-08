@@ -2010,6 +2010,15 @@ fn record_i32_pattern(code: crate::machine::CodeView<'_>, pc: usize) {
     );
 }
 
+fn record_call_return(code: crate::machine::CodeView<'_>, pc: usize) {
+    crate::execution_trace::stencil_observation(code, pc, "monomorphic_call_return", true);
+    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+    #[cfg(test)]
+    crate::test_execution_profile::dynamic_region_route(
+        crate::stencil_call_return::NativeCallReturnPlan::route(),
+    );
+}
+
 pub(crate) fn execute_baseline_completion_step_from_with_owner(
     code: crate::machine::CodeView<'_>,
     plan: &crate::machine::BaselinePlan,
@@ -2232,6 +2241,25 @@ pub(crate) fn execute_optimized_code_step_from(
             false,
         );
         crate::execution_trace::leaf_rejection("bitwise_shift_mask_return");
+    }
+    if let Some(call) = entry.call_return() {
+        let value = crate::locals::with_current_ref(|environment| {
+            call.borrow_mut().execute(environment?)
+        });
+        if let Some(value) = value {
+            record_call_return(code, start);
+            return Ok((
+                crate::completion::Completion::Return(value),
+                start + call.borrow().span(),
+            ));
+        }
+        crate::execution_trace::stencil_observation(
+            code,
+            start,
+            "monomorphic_call_return",
+            false,
+        );
+        crate::execution_trace::leaf_rejection("monomorphic_call_return");
     }
     if let Some(dag) = entry.numeric_dag() {
         let value = crate::locals::with_current_ref(|environment| {
@@ -2989,6 +3017,25 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                 false,
             );
             crate::execution_trace::leaf_rejection("bitwise_shift_mask_return");
+        }
+        if let (Some(environment), Some(call)) = (environment, plan.call_return_at(pc)) {
+            let value = call.borrow_mut().execute(environment);
+            if let Some(value) = value {
+                let span = call.borrow().span();
+                record_call_return(code, pc);
+                return completion_step_after_transition(
+                    registers,
+                    crate::completion::Completion::Return(value),
+                    pc + span,
+                );
+            }
+            crate::execution_trace::stencil_observation(
+                code,
+                pc,
+                "monomorphic_call_return",
+                false,
+            );
+            crate::execution_trace::leaf_rejection("monomorphic_call_return");
         }
         if let (Some(environment), Some(dag)) = (environment, plan.numeric_dag_at(pc)) {
             let value = {
