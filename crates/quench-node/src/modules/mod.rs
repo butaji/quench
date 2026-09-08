@@ -55,6 +55,7 @@ pub mod pump;
 pub mod querystring;
 pub mod querystring_parse;
 pub mod querystring_stringify;
+pub mod quic_transport;
 pub mod readline;
 pub mod repl;
 pub mod require;
