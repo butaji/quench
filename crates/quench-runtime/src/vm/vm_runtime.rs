@@ -2361,21 +2361,27 @@ pub(crate) fn execute_optimized_code_step_from(
     if let Some(missing) = entry.missing_property() {
         let executed = crate::locals::with_current_ref(|environment| {
             let mut missing = missing.borrow_mut();
-            missing.execute(code, start, environment?).map(|bits| (bits, missing.span()))
+            let environment = environment?;
+            Some((missing.execute(code, start, environment), missing.span()))
         });
-        if let Some((bits, span)) = executed {
+        if let Some((crate::stencil_missing_property::MissingPropertyExecution::Completed(bits), span)) = executed {
             if let Some(value) = crate::register_file::own_tagged_bits(bits) {
                 record_missing_property(code, start);
                 return Ok((crate::completion::Completion::Return(value), start + span));
             }
         }
-        crate::execution_trace::stencil_observation(
-            code,
-            start,
-            "guarded_missing_property_return",
-            false,
-        );
-        crate::execution_trace::leaf_rejection("guarded_missing_property_return");
+        if matches!(
+            executed,
+            Some((crate::stencil_missing_property::MissingPropertyExecution::GuardMiss, _))
+        ) {
+            crate::execution_trace::stencil_observation(
+                code,
+                start,
+                "guarded_missing_property_return",
+                false,
+            );
+            crate::execution_trace::leaf_rejection("guarded_missing_property_return");
+        }
     }
     if let Some(plan) = entry.string_concat() {
         let result = crate::locals::with_current_ref(|environment| match environment {
@@ -3220,9 +3226,9 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
         {
             let executed = {
                 let mut missing = missing.borrow_mut();
-                missing.execute(code, pc, environment).map(|bits| (bits, missing.span()))
+                (missing.execute(code, pc, environment), missing.span())
             };
-            if let Some((bits, span)) = executed {
+            if let (crate::stencil_missing_property::MissingPropertyExecution::Completed(bits), span) = executed {
                 if let Some(value) = crate::register_file::own_tagged_bits(bits) {
                     record_missing_property(code, pc);
                     return completion_step_after_transition(
@@ -3232,13 +3238,18 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                     );
                 }
             }
-            crate::execution_trace::stencil_observation(
-                code,
-                pc,
-                "guarded_missing_property_return",
-                false,
-            );
-            crate::execution_trace::leaf_rejection("guarded_missing_property_return");
+            if matches!(
+                executed.0,
+                crate::stencil_missing_property::MissingPropertyExecution::GuardMiss
+            ) {
+                crate::execution_trace::stencil_observation(
+                    code,
+                    pc,
+                    "guarded_missing_property_return",
+                    false,
+                );
+                crate::execution_trace::leaf_rejection("guarded_missing_property_return");
+            }
         }
         if let (Some(environment), Some(concat)) = (environment, plan.string_concat_at(pc)) {
             if let Some(outcome) = concat.borrow().execute(environment)? {
