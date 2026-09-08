@@ -1081,6 +1081,7 @@ fn session_request(
         "\0quench:http2-stream-id",
         Value::Number(stream_id as f64),
     );
+    execute::set_property_in_place(&stream, "id", Value::Number(stream_id as f64));
     execute::set_property_in_place(&stream, "write", session_capability("streamWrite"));
     execute::set_property_in_place(&stream, "end", session_capability("streamEnd"));
     execute::set_property_in_place(&stream, "close", session_capability("streamClose"));
@@ -1347,7 +1348,8 @@ fn stream_destroy(
     receiver: Option<&Value>,
     values: &[Value],
 ) -> Result<Value, VmError> {
-    let stream = execute::canonical_value(receiver.ok_or(VmError::NotCallable)?);
+    let receiver = receiver.ok_or(VmError::NotCallable)?.clone();
+    let stream = execute::canonical_value(&receiver);
     let (socket, stream_id) = stream_socket(Some(&stream))?;
     let error = values
         .first()
@@ -1381,7 +1383,7 @@ fn stream_destroy(
         // Destruction is observable on a later event-loop turn, allowing the
         // usual `destroy(error); stream.on('error', ...)` ordering.
         state.borrow_mut().net.pending_events.push((
-            stream.clone(),
+            receiver.clone(),
             "error".into(),
             vec![error],
         ));
@@ -1402,7 +1404,7 @@ fn stream_destroy(
         code.to_be_bytes().to_vec(),
     );
     write_http2_frame(&socket, &frame)?;
-    Ok(stream)
+    Ok(receiver)
 }
 
 fn stream_push_stream(
@@ -1517,6 +1519,7 @@ fn stream_push_stream(
     let stream = crate::modules::events::new_emitter_object(state)?;
     execute::set_property_in_place(&stream, "\0quench:http2-socket", socket.clone());
     execute::set_property_in_place(&stream, "\0quench:http2-stream-id", Value::Number(promised_id as f64));
+    execute::set_property_in_place(&stream, "id", Value::Number(promised_id as f64));
     for (name, capability) in [
         ("write", "streamWrite"),
         ("end", "streamEnd"),
@@ -1529,6 +1532,25 @@ fn stream_push_stream(
     }
     execute::set_property_in_place(&stream, "session", socket.clone());
     decorate_http2_stream(state, &stream, true);
+    let diagnostics_headers = http2_diagnostic_headers(&fields);
+    publish_http2_stream_diagnostic(
+        state,
+        &stream,
+        true,
+        HTTP2_DIAG_CREATED,
+        Some(diagnostics_headers.clone()),
+        None,
+        None,
+    )?;
+    publish_http2_stream_diagnostic(
+        state,
+        &stream,
+        true,
+        HTTP2_DIAG_START,
+        Some(diagnostics_headers),
+        None,
+        None,
+    )?;
     let socket_id = crate::modules::net::net_id(&socket).ok_or(VmError::NotCallable)?;
     state.borrow_mut().net.http2_streams.insert((socket_id, promised_id), stream.clone());
     write_http2_frame(&socket, &frame)?;

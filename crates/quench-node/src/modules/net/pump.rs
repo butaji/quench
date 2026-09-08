@@ -101,7 +101,12 @@ fn emit_server_scoped(
     event: &str,
     args: Vec<Value>,
 ) -> Result<(), VmError> {
-    let server_id = super::net_id(receiver);
+    // Host lifecycle queues may retain a pre-COW stream representative while
+    // listener registration has already published its live replacement.
+    // Resolve that identity before looking up scoped listeners or invoking
+    // callbacks so deferred stream errors reach the object observers use.
+    let receiver = execute::canonical_value(receiver);
+    let server_id = super::net_id(&receiver);
     let scope = server_id.and_then(|id| {
         state
             .borrow()
@@ -136,7 +141,7 @@ fn emit_server_scoped(
         crate::modules::cluster::set_worker_mode(state, *worker_id, worker, true);
         state.borrow_mut().cluster.worker_context = Some(*worker_id);
     }
-    let result = emit(state, receiver, event, args);
+    let result = emit(state, &receiver, event, args);
     if let Some((worker_id, worker)) = &worker {
         crate::modules::cluster::set_worker_mode(state, *worker_id, worker, false);
     }
@@ -722,6 +727,7 @@ fn http2_stream(
         "\0quench:http2-stream-id",
         Value::Number(stream_id as f64),
     );
+    execute::set_property_in_place(&stream, "id", Value::Number(stream_id as f64));
     execute::set_property_in_place(&stream, "write", http2_capability("streamWrite"));
     execute::set_property_in_place(&stream, "end", http2_capability("streamEnd"));
     execute::set_property_in_place(&stream, "close", http2_capability("streamClose"));
@@ -1205,6 +1211,20 @@ fn dispatch_http2_frames(
                 execute::set_property_in_place(&stream, "rstCode", Value::Number(code as f64));
                 execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
                 execute::set_property_in_place(&stream, "destroyed", Value::Boolean(true));
+                if code != 0 {
+                    let error = quench_runtime::builtins::error(
+                        quench_runtime::ops::Builtin::Error,
+                        &[Value::String(format!(
+                            "Stream closed with error code {code}"
+                        ))],
+                    );
+                    let error = execute::set_property(
+                        error,
+                        "code",
+                        Value::String("ERR_HTTP2_STREAM_ERROR".into()),
+                    );
+                    emit_socket_scoped(state, socket, &stream, "error", vec![error])?;
+                }
                 crate::modules::http2_util::publish_http2_stream_diagnostic(
                     state,
                     &stream,
