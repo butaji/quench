@@ -190,6 +190,7 @@ mod stencil_numeric_receiver_selection;
 mod stencil_numeric_independent_loop;
 mod stencil_numeric_mixed_loop;
 mod stencil_ordered_reduction;
+mod stencil_ordered_neighbor;
 pub mod stencil_patch;
 mod stencil_physical;
 mod stencil_plan;
