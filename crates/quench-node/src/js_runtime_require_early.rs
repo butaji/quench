@@ -26,6 +26,9 @@ fn require_early_module(name: &str) -> Result<Option<Value>, VmError> {
             "internalBinding".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::InternalBinding)),
         )]),
+        "internal/blocklist" | "node:internal/blocklist" => {
+            crate::modules::net::block_list_internal_module()
+        }
         "dgram" | "node:dgram" => quench_runtime::host_api::object(vec![(
             "createSocket".into(),
             capability_function(HostCapabilityKind::Custom(
