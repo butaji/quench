@@ -97,6 +97,59 @@ q_array_numeric_loop_end:
 "#);
 "##;
 
+const AARCH64_ARRAY_FILL_LOOP: &str = r##"#![no_std]
+use core::arch::global_asm;
+
+#[repr(C)]
+struct ArrayLoopContext {
+    data: *mut f64,
+    len: usize,
+    index: usize,
+    end: usize,
+    addend: f64,
+    result: f64,
+    interrupt: *const u8,
+}
+
+global_asm!(r#"
+.text
+.p2align 2
+.globl q_array_numeric_fill_loop
+q_array_numeric_fill_loop:
+  ldr x1, [x0, #{index}]
+  ldr x2, [x0, #{end}]
+  ldr d1, [x0, #{value}]
+1:
+  cmp x1, x2
+  b.hs 2f
+  ldr x3, [x0, #{data}]
+  add x4, x3, x1, lsl #3
+  str d1, [x4]
+  add x1, x1, #1
+  str x1, [x0, #{index}]
+  ldr x5, [x0, #{interrupt}]
+  ldrb w6, [x5]
+  cbnz w6, 3f
+  b 1b
+2:
+  str d1, [x0, #{result}]
+  mov w0, #1
+  ret
+3:
+  str d1, [x0, #{result}]
+  mov w0, #4
+  ret
+q_array_numeric_fill_loop_end:
+"#,
+    data = const core::mem::offset_of!(ArrayLoopContext, data),
+    index = const core::mem::offset_of!(ArrayLoopContext, index),
+    end = const core::mem::offset_of!(ArrayLoopContext, end),
+    value = const core::mem::offset_of!(ArrayLoopContext, addend),
+    result = const core::mem::offset_of!(ArrayLoopContext, result),
+    interrupt = const core::mem::offset_of!(ArrayLoopContext, interrupt),
+);
+"##;
+
 const AARCH64_AFFINE_I32_LOOP: &str = r##"#![no_std]
 use core::arch::global_asm;
 global_asm!(r#"
@@ -373,6 +426,7 @@ pub(crate) fn assembly_source(recipe: super::RustAssemblyRecipe) -> String {
         CompareGreaterBranch => compare_branch_source(recipe.name(), "gt", false),
         CompareGreaterEqualBranch => compare_branch_source(recipe.name(), "ge", false),
         ArrayNumericLoop => AARCH64_ARRAY_LOOP.to_owned(),
+        ArrayNumericFillLoop => AARCH64_ARRAY_FILL_LOOP.to_owned(),
         AffineI32Loop => AARCH64_AFFINE_I32_LOOP.to_owned(),
         Property => AARCH64_PROPERTY_READ.to_owned(),
         PrototypeProperty => AARCH64_PROTOTYPE_PROPERTY.to_owned(),
