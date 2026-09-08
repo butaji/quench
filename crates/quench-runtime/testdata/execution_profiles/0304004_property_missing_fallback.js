@@ -3,13 +3,10 @@ function read(object) {
 }
 
 read({ value: 1 });
-function run() {
-  return read({ value: 2 });
-}
+var receiver = { value: 2 };
 function verify(result) {
-if (result !== undefined) {
-  throw new Error("missing-property fallback mismatch");
-}
+  if (read(receiver) !== undefined) throw new Error("missing-property mismatch");
+  if (result !== undefined) throw new Error("measured missing-property mismatch");
   return result;
 }
-return { run: run, verify: verify };
+return { run: read, verify: verify, arguments: [receiver] };

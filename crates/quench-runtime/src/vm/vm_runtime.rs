@@ -2097,6 +2097,18 @@ fn record_nullish_truthy(code: crate::machine::CodeView<'_>, pc: usize) {
     ]);
 }
 
+fn record_missing_property(code: crate::machine::CodeView<'_>, pc: usize) {
+    crate::execution_trace::stencil_observation(
+        code,
+        pc,
+        "guarded_missing_property_return",
+        true,
+    );
+    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+    #[cfg(test)]
+    crate::test_execution_profile::dynamic_region_route(["GetN", "Return"]);
+}
+
 pub(crate) fn execute_baseline_completion_step_from_with_owner(
     code: crate::machine::CodeView<'_>,
     plan: &crate::machine::BaselinePlan,
@@ -2345,6 +2357,25 @@ pub(crate) fn execute_optimized_code_step_from(
         }
         crate::execution_trace::stencil_observation(code, start, "monomorphic_call_return", false);
         crate::execution_trace::leaf_rejection("monomorphic_call_return");
+    }
+    if let Some(missing) = entry.missing_property() {
+        let executed = crate::locals::with_current_ref(|environment| {
+            let mut missing = missing.borrow_mut();
+            missing.execute(code, start, environment?).map(|bits| (bits, missing.span()))
+        });
+        if let Some((bits, span)) = executed {
+            if let Some(value) = crate::register_file::own_tagged_bits(bits) {
+                record_missing_property(code, start);
+                return Ok((crate::completion::Completion::Return(value), start + span));
+            }
+        }
+        crate::execution_trace::stencil_observation(
+            code,
+            start,
+            "guarded_missing_property_return",
+            false,
+        );
+        crate::execution_trace::leaf_rejection("guarded_missing_property_return");
     }
     if let Some(plan) = entry.string_concat() {
         let result = crate::locals::with_current_ref(|environment| match environment {
@@ -3183,6 +3214,31 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
             }
             crate::execution_trace::stencil_observation(code, pc, "monomorphic_call_return", false);
             crate::execution_trace::leaf_rejection("monomorphic_call_return");
+        }
+        if let (Some(environment), Some(missing)) =
+            (environment, plan.missing_property_at(pc))
+        {
+            let executed = {
+                let mut missing = missing.borrow_mut();
+                missing.execute(code, pc, environment).map(|bits| (bits, missing.span()))
+            };
+            if let Some((bits, span)) = executed {
+                if let Some(value) = crate::register_file::own_tagged_bits(bits) {
+                    record_missing_property(code, pc);
+                    return completion_step_after_transition(
+                        registers,
+                        crate::completion::Completion::Return(value),
+                        pc + span,
+                    );
+                }
+            }
+            crate::execution_trace::stencil_observation(
+                code,
+                pc,
+                "guarded_missing_property_return",
+                false,
+            );
+            crate::execution_trace::leaf_rejection("guarded_missing_property_return");
         }
         if let (Some(environment), Some(concat)) = (environment, plan.string_concat_at(pc)) {
             if let Some(outcome) = concat.borrow().execute(environment)? {

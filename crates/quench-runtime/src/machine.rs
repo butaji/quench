@@ -5497,6 +5497,7 @@ enum NativeAdmission {
     NumericDag(Rc<RefCell<crate::stencil_numeric_dag::NativeNumericDagPlan>>),
     NumberClassify(Rc<RefCell<crate::stencil_number_classify::NativeNumberClassifyPlan>>),
     NullishTruthy(Rc<RefCell<crate::stencil_nullish_truthy::NativeNullishTruthyPlan>>),
+    MissingProperty(Rc<RefCell<crate::stencil_missing_property::NativeMissingPropertyPlan>>),
     DenseUpdate(Rc<RefCell<crate::stencil_dense_array_update::NativeDenseUpdatePlan>>),
     DenseCopy(Rc<RefCell<crate::stencil_dense_array_copy::NativeDenseCopyPlan>>),
     Reduction(Rc<RefCell<crate::stencil_ordered_reduction::NativeReductionPlan>>),
@@ -5541,6 +5542,9 @@ impl AdmissionEntry for NativeAdmission {
             >(),
             Self::NullishTruthy(_) => shared_value_bytes::<
                 RefCell<crate::stencil_nullish_truthy::NativeNullishTruthyPlan>,
+            >(),
+            Self::MissingProperty(_) => shared_value_bytes::<
+                RefCell<crate::stencil_missing_property::NativeMissingPropertyPlan>,
             >(),
             Self::DenseUpdate(_) => shared_value_bytes::<
                 RefCell<crate::stencil_dense_array_update::NativeDenseUpdatePlan>,
@@ -5593,6 +5597,7 @@ impl std::fmt::Debug for NativeAdmission {
             Self::NumericDag(_) => "numeric_dag",
             Self::NumberClassify(_) => "number_classify",
             Self::NullishTruthy(_) => "nullish_truthy",
+            Self::MissingProperty(_) => "missing_property",
             Self::DenseUpdate(_) => "dense_update",
             Self::DenseCopy(_) => "dense_copy",
             Self::Reduction(_) => "reduction",
@@ -5979,6 +5984,22 @@ fn nullish_truthy_admission(
         selection, policy, Rc::clone(arena),
     )?;
     Some(NativeAdmission::NullishTruthy(Rc::new(RefCell::new(plan))))
+}
+
+fn missing_property_admission(
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    let selection = crate::stencil_missing_property::select_missing_property(entries, cfg, pc)?;
+    let plan = crate::stencil_missing_property::NativeMissingPropertyPlan::new(
+        selection,
+        policy,
+        Rc::clone(arena),
+    )?;
+    Some(NativeAdmission::MissingProperty(Rc::new(RefCell::new(plan))))
 }
 
 fn dense_update_admission(
@@ -6554,6 +6575,10 @@ fn collect_admissions_at(
     );
     builder.push_optional(
         pc,
+        missing_property_admission(entries, cfg, pc, policy, arena),
+    );
+    builder.push_optional(
+        pc,
         local_binary_admission(code, entries, cfg, pc, policy, arena),
     );
     builder.push_optional(
@@ -6651,6 +6676,7 @@ impl BaselinePlan {
         let dag = self.numeric_dag_at(0).is_some();
         let classify = self.number_classify_at(0).is_some();
         let nullish_truthy = self.nullish_truthy_at(0).is_some();
+        let missing_property = self.missing_property_at(0).is_some();
         let dense = self.dense_update_at(0).is_some();
         let copy = self.dense_copy_at(0).is_some();
         let reduction = self.reduction_at(0).is_some();
@@ -6664,7 +6690,7 @@ impl BaselinePlan {
         let property = self
             .native_local_property_at(0)
             .is_some_and(|plan| plan.borrow().returns());
-        dag || classify || nullish_truthy || dense
+        dag || classify || nullish_truthy || missing_property || dense
             || copy
             || reduction
             || i32_pattern
@@ -6725,6 +6751,12 @@ impl BaselinePlan {
         nullish_truthy_at,
         NullishTruthy,
         crate::stencil_nullish_truthy::NativeNullishTruthyPlan
+    );
+    typed_admission_accessors!(
+        missing_property_handle_at,
+        missing_property_at,
+        MissingProperty,
+        crate::stencil_missing_property::NativeMissingPropertyPlan
     );
     typed_admission_accessors!(
         dense_update_handle_at,
@@ -6893,6 +6925,11 @@ impl OptimizingEntry<'_> {
         nullish_truthy,
         NullishTruthy,
         crate::stencil_nullish_truthy::NativeNullishTruthyPlan
+    );
+    optimizing_admission_accessors!(
+        missing_property,
+        MissingProperty,
+        crate::stencil_missing_property::NativeMissingPropertyPlan
     );
     optimizing_admission_accessors!(
         dense_update,

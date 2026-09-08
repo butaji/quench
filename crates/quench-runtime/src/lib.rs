@@ -143,30 +143,31 @@ mod stencil_bitwise_fusion_tests;
 #[cfg(test)]
 mod stencil_bridge_tests;
 mod stencil_cache;
+mod stencil_call_return;
 mod stencil_cfg;
 #[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
 mod stencil_compare_branch_tests;
 #[cfg(test)]
 mod stencil_control_composition_tests;
-mod stencil_dense_array_update;
 mod stencil_dense_array_copy;
-mod stencil_ordered_reduction;
-mod stencil_i32_pattern;
-mod stencil_call_return;
+mod stencil_dense_array_update;
 pub mod stencil_fact;
 mod stencil_fusion;
 #[cfg(test)]
 mod stencil_fusion_store_tests;
 #[cfg(test)]
 mod stencil_fusion_tests;
+mod stencil_i32_pattern;
 mod stencil_installation;
 mod stencil_layout;
 pub mod stencil_lifecycle;
+mod stencil_missing_property;
 #[cfg(test)]
 mod stencil_move_integration_tests;
-mod stencil_numeric_dag;
-mod stencil_number_classify;
 mod stencil_nullish_truthy;
+mod stencil_number_classify;
+mod stencil_numeric_dag;
+mod stencil_ordered_reduction;
 pub mod stencil_patch;
 mod stencil_physical;
 mod stencil_plan;
@@ -175,14 +176,14 @@ mod stencil_predicate_fusion;
 #[cfg(test)]
 mod stencil_property_integration_tests;
 mod stencil_property_numeric;
-mod stencil_string_concat;
-mod stencil_string_builtin;
 #[cfg(test)]
 mod stencil_property_store_tests;
 mod stencil_region_builder;
 mod stencil_region_layout;
 mod stencil_region_links;
 pub mod stencil_select;
+mod stencil_string_builtin;
+mod stencil_string_concat;
 #[cfg(test)]
 mod stencil_test_support;
 #[cfg(test)]
