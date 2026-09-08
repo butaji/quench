@@ -48,6 +48,34 @@ pub(crate) fn numeric_affine_callable(
     (usize::from(fact.parameter_slot) == function.captures.len()).then_some(fact)
 }
 
+/// Prove that a callable is exactly the pure numeric ordering function
+/// `(left, right) => left - right` over its two argument slots.
+///
+/// This is a semantic fact about canonical residual code, not a source-text
+/// pattern. Consumers must still guard the argument representations before
+/// replacing calls with native Number subtraction.
+pub(crate) fn numeric_subtract_comparator(
+    function: &crate::value::FunctionValue,
+) -> Option<()> {
+    (function.params == 2 && crate::functions::direct_call_eligible(function)).then_some(())?;
+    let code = function.code.code()?;
+    (core_len(code)? == 4).then_some(())?;
+    let left = code.instruction(0)?;
+    let right = code.instruction(1)?;
+    let subtract = code.instruction(2)?;
+    let ret = code.instruction(3)?;
+    let first = u16::try_from(function.captures.len()).ok()?;
+    (left.opcode == crate::ir::Opcode::LoadLocal
+        && left.b == first
+        && right.opcode == crate::ir::Opcode::LoadLocal
+        && right.b == first.checked_add(1)?
+        && subtract.opcode == crate::ir::Opcode::Sub
+        && subtract.b == left.a
+        && subtract.c == right.a
+        && ret == crate::ir::Instruction::ret(subtract.a))
+    .then_some(())
+}
+
 pub(crate) fn forwards_one_argument(function: &crate::value::FunctionValue) -> Option<()> {
     (function.params == 2 && crate::functions::direct_call_eligible(function)).then_some(())?;
     let code = function.code.code()?;

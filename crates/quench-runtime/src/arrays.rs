@@ -853,6 +853,9 @@ fn insertion_sort(
     elements: &mut [Value],
     compare: Option<&Value>,
 ) -> Result<(), crate::execute::VmError> {
+    if numeric_subtract_sort(elements, compare) {
+        return Ok(());
+    }
     for index in 1..elements.len() {
         let value = elements[index].clone();
         let mut position = index;
@@ -867,6 +870,26 @@ fn insertion_sort(
         elements[position] = value;
     }
     Ok(())
+}
+
+fn numeric_subtract_sort(elements: &mut [Value], compare: Option<&Value>) -> bool {
+    let Some(Value::Function(function)) = compare else {
+        return false;
+    };
+    if crate::function_call_fact::numeric_subtract_comparator(function).is_none()
+        || !elements.iter().all(|value| matches!(value, Value::Number(_)))
+    {
+        return false;
+    }
+    elements.sort_by(|left, right| {
+        let (Value::Number(left), Value::Number(right)) = (left, right) else {
+            unreachable!("numeric representation was guarded before sorting")
+        };
+        (left - right)
+            .partial_cmp(&0.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    true
 }
 
 fn compare_values(
