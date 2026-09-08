@@ -41,6 +41,7 @@ const BROADCAST_CHANNEL_NAME: u16 = 0x7FEB;
 const BROADCAST_CHANNEL_DRAIN: u16 = 0x7FEC;
 const BROADCAST_CHANNEL_ID: &str = "\0quench:broadcast-channel";
 const SHARE_ENV_PROP: &str = "\0quench:worker-share-env";
+const TRANSFERRED_PORT_ID_PROP: &str = "\0quench:worker-transferred-port-id";
 
 thread_local! {
     static ENVIRONMENT_DATA: RefCell<Vec<(String, Value)>> = const { RefCell::new(Vec::new()) };
@@ -851,6 +852,10 @@ fn worker_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, V
         ]),
     );
     let worker = crate::modules::async_hooks::worker_resource(state, None, &[worker])?;
+    // A Worker owns an internal MessagePort. Keep that resource explicit so
+    // async_hooks observes the same ref/unref relationship as Node: the port
+    // starts unref'd, follows Worker.ref(), and is destroyed with the worker.
+    let worker_port = crate::modules::event_target::new_message_port(state)?;
     if let Some(id) = worker_id(&worker) {
         WORKER_FLAGS.with(|flags| {
             flags.borrow_mut().insert(id, (true, false));
@@ -869,6 +874,7 @@ fn worker_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, V
         ("_worker-refed", Value::Boolean(true)),
         ("_worker-started", Value::Boolean(false)),
         ("_worker-destroyed", Value::Boolean(false)),
+        ("\0quench:worker-port", worker_port),
     ] {
         execute::set_property_in_place(&worker, name, value);
     }
@@ -998,7 +1004,7 @@ fn launch(
         Value::Boolean(true)
     );
     let data = execute::get_property(&options, "workerData");
-    let encoded = serde_json::to_string(&to_json(&data)).unwrap_or_else(|_| "null".into());
+    let encoded = serde_json::to_string(&to_json(&data, state)).unwrap_or_else(|_| "null".into());
     let executable = std::env::current_exe()
         .ok()
         .and_then(|path| path.parent().map(|dir| dir.join("run")))
@@ -1054,7 +1060,7 @@ fn launch(
     if !matches!(message, Value::Undefined) {
         command.env(
             "QUENCH_WORKER_MESSAGE",
-            serde_json::to_string(&to_json(&message)).unwrap_or_else(|_| "null".into()),
+            serde_json::to_string(&to_json(&message, state)).unwrap_or_else(|_| "null".into()),
         );
     }
     let exec_argv = execute::get_property(&options, "execArgv");
@@ -1067,7 +1073,7 @@ fn launch(
     if !matches!(exec_argv, Value::Undefined) {
         command.env(
             "QUENCH_EXEC_ARGV",
-            serde_json::to_string(&to_json(&exec_argv)).unwrap_or_else(|_| "[]".into()),
+            serde_json::to_string(&to_json(&exec_argv, state)).unwrap_or_else(|_| "[]".into()),
         );
     }
     if let Value::String(cwd) = execute::get_property(&options, "cwd") {
@@ -1197,16 +1203,41 @@ fn parse_messages(state: &Rc<RefCell<HostState>>, worker: &Value, text: &str) {
             );
         }
     }
+    for line in text
+        .lines()
+        .filter_map(|line| line.strip_prefix("__QUENCH_WORKER_PORT_MESSAGE__"))
+    {
+        let Some((id, json)) = line.split_once(':') else {
+            continue;
+        };
+        let Ok(id) = id.parse::<u64>() else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
+            continue;
+        };
+        let value = from_json(value, state);
+        let _ = crate::modules::event_target::post_message_to_target_id(state, id, value);
+    }
 }
 
 fn worker_post_message(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     let Some(port) = receiver else {
         return Err(type_error("Cannot post message without a parentPort"));
     };
+    if let Value::String(id) = execute::get_property(port, TRANSFERRED_PORT_ID_PROP) {
+        let value = args.first().cloned().unwrap_or(Value::Undefined);
+        let encoded = serde_json::to_string(&to_json(&value, state))
+            .unwrap_or_else(|_| "null".into());
+        use std::io::Write;
+        let _ = std::io::stdout()
+            .write_all(format!("__QUENCH_WORKER_PORT_MESSAGE__{id}:{encoded}\n").as_bytes());
+        return Ok(port.clone());
+    }
     if execute::get_property(port, "_worker-filename") != Value::Undefined {
         // The construction microtask owns the child launch.  Store an
         // immediately-posted message as a fact for that launch; launching a
@@ -1223,7 +1254,7 @@ fn worker_post_message(
         return Ok(Value::Undefined);
     }
     let value = args.first().cloned().unwrap_or(Value::Undefined);
-    let encoded = serde_json::to_string(&to_json(&value)).unwrap_or_else(|_| "null".into());
+    let encoded = serde_json::to_string(&to_json(&value, state)).unwrap_or_else(|_| "null".into());
     if let Some(transfer) = args.get(1) {
         detach_transfer_list(transfer)?;
     }
@@ -1277,6 +1308,13 @@ fn worker_close(
             }
         });
     }
+    if let Some(worker) = worker {
+        let port = execute::get_property(worker, "\0quench:worker-port");
+        if !matches!(port, Value::Undefined) {
+            let _ = crate::modules::async_hooks::resource_destroy(_state, Some(&port), &[]);
+        }
+        let _ = crate::modules::async_hooks::resource_destroy(_state, Some(worker), &[]);
+    }
     Ok(worker.cloned().unwrap_or(Value::Undefined))
 }
 
@@ -1285,6 +1323,10 @@ fn worker_ref(_state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) -> Resu
         execute::set_property_in_place(worker, "_worker-refed", Value::Boolean(true));
         let shared = execute::get_property(worker, "\0worker-state");
         execute::set_property_in_place(&shared, "refed", Value::Boolean(true));
+        let port = execute::get_property(worker, "\0quench:worker-port");
+        if !matches!(port, Value::Undefined) {
+            let _ = crate::modules::event_target::message_port_ref(_state, Some(&port), &[])?;
+        }
     }
     if let Some(id) = receiver.and_then(worker_id) {
         WORKER_FLAGS.with(|flags| {
@@ -1304,6 +1346,10 @@ fn worker_unref(
         execute::set_property_in_place(worker, "_worker-refed", Value::Boolean(false));
         let shared = execute::get_property(worker, "\0worker-state");
         execute::set_property_in_place(&shared, "refed", Value::Boolean(false));
+        let port = execute::get_property(worker, "\0quench:worker-port");
+        if !matches!(port, Value::Undefined) {
+            let _ = crate::modules::event_target::message_port_unref(_state, Some(&port), &[])?;
+        }
     }
     if let Some(id) = receiver.and_then(worker_id) {
         WORKER_FLAGS.with(|flags| {
@@ -1410,7 +1456,7 @@ fn missing_args(message: &str) -> VmError {
     ]))
 }
 
-fn to_json(value: &Value) -> serde_json::Value {
+fn to_json(value: &Value, state: &Rc<RefCell<HostState>>) -> serde_json::Value {
     if let Some(wire) = crate::modules::webcrypto::key_to_wire(value) {
         return wire;
     }
@@ -1444,14 +1490,18 @@ fn to_json(value: &Value) -> serde_json::Value {
                     .unwrap_or(0);
             serde_json::Value::Array(
                 (0..length)
-                    .map(|index| to_json(&execute::get_property(value, &index.to_string())))
+                    .map(|index| to_json(&execute::get_property(value, &index.to_string()), state))
                     .collect(),
             )
+        }
+        Value::Object(_) | Value::ObjectAlias(_) if crate::modules::event_target::is_message_port(state, value) => {
+            let id = crate::modules::event_target::target_identity(value).unwrap_or(0);
+            serde_json::json!({"__quench_message_port": id})
         }
         Value::Object(_) | Value::ObjectAlias(_) => serde_json::Value::Object(
             execute::own_enumerable_keys(value)
                 .into_iter()
-                .map(|key| (key.clone(), to_json(&execute::get_property(value, &key))))
+                .map(|key| (key.clone(), to_json(&execute::get_property(value, &key), state)))
                 .collect(),
         ),
         _ => serde_json::Value::Null,
@@ -1471,6 +1521,18 @@ fn from_json(value: serde_json::Value, state: &Rc<RefCell<HostState>>) -> Value 
                 .collect(),
         ),
         serde_json::Value::Object(values) => {
+            if let Some(id) = values
+                .get("__quench_message_port")
+                .and_then(serde_json::Value::as_u64)
+            {
+                return host_api::object(vec![
+                    (
+                        TRANSFERRED_PORT_ID_PROP.into(),
+                        Value::String(id.to_string()),
+                    ),
+                    ("postMessage".into(), cap(WORKER_MESSAGE)),
+                ]);
+            }
             if let Some(key) = crate::modules::webcrypto::key_from_wire(&values) {
                 return key;
             }
