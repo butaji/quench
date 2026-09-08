@@ -165,6 +165,7 @@ pub mod stencil_lifecycle;
 #[cfg(test)]
 mod stencil_move_integration_tests;
 mod stencil_numeric_dag;
+mod stencil_number_classify;
 pub mod stencil_patch;
 mod stencil_physical;
 mod stencil_plan;

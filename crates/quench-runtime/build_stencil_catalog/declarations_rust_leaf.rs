@@ -155,6 +155,16 @@ rust_leaf_catalog! {
         x86: &X86_TRUTHY_NUMBER_BYTES, aarch64: &AARCH64_TRUTHY_NUMBER_BYTES,
         holes: &[], aarch64_holes: &[]
     },
+    NumberClassifyBranchReturn {
+        name: "number_classify_branch_return", abi: ScalarF64Unary,
+        ops: ["Binary", "JumpIfFalse", "Div", "Binary", "JumpIfFalse",
+            "Binary", "JumpIfFalse", "Return"],
+        params: "a: f64", result: "f64",
+        body: "if a.is_nan() { 1.0 } else if a == 0.0 && a.is_sign_negative() { 2.0 } else if a < 0.0 { 3.0 } else { 4.0 }",
+        // This whole decision recipe is generated-only. Empty legacy views
+        // reject before entry instead of substituting an unrelated unary ABI.
+        x86: &[], aarch64: &[], holes: &[], aarch64_holes: &[]
+    },
 }
 
 pub(crate) fn rust_leaf_recipe(declaration: &RegionDeclaration) -> Option<RustLeafRecipe> {

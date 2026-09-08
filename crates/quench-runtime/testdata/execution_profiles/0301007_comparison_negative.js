@@ -11,7 +11,7 @@ function verify(result) {
   if (classify(-0) !== 2) throw new Error("negative-zero classification mismatch");
   if (classify(-1) !== 3) throw new Error("negative classification mismatch");
   if (classify(1) !== 4) throw new Error("positive classification mismatch");
-  if (result !== 1) throw new Error("measured NaN classification mismatch");
+  if (result !== 3) throw new Error("measured negative classification mismatch");
   return result;
 }
-return { run: classify, verify: verify, arguments: [NaN] };
+return { run: classify, verify: verify, arguments: [-1] };
