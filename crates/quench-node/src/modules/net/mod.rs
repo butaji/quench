@@ -161,6 +161,7 @@ pub struct NetState {
     /// kept beside the canonical server registry because mutating a copied JS
     /// value cannot reliably identify the transport owner after COW.
     pub http2_servers: HashSet<u64>,
+    pub http2_request_listeners: HashMap<u64, Value>,
     /// Canonical socket timeout timers, independent of VM alias properties.
     pub timeout_timers: HashMap<u64, Value>,
     pub pipe_fds: HashMap<i64, String>,
@@ -213,6 +214,7 @@ impl NetState {
             pending_request_writes: Vec::new(),
             http2_sessions: HashMap::new(),
             http2_servers: HashSet::new(),
+            http2_request_listeners: HashMap::new(),
             timeout_timers: HashMap::new(),
             pipe_fds: HashMap::new(),
             fd_streams: HashMap::new(),
@@ -667,6 +669,20 @@ pub(crate) fn register_http2_session(
 pub(crate) fn register_http2_server(state: &Rc<RefCell<HostState>>, server: &Value) {
     if let Some(id) = net_id(server) {
         state.borrow_mut().net.http2_servers.insert(id);
+    }
+}
+
+pub(crate) fn register_http2_request_listener(
+    state: &Rc<RefCell<HostState>>,
+    server: &Value,
+    listener: Value,
+) {
+    if let Some(id) = net_id(server) {
+        state
+            .borrow_mut()
+            .net
+            .http2_request_listeners
+            .insert(id, listener);
     }
 }
 
