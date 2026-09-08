@@ -871,8 +871,21 @@ pub(crate) fn decorate_http2_stream(state: &Rc<RefCell<HostState>>, stream: &Val
         ("configurable".into(), Value::Boolean(true)),
     ]);
     let _ = execute::define_property(stream.clone(), "constructor", constructor_descriptor);
-    let _ = execute::set_property_in_place(stream, "closed", Value::Boolean(false));
-    let _ = execute::set_property_in_place(stream, "destroyed", Value::Boolean(false));
+    // Duplex exposes lifecycle accessors on its prototype.  HTTP/2 streams
+    // need writable own state so close/destroy transitions remain observable
+    // even when the inherited accessor has no setter.
+    for name in ["closed", "destroyed"] {
+        let _ = execute::define_property(
+            stream.clone(),
+            name,
+            host_api::object(vec![
+                ("value".into(), Value::Boolean(false)),
+                ("writable".into(), Value::Boolean(true)),
+                ("enumerable".into(), Value::Boolean(true)),
+                ("configurable".into(), Value::Boolean(true)),
+            ]),
+        );
+    }
     // Duplex exposes an `aborted` accessor on its prototype. Define an own
     // writable data property so HTTP/2 streams retain Node's boolean state
     // instead of silently routing the write through a getter-only slot.
@@ -1174,6 +1187,10 @@ fn session_request(
     execute::set_property_in_place(&stream, "end", session_capability("streamEnd"));
     execute::set_property_in_place(&stream, "close", session_capability("streamClose"));
     execute::set_property_in_place(&stream, "destroy", session_capability("streamDestroy"));
+    // Host-created requests bypass the ordinary Duplex constructor, so the
+    // internal lifecycle hook must be installed explicitly for callers that
+    // inspect or wrap `_destroy`.
+    execute::set_property_in_place(&stream, "_destroy", session_capability("streamDestroy"));
     execute::set_property_in_place(&stream, "respond", session_capability("streamRespond"));
     execute::set_property_in_place(
         &stream,
@@ -1728,13 +1745,51 @@ fn stream_close(
     values: &[Value],
 ) -> Result<Value, VmError> {
     let (socket, stream_id) = stream_socket(receiver)?;
-    let code = values
-        .first()
-        .and_then(|value| match value {
-            Value::Number(value) if value.is_finite() => Some(*value as u32),
-            _ => None,
-        })
-        .unwrap_or(0);
+    if matches!(
+        receiver.map(|stream| execute::get_property(stream, "closed")),
+        Some(Value::Boolean(true))
+    ) {
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    }
+    let code = match values.first().unwrap_or(&Value::Undefined) {
+        Value::Undefined => 0,
+        Value::Number(value)
+            if value.is_finite() && value.fract() == 0.0 && *value >= 0.0
+                && *value <= u32::MAX as f64 => *value as u32,
+        Value::Number(value) => {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::RangeError,
+                "ERR_OUT_OF_RANGE",
+                format!(
+                    "The value of \"code\" is out of range. It must be >= 0 && <= {}. Received {}",
+                    u32::MAX,
+                    value
+                ),
+            ));
+        }
+        value => {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::TypeError,
+                "ERR_INVALID_ARG_TYPE",
+                format!(
+                    "The \"code\" argument must be of type number.{}",
+                    crate::modules::util::invalid_arg_received(value)
+                ),
+            ));
+        }
+    };
+    if let Some(callback) = values.get(1) {
+        if !quench_runtime::is_callable(callback) {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::TypeError,
+                "ERR_INVALID_ARG_TYPE",
+                format!(
+                    "The \"callback\" argument must be of type function.{}",
+                    crate::modules::util::invalid_arg_received(callback)
+                ),
+            ));
+        }
+    }
     let frame = crate::modules::http2_protocol::Frame::new(
         crate::modules::http2_protocol::FrameType::RstStream,
         0,
@@ -1749,6 +1804,10 @@ fn stream_close(
     }
     if let Some(stream) = receiver {
         execute::set_property_in_place(stream, "rstCode", Value::Number(code as f64));
+        execute::set_property_in_place(stream, "closed", Value::Boolean(true));
+        if let Some(callback) = values.get(1) {
+            execute::call(callback, stream, &[])?;
+        }
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
