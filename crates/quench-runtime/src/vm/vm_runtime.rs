@@ -2132,16 +2132,20 @@ fn record_forward_pair(
     crate::test_execution_profile::dynamic_region_route(plan.route().iter().copied());
 }
 
-fn record_fresh_object_call(code: crate::machine::CodeView<'_>, pc: usize) {
+fn record_fresh_object_call(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    plan: &crate::stencil_fresh_object_call::NativeFreshObjectCallPlan,
+) {
     crate::execution_trace::stencil_observation(
         code,
         pc,
-        crate::stencil_fresh_object_call::PROFILE_NAME,
+        plan.profile_name(),
         true,
     );
     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
     #[cfg(test)]
-    crate::test_execution_profile::dynamic_region_route(crate::stencil_fresh_object_call::route());
+    crate::test_execution_profile::dynamic_region_route(plan.route());
 }
 
 fn record_method_call(code: crate::machine::CodeView<'_>, pc: usize) {
@@ -2728,18 +2732,14 @@ pub(crate) fn execute_optimized_code_step_from(
             (value, call.span())
         };
         if let Some(value) = value {
-            record_fresh_object_call(code, start);
+            record_fresh_object_call(code, start, &call.borrow());
             return Ok((
                 crate::completion::Completion::Return(crate::value::Value::Number(value)),
                 start + span,
             ));
         }
-        crate::execution_trace::stencil_observation(
-            code,
-            start,
-            crate::stencil_fresh_object_call::PROFILE_NAME,
-            false,
-        );
+        let name = call.borrow().profile_name();
+        crate::execution_trace::stencil_observation(code, start, name, false);
     }
     if let Some(method) = entry.method_call() {
         let (value, span) = {
@@ -3950,19 +3950,15 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                 (call.execute(environment), call.span())
             };
             if let Some(value) = value {
-                record_fresh_object_call(code, pc);
+                record_fresh_object_call(code, pc, &call.borrow());
                 return completion_step_after_transition(
                     registers,
                     crate::completion::Completion::Return(crate::value::Value::Number(value)),
                     pc + span,
                 );
             }
-            crate::execution_trace::stencil_observation(
-                code,
-                pc,
-                crate::stencil_fresh_object_call::PROFILE_NAME,
-                false,
-            );
+            let name = call.borrow().profile_name();
+            crate::execution_trace::stencil_observation(code, pc, name, false);
         }
         if let (Some(environment), Some(method)) = (environment, plan.method_call_at(pc)) {
             let (value, span) = {
