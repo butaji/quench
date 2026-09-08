@@ -121,6 +121,15 @@ pub(crate) fn own_field_add_return(
     })
 }
 
+pub(crate) fn stable_own_field_add_return(
+    installed: &mut Option<OwnFieldAddReturn>,
+    function: &crate::value::FunctionValue,
+) -> Option<OwnFieldAddReturn> {
+    let fact = own_field_add_return(function)?;
+    let expected = installed.get_or_insert_with(|| fact.clone());
+    (*expected == fact).then_some(fact)
+}
+
 fn validate_field_add_ops(
     code: CodeView<'_>,
     ops: &[crate::ir::Instruction; 13],
