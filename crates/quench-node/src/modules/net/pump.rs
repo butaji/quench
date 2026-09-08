@@ -161,6 +161,7 @@ fn emit_socket_scoped(
     event: &str,
     args: Vec<Value>,
 ) -> Result<Value, VmError> {
+    let receiver = execute::canonical_value(receiver);
     let scope = socket.borrow().process_scope;
     let worker = socket
         .borrow()
@@ -191,7 +192,7 @@ fn emit_socket_scoped(
         crate::modules::cluster::set_worker_mode(state, *worker_id, worker, true);
         state.borrow_mut().cluster.worker_context = Some(*worker_id);
     }
-    let result = emit(state, receiver, event, args);
+    let result = emit(state, &receiver, event, args);
     if let Some((worker_id, worker)) = &worker {
         crate::modules::cluster::set_worker_mode(state, *worker_id, worker, false);
     }
@@ -755,6 +756,42 @@ fn http2_stream(
     Ok((stream, true))
 }
 
+fn emit_http2_stream_close(
+    state: &Rc<RefCell<HostState>>,
+    socket: &Rc<RefCell<NetSocket>>,
+    stream: &Value,
+    server: bool,
+    emit_end: bool,
+) -> Result<(), VmError> {
+    let stream = execute::canonical_value(stream);
+    if matches!(
+        execute::get_property(&stream, "__quenchHttp2CloseEmitted"),
+        Value::Boolean(true)
+    ) {
+        return Ok(());
+    }
+    execute::set_property_in_place(
+        &stream,
+        "__quenchHttp2CloseEmitted",
+        Value::Boolean(true),
+    );
+    execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
+    crate::modules::http2_util::publish_http2_stream_diagnostic(
+        state,
+        &stream,
+        server,
+        crate::modules::http2_util::HTTP2_DIAG_CLOSE,
+        None,
+        None,
+        None,
+    )?;
+    if emit_end {
+        emit_socket_scoped(state, socket, &stream, "end", Vec::new())?;
+    }
+    emit_socket_scoped(state, socket, &stream, "close", Vec::new())?;
+    Ok(())
+}
+
 fn dispatch_http2_frames(
     state: &Rc<RefCell<HostState>>,
     socket: &Rc<RefCell<NetSocket>>,
@@ -789,6 +826,13 @@ fn dispatch_http2_frames(
         .unwrap_or_default()
         .into_iter()
         .collect::<std::collections::HashMap<_, _>>();
+    let push_promise_headers = state
+        .borrow_mut()
+        .net
+        .http2_sessions
+        .get_mut(&socket.borrow().id)
+        .map(|session| session.take_push_promises())
+        .unwrap_or_default();
     let mut header_flags = std::collections::HashMap::<u32, u8>::new();
     for frame in frames {
         if matches!(
@@ -842,7 +886,11 @@ fn dispatch_http2_frames(
                     continue;
                 }
                 let promised_id = u32::from_be_bytes(frame.payload[..4].try_into().unwrap()) & 0x7fff_ffff;
-                let fields = completed_headers.get(&promised_id).cloned().unwrap_or_default();
+                let fields = push_promise_headers
+                    .get(&promised_id)
+                    .cloned()
+                    .or_else(|| completed_headers.get(&promised_id).cloned())
+                    .unwrap_or_default();
                 let (push_stream, push_fresh) = http2_stream(state, &socket_js, promised_id)?;
                 crate::modules::http2_util::decorate_http2_stream(state, &push_stream, false);
                 execute::set_property_in_place(
@@ -904,26 +952,10 @@ fn dispatch_http2_frames(
                         Value::Number(frame.header.flags as f64),
                     ],
                 )?;
-                // Deliver `push` on the next host turn.  Node emits the
-                // session `stream` notification first, allowing user code to
-                // install the push listener before this stream event fires.
-                if push_fresh
-                    && !matches!(
-                    execute::get_property(&push_stream, "__quenchHttp2PushEmitted"),
-                    Value::Boolean(true)
-                )
-                {
-                    execute::set_property_in_place(
-                        &push_stream,
-                        "__quenchHttp2PushEmitted",
-                        Value::Boolean(true),
-                    );
-                    state.borrow_mut().net.pending_events.push((
-                        push_stream,
-                        "push".into(),
-                        vec![headers],
-                    ));
-                }
+                // Defer `push` until the promised stream's response HEADERS
+                // arrive. Node emits `stream` with the PUSH_PROMISE request
+                // headers first, then emits `push` with response headers.
+                let _ = push_fresh;
             }
             crate::modules::http2_protocol::FrameType::Headers
             | crate::modules::http2_protocol::FrameType::Continuation => {
@@ -979,15 +1011,6 @@ fn dispatch_http2_frames(
                             &stream,
                             "__quenchHttp2PushStream",
                             Value::Boolean(true),
-                        );
-                    }
-                    if matches!(
-                        execute::get_property(&stream, "__quenchHttp2PushDiagnostics"),
-                        Value::Object(_) | Value::ObjectAlias(_)
-                    ) {
-                        headers = execute::get_property(
-                            &stream,
-                            "__quenchHttp2PushDiagnostics",
                         );
                     }
                     if let Value::String(sensitive) =
@@ -1138,6 +1161,24 @@ fn dispatch_http2_frames(
                             "response",
                             vec![http2_headers_value(&fields)],
                         )?;
+                        if matches!(
+                            execute::get_property(&stream, "__quenchHttp2PushStream"),
+                            Value::Boolean(true)
+                        ) && !matches!(
+                            execute::get_property(&stream, "__quenchHttp2PushEmitted"),
+                            Value::Boolean(true)
+                        ) {
+                            execute::set_property_in_place(
+                                &stream,
+                                "__quenchHttp2PushEmitted",
+                                Value::Boolean(true),
+                            );
+                            state.borrow_mut().net.pending_events.push((
+                                stream.clone(),
+                                "push".into(),
+                                vec![headers.clone()],
+                            ));
+                        }
                     }
                 }
                 // `header_flags` also includes a later DATA frame so the
@@ -1146,36 +1187,14 @@ fn dispatch_http2_frames(
                 // frame itself; using the aggregate here would emit a
                 // duplicate `end`/`close` before DATA is dispatched.
                 if frame.header.flags & 1 != 0 {
-                    execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
-                    crate::modules::http2_util::publish_http2_stream_diagnostic(
-                        state,
-                        &stream,
-                        is_server,
-                        crate::modules::http2_util::HTTP2_DIAG_CLOSE,
-                        None,
-                        None,
-                        None,
-                    )?;
-                    emit_socket_scoped(state, socket, &stream, "end", Vec::new())?;
-                    emit_socket_scoped(state, socket, &stream, "close", Vec::new())?;
+                    emit_http2_stream_close(state, socket, &stream, is_server, true)?;
                 }
             }
             crate::modules::http2_protocol::FrameType::Data => {
                 let (stream, _) = http2_stream(state, &socket_js, stream_id)?;
                 if frame.payload.is_empty() {
                     if frame.header.flags & 1 != 0 {
-                        execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
-                        crate::modules::http2_util::publish_http2_stream_diagnostic(
-                            state,
-                            &stream,
-                            is_server,
-                            crate::modules::http2_util::HTTP2_DIAG_CLOSE,
-                            None,
-                            None,
-                            None,
-                        )?;
-                        emit_socket_scoped(state, socket, &stream, "end", Vec::new())?;
-                        emit_socket_scoped(state, socket, &stream, "close", Vec::new())?;
+                        emit_http2_stream_close(state, socket, &stream, is_server, true)?;
                     }
                     continue;
                 }
@@ -1187,18 +1206,7 @@ fn dispatch_http2_frames(
                 };
                 emit_socket_scoped(state, socket, &stream, "data", vec![data])?;
                 if frame.header.flags & 1 != 0 {
-                    execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
-                    crate::modules::http2_util::publish_http2_stream_diagnostic(
-                        state,
-                        &stream,
-                        is_server,
-                        crate::modules::http2_util::HTTP2_DIAG_CLOSE,
-                        None,
-                        None,
-                        None,
-                    )?;
-                    emit_socket_scoped(state, socket, &stream, "end", Vec::new())?;
-                    emit_socket_scoped(state, socket, &stream, "close", Vec::new())?;
+                    emit_http2_stream_close(state, socket, &stream, is_server, true)?;
                 }
             }
             crate::modules::http2_protocol::FrameType::RstStream => {
@@ -1209,7 +1217,6 @@ fn dispatch_http2_frames(
                     .map(|bytes| u32::from_be_bytes(bytes.try_into().unwrap()))
                     .unwrap_or(0);
                 execute::set_property_in_place(&stream, "rstCode", Value::Number(code as f64));
-                execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
                 execute::set_property_in_place(&stream, "destroyed", Value::Boolean(true));
                 if code != 0 {
                     let error = quench_runtime::builtins::error(
@@ -1225,16 +1232,7 @@ fn dispatch_http2_frames(
                     );
                     emit_socket_scoped(state, socket, &stream, "error", vec![error])?;
                 }
-                crate::modules::http2_util::publish_http2_stream_diagnostic(
-                    state,
-                    &stream,
-                    is_server,
-                    crate::modules::http2_util::HTTP2_DIAG_CLOSE,
-                    None,
-                    None,
-                    None,
-                )?;
-                emit_socket_scoped(state, socket, &stream, "close", Vec::new())?;
+                emit_http2_stream_close(state, socket, &stream, is_server, false)?;
             }
             _ => {}
         }
