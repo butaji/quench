@@ -297,6 +297,61 @@ q_numeric_floating_loop_end:
 );
 "##;
 
+const AARCH64_NUMERIC_BITWISE_LOOP: &str = r##"#![no_std]
+use core::arch::global_asm;
+
+#[repr(C)]
+struct BitwiseLoopContext {
+    index: usize,
+    end: usize,
+    value: i32,
+    left_shift: u32,
+    right_shift: u32,
+    interrupt: *const u8,
+}
+
+global_asm!(r#"
+.text
+.p2align 2
+.globl q_numeric_bitwise_loop
+q_numeric_bitwise_loop:
+  ldr x1, [x0, #{index}]
+  ldr x2, [x0, #{end}]
+  ldr w3, [x0, #{value}]
+  ldr w5, [x0, #{left_shift}]
+  ldr w6, [x0, #{right_shift}]
+1:
+  cmp x1, x2
+  b.hs 2f
+  lsl w4, w3, w5
+  lsr w7, w3, w6
+  eor w4, w4, w7
+  eor w3, w4, w1
+  add x1, x1, #1
+  str x1, [x0, #{index}]
+  ldr x4, [x0, #{interrupt}]
+  ldrb w4, [x4]
+  cbnz w4, 3f
+  b 1b
+2:
+  str w3, [x0, #{value}]
+  mov w0, #1
+  ret
+3:
+  str w3, [x0, #{value}]
+  mov w0, #4
+  ret
+q_numeric_bitwise_loop_end:
+"#,
+    index = const core::mem::offset_of!(BitwiseLoopContext, index),
+    end = const core::mem::offset_of!(BitwiseLoopContext, end),
+    value = const core::mem::offset_of!(BitwiseLoopContext, value),
+    left_shift = const core::mem::offset_of!(BitwiseLoopContext, left_shift),
+    right_shift = const core::mem::offset_of!(BitwiseLoopContext, right_shift),
+    interrupt = const core::mem::offset_of!(BitwiseLoopContext, interrupt),
+);
+"##;
+
 fn compare_branch_source(name: &str, condition: &str, unordered_true: bool) -> String {
     let unordered = if unordered_true { "1f" } else { "2f" };
     format!(
@@ -542,6 +597,7 @@ pub(crate) fn assembly_source(recipe: super::RustAssemblyRecipe) -> String {
         AffineI32Loop => AARCH64_AFFINE_I32_LOOP.to_owned(),
         NumericIntegerLoop => AARCH64_NUMERIC_INTEGER_LOOP.to_owned(),
         NumericFloatingLoop => AARCH64_NUMERIC_FLOATING_LOOP.to_owned(),
+        NumericBitwiseLoop => AARCH64_NUMERIC_BITWISE_LOOP.to_owned(),
         Property => AARCH64_PROPERTY_READ.to_owned(),
         PrototypeProperty => AARCH64_PROTOTYPE_PROPERTY.to_owned(),
         StoreProperty => AARCH64_PROPERTY_WRITE.to_owned(),
