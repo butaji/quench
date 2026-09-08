@@ -989,6 +989,26 @@ pub(crate) fn array_word_is_current(array: &crate::value::ArrayData) -> bool {
     })
 }
 
+/// Retain the current semantic function represented by one owning slot word.
+/// This is the raw-word counterpart of `resolved_replacement`: native call
+/// admission uses it without first materializing a temporary `Value`.
+///
+/// # Safety
+/// `pointer` must come from a live owning tagged slot for the duration of this
+/// call. The returned `Rc` retains the resolved representative afterwards.
+pub(crate) unsafe fn resolved_function_ptr(
+    pointer: *const crate::value::FunctionValue,
+) -> Option<Rc<crate::value::FunctionValue>> {
+    let original = unsafe {
+        Rc::increment_strong_count(pointer);
+        Rc::from_raw(pointer)
+    };
+    match resolved_replacement(Value::Function(original)) {
+        Value::Function(function) => Some(function),
+        _ => None,
+    }
+}
+
 pub(crate) fn reset_replacements() {
     REPLACEMENTS.with(|replacements| replacements.borrow_mut().clear());
     REPLACEMENT_ROOTS.with(|roots| roots.borrow_mut().clear());

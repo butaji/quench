@@ -2144,6 +2144,18 @@ fn record_method_call(code: crate::machine::CodeView<'_>, pc: usize) {
     crate::test_execution_profile::dynamic_region_route(crate::stencil_method_call::route());
 }
 
+fn record_property_pair(code: crate::machine::CodeView<'_>, pc: usize) {
+    crate::execution_trace::stencil_observation(
+        code,
+        pc,
+        crate::stencil_property_pair::PROFILE_NAME,
+        true,
+    );
+    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+    #[cfg(test)]
+    crate::test_execution_profile::dynamic_region_route(crate::stencil_property_pair::route());
+}
+
 fn record_string_concat(code: crate::machine::CodeView<'_>, pc: usize, constant_call: bool) {
     crate::execution_trace::stencil_observation(code, pc, "string_concat_chain_return", true);
     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
@@ -2673,6 +2685,26 @@ pub(crate) fn execute_optimized_code_step_from(
             code,
             start,
             crate::stencil_method_call::PROFILE_NAME,
+            false,
+        );
+    }
+    if let Some(pair) = entry.property_pair() {
+        let (value, span) = {
+            let mut pair = pair.borrow_mut();
+            let value = crate::locals::with_current_ref(|environment| pair.execute(environment?));
+            (value, pair.span())
+        };
+        if let Some(value) = value {
+            record_property_pair(code, start);
+            return Ok((
+                crate::completion::Completion::Return(crate::value::Value::Number(f64::from(value))),
+                start + span,
+            ));
+        }
+        crate::execution_trace::stencil_observation(
+            code,
+            start,
+            crate::stencil_property_pair::PROFILE_NAME,
             false,
         );
     }
@@ -3790,6 +3822,26 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                 code,
                 pc,
                 crate::stencil_method_call::PROFILE_NAME,
+                false,
+            );
+        }
+        if let (Some(environment), Some(pair)) = (environment, plan.property_pair_at(pc)) {
+            let (value, span) = {
+                let mut pair = pair.borrow_mut();
+                (pair.execute(environment), pair.span())
+            };
+            if let Some(value) = value {
+                record_property_pair(code, pc);
+                return completion_step_after_transition(
+                    registers,
+                    crate::completion::Completion::Return(crate::value::Value::Number(f64::from(value))),
+                    pc + span,
+                );
+            }
+            crate::execution_trace::stencil_observation(
+                code,
+                pc,
+                crate::stencil_property_pair::PROFILE_NAME,
                 false,
             );
         }
