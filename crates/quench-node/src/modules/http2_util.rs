@@ -818,6 +818,7 @@ pub(crate) fn decorate_http2_stream(
     let _ = execute::define_property(stream.clone(), "constructor", constructor_descriptor);
     let _ = execute::set_property_in_place(stream, "closed", Value::Boolean(false));
     let _ = execute::set_property_in_place(stream, "destroyed", Value::Boolean(false));
+    let _ = execute::set_property_in_place(stream, "bufferSize", Value::Number(0.0));
 }
 
 fn http2_diag_name(server: bool, event: &str) -> String {
@@ -1270,6 +1271,7 @@ fn stream_write(
                 .map(String::into_bytes)
         })
         .unwrap_or_default();
+    let body_len = bytes.len();
     let frame = crate::modules::http2_protocol::Frame::new(
         crate::modules::http2_protocol::FrameType::Data,
         0,
@@ -1277,6 +1279,21 @@ fn stream_write(
         bytes,
     );
     write_http2_frame(&socket, &frame)?;
+    if let Some(receiver) = receiver {
+        let stream = execute::canonical_value(receiver);
+        let current = match execute::get_property(&stream, "bufferSize") {
+            Value::Number(size) if size.is_finite() && size >= 0.0 => size,
+            _ => 0.0,
+        };
+        execute::set_property_in_place(
+            &stream,
+            "bufferSize",
+            Value::Number(current + body_len as f64),
+        );
+        if let Some(callback) = values.get(1).filter(|value| quench_runtime::is_callable(value)) {
+            execute::call(callback, &stream, &[])?;
+        }
+    }
     Ok(Value::Boolean(true))
 }
 
@@ -1295,6 +1312,7 @@ fn stream_end(
                 .map(String::into_bytes)
         })
         .unwrap_or_default();
+    let body_len = bytes.len();
     // `request()` submits END_STREAM by default.  `request().end()` is still
     // a common spelling for that header-only request, but sending a second
     // empty DATA frame would produce duplicate end/close observations and an
@@ -1314,6 +1332,21 @@ fn stream_end(
         bytes,
     );
     write_http2_frame(&socket, &frame)?;
+    if let Some(receiver) = receiver {
+        let stream = execute::canonical_value(receiver);
+        let current = match execute::get_property(&stream, "bufferSize") {
+            Value::Number(size) if size.is_finite() && size >= 0.0 => size,
+            _ => 0.0,
+        };
+        execute::set_property_in_place(
+            &stream,
+            "bufferSize",
+            Value::Number(current + body_len as f64),
+        );
+        if let Some(callback) = values.get(1).filter(|value| quench_runtime::is_callable(value)) {
+            execute::call(callback, &stream, &[])?;
+        }
+    }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
