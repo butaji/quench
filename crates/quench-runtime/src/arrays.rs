@@ -876,9 +876,7 @@ fn numeric_subtract_sort(elements: &mut [Value], compare: Option<&Value>) -> boo
     let Some(Value::Function(function)) = compare else {
         return false;
     };
-    let Some(crate::function_call_fact::NumericComparatorFact::Subtract) =
-        crate::function_call_fact::numeric_subtract_comparator(function)
-    else {
+    let Some(fact) = crate::function_call_fact::numeric_comparator(function) else {
         return false;
     };
     if !elements.iter().all(|value| matches!(value, Value::Number(_))) {
@@ -888,7 +886,11 @@ fn numeric_subtract_sort(elements: &mut [Value], compare: Option<&Value>) -> boo
         let (Value::Number(left), Value::Number(right)) = (left, right) else {
             unreachable!("numeric representation was guarded before sorting")
         };
-        (left - right)
+        let difference = match fact.direction {
+            crate::function_call_fact::NumericSortDirection::Ascending => left - right,
+            crate::function_call_fact::NumericSortDirection::Descending => right - left,
+        };
+        difference
             .partial_cmp(&0.0)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
