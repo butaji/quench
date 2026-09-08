@@ -24,13 +24,10 @@ const check = function (r, s, v) {
   };
 const state = setup(64, 17, "dependent");
 assert(typeof operation === "function", "scenario operation is callable");
-function run() {
-  return operation(state);
-}
 function verify(value) {
   if (check) check(value, state, "dependent");
   const signature = JSON.stringify(encode(value));
   assert(signature === "[\"number\",\"2033\"]", "exact encoded result");
   return signature;
 }
-return { run: run, verify: verify };
+return { run: operation, arguments: [state], verify: verify };

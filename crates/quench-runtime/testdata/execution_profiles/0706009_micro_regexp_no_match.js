@@ -21,13 +21,10 @@ const operation = function (s) {
 const check = null;
 const state = setup(64, 17, "no_match");
 assert(typeof operation === "function", "scenario operation is callable");
-function run() {
-  return operation(state);
-}
 function verify(value) {
   if (check) check(value, state, "no_match");
   const signature = JSON.stringify(encode(value));
   assert(signature === "[\"number\",\"0\"]", "exact encoded result");
   return signature;
 }
-return { run: run, verify: verify };
+return { run: operation, arguments: [state], verify: verify };

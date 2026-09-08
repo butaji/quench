@@ -19,6 +19,7 @@ pub(crate) struct ExecutionProfile {
     pub(crate) stencils: BTreeMap<&'static str, RouteCount>,
     pub(crate) events: BTreeMap<&'static str, u64>,
     region_routes: Vec<Vec<&'static str>>,
+    lowered_route: Vec<&'static str>,
 }
 
 const EXECUTION_CASE_SCHEMA: u32 = 1;
@@ -300,8 +301,8 @@ impl ExpectedPlan {
         }
         if route != self.operation_route {
             differences.push(format!(
-                "plan route: expected {:?}, actual {route:?}",
-                self.operation_route
+                "plan route: expected {:?}, actual {route:?}, lowered {:?}",
+                self.operation_route, actual.lowered_route
             ));
         }
         if fallback != self.fallback {
@@ -394,6 +395,7 @@ impl ExecutionProfile {
                 .collect(),
             events: scaled_counts(&self.events, executions),
             region_routes: self.region_routes.clone(),
+            lowered_route: self.lowered_route.clone(),
         }
     }
 }

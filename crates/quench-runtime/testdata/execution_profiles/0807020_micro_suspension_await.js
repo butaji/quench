@@ -21,13 +21,10 @@ const operation = async function (s) {
 const check = null;
 const state = setup(64, 17, "await");
 assert(typeof operation === "function", "scenario operation is callable");
-async function run() {
-  return operation(state);
-}
-function verify(value) {
+async function verify(value) {
   if (check) check(value, state, "await");
   const signature = JSON.stringify(encode(value));
   assert(signature === "[\"number\",\"81\"]", "exact encoded result");
   return signature;
 }
-return { run: run, verify: verify };
+return { run: operation, arguments: [state], verify: verify };
