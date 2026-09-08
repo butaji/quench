@@ -131,6 +131,18 @@ rust_leaf_catalog! {
         aarch64: &AARCH64_SHIFT_RIGHT_ZERO_BYTES,
         holes: &[], aarch64_holes: &[]
     },
+    BitwiseShiftMaskReturn {
+        name: "bitwise_shift_mask_return", abi: ScalarI32,
+        ops: ["LoadLocal", "LoadLocal", "LoadConst", "Binary", "Binary",
+            "LoadLocal", "LoadConst", "Binary", "Binary", "LoadConst",
+            "Binary", "Return"],
+        params: "value: i32, shift: i32", result: "i32",
+        body: "value.wrapping_shl((shift as u32) & 31) ^ ((value as u32) >> 3) as i32",
+        // This recipe is intentionally generated-only. If Rust object
+        // extraction is disabled, the empty legacy view rejects before entry
+        // instead of substituting bytes from a merely ABI-compatible leaf.
+        x86: &[], aarch64: &[], holes: &[], aarch64_holes: &[]
+    },
     BitNot {
         name: "bitwise_not", abi: ScalarI32, ops: ["Unary", "Return"],
         params: "a: i32", result: "i32", body: "!a",
