@@ -71,6 +71,7 @@ pub mod execution_trace;
 pub mod facts;
 mod finalization_registry;
 mod function_code;
+mod function_affine_number;
 mod function_parameters;
 mod function_physical;
 mod function_call_fact;
@@ -168,6 +169,7 @@ mod stencil_fusion_store_tests;
 #[cfg(test)]
 mod stencil_fusion_tests;
 mod stencil_i32_pattern;
+mod stencil_local_affine_sum;
 mod stencil_installation;
 mod stencil_layout;
 pub mod stencil_lifecycle;

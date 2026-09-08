@@ -2041,6 +2041,17 @@ fn record_integer_loop(
     }
 }
 
+fn record_local_affine_sum(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    plan: &crate::stencil_local_affine_sum::NativeLocalAffineSumPlan,
+) {
+    crate::execution_trace::stencil_observation(code, pc, plan.profile_name(), true);
+    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+    #[cfg(test)]
+    crate::test_execution_profile::dynamic_region_route(plan.route());
+}
+
 fn record_floating_loop(code: crate::machine::CodeView<'_>, pc: usize) {
     crate::execution_trace::stencil_observation(code, pc, "numeric_floating_region", true);
     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
@@ -2445,6 +2456,20 @@ pub(crate) fn execute_optimized_code_step_from(
             }
         }
         crate::execution_trace::stencil_observation(code, start, "dense_numeric_fill_loop", false);
+    }
+    if let Some(plan) = entry.local_affine_sum() {
+        let plan = plan.borrow();
+        let result = crate::locals::with_current_ref(|environment| {
+            environment.and_then(|environment| plan.execute(code, environment, context))
+        });
+        if let Some(value) = result {
+            record_local_affine_sum(code, start, &plan);
+            return Ok((
+                crate::completion::Completion::Return(crate::value::Value::Number(value)),
+                crate::stencil_local_affine_sum::REGION_END,
+            ));
+        }
+        crate::execution_trace::stencil_observation(code, start, plan.profile_name(), false);
     }
     if let Some(integer_loop) = entry.integer_loop() {
         let result = crate::locals::with_current_ref(|environment| {
@@ -3630,6 +3655,23 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                     )));
                 }
             }
+        }
+        if let (Some(environment), Some(native)) = (environment, plan.local_affine_sum_at(pc)) {
+            let native = native.borrow();
+            if let Some(value) = native.execute(code, environment, context) {
+                record_local_affine_sum(code, pc, &native);
+                return completion_step_after_transition(
+                    registers,
+                    crate::completion::Completion::Return(crate::value::Value::Number(value)),
+                    crate::stencil_local_affine_sum::REGION_END,
+                );
+            }
+            crate::execution_trace::stencil_observation(
+                code,
+                pc,
+                native.profile_name(),
+                false,
+            );
         }
         if let (Some(environment), Some(integer_loop)) = (environment, plan.integer_loop_at(pc)) {
             match integer_loop.borrow_mut().execute(code, environment, context) {
