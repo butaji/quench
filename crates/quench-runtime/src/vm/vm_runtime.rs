@@ -2082,6 +2082,21 @@ fn record_number_classify(code: crate::machine::CodeView<'_>, pc: usize) {
     crate::test_execution_profile::dynamic_region_route(["numeric", "classify_branch"]);
 }
 
+fn record_nullish_truthy(code: crate::machine::CodeView<'_>, pc: usize) {
+    crate::execution_trace::stencil_observation(
+        code,
+        pc,
+        "nullish_truthy_branch_return",
+        true,
+    );
+    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+    #[cfg(test)]
+    crate::test_execution_profile::dynamic_region_route([
+        "LoadLocalChecked", "Unary", "JumpIfFalse", "LoadLocalChecked",
+        "JumpIfFalse", "Return",
+    ]);
+}
+
 pub(crate) fn execute_baseline_completion_step_from_with_owner(
     code: crate::machine::CodeView<'_>,
     plan: &crate::machine::BaselinePlan,
@@ -2356,6 +2371,25 @@ pub(crate) fn execute_optimized_code_step_from(
             record_string_builtin(code, start, &plan);
             return Ok((crate::completion::Completion::Return(value), start + span));
         }
+    }
+    if let Some(nullish) = entry.nullish_truthy() {
+        let executed = crate::locals::with_current_ref(|environment| {
+            let mut nullish = nullish.borrow_mut();
+            nullish.execute(environment?).map(|bits| (bits, nullish.span()))
+        });
+        if let Some((bits, span)) = executed {
+            if let Some(value) = crate::register_file::own_tagged_bits(bits) {
+                record_nullish_truthy(code, start);
+                return Ok((crate::completion::Completion::Return(value), start + span));
+            }
+        }
+        crate::execution_trace::stencil_observation(
+            code,
+            start,
+            "nullish_truthy_branch_return",
+            false,
+        );
+        crate::execution_trace::leaf_rejection("nullish_truthy_branch_return");
     }
     if let Some(classify) = entry.number_classify() {
         let value = crate::locals::with_current_ref(|environment| {
@@ -3173,6 +3207,31 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                     pc + span,
                 );
             }
+        }
+        if let (Some(environment), Some(nullish)) =
+            (environment, plan.nullish_truthy_at(pc))
+        {
+            let executed = {
+                let mut nullish = nullish.borrow_mut();
+                nullish.execute(environment).map(|bits| (bits, nullish.span()))
+            };
+            if let Some((bits, span)) = executed {
+                if let Some(value) = crate::register_file::own_tagged_bits(bits) {
+                    record_nullish_truthy(code, pc);
+                    return completion_step_after_transition(
+                        registers,
+                        crate::completion::Completion::Return(value),
+                        pc + span,
+                    );
+                }
+            }
+            crate::execution_trace::stencil_observation(
+                code,
+                pc,
+                "nullish_truthy_branch_return",
+                false,
+            );
+            crate::execution_trace::leaf_rejection("nullish_truthy_branch_return");
         }
         if let (Some(environment), Some(classify)) =
             (environment, plan.number_classify_at(pc))

@@ -217,6 +217,20 @@ impl StencilArena {
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn word_pair_entry(
+        &self,
+        address: usize,
+    ) -> Result<extern "C" fn(u64, u64) -> u64, ArenaError> {
+        self.require_abi(address, crate::stencil_select::RegionAbi::ScalarWordPair)?;
+        let base = self.ptr as usize;
+        let end = base.saturating_add(self.cursor);
+        if !self.executable || address < base || address >= end {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        Ok(unsafe { std::mem::transmute(address) })
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn bool_unary_entry(
         &self,
         address: usize,

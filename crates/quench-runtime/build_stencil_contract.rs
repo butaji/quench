@@ -28,6 +28,7 @@ pub(crate) enum DeclAbi {
     ConstantWord,
     ScalarBool,
     ScalarWordBool,
+    ScalarWordPair,
     ScalarWordPairBool,
     ScalarI32,
     ScalarU32,

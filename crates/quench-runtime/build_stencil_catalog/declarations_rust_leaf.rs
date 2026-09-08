@@ -165,6 +165,14 @@ rust_leaf_catalog! {
         // reject before entry instead of substituting an unrelated unary ABI.
         x86: &[], aarch64: &[], holes: &[], aarch64_holes: &[]
     },
+    NullishTruthyBranchReturn {
+        name: "nullish_truthy_branch_return", abi: ScalarWordPair,
+        ops: ["LoadLocal", "Unary", "JumpIfFalse", "LoadLocal",
+            "JumpIfFalse", "Return"],
+        params: "value: u64, fallback: u64", result: "u64",
+        body: "{ const BOOL_TRUE: u64 = 0x7ff8_4000_0000_0001; const NULL: u64 = 0x7ff8_4000_0000_0002; const UNDEFINED: u64 = 0x7ff8_4000_0000_0003; const FORTY_ONE: u64 = 41.0f64.to_bits(); const SEVEN: u64 = 7.0f64.to_bits(); if value == NULL || value == UNDEFINED { if fallback == BOOL_TRUE { FORTY_ONE } else { SEVEN } } else { value } }",
+        x86: &[], aarch64: &[], holes: &[], aarch64_holes: &[]
+    },
 }
 
 pub(crate) fn rust_leaf_recipe(declaration: &RegionDeclaration) -> Option<RustLeafRecipe> {

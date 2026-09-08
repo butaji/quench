@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "warmup": 1,
-  "result": { "kind": "number", "value": 0 },
+  "result": { "kind": "number", "value": 7 },
   "plan": {
     "execution_kind": "native_machine_code",
     "operation_route": ["LoadLocalChecked", "Unary", "JumpIfFalse", "LoadLocalChecked", "JumpIfFalse", "Return"],
