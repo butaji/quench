@@ -132,10 +132,10 @@ impl<'a> NativeRegionContext<'a> {
     }
 }
 
-const NATIVE_DISPATCH_OK: u64 = 1;
+pub(crate) const NATIVE_DISPATCH_OK: u64 = 1;
 const NATIVE_DISPATCH_SEMANTIC_ERROR: u64 = 2;
 const NATIVE_DISPATCH_COMMITTED_ERROR: u64 = 3;
-const NATIVE_DISPATCH_INTERRUPT: u64 = 4;
+pub(crate) const NATIVE_DISPATCH_INTERRUPT: u64 = 4;
 
 /// Native loops are deliberately bounded and poll an explicit interrupt flag
 /// at each backedge. Keeping a finite chunk also prevents an admitted byte
@@ -1974,6 +1974,15 @@ pub(crate) fn execute_baseline_code_step_from_with_owner(
         .map(|step| (step.completion, step.next))
 }
 
+fn record_dense_update(code: crate::machine::CodeView<'_>, pc: usize) {
+    crate::execution_trace::stencil_observation(code, pc, "dense_f64_update_loop", true);
+    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+    #[cfg(test)]
+    crate::test_execution_profile::dynamic_region_route(
+        crate::stencil_dense_array_update::NativeDenseUpdatePlan::route(),
+    );
+}
+
 pub(crate) fn execute_baseline_completion_step_from_with_owner(
     code: crate::machine::CodeView<'_>,
     plan: &crate::machine::BaselinePlan,
@@ -2088,6 +2097,42 @@ pub(crate) fn execute_optimized_code_step_from(
     let _decode_guard = crate::execution_trace::compact(instruction.opcode);
     crate::execution_trace::compact_site(code, start);
     crate::execution_trace::operands(instruction);
+    if let Some(dense) = entry.dense_update() {
+        let result = crate::locals::with_current_ref(|environment| {
+            let Some(environment) = environment else {
+                return Ok(None);
+            };
+            dense.borrow_mut().execute(environment, context)
+        });
+        match result {
+            Ok(Some(outcome)) => {
+                record_dense_update(code, start);
+                return match outcome {
+                    crate::stencil_dense_array_update::DenseUpdateOutcome::Completed(value) => {
+                        Ok((
+                            crate::completion::Completion::Return(crate::value::Value::Number(
+                                value,
+                            )),
+                            crate::stencil_dense_array_update::REGION_END,
+                        ))
+                    }
+                    crate::stencil_dense_array_update::DenseUpdateOutcome::Resume { pc } => {
+                        Ok((crate::completion::Completion::Normal, pc))
+                    }
+                };
+            }
+            Ok(None) | Err(crate::machine::NativeDispatchError::Physical(_)) => {}
+            Err(crate::machine::NativeDispatchError::SemanticAt { error, .. }) => {
+                return Err(error)
+            }
+            Err(crate::machine::NativeDispatchError::Committed { pc, message }) => {
+                return Err(VmError::EvalError(format!(
+                    "committed dense update failure at residual pc {pc}: {message}"
+                )))
+            }
+        }
+        crate::execution_trace::stencil_observation(code, start, "dense_f64_update_loop", false);
+    }
     if let Some(dag) = entry.numeric_dag() {
         let value = crate::locals::with_current_ref(|environment| {
             let mut plan = dag.borrow_mut();
@@ -2715,6 +2760,44 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
         if skip_proven_object_coercible(code, pc, instruction, registers) {
             pc += 1;
             continue;
+        }
+        if let (Some(environment), Some(dense)) = (environment, plan.dense_update_at(pc)) {
+            match dense.borrow_mut().execute(environment, context) {
+                Ok(Some(crate::stencil_dense_array_update::DenseUpdateOutcome::Completed(
+                    value,
+                ))) => {
+                    record_dense_update(code, pc);
+                    return completion_step_after_transition(
+                        registers,
+                        crate::completion::Completion::Return(crate::value::Value::Number(value)),
+                        crate::stencil_dense_array_update::REGION_END,
+                    );
+                }
+                Ok(Some(crate::stencil_dense_array_update::DenseUpdateOutcome::Resume { pc })) => {
+                    record_dense_update(code, 0);
+                    return completion_step_after_transition(
+                        registers,
+                        crate::completion::Completion::Normal,
+                        pc,
+                    );
+                }
+                Ok(None) | Err(crate::machine::NativeDispatchError::Physical(_)) => {
+                    crate::execution_trace::stencil_observation(
+                        code,
+                        pc,
+                        "dense_f64_update_loop",
+                        false,
+                    )
+                }
+                Err(crate::machine::NativeDispatchError::SemanticAt { pc, error }) => {
+                    return completion_step_after_error(registers, error, pc + 1);
+                }
+                Err(crate::machine::NativeDispatchError::Committed { pc, message }) => {
+                    return Err(VmError::EvalError(format!(
+                        "committed dense update failure at residual pc {pc}: {message}"
+                    )));
+                }
+            }
         }
         if let (Some(environment), Some(dag)) = (environment, plan.numeric_dag_at(pc)) {
             let value = {
