@@ -40,6 +40,10 @@ pub(crate) struct ExecutionCase {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum ExpectedValue {
     Number { value: f64 },
+    Nan,
+    PositiveInfinity,
+    NegativeInfinity,
+    NegativeZero,
     String { value: String },
     Boolean { value: bool },
     Undefined,
@@ -136,6 +140,16 @@ impl ExpectedValue {
     fn assert(&self, actual: &crate::value::Value, source: &str) {
         let matches = match (self, actual) {
             (Self::Number { value }, crate::value::Value::Number(actual)) => value == actual,
+            (Self::Nan, crate::value::Value::Number(actual)) => actual.is_nan(),
+            (Self::PositiveInfinity, crate::value::Value::Number(actual)) => {
+                *actual == f64::INFINITY
+            }
+            (Self::NegativeInfinity, crate::value::Value::Number(actual)) => {
+                *actual == f64::NEG_INFINITY
+            }
+            (Self::NegativeZero, crate::value::Value::Number(actual)) => {
+                *actual == 0.0 && actual.is_sign_negative()
+            }
             (Self::String { value }, crate::value::Value::String(actual)) => value == actual,
             (Self::Boolean { value }, crate::value::Value::Boolean(actual)) => value == actual,
             (Self::Undefined, crate::value::Value::Undefined) => true,
