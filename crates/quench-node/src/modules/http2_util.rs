@@ -474,8 +474,8 @@ pub fn dispatch(
         "range" => http2_asserts::range(values),
         "sessionName" => session_name(values),
         "connect" => connect(state, values),
-        "createServer" => create_server(values, false),
-        "createSecureServer" => create_server(values, true),
+        "createServer" => create_server(state, values, false),
+        "createSecureServer" => create_server(state, values, true),
         _ => Err(VmError::NotCallable),
     }
 }
@@ -600,6 +600,13 @@ fn parse_authority(authority: &Value) -> Result<Value, VmError> {
             format!("Invalid URL: {text}"),
         ));
     };
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::Error,
+            "ERR_HTTP2_UNSUPPORTED_PROTOCOL",
+            format!("Protocol \"{scheme}:\" not supported."),
+        ));
+    }
     let authority = remainder.split('/').next().unwrap_or_default();
     let (host, port) = if let Some(rest) = authority.strip_prefix('[') {
         let Some(end) = rest.find(']') else {
@@ -646,9 +653,15 @@ fn parse_authority(authority: &Value) -> Result<Value, VmError> {
 /// The protocol transport is intentionally unavailable, but rejecting bad
 /// arguments before reporting that capability boundary preserves the public
 /// API's ordinary error contract without fabricating a server.
-fn create_server(values: &[Value], secure: bool) -> Result<Value, VmError> {
+fn create_server(
+    state: &Rc<RefCell<HostState>>,
+    values: &[Value],
+    secure: bool,
+) -> Result<Value, VmError> {
     let options = values.first().unwrap_or(&Value::Undefined);
-    if !matches!(options, Value::Undefined | Value::Object(_) | Value::ObjectAlias(_)) {
+    if !matches!(options, Value::Undefined | Value::Object(_) | Value::ObjectAlias(_))
+        && !quench_runtime::is_callable(options)
+    {
         return Err(coded_error(
             quench_runtime::ops::Builtin::TypeError,
             "ERR_INVALID_ARG_TYPE",
@@ -683,16 +696,37 @@ fn create_server(values: &[Value], secure: bool) -> Result<Value, VmError> {
             }
         }
     }
-    let operation = if secure {
-        "http2.createSecureServer"
+    // Reuse the canonical Rust-owned listener lifecycle.  This exposes the
+    // valid constructor/listen/address/close surface without claiming that a
+    // connected socket has HTTP/2 session or stream semantics; those remain a
+    // separate protocol capability layered above this endpoint identity.
+    // The constructor's callback is an HTTP/2 request handler, not a raw
+    // net.Server `connection` listener.  Do not register it on the transport
+    // endpoint (which would call `mustNotCall` handlers as soon as a TCP peer
+    // connects); retain it for the future session layer instead.
+    let transport_values = if quench_runtime::is_callable(options) {
+        &[][..]
     } else {
-        "http2.createServer"
+        &values[..values.len().min(1)]
     };
-    Err(coded_error(
-        quench_runtime::ops::Builtin::Error,
-        "ERR_HTTP2_NOT_SUPPORTED",
-        format!("{operation} is not supported by quench-node"),
-    ))
+    let request_listener = if quench_runtime::is_callable(options) {
+        Some(options.clone())
+    } else {
+        values
+            .get(1)
+            .filter(|value| quench_runtime::is_callable(value))
+            .cloned()
+    };
+    let server = if secure {
+        crate::modules::tls::create_server(state, None, transport_values)?
+    } else {
+        crate::modules::net::create_server(state, transport_values)?
+    };
+    if let Some(request_listener) = request_listener {
+        execute::set_property_in_place(&server, "_http2RequestListener", request_listener);
+    }
+    execute::set_property_in_place(&server, "_http2", Value::Boolean(true));
+    Ok(server)
 }
 
 fn session_name(values: &[Value]) -> Result<Value, VmError> {
