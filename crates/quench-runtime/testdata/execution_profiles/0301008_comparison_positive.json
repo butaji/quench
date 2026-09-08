@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "warmup": 1,
-  "result": { "kind": "number", "value": 1 },
+  "result": { "kind": "number", "value": 4 },
   "plan": {
     "execution_kind": "native_machine_code",
     "operation_route": ["numeric", "classify_branch"],
