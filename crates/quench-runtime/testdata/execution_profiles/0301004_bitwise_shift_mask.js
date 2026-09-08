@@ -3,13 +3,10 @@ function mix(value, shift) {
 }
 
 mix(1, 1);
-function run() {
-  return mix(-123456789, 37);
-}
 function verify(result) {
 if (result !== 194173757) {
   throw new Error("bitwise shift/mask mismatch: " + result);
 }
   return result;
 }
-return { run: run, verify: verify };
+return { run: mix, arguments: [-123456789, 37], verify: verify };
