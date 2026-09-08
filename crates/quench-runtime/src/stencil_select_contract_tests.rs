@@ -159,6 +159,10 @@ fn generated_abi_classification_matches_physical_entry_shape() {
                 assert_eq!(record.name, "typed_lane_loop");
                 assert!(record.operations.contains(&crate::ir::Opcode::ASetI));
             }
+            RegionAbi::TwoStateI32Loop => {
+                assert_eq!(record.name, "two_state_i32_loop");
+                assert!(record.operations.contains(&crate::ir::Opcode::InitLocal));
+            }
             RegionAbi::NumericF64Loop => {
                 assert_eq!(record.name, "numeric_floating_loop");
                 assert!(record.operations.ends_with(&[crate::ir::Opcode::Jump]));

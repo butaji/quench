@@ -45,6 +45,7 @@ pub(crate) enum DeclAbi {
     SwitchReductionLoop,
     MatrixReductionLoop,
     TypedLaneLoop,
+    TwoStateI32Loop,
     NumericI32BitwiseLoop,
     NumericI32PairLoop,
     NumericF64Loop,
