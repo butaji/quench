@@ -175,6 +175,7 @@ mod stencil_local_affine_sum;
 mod stencil_local_recursive_sum;
 mod stencil_method_call;
 mod stencil_missing_property;
+mod stencil_nested_xor;
 #[cfg(test)]
 mod stencil_move_integration_tests;
 mod stencil_nullish_truthy;
