@@ -174,6 +174,10 @@ struct IntegerLoopContext {
 
 pub(crate) struct NativeIntegerLoopPlan {
     selection: IntegerLoopSelection,
+    machine: AffineMachinePlan,
+}
+
+struct AffineMachinePlan {
     owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
     image: crate::stencil_region_layout::VerifiedRegionImage,
     cache: crate::stencil_select::RenderedRegionCache,
@@ -187,21 +191,8 @@ impl NativeIntegerLoopPlan {
         owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
     ) -> Option<Self> {
         policy.affine_i32_loops.then_some(())?;
-        let view = crate::stencil_select::select_physical_for_abi(
-            selection.recurrence.physical_key(),
-            crate::stencil_select::RegionAbi::AffineI32Loop,
-        )?;
-        (view.generated && view.executable && view.stencil.validate()).then_some(())?;
-        let site = crate::quickening::QuickeningSite::<4>::new(Opcode::Binary);
-        let values = crate::stencil_fact::PatchValues::from_site(&site);
-        let image = crate::stencil_region_layout::finalize_selected_leaf(view, &values).ok()?;
-        Some(Self {
-            selection,
-            owner,
-            image,
-            cache: crate::stencil_select::RenderedRegionCache::new(),
-            installed: None,
-        })
+        let machine = AffineMachinePlan::new(selection.recurrence.physical_key(), owner)?;
+        Some(Self { selection, machine })
     }
 
     pub(crate) fn execute(
@@ -222,7 +213,7 @@ impl NativeIntegerLoopPlan {
             _padding: 0,
             interrupt: vm.interrupt_flag(),
         };
-        let status = self.invoke(&mut context)?;
+        let status = self.machine.invoke(&mut context)?;
         self.finish(status, context, environment, vm).map(Some)
     }
 
@@ -277,6 +268,28 @@ impl NativeIntegerLoopPlan {
             | IntegerRecurrence::ArgumentConstants(_) => None,
         }
     }
+}
+
+impl AffineMachinePlan {
+    fn new(
+        key: crate::stencil_fact::RegionKey,
+        owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
+    ) -> Option<Self> {
+        let view = crate::stencil_select::select_physical_for_abi(
+            key,
+            crate::stencil_select::RegionAbi::AffineI32Loop,
+        )?;
+        (view.generated && view.executable && view.stencil.validate()).then_some(())?;
+        let site = crate::quickening::QuickeningSite::<4>::new(Opcode::Binary);
+        let values = crate::stencil_fact::PatchValues::from_site(&site);
+        let image = crate::stencil_region_layout::finalize_selected_leaf(view, &values).ok()?;
+        Some(Self {
+            owner,
+            image,
+            cache: crate::stencil_select::RenderedRegionCache::new(),
+            installed: None,
+        })
+    }
 
     fn invoke(&mut self, context: &mut IntegerLoopContext) -> Result<u64, NativeDispatchError> {
         let entry = self.entry()?;
@@ -291,6 +304,39 @@ impl NativeIntegerLoopPlan {
             })
     }
 
+    fn entry(
+        &mut self,
+    ) -> Result<
+        crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>,
+        NativeDispatchError,
+    > {
+        if let Some(entry) = self
+            .installed
+            .filter(|entry| self.owner.borrow().entry_token_is_live(*entry))
+        {
+            return Ok(entry);
+        }
+        self.installed = None;
+        let address = self
+            .owner
+            .borrow_mut()
+            .publish_region_image_or_get(&mut self.cache, &self.image)
+            .map_err(|error| {
+                NativeDispatchError::Physical(format!("integer loop publish: {error:?}"))
+            })?;
+        let entry = self
+            .owner
+            .borrow()
+            .owned_affine_i32_loop_entry(address)
+            .map_err(|error| {
+                NativeDispatchError::Physical(format!("integer loop entry: {error:?}"))
+            })?;
+        self.installed = Some(entry);
+        Ok(entry)
+    }
+}
+
+impl NativeIntegerLoopPlan {
     fn finish(
         &self,
         status: u64,
@@ -329,36 +375,33 @@ impl NativeIntegerLoopPlan {
             crate::value::Value::Number(f64::from(context.value)),
         );
     }
+}
 
-    fn entry(
-        &mut self,
-    ) -> Result<
-        crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>,
-        NativeDispatchError,
-    > {
-        if let Some(entry) = self
-            .installed
-            .filter(|entry| self.owner.borrow().entry_token_is_live(*entry))
-        {
-            return Ok(entry);
-        }
-        self.installed = None;
-        let address = self
-            .owner
-            .borrow_mut()
-            .publish_region_image_or_get(&mut self.cache, &self.image)
-            .map_err(|error| {
-                NativeDispatchError::Physical(format!("integer loop publish: {error:?}"))
-            })?;
-        let entry = self
-            .owner
-            .borrow()
-            .owned_affine_i32_loop_entry(address)
-            .map_err(|error| {
-                NativeDispatchError::Physical(format!("integer loop entry: {error:?}"))
-            })?;
-        self.installed = Some(entry);
-        Ok(entry)
+pub(crate) struct NativeAffineI32Transform {
+    machine: AffineMachinePlan,
+}
+
+impl NativeAffineI32Transform {
+    pub(crate) fn new(owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>) -> Option<Self> {
+        AffineMachinePlan::new(crate::stencil_select::affine_i32_loop_region_key(), owner)
+            .map(|machine| Self { machine })
+    }
+
+    pub(crate) fn execute(&mut self, input: i32, multiplier: i32, addend: i32) -> Option<i32> {
+        static NO_INTERRUPT: std::sync::atomic::AtomicBool =
+            std::sync::atomic::AtomicBool::new(false);
+        input.checked_mul(multiplier)?.checked_add(addend)?;
+        let mut context = IntegerLoopContext {
+            index: 0,
+            end: 1,
+            value: input,
+            multiplier,
+            addend,
+            _padding: 0,
+            interrupt: &NO_INTERRUPT,
+        };
+        let status = self.machine.invoke(&mut context).ok()?;
+        (status == crate::vm::NATIVE_DISPATCH_OK && context.index == 1).then_some(context.value)
     }
 }
 
