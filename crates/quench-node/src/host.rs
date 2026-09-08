@@ -125,6 +125,11 @@ pub struct HostState {
     pub child_process_prototype: Option<Value>,
     /// One canonical source-to-stdin edge for in-process stdio pipelines.
     pub child_pipes: std::collections::HashMap<u64, Value>,
+    /// Process scopes whose IPC channel has closed but whose network handles
+    /// still need their callbacks to drain before scope-local listeners are
+    /// retired.  Keeping this fact in the host envelope preserves the final
+    /// socket events without leaking callbacks into a later fork.
+    pub deferred_emitter_scopes: HashSet<u64>,
     /// Stateful native compressors owned by zlib stream objects.  The VM
     /// value only carries observable stream properties; codec state remains
     /// in the host envelope so each write/flush sees the same deflater.
@@ -200,6 +205,7 @@ impl NodeHost {
             identity_roots: Vec::new(),
             child_process_prototype: None,
             child_pipes: std::collections::HashMap::new(),
+            deferred_emitter_scopes: HashSet::new(),
             zlib_compressors: std::collections::HashMap::new(),
             zlib_decompressors: std::collections::HashMap::new(),
         };
@@ -349,7 +355,7 @@ pub fn install_script_with_args_and_title(
     install_with_argv_and_title(realm, sink, argv, title)
 }
 
-fn host_exec_path() -> String {
+pub(crate) fn host_exec_path() -> String {
     let executable = std::env::current_exe()
         .ok()
         .and_then(|path| std::fs::canonicalize(path).ok());
@@ -392,6 +398,27 @@ pub(crate) fn command_uses_host_exec(command: &str) -> bool {
         .map(|parent| parent.join("quench-node"))
         .filter(|engine| engine.is_file())
         .is_some_and(|engine| command.contains(engine.to_string_lossy().as_ref()))
+}
+
+/// Rewrite a shell command containing the public engine path to the canonical
+/// compatibility runner used by host child processes. Commands without that
+/// host identity are returned unchanged.
+pub(crate) fn rewrite_host_exec_command(command: &str) -> String {
+    let Some(executable) = std::env::current_exe()
+        .ok()
+        .and_then(|path| std::fs::canonicalize(path).ok())
+    else {
+        return command.to_string();
+    };
+    let Some(engine) = executable.parent().map(|parent| parent.join("quench-node")) else {
+        return command.to_string();
+    };
+    let runner = executable
+        .parent()
+        .map(|parent| parent.join("run"))
+        .filter(|candidate| candidate.is_file())
+        .unwrap_or(executable);
+    command.replace(engine.to_string_lossy().as_ref(), runner.to_string_lossy().as_ref())
 }
 
 /// Same as `install`, but provides a host-side output sink that

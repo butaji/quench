@@ -68,9 +68,10 @@ pub fn run_script_with_exec_argv(
     source: &str,
     sink: OutputSink,
 ) -> RunOutcome {
-    // Compatibility tests model the Node executable, not the test harness
-    // binary that happens to host it.
-    let exec = "quench-node".to_string();
+    // File-backed runs expose the same executable identity through argv[0]
+    // and process.execPath.  The test launcher hosts the engine, so derive
+    // the canonical sibling path instead of leaking a non-resolvable label.
+    let exec = crate::host::host_exec_path();
     let script_str = script.to_string_lossy().into_owned();
     let mut argv = vec![exec, script_str.clone()];
     argv.extend(script_args.iter().cloned());
@@ -118,6 +119,7 @@ pub fn run_script_with_exec_argv(
     let url_pattern_surface =
         crate::polyfills::post_bootstrap::lookup("module-surface-06").unwrap_or("");
     let globals_surface = crate::polyfills::bootstrap::lookup("globals-extra").unwrap_or("");
+    let target_surface = crate::polyfills::bootstrap::lookup("target").unwrap_or("");
     let fetch_surface = crate::polyfills::bootstrap::lookup("fetch").unwrap_or("");
     let externalizable_surface = source
         .contains("Externalizable")
@@ -149,7 +151,7 @@ pub fn run_script_with_exec_argv(
         .collect::<Vec<_>>()
         .join("\n");
     let bootstrap_surface = format!(
-        "{web_streams_surface}\n{globals_surface}\n{fetch_surface}\nconst fetch = globalThis.fetch;\n{externalizable_surface}\n{report_surface}\n{async_resource_surface}\n{webcrypto_surface}\nconst crypto = globalThis.crypto;\nfor (const __name of ['MessageChannel','MessagePort','worker_threads','TypeMismatchError','QuotaExceededError','__nodeCurrentAsyncResource','__nodeCallChecks']) if (__name in globalThis) Object.defineProperty(globalThis, __name, {{ configurable: true, enumerable: false, writable: true, value: globalThis[__name] }});"
+        "{web_streams_surface}\n{globals_surface}\n{fetch_surface}\nconst fetch = globalThis.fetch;\n{externalizable_surface}\n{report_surface}\n{async_resource_surface}\n{webcrypto_surface}\nconst crypto = globalThis.crypto;\nfor (const __name of ['MessageChannel','MessagePort','worker_threads','TypeMismatchError','QuotaExceededError','__nodeCurrentAsyncResource','__nodeCallChecks']) if (__name in globalThis) Object.defineProperty(globalThis, __name, {{ configurable: true, enumerable: false, writable: true, value: globalThis[__name] }});\n{target_surface}"
     );
     let wrapped = format!(
         "{bootstrap_surface}\n{punycode_surface}\n{vfs_head_surface}\n{vfs_surface}\n{vfs_stream_setup}\nObject.defineProperty(globalThis, '__nodePath', {{ value: __nodePath, configurable: true, enumerable: false }}); Object.defineProperty(globalThis, '__quench_fs_mkdir', {{ value: __quench_fs_mkdir, configurable: true, enumerable: false }}); globalThis.URL = URL; Object.defineProperty(globalThis, '__nodeURL', {{ value: globalThis.URL, configurable: true }}); Object.defineProperty(globalThis, '__nodeURLSearchParams', {{ value: globalThis.URLSearchParams, configurable: true }});\n{performance_surface}\n{url_pattern_surface}\nObject.defineProperty(globalThis, '__quenchURLPattern', {{ value: globalThis.__quenchURLPatternFactory?.(), configurable: true }}); delete globalThis.__quenchURLPatternFactory; delete globalThis.__quenchURLInstallCanParse; delete globalThis.__quenchURLInstallToString; delete globalThis.__nodeThrowReadonlyURLSetter;\n{wrapped}\n// Materialize persistent host globals after module setup and before the pump.\n{persistent_globals}"
@@ -165,10 +167,11 @@ pub fn run_script_with_exec_argv(
         // Promise jobs as a convenience for synchronous VM callers; doing so
         // here would run a Promise reaction before the already-queued
         // process.nextTick callbacks, reversing Node's turn ordering.
-        normalize_script_completion(
-            quench_runtime::vm::execute_code_isolated_in_context(ops.code(), &context),
-        )
-            .and_then(|_| drive(&context, "__quench_run_loop__();"))
+        normalize_script_completion(quench_runtime::vm::execute_code_isolated_in_context(
+            ops.code(),
+            &context,
+        ))
+        .and_then(|_| drive(&context, "__quench_run_loop__();"))
     });
     let result = route_uncaught(&host, &context, result);
     let result = match result {
@@ -227,7 +230,10 @@ pub fn eval_script_with_exec_argv(
         .with_source_name("<eval>");
     // `node -e` resolves bare modules from the process cwd, just like a
     // script resolves them from its containing directory.
-    if let Ok(cwd) = std::env::current_dir() {
+    let cwd = std::env::var_os("QUENCH_CWD")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::current_dir().ok());
+    if let Some(cwd) = cwd {
         host.set_main_dir(cwd.to_string_lossy().into_owned());
     }
     let globals_surface = crate::polyfills::bootstrap::lookup("globals-extra").unwrap_or("");
@@ -235,13 +241,16 @@ pub fn eval_script_with_exec_argv(
     let web_streams_surface = crate::polyfills::bootstrap::lookup("web-streams").unwrap_or("");
     let source_text = source.to_owned();
     let punycode_surface = crate::polyfills::bootstrap::lookup("punycode").unwrap_or("");
-    let source = format!("{web_streams_surface}\n{globals_surface}\n{fetch_surface}\nconst fetch = globalThis.fetch; const crypto = globalThis.crypto;\n{punycode_surface}\n{source}");
+    let deprecation_surface = crate::modules::process::deprecation_policy_source(exec_argv);
+    let source = format!("{web_streams_surface}\n{globals_surface}\n{fetch_surface}\nconst fetch = globalThis.fetch; const crypto = globalThis.crypto;\n{punycode_surface}\n{deprecation_surface}{source}");
     let context = context.with_compiled_source_text(source.clone());
     let ops = match reduce(&source) {
         Ok(ops) => ops,
         Err(error) => return RunOutcome::fail(1, format!("reduce: {error}")),
     };
-    let result = crate::modules::require::with_static_esm_mode(module_mode, || {
+    let result = quench_runtime::vm::with_current_context(&context, || {
+        crate::modules::process::configure_deprecation_flags(exec_argv);
+        crate::modules::require::with_static_esm_mode(module_mode, || {
         let state = host.state();
         let dynamic_namespace_cache =
             std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::<
@@ -315,10 +324,12 @@ pub fn eval_script_with_exec_argv(
         });
         // As with file-backed scripts, defer the first Promise checkpoint to
         // the host event-loop pump so process.nextTick precedes Promise jobs.
-        normalize_script_completion(
-            quench_runtime::vm::execute_code_isolated_in_context(ops.code(), &context),
-        )
-            .and_then(|_| drive(&context, "__quench_run_loop__();"))
+        normalize_script_completion(quench_runtime::vm::execute_code_isolated_in_context(
+            ops.code(),
+            &context,
+        ))
+        .and_then(|_| drive(&context, "__quench_run_loop__();"))
+        })
     });
     let result = route_uncaught(&host, &context, result);
     let result = match result {
