@@ -8,9 +8,9 @@
     "fallback": true
   },
   "profile": {
-    "residual": { "AGetI": 1, "Return": 1 },
+    "residual": { "AGetI": 1 },
     "slow": { "GetP": 1 },
     "stencils": { "dense_index_get": { "entries": 0, "fallbacks": 1 } },
-    "events": { "register_file_read": 2 }
+    "events": { "leaf_reject": 1 }
   }
 }
