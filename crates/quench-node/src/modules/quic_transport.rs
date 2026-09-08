@@ -338,7 +338,13 @@ mod tests {
         peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
 
         peer.send_to(b"inbound", address).unwrap();
-        state.poll();
+        for _ in 0..100 {
+            state.poll();
+            if state.pending_received() != 0 {
+                break;
+            }
+            std::thread::yield_now();
+        }
         let received = state.take_received().unwrap();
         assert_eq!(received.endpoint, endpoint);
         assert_eq!(received.peer, peer.local_addr().unwrap());
@@ -377,7 +383,13 @@ mod tests {
         let packet = vec![0u8, 1, 2];
 
         peer.send_to(&packet, address).unwrap();
-        state.poll();
+        for _ in 0..100 {
+            state.poll();
+            if state.pending_received() != 0 {
+                break;
+            }
+            std::thread::yield_now();
+        }
 
         assert_eq!(
             state.take_protocol_event(),
