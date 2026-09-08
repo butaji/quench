@@ -20,6 +20,7 @@ pub(crate) struct ExecutionProfile {
     pub(crate) events: BTreeMap<&'static str, u64>,
     region_routes: Vec<Vec<&'static str>>,
     lowered_routes: Vec<Vec<&'static str>>,
+    portable_recipe: bool,
 }
 
 const EXECUTION_CASE_SCHEMA: u32 = 1;
@@ -368,11 +369,11 @@ fn string_routes(input: &BTreeMap<&'static str, RouteCount>) -> BTreeMap<String,
 
 impl ExecutionProfile {
     fn execution_kind(&self) -> ExecutionKind {
+        if self.portable_recipe {
+            return ExecutionKind::PortableRecipe;
+        }
         if self.stencils.values().any(|count| count.entries != 0) {
             return ExecutionKind::NativeMachineCode;
-        }
-        if self.events.contains_key("portable_recipe_step") {
-            return ExecutionKind::PortableRecipe;
         }
         ExecutionKind::OrdinaryFallback
     }
@@ -397,6 +398,7 @@ impl ExecutionProfile {
             events: scaled_counts(&self.events, executions),
             region_routes: self.region_routes.clone(),
             lowered_routes: self.lowered_routes.clone(),
+            portable_recipe: self.portable_recipe,
         }
     }
 }
@@ -451,6 +453,10 @@ pub(crate) fn stencil(name: &'static str, entered: bool) {
 
 pub(crate) fn event(name: &'static str) {
     update(|profile| increment(&mut profile.events, name));
+}
+
+pub(crate) fn portable_recipe() {
+    update(|profile| profile.portable_recipe = true);
 }
 
 pub(crate) fn region_route(operations: &'static [crate::ir::Opcode]) {

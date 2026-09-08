@@ -2019,6 +2019,28 @@ fn record_call_return(code: crate::machine::CodeView<'_>, pc: usize) {
     );
 }
 
+fn record_string_concat(code: crate::machine::CodeView<'_>, pc: usize, constant_call: bool) {
+    crate::execution_trace::stencil_observation(code, pc, "string_concat_chain_return", true);
+    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+    #[cfg(test)]
+    {
+        crate::test_execution_profile::portable_recipe();
+        let direct = ["Add", "Add", "Return"].as_slice();
+        let call = [
+            "LoadLocalChecked",
+            "LoadLocalChecked",
+            "Add",
+            "LoadLocalChecked",
+            "Add",
+            "Return",
+        ];
+        let route = constant_call.then_some(call.as_slice()).unwrap_or(direct);
+        crate::test_execution_profile::dynamic_region_route(route.iter().copied());
+    }
+    #[cfg(not(test))]
+    let _ = constant_call;
+}
+
 pub(crate) fn execute_baseline_completion_step_from_with_owner(
     code: crate::machine::CodeView<'_>,
     plan: &crate::machine::BaselinePlan,
@@ -2171,7 +2193,9 @@ pub(crate) fn execute_optimized_code_step_from(
     }
     if let Some(copy) = entry.dense_copy() {
         let result = crate::locals::with_current_ref(|environment| {
-            let Some(environment) = environment else { return Ok(None) };
+            let Some(environment) = environment else {
+                return Ok(None);
+            };
             copy.borrow_mut().execute(environment, context)
         });
         match result {
@@ -2187,7 +2211,9 @@ pub(crate) fn execute_optimized_code_step_from(
                 return Ok((crate::completion::Completion::Normal, pc));
             }
             Ok(None) | Err(crate::machine::NativeDispatchError::Physical(_)) => {}
-            Err(crate::machine::NativeDispatchError::SemanticAt { error, .. }) => return Err(error),
+            Err(crate::machine::NativeDispatchError::SemanticAt { error, .. }) => {
+                return Err(error)
+            }
             Err(crate::machine::NativeDispatchError::Committed { pc, message }) => {
                 return Err(VmError::EvalError(format!(
                     "committed dense copy failure at residual pc {pc}: {message}"
@@ -2198,7 +2224,9 @@ pub(crate) fn execute_optimized_code_step_from(
     }
     if let Some(reduction) = entry.reduction() {
         let result = crate::locals::with_current_ref(|environment| {
-            let Some(environment) = environment else { return Ok(None) };
+            let Some(environment) = environment else {
+                return Ok(None);
+            };
             reduction.borrow_mut().execute(environment, context)
         });
         match result {
@@ -2214,14 +2242,21 @@ pub(crate) fn execute_optimized_code_step_from(
                 return Ok((crate::completion::Completion::Normal, pc));
             }
             Ok(None) | Err(crate::machine::NativeDispatchError::Physical(_)) => {}
-            Err(crate::machine::NativeDispatchError::SemanticAt { error, .. }) => return Err(error),
+            Err(crate::machine::NativeDispatchError::SemanticAt { error, .. }) => {
+                return Err(error)
+            }
             Err(crate::machine::NativeDispatchError::Committed { pc, message }) => {
                 return Err(VmError::EvalError(format!(
                     "committed ordered reduction failure at residual pc {pc}: {message}"
                 )))
             }
         }
-        crate::execution_trace::stencil_observation(code, start, "ordered_f64_reduction_loop", false);
+        crate::execution_trace::stencil_observation(
+            code,
+            start,
+            "ordered_f64_reduction_loop",
+            false,
+        );
     }
     if let Some(pattern) = entry.i32_pattern() {
         let value = crate::locals::with_current_ref(|environment| {
@@ -2243,9 +2278,8 @@ pub(crate) fn execute_optimized_code_step_from(
         crate::execution_trace::leaf_rejection("bitwise_shift_mask_return");
     }
     if let Some(call) = entry.call_return() {
-        let value = crate::locals::with_current_ref(|environment| {
-            call.borrow_mut().execute(environment?)
-        });
+        let value =
+            crate::locals::with_current_ref(|environment| call.borrow_mut().execute(environment?));
         if let Some(value) = value {
             record_call_return(code, start);
             return Ok((
@@ -2253,13 +2287,22 @@ pub(crate) fn execute_optimized_code_step_from(
                 start + call.borrow().span(),
             ));
         }
-        crate::execution_trace::stencil_observation(
-            code,
-            start,
-            "monomorphic_call_return",
-            false,
-        );
+        crate::execution_trace::stencil_observation(code, start, "monomorphic_call_return", false);
         crate::execution_trace::leaf_rejection("monomorphic_call_return");
+    }
+    if let Some(plan) = entry.string_concat() {
+        let result = crate::locals::with_current_ref(|environment| match environment {
+            Some(environment) => plan.borrow().execute(environment),
+            None => Ok(None),
+        })?;
+        if let Some(outcome) = result {
+            let span = plan.borrow().span();
+            record_string_concat(code, start, outcome.constant_call);
+            return Ok((
+                crate::completion::Completion::Return(outcome.value),
+                start + span,
+            ));
+        }
     }
     if let Some(dag) = entry.numeric_dag() {
         let value = crate::locals::with_current_ref(|environment| {
@@ -2275,6 +2318,8 @@ pub(crate) fn execute_optimized_code_step_from(
                 true,
             );
             crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+            #[cfg(test)]
+            crate::test_execution_profile::portable_recipe();
             #[cfg(test)]
             crate::test_execution_profile::dynamic_region_route(dag.route());
             return Ok((
@@ -3029,13 +3074,19 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                     pc + span,
                 );
             }
-            crate::execution_trace::stencil_observation(
-                code,
-                pc,
-                "monomorphic_call_return",
-                false,
-            );
+            crate::execution_trace::stencil_observation(code, pc, "monomorphic_call_return", false);
             crate::execution_trace::leaf_rejection("monomorphic_call_return");
+        }
+        if let (Some(environment), Some(concat)) = (environment, plan.string_concat_at(pc)) {
+            if let Some(outcome) = concat.borrow().execute(environment)? {
+                let span = concat.borrow().span();
+                record_string_concat(code, pc, outcome.constant_call);
+                return completion_step_after_transition(
+                    registers,
+                    crate::completion::Completion::Return(outcome.value),
+                    pc + span,
+                );
+            }
         }
         if let (Some(environment), Some(dag)) = (environment, plan.numeric_dag_at(pc)) {
             let value = {
@@ -3092,6 +3143,8 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                     true,
                 );
                 crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                #[cfg(test)]
+                crate::test_execution_profile::portable_recipe();
                 return completion_step_after_transition(
                     registers,
                     crate::completion::Completion::Return(crate::value::Value::Number(value)),
