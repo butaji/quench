@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "warmup": 1,
+  "result": { "kind": "number", "value": 42 },
+  "plan": {
+    "execution_kind": "native_machine_code",
+    "operation_route": ["GetNQuickened", "AddConst", "Return"],
+    "fallback": false
+  },
+  "profile": {
+    "residual": {},
+    "slow": {},
+    "stencils": { "prototype_data_add_const_return": { "entries": 1, "fallbacks": 0 } },
+    "events": { "leaf_hit": 1 }
+  }
+}
