@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "warmup": 1,
-  "result": { "kind": "positive_infinity" },
+  "result": { "kind": "negative_infinity" },
   "plan": {
     "execution_kind": "native_machine_code",
     "operation_route": ["LoadLocalChecked", "LoadLocalChecked", "Div", "Return"],

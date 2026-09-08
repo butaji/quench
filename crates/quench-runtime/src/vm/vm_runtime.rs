@@ -2055,6 +2055,21 @@ fn record_string_builtin(
     }
 }
 
+fn record_local_binary(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    plan: &crate::stencil_fusion::NativeLocalBinaryPlan,
+    span: usize,
+) {
+    crate::execution_trace::stencil_observation(code, pc, plan.trace_name(), true);
+    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+    #[cfg(test)]
+    match plan.profile_route() {
+        Some(route) => crate::test_execution_profile::dynamic_region_route(route.iter().copied()),
+        None => crate::test_execution_profile::local_numeric_route(code, pc, span),
+    }
+}
+
 pub(crate) fn execute_baseline_completion_step_from_with_owner(
     code: crate::machine::CodeView<'_>,
     plan: &crate::machine::BaselinePlan,
@@ -2424,8 +2439,8 @@ pub(crate) fn execute_optimized_code_step_from(
                 .commit(registers, environment)
         });
         if let Some(committed) = committed {
-            crate::execution_trace::stencil_observation(code, start, "local_binary", true);
-            crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+            let native = native.borrow();
+            record_local_binary(code, start, &native, committed.span);
             return Ok((
                 committed
                     .completion
@@ -3230,10 +3245,8 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                 crate::stencil_fusion::execute_local_binary(native, environment)
                     .and_then(|result| result.commit(registers, environment))
             {
-                crate::execution_trace::stencil_observation(code, pc, "local_binary", true);
-                crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
-                #[cfg(test)]
-                crate::test_execution_profile::local_numeric_route(code, pc, committed.span);
+                let native = native.borrow();
+                record_local_binary(code, pc, &native, committed.span);
                 if let Some(completion) = committed.completion {
                     return completion_step_after_transition(
                         registers,
