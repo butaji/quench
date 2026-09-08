@@ -4,13 +4,13 @@
   "result": { "kind": "number", "value": 42 },
   "plan": {
     "execution_kind": "native_machine_code",
-    "operation_route": ["LoadLocalChecked", "LoadLocalChecked", "Add", "Return"],
+    "operation_route": ["Add", "Return"],
     "fallback": false
   },
   "profile": {
     "residual": {},
     "slow": {},
-    "stencils": { "captured_local_add_return": { "entries": 1, "fallbacks": 0 } },
+    "stencils": { "local_binary": { "entries": 1, "fallbacks": 0 } },
     "events": { "leaf_hit": 1 }
   }
 }
