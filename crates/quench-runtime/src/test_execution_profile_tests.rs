@@ -33,8 +33,25 @@ fn execute_once(
     let (result, profile) = capture_result(measured, || {
         invoke(context, &prepared.run, &prepared.arguments)
     })?;
+    let mut profile = profile;
+    profile.lowered_route = lowered_route(&prepared.run);
     let verified = invoke(context, &prepared.verify, &[result])?;
     Ok((verified, profile))
+}
+
+fn lowered_route(function: &crate::value::Value) -> Vec<&'static str> {
+    let crate::value::Value::Function(function) = function else {
+        return Vec::new();
+    };
+    let Some(code) = function.code.code() else {
+        return Vec::new();
+    };
+    (0..code.len())
+        .filter_map(|pc| {
+            code.instruction(pc)
+                .map(|instruction| instruction.opcode.name())
+        })
+        .collect()
 }
 
 fn capture_result<T>(
