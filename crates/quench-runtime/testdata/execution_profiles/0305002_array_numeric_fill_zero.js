@@ -3,12 +3,9 @@ function fill(values, value) {
   return values[0] + values[values.length - 1];
 }
 
-fill([0, 0], 1);
-var values = [0, 0, 0, 0, 0];
+var values = [];
 function verify(result) {
-  if (result !== 42 || values.join(",") !== "21,21,21,21,21") {
-    throw new Error("numeric fill mismatch");
-  }
+  if (result === result || values.length !== 0) throw new Error("zero fill mismatch");
   return result;
 }
 return { run: fill, verify: verify, arguments: [values, 21] };

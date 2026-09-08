@@ -1983,6 +1983,15 @@ fn record_dense_update(code: crate::machine::CodeView<'_>, pc: usize) {
     );
 }
 
+fn record_dense_fill(code: crate::machine::CodeView<'_>, pc: usize) {
+    crate::execution_trace::stencil_observation(code, pc, "dense_numeric_fill_loop", true);
+    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+    #[cfg(test)]
+    crate::test_execution_profile::dynamic_region_route([
+        "ASetI", "AddConst", "Jump", "AGetI", "Return",
+    ]);
+}
+
 fn record_dense_copy(code: crate::machine::CodeView<'_>, pc: usize) {
     crate::execution_trace::stencil_observation(code, pc, "dense_numeric_copy_loop", true);
     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
@@ -2223,6 +2232,33 @@ pub(crate) fn execute_optimized_code_step_from(
     let _decode_guard = crate::execution_trace::compact(instruction.opcode);
     crate::execution_trace::compact_site(code, start);
     crate::execution_trace::operands(instruction);
+    if let Some(fill) = entry.dense_fill() {
+        let result = crate::locals::with_current_ref(|environment| {
+            let Some(environment) = environment else { return Ok(None) };
+            fill.borrow_mut().execute(environment, context)
+        });
+        match result {
+            Ok(Some(crate::stencil_dense_array_fill::DenseFillOutcome::Completed(value))) => {
+                record_dense_fill(code, start);
+                return Ok((
+                    crate::completion::Completion::Return(crate::value::Value::Number(value)),
+                    crate::stencil_dense_array_fill::REGION_END,
+                ));
+            }
+            Ok(Some(crate::stencil_dense_array_fill::DenseFillOutcome::Resume { pc })) => {
+                record_dense_fill(code, start);
+                return Ok((crate::completion::Completion::Normal, pc));
+            }
+            Ok(None) | Err(crate::machine::NativeDispatchError::Physical(_)) => {}
+            Err(crate::machine::NativeDispatchError::SemanticAt { error, .. }) => return Err(error),
+            Err(crate::machine::NativeDispatchError::Committed { pc, message }) => {
+                return Err(VmError::EvalError(format!(
+                    "committed dense fill failure at residual pc {pc}: {message}"
+                )))
+            }
+        }
+        crate::execution_trace::stencil_observation(code, start, "dense_numeric_fill_loop", false);
+    }
     if let Some(dense) = entry.dense_update() {
         let result = crate::locals::with_current_ref(|environment| {
             let Some(environment) = environment else {
@@ -3077,6 +3113,39 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
         if skip_proven_object_coercible(code, pc, instruction, registers) {
             pc += 1;
             continue;
+        }
+        if let (Some(environment), Some(fill)) = (environment, plan.dense_fill_at(pc)) {
+            match fill.borrow_mut().execute(environment, context) {
+                Ok(Some(crate::stencil_dense_array_fill::DenseFillOutcome::Completed(value))) => {
+                    record_dense_fill(code, pc);
+                    return completion_step_after_transition(
+                        registers,
+                        crate::completion::Completion::Return(crate::value::Value::Number(value)),
+                        crate::stencil_dense_array_fill::REGION_END,
+                    );
+                }
+                Ok(Some(crate::stencil_dense_array_fill::DenseFillOutcome::Resume { pc })) => {
+                    record_dense_fill(code, 0);
+                    return completion_step_after_transition(
+                        registers,
+                        crate::completion::Completion::Normal,
+                        pc,
+                    );
+                }
+                Ok(None) | Err(crate::machine::NativeDispatchError::Physical(_)) => {
+                    crate::execution_trace::stencil_observation(
+                        code, pc, "dense_numeric_fill_loop", false,
+                    )
+                }
+                Err(crate::machine::NativeDispatchError::SemanticAt { pc, error }) => {
+                    return completion_step_after_error(registers, error, pc + 1);
+                }
+                Err(crate::machine::NativeDispatchError::Committed { pc, message }) => {
+                    return Err(VmError::EvalError(format!(
+                        "committed dense fill failure at residual pc {pc}: {message}"
+                    )));
+                }
+            }
         }
         if let (Some(environment), Some(dense)) = (environment, plan.dense_update_at(pc)) {
             match dense.borrow_mut().execute(environment, context) {

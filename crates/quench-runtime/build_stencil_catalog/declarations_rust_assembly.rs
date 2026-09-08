@@ -238,6 +238,11 @@ rust_assembly_catalog! {
         x86_holes: &[], aarch64_holes: &[],
         bindings: &ARRAY_NUMERIC_LOOP_BINDINGS, outputs: &ARRAY_NUMERIC_LOOP_OUTPUTS
     },
+    ArrayNumericFillLoop {
+        name: "array_numeric_fill_loop", abi: ArrayNumericLoop,
+        ops: ["ASetI", "Binary", "Jump"],
+        x86: &[], aarch64: &[], x86_holes: &[], aarch64_holes: &[]
+    },
     AffineI32Loop {
         name: "affine_i32_loop", abi: AffineI32Loop,
         ops: ["LoadLocal", "LoadLocal", "GetN", "Binary", "JumpIfFalse",

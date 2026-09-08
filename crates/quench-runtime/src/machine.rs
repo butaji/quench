@@ -5498,6 +5498,7 @@ enum NativeAdmission {
     NumberClassify(Rc<RefCell<crate::stencil_number_classify::NativeNumberClassifyPlan>>),
     NullishTruthy(Rc<RefCell<crate::stencil_nullish_truthy::NativeNullishTruthyPlan>>),
     MissingProperty(Rc<RefCell<crate::stencil_missing_property::NativeMissingPropertyPlan>>),
+    DenseFill(Rc<RefCell<crate::stencil_dense_array_fill::NativeDenseFillPlan>>),
     DenseUpdate(Rc<RefCell<crate::stencil_dense_array_update::NativeDenseUpdatePlan>>),
     DenseCopy(Rc<RefCell<crate::stencil_dense_array_copy::NativeDenseCopyPlan>>),
     Reduction(Rc<RefCell<crate::stencil_ordered_reduction::NativeReductionPlan>>),
@@ -5545,6 +5546,9 @@ impl AdmissionEntry for NativeAdmission {
             >(),
             Self::MissingProperty(_) => shared_value_bytes::<
                 RefCell<crate::stencil_missing_property::NativeMissingPropertyPlan>,
+            >(),
+            Self::DenseFill(_) => shared_value_bytes::<
+                RefCell<crate::stencil_dense_array_fill::NativeDenseFillPlan>,
             >(),
             Self::DenseUpdate(_) => shared_value_bytes::<
                 RefCell<crate::stencil_dense_array_update::NativeDenseUpdatePlan>,
@@ -5598,6 +5602,7 @@ impl std::fmt::Debug for NativeAdmission {
             Self::NumberClassify(_) => "number_classify",
             Self::NullishTruthy(_) => "nullish_truthy",
             Self::MissingProperty(_) => "missing_property",
+            Self::DenseFill(_) => "dense_fill",
             Self::DenseUpdate(_) => "dense_update",
             Self::DenseCopy(_) => "dense_copy",
             Self::Reduction(_) => "reduction",
@@ -6017,6 +6022,23 @@ fn dense_update_admission(
         Rc::clone(arena),
     )?;
     Some(NativeAdmission::DenseUpdate(Rc::new(RefCell::new(plan))))
+}
+
+fn dense_fill_admission(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    let selection = crate::stencil_dense_array_fill::select_dense_fill(code, entries, cfg, pc)?;
+    let plan = crate::stencil_dense_array_fill::NativeDenseFillPlan::new(
+        selection,
+        policy,
+        Rc::clone(arena),
+    )?;
+    Some(NativeAdmission::DenseFill(Rc::new(RefCell::new(plan))))
 }
 
 fn dense_copy_admission(
@@ -6546,6 +6568,10 @@ fn collect_admissions_at(
     );
     builder.push_optional(
         pc,
+        dense_fill_admission(code, entries, cfg, pc, policy, arena),
+    );
+    builder.push_optional(
+        pc,
         dense_copy_admission(code, entries, cfg, pc, policy, arena),
     );
     builder.push_optional(
@@ -6677,6 +6703,7 @@ impl BaselinePlan {
         let classify = self.number_classify_at(0).is_some();
         let nullish_truthy = self.nullish_truthy_at(0).is_some();
         let missing_property = self.missing_property_at(0).is_some();
+        let fill = self.dense_fill_at(0).is_some();
         let dense = self.dense_update_at(0).is_some();
         let copy = self.dense_copy_at(0).is_some();
         let reduction = self.reduction_at(0).is_some();
@@ -6690,7 +6717,7 @@ impl BaselinePlan {
         let property = self
             .native_local_property_at(0)
             .is_some_and(|plan| plan.borrow().returns());
-        dag || classify || nullish_truthy || missing_property || dense
+        dag || classify || nullish_truthy || missing_property || fill || dense
             || copy
             || reduction
             || i32_pattern
@@ -6757,6 +6784,12 @@ impl BaselinePlan {
         missing_property_at,
         MissingProperty,
         crate::stencil_missing_property::NativeMissingPropertyPlan
+    );
+    typed_admission_accessors!(
+        dense_fill_handle_at,
+        dense_fill_at,
+        DenseFill,
+        crate::stencil_dense_array_fill::NativeDenseFillPlan
     );
     typed_admission_accessors!(
         dense_update_handle_at,
@@ -6930,6 +6963,11 @@ impl OptimizingEntry<'_> {
         missing_property,
         MissingProperty,
         crate::stencil_missing_property::NativeMissingPropertyPlan
+    );
+    optimizing_admission_accessors!(
+        dense_fill,
+        DenseFill,
+        crate::stencil_dense_array_fill::NativeDenseFillPlan
     );
     optimizing_admission_accessors!(
         dense_update,
