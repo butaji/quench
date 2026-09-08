@@ -529,6 +529,9 @@ fn http2_stream(
     execute::set_property_in_place(&stream, "end", http2_capability("streamEnd"));
     execute::set_property_in_place(&stream, "close", http2_capability("streamClose"));
     execute::set_property_in_place(&stream, "respond", http2_capability("streamRespond"));
+    execute::set_property_in_place(&stream, "setEncoding", http2_capability("streamSetEncoding"));
+    execute::set_property_in_place(&stream, "resume", http2_capability("streamResume"));
+    execute::set_property_in_place(&stream, "pause", http2_capability("streamPause"));
     execute::set_property_in_place(&stream, "session", socket.clone());
     execute::set_property_in_place(&stream, "rstCode", Value::Number(0.0));
     execute::set_property_in_place(&streams, &key, stream.clone());
@@ -541,10 +544,14 @@ fn dispatch_http2_frames(
     frames: &[crate::modules::http2_protocol::Frame],
 ) -> Result<(), VmError> {
     let socket_js = socket.borrow().js.clone();
-    let is_server = matches!(
-        execute::get_property(&socket_js, crate::modules::http2_protocol::SERVER_MARKER),
-        Value::Boolean(true)
-    );
+    let is_server = socket
+        .borrow()
+        .server_id
+        .is_some_and(|server_id| state.borrow().net.http2_servers.contains(&server_id))
+        || matches!(
+            execute::get_property(&socket_js, crate::modules::http2_protocol::SERVER_MARKER),
+            Value::Boolean(true)
+        );
     // `Session::feed` may complete a header block on a CONTINUATION frame;
     // consume completed blocks once per stream instead of assuming the first
     // HEADERS frame is self-contained.  Preserve the stream/end flags from
@@ -566,6 +573,16 @@ fn dispatch_http2_frames(
                 | crate::modules::http2_protocol::FrameType::Continuation
         ) {
             *header_flags.entry(frame.header.stream_id).or_default() |= frame.header.flags;
+        } else if matches!(
+            frame.header.kind,
+            crate::modules::http2_protocol::FrameType::Data
+        ) && frame.header.flags & 1 != 0
+        {
+            // A zero-length DATA with END_STREAM is how `request().end()`
+            // terminates a header-only request in this transport. Surface
+            // the canonical Node stream flag (END_HEADERS|END_STREAM) on the
+            // preceding `stream` event.
+            *header_flags.entry(frame.header.stream_id).or_default() |= 1;
         }
     }
     let mut processed_headers = std::collections::HashSet::new();
@@ -610,9 +627,41 @@ fn dispatch_http2_frames(
                     ),
                 ];
                 if is_server {
-                    let server = execute::get_property(&socket_js, "server");
+                    let server = socket
+                        .borrow()
+                        .server_id
+                        .and_then(|server_id| {
+                            state
+                                .borrow()
+                                .net
+                                .servers
+                                .get(&server_id)
+                                .map(|entry| entry.borrow().js.clone())
+                        })
+                        .unwrap_or_else(|| execute::get_property(&socket_js, "server"));
                     if fresh && matches!(server, Value::Object(_) | Value::ObjectAlias(_)) {
-                        emit_server_scoped(state, &server, "stream", args)?;
+                        let request_listener = socket
+                            .borrow()
+                            .server_id
+                            .and_then(|server_id| {
+                                state
+                                    .borrow()
+                                    .net
+                                    .http2_request_listeners
+                                    .get(&server_id)
+                                    .cloned()
+                            })
+                            .unwrap_or_else(|| {
+                                execute::get_property(
+                                    &server,
+                                    "\0quench:http2-request-listener",
+                                )
+                            });
+                        if quench_runtime::is_callable(&request_listener) {
+                            execute::call(&request_listener, &server, &args)?;
+                        } else {
+                            emit_server_scoped(state, &server, "stream", args)?;
+                        }
                     }
                 } else if fresh {
                     emit_socket_scoped(state, socket, &socket_js, "stream", args)?;
@@ -632,12 +681,25 @@ fn dispatch_http2_frames(
             }
             crate::modules::http2_protocol::FrameType::Data => {
                 let (stream, _) = http2_stream(state, &socket_js, stream_id)?;
+                if frame.payload.is_empty() {
+                    if frame.header.flags & 1 != 0 {
+                        emit_socket_scoped(state, socket, &stream, "end", Vec::new())?;
+                        emit_socket_scoped(state, socket, &stream, "close", Vec::new())?;
+                    }
+                    continue;
+                }
+                let data = match execute::get_property(&stream, "encoding") {
+                    Value::String(encoding) if encoding == "utf8" || encoding == "utf-8" => {
+                        Value::String(String::from_utf8_lossy(&frame.payload).into_owned())
+                    }
+                    _ => host_api::bytes(&frame.payload),
+                };
                 emit_socket_scoped(
                     state,
                     socket,
                     &stream,
                     "data",
-                    vec![host_api::bytes(&frame.payload)],
+                    vec![data],
                 )?;
                 if frame.header.flags & 1 != 0 {
                     emit_socket_scoped(state, socket, &stream, "end", Vec::new())?;
@@ -729,13 +791,19 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
                 Value::Boolean(true),
             );
         }
-        let is_http2 = matches!(
-            execute::get_property(&js, crate::modules::http2_protocol::CLIENT_MARKER),
-            Value::Boolean(true)
-        ) || matches!(
-            execute::get_property(&js, crate::modules::http2_protocol::SERVER_MARKER),
-            Value::Boolean(true)
-        );
+        let is_http2 = state
+            .borrow()
+            .net
+            .http2_sessions
+            .contains_key(&sock.borrow().id)
+            || matches!(
+                execute::get_property(&js, crate::modules::http2_protocol::CLIENT_MARKER),
+                Value::Boolean(true)
+            )
+            || matches!(
+                execute::get_property(&js, crate::modules::http2_protocol::SERVER_MARKER),
+                Value::Boolean(true)
+            );
         if is_http2 && !protocol_frames.is_empty() {
             dispatch_http2_frames(state, &sock, &protocol_frames)?;
         }

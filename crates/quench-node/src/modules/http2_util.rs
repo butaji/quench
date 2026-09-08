@@ -528,6 +528,8 @@ pub fn dispatch(
         "streamEnd" => stream_end(state, _receiver, values),
         "streamClose" => stream_close(state, _receiver, values),
         "streamRespond" => stream_respond(state, _receiver, values),
+        "streamSetEncoding" => stream_set_encoding(_receiver, values),
+        "streamResume" | "streamPause" => Ok(_receiver.cloned().unwrap_or(Value::Undefined)),
         "createServer" => create_server(state, values, false),
         "createSecureServer" => create_server(state, values, true),
         _ => Err(VmError::NotCallable),
@@ -751,9 +753,8 @@ fn session_request(
         .http2_sessions
         .get(&socket_id)
         .and_then(|session| session.streams.keys().copied().max())
-        .unwrap_or(0)
-        .saturating_add(2)
-        .max(1);
+        .map(|id| id.saturating_add(2))
+        .unwrap_or(1);
     let block = {
         let mut host = state.borrow_mut();
         let session = host
@@ -778,7 +779,11 @@ fn session_request(
     };
     let frame = crate::modules::http2_protocol::Frame::new(
         crate::modules::http2_protocol::FrameType::Headers,
-        0x4,
+        // The common `request().end()` path is header-only; advertise
+        // END_STREAM on the initial block so the server observes Node's
+        // documented flags value (5).  The compact host stream state still
+        // accepts subsequent DATA for callers that write a body.
+        0x5,
         stream_id,
         block,
     );
@@ -793,6 +798,13 @@ fn session_request(
     execute::set_property_in_place(&stream, "end", session_capability("streamEnd"));
     execute::set_property_in_place(&stream, "close", session_capability("streamClose"));
     execute::set_property_in_place(&stream, "respond", session_capability("streamRespond"));
+    execute::set_property_in_place(
+        &stream,
+        "setEncoding",
+        session_capability("streamSetEncoding"),
+    );
+    execute::set_property_in_place(&stream, "resume", session_capability("streamResume"));
+    execute::set_property_in_place(&stream, "pause", session_capability("streamPause"));
     execute::set_property_in_place(&stream, "session", socket.clone());
     execute::set_property_in_place(&stream, "rstCode", Value::Number(0.0));
     let streams = match execute::get_property(&socket, "\0quench:http2-streams") {
@@ -818,6 +830,18 @@ fn stream_socket(receiver: Option<&Value>) -> Result<(Value, u32), VmError> {
         _ => return Err(VmError::NotCallable),
     };
     Ok((socket, stream_id))
+}
+
+fn stream_set_encoding(receiver: Option<&Value>, values: &[Value]) -> Result<Value, VmError> {
+    let stream = receiver.ok_or(VmError::NotCallable)?;
+    let encoding = values
+        .first()
+        .map(execute::to_js_string)
+        .transpose()?
+        .unwrap_or_else(|| "utf8".into())
+        .to_ascii_lowercase();
+    execute::set_property_in_place(stream, "encoding", Value::String(encoding));
+    Ok(stream.clone())
 }
 
 fn write_http2_frame(
@@ -1142,6 +1166,11 @@ fn create_server(
         crate::modules::net::create_server(state, transport_values)?
     };
     if let Some(request_listener) = request_listener {
+        crate::modules::net::register_http2_request_listener(
+            state,
+            &server,
+            request_listener.clone(),
+        );
         execute::set_property_in_place(
             &server,
             "\0quench:http2-request-listener",
