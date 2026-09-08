@@ -477,7 +477,18 @@ fn http2_headers_value(fields: &[(Vec<u8>, Vec<u8>)]) -> Value {
     let headers = host_api::object(Vec::new());
     for (name, value) in fields {
         let key = String::from_utf8_lossy(name).into_owned();
-        let value = Value::String(String::from_utf8_lossy(value).into_owned());
+        // Node exposes the response `:status` pseudo-header as a number;
+        // ordinary and request pseudo-headers remain strings.  Keeping this
+        // conversion at the single wire-to-JS boundary prevents every
+        // response consumer from having to reinterpret the HPACK bytes.
+        let value = if key == ":status" {
+            String::from_utf8_lossy(value)
+                .parse::<f64>()
+                .map(Value::Number)
+                .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(value).into_owned()))
+        } else {
+            Value::String(String::from_utf8_lossy(value).into_owned())
+        };
         let previous = execute::get_property(&headers, &key);
         let next = match previous {
             Value::Undefined => value,
@@ -503,6 +514,17 @@ fn http2_stream(
     socket: &Value,
     stream_id: u32,
 ) -> Result<(Value, bool), VmError> {
+    if let Some(socket_id) = crate::modules::net::net_id(socket) {
+        if let Some(existing) = state
+            .borrow()
+            .net
+            .http2_streams
+            .get(&(socket_id, stream_id))
+            .cloned()
+        {
+            return Ok((existing, false));
+        }
+    }
     let streams = match execute::get_property(socket, "\0quench:http2-streams") {
         Value::Object(_) | Value::ObjectAlias(_) => {
             execute::get_property(socket, "\0quench:http2-streams")
@@ -529,11 +551,22 @@ fn http2_stream(
     execute::set_property_in_place(&stream, "end", http2_capability("streamEnd"));
     execute::set_property_in_place(&stream, "close", http2_capability("streamClose"));
     execute::set_property_in_place(&stream, "respond", http2_capability("streamRespond"));
-    execute::set_property_in_place(&stream, "setEncoding", http2_capability("streamSetEncoding"));
+    execute::set_property_in_place(
+        &stream,
+        "setEncoding",
+        http2_capability("streamSetEncoding"),
+    );
     execute::set_property_in_place(&stream, "resume", http2_capability("streamResume"));
     execute::set_property_in_place(&stream, "pause", http2_capability("streamPause"));
     execute::set_property_in_place(&stream, "session", socket.clone());
     execute::set_property_in_place(&stream, "rstCode", Value::Number(0.0));
+    if let Some(socket_id) = crate::modules::net::net_id(socket) {
+        state
+            .borrow_mut()
+            .net
+            .http2_streams
+            .insert((socket_id, stream_id), stream.clone());
+    }
     execute::set_property_in_place(&streams, &key, stream.clone());
     Ok((stream, true))
 }
@@ -674,7 +707,12 @@ fn dispatch_http2_frames(
                         vec![http2_headers_value(&fields)],
                     )?;
                 }
-                if header_flags.get(&stream_id).copied().unwrap_or(frame.header.flags) & 1 != 0 {
+                // `header_flags` also includes a later DATA frame so the
+                // callback can observe Node's flags value (5).  END_STREAM
+                // belongs to this HEADERS frame only when it is set on the
+                // frame itself; using the aggregate here would emit a
+                // duplicate `end`/`close` before DATA is dispatched.
+                if frame.header.flags & 1 != 0 {
                     emit_socket_scoped(state, socket, &stream, "end", Vec::new())?;
                     emit_socket_scoped(state, socket, &stream, "close", Vec::new())?;
                 }
