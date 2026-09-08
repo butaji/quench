@@ -107,6 +107,7 @@ fn leaf_policy() -> crate::stencil_policy::ExecutionPolicy {
         array_kernels: false,
         array_numeric_loops: false,
         affine_i32_loops: false,
+        numeric_f64_loops: false,
         optimizing_view: false,
     }
 }
@@ -120,6 +121,7 @@ fn disabled_policy() -> crate::stencil_policy::ExecutionPolicy {
         array_kernels: false,
         array_numeric_loops: false,
         affine_i32_loops: false,
+        numeric_f64_loops: false,
         optimizing_view: false,
     }
 }

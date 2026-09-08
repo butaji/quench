@@ -237,6 +237,66 @@ q_numeric_integer_loop_end:
 );
 "##;
 
+const AARCH64_NUMERIC_FLOATING_LOOP: &str = r##"#![no_std]
+use core::arch::global_asm;
+
+#[repr(C)]
+struct FloatingLoopContext {
+    index: usize,
+    end: usize,
+    value: f64,
+    multiplier: f64,
+    divisor: f64,
+    modulus: usize,
+    interrupt: *const u8,
+}
+
+global_asm!(r#"
+.text
+.p2align 2
+.globl q_numeric_floating_loop
+q_numeric_floating_loop:
+  ldr x1, [x0, #{index}]
+  ldr x2, [x0, #{end}]
+  ldr d0, [x0, #{value}]
+  ldr d1, [x0, #{multiplier}]
+  ldr d3, [x0, #{divisor}]
+  ldr x3, [x0, #{modulus}]
+1:
+  cmp x1, x2
+  b.hs 2f
+  fmul d0, d0, d1
+  udiv x4, x1, x3
+  msub x4, x4, x3, x1
+  ucvtf d4, x4
+  fdiv d4, d4, d3
+  fadd d0, d0, d4
+  add x1, x1, #1
+  str x1, [x0, #{index}]
+  ldr x5, [x0, #{interrupt}]
+  ldrb w6, [x5]
+  cbnz w6, 3f
+  b 1b
+2:
+  str d0, [x0, #{value}]
+  mov w0, #1
+  ret
+3:
+  str d0, [x0, #{value}]
+  mov w0, #4
+  ret
+q_numeric_floating_loop_end:
+"#,
+    index = const core::mem::offset_of!(FloatingLoopContext, index),
+    end = const core::mem::offset_of!(FloatingLoopContext, end),
+    value = const core::mem::offset_of!(FloatingLoopContext, value),
+    multiplier = const core::mem::offset_of!(FloatingLoopContext, multiplier),
+    divisor = const core::mem::offset_of!(FloatingLoopContext, divisor),
+    modulus = const core::mem::offset_of!(FloatingLoopContext, modulus),
+    interrupt = const core::mem::offset_of!(FloatingLoopContext, interrupt),
+);
+"##;
+
 fn compare_branch_source(name: &str, condition: &str, unordered_true: bool) -> String {
     let unordered = if unordered_true { "1f" } else { "2f" };
     format!(
@@ -481,6 +541,7 @@ pub(crate) fn assembly_source(recipe: super::RustAssemblyRecipe) -> String {
         ArrayNumericFillLoop => AARCH64_ARRAY_FILL_LOOP.to_owned(),
         AffineI32Loop => AARCH64_AFFINE_I32_LOOP.to_owned(),
         NumericIntegerLoop => AARCH64_NUMERIC_INTEGER_LOOP.to_owned(),
+        NumericFloatingLoop => AARCH64_NUMERIC_FLOATING_LOOP.to_owned(),
         Property => AARCH64_PROPERTY_READ.to_owned(),
         PrototypeProperty => AARCH64_PROTOTYPE_PROPERTY.to_owned(),
         StoreProperty => AARCH64_PROPERTY_WRITE.to_owned(),

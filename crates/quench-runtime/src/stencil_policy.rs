@@ -124,6 +124,7 @@ pub(crate) struct ExecutionPolicy {
     pub(crate) array_kernels: bool,
     pub(crate) array_numeric_loops: bool,
     pub(crate) affine_i32_loops: bool,
+    pub(crate) numeric_f64_loops: bool,
     pub(crate) optimizing_view: bool,
 }
 
@@ -136,6 +137,7 @@ impl ExecutionPolicy {
             || self.array_kernels
             || self.array_numeric_loops
             || self.affine_i32_loops
+            || self.numeric_f64_loops
     }
 
     /// Local fusions use leaf templates as implementation components without
@@ -156,6 +158,7 @@ impl ExecutionPolicy {
             RegionAbi::ArrayCopyLoop => false,
             RegionAbi::ArrayReductionLoop => false,
             RegionAbi::AffineI32Loop => self.affine_i32_loops,
+            RegionAbi::NumericF64Loop => self.numeric_f64_loops,
             _ => false,
         }
     }
@@ -184,6 +187,7 @@ impl ExecutionPolicy {
             array_kernels: false,
             array_numeric_loops: false,
             affine_i32_loops: false,
+            numeric_f64_loops: false,
             optimizing_view: false,
         }
     }
@@ -207,6 +211,7 @@ impl ExecutionPolicy {
                 array_kernels: true,
                 array_numeric_loops: true,
                 affine_i32_loops: true,
+                numeric_f64_loops: true,
                 optimizing_view: true,
             },
             Architecture::Aarch64 => Self {
@@ -226,6 +231,10 @@ impl ExecutionPolicy {
                     arm_mode,
                     ArmMode::AffineLoop | ArmMode::Composed | ArmMode::All
                 ),
+                numeric_f64_loops: matches!(
+                    arm_mode,
+                    ArmMode::AffineLoop | ArmMode::Composed | ArmMode::All
+                ),
                 // The AArch64 optimizing driver is not a distinct physical
                 // contract: enabling it can re-enter structured fragments at
                 // the wrong semantic boundary. Keep the verified leaves and
@@ -242,6 +251,7 @@ impl ExecutionPolicy {
                 array_kernels: false,
                 array_numeric_loops: false,
                 affine_i32_loops: false,
+                numeric_f64_loops: false,
                 optimizing_view: false,
             },
         }
@@ -304,6 +314,7 @@ mod tests {
                 array_kernels: true,
                 array_numeric_loops: true,
                 affine_i32_loops: true,
+                numeric_f64_loops: true,
                 optimizing_view: true,
             }
         );
@@ -317,6 +328,7 @@ mod tests {
                 array_kernels: false,
                 array_numeric_loops: false,
                 affine_i32_loops: false,
+                numeric_f64_loops: false,
                 optimizing_view: false,
             }
         );
@@ -330,6 +342,7 @@ mod tests {
                 array_kernels: true,
                 array_numeric_loops: true,
                 affine_i32_loops: true,
+                numeric_f64_loops: true,
                 optimizing_view: false,
             }
         );

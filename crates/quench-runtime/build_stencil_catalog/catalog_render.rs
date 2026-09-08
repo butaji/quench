@@ -257,6 +257,9 @@ fn abi_expr(declaration: &RegionDeclaration) -> &'static str {
         DeclAbi::AffineI32Loop if target_is_aarch64 => {
             "crate::stencil_select::RegionAbi::AffineI32Loop"
         }
+        DeclAbi::NumericF64Loop if target_is_aarch64 => {
+            "crate::stencil_select::RegionAbi::NumericF64Loop"
+        }
         DeclAbi::CompareBranch if target_is_aarch64 => {
             "crate::stencil_select::RegionAbi::CompareBranch"
         }
@@ -267,6 +270,7 @@ fn abi_expr(declaration: &RegionDeclaration) -> &'static str {
         | DeclAbi::ArrayCopyLoop
         | DeclAbi::ArrayReductionLoop
         | DeclAbi::AffineI32Loop
+        | DeclAbi::NumericF64Loop
         | DeclAbi::CompareBranch => {
             "crate::stencil_select::RegionAbi::Bridge"
         }
@@ -341,6 +345,11 @@ fn abi_contract_fields(abi: DeclAbi) -> (&'static str, bool, &'static str) {
             true,
             "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0x00ff, live_out_mask: 0x0003, root_materialization_required: false",
         ),
+        DeclAbi::NumericF64Loop => (
+            "NumericF64Loop",
+            true,
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x001f, hardware_gpr_clobber_mask: 0x007f, live_out_mask: 0x0003, root_materialization_required: false",
+        ),
         DeclAbi::CompareBranch => (
             "CompareBranch",
             true,
@@ -378,6 +387,7 @@ fn abi_variant_name(abi: DeclAbi) -> &'static str {
         DeclAbi::ArrayCopyLoop => "ArrayCopyLoop",
         DeclAbi::ArrayReductionLoop => "ArrayReductionLoop",
         DeclAbi::AffineI32Loop => "AffineI32Loop",
+        DeclAbi::NumericF64Loop => "NumericF64Loop",
         DeclAbi::CompareBranch => "CompareBranch",
         DeclAbi::PropertyGuard => "PropertyGuard",
         DeclAbi::PropertyWriteGuard => "PropertyWriteGuard",
