@@ -268,6 +268,11 @@ rust_assembly_catalog! {
         ops: ["Binary", "Jump"],
         x86: &[], aarch64: &[], x86_holes: &[], aarch64_holes: &[]
     },
+    NumericIndependentLoop {
+        name: "numeric_independent_loop", abi: NumericI32PairLoop,
+        ops: ["Mul", "Add", "Binary", "Jump"],
+        x86: &[], aarch64: &[], x86_holes: &[], aarch64_holes: &[]
+    },
     Property {
         name: "property", abi: PropertyGuard, ops: ["GetN"],
         x86: &X86_PROPERTY_BYTES, aarch64: &AARCH64_PROPERTY_GUARD_BYTES,
