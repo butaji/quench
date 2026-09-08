@@ -16,7 +16,19 @@ pub(crate) struct InitialNumber {
 pub(crate) struct CountedFunctionFacts<T> {
     pub(crate) initials: Vec<InitialNumber>,
     pub(crate) loop_cover: T,
-    pub(crate) returned_slot: u16,
+    pub(crate) returned: ReturnedLocal,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ReturnedLocal {
+    pub(crate) slot: u16,
+    pub(crate) representation: ReturnedRepresentation,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ReturnedRepresentation {
+    Direct,
+    U32,
 }
 
 pub(crate) fn select<T>(
@@ -25,18 +37,19 @@ pub(crate) fn select<T>(
 ) -> Option<CountedFunctionFacts<T>> {
     let mut state = FunctionState::new(cover);
     for pc in 0..code.len() {
-        state.push(code, pc, code.instruction(pc)?)?;
+        let instruction = code.instruction(pc)?;
+        state.push(code, pc, instruction)?;
     }
     state.finish()
 }
 
 struct FunctionState<F, T> {
     constants: BTreeMap<u16, f64>,
-    locals: BTreeMap<u16, u16>,
+    locals: BTreeMap<u16, ReturnedLocal>,
     initials: Vec<InitialNumber>,
     cover: Option<F>,
     loop_cover: Option<T>,
-    returned_slot: Option<u16>,
+    returned: Option<ReturnedLocal>,
 }
 
 impl<F, T> FunctionState<F, T>
@@ -50,7 +63,7 @@ where
             initials: Vec::new(),
             cover: Some(cover),
             loop_cover: None,
-            returned_slot: None,
+            returned: None,
         }
     }
 
@@ -64,18 +77,41 @@ where
             Opcode::LoadConst => self.load_constant(code, instruction),
             Opcode::InitLocal => self.initialize(instruction),
             Opcode::LoadLocal | Opcode::LoadLocalChecked => {
-                self.locals.insert(instruction.a, instruction.b);
+                self.locals.insert(
+                    instruction.a,
+                    ReturnedLocal {
+                        slot: instruction.b,
+                        representation: ReturnedRepresentation::Direct,
+                    },
+                );
                 Some(())
             }
+            Opcode::Binary => self.binary(instruction),
             Opcode::Return => {
-                if let Some(slot) = self.locals.get(&instruction.a) {
-                    self.returned_slot = Some(*slot);
+                if let Some(returned) = self.locals.get(&instruction.a) {
+                    self.returned = Some(*returned);
                 }
                 Some(())
             }
             Opcode::Slow => self.slow(code, pc),
             _ => None,
         }
+    }
+
+    fn binary(&mut self, instruction: crate::ir::Instruction) -> Option<()> {
+        let operator = crate::ir::compact_binary_operator(instruction.flags)?;
+        (operator == crate::ops::BinaryOp::ShiftRightZeroFill).then_some(())?;
+        let source = self.locals.get(&instruction.b).copied()?;
+        let shift = self.constants.get(&instruction.c)?;
+        (shift.to_bits() == 0.0f64.to_bits()).then_some(())?;
+        self.locals.insert(
+            instruction.a,
+            ReturnedLocal {
+                slot: source.slot,
+                representation: ReturnedRepresentation::U32,
+            },
+        );
+        Some(())
     }
 
     fn load_constant(
@@ -136,7 +172,7 @@ where
         Some(CountedFunctionFacts {
             initials: self.initials,
             loop_cover: self.loop_cover?,
-            returned_slot: self.returned_slot?,
+            returned: self.returned?,
         })
     }
 }

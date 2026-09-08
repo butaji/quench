@@ -170,6 +170,7 @@ mod stencil_fusion_store_tests;
 #[cfg(test)]
 mod stencil_fusion_tests;
 mod stencil_i32_pattern;
+mod stencil_increasing_i32_recurrence;
 mod stencil_installation;
 mod stencil_layout;
 pub mod stencil_lifecycle;

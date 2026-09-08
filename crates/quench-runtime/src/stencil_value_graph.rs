@@ -1,7 +1,9 @@
 //! Bounded disposable value/use graph; it owns neither JS semantics nor durable state.
 
 use crate::ir::{Instruction, Opcode, Register};
-use crate::stencil_plan::{fold_numeric_sources, numeric_operation, NumericSource, MAX_BLOCK_VALUES};
+use crate::stencil_plan::{
+    fold_numeric_sources, numeric_operation, NumericSource, MAX_BLOCK_VALUES,
+};
 
 const MAX_VALUE_GRAPH_CAPACITY: usize = u8::MAX as usize;
 
@@ -198,9 +200,9 @@ impl<const CAPACITY: usize> ValueGraph<CAPACITY> {
             Opcode::LoadConst if pure(instruction.opcode) => Some(ValueDefinition::Source(
                 NumericSource::Constant(constant_bits(instruction.b)?),
             )),
-            Opcode::Move if instruction.flags == 0 && pure(instruction.opcode) => {
-                Some(ValueDefinition::Alias(self.canonical(self.current(instruction.b)?)?))
-            }
+            Opcode::Move if instruction.flags == 0 && pure(instruction.opcode) => Some(
+                ValueDefinition::Alias(self.canonical(self.current(instruction.b)?)?),
+            ),
             Opcode::Unary
                 if instruction.flags == crate::ir::compact_unary_id(crate::ops::UnaryOp::Minus) =>
             {
@@ -234,7 +236,6 @@ impl<const CAPACITY: usize> ValueGraph<CAPACITY> {
         constant_bits: impl FnOnce(u16) -> Option<u64>,
     ) -> Option<ValueDefinition> {
         let source = self.canonical(self.current(instruction.b)?)?;
-        matches!(self.resolve(source)?, NumericSource::Constant(_)).then_some(())?;
         Some(ValueDefinition::AddConstant {
             source,
             bits: constant_bits(instruction.c)?,
