@@ -43,6 +43,13 @@ pub(crate) fn client_preface() -> Vec<u8> {
 /// internal util module keeps session and test-side property access identical.
 pub(crate) const HTTP2_SOCKET_SYMBOL: &str = "Symbol.nodejs.http2.kSocket\0quench";
 
+fn http2_capability(kind: &str) -> Value {
+    host_api::bound_capability_with_arguments(
+        crate::host::capability_ref(crate::registry::SPEC_INTERNAL_HTTP2_UTIL),
+        vec![Value::String(kind.into())],
+    )
+}
+
 pub(crate) fn coded_error(
     kind: quench_runtime::ops::Builtin,
     code: &str,
@@ -552,6 +559,10 @@ pub fn dispatch(
         "streamPushStream" => stream_push_stream(state, _receiver, values),
         "streamSetEncoding" => stream_set_encoding(state, _receiver, values),
         "streamResume" | "streamPause" => Ok(_receiver.cloned().unwrap_or(Value::Undefined)),
+        "compatResponseWriteHead" => compat_response_write_head(state, _receiver, values),
+        "compatResponseWrite" => compat_response_write(state, _receiver, values),
+        "compatResponseEnd" => compat_response_end(state, _receiver, values),
+        "compatResponseDestroy" => compat_response_destroy(state, _receiver, values),
         "createServer" => create_server(state, values, false),
         "createSecureServer" => create_server(state, values, true),
         _ => Err(VmError::NotCallable),
@@ -1398,6 +1409,174 @@ fn stream_end(
         if let Some(callback) = values.get(1).filter(|value| quench_runtime::is_callable(value)) {
             execute::call(callback, &stream, &[])?;
         }
+    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+/// Build the `(Http2ServerRequest, Http2ServerResponse)` pair delivered by
+/// `http2.createServer`'s compatibility callback.  The wire parser already
+/// owns the canonical stream and transport socket; these two objects are
+/// only the public request/response views over those identities.
+pub(crate) fn compat_server_request_response(
+    state: &Rc<RefCell<HostState>>,
+    stream: &Value,
+    headers: &Value,
+) -> Result<(Value, Value), VmError> {
+    let socket = execute::get_property(stream, "\0quench:http2-socket");
+    let mut request = crate::modules::events::new_emitter_object(state)?;
+    let method = execute::get_property(headers, ":method");
+    let path = execute::get_property(headers, ":path");
+    for (name, value) in [
+        ("method", method),
+        (
+            "url",
+            if matches!(path, Value::Undefined) {
+                Value::String("/".into())
+            } else {
+                path
+            },
+        ),
+        ("httpVersion", Value::String("2.0".into())),
+        ("httpVersionMajor", Value::Number(2.0)),
+        ("httpVersionMinor", Value::Number(0.0)),
+        ("headers", headers.clone()),
+        ("trailers", host_api::object(Vec::new())),
+        ("rawTrailers", host_api::array(Vec::new())),
+        ("socket", socket.clone()),
+        ("connection", socket.clone()),
+        ("complete", Value::Boolean(false)),
+        ("aborted", Value::Boolean(false)),
+        ("destroyed", Value::Boolean(false)),
+        ("readable", Value::Boolean(true)),
+    ] {
+        execute::set_property_in_place(&request, name, value);
+    }
+    for (name, method) in [
+        ("pause", execute::get_property(stream, "pause")),
+        ("resume", execute::get_property(stream, "resume")),
+        ("destroy", execute::get_property(stream, "destroy")),
+    ] {
+        execute::set_property_in_place(&request, name, method);
+    }
+
+    let mut response = crate::modules::events::new_emitter_object(state)?;
+    for (name, value) in [
+        ("socket", socket.clone()),
+        ("connection", socket),
+        ("req", request.clone()),
+        ("statusCode", Value::Number(200.0)),
+        ("headersSent", Value::Boolean(false)),
+        ("finished", Value::Boolean(false)),
+        ("writableEnded", Value::Boolean(false)),
+        ("destroyed", Value::Boolean(false)),
+        ("closed", Value::Boolean(false)),
+        ("\0quench:http2-compat-stream", stream.clone()),
+    ] {
+        execute::set_property_in_place(&response, name, value);
+    }
+    for (name, method) in [
+        (
+            "writeHead",
+            http2_capability("compatResponseWriteHead"),
+        ),
+        ("write", http2_capability("compatResponseWrite")),
+        ("end", http2_capability("compatResponseEnd")),
+        ("destroy", http2_capability("compatResponseDestroy")),
+    ] {
+        execute::set_property_in_place(&response, name, method);
+    }
+    Ok((request, response))
+}
+
+fn compat_response_stream(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let response = receiver.ok_or(VmError::NotCallable)?;
+    let stream = execute::get_property(response, "\0quench:http2-compat-stream");
+    if matches!(stream, Value::Object(_) | Value::ObjectAlias(_)) {
+        Ok(stream)
+    } else {
+        Err(VmError::NotCallable)
+    }
+}
+
+fn compat_response_write_head(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let stream = compat_response_stream(receiver)?;
+    let status = values
+        .first()
+        .cloned()
+        .unwrap_or(Value::Number(200.0));
+    let headers = match values.get(1) {
+        Some(Value::Object(_) | Value::ObjectAlias(_)) => {
+            // Do not add the response pseudo-header to the request's own
+            // header object when the caller passed a mutable map.
+            host_api::object(
+                execute::own_enumerable_keys(&values[1])
+                    .into_iter()
+                    .map(|key| {
+                        let value = execute::get_property(&values[1], &key);
+                        (key, value)
+                    })
+                    .collect(),
+            )
+        }
+        _ => host_api::object(Vec::new()),
+    };
+    execute::set_property_in_place(&headers, ":status", status);
+    stream_respond(state, Some(&stream), &[headers])?;
+    if let Some(response) = receiver {
+        execute::set_property_in_place(response, "headersSent", Value::Boolean(true));
+        execute::set_property_in_place(
+            response,
+            "statusCode",
+            values.first().cloned().unwrap_or(Value::Number(200.0)),
+        );
+    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+fn compat_response_write(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let stream = compat_response_stream(receiver)?;
+    stream_write(state, Some(&stream), values)?;
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+fn compat_response_end(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let stream = compat_response_stream(receiver)?;
+    stream_end(state, Some(&stream), values)?;
+    if let Some(response) = receiver {
+        execute::set_property_in_place(response, "finished", Value::Boolean(true));
+        execute::set_property_in_place(response, "writableEnded", Value::Boolean(true));
+        execute::set_property_in_place(response, "closed", Value::Boolean(true));
+        state
+            .borrow_mut()
+            .net
+            .pending_events
+            .push((response.clone(), "finish".into(), Vec::new()));
+    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+fn compat_response_destroy(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let stream = compat_response_stream(receiver)?;
+    stream_destroy(state, Some(&stream), values)?;
+    if let Some(response) = receiver {
+        execute::set_property_in_place(response, "destroyed", Value::Boolean(true));
+        execute::set_property_in_place(response, "closed", Value::Boolean(true));
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
