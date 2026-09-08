@@ -149,6 +149,11 @@ pub struct NetState {
     pub auto_select_family_attempt_timeout: u64,
     pub pending_lookups: Vec<PendingLookup>,
     pub pending_events: Vec<(Value, String, Vec<Value>)>,
+    /// HTTP/2 stream terminal events are delivered after the current socket
+    /// poll. This lets a buffered RST_STREAM reach its peer before an error
+    /// callback is allowed to close the session and discard that control
+    /// frame.
+    pub pending_http2_events: Vec<(Value, String, Vec<Value>)>,
     pub paths: HashMap<String, u16>,
     pub pending_writes: Vec<(Value, Vec<u8>)>,
     pub pending_connect_writes: HashMap<u64, Vec<u8>>,
@@ -216,6 +221,7 @@ impl NetState {
             auto_select_family_attempt_timeout: 2500,
             pending_lookups: Vec::new(),
             pending_events: Vec::new(),
+            pending_http2_events: Vec::new(),
             paths: HashMap::new(),
             pending_writes: Vec::new(),
             pending_connect_writes: HashMap::new(),
@@ -244,6 +250,7 @@ pub fn has_work(state: &Rc<RefCell<HostState>>) -> bool {
         server.listening && server.refed && !server.closed
     }) || !host.net.pending_errors.is_empty()
         || !host.net.pending_events.is_empty()
+        || !host.net.pending_http2_events.is_empty()
         || host.net.sockets.values().any(|s| {
             let socket = s.borrow();
             let paused = matches!(
