@@ -24,7 +24,8 @@ const setup = function (n, seed) {
   };
 const operation = function (s) {
       var x = s.seed;
-      for (var i = 0; i < s.n; i++) x = s.f(x);
+      var f = s.f;
+      for (var i = 0; i < s.n; i++) x = f(x);
       return x;
     };
 const check = null;
