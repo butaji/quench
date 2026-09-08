@@ -958,6 +958,15 @@ fn stream_respond(
     if !fields.iter().any(|(name, _)| name.as_slice() == b":status") {
         fields.push((b":status".to_vec(), b"200".to_vec()));
     }
+    // Node's HTTP/2 server adds a Date header by default when responding.
+    // Keep this host-owned response fact in the encoded header block so
+    // clients observe the same shape as the HTTP/1 response path.
+    if !fields.iter().any(|(name, _)| name.as_slice() == b"date") {
+        fields.push((
+            b"date".to_vec(),
+            b"Thu, 01 Jan 1970 00:00:00 GMT".to_vec(),
+        ));
+    }
     let block = {
         let mut host = state.borrow_mut();
         let id = crate::modules::net::net_id(&socket).ok_or(VmError::NotCallable)?;
