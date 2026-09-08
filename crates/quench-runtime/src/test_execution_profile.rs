@@ -23,6 +23,7 @@ pub(crate) struct ExecutionProfile {
 const EXECUTION_CASE_SCHEMA: u32 = 1;
 const PROFILE_RUN_PROPERTY: &str = "run";
 const PROFILE_VERIFY_PROPERTY: &str = "verify";
+const PROFILE_CASE_FILTER: &str = "QUENCH_EXECUTION_PROFILE_CASE";
 
 struct PreparedExecution {
     run: crate::value::Value,
@@ -270,7 +271,13 @@ fn fixture_names() -> Vec<String> {
         })
         .collect::<Vec<_>>();
     names.sort();
-    names
+    match std::env::var(PROFILE_CASE_FILTER) {
+        Ok(filter) => names
+            .into_iter()
+            .filter(|name| name.contains(&filter))
+            .collect(),
+        Err(_) => names,
+    }
 }
 
 fn string_counts(input: &BTreeMap<&'static str, u64>) -> BTreeMap<String, u64> {
@@ -389,6 +396,13 @@ mod tests {
     use super::*;
 
     fn execute_profile(case: &ExecutionCase) -> Result<(crate::value::Value, ExecutionProfile), String> {
+        let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+        crate::stencil_policy::with_policy_for_test(policy, || execute_profile_with_policy(case))
+    }
+
+    fn execute_profile_with_policy(
+        case: &ExecutionCase,
+    ) -> Result<(crate::value::Value, ExecutionProfile), String> {
         let program = crate::reduce::reduce_source(case.source())
             .map_err(|errors| format!("lowering failed: {}", errors.join("; ")))?;
         let context = crate::vm::current_context_or_default();
