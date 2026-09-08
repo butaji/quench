@@ -4,13 +4,22 @@
   "result": { "kind": "number", "value": 83 },
   "plan": {
     "execution_kind": "native_machine_code",
-    "operation_route": ["GetNQuickened", "AddConst", "Return"],
+    "operation_route": [
+      "ShapeGuard",
+      "FieldLoad",
+      "AddConst",
+      "ShapeGuard",
+      "FieldLoad",
+      "AddConst",
+      "Add",
+      "Return"
+    ],
     "fallback": false
   },
   "profile": {
     "residual": {},
     "slow": {},
-    "stencils": { "polymorphic_property_add_const_return": { "entries": 2, "fallbacks": 0 } },
-    "events": { "leaf_hit": 2 }
+    "stencils": { "polymorphic_property_pair_sum_return": { "entries": 1, "fallbacks": 0 } },
+    "events": { "leaf_hit": 1 }
   }
 }
