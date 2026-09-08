@@ -2615,11 +2615,22 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
         // pre-entry miss and falls through to the existing per-op handlers;
         // every post-entry outcome is propagated without replay.
         if let Some(native) = plan.native_region_at(pc) {
-            let (region_result, native_executed, region_kind) = {
+            let (region_result, native_executed, region_kind, region_operations) = {
                 let mut native = native.borrow_mut();
                 let result = native.execute(code, pc, registers, context, environment);
-                (result, native.last_native_execution(), native.trace_kind())
+                (
+                    result,
+                    native.last_native_execution(),
+                    native.trace_kind(),
+                    native.trace_operations(),
+                )
             };
+            #[cfg(test)]
+            if native_executed {
+                crate::test_execution_profile::region_route(region_operations);
+            }
+            #[cfg(not(test))]
+            let _ = region_operations;
             crate::execution_trace::stencil_observation(code, pc, region_kind, native_executed);
             match region_result {
                 Ok(transition) => {
