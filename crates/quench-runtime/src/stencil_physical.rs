@@ -43,7 +43,10 @@ mod aarch64 {
     pub(super) const ADD_W_SHIFTED: P = P::new(0x7FE0_0000, 0x0B00_0000);
     pub(super) const SUB_W_SHIFTED: P = P::new(0x7FE0_0000, 0x4B00_0000);
     pub(super) const MUL_W: P = P::new(0xFFE0_FC00, 0x1B00_7C00);
+    pub(super) const SIGNED_DIVIDE_W: P = P::new(0xFFE0_FC00, 0x1AC0_0C00);
+    pub(super) const MULTIPLY_SUBTRACT_W: P = P::new(0xFFE0_8000, 0x1B00_8000);
     pub(super) const ADD_X_IMMEDIATE: P = P::new(0xFFC0_0000, 0x9100_0000);
+    pub(super) const ADD_W_IMMEDIATE: P = P::new(0x7FC0_0000, 0x1100_0000);
     pub(super) const MOVE_W_IMMEDIATE: P = P::new(0xFF80_0000, 0x5280_0000);
     pub(super) const FP_ADD: P = P::new(0xFF20_FC00, 0x1E20_2800);
     pub(super) const FP_SUB: P = P::new(0xFF20_FC00, 0x1E20_3800);
@@ -56,6 +59,7 @@ mod aarch64 {
     pub(super) const CONDITIONAL_SELECT: P = P::new(0xFFE0_07E0, 0x1A80_07E0);
     pub(super) const CONDITIONAL_INCREMENT: P = P::new(0x7FE0_0C00, 0x1A80_0400);
     pub(super) const AND_W: P = P::new(0xFF00_0000, 0x0A00_0000);
+    pub(super) const AND_W_IMMEDIATE: P = P::new(0x7F80_0000, 0x1200_0000);
     pub(super) const OR_W: P = P::new(0xFF00_0000, 0x2A00_0000);
     pub(super) const XOR_W: P = P::new(0xFF00_0000, 0x4A00_0000);
     pub(super) const SHIFT_LEFT_W: P = P::new(0xFFE0_FC00, 0x1AC0_2000);
@@ -166,9 +170,13 @@ pub(crate) fn gpr_clobber_mask(bytes: &[u8]) -> u16 {
                     || aarch64::ADD_W_SHIFTED.matches(encoded)
                     || aarch64::SUB_W_SHIFTED.matches(encoded)
                     || aarch64::MUL_W.matches(encoded)
+                    || aarch64::SIGNED_DIVIDE_W.matches(encoded)
+                    || aarch64::MULTIPLY_SUBTRACT_W.matches(encoded)
                     || aarch64::ADD_X_IMMEDIATE.matches(encoded)
+                    || aarch64::ADD_W_IMMEDIATE.matches(encoded)
                     || aarch64::MOVE_W_IMMEDIATE.matches(encoded)
                     || aarch64::LOAD_BYTE.matches(encoded);
+                let writes_rt = writes_rt || aarch64::AND_W_IMMEDIATE.matches(encoded);
                 let conditional_select = aarch64::CONDITIONAL_INCREMENT.matches(encoded);
                 (writes_rt || conditional_select).then_some((encoded & 0x1f) as u16)
             })
@@ -282,7 +290,10 @@ fn known_aarch64_instruction(encoded: u32) -> bool {
         aarch64::ADD_W_SHIFTED,
         aarch64::SUB_W_SHIFTED,
         aarch64::MUL_W,
+        aarch64::SIGNED_DIVIDE_W,
+        aarch64::MULTIPLY_SUBTRACT_W,
         aarch64::ADD_X_IMMEDIATE,
+        aarch64::ADD_W_IMMEDIATE,
         aarch64::MOVE_W_IMMEDIATE,
         aarch64::DIRECT_BRANCH,
         aarch64::CONDITIONAL_BRANCH,
@@ -300,6 +311,7 @@ fn known_aarch64_instruction(encoded: u32) -> bool {
         aarch64::CONDITIONAL_SELECT,
         aarch64::CONDITIONAL_INCREMENT,
         aarch64::AND_W,
+        aarch64::AND_W_IMMEDIATE,
         aarch64::OR_W,
         aarch64::XOR_W,
         aarch64::SHIFT_LEFT_W,

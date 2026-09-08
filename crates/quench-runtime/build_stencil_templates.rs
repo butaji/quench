@@ -250,6 +250,96 @@ q_i32_counter_loop_end:
 );
 "##;
 
+const AARCH64_BOOLEAN_REDUCTION_LOOP: &str = r##"#![no_std]
+use core::arch::global_asm;
+
+#[repr(C)]
+struct BooleanReductionContext {
+    index: i32,
+    end: i32,
+    count: i32,
+    left_kind: u32,
+    left_operand: i32,
+    left_expected: i32,
+    right_kind: u32,
+    right_operand: i32,
+    right_expected: i32,
+    truth_table: u32,
+    interrupt: *const u8,
+}
+
+global_asm!(r#"
+.text
+.p2align 2
+.globl q_boolean_reduction_loop
+q_boolean_reduction_loop:
+  ldr w1, [x0, #{index}]
+  ldr w2, [x0, #{end}]
+  ldr w3, [x0, #{count}]
+1:
+  cmp w1, w2
+  b.ge 5f
+  ldr w4, [x0, #{left_kind}]
+  ldr w5, [x0, #{left_operand}]
+  ldr w6, [x0, #{left_expected}]
+  cmp w4, #1
+  b.ne 2f
+  and w7, w1, w5
+  b 3f
+2:
+  sdiv w8, w1, w5
+  msub w7, w8, w5, w1
+3:
+  cmp w7, w6
+  cset w7, eq
+  ldr w4, [x0, #{right_kind}]
+  ldr w5, [x0, #{right_operand}]
+  ldr w6, [x0, #{right_expected}]
+  cmp w4, #1
+  b.ne 4f
+  and w8, w1, w5
+  b 6f
+4:
+  sdiv w9, w1, w5
+  msub w8, w9, w5, w1
+6:
+  cmp w8, w6
+  cset w8, eq
+  add w7, w7, w7
+  orr w7, w7, w8
+  ldr w9, [x0, #{truth_table}]
+  lsr w9, w9, w7
+  and w9, w9, #1
+  add w3, w3, w9
+  add w1, w1, #1
+  str w1, [x0, #{index}]
+  str w3, [x0, #{count}]
+  ldr x10, [x0, #{interrupt}]
+  ldrb w11, [x10]
+  cbnz w11, 7f
+  b 1b
+5:
+  mov w0, #1
+  ret
+7:
+  mov w0, #4
+  ret
+q_boolean_reduction_loop_end:
+"#,
+    index = const core::mem::offset_of!(BooleanReductionContext, index),
+    end = const core::mem::offset_of!(BooleanReductionContext, end),
+    count = const core::mem::offset_of!(BooleanReductionContext, count),
+    left_kind = const core::mem::offset_of!(BooleanReductionContext, left_kind),
+    left_operand = const core::mem::offset_of!(BooleanReductionContext, left_operand),
+    left_expected = const core::mem::offset_of!(BooleanReductionContext, left_expected),
+    right_kind = const core::mem::offset_of!(BooleanReductionContext, right_kind),
+    right_operand = const core::mem::offset_of!(BooleanReductionContext, right_operand),
+    right_expected = const core::mem::offset_of!(BooleanReductionContext, right_expected),
+    truth_table = const core::mem::offset_of!(BooleanReductionContext, truth_table),
+    interrupt = const core::mem::offset_of!(BooleanReductionContext, interrupt),
+);
+"##;
+
 const AARCH64_NUMERIC_INTEGER_LOOP: &str = r##"#![no_std]
 use core::arch::global_asm;
 
@@ -778,6 +868,7 @@ pub(crate) fn assembly_source(recipe: super::RustAssemblyRecipe) -> String {
         ArrayNumericFillLoop => AARCH64_ARRAY_FILL_LOOP.to_owned(),
         AffineI32Loop => AARCH64_AFFINE_I32_LOOP.to_owned(),
         I32CounterLoop => AARCH64_I32_COUNTER_LOOP.to_owned(),
+        BooleanReductionLoop => AARCH64_BOOLEAN_REDUCTION_LOOP.to_owned(),
         NumericIntegerLoop => AARCH64_NUMERIC_INTEGER_LOOP.to_owned(),
         NumericFloatingLoop => AARCH64_NUMERIC_FLOATING_LOOP.to_owned(),
         NumericBitwiseLoop => AARCH64_NUMERIC_BITWISE_LOOP.to_owned(),
