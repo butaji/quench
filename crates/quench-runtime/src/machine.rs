@@ -62,6 +62,7 @@ fn invoke_f64x3_entry(
 }
 
 const OPTIMIZATION_WARMUP_MULTIPLIER: u32 = 8;
+const BASELINE_RETIREMENT_THRESHOLD: u32 = 32;
 
 // Code stores are isolate-local and never shared across runtime threads. The
 // OnceLock is retained only for the construction cycle: nested FunctionCode
@@ -6490,7 +6491,7 @@ impl TierState {
             invocations: 0,
             retired: 0,
             osr_transfers: 0,
-            threshold: 32,
+            threshold: BASELINE_RETIREMENT_THRESHOLD,
             tier: ExecutionTier::Interpreter,
             plan: None,
             optimizing: None,
