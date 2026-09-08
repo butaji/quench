@@ -237,6 +237,10 @@ impl SharedStencilSlab {
         crate::stencil_select::RegionAbi::SwitchReductionLoop
     );
     typed_dispatch_entry!(
+        owned_matrix_reduction_loop_entry,
+        crate::stencil_select::RegionAbi::MatrixReductionLoop
+    );
+    typed_dispatch_entry!(
         owned_numeric_f64_loop_entry,
         crate::stencil_select::RegionAbi::NumericF64Loop
     );
