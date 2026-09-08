@@ -4971,6 +4971,7 @@ pub(crate) fn validate_physical_view(
             | crate::stencil_select::RegionAbi::ArrayNumericLoop
             | crate::stencil_select::RegionAbi::AffineI32Loop
             | crate::stencil_select::RegionAbi::I32CounterLoop
+            | crate::stencil_select::RegionAbi::BooleanReductionLoop
             | crate::stencil_select::RegionAbi::NumericI32BitwiseLoop
             | crate::stencil_select::RegionAbi::NumericI32PairLoop
             | crate::stencil_select::RegionAbi::NumericF64MixedLoop
@@ -5016,6 +5017,7 @@ fn raw_region_declares_allocation(contract: crate::stencil_select::RegionContrac
             | crate::stencil_select::RegionAbi::ArrayNumericLoop
             | crate::stencil_select::RegionAbi::AffineI32Loop
             | crate::stencil_select::RegionAbi::I32CounterLoop
+            | crate::stencil_select::RegionAbi::BooleanReductionLoop
             | crate::stencil_select::RegionAbi::NumericI32BitwiseLoop
             | crate::stencil_select::RegionAbi::NumericI32PairLoop
             | crate::stencil_select::RegionAbi::NumericF64MixedLoop
@@ -5301,6 +5303,7 @@ impl NativeRegionPlan {
                     | crate::stencil_select::RegionAbi::ArrayNumericLoop
                     | crate::stencil_select::RegionAbi::AffineI32Loop
                     | crate::stencil_select::RegionAbi::I32CounterLoop
+                    | crate::stencil_select::RegionAbi::BooleanReductionLoop
                     | crate::stencil_select::RegionAbi::NumericI32BitwiseLoop
                     | crate::stencil_select::RegionAbi::NumericI32PairLoop
                     | crate::stencil_select::RegionAbi::NumericF64MixedLoop
@@ -5364,6 +5367,11 @@ impl NativeRegionPlan {
                 crate::stencil_select::RegionAbi::I32CounterLoop => {
                     return Err(NativeDispatchError::Physical(
                         "i32-counter loop ABI requires its typed entry".into(),
+                    ));
+                }
+                crate::stencil_select::RegionAbi::BooleanReductionLoop => {
+                    return Err(NativeDispatchError::Physical(
+                        "boolean-reduction loop ABI requires its typed entry".into(),
                     ));
                 }
                 crate::stencil_select::RegionAbi::ArrayCopyLoop => {

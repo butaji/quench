@@ -259,6 +259,12 @@ rust_assembly_catalog! {
             "JumpIfFalse", "Mul", "Add", "AddConst", "Move", "Jump", "Return"],
         x86: &[], aarch64: &[], x86_holes: &[], aarch64_holes: &[]
     },
+    BooleanReductionLoop {
+        name: "boolean_reduction_loop", abi: BooleanReductionLoop,
+        ops: ["LoadLocal", "LoadConst", "Binary", "JumpIfFalse", "Jump",
+            "Unary", "StoreLocal", "UpdateLocal", "Return"],
+        x86: &[], aarch64: &[], x86_holes: &[], aarch64_holes: &[]
+    },
     NumericIntegerLoop {
         name: "numeric_integer_loop", abi: AffineI32Loop,
         ops: ["Mul", "Add", "Binary", "Jump"],
