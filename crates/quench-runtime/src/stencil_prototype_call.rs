@@ -6,18 +6,18 @@ const REGION_LEN: usize = 4;
 pub(crate) const PROFILE_NAME: &str = "prototype_data_add_const_return";
 
 #[derive(Clone, Copy)]
-pub(crate) struct PrototypeCallSelection {
-    callee_slot: u16,
-    receiver_slot: u16,
+pub(crate) struct SingleArgumentCallSelection {
+    pub(crate) callee_slot: u16,
+    pub(crate) receiver_slot: u16,
 }
 
 pub(crate) struct NativePrototypeCallPlan {
-    selection: PrototypeCallSelection,
+    selection: SingleArgumentCallSelection,
     fact: Option<crate::function_call_fact::OwnFieldAddReturn>,
 }
 
 impl NativePrototypeCallPlan {
-    pub(crate) const fn new(selection: PrototypeCallSelection) -> Self {
+    pub(crate) const fn new(selection: SingleArgumentCallSelection) -> Self {
         Self {
             selection,
             fact: None,
@@ -56,11 +56,11 @@ fn execute_prototype_call(
     context.result(status)
 }
 
-pub(crate) fn select_prototype_call(
+pub(crate) fn select_single_argument_call(
     entries: &[BaselineEntry],
     cfg: &crate::stencil_cfg::ControlFlowFacts,
     start: usize,
-) -> Option<PrototypeCallSelection> {
+) -> Option<SingleArgumentCallSelection> {
     let [callee, receiver, call, ret] = entries.get(start..start.checked_add(REGION_LEN)?)? else {
         return None;
     };
@@ -72,7 +72,7 @@ pub(crate) fn select_prototype_call(
     );
     validate_shape(callee, receiver, call, ret)?;
     cfg.region_control(start, start + REGION_LEN)?;
-    Some(PrototypeCallSelection {
+    Some(SingleArgumentCallSelection {
         callee_slot: callee.b,
         receiver_slot: receiver.b,
     })
