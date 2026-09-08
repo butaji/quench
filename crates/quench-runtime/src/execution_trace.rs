@@ -65,6 +65,11 @@ macro_rules! execution_events {
         #[repr(usize)]
         pub(crate) enum Event { $($name),+ }
         const EVENT_NAMES: &[&str] = &[$($wire),+];
+        impl Event {
+            pub(crate) const fn name(self) -> &'static str {
+                match self { $(Self::$name => $wire),+ }
+            }
+        }
     };
 }
 
@@ -1147,6 +1152,8 @@ pub(crate) const fn enabled() -> bool {
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
 pub(crate) fn compact(opcode: crate::ir::Opcode) -> DecodeGuard {
+    #[cfg(test)]
+    crate::test_execution_profile::residual(opcode.name());
     let guard = enter_decode(decode_site_for_opcode(opcode, false), opcode.name());
     if enabled() {
         COUNTERS.with(|counters| {
@@ -1163,8 +1170,15 @@ pub(crate) fn compact(opcode: crate::ir::Opcode) -> DecodeGuard {
 }
 
 #[inline(always)]
-#[cfg(not(feature = "execution-trace"))]
+#[cfg(all(not(feature = "execution-trace"), not(test)))]
 pub(crate) const fn compact(_: crate::ir::Opcode) -> DecodeGuard {
+    DecodeGuard
+}
+
+#[inline(always)]
+#[cfg(all(not(feature = "execution-trace"), test))]
+pub(crate) fn compact(opcode: crate::ir::Opcode) -> DecodeGuard {
+    crate::test_execution_profile::residual(opcode.name());
     DecodeGuard
 }
 
@@ -1254,6 +1268,8 @@ fn record_compact_site(counters: &mut Counters, key: CompactSiteKey) {
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
 pub(crate) fn slow(op: &crate::ops::Op) -> DecodeGuard {
+    #[cfg(test)]
+    crate::test_execution_profile::slow(op.variant_name());
     let guard = enter_decode(decode_site_for_slow(op.variant_name()), op.variant_name());
     if enabled() {
         COUNTERS.with(|counters| {
@@ -1325,8 +1341,15 @@ fn constant_name(value: &crate::ops::Constant) -> &'static str {
 }
 
 #[inline(always)]
-#[cfg(not(feature = "execution-trace"))]
+#[cfg(all(not(feature = "execution-trace"), not(test)))]
 pub(crate) const fn slow(_: &crate::ops::Op) -> DecodeGuard {
+    DecodeGuard
+}
+
+#[inline(always)]
+#[cfg(all(not(feature = "execution-trace"), test))]
+pub(crate) fn slow(op: &crate::ops::Op) -> DecodeGuard {
+    crate::test_execution_profile::slow(op.variant_name());
     DecodeGuard
 }
 
@@ -1427,6 +1450,8 @@ pub(crate) fn call_target_name(value: &crate::value::Value) -> &'static str {
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
 pub(crate) fn event(event: Event) {
+    #[cfg(test)]
+    crate::test_execution_profile::event(event.name());
     if enabled() {
         COUNTERS.with(|counters| {
             let mut counters = counters.borrow_mut();
@@ -1448,8 +1473,14 @@ pub(crate) fn event(event: Event) {
 }
 
 #[inline(always)]
-#[cfg(not(feature = "execution-trace"))]
+#[cfg(all(not(feature = "execution-trace"), not(test)))]
 pub(crate) fn event(_: Event) {}
+
+#[inline(always)]
+#[cfg(all(not(feature = "execution-trace"), test))]
+pub(crate) fn event(event: Event) {
+    crate::test_execution_profile::event(event.name());
+}
 
 #[cfg(feature = "execution-trace")]
 fn record_value_decode(counters: &mut Counters, site: DecodeSite, op: &'static str) {
@@ -1661,6 +1692,8 @@ pub(crate) fn stencil_observation(
     kind: &'static str,
     native: bool,
 ) {
+    #[cfg(test)]
+    crate::test_execution_profile::stencil(kind, native);
     #[cfg(feature = "execution-trace")]
     if enabled() {
         let (_, code_id) = code.trace_identity();

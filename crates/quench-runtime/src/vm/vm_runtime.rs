@@ -2088,6 +2088,32 @@ pub(crate) fn execute_optimized_code_step_from(
     let _decode_guard = crate::execution_trace::compact(instruction.opcode);
     crate::execution_trace::compact_site(code, start);
     crate::execution_trace::operands(instruction);
+    if let Some(plan) = entry.property_numeric() {
+        let span = plan.borrow().span();
+        let value = crate::locals::with_current_ref(|environment| {
+            execute_property_numeric(code, start, plan, environment?)
+        });
+        if let Some(value) = value {
+            crate::execution_trace::stencil_observation(
+                code,
+                start,
+                "property_numeric_portable",
+                true,
+            );
+            crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+            return Ok((
+                crate::completion::Completion::Return(crate::value::Value::Number(value)),
+                start + span,
+            ));
+        }
+        crate::execution_trace::stencil_observation(
+            code,
+            start,
+            "property_numeric_portable",
+            false,
+        );
+        crate::execution_trace::leaf_rejection("property_numeric");
+    }
     if let Some(native) = entry.native_local_predicate() {
         let next = crate::locals::with_current_ref(|environment| {
             crate::stencil_fusion::execute_local_predicate(native, environment?)
@@ -2663,6 +2689,32 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
             }
             crate::execution_trace::stencil_observation(code, pc, "local_predicate", false);
             crate::execution_trace::leaf_rejection("native_local_predicate");
+        }
+        if let (Some(environment), Some(property_plan)) =
+            (environment, plan.property_numeric_at(pc))
+        {
+            let span = property_plan.borrow().span();
+            if let Some(value) = execute_property_numeric(code, pc, property_plan, environment) {
+                crate::execution_trace::stencil_observation(
+                    code,
+                    pc,
+                    "property_numeric_portable",
+                    true,
+                );
+                crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                return completion_step_after_transition(
+                    registers,
+                    crate::completion::Completion::Return(crate::value::Value::Number(value)),
+                    pc + span,
+                );
+            }
+            crate::execution_trace::stencil_observation(
+                code,
+                pc,
+                "property_numeric_portable",
+                false,
+            );
+            crate::execution_trace::leaf_rejection("property_numeric");
         }
         if let (Some(environment), Some(native)) = (environment, plan.native_local_property_at(pc))
         {
@@ -4445,6 +4497,51 @@ fn native_property_object(value: &crate::value::Value) -> Option<&crate::value::
         return None;
     };
     native_property_object_guard(object)
+}
+
+fn execute_property_numeric(
+    code: crate::machine::CodeView<'_>,
+    start: usize,
+    plan: &std::cell::RefCell<crate::stencil_property_numeric::PropertyNumericPlan>,
+    environment: &crate::environment::Environment,
+) -> Option<f64> {
+    let mut receivers = [None; crate::stencil_property_numeric::MAX_PROPERTY_NUMERIC_VALUES];
+    plan.borrow_mut().execute(environment, |offset, receiver_slot| {
+        let pc = start.checked_add(usize::from(offset))?;
+        let object = property_numeric_receiver(&mut receivers, environment, receiver_slot)?;
+        cached_property_number(code, pc, object)
+    })
+}
+
+fn property_numeric_receiver<'a>(
+    receivers: &mut [Option<(u16, *const crate::value::ObjectData)>],
+    environment: &'a crate::environment::Environment,
+    slot: u16,
+) -> Option<&'a crate::value::ObjectData> {
+    if let Some((_, pointer)) = receivers.iter().flatten().find(|entry| entry.0 == slot) {
+        return unsafe { pointer.as_ref() };
+    }
+    let bits = environment.proven_tagged_bits(slot)?;
+    let crate::tagged_value::DecodedValue::ObjectPtr(pointer) =
+        crate::tagged_value::TaggedValue::from_bits(bits).decode()
+    else {
+        return None;
+    };
+    let object = native_property_object_guard(unsafe { &*(pointer as *const _) })?;
+    *receivers.iter_mut().find(|entry| entry.is_none())? = Some((slot, object as *const _));
+    Some(object)
+}
+
+fn cached_property_number(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    object: &crate::value::ObjectData,
+) -> Option<f64> {
+    let metadata = code.metadata_at(pc)?;
+    let key = metadata.name.as_deref()?;
+    quickened_native_own_slot(code, pc, object, key)
+        .and_then(crate::native_property::GuardedPropertySlot::load_own_number_now)
+        .or_else(|| get_named_cached_number(object, key, &metadata.named_cache))
 }
 
 fn native_property_object_guard(

@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "warmup": 1,
+  "result": { "kind": "number", "value": 32 },
+  "plan": {
+    "execution_kind": "portable_recipe",
+    "operation_route": [
+      "local",
+      "guarded_property_number",
+      "local",
+      "guarded_property_number",
+      "number_multiply",
+      "local",
+      "guarded_property_number",
+      "local",
+      "guarded_property_number",
+      "number_multiply",
+      "number_add",
+      "local",
+      "guarded_property_number",
+      "local",
+      "guarded_property_number",
+      "number_multiply",
+      "number_add",
+      "return"
+    ],
+    "fallback": false
+  },
+  "profile": {
+    "residual": {},
+    "slow": {},
+    "stencils": {
+      "property_numeric_portable": { "entries": 1, "fallbacks": 0 }
+    },
+    "events": {
+      "leaf_hit": 1,
+      "portable_recipe_step": 17,
+      "register_file_read": 1
+    }
+  },
+  "scaled": [
+    {
+      "executions": 1000000,
+      "events": { "portable_recipe_step": 17000000 }
+    }
+  ]
+}

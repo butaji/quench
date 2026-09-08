@@ -82,16 +82,7 @@ pub(crate) fn execute_binary(
         crate::execution_trace::event(crate::execution_trace::Event::EqualityWordMiss);
     }
     if let Some((left, right)) = registers.read_number_pair(usize::from(lhs), usize::from(rhs)) {
-        use crate::ops::BinaryOp;
-        let result = match operator {
-            BinaryOp::Add => Some(left + right),
-            BinaryOp::Subtract => Some(left - right),
-            BinaryOp::Multiply => Some(left * right),
-            BinaryOp::Divide => Some(left / right),
-            BinaryOp::Remainder => Some(left % right),
-            BinaryOp::Exponentiate => Some(exponentiate(left, right)),
-            _ => None,
-        };
+        let result = arithmetic_number(left, right, operator);
         if let Some(result) = result {
             registers.write_number(usize::from(dst), result);
             return Ok(());
@@ -105,6 +96,24 @@ pub(crate) fn execute_binary(
     let right = read_register_unchecked(registers, rhs);
     write_value(registers, dst, evaluate_binary(&left, &right, operator)?);
     Ok(())
+}
+
+#[inline(always)]
+pub(crate) fn arithmetic_number(
+    left: f64,
+    right: f64,
+    operator: crate::ops::BinaryOp,
+) -> Option<f64> {
+    use crate::ops::BinaryOp;
+    match operator {
+        BinaryOp::Add => Some(left + right),
+        BinaryOp::Subtract => Some(left - right),
+        BinaryOp::Multiply => Some(left * right),
+        BinaryOp::Divide => Some(left / right),
+        BinaryOp::Remainder => Some(left % right),
+        BinaryOp::Exponentiate => Some(exponentiate(left, right)),
+        _ => None,
+    }
 }
 
 /// Apply JavaScript's numeric update semantics to one register.
