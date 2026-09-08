@@ -5,9 +5,6 @@ const assert = (condition, message) => { if (!condition) throw new Error("micro 
 function microRun() {
   let score = 0; let state = 1; for (let i = 0; i < 6400; i++) { state = (state * 1103515245 + 12345) >>> 0; if ((state & 3) === 0) score += i; else score -= i & 7; } return score;
 }
-function run() {
-  return microRun();
-}
 function verify(result) {
 assert(Number.isFinite(result), "result");
 assert(typeof microRun === "function", "scenario entry is callable");
@@ -15,4 +12,4 @@ const __profileResult = JSON.stringify(result);
 assert(__profileResult === "20447050", "exact encoded result");
   return __profileResult;
 }
-return { run: run, verify: verify };
+return { run: microRun, verify: verify };
