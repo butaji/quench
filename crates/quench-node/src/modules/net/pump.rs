@@ -770,11 +770,7 @@ fn emit_http2_stream_close(
     ) {
         return Ok(());
     }
-    execute::set_property_in_place(
-        &stream,
-        "__quenchHttp2CloseEmitted",
-        Value::Boolean(true),
-    );
+    execute::set_property_in_place(&stream, "__quenchHttp2CloseEmitted", Value::Boolean(true));
     execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
     crate::modules::http2_util::publish_http2_stream_diagnostic(
         state,
@@ -808,10 +804,7 @@ fn dispatch_http2_frames(
         .http2_sessions
         .get(&socket_id)
         .is_some_and(|session| {
-            matches!(
-                session.role(),
-                crate::modules::http2_protocol::Role::Server
-            )
+            matches!(session.role(), crate::modules::http2_protocol::Role::Server)
         });
     // `Session::feed` may complete a header block on a CONTINUATION frame;
     // consume completed blocks once per stream instead of assuming the first
@@ -885,7 +878,8 @@ fn dispatch_http2_frames(
                 if is_server || frame.payload.len() < 4 {
                     continue;
                 }
-                let promised_id = u32::from_be_bytes(frame.payload[..4].try_into().unwrap()) & 0x7fff_ffff;
+                let promised_id =
+                    u32::from_be_bytes(frame.payload[..4].try_into().unwrap()) & 0x7fff_ffff;
                 let fields = push_promise_headers
                     .get(&promised_id)
                     .cloned()
@@ -965,6 +959,11 @@ fn dispatch_http2_frames(
                 let fields = completed_headers.get(&stream_id).cloned();
                 let Some(fields) = fields else { continue };
                 let (stream, fresh) = http2_stream(state, &socket_js, stream_id)?;
+                let locally_reset = state
+                    .borrow()
+                    .net
+                    .http2_reset_codes
+                    .contains_key(&(socket_id, stream_id));
                 crate::modules::http2_util::decorate_http2_stream(state, &stream, is_server);
                 let mut headers = if !is_server {
                     match execute::get_property(&stream, "__quenchHttp2RequestDiagnostics") {
@@ -983,13 +982,15 @@ fn dispatch_http2_frames(
                                     ),
                                     &stream_id.to_string(),
                                 ) {
-                                    Value::Object(_) | Value::ObjectAlias(_) => execute::get_property(
-                                        &execute::get_property(
-                                            &socket_js,
-                                            "\0quench:http2-request-diagnostics-map",
-                                        ),
-                                        &stream_id.to_string(),
-                                    ),
+                                    Value::Object(_) | Value::ObjectAlias(_) => {
+                                        execute::get_property(
+                                            &execute::get_property(
+                                                &socket_js,
+                                                "\0quench:http2-request-diagnostics-map",
+                                            ),
+                                            &stream_id.to_string(),
+                                        )
+                                    }
                                     _ => http2_headers_value(&fields),
                                 }
                             }
@@ -1022,8 +1023,7 @@ fn dispatch_http2_frames(
                             host_api::array(Vec::new()),
                         );
                     }
-                    headers =
-                        execute::set_prototype_of(&headers, &Value::Null).unwrap_or(headers);
+                    headers = execute::set_prototype_of(&headers, &Value::Null).unwrap_or(headers);
                 }
                 if is_server {
                     execute::set_property_in_place(
@@ -1119,11 +1119,7 @@ fn dispatch_http2_frames(
                                 crate::modules::http2_util::compat_server_request_response(
                                     state, &stream, &headers,
                                 )?;
-                            execute::call(
-                                &request_listener,
-                                &server,
-                                &[request, response],
-                            )?;
+                            execute::call(&request_listener, &server, &[request, response])?;
                         } else {
                             emit_server_scoped(state, &server, "stream", args)?;
                         }
@@ -1155,13 +1151,20 @@ fn dispatch_http2_frames(
                         false,
                         crate::modules::http2_util::HTTP2_DIAG_FINISH,
                         Some(headers.clone()),
-                        Some(header_flags.get(&stream_id).copied().unwrap_or(frame.header.flags)),
+                        Some(
+                            header_flags
+                                .get(&stream_id)
+                                .copied()
+                                .unwrap_or(frame.header.flags),
+                        ),
                         None,
                     )?;
-                    if !matches!(
-                        execute::get_property(&stream, "__quenchHttp2ResponseEmitted"),
-                        Value::Boolean(true)
-                    ) {
+                    if !locally_reset
+                        && !matches!(
+                            execute::get_property(&stream, "__quenchHttp2ResponseEmitted"),
+                            Value::Boolean(true)
+                        )
+                    {
                         execute::set_property_in_place(
                             &stream,
                             "__quenchHttp2ResponseEmitted",
@@ -1205,10 +1208,18 @@ fn dispatch_http2_frames(
             }
             crate::modules::http2_protocol::FrameType::Data => {
                 let (stream, _) = http2_stream(state, &socket_js, stream_id)?;
+                let locally_reset = state
+                    .borrow()
+                    .net
+                    .http2_reset_codes
+                    .contains_key(&(socket_id, stream_id));
                 if frame.payload.is_empty() {
                     if frame.header.flags & 1 != 0 {
-                        emit_http2_stream_close(state, socket, &stream, is_server, true)?;
+                        emit_http2_stream_close(state, socket, &stream, is_server, !locally_reset)?;
                     }
+                    continue;
+                }
+                if locally_reset {
                     continue;
                 }
                 let data = match execute::get_property(&stream, "encoding") {
@@ -1229,6 +1240,11 @@ fn dispatch_http2_frames(
                     .get(..4)
                     .map(|bytes| u32::from_be_bytes(bytes.try_into().unwrap()))
                     .unwrap_or(0);
+                state
+                    .borrow_mut()
+                    .net
+                    .http2_reset_codes
+                    .insert((socket_id, stream_id), code);
                 execute::set_property_in_place(&stream, "rstCode", Value::Number(code as f64));
                 execute::set_property_in_place(&stream, "destroyed", Value::Boolean(true));
                 // NGHTTP2_CANCEL is the normal peer-side result of an
@@ -1236,10 +1252,12 @@ fn dispatch_http2_frames(
                 // for this cancellation without treating it as an error;
                 // protocol/internal reset codes remain observable errors.
                 if code != 0 && code != 8 {
+                    let code_name = crate::modules::http2_facts::error_name(code)
+                        .map_or_else(|| code.to_string(), str::to_owned);
                     let error = quench_runtime::builtins::error(
                         quench_runtime::ops::Builtin::Error,
                         &[Value::String(format!(
-                            "Stream closed with error code {code}"
+                            "Stream closed with error code {code_name}"
                         ))],
                     );
                     let error = execute::set_property(

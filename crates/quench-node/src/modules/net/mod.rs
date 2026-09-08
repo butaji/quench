@@ -166,6 +166,10 @@ pub struct NetState {
     /// properties remain a public convenience, but COW object updates must
     /// not be allowed to lose a stream between request and response events.
     pub http2_streams: HashMap<(u64, u32), Value>,
+    /// Terminal reset facts keyed by transport/session identity. These facts
+    /// survive VM aliases so a locally destroyed request cannot later emit a
+    /// peer response or end event through a different stream representative.
+    pub http2_reset_codes: HashMap<(u64, u32), u32>,
     /// Canonical socket timeout timers, independent of VM alias properties.
     pub timeout_timers: HashMap<u64, Value>,
     pub pipe_fds: HashMap<i64, String>,
@@ -220,6 +224,7 @@ impl NetState {
             http2_servers: HashSet::new(),
             http2_request_listeners: HashMap::new(),
             http2_streams: HashMap::new(),
+            http2_reset_codes: HashMap::new(),
             timeout_timers: HashMap::new(),
             pipe_fds: HashMap::new(),
             fd_streams: HashMap::new(),

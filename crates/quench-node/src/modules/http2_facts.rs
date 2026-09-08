@@ -111,7 +111,10 @@ pub(crate) const HEADER_CONSTANTS: &[(&str, &str)] = &[
     ("HTTP2_HEADER_KEEP_ALIVE", "keep-alive"),
     ("HTTP2_HEADER_PROXY_CONNECTION", "proxy-connection"),
     ("HTTP2_HEADER_ALT_SVC", "alt-svc"),
-    ("HTTP2_HEADER_CONTENT_SECURITY_POLICY", "content-security-policy"),
+    (
+        "HTTP2_HEADER_CONTENT_SECURITY_POLICY",
+        "content-security-policy",
+    ),
     ("HTTP2_HEADER_EARLY_DATA", "early-data"),
     ("HTTP2_HEADER_EXPECT_CT", "expect-ct"),
     ("HTTP2_HEADER_ORIGIN", "origin"),
@@ -191,6 +194,27 @@ pub(crate) const NUMERIC_CONSTANTS: &[(&str, f64)] = &[
     ("NGHTTP2_HTTP_1_1_REQUIRED", 13.0),
     ("NGHTTP2_DEFAULT_WEIGHT", 16.0),
 ];
+
+/// Canonical names for HTTP/2 stream reset codes as surfaced by Node errors.
+pub(crate) fn error_name(code: u32) -> Option<&'static str> {
+    const NAMES: &[&str] = &[
+        "NGHTTP2_NO_ERROR",
+        "NGHTTP2_PROTOCOL_ERROR",
+        "NGHTTP2_INTERNAL_ERROR",
+        "NGHTTP2_FLOW_CONTROL_ERROR",
+        "NGHTTP2_SETTINGS_TIMEOUT",
+        "NGHTTP2_STREAM_CLOSED",
+        "NGHTTP2_FRAME_SIZE_ERROR",
+        "NGHTTP2_REFUSED_STREAM",
+        "NGHTTP2_CANCEL",
+        "NGHTTP2_COMPRESSION_ERROR",
+        "NGHTTP2_CONNECT_ERROR",
+        "NGHTTP2_ENHANCE_YOUR_CALM",
+        "NGHTTP2_INADEQUATE_SECURITY",
+        "NGHTTP2_HTTP_1_1_REQUIRED",
+    ];
+    NAMES.get(code as usize).copied()
+}
 
 pub(crate) const METHOD_CONSTANTS: &[(&str, &str)] = &[
     ("HTTP2_METHOD_ACL", "ACL"),
