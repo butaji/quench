@@ -55,7 +55,10 @@ pub(crate) fn shell_output(command: &str, options: Option<&Value>) -> std::io::R
     };
     if let Some(options) = options {
         if let Some(cwd) = opt_str(options, "cwd") {
-            process.current_dir(cwd);
+            process.current_dir(&cwd);
+            if uses_host_exec {
+                process.env("QUENCH_CWD", &cwd);
+            }
         }
         if let Some(env) = opt_env(options) {
             process.env_clear().envs(env);
@@ -517,7 +520,12 @@ pub fn spawn_sync(
         validate_numeric_range(options, "gid", false)?;
         validate_kill_signal(options)?;
         if let Some(cwd) = opt_str(options, "cwd") {
-            cmd.current_dir(cwd);
+            cmd.current_dir(&cwd);
+            if is_host_exec {
+                // Preserve the caller's lexical cwd across symlinked temp
+                // roots while resolving NODE_OPTIONS preload paths.
+                cmd.env("QUENCH_CWD", &cwd);
+            }
         }
         if let Some(env) = opt_env(options) {
             cmd.env_clear().envs(env);
