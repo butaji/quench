@@ -28,13 +28,10 @@ const check = function (r, s, v) {
   };
 const state = setup(64, 17, "overwrite");
 assert(typeof operation === "function", "scenario operation is callable");
-function run() {
-  return operation(state);
-}
 function verify(value) {
   if (check) check(value, state, "overwrite");
   const signature = JSON.stringify(encode(value));
   assert(signature === "[\"array\",[[\"number\",\"2016\"],[\"array\",[[\"string\",\"x\"],[\"string\",\"y\"]]]]]", "exact encoded result");
   return signature;
 }
-return { run: run, verify: verify };
+return { run: operation, arguments: [state], verify: verify };

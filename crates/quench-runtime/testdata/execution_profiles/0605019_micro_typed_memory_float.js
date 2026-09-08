@@ -25,13 +25,10 @@ const operation = function (s) {
 const check = null;
 const state = setup(64, 17, "float");
 assert(typeof operation === "function", "scenario operation is callable");
-function run() {
-  return operation(state);
-}
 function verify(value) {
   if (check) check(value, state, "float");
   const signature = JSON.stringify(encode(value));
   assert(signature === "[\"number\",\"443.42857142857144\"]", "exact encoded result");
   return signature;
 }
-return { run: run, verify: verify };
+return { run: operation, arguments: [state], verify: verify };

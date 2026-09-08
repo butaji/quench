@@ -32,13 +32,10 @@ const check = function (r, s, v) {
   };
 const state = setup(64, 17, "date_format");
 assert(typeof operation === "function", "scenario operation is callable");
-function run() {
-  return operation(state);
-}
 function verify(value) {
   if (check) check(value, state, "date_format");
   const signature = JSON.stringify(encode(value));
   assert(signature === "[\"number\",\"1536\"]", "exact encoded result");
   return signature;
 }
-return { run: run, verify: verify };
+return { run: operation, arguments: [state], verify: verify };
