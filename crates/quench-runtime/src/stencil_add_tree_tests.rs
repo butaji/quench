@@ -69,14 +69,23 @@ fn add_chain_environment(
 
 #[test]
 fn ordinary_source_add_tree_executes_native_and_guarded_fallback() {
-    let source = "function f(a,b,c){return (a+b)+c} f(1,2,4)";
-    let program = crate::reduce::reduce_source(source).expect("ordinary source lowers");
+    let case = crate::test_execution_profile::ExecutionCase::load("add_chain");
+    case.assert_standalone();
+    let program = crate::reduce::reduce_source(case.source()).expect("ordinary source lowers");
     let mut checked = false;
     crate::stencil_test_support::visit_code_views(program.code(), &mut |view| {
-        let Some(numeric) = execute_source_add_chain(view, numeric_inputs()) else {
+        let (numeric, profile) = crate::test_execution_profile::capture(|| {
+            execute_source_add_chain(view, numeric_inputs())
+        });
+        let Some(numeric) = numeric else {
             return;
         };
         assert_eq!(numeric.0, Completion::Return(Value::Number(7.0)));
+        case.assert(&Value::Number(7.0), &profile);
+        case.assert_plan(
+            crate::test_execution_profile::ExecutionKind::NativeMachineCode,
+            &["add", "add", "return"],
+        );
         assert_eq!(numeric.1, 1);
         #[cfg(quench_generated_stencil_artifacts)]
         assert_generated_add_chain(numeric.2);
