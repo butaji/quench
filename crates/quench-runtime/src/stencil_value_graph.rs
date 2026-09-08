@@ -186,8 +186,7 @@ impl BlockValueGraph {
                 ValueDefinition::Alias(self.canonical(self.current(instruction.b)?)?)
             }
             Opcode::Unary
-                if instruction.flags
-                    == crate::ir::compact_unary_id(crate::ops::UnaryOp::Minus) =>
+                if instruction.flags == crate::ir::compact_unary_id(crate::ops::UnaryOp::Minus) =>
             {
                 self.negate_constant_definition(instruction)?
             }
@@ -526,6 +525,7 @@ fn select_local_property(
         result: crate::stencil_plan::LocalResultBinding::register(operation.a),
         operation,
         span: u8::try_from(graph.len() + 1).ok()?,
+        returns: false,
         discarded: graph.discarded_registers(operation.a),
         cost,
     })

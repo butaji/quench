@@ -218,8 +218,18 @@ pub(crate) struct LocalPropertySelection {
     pub result: LocalResultBinding,
     pub operation: Instruction,
     pub span: u8,
+    pub returns: bool,
     pub discarded: DiscardedRegisters,
     pub cost: FusionCost,
+}
+
+impl LocalPropertySelection {
+    pub(crate) fn with_return(mut self) -> Option<Self> {
+        self.span = self.span.checked_add(1)?;
+        self.returns = true;
+        self.cost.removed_dispatches = self.cost.removed_dispatches.saturating_add(1);
+        Some(self)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

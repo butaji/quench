@@ -69,6 +69,7 @@ pub(crate) struct LocalPropertyExecution {
     pub result: crate::stencil_plan::LocalResultBinding,
     pub bits: u64,
     pub span: usize,
+    pub returns: bool,
     pub discarded: crate::stencil_plan::DiscardedRegisters,
 }
 
@@ -77,12 +78,18 @@ impl LocalPropertyExecution {
         self,
         registers: &mut crate::register_file::RegisterFile,
         environment: &crate::environment::Environment,
-    ) -> Option<usize> {
+    ) -> Option<LocalPropertyCommit> {
         registers.word_ptr(usize::from(self.result.register))?;
-        // Retain the loaded word before a fused StoreLocal can release the
-        // receiver's last owning edge (for example `node = node.next`).
-        // The native property context only borrows the slot while loading it.
-        registers.write_tagged_bits(usize::from(self.result.register), self.bits)?;
+        let completion = if self.returns {
+            Some(crate::register_file::own_tagged_bits(self.bits)?)
+        } else {
+            None
+        };
+        if completion.is_none() {
+            // Retain before a fused StoreLocal can release the receiver's last
+            // owner (for example `node = node.next`).
+            registers.write_tagged_bits(usize::from(self.result.register), self.bits)?;
+        }
         if let Some(slot) = self.result.store_slot {
             environment
                 .store_proven_tagged_bits(slot, self.bits)
@@ -91,8 +98,16 @@ impl LocalPropertyExecution {
         for register in self.discarded.into_iter().flatten() {
             registers.clear_word(usize::from(register));
         }
-        Some(self.span)
+        Some(LocalPropertyCommit {
+            span: self.span,
+            completion: completion.map(crate::completion::Completion::Return),
+        })
     }
+}
+
+pub(crate) struct LocalPropertyCommit {
+    pub(crate) span: usize,
+    pub(crate) completion: Option<crate::completion::Completion>,
 }
 
 pub(crate) struct NativeLocalPropertyPlan {
@@ -127,7 +142,7 @@ impl NativeLocalPropertyPlan {
     fn execute(
         &mut self,
         environment: &crate::environment::Environment,
-        invoke: impl FnOnce(&mut NativePropertyPlan, &crate::value::Value) -> Option<u64>,
+        invoke: impl FnOnce(&mut NativePropertyPlan, &crate::value::ObjectData) -> Option<u64>,
     ) -> Option<LocalPropertyExecution> {
         if environment.is_deleted_slot(self.selection.receiver_slot)
             || self
@@ -138,21 +153,31 @@ impl NativeLocalPropertyPlan {
         {
             return None;
         }
-        let receiver = environment.get(self.selection.receiver_slot);
         #[cfg(test)]
         {
             self.local_read_count = self.local_read_count.saturating_add(1);
         }
+        let bits = environment.with_proven_object(self.selection.receiver_slot, |receiver| {
+            invoke(&mut self.property, receiver)
+        })??;
         Some(LocalPropertyExecution {
             result: self.selection.result,
-            bits: invoke(&mut self.property, &receiver)?,
+            bits,
             span: usize::from(self.selection.span),
+            returns: self.selection.returns,
             discarded: self.selection.discarded,
         })
     }
 
     pub(crate) const fn operation_offset(&self) -> usize {
-        self.selection.span as usize - 1 - self.selection.result.store_slot.is_some() as usize
+        self.selection.span as usize
+            - 1
+            - self.selection.result.store_slot.is_some() as usize
+            - self.selection.returns as usize
+    }
+
+    pub(crate) const fn returns(&self) -> bool {
+        self.selection.returns
     }
 
     #[cfg(test)]
@@ -380,7 +405,7 @@ pub(crate) fn execute_local_binary(
 pub(crate) fn execute_local_property(
     plan: &std::cell::RefCell<NativeLocalPropertyPlan>,
     environment: &crate::environment::Environment,
-    invoke: impl FnOnce(&mut NativePropertyPlan, &crate::value::Value) -> Option<u64>,
+    invoke: impl FnOnce(&mut NativePropertyPlan, &crate::value::ObjectData) -> Option<u64>,
 ) -> Option<LocalPropertyExecution> {
     plan.borrow_mut().execute(environment, invoke)
 }
