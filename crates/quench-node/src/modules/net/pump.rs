@@ -801,6 +801,24 @@ fn emit_http2_stream_close(
     if emit_end {
         emit_socket_scoped(state, socket, &stream, "end", Vec::new())?;
     }
+    // A client response without a `response` listener is auto-discarded by
+    // Node and reaches its terminal destroyed state before `close`. Keep that
+    // state transition tied to the observable listener fact; ordinary
+    // response streams retain their existing close ordering.
+    let response_listeners = crate::modules::events::method_listener_count(
+        state,
+        Some(&stream),
+        &[Value::String("response".into())],
+    )
+    .ok()
+    .and_then(|value| match value {
+        Value::Number(count) if count.is_finite() && count >= 0.0 => Some(count as usize),
+        _ => None,
+    })
+    .unwrap_or(0);
+    if !server && response_listeners == 0 {
+        execute::set_property_in_place(&stream, "destroyed", Value::Boolean(true));
+    }
     emit_socket_scoped(state, socket, &stream, "close", Vec::new())?;
     Ok(())
 }
