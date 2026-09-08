@@ -522,6 +522,12 @@ pub fn dispatch(
         "range" => http2_asserts::range(values),
         "sessionName" => session_name(values),
         "connect" => connect(state, values),
+        "sessionRequest" => session_request(state, _receiver, values),
+        "sessionClose" => session_close(state, _receiver, values),
+        "streamWrite" => stream_write(state, _receiver, values),
+        "streamEnd" => stream_end(state, _receiver, values),
+        "streamClose" => stream_close(state, _receiver, values),
+        "streamRespond" => stream_respond(state, _receiver, values),
         "createServer" => create_server(state, values, false),
         "createSecureServer" => create_server(state, values, true),
         _ => Err(VmError::NotCallable),
@@ -575,6 +581,28 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
                 execute::set_property_in_place(&socket, "close", destroy);
             }
         }
+        decorate_client_session(&socket)?;
+        if let Some(callback) = callback {
+            // `createConnection` may return either an already-connected
+            // socket or one that is still opening.  Preserve the transport's
+            // connect fact and invoke the HTTP/2 session callback exactly
+            // once in either case.
+            let connected = crate::modules::net::net_id(&socket)
+                .and_then(|id| state.borrow().net.sockets.get(&id).cloned())
+                .is_some_and(|entry| entry.borrow().connect_announced);
+            if connected {
+                execute::call(&callback, &socket, &[socket.clone()])?;
+            } else {
+                let once = execute::get_property(&socket, "once");
+                if quench_runtime::is_callable(&once) {
+                    execute::call(
+                        &once,
+                        &socket,
+                        &[Value::String("connect".into()), callback],
+                    )?;
+                }
+            }
+        }
         return Ok(socket);
     }
     let net = crate::modules::require::require(state, &[Value::String("net".into())])?;
@@ -618,20 +646,332 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
             execute::set_property_in_place(&socket, "close", destroy);
         }
     }
-    if let Some(callback) = callback {
-        // `net.connect` owns the successful `connect` callback. HTTP/2's
-        // callback also receives endpoint failures, so add the error leg to
-        // the returned socket without introducing a second transport path.
-        let once = execute::get_property(&socket, "once");
-        if quench_runtime::is_callable(&once) {
-            execute::call(
-                &once,
-                &socket,
-                &[Value::String("error".into()), callback],
-            )?;
+    decorate_client_session(&socket)?;
+    Ok(socket)
+}
+
+fn session_capability(kind: &str) -> Value {
+    host_api::bound_capability_with_arguments(
+        crate::host::capability_ref(crate::registry::SPEC_INTERNAL_HTTP2_UTIL),
+        vec![Value::String(kind.into())],
+    )
+}
+
+fn decorate_client_session(socket: &Value) -> Result<(), VmError> {
+    execute::set_property_in_place(socket, "request", session_capability("sessionRequest"));
+    execute::set_property_in_place(socket, "close", session_capability("sessionClose"));
+    execute::set_property_in_place(socket, "pendingSettingsAck", Value::Boolean(false));
+    execute::set_property_in_place(socket, "alpnProtocol", Value::String("h2c".into()));
+    Ok(())
+}
+
+fn session_request(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let socket = receiver.cloned().unwrap_or(Value::Undefined);
+    let Some(socket_id) = crate::modules::net::net_id(&socket) else {
+        return Err(VmError::NotCallable);
+    };
+    let headers = values.first().unwrap_or(&Value::Undefined);
+    if !matches!(headers, Value::Undefined | Value::Object(_) | Value::ObjectAlias(_)) {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::TypeError,
+            "ERR_INVALID_ARG_TYPE",
+            "The \"headers\" argument must be of type object.".into(),
+        ));
+    }
+    let mut fields = Vec::<(Vec<u8>, Vec<u8>)>::new();
+    if matches!(headers, Value::Object(_) | Value::ObjectAlias(_)) {
+        for key in execute::own_enumerable_keys(headers) {
+            let value = execute::get_property(headers, &key);
+            let text = execute::to_js_string(&value)?;
+            fields.push((key.to_ascii_lowercase().into_bytes(), text.into_bytes()));
         }
     }
-    Ok(socket)
+    let method = fields
+        .iter()
+        .find(|(name, _)| name.as_slice() == b":method")
+        .map(|(_, value)| value.clone())
+        .unwrap_or_else(|| b"GET".to_vec());
+    if method.as_slice() == b"CONNECT" {
+        let authority = fields.iter().any(|(name, _)| name.as_slice() == b":authority");
+        let scheme = fields.iter().any(|(name, _)| name.as_slice() == b":scheme");
+        let path = fields.iter().any(|(name, _)| name.as_slice() == b":path");
+        if !authority {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::TypeError,
+                "ERR_HTTP2_CONNECT_AUTHORITY",
+                ":authority header is required for CONNECT requests".into(),
+            ));
+        }
+        if scheme {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::TypeError,
+                "ERR_HTTP2_CONNECT_SCHEME",
+                "The :scheme header is forbidden for CONNECT requests".into(),
+            ));
+        }
+        if path {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::TypeError,
+                "ERR_HTTP2_CONNECT_PATH",
+                "The :path header is forbidden for CONNECT requests".into(),
+            ));
+        }
+    }
+    if !fields.iter().any(|(name, _)| name.as_slice() == b":method") {
+        fields.push((b":method".to_vec(), b"GET".to_vec()));
+    }
+    if !fields.iter().any(|(name, _)| name.as_slice() == b":path")
+        && method.as_slice() != b"CONNECT"
+    {
+        fields.push((b":path".to_vec(), b"/".to_vec()));
+    }
+    if !fields.iter().any(|(name, _)| name.as_slice() == b":scheme")
+        && method.as_slice() != b"CONNECT"
+    {
+        fields.push((b":scheme".to_vec(), b"http".to_vec()));
+    }
+    if !fields.iter().any(|(name, _)| name.as_slice() == b":authority") {
+        let host = match execute::get_property(&socket, "host") {
+            Value::String(host) if !host.is_empty() => host,
+            _ => "localhost".into(),
+        };
+        let port = match execute::get_property(&socket, "port") {
+            Value::Number(port) if port.is_finite() && port > 0.0 => format!(":{}", port as u16),
+            _ => String::new(),
+        };
+        fields.push((b":authority".to_vec(), format!("{host}{port}").into_bytes()));
+    }
+    let stream_id = state
+        .borrow()
+        .net
+        .http2_sessions
+        .get(&socket_id)
+        .and_then(|session| session.streams.keys().copied().max())
+        .unwrap_or(0)
+        .saturating_add(2)
+        .max(1);
+    let block = {
+        let mut host = state.borrow_mut();
+        let session = host
+            .net
+            .http2_sessions
+            .get_mut(&socket_id)
+            .ok_or(VmError::NotCallable)?;
+        session.streams.insert(
+            stream_id,
+            crate::modules::http2_protocol::Stream {
+                state: crate::modules::http2_protocol::StreamState::Open,
+                recv_window: 65_535,
+                send_window: 65_535,
+            },
+        );
+        session.encode_headers(
+            &fields
+                .iter()
+                .map(|(name, value)| (name.as_slice(), value.as_slice()))
+                .collect::<Vec<_>>(),
+        )
+    };
+    let frame = crate::modules::http2_protocol::Frame::new(
+        crate::modules::http2_protocol::FrameType::Headers,
+        0x4,
+        stream_id,
+        block,
+    );
+    let stream = crate::modules::events::new_emitter_object(state)?;
+    execute::set_property_in_place(&stream, "\0quench:http2-socket", socket.clone());
+    execute::set_property_in_place(
+        &stream,
+        "\0quench:http2-stream-id",
+        Value::Number(stream_id as f64),
+    );
+    execute::set_property_in_place(&stream, "write", session_capability("streamWrite"));
+    execute::set_property_in_place(&stream, "end", session_capability("streamEnd"));
+    execute::set_property_in_place(&stream, "close", session_capability("streamClose"));
+    execute::set_property_in_place(&stream, "respond", session_capability("streamRespond"));
+    execute::set_property_in_place(&stream, "session", socket.clone());
+    execute::set_property_in_place(&stream, "rstCode", Value::Number(0.0));
+    let streams = match execute::get_property(&socket, "\0quench:http2-streams") {
+        Value::Object(_) | Value::ObjectAlias(_) => {
+            execute::get_property(&socket, "\0quench:http2-streams")
+        }
+        _ => {
+            let map = host_api::object(Vec::new());
+            execute::set_property_in_place(&socket, "\0quench:http2-streams", map.clone());
+            map
+        }
+    };
+    execute::set_property_in_place(&streams, &stream_id.to_string(), stream.clone());
+    write_http2_frame(&socket, &frame)?;
+    Ok(stream)
+}
+
+fn stream_socket(receiver: Option<&Value>) -> Result<(Value, u32), VmError> {
+    let stream = receiver.ok_or(VmError::NotCallable)?;
+    let socket = execute::get_property(stream, "\0quench:http2-socket");
+    let stream_id = match execute::get_property(stream, "\0quench:http2-stream-id") {
+        Value::Number(id) if id.is_finite() && id > 0.0 => id as u32,
+        _ => return Err(VmError::NotCallable),
+    };
+    Ok((socket, stream_id))
+}
+
+fn write_http2_frame(
+    socket: &Value,
+    frame: &crate::modules::http2_protocol::Frame,
+) -> Result<(), VmError> {
+    let write = execute::get_property(socket, "write");
+    if !quench_runtime::is_callable(&write) {
+        return Err(VmError::NotCallable);
+    }
+    execute::call(
+        &write,
+        socket,
+        &[crate::modules::buffer_proto::make_buffer(&frame.encode())],
+    )?;
+    Ok(())
+}
+
+fn stream_write(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let (socket, stream_id) = stream_socket(receiver)?;
+    let body = values.first().unwrap_or(&Value::Undefined);
+    let bytes = crate::modules::crypto::bytes_from_value(body)
+        .or_else(|| {
+            matches!(body, Value::String(_) | Value::StringUnits(_))
+                .then(|| execute::to_js_string(body).ok())
+                .flatten()
+                .map(String::into_bytes)
+        })
+        .unwrap_or_default();
+    let frame = crate::modules::http2_protocol::Frame::new(
+        crate::modules::http2_protocol::FrameType::Data,
+        0,
+        stream_id,
+        bytes,
+    );
+    write_http2_frame(&socket, &frame)?;
+    Ok(Value::Boolean(true))
+}
+
+fn stream_end(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let (socket, stream_id) = stream_socket(receiver)?;
+    let body = values.first().unwrap_or(&Value::Undefined);
+    let bytes = crate::modules::crypto::bytes_from_value(body)
+        .or_else(|| {
+            matches!(body, Value::String(_) | Value::StringUnits(_))
+                .then(|| execute::to_js_string(body).ok())
+                .flatten()
+                .map(String::into_bytes)
+        })
+        .unwrap_or_default();
+    let frame = crate::modules::http2_protocol::Frame::new(
+        crate::modules::http2_protocol::FrameType::Data,
+        0x1,
+        stream_id,
+        bytes,
+    );
+    write_http2_frame(&socket, &frame)?;
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+fn stream_close(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let (socket, stream_id) = stream_socket(receiver)?;
+    let code = values
+        .first()
+        .and_then(|value| match value {
+            Value::Number(value) if value.is_finite() => Some(*value as u32),
+            _ => None,
+        })
+        .unwrap_or(0);
+    let frame = crate::modules::http2_protocol::Frame::new(
+        crate::modules::http2_protocol::FrameType::RstStream,
+        0,
+        stream_id,
+        code.to_be_bytes().to_vec(),
+    );
+    write_http2_frame(&socket, &frame)?;
+    if let Some(stream) = receiver {
+        execute::set_property_in_place(stream, "rstCode", Value::Number(code as f64));
+    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+fn stream_respond(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let (socket, stream_id) = stream_socket(receiver)?;
+    let headers = values.first().unwrap_or(&Value::Undefined);
+    if !matches!(headers, Value::Object(_) | Value::ObjectAlias(_)) {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::TypeError,
+            "ERR_INVALID_ARG_TYPE",
+            "The \"headers\" argument must be of type object.".into(),
+        ));
+    }
+    let mut fields = Vec::new();
+    for key in execute::own_enumerable_keys(headers) {
+        let value = execute::to_js_string(&execute::get_property(headers, &key))?;
+        fields.push((key.to_ascii_lowercase().into_bytes(), value.into_bytes()));
+    }
+    if !fields.iter().any(|(name, _)| name.as_slice() == b":status") {
+        fields.push((b":status".to_vec(), b"200".to_vec()));
+    }
+    let block = {
+        let mut host = state.borrow_mut();
+        let id = crate::modules::net::net_id(&socket).ok_or(VmError::NotCallable)?;
+        let session = host
+            .net
+            .http2_sessions
+            .get_mut(&id)
+            .ok_or(VmError::NotCallable)?;
+        session.encode_headers(
+            &fields
+                .iter()
+                .map(|(name, value)| (name.as_slice(), value.as_slice()))
+                .collect::<Vec<_>>(),
+        )
+    };
+    write_http2_frame(
+        &socket,
+        &crate::modules::http2_protocol::Frame::new(
+            crate::modules::http2_protocol::FrameType::Headers,
+            0x4,
+            stream_id,
+            block,
+        ),
+    )?;
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+fn session_close(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _values: &[Value],
+) -> Result<Value, VmError> {
+    let socket = receiver.ok_or(VmError::NotCallable)?;
+    let destroy = execute::get_property(socket, "destroy");
+    if quench_runtime::is_callable(&destroy) {
+        execute::call(&destroy, socket, &[])?;
+    }
+    Ok(socket.clone())
 }
 
 fn connect_target_options(
@@ -813,6 +1153,7 @@ fn create_server(
         crate::modules::http2_protocol::SERVER_MARKER,
         Value::Boolean(true),
     );
+    crate::modules::net::register_http2_server(state, &server);
     Ok(server)
 }
 

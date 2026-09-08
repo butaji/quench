@@ -8,7 +8,7 @@
 //! are buffered until the socket drains.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::rc::Rc;
@@ -157,6 +157,10 @@ pub struct NetState {
     /// beside the canonical socket registry lets arbitrary TCP read chunks be
     /// reduced into complete frames without duplicating net transport state.
     pub http2_sessions: HashMap<u64, crate::modules::http2_protocol::Session>,
+    /// Server IDs that use the HTTP/2 protocol dispatcher. This host fact is
+    /// kept beside the canonical server registry because mutating a copied JS
+    /// value cannot reliably identify the transport owner after COW.
+    pub http2_servers: HashSet<u64>,
     /// Canonical socket timeout timers, independent of VM alias properties.
     pub timeout_timers: HashMap<u64, Value>,
     pub pipe_fds: HashMap<i64, String>,
@@ -208,6 +212,7 @@ impl NetState {
             pending_connect_writes: HashMap::new(),
             pending_request_writes: Vec::new(),
             http2_sessions: HashMap::new(),
+            http2_servers: HashSet::new(),
             timeout_timers: HashMap::new(),
             pipe_fds: HashMap::new(),
             fd_streams: HashMap::new(),
@@ -656,6 +661,12 @@ pub(crate) fn register_http2_session(
             .net
             .http2_sessions
             .insert(id, crate::modules::http2_protocol::Session::new(role));
+    }
+}
+
+pub(crate) fn register_http2_server(state: &Rc<RefCell<HostState>>, server: &Value) {
+    if let Some(id) = net_id(server) {
+        state.borrow_mut().net.http2_servers.insert(id);
     }
 }
 
