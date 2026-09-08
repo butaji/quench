@@ -35,6 +35,7 @@ pub(crate) enum DeclAbi {
     ArrayKernel,
     ArrayNumericLoop,
     ArrayCopyLoop,
+    ArrayReductionLoop,
     AffineI32Loop,
     CompareBranch,
     PropertyGuard,

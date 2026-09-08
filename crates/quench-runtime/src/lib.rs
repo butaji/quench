@@ -150,6 +150,7 @@ mod stencil_compare_branch_tests;
 mod stencil_control_composition_tests;
 mod stencil_dense_array_update;
 mod stencil_dense_array_copy;
+mod stencil_ordered_reduction;
 pub mod stencil_fact;
 mod stencil_fusion;
 #[cfg(test)]
