@@ -11,7 +11,7 @@
     "residual": {},
     "slow": {},
     "stencils": {
-      "property": { "entries": 1, "fallbacks": 0 }
+      "local_property": { "entries": 1, "fallbacks": 0 }
     },
     "events": { "leaf_hit": 1 }
   }
