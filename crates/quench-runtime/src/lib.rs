@@ -173,6 +173,7 @@ mod stencil_numeric_floating_loop;
 mod stencil_numeric_integer_loop;
 mod stencil_numeric_integer_selection;
 mod stencil_numeric_call_selection;
+mod stencil_numeric_receiver_selection;
 mod stencil_numeric_independent_loop;
 mod stencil_numeric_mixed_loop;
 mod stencil_ordered_reduction;
