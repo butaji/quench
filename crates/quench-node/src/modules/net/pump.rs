@@ -837,7 +837,7 @@ fn dispatch_http2_frames(
                 }
                 let promised_id = u32::from_be_bytes(frame.payload[..4].try_into().unwrap()) & 0x7fff_ffff;
                 let fields = completed_headers.get(&promised_id).cloned().unwrap_or_default();
-                let (push_stream, _) = http2_stream(state, &socket_js, promised_id)?;
+                let (push_stream, push_fresh) = http2_stream(state, &socket_js, promised_id)?;
                 crate::modules::http2_util::decorate_http2_stream(state, &push_stream, false);
                 execute::set_property_in_place(
                     &push_stream,
@@ -901,10 +901,12 @@ fn dispatch_http2_frames(
                 // Deliver `push` on the next host turn.  Node emits the
                 // session `stream` notification first, allowing user code to
                 // install the push listener before this stream event fires.
-                if !matches!(
+                if push_fresh
+                    && !matches!(
                     execute::get_property(&push_stream, "__quenchHttp2PushEmitted"),
                     Value::Boolean(true)
-                ) {
+                )
+                {
                     execute::set_property_in_place(
                         &push_stream,
                         "__quenchHttp2PushEmitted",
