@@ -1052,6 +1052,24 @@ impl Environment {
         }))
     }
 
+    /// Retain the current callable represented by a proven owning slot.
+    /// Replacement resolution happens before the caller enters native code.
+    #[inline(always)]
+    pub(crate) fn retain_proven_function(
+        &self,
+        slot: u16,
+    ) -> Option<Rc<crate::value::FunctionValue>> {
+        let bits = self.proven_tagged_bits(slot)?;
+        let crate::tagged_value::DecodedValue::FunctionPtr(pointer) =
+            crate::tagged_value::TaggedValue::from_bits(bits).decode()
+        else {
+            return None;
+        };
+        // SAFETY: this environment owns the tagged slot throughout the call;
+        // the returned Rc retains the resolved representative independently.
+        unsafe { crate::locals::resolved_function_ptr(pointer as *const _) }
+    }
+
     /// Borrow an array from a proven non-cell slot for one non-reentrant
     /// region. The environment owns the tagged word throughout the closure;
     /// callers may not allocate, invoke JavaScript, or expose the reference.
