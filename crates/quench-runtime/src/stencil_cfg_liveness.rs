@@ -21,7 +21,7 @@ pub(super) fn live_inputs(
     windows: &[Option<&[u16]>],
     live_out: &[BTreeSet<u16>],
 ) -> Vec<BTreeSet<u16>> {
-    let conservative = all_register_uses(entries, windows);
+    let conservative = conservative_registers(entries, windows);
     entries
         .iter()
         .enumerate()
@@ -42,7 +42,7 @@ pub(super) fn bounded_register_liveness(
     successors: &[Successors],
     round_limit: usize,
 ) -> Vec<BTreeSet<u16>> {
-    let conservative = all_register_uses(entries, operand_windows);
+    let conservative = conservative_registers(entries, operand_windows);
     let mut live_in = vec![BTreeSet::new(); entries.len()];
     let mut live_out = live_in.clone();
     for _ in 0..round_limit {
@@ -95,22 +95,30 @@ fn successor_input_union(successors: &Successors, live_in: &[BTreeSet<u16>]) -> 
     output
 }
 
-fn all_register_uses(
+fn conservative_registers(
     entries: &[BaselineEntry],
     operand_windows: &[Option<&[u16]>],
 ) -> BTreeSet<u16> {
-    let mut uses = entries
+    let mut registers = entries
         .iter()
         .flat_map(|entry| entry.instruction.register_flow().uses)
         .flatten()
         .collect::<BTreeSet<_>>();
-    uses.extend(
+    // An opaque structured operation may read a value produced earlier even
+    // when that register has no later compact use. Include definitions so an
+    // Unknown edge cannot authorize a fusion to clear such a live value.
+    registers.extend(
+        entries
+            .iter()
+            .filter_map(|entry| entry.instruction.register_flow().definition),
+    );
+    registers.extend(
         operand_windows
             .iter()
             .flatten()
             .flat_map(|window| window.iter().copied()),
     );
-    uses
+    registers
 }
 
 fn live_input(
