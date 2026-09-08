@@ -1053,6 +1053,18 @@ fn connect_target_options(
                 let value = execute::get_property(authority, &key);
                 execute::set_property_in_place(&target, &key, value);
             }
+            // WHATWG URL instances keep their connection fields on the
+            // prototype/internal slots rather than as enumerable own keys.
+            // Read the ordinary URL properties as facts too, while retaining
+            // enumerable option objects unchanged.
+            for key in ["protocol", "hostname", "host", "port", "path", "pathname"] {
+                if matches!(execute::get_property(&target, key), Value::Undefined) {
+                    let value = execute::get_property(authority, key);
+                    if !matches!(value, Value::Undefined) {
+                        execute::set_property_in_place(&target, key, value);
+                    }
+                }
+            }
             target
         }
         _ => {
