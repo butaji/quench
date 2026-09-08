@@ -265,6 +265,12 @@ rust_assembly_catalog! {
             "Unary", "StoreLocal", "UpdateLocal", "Return"],
         x86: &[], aarch64: &[], x86_holes: &[], aarch64_holes: &[]
     },
+    BranchRecurrenceLoop {
+        name: "branch_recurrence_loop", abi: BranchRecurrenceLoop,
+        ops: ["LoadLocal", "LoadConst", "Mul", "AddConst", "Binary",
+            "JumpIfFalse", "Add", "Sub", "StoreLocal", "UpdateLocal", "Return"],
+        x86: &[], aarch64: &[], x86_holes: &[], aarch64_holes: &[]
+    },
     NumericIntegerLoop {
         name: "numeric_integer_loop", abi: AffineI32Loop,
         ops: ["Mul", "Add", "Binary", "Jump"],

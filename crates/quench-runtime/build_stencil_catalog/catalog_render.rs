@@ -263,6 +263,9 @@ fn abi_expr(declaration: &RegionDeclaration) -> &'static str {
         DeclAbi::BooleanReductionLoop if target_is_aarch64 => {
             "crate::stencil_select::RegionAbi::BooleanReductionLoop"
         }
+        DeclAbi::BranchRecurrenceLoop if target_is_aarch64 => {
+            "crate::stencil_select::RegionAbi::BranchRecurrenceLoop"
+        }
         DeclAbi::NumericF64Loop if target_is_aarch64 => {
             "crate::stencil_select::RegionAbi::NumericF64Loop"
         }
@@ -287,6 +290,7 @@ fn abi_expr(declaration: &RegionDeclaration) -> &'static str {
         | DeclAbi::AffineI32Loop
         | DeclAbi::I32CounterLoop
         | DeclAbi::BooleanReductionLoop
+        | DeclAbi::BranchRecurrenceLoop
         | DeclAbi::NumericF64Loop
         | DeclAbi::NumericI32BitwiseLoop
         | DeclAbi::NumericI32PairLoop
@@ -373,6 +377,11 @@ fn abi_contract_fields(abi: DeclAbi) -> (&'static str, bool, &'static str) {
             true,
             "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0x0fff, live_out_mask: 0x0007, root_materialization_required: false",
         ),
+        DeclAbi::BranchRecurrenceLoop => (
+            "BranchRecurrenceLoop",
+            true,
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x001f, hardware_gpr_clobber_mask: 0x0fff, live_out_mask: 0x000f, root_materialization_required: false",
+        ),
         DeclAbi::NumericF64Loop => (
             "NumericF64Loop",
             true,
@@ -432,6 +441,7 @@ fn abi_variant_name(abi: DeclAbi) -> &'static str {
         DeclAbi::AffineI32Loop => "AffineI32Loop",
         DeclAbi::I32CounterLoop => "I32CounterLoop",
         DeclAbi::BooleanReductionLoop => "BooleanReductionLoop",
+        DeclAbi::BranchRecurrenceLoop => "BranchRecurrenceLoop",
         DeclAbi::NumericF64Loop => "NumericF64Loop",
         DeclAbi::NumericI32BitwiseLoop => "NumericI32BitwiseLoop",
         DeclAbi::NumericI32PairLoop => "NumericI32PairLoop",
