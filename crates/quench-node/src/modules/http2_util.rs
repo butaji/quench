@@ -1123,12 +1123,14 @@ fn connect_target_options(
             || host == format!("[{hostname}]:{port}")
         {
             execute::set_property_in_place(&target, "host", Value::String(hostname));
-        } else if host.starts_with('[') && host.ends_with(']') {
-            execute::set_property_in_place(
-                &target,
-                "host",
-                Value::String(host.trim_matches(['[', ']']).into()),
-            );
+        } else if let Some(host) = host.strip_prefix('[') {
+            if let Some(end) = host.find(']') {
+                execute::set_property_in_place(
+                    &target,
+                    "host",
+                    Value::String(host[..end].into()),
+                );
+            }
         }
     }
     if let Value::String(protocol) = execute::get_property(&target, "protocol") {
