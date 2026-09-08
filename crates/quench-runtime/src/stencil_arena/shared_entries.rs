@@ -217,6 +217,10 @@ impl SharedStencilSlab {
         crate::stencil_select::RegionAbi::AffineI32Loop
     );
     typed_dispatch_entry!(
+        owned_i32_counter_loop_entry,
+        crate::stencil_select::RegionAbi::I32CounterLoop
+    );
+    typed_dispatch_entry!(
         owned_numeric_f64_loop_entry,
         crate::stencil_select::RegionAbi::NumericF64Loop
     );

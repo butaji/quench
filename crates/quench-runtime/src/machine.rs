@@ -4907,7 +4907,7 @@ fn validate_physical_template(record: &crate::stencil_select::RegionRecord) -> R
     validate_physical_view(record, stencil)
 }
 
-fn validate_physical_view(
+pub(crate) fn validate_physical_view(
     record: &crate::stencil_select::RegionRecord,
     stencil: &crate::stencil_fact::Stencil,
 ) -> Result<(), String> {
@@ -4970,6 +4970,7 @@ fn validate_physical_view(
         crate::stencil_select::RegionAbi::ArrayKernel
             | crate::stencil_select::RegionAbi::ArrayNumericLoop
             | crate::stencil_select::RegionAbi::AffineI32Loop
+            | crate::stencil_select::RegionAbi::I32CounterLoop
             | crate::stencil_select::RegionAbi::NumericI32BitwiseLoop
             | crate::stencil_select::RegionAbi::NumericI32PairLoop
             | crate::stencil_select::RegionAbi::NumericF64MixedLoop
@@ -5014,6 +5015,7 @@ fn raw_region_declares_allocation(contract: crate::stencil_select::RegionContrac
         crate::stencil_select::RegionAbi::ArrayKernel
             | crate::stencil_select::RegionAbi::ArrayNumericLoop
             | crate::stencil_select::RegionAbi::AffineI32Loop
+            | crate::stencil_select::RegionAbi::I32CounterLoop
             | crate::stencil_select::RegionAbi::NumericI32BitwiseLoop
             | crate::stencil_select::RegionAbi::NumericI32PairLoop
             | crate::stencil_select::RegionAbi::NumericF64MixedLoop
@@ -5298,6 +5300,7 @@ impl NativeRegionPlan {
                 crate::stencil_select::RegionAbi::ArrayKernel
                     | crate::stencil_select::RegionAbi::ArrayNumericLoop
                     | crate::stencil_select::RegionAbi::AffineI32Loop
+                    | crate::stencil_select::RegionAbi::I32CounterLoop
                     | crate::stencil_select::RegionAbi::NumericI32BitwiseLoop
                     | crate::stencil_select::RegionAbi::NumericI32PairLoop
                     | crate::stencil_select::RegionAbi::NumericF64MixedLoop
@@ -5357,6 +5360,11 @@ impl NativeRegionPlan {
                         return Ok(result);
                     }
                     return crate::vm::execute_region_fallback(&mut region);
+                }
+                crate::stencil_select::RegionAbi::I32CounterLoop => {
+                    return Err(NativeDispatchError::Physical(
+                        "i32-counter loop ABI requires its typed entry".into(),
+                    ));
                 }
                 crate::stencil_select::RegionAbi::ArrayCopyLoop => {
                     return Err(NativeDispatchError::Physical(

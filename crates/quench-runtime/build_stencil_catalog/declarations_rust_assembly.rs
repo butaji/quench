@@ -253,6 +253,12 @@ rust_assembly_catalog! {
         x86_holes: &[], aarch64_holes: &[],
         bindings: &AFFINE_I32_LOOP_BINDINGS, outputs: &AFFINE_I32_LOOP_OUTPUTS
     },
+    I32CounterLoop {
+        name: "i32_counter_loop", abi: I32CounterLoop,
+        ops: ["LoadLocal", "LoadConst", "Binary", "StoreLocal", "Unary",
+            "JumpIfFalse", "Mul", "Add", "AddConst", "Move", "Jump", "Return"],
+        x86: &[], aarch64: &[], x86_holes: &[], aarch64_holes: &[]
+    },
     NumericIntegerLoop {
         name: "numeric_integer_loop", abi: AffineI32Loop,
         ops: ["Mul", "Add", "Binary", "Jump"],

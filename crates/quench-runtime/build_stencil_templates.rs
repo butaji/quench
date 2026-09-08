@@ -185,6 +185,71 @@ q_affine_i32_loop_end:
 "#);
 "##;
 
+const AARCH64_I32_COUNTER_LOOP: &str = r##"#![no_std]
+use core::arch::global_asm;
+
+#[repr(C)]
+struct CounterLoopContext {
+    index: usize,
+    end: usize,
+    value: i32,
+    multiplier: i32,
+    counter: i32,
+    decrement: i32,
+    addend: i32,
+    _padding: u32,
+    interrupt: *const u8,
+}
+
+global_asm!(r#"
+.text
+.p2align 2
+.globl q_i32_counter_loop
+q_i32_counter_loop:
+  ldr x1, [x0, #{index}]
+  ldr x2, [x0, #{end}]
+  ldr w3, [x0, #{value}]
+  ldr w4, [x0, #{multiplier}]
+  ldr w5, [x0, #{counter}]
+  ldr w6, [x0, #{decrement}]
+  ldr w7, [x0, #{addend}]
+1:
+  cmp x1, x2
+  b.hs 2f
+  sub w5, w5, w6
+  mul w3, w3, w4
+  add w3, w3, w5
+  add w3, w3, w7
+  add x1, x1, #1
+  str x1, [x0, #{index}]
+  str w3, [x0, #{value}]
+  str w5, [x0, #{counter}]
+  ldr x8, [x0, #{interrupt}]
+  ldrb w9, [x8]
+  cbnz w9, 3f
+  b 1b
+2:
+  str x1, [x0, #{index}]
+  str w3, [x0, #{value}]
+  str w5, [x0, #{counter}]
+  mov w0, #1
+  ret
+3:
+  mov w0, #4
+  ret
+q_i32_counter_loop_end:
+"#,
+    index = const core::mem::offset_of!(CounterLoopContext, index),
+    end = const core::mem::offset_of!(CounterLoopContext, end),
+    value = const core::mem::offset_of!(CounterLoopContext, value),
+    multiplier = const core::mem::offset_of!(CounterLoopContext, multiplier),
+    counter = const core::mem::offset_of!(CounterLoopContext, counter),
+    decrement = const core::mem::offset_of!(CounterLoopContext, decrement),
+    addend = const core::mem::offset_of!(CounterLoopContext, addend),
+    interrupt = const core::mem::offset_of!(CounterLoopContext, interrupt),
+);
+"##;
+
 const AARCH64_NUMERIC_INTEGER_LOOP: &str = r##"#![no_std]
 use core::arch::global_asm;
 
@@ -712,6 +777,7 @@ pub(crate) fn assembly_source(recipe: super::RustAssemblyRecipe) -> String {
         ArrayNumericLoop => AARCH64_ARRAY_LOOP.to_owned(),
         ArrayNumericFillLoop => AARCH64_ARRAY_FILL_LOOP.to_owned(),
         AffineI32Loop => AARCH64_AFFINE_I32_LOOP.to_owned(),
+        I32CounterLoop => AARCH64_I32_COUNTER_LOOP.to_owned(),
         NumericIntegerLoop => AARCH64_NUMERIC_INTEGER_LOOP.to_owned(),
         NumericFloatingLoop => AARCH64_NUMERIC_FLOATING_LOOP.to_owned(),
         NumericBitwiseLoop => AARCH64_NUMERIC_BITWISE_LOOP.to_owned(),
