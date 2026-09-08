@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "warmup": 2,
+  "result": { "kind": "number", "value": 42 },
+  "plan": {
+    "execution_kind": "ordinary_fallback",
+    "operation_route": ["GetN", "Return"],
+    "fallback": true
+  },
+  "profile": {
+    "residual": { "GetN": 1, "Return": 1 },
+    "slow": {},
+    "stencils": { "prototype_property": { "entries": 0, "fallbacks": 1 } },
+    "events": { "owned_word_read": 1, "register_file_read": 2 }
+  }
+}
