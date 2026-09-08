@@ -788,14 +788,17 @@ fn session_request(
                 .collect::<Vec<_>>(),
         )
     };
+    let end_stream = !matches!(
+        values
+            .get(1)
+            .map(|value| execute::get_property(value, "endStream")),
+        Some(Value::Boolean(false))
+    );
     let frame = crate::modules::http2_protocol::Frame::new(
         crate::modules::http2_protocol::FrameType::Headers,
-        // Keep END_STREAM on the DATA frame produced by `end()`.  A request
-        // may still receive a body through `write()` after this call, so the
-        // initial HEADERS block only carries END_HEADERS.  The pump derives
-        // the observable stream flags from both frames when they share a
-        // read, while delivering `end` exactly once from DATA.
-        0x4,
+        // Node ends a request stream by default.  An explicit
+        // `endStream: false` leaves it open for DATA frames written later.
+        0x4 | u8::from(end_stream),
         stream_id,
         block,
     );
@@ -819,6 +822,11 @@ fn session_request(
     execute::set_property_in_place(&stream, "pause", session_capability("streamPause"));
     execute::set_property_in_place(&stream, "session", socket.clone());
     execute::set_property_in_place(&stream, "rstCode", Value::Number(0.0));
+    execute::set_property_in_place(
+        &stream,
+        "\0quench:http2:end-stream",
+        Value::Boolean(end_stream),
+    );
     state
         .borrow_mut()
         .net
@@ -917,6 +925,18 @@ fn stream_end(
                 .map(String::into_bytes)
         })
         .unwrap_or_default();
+    // `request()` submits END_STREAM by default.  `request().end()` is still
+    // a common spelling for that header-only request, but sending a second
+    // empty DATA frame would produce duplicate end/close observations and an
+    // invalid wire transition.  Only an explicitly open stream needs DATA.
+    if bytes.is_empty()
+        && matches!(
+            receiver.map(|stream| execute::get_property(stream, "\0quench:http2:end-stream")),
+            Some(Value::Boolean(true))
+        )
+    {
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    }
     let frame = crate::modules::http2_protocol::Frame::new(
         crate::modules::http2_protocol::FrameType::Data,
         0x1,
