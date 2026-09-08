@@ -530,12 +530,15 @@ pub fn dispatch(
         "sessionName" => session_name(values),
         "connect" => connect(state, values),
         "sessionRequest" => session_request(state, _receiver, values),
+        "sessionConnect" => session_connect(values),
         "sessionClose" => session_close(state, _receiver, values),
         "streamWrite" => stream_write(state, _receiver, values),
         "streamEnd" => stream_end(state, _receiver, values),
         "streamClose" => stream_close(state, _receiver, values),
+        "streamDestroy" => stream_destroy(state, _receiver, values),
+        "streamAbort" => stream_abort(state, values),
         "streamRespond" => stream_respond(state, _receiver, values),
-        "streamSetEncoding" => stream_set_encoding(_receiver, values),
+        "streamSetEncoding" => stream_set_encoding(state, _receiver, values),
         "streamResume" | "streamPause" => Ok(_receiver.cloned().unwrap_or(Value::Undefined)),
         "createServer" => create_server(state, values, false),
         "createSecureServer" => create_server(state, values, true),
@@ -613,15 +616,18 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
             // socket or one that is still opening.  Preserve the transport's
             // connect fact and invoke the HTTP/2 session callback exactly
             // once in either case.
-            let connected = crate::modules::net::net_id(&socket)
-                .and_then(|id| state.borrow().net.sockets.get(&id).cloned())
-                .is_some_and(|entry| entry.borrow().connect_announced);
+            let connected = transport_connected(state, &socket);
             if connected {
-                execute::call(&callback, &socket, &[socket.clone()])?;
+                invoke_session_callback(&callback, &socket)?;
             } else {
+                let listener = session_callback(&callback, &socket);
                 let once = execute::get_property(&socket, "once");
                 if quench_runtime::is_callable(&once) {
-                    execute::call(&once, &socket, &[Value::String("connect".into()), callback])?;
+                    execute::call(
+                        &once,
+                        &socket,
+                        &[Value::String("connect".into()), listener],
+                    )?;
                 }
             }
         }
@@ -633,10 +639,7 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
     if !quench_runtime::is_callable(&net_connect) {
         return Err(VmError::NotCallable);
     }
-    let mut net_args = vec![target];
-    if let Some(callback) = callback.clone() {
-        net_args.push(callback);
-    }
+    let net_args = vec![target];
     let socket = execute::call(&net_connect, &Value::Undefined, &net_args)?;
     execute::set_property_in_place(
         &socket,
@@ -670,7 +673,62 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
         }
     }
     decorate_client_session(&socket, secure)?;
+    if let Some(callback) = callback {
+        let connected = transport_connected(state, &socket);
+        if connected {
+            invoke_session_callback(&callback, &socket)?;
+        } else {
+            let listener = session_callback(&callback, &socket);
+            let once = execute::get_property(&socket, "once");
+            if quench_runtime::is_callable(&once) {
+                execute::call(
+                    &once,
+                    &socket,
+                    &[Value::String("connect".into()), listener],
+                )?;
+            }
+        }
+    }
     Ok(socket)
+}
+
+fn session_callback(callback: &Value, socket: &Value) -> Value {
+    host_api::bound_capability_with_arguments(
+        crate::host::capability_ref(crate::registry::SPEC_INTERNAL_HTTP2_UTIL),
+        vec![Value::String("sessionConnect".into()), callback.clone(), socket.clone()],
+    )
+}
+
+/// A custom `createConnection` may return a socket whose host entry has
+/// already announced `connect` (the common case for an already-open net or
+/// TLS socket).  Keep the host record as the authoritative fact when present,
+/// while using the public open-state tuple for foreign duplex implementations
+/// that are not registered in `NetState`.
+fn transport_connected(state: &Rc<RefCell<HostState>>, socket: &Value) -> bool {
+    let registered = crate::modules::net::net_id(socket)
+        .and_then(|id| state.borrow().net.sockets.get(&id).cloned())
+        .is_some_and(|entry| entry.borrow().connect_announced);
+    registered
+        || (matches!(execute::get_property(socket, "connecting"), Value::Boolean(false))
+            && matches!(
+                execute::get_property(socket, "readyState"),
+                Value::String(state) if state == "open"
+            )
+            && !matches!(
+                execute::get_property(socket, "destroyed"),
+                Value::Boolean(true)
+            ))
+}
+
+fn invoke_session_callback(callback: &Value, socket: &Value) -> Result<(), VmError> {
+    execute::call(callback, &Value::Undefined, &[socket.clone()]).map(|_| ())
+}
+
+fn session_connect(values: &[Value]) -> Result<Value, VmError> {
+    let callback = values.first().ok_or(VmError::NotCallable)?;
+    let socket = values.get(1).ok_or(VmError::NotCallable)?;
+    invoke_session_callback(callback, socket)?;
+    Ok(Value::Undefined)
 }
 
 fn session_capability(kind: &str) -> Value {
@@ -690,6 +748,133 @@ fn decorate_client_session(socket: &Value, secure: bool) -> Result<(), VmError> 
         Value::String(if secure { "h2" } else { "h2c" }.into()),
     );
     Ok(())
+}
+
+pub(crate) const HTTP2_DIAG_CREATED: &str = "created";
+pub(crate) const HTTP2_DIAG_START: &str = "start";
+pub(crate) const HTTP2_DIAG_FINISH: &str = "finish";
+pub(crate) const HTTP2_DIAG_CLOSE: &str = "close";
+pub(crate) const HTTP2_DIAG_ERROR: &str = "error";
+
+const HTTP2_DIAG_CREATED_PROP: &str = "\0quench:http2:diagnostics:created";
+const HTTP2_DIAG_START_PROP: &str = "\0quench:http2:diagnostics:start";
+const HTTP2_DIAG_FINISH_PROP: &str = "\0quench:http2:diagnostics:finish";
+const HTTP2_DIAG_CLOSE_PROP: &str = "\0quench:http2:diagnostics:close";
+const HTTP2_DIAG_ERROR_PROP: &str = "\0quench:http2:diagnostics:error";
+
+/// Attach the observable stream family identity to a host-created stream.
+/// The emitter methods remain host-owned, while the shared Duplex prototype
+/// supplies the standard `instanceof` relationship used by diagnostics
+/// consumers.  A private constructor record avoids mutating the global
+/// `Duplex` constructor while retaining Node's concrete stream names.
+pub(crate) fn decorate_http2_stream(
+    state: &Rc<RefCell<HostState>>,
+    stream: &Value,
+    server: bool,
+) {
+    if let Some(module) = state.borrow().stream_module.clone() {
+        let duplex = execute::get_property(&module, "Duplex");
+        let prototype = execute::get_property(&duplex, "prototype");
+        if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
+            let _ = execute::set_prototype_of(stream, &prototype);
+        }
+    }
+    let constructor = host_api::object(vec![
+        (
+            "name".into(),
+            Value::String(if server {
+                "ServerHttp2Stream"
+            } else {
+                "ClientHttp2Stream"
+            }
+            .into()),
+        ),
+    ]);
+    let _ = execute::set_property_in_place(stream, "constructor", constructor);
+    let _ = execute::set_property_in_place(stream, "closed", Value::Boolean(false));
+    let _ = execute::set_property_in_place(stream, "destroyed", Value::Boolean(false));
+}
+
+fn http2_diag_name(server: bool, event: &str) -> String {
+    format!(
+        "http2.{}.stream.{}",
+        if server { "server" } else { "client" },
+        event
+    )
+}
+
+/// Publish one of Node's built-in HTTP/2 stream diagnostics records.  The
+/// one-shot marker belongs to the canonical stream object, not to an event
+/// callback, so split TCP reads and repeated terminal frames cannot duplicate
+/// an observable diagnostic.
+pub(crate) fn publish_http2_stream_diagnostic(
+    state: &Rc<RefCell<HostState>>,
+    stream: &Value,
+    server: bool,
+    event: &str,
+    headers: Option<Value>,
+    flags: Option<u8>,
+    error: Option<Value>,
+) -> Result<(), VmError> {
+    let marker = match event {
+        HTTP2_DIAG_CREATED => HTTP2_DIAG_CREATED_PROP,
+        HTTP2_DIAG_START => HTTP2_DIAG_START_PROP,
+        HTTP2_DIAG_FINISH => HTTP2_DIAG_FINISH_PROP,
+        HTTP2_DIAG_CLOSE => HTTP2_DIAG_CLOSE_PROP,
+        HTTP2_DIAG_ERROR => HTTP2_DIAG_ERROR_PROP,
+        _ => return Ok(()),
+    };
+    if matches!(execute::get_property(stream, marker), Value::Boolean(true)) {
+        return Ok(());
+    }
+    execute::set_property_in_place(stream, marker, Value::Boolean(true));
+    let mut message = vec![("stream".into(), stream.clone())];
+    if let Some(headers) = headers {
+        message.push(("headers".into(), headers));
+    }
+    if let Some(flags) = flags {
+        message.push(("flags".into(), Value::Number(flags as f64)));
+    }
+    if let Some(error) = error {
+        message.push(("error".into(), error));
+    }
+    crate::modules::diagnostics_channel::publish_named(
+        state,
+        &http2_diag_name(server, event),
+        host_api::object(message),
+    )
+}
+
+pub(crate) fn http2_diagnostic_headers(fields: &[(Vec<u8>, Vec<u8>)]) -> Value {
+    let headers = host_api::object(Vec::new());
+    let _ = execute::set_prototype_of(&headers, &Value::Null);
+    for (name, value) in fields {
+        let key = String::from_utf8_lossy(name).into_owned();
+        let value = if key == ":status" {
+            String::from_utf8_lossy(value)
+                .parse::<f64>()
+                .map(Value::Number)
+                .unwrap_or_else(|_| {
+                    Value::String(String::from_utf8_lossy(value).into_owned())
+                })
+        } else {
+            Value::String(String::from_utf8_lossy(value).into_owned())
+        };
+        let previous = execute::get_property(&headers, &key);
+        let next = match previous {
+            Value::Undefined => value,
+            Value::Array(_) => {
+                let length = execute::get_property(&previous, "length");
+                if let Value::Number(length) = length {
+                    let _ = execute::set_property_in_place(&previous, &length.to_string(), value);
+                }
+                previous
+            }
+            other => host_api::array(vec![other, value]),
+        };
+        let _ = execute::set_property_in_place(&headers, &key, next);
+    }
+    headers
 }
 
 fn session_request(
@@ -834,6 +1019,7 @@ fn session_request(
     execute::set_property_in_place(&stream, "write", session_capability("streamWrite"));
     execute::set_property_in_place(&stream, "end", session_capability("streamEnd"));
     execute::set_property_in_place(&stream, "close", session_capability("streamClose"));
+    execute::set_property_in_place(&stream, "destroy", session_capability("streamDestroy"));
     execute::set_property_in_place(&stream, "respond", session_capability("streamRespond"));
     execute::set_property_in_place(
         &stream,
@@ -849,6 +1035,7 @@ fn session_request(
         "\0quench:http2:end-stream",
         Value::Boolean(end_stream),
     );
+    decorate_http2_stream(state, &stream, false);
     state
         .borrow_mut()
         .net
@@ -865,6 +1052,48 @@ fn session_request(
         }
     };
     execute::set_property_in_place(&streams, &stream_id.to_string(), stream.clone());
+    let diagnostic_headers = http2_diagnostic_headers(&fields);
+    publish_http2_stream_diagnostic(
+        state,
+        &stream,
+        false,
+        HTTP2_DIAG_CREATED,
+        Some(diagnostic_headers.clone()),
+        None,
+        None,
+    )?;
+    publish_http2_stream_diagnostic(
+        state,
+        &stream,
+        false,
+        HTTP2_DIAG_START,
+        Some(diagnostic_headers),
+        None,
+        None,
+    )?;
+    if let Some(options) = values
+        .get(1)
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+    {
+        let signal = execute::get_property(options, "signal");
+        if matches!(signal, Value::Object(_) | Value::ObjectAlias(_)) {
+            if matches!(execute::get_property(&signal, "aborted"), Value::Boolean(true)) {
+                stream_abort(state, std::slice::from_ref(&stream))?;
+            } else {
+                let listener = host_api::bound_capability_with_arguments(
+                    crate::host::capability_ref(crate::registry::SPEC_INTERNAL_HTTP2_UTIL),
+                    vec![Value::String("streamAbort".into()), stream.clone()],
+                );
+                let listener_options =
+                    host_api::object(vec![("once".into(), Value::Boolean(true))]);
+                crate::modules::event_target::add_event_listener(
+                    state,
+                    Some(&signal),
+                    &[Value::String("abort".into()), listener, listener_options],
+                )?;
+            }
+        }
+    }
     write_http2_frame(&socket, &frame)?;
     Ok(stream)
 }
@@ -879,7 +1108,11 @@ fn stream_socket(receiver: Option<&Value>) -> Result<(Value, u32), VmError> {
     Ok((socket, stream_id))
 }
 
-fn stream_set_encoding(receiver: Option<&Value>, values: &[Value]) -> Result<Value, VmError> {
+fn stream_set_encoding(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    values: &[Value],
+) -> Result<Value, VmError> {
     let stream = receiver.ok_or(VmError::NotCallable)?;
     let encoding = values
         .first()
@@ -887,7 +1120,27 @@ fn stream_set_encoding(receiver: Option<&Value>, values: &[Value]) -> Result<Val
         .transpose()?
         .unwrap_or_else(|| "utf8".into())
         .to_ascii_lowercase();
-    execute::set_property_in_place(stream, "encoding", Value::String(encoding));
+    execute::set_property_in_place(stream, "encoding", Value::String(encoding.clone()));
+    // A request stream can be observed through a canonical stream object
+    // created when the peer's response headers arrive. Keep the encoding on
+    // that shared host record as well, so data dispatch never falls back to
+    // byte-array coercion merely because the VM exposed a distinct wrapper.
+    let socket = execute::get_property(stream, "\0quench:http2-socket");
+    let stream_id = execute::get_property(stream, "\0quench:http2-stream-id");
+    if let (Some(socket_id), Value::Number(id)) = (
+        crate::modules::net::net_id(&socket),
+        stream_id,
+    ) {
+        if let Some(canonical) = state
+            .borrow()
+            .net
+            .http2_streams
+            .get(&(socket_id, id as u32))
+            .cloned()
+        {
+            execute::set_property_in_place(&canonical, "encoding", Value::String(encoding));
+        }
+    }
     Ok(stream.clone())
 }
 
@@ -995,13 +1248,103 @@ fn stream_close(
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
+fn stream_destroy(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let stream = receiver.ok_or(VmError::NotCallable)?;
+    let (socket, stream_id) = stream_socket(Some(stream))?;
+    let error = values
+        .first()
+        .filter(|value| !matches!(value, Value::Undefined | Value::Null))
+        .cloned();
+    let code = if error
+        .as_ref()
+        .is_some_and(|value| matches!(execute::get_property(value, "code"), Value::String(code) if code == "ABORT_ERR"))
+    {
+        8_u32 // NGHTTP2_CANCEL
+    } else {
+        2_u32 // NGHTTP2_INTERNAL_ERROR
+    };
+    execute::set_property_in_place(stream, "rstCode", Value::Number(code as f64));
+    execute::set_property_in_place(stream, "closed", Value::Boolean(true));
+    execute::set_property_in_place(stream, "destroyed", Value::Boolean(error.is_some()));
+    let is_server = matches!(
+        execute::get_property(&socket, crate::modules::http2_protocol::SERVER_MARKER),
+        Value::Boolean(true)
+    );
+    if let Some(error) = error.clone() {
+        publish_http2_stream_diagnostic(
+            state,
+            stream,
+            is_server,
+            HTTP2_DIAG_ERROR,
+            None,
+            None,
+            Some(error.clone()),
+        )?;
+        // Destruction is observable on a later event-loop turn, allowing the
+        // usual `destroy(error); stream.on('error', ...)` ordering.
+        state.borrow_mut().net.pending_events.push((
+            stream.clone(),
+            "error".into(),
+            vec![error],
+        ));
+    }
+    publish_http2_stream_diagnostic(
+        state,
+        stream,
+        is_server,
+        HTTP2_DIAG_CLOSE,
+        None,
+        None,
+        None,
+    )?;
+    let frame = crate::modules::http2_protocol::Frame::new(
+        crate::modules::http2_protocol::FrameType::RstStream,
+        0,
+        stream_id,
+        code.to_be_bytes().to_vec(),
+    );
+    write_http2_frame(&socket, &frame)?;
+    Ok(stream.clone())
+}
+
+fn stream_abort(
+    state: &Rc<RefCell<HostState>>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let Some(stream) = values.first() else {
+        return Ok(Value::Undefined);
+    };
+    stream_destroy(state, Some(stream), &[abort_error()])
+}
+
+fn abort_error() -> Value {
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String("The operation was aborted".into())],
+    );
+    let error = execute::set_property(error, "name", Value::String("AbortError".into()));
+    execute::set_property(error, "code", Value::String("ABORT_ERR".into()))
+}
+
 fn stream_respond(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     values: &[Value],
 ) -> Result<Value, VmError> {
     let (socket, stream_id) = stream_socket(receiver)?;
-    let headers = values.first().unwrap_or(&Value::Undefined);
+    // `ServerHttp2Stream#respond()` defaults its header map to an empty
+    // object.  Keep the default at this API boundary so callers (including
+    // the diagnostics-channel HTTP/2 fixtures) do not need to manufacture a
+    // placeholder object merely to send the standard response headers.
+    let default_headers = host_api::object(Vec::new());
+    let headers = match values.first() {
+        None | Some(Value::Undefined) => &default_headers,
+        Some(value) => value,
+    };
     if !matches!(headers, Value::Object(_) | Value::ObjectAlias(_)) {
         return Err(coded_error(
             quench_runtime::ops::Builtin::TypeError,
@@ -1047,6 +1390,22 @@ fn stream_respond(
             block,
         ),
     )?;
+    let is_server = matches!(
+        execute::get_property(&socket, crate::modules::http2_protocol::SERVER_MARKER),
+        Value::Boolean(true)
+    );
+    if is_server {
+        decorate_http2_stream(state, receiver.unwrap_or(&Value::Undefined), true);
+        publish_http2_stream_diagnostic(
+            state,
+            receiver.unwrap_or(&Value::Undefined),
+            true,
+            HTTP2_DIAG_FINISH,
+            Some(http2_diagnostic_headers(&fields)),
+            Some(4),
+            None,
+        )?;
+    }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 

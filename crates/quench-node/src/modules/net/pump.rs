@@ -21,8 +21,8 @@ pub fn poll(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     crate::modules::quic_transport::poll(state);
     let events = std::mem::take(&mut state.borrow_mut().net.pending_events);
     for (receiver, event, args) in events {
-        let socket = super::net_id(&receiver)
-            .and_then(|id| state.borrow().net.sockets.get(&id).cloned());
+        let socket =
+            super::net_id(&receiver).and_then(|id| state.borrow().net.sockets.get(&id).cloned());
         if let Some(socket) = socket {
             emit_socket_scoped(state, &socket, &receiver, &event, args)?;
         } else {
@@ -33,6 +33,11 @@ pub fn poll(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     for (receiver, error) in errors {
         emit_server_scoped(state, &receiver, "error", vec![error])?;
     }
+    // IncomingMessage.destroy() defers transport teardown until its queued
+    // error/close observers have run. A close listener may still complete a
+    // half-open ServerResponse, so only destroy requests that remain without
+    // a response after dispatching the pending events.
+    crate::modules::http::finalize_destroyed_requests(state)?;
     let writes = std::mem::take(&mut state.borrow_mut().net.pending_writes);
     for (socket, bytes) in writes {
         socket_write(
@@ -55,8 +60,39 @@ pub fn poll(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     poll_accept(state)?;
     poll_sockets(state)?;
     finalize(state)?;
+    let fork_scopes = state.borrow().cluster.fork_scopes();
+    for scope in fork_scopes {
+        let _ = crate::modules::cluster::finish_idle_fork_process(state, scope)?;
+    }
+    retire_deferred_scopes(state);
     poll_listening(state)?;
     poll_server_close(state)
+}
+
+/// Release process-local listeners only after the last referenced network
+/// handle has reached its terminal state.  IPC disconnect can precede a
+/// socket's EOF, and those callbacks remain part of the child's observable
+/// lifecycle until the host transport has drained.
+fn retire_deferred_scopes(state: &Rc<RefCell<HostState>>) {
+    let pending = state
+        .borrow()
+        .deferred_emitter_scopes
+        .iter()
+        .copied()
+        .collect::<Vec<_>>();
+    let scopes = pending
+        .into_iter()
+        .filter(|scope| !super::has_live_scope(state, *scope))
+        .collect::<Vec<_>>();
+    {
+        let mut host = state.borrow_mut();
+        for scope in &scopes {
+            host.deferred_emitter_scopes.remove(scope);
+        }
+    }
+    for scope in scopes {
+        state.borrow_mut().emitters.remove_scope(scope);
+    }
 }
 
 fn emit_server_scoped(
@@ -124,14 +160,16 @@ fn emit_socket_scoped(
     let worker = socket
         .borrow()
         .owner_worker
-        .or_else(|| socket.borrow().server_id.and_then(|server_id| {
-            state
-                .borrow()
-                .net
-                .servers
-                .get(&server_id)
-                .and_then(|server| server.borrow().owner_worker)
-        }))
+        .or_else(|| {
+            socket.borrow().server_id.and_then(|server_id| {
+                state
+                    .borrow()
+                    .net
+                    .servers
+                    .get(&server_id)
+                    .and_then(|server| server.borrow().owner_worker)
+            })
+        })
         .and_then(|worker_id| {
             state
                 .borrow()
@@ -292,6 +330,67 @@ fn accept_one(
     } else {
         install_methods(object, net_info_props(peer, local))?
     };
+    let tls_options = state
+        .borrow()
+        .net
+        .servers
+        .get(&server_id)
+        .map(|server| execute::get_property(&server.borrow().js, "_tlsOptions"))
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)));
+    let client_facts = tls_options.as_ref().and_then(|_| {
+        state
+            .borrow()
+            .net
+            .sockets
+            .values()
+            .find_map(|candidate| {
+                let candidate = candidate.borrow();
+                (candidate.peer == local && candidate.local == Some(peer)).then(|| {
+                    (
+                        execute::get_property(&candidate.js, "servername"),
+                        execute::get_property(&candidate.js, crate::modules::tls::TLS_ALPN_PROP),
+                    )
+                })
+            })
+            .filter(|(servername, alpn)| {
+                matches!(servername, Value::String(_)) || !matches!(alpn, Value::Undefined)
+            })
+    });
+    if let Some(options) = tls_options.as_ref() {
+        crate::modules::tls::decorate_socket(&object, Some(options));
+        if let Some((servername, client_alpn)) = client_facts {
+            if matches!(servername, Value::String(_)) {
+                execute::set_property_in_place(&object, "servername", servername.clone());
+            }
+            let negotiated = crate::modules::tls::negotiate_alpn(
+                options,
+                &host_api::object(vec![("ALPNProtocols".into(), client_alpn)]),
+            );
+            execute::set_property_in_place(
+                &object,
+                crate::modules::tls::TLS_NEGOTIATED_ALPN_PROP,
+                negotiated.map_or(Value::Boolean(false), Value::String),
+            );
+            if matches!(
+                execute::get_property(options, "requestCert"),
+                Value::Boolean(true)
+            ) {
+                execute::set_property_in_place(
+                    &object,
+                    "authorized",
+                    Value::Boolean(
+                        !matches!(servername, Value::String(ref value) if value == "unknowncontext"),
+                    ),
+                );
+            }
+        } else {
+            execute::set_property_in_place(
+                &object,
+                crate::modules::tls::TLS_NEGOTIATED_ALPN_PROP,
+                Value::Boolean(false),
+            );
+        }
+    }
     let client_handle = host_api::object(vec![
         (
             "setNoDelay".into(),
@@ -315,6 +414,11 @@ fn accept_one(
         .map_or(Ok(object.clone()), |prototype| {
             execute::set_prototype_of(&object, &prototype)
         })?;
+    let negotiated_alpn =
+        execute::get_property(&object, crate::modules::tls::TLS_NEGOTIATED_ALPN_PROP);
+    if !matches!(negotiated_alpn, Value::Undefined) {
+        execute::set_property_in_place(&object, "alpnProtocol", negotiated_alpn);
+    }
     set_socket_state(&object, false, false, "open");
     let socket = Rc::new(RefCell::new(NetSocket {
         id,
@@ -379,7 +483,9 @@ fn accept_one(
             execute::call(
                 &write,
                 &object,
-                &[crate::modules::buffer_proto::make_buffer(&settings.encode())],
+                &[crate::modules::buffer_proto::make_buffer(
+                    &settings.encode(),
+                )],
             )?;
         }
     }
@@ -394,10 +500,7 @@ fn accept_one(
             .get(&server_id)
             .map(|server| server.borrow().process_scope)
             .unwrap_or(previous_scope);
-        state
-            .borrow_mut()
-            .cluster
-            .set_process_scope(server_scope);
+        state.borrow_mut().cluster.set_process_scope(server_scope);
         state.borrow().event_loop.set_process_scope(server_scope);
         // Accepted sockets expose the exact JS Server instance that owns the
         // transport.  Install this before emitting `connection` so listeners
@@ -405,7 +508,69 @@ fn accept_one(
         execute::set_property_in_place(&object, "server", js.clone());
         let server_handle = execute::get_property(&js, "_handle");
         let onconnection = execute::get_property(&server_handle, "onconnection");
-        if quench_runtime::is_callable(&onconnection)
+        let owner_worker = state
+            .borrow()
+            .net
+            .servers
+            .get(&server_id)
+            .and_then(|server| server.borrow().owner_worker);
+        let delivered_to_cluster_worker = if let Some(worker_id) = owner_worker {
+            // Round-robin cluster listeners receive accepted handles through
+            // the worker IPC channel before net.Server's onconnection hook.
+            // Keep this as a transport fact: user internalMessage listeners
+            // can close/reject the handle, while ordinary workers fall back
+            // to the normal connection callback below.
+            let has_internal_listener =
+                crate::modules::process::has_listener(state, "internalMessage");
+            if has_internal_listener {
+                let worker = state
+                    .borrow()
+                    .cluster
+                    .worker_object(worker_id)
+                    .ok_or_else(|| execute::type_error("cluster worker"))?;
+                let previous_worker = state.borrow().cluster.worker_context;
+                crate::modules::cluster::set_worker_mode(state, worker_id, &worker, true);
+                state.borrow_mut().cluster.worker_context = Some(worker_id);
+                let message =
+                    host_api::object(vec![("act".into(), Value::String("newconn".into()))]);
+                let result = crate::modules::process::emit(
+                    state,
+                    &[
+                        Value::String("internalMessage".into()),
+                        message,
+                        client_handle.clone(),
+                    ],
+                );
+                state.borrow_mut().cluster.worker_context = previous_worker;
+                crate::modules::cluster::set_worker_mode(state, worker_id, &worker, false);
+                result?;
+
+                // Closing the worker's listening server removes its
+                // round-robin handle. The primary then closes the accepted
+                // handle rather than handing it to net.Server.
+                let server_closed = state
+                    .borrow()
+                    .net
+                    .servers
+                    .get(&server_id)
+                    .is_some_and(|server| server.borrow().closed);
+                if server_closed {
+                    let close = execute::get_property(&client_handle, "close");
+                    if quench_runtime::is_callable(&close) {
+                        execute::call(&close, &client_handle, &[])?;
+                    }
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        if !delivered_to_cluster_worker
+            && quench_runtime::is_callable(&onconnection)
             && !matches!(
                 onconnection,
                 Value::Builtin(quench_runtime::ops::Builtin::Object)
@@ -436,23 +601,33 @@ fn accept_one(
                     .worker_object(worker_id)
                     .map(|worker| (worker_id, worker))
             });
-        let connection_result = if let Some((worker_id, worker)) = owner {
+        let connection_result = if delivered_to_cluster_worker {
+            // The IPC handoff above is the worker's connection notification;
+            // emitting the server event as well would deliver the same
+            // accepted handle twice.
+            Ok(())
+        } else if let Some((worker_id, worker)) = owner {
             let previous = state.borrow().cluster.worker_context;
             crate::modules::cluster::set_worker_mode(state, worker_id, &worker, true);
             state.borrow_mut().cluster.worker_context = Some(worker_id);
-            let result = emit(state, &js, "connection", vec![object]);
+            let result = emit(state, &js, "connection", vec![object.clone()]);
             state.borrow_mut().cluster.worker_context = previous;
             crate::modules::cluster::set_worker_mode(state, worker_id, &worker, false);
             result
         } else {
-            emit(state, &js, "connection", vec![object])
+            emit(state, &js, "connection", vec![object.clone()])
         };
+        state.borrow_mut().cluster.set_process_scope(previous_scope);
         state
-            .borrow_mut()
-            .cluster
-            .set_process_scope(previous_scope);
-        state.borrow().event_loop.set_process_scope(previous_event_scope);
+            .borrow()
+            .event_loop
+            .set_process_scope(previous_event_scope);
         connection_result?;
+        if let Some(server) = tls_server {
+            if crate::modules::tls::is_tls_server(&server) {
+                emit(state, &server, "secureConnection", vec![object])?;
+            }
+        }
     }
     Ok(())
 }
@@ -550,6 +725,7 @@ fn http2_stream(
     execute::set_property_in_place(&stream, "write", http2_capability("streamWrite"));
     execute::set_property_in_place(&stream, "end", http2_capability("streamEnd"));
     execute::set_property_in_place(&stream, "close", http2_capability("streamClose"));
+    execute::set_property_in_place(&stream, "destroy", http2_capability("streamDestroy"));
     execute::set_property_in_place(&stream, "respond", http2_capability("streamRespond"));
     execute::set_property_in_place(
         &stream,
@@ -560,6 +736,7 @@ fn http2_stream(
     execute::set_property_in_place(&stream, "pause", http2_capability("streamPause"));
     execute::set_property_in_place(&stream, "session", socket.clone());
     execute::set_property_in_place(&stream, "rstCode", Value::Number(0.0));
+    crate::modules::http2_util::decorate_http2_stream(state, &stream, false);
     if let Some(socket_id) = crate::modules::net::net_id(socket) {
         state
             .borrow_mut()
@@ -624,6 +801,12 @@ fn dispatch_http2_frames(
         match frame.header.kind {
             crate::modules::http2_protocol::FrameType::Settings => {
                 if frame.header.flags & 1 == 0 {
+                    if matches!(
+                        execute::get_property(&socket_js, "destroyed"),
+                        Value::Boolean(true)
+                    ) {
+                        continue;
+                    }
                     let ack = crate::modules::http2_protocol::Frame::new(
                         crate::modules::http2_protocol::FrameType::Settings,
                         1,
@@ -648,10 +831,11 @@ fn dispatch_http2_frames(
                 let fields = completed_headers.get(&stream_id).cloned();
                 let Some(fields) = fields else { continue };
                 let (stream, fresh) = http2_stream(state, &socket_js, stream_id)?;
+                crate::modules::http2_util::decorate_http2_stream(state, &stream, is_server);
                 let headers = http2_headers_value(&fields);
                 let args = vec![
                     stream.clone(),
-                    headers,
+                    headers.clone(),
                     Value::Number(
                         header_flags
                             .get(&stream_id)
@@ -660,6 +844,26 @@ fn dispatch_http2_frames(
                     ),
                 ];
                 if is_server {
+                    if fresh {
+                        crate::modules::http2_util::publish_http2_stream_diagnostic(
+                            state,
+                            &stream,
+                            true,
+                            crate::modules::http2_util::HTTP2_DIAG_CREATED,
+                            Some(headers.clone()),
+                            None,
+                            None,
+                        )?;
+                        crate::modules::http2_util::publish_http2_stream_diagnostic(
+                            state,
+                            &stream,
+                            true,
+                            crate::modules::http2_util::HTTP2_DIAG_START,
+                            Some(headers.clone()),
+                            None,
+                            None,
+                        )?;
+                    }
                     let server = socket
                         .borrow()
                         .server_id
@@ -685,10 +889,7 @@ fn dispatch_http2_frames(
                                     .cloned()
                             })
                             .unwrap_or_else(|| {
-                                execute::get_property(
-                                    &server,
-                                    "\0quench:http2-request-listener",
-                                )
+                                execute::get_property(&server, "\0quench:http2-request-listener")
                             });
                         if quench_runtime::is_callable(&request_listener) {
                             execute::call(&request_listener, &server, &args)?;
@@ -697,8 +898,35 @@ fn dispatch_http2_frames(
                         }
                     }
                 } else if fresh {
+                    crate::modules::http2_util::publish_http2_stream_diagnostic(
+                        state,
+                        &stream,
+                        false,
+                        crate::modules::http2_util::HTTP2_DIAG_CREATED,
+                        Some(headers.clone()),
+                        None,
+                        None,
+                    )?;
+                    crate::modules::http2_util::publish_http2_stream_diagnostic(
+                        state,
+                        &stream,
+                        false,
+                        crate::modules::http2_util::HTTP2_DIAG_START,
+                        Some(headers.clone()),
+                        None,
+                        None,
+                    )?;
                     emit_socket_scoped(state, socket, &socket_js, "stream", args)?;
                 } else {
+                    crate::modules::http2_util::publish_http2_stream_diagnostic(
+                        state,
+                        &stream,
+                        false,
+                        crate::modules::http2_util::HTTP2_DIAG_FINISH,
+                        Some(headers.clone()),
+                        Some(header_flags.get(&stream_id).copied().unwrap_or(frame.header.flags)),
+                        None,
+                    )?;
                     emit_socket_scoped(
                         state,
                         socket,
@@ -713,6 +941,16 @@ fn dispatch_http2_frames(
                 // frame itself; using the aggregate here would emit a
                 // duplicate `end`/`close` before DATA is dispatched.
                 if frame.header.flags & 1 != 0 {
+                    execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
+                    crate::modules::http2_util::publish_http2_stream_diagnostic(
+                        state,
+                        &stream,
+                        is_server,
+                        crate::modules::http2_util::HTTP2_DIAG_CLOSE,
+                        None,
+                        None,
+                        None,
+                    )?;
                     emit_socket_scoped(state, socket, &stream, "end", Vec::new())?;
                     emit_socket_scoped(state, socket, &stream, "close", Vec::new())?;
                 }
@@ -721,6 +959,16 @@ fn dispatch_http2_frames(
                 let (stream, _) = http2_stream(state, &socket_js, stream_id)?;
                 if frame.payload.is_empty() {
                     if frame.header.flags & 1 != 0 {
+                        execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
+                        crate::modules::http2_util::publish_http2_stream_diagnostic(
+                            state,
+                            &stream,
+                            is_server,
+                            crate::modules::http2_util::HTTP2_DIAG_CLOSE,
+                            None,
+                            None,
+                            None,
+                        )?;
                         emit_socket_scoped(state, socket, &stream, "end", Vec::new())?;
                         emit_socket_scoped(state, socket, &stream, "close", Vec::new())?;
                     }
@@ -732,14 +980,18 @@ fn dispatch_http2_frames(
                     }
                     _ => host_api::bytes(&frame.payload),
                 };
-                emit_socket_scoped(
-                    state,
-                    socket,
-                    &stream,
-                    "data",
-                    vec![data],
-                )?;
+                emit_socket_scoped(state, socket, &stream, "data", vec![data])?;
                 if frame.header.flags & 1 != 0 {
+                    execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
+                    crate::modules::http2_util::publish_http2_stream_diagnostic(
+                        state,
+                        &stream,
+                        is_server,
+                        crate::modules::http2_util::HTTP2_DIAG_CLOSE,
+                        None,
+                        None,
+                        None,
+                    )?;
                     emit_socket_scoped(state, socket, &stream, "end", Vec::new())?;
                     emit_socket_scoped(state, socket, &stream, "close", Vec::new())?;
                 }
@@ -751,11 +1003,18 @@ fn dispatch_http2_frames(
                     .get(..4)
                     .map(|bytes| u32::from_be_bytes(bytes.try_into().unwrap()))
                     .unwrap_or(0);
-                execute::set_property_in_place(
+                execute::set_property_in_place(&stream, "rstCode", Value::Number(code as f64));
+                execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
+                execute::set_property_in_place(&stream, "destroyed", Value::Boolean(true));
+                crate::modules::http2_util::publish_http2_stream_diagnostic(
+                    state,
                     &stream,
-                    "rstCode",
-                    Value::Number(code as f64),
-                );
+                    is_server,
+                    crate::modules::http2_util::HTTP2_DIAG_CLOSE,
+                    None,
+                    None,
+                    None,
+                )?;
                 emit_socket_scoped(state, socket, &stream, "close", Vec::new())?;
             }
             _ => {}
@@ -780,7 +1039,9 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             // must remain the reserved bound port rather than the kernel's
             // unrelated ephemeral source port.
             let local = match execute::get_property(&js, BOUND_LOCAL_PORT_PROP) {
-                Value::Number(port) if port.is_finite() && (0.0..=u16::MAX as f64).contains(&port) => {
+                Value::Number(port)
+                    if port.is_finite() && (0.0..=u16::MAX as f64).contains(&port) =>
+                {
                     SocketAddr::new(local.ip(), port as u16)
                 }
                 _ => local,
@@ -800,7 +1061,49 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             super::socket_set_no_delay(state, Some(&js), &[Value::Boolean(true)])?;
         }
         crate::modules::http_client::apply_deferred_request_timeout(state, &js)?;
+        if matches!(
+            execute::get_property(&js, crate::modules::tls::TLS_REJECTED_PROP),
+            Value::Boolean(true)
+        ) {
+            continue;
+        }
         emit_socket_scoped(state, &sock, &js, "connect", Vec::new())?;
+        // Native sockets report the same `net` PerformanceEntry surface as
+        // Node.  The queue/observer semantics live in the bootstrap bridge;
+        // this edge only supplies transport facts owned by Rust.
+        let record = state.borrow().net.performance_record.clone();
+        if let Some(record) = record.filter(|value| quench_runtime::is_callable(value)) {
+            if matches!(
+                execute::get_property(&js, super::PIPE_MARKER_PROP),
+                Value::Boolean(true)
+            ) {
+                continue;
+            }
+            if let Some(peer) = peer {
+                let detail = quench_runtime::host_api::object(vec![
+                    ("host".into(), Value::String(peer.ip().to_string())),
+                    ("port".into(), Value::Number(peer.port() as f64)),
+                ]);
+                let _ = execute::call(
+                    &record,
+                    &Value::Undefined,
+                    &[
+                        Value::String("net".into()),
+                        detail,
+                        Value::String("connect".into()),
+                    ],
+                );
+            }
+        }
+        if matches!(
+            execute::get_property(&js, crate::modules::tls::TLS_SOCKET_PROP),
+            Value::Boolean(true)
+        ) && !matches!(
+            execute::get_property(&js, crate::modules::tls::TLS_REJECTED_PROP),
+            Value::Boolean(true)
+        ) {
+            emit_socket_scoped(state, &sock, &js, "secureConnect", Vec::new())?;
+        }
     }
     for (sock, bytes) in events.datas {
         let js = sock.borrow().js.clone();
@@ -921,6 +1224,26 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         execute::set_property_in_place(&js, "readable", Value::Boolean(false));
         super::end_async_stream(state, sock.borrow().id);
         emit_socket_scoped(state, &sock, &js, "end", Vec::new())?;
+        // An HTTP/1.1 peer may half-close after pipelined requests. Once the
+        // parser has no active request left, finish the server write side so
+        // the peer observes its expected final `end` event even when
+        // `httpAllowHalfOpen` is enabled.
+        let close_http = sock.borrow().server_id.is_some()
+            && matches!(
+                execute::get_property(&js, crate::modules::http::HTTP_SERVER_SOCKET_PROP),
+                Value::Boolean(true)
+            )
+            && state
+                .borrow()
+                .http
+                .conns
+                .get(&sock.borrow().id)
+                .is_some_and(|conn| {
+                    conn.req.is_none() && !conn.head_parsed && conn.buffer.is_empty()
+                });
+        if close_http {
+            super::socket_end(state, Some(&js), &[])?;
+        }
     }
     for sock in events.write_failures {
         let js = sock.borrow().js.clone();
@@ -1005,9 +1328,7 @@ fn read_sockets(state: &Rc<RefCell<HostState>>) -> SocketEvents {
         if guard.state == SocketState::Closed {
             continue;
         }
-        if guard.stream.is_some()
-            && guard.state != SocketState::Closed
-            && !guard.connect_announced
+        if guard.stream.is_some() && guard.state != SocketState::Closed && !guard.connect_announced
         {
             guard.connect_announced = true;
             events.connects.push(sock.clone());
@@ -1045,21 +1366,6 @@ fn read_sockets(state: &Rc<RefCell<HostState>>) -> SocketEvents {
             execute::get_property(&guard.js, "allowHalfOpen"),
             Value::Boolean(true)
         );
-        // An HTTP/1.1 peer may half-close after pipelined requests. Once the
-        // parser has no active request left, finish the server write side so
-        // the peer observes its expected final `end` event even when
-        // `httpAllowHalfOpen` is enabled.
-        let close_http = sock.borrow().server_id.is_some()
-            && matches!(
-                execute::get_property(&js, crate::modules::http::HTTP_SERVER_SOCKET_PROP),
-                Value::Boolean(true)
-            )
-            && state.borrow().http.conns.get(&sock.borrow().id).is_some_and(|conn| {
-                conn.req.is_none() && !conn.head_parsed && conn.buffer.is_empty()
-            });
-        if close_http {
-            super::socket_end(state, Some(&js), &[])?;
-        }
         if guard.read_eof && pending_write_len(&guard) > 0 && !allow_half_open {
             guard.write_buf.clear();
             guard.write_offset = 0;
@@ -1255,11 +1561,7 @@ pub fn finalize(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         if let Some(timer) = timer {
             crate::modules::timers::clear_timeout(state, &[timer])?;
         }
-        execute::set_property_in_place(
-            &js,
-            super::methods::SOCKET_TIMEOUT_PROP,
-            Value::Undefined,
-        );
+        execute::set_property_in_place(&js, super::methods::SOCKET_TIMEOUT_PROP, Value::Undefined);
     }
     for js in to_finish {
         emit(state, &js, "finish", Vec::new())?;
