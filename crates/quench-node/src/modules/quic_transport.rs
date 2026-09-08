@@ -71,6 +71,9 @@ struct Endpoint {
     /// stream facts must be derived from protocol events, not from a second
     /// JS-owned packet implementation.
     protocol: ProtocolEndpoint,
+    /// Whether an application-installed server configuration allows Initial
+    /// packets to enter quinn-proto's incoming-connection state machine.
+    server_configured: bool,
 }
 
 /// Host-owned UDP endpoints and their transport queues.
@@ -116,9 +119,28 @@ impl QuicTransportState {
                     false,
                     None,
                 ),
+                server_configured: false,
             },
         );
         Ok(id)
+    }
+
+    /// Install or remove the server TLS/protocol configuration for an
+    /// endpoint. No JavaScript surface calls this yet; it is the single
+    /// host-side transition a future `node:quic` adapter will use once
+    /// certificate and ALPN validation are mapped into `ServerConfig`.
+    pub fn set_server_config(
+        &mut self,
+        endpoint: u64,
+        config: Option<Arc<quinn_proto::ServerConfig>>,
+    ) -> Result<(), TransportError> {
+        let endpoint_state = self
+            .endpoints
+            .get_mut(&endpoint)
+            .ok_or(TransportError::UnknownEndpoint(endpoint))?;
+        endpoint_state.server_configured = config.is_some();
+        endpoint_state.protocol.set_server_config(config);
+        Ok(())
     }
 
     pub fn local_addr(&self, endpoint: u64) -> Result<SocketAddr, TransportError> {
@@ -263,6 +285,23 @@ impl QuicTransportState {
     }
 
     fn handle_protocol_datagram(&mut self, endpoint_id: u64, peer: SocketAddr, payload: Vec<u8>) {
+        // quinn-proto's endpoint parser assumes a server configuration exists
+        // once a packet is identified as Initial. This host endpoint is
+        // currently transport-only, so reject that transition explicitly
+        // rather than allowing a peer-controlled datagram to panic the event
+        // loop. The original datagram remains available through `received`.
+        let server_configured = self
+            .endpoints
+            .get(&endpoint_id)
+            .is_some_and(|endpoint| endpoint.server_configured);
+        if !server_configured && is_initial_packet(&payload) {
+            self.protocol_events.push_back(ProtocolEvent::Ignored {
+                endpoint: endpoint_id,
+                peer,
+                payload_len: payload.len(),
+            });
+            return;
+        }
         let Some(local_ip) = self
             .endpoints
             .get(&endpoint_id)
@@ -311,6 +350,15 @@ impl QuicTransportState {
             self.errors.push_back(error);
         }
     }
+}
+
+/// Recognize the QUIC long-header Initial packet type without decoding it.
+/// This is only a capability guard; all packet validation remains delegated to
+/// quinn-proto after a server configuration is installed.
+fn is_initial_packet(payload: &[u8]) -> bool {
+    payload
+        .first()
+        .is_some_and(|first| first & 0x80 != 0 && first & 0x30 == 0)
 }
 
 /// Event-loop integration point.  QUIC remains capability-disabled until a
@@ -402,5 +450,51 @@ mod tests {
         // The protocol layer observes a copy; the transport contract still
         // exposes the original datagram to the eventual endpoint adapter.
         assert_eq!(state.take_received().unwrap().payload, packet);
+    }
+
+    #[test]
+    fn unconfigured_endpoint_ignores_initial_without_panicking() {
+        let mut state = QuicTransportState::new();
+        let endpoint = state.bind(loopback()).unwrap();
+        let address = state.local_addr(endpoint).unwrap();
+        let peer = UdpSocket::bind(loopback()).unwrap();
+        // Long-header, fixed-bit Initial prefix and a version. The remainder
+        // is intentionally incomplete; this exercises the configuration guard
+        // before quinn-proto's Initial decoder.
+        let packet = vec![0xc0, 0, 0, 0, 1, 0, 0, 0];
+
+        peer.send_to(&packet, address).unwrap();
+        for _ in 0..100 {
+            state.poll();
+            if state.pending_received() != 0 {
+                break;
+            }
+            std::thread::yield_now();
+        }
+
+        assert_eq!(
+            state.take_protocol_event(),
+            Some(ProtocolEvent::Ignored {
+                endpoint,
+                peer: peer.local_addr().unwrap(),
+                payload_len: packet.len(),
+            })
+        );
+        assert_eq!(state.take_received().unwrap().payload, packet);
+    }
+
+    #[test]
+    fn server_configuration_transition_is_endpoint_scoped() {
+        let mut state = QuicTransportState::new();
+        let first = state.bind(loopback()).unwrap();
+        let second = state.bind(loopback()).unwrap();
+
+        assert_eq!(state.set_server_config(first, None), Ok(()));
+        assert_eq!(
+            state.set_server_config(99, None),
+            Err(TransportError::UnknownEndpoint(99))
+        );
+        assert!(!state.endpoints.get(&first).unwrap().server_configured);
+        assert!(!state.endpoints.get(&second).unwrap().server_configured);
     }
 }
