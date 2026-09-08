@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "warmup": 1,
+  "result": { "kind": "string", "value": "[\"number\",\"3168\"]" },
+  "plan": {
+    "execution_kind": "native_machine_code",
+    "operation_route": ["closures", "mutable"],
+    "fallback": false
+  },
+  "profile": {
+    "residual": {},
+    "slow": {},
+    "stencils": { "closures_mutable_region": { "entries": 1, "fallbacks": 0 } },
+    "events": { "leaf_hit": 1 }
+  }
+}

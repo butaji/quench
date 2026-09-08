@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "warmup": 1,
+  "result": { "kind": "string", "value": "6187488" },
+  "plan": {
+    "execution_kind": "portable_recipe",
+    "operation_route": ["unicode_codepoints"],
+    "fallback": false
+  },
+  "profile": {
+    "residual": {},
+    "slow": {},
+    "stencils": { "unicode_codepoints_region": { "entries": 1, "fallbacks": 0 } },
+    "events": { "leaf_hit": 1 }
+  }
+}

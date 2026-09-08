@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "warmup": 1,
+  "result": { "kind": "string", "value": "[\"number\",\"4032\"]" },
+  "plan": {
+    "execution_kind": "native_machine_code",
+    "operation_route": ["diversity", "code"],
+    "fallback": false
+  },
+  "profile": {
+    "residual": {},
+    "slow": {},
+    "stencils": { "diversity_code_region": { "entries": 1, "fallbacks": 0 } },
+    "events": { "leaf_hit": 1 }
+  }
+}

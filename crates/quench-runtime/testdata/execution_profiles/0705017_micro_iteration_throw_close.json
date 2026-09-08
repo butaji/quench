@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "warmup": 1,
+  "result": { "kind": "string", "value": "[\"array\",[[\"number\",\"64\"],[\"number\",\"1\"]]]" },
+  "plan": {
+    "execution_kind": "native_machine_code",
+    "operation_route": ["iteration", "throw_close"],
+    "fallback": false
+  },
+  "profile": {
+    "residual": {},
+    "slow": {},
+    "stencils": { "iteration_throw_close_region": { "entries": 1, "fallbacks": 0 } },
+    "events": { "leaf_hit": 1 }
+  }
+}
