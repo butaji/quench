@@ -49,6 +49,10 @@ pub struct ClusterState {
     /// worker arguments.
     parent_argv: Option<Value>,
     settings_explicit: bool,
+    /// Primary-side IPC sender for each logical process scope. Worker event
+    /// callbacks temporarily install their worker sender and restore this
+    /// value when the callback returns.
+    primary_sends: HashMap<u64, Value>,
 }
 impl ClusterState {
     pub fn new() -> Self {
@@ -67,6 +71,7 @@ impl ClusterState {
             pending_cluster_listening: Vec::new(),
             parent_argv: None,
             settings_explicit: false,
+            primary_sends: HashMap::new(),
         }
     }
 
@@ -630,12 +635,29 @@ pub fn fork(
     );
     let module = host.cluster.module.clone();
     drop(host);
+    let primary_process = {
+        let global = quench_runtime::vm::current_global_object();
+        execute::get_property(&global, "process")
+    };
+    let primary_send = execute::get_property(&primary_process, "send");
+    let primary_scope = state.borrow().cluster.process_scope();
+    state
+        .borrow_mut()
+        .cluster
+        .primary_sends
+        .entry(primary_scope)
+        .or_insert_with(|| primary_send.clone());
     if let Some(module) = module {
         if let Ok(workers) = execute::get_property_result(&module, "workers") {
             let _ = execute::set_property_in_place(&workers, &id.to_string(), worker.clone());
         }
     }
     run_worker_script(state, id, &worker);
+    // Worker re-entry temporarily installs the cluster worker's process.send
+    // capability. Restore the primary IPC sender before fork() returns so a
+    // listener registered immediately after the call binds the parent
+    // channel rather than the worker-side sender.
+    execute::set_property_in_place(&primary_process, "send", primary_send);
     // Child bootstrap may have delivered a listening notification while the
     // logical worker was re-entered. The parent-visible lifecycle still
     // starts at `none` for the deferred fork event; the queued listening
@@ -1018,8 +1040,30 @@ pub(crate) fn set_worker_mode(
     if let Ok(process) = execute::get_property_result(&global, "process") {
         if child {
             let _ = execute::set_property_in_place(&process, ID, Value::Number(id as f64));
+            // Worker callbacks execute in the shared VM but must observe the
+            // worker-side IPC sender while their logical process scope is
+            // active.  This is the same capability installed during worker
+            // bootstrap; keeping it scoped here also covers delayed I/O
+            // callbacks that run after `fork()` has returned.
+            let _ = execute::set_property_in_place(
+                &process,
+                "send",
+                crate::host::capability(SPEC_CLUSTER_WORKER_PROCESS_SEND),
+            );
         } else {
-            let _ = execute::delete_property(process, ID);
+            let scope = state.borrow().cluster.process_scope();
+            let primary_send = state
+                .borrow()
+                .cluster
+                .primary_sends
+                .get(&scope)
+                .cloned()
+                .unwrap_or(Value::Undefined);
+            let _ = execute::delete_property(process.clone(), ID);
+            // Restore the sender belonging to this logical primary.  The
+            // top-level primary intentionally has no `process.send`, while a
+            // child-process primary retains its ordinary IPC capability.
+            let _ = execute::set_property_in_place(&process, "send", primary_send);
         }
     }
 }
