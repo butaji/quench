@@ -88,6 +88,13 @@ pub(crate) struct NativePrototypeAddContext {
     result: i32,
 }
 
+#[repr(C)]
+pub(crate) struct NativeVectorDotContext {
+    left: [f64; 3],
+    right: [f64; 3],
+    result: f64,
+}
+
 impl NativePropertyReadContext {
     pub(crate) fn new(access: GuardedPropertySlot) -> Self {
         Self {
@@ -163,6 +170,30 @@ impl NativePrototypeAddContext {
     pub(crate) fn result(&self, status: u32) -> Option<i32> {
         (status == 1).then_some(self.result)
     }
+}
+
+impl NativeVectorDotContext {
+    pub(crate) const fn new(left: [f64; 3], right: [f64; 3]) -> Self {
+        Self {
+            left,
+            right,
+            result: 0.0,
+        }
+    }
+
+    pub(crate) fn result(&self, status: u32) -> Option<f64> {
+        (status == 1).then_some(self.result)
+    }
+}
+
+#[inline(never)]
+pub(crate) extern "C" fn execute_vector_dot(context: *mut NativeVectorDotContext) -> u32 {
+    let Some(context) = (unsafe { context.as_mut() }) else {
+        return 0;
+    };
+    let xy = context.left[0] * context.right[0] + context.left[1] * context.right[1];
+    context.result = xy + context.left[2] * context.right[2];
+    1
 }
 
 #[inline(never)]

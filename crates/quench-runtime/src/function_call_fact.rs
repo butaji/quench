@@ -21,6 +21,11 @@ pub(crate) struct OwnFieldAddReturn {
     pub(crate) addend: i32,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct VectorDotReturn {
+    pub(crate) fields: [std::rc::Rc<str>; 3],
+}
+
 impl IntegerSwitchI32 {
     pub(crate) fn select(&self, discriminant: i32) -> NumericAffineI32 {
         self.branches
@@ -128,6 +133,70 @@ pub(crate) fn stable_own_field_add_return(
     let fact = own_field_add_return(function)?;
     let expected = installed.get_or_insert_with(|| fact.clone());
     (*expected == fact).then_some(fact)
+}
+
+pub(crate) fn stable_vector_dot_return(
+    installed: &mut Option<VectorDotReturn>,
+    function: &crate::value::FunctionValue,
+) -> Option<VectorDotReturn> {
+    let fact = vector_dot_return(function)?;
+    let expected = installed.get_or_insert_with(|| fact.clone());
+    (*expected == fact).then_some(fact)
+}
+
+fn vector_dot_return(function: &crate::value::FunctionValue) -> Option<VectorDotReturn> {
+    (function.params == 2 && crate::functions::direct_call_eligible(function)).then_some(())?;
+    let code = function.code.code()?;
+    let ops = instruction_array::<20>(code)?;
+    validate_vector_dot_shape(&ops)?;
+    validate_vector_dot_flow(function, &ops)?;
+    let fields = [
+        code.metadata_at(1)?.name.clone()?,
+        code.metadata_at(6)?.name.clone()?,
+        code.metadata_at(12)?.name.clone()?,
+    ];
+    (code.metadata_at(3)?.name == Some(fields[0].clone())
+        && code.metadata_at(8)?.name == Some(fields[1].clone())
+        && code.metadata_at(14)?.name == Some(fields[2].clone())
+        && has_undefined_tail(code, 18))
+    .then_some(VectorDotReturn { fields })
+}
+
+fn validate_vector_dot_shape(ops: &[crate::ir::Instruction; 20]) -> Option<()> {
+    use crate::ir::Opcode::{Add, GetN, GetNQuickened, LoadLocal, Mul, Return};
+    let expected = [
+        LoadLocal, GetN, LoadLocal, GetN, Mul, LoadLocal, GetN, LoadLocal, GetN, Mul, Add,
+        LoadLocal, GetN, LoadLocal, GetN, Mul, Add, Return,
+    ];
+    ops[..18]
+        .iter()
+        .zip(expected)
+        .all(|(op, expected)| {
+            op.opcode == expected || (expected == GetN && op.opcode == GetNQuickened)
+        })
+        .then_some(())
+}
+
+fn validate_vector_dot_flow(
+    function: &crate::value::FunctionValue,
+    ops: &[crate::ir::Instruction; 20],
+) -> Option<()> {
+    let first = u16::try_from(function.captures.len()).ok()?;
+    let second = first.checked_add(1)?;
+    ([0, 5, 11].into_iter().all(|pc| ops[pc].b == first)
+        && [2, 7, 13].into_iter().all(|pc| ops[pc].b == second)
+        && [1, 3, 6, 8, 12, 14]
+            .into_iter()
+            .all(|pc| ops[pc].b == ops[pc - 1].a)
+        && [4, 9, 15]
+            .into_iter()
+            .all(|pc| ops[pc].b == ops[pc - 3].a && ops[pc].c == ops[pc - 1].a)
+        && ops[10].b == ops[4].a
+        && ops[10].c == ops[9].a
+        && ops[16].b == ops[10].a
+        && ops[16].c == ops[15].a
+        && ops[17] == crate::ir::Instruction::ret(ops[16].a))
+    .then_some(())
 }
 
 fn validate_field_add_ops(
