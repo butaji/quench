@@ -31,6 +31,11 @@ pub(crate) struct OwnFieldStoreReturn {
     pub(crate) field: std::rc::Rc<str>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NumericComparatorFact {
+    Subtract,
+}
+
 impl IntegerSwitchI32 {
     pub(crate) fn select(&self, discriminant: i32) -> NumericAffineI32 {
         self.branches
@@ -56,7 +61,7 @@ pub(crate) fn numeric_affine_callable(
 /// replacing calls with native Number subtraction.
 pub(crate) fn numeric_subtract_comparator(
     function: &crate::value::FunctionValue,
-) -> Option<()> {
+) -> Option<NumericComparatorFact> {
     (function.params == 2 && crate::functions::direct_call_eligible(function)).then_some(())?;
     let code = function.code.code()?;
     (core_len(code)? == 4).then_some(())?;
@@ -73,7 +78,7 @@ pub(crate) fn numeric_subtract_comparator(
         && subtract.b == left.a
         && subtract.c == right.a
         && ret == crate::ir::Instruction::ret(subtract.a))
-    .then_some(())
+    .then_some(NumericComparatorFact::Subtract)
 }
 
 pub(crate) fn forwards_one_argument(function: &crate::value::FunctionValue) -> Option<()> {
