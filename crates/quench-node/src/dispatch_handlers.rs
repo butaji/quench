@@ -2337,19 +2337,11 @@ pub fn timers_run_loop(
     _receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    // The fixture leak checker runs from `process.on("exit")`. Keep host
-    // bookkeeping out of that observable global scan while the exit handlers
-    // drain, then restore it for the runner's post-loop verifier.
-    let global = quench_runtime::vm::current_global_object();
-    let saved_resource = execute::get_property(&global, "__nodeCurrentAsyncResource");
-    let saved_calls = execute::get_property(&global, "__nodeCallChecks");
-    let _ = execute::set_property_in_place(&global, "__nodeCurrentAsyncResource", global.clone());
-    let _ = execute::set_property_in_place(&global, "__nodeCallChecks", global.clone());
-    let result = crate::modules::pump::run_event_loop(state);
-    let _ = execute::set_property_in_place(&global, "__nodeCurrentAsyncResource", saved_resource);
-    let _ = execute::set_property_in_place(&global, "__nodeCallChecks", saved_calls);
-    rehide_runtime_globals(&global);
-    result?;
+    // `run_event_loop` hides host bookkeeping immediately before invoking the
+    // process-exit observers. Do not hide it across the event-loop drain:
+    // asynchronous callbacks are ordinary user code and must see the live
+    // call-check collection while they create wrappers.
+    crate::modules::pump::run_event_loop(state)?;
     Ok(Value::Undefined)
 }
 pub fn uncaught_dispatch(
