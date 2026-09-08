@@ -134,6 +134,10 @@ fn generated_abi_classification_matches_physical_entry_shape() {
                 assert_eq!(record.name, "numeric_floating_loop");
                 assert!(record.operations.ends_with(&[crate::ir::Opcode::Jump]));
             }
+            RegionAbi::NumericI32BitwiseLoop => {
+                assert_eq!(record.name, "numeric_bitwise_loop");
+                assert!(record.operations.ends_with(&[crate::ir::Opcode::Jump]));
+            }
             RegionAbi::CompareBranch => {
                 assert_eq!(
                     record.operations,

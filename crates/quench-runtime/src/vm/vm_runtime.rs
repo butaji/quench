@@ -2006,6 +2006,13 @@ fn record_floating_loop(code: crate::machine::CodeView<'_>, pc: usize) {
     crate::test_execution_profile::dynamic_region_route(["numeric", "floating"]);
 }
 
+fn record_bitwise_loop(code: crate::machine::CodeView<'_>, pc: usize) {
+    crate::execution_trace::stencil_observation(code, pc, "numeric_bitwise_region", true);
+    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+    #[cfg(test)]
+    crate::test_execution_profile::dynamic_region_route(["numeric", "bitwise"]);
+}
+
 fn record_dense_copy(code: crate::machine::CodeView<'_>, pc: usize) {
     crate::execution_trace::stencil_observation(code, pc, "dense_numeric_copy_loop", true);
     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
@@ -2326,6 +2333,33 @@ pub(crate) fn execute_optimized_code_step_from(
             }
         }
         crate::execution_trace::stencil_observation(code, start, "numeric_floating_region", false);
+    }
+    if let Some(bitwise_loop) = entry.bitwise_loop() {
+        let result = crate::locals::with_current_ref(|environment| {
+            let Some(environment) = environment else { return Ok(None) };
+            bitwise_loop.borrow_mut().execute(code, environment, context)
+        });
+        match result {
+            Ok(Some(crate::stencil_numeric_bitwise_loop::BitwiseLoopOutcome::Completed(value))) => {
+                record_bitwise_loop(code, start);
+                return Ok((
+                    crate::completion::Completion::Return(crate::value::Value::Number(f64::from(value))),
+                    crate::stencil_numeric_bitwise_loop::REGION_END,
+                ));
+            }
+            Ok(Some(crate::stencil_numeric_bitwise_loop::BitwiseLoopOutcome::Resume { pc })) => {
+                record_bitwise_loop(code, start);
+                return Ok((crate::completion::Completion::Normal, pc));
+            }
+            Ok(None) | Err(crate::machine::NativeDispatchError::Physical(_)) => {}
+            Err(crate::machine::NativeDispatchError::SemanticAt { error, .. }) => return Err(error),
+            Err(crate::machine::NativeDispatchError::Committed { pc, message }) => {
+                return Err(VmError::EvalError(format!(
+                    "committed bitwise loop failure at residual pc {pc}: {message}"
+                )))
+            }
+        }
+        crate::execution_trace::stencil_observation(code, start, "numeric_bitwise_region", false);
     }
     if let Some(dense) = entry.dense_update() {
         let result = crate::locals::with_current_ref(|environment| {
@@ -3277,6 +3311,39 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                 Err(crate::machine::NativeDispatchError::Committed { pc, message }) => {
                     return Err(VmError::EvalError(format!(
                         "committed floating loop failure at residual pc {pc}: {message}"
+                    )));
+                }
+            }
+        }
+        if let (Some(environment), Some(bitwise_loop)) = (environment, plan.bitwise_loop_at(pc)) {
+            match bitwise_loop.borrow_mut().execute(code, environment, context) {
+                Ok(Some(crate::stencil_numeric_bitwise_loop::BitwiseLoopOutcome::Completed(value))) => {
+                    record_bitwise_loop(code, pc);
+                    return completion_step_after_transition(
+                        registers,
+                        crate::completion::Completion::Return(crate::value::Value::Number(f64::from(value))),
+                        crate::stencil_numeric_bitwise_loop::REGION_END,
+                    );
+                }
+                Ok(Some(crate::stencil_numeric_bitwise_loop::BitwiseLoopOutcome::Resume { pc })) => {
+                    record_bitwise_loop(code, 0);
+                    return completion_step_after_transition(
+                        registers,
+                        crate::completion::Completion::Normal,
+                        pc,
+                    );
+                }
+                Ok(None) | Err(crate::machine::NativeDispatchError::Physical(_)) => {
+                    crate::execution_trace::stencil_observation(
+                        code, pc, "numeric_bitwise_region", false,
+                    )
+                }
+                Err(crate::machine::NativeDispatchError::SemanticAt { pc, error }) => {
+                    return completion_step_after_error(registers, error, pc + 1);
+                }
+                Err(crate::machine::NativeDispatchError::Committed { pc, message }) => {
+                    return Err(VmError::EvalError(format!(
+                        "committed bitwise loop failure at residual pc {pc}: {message}"
                     )));
                 }
             }

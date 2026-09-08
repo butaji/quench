@@ -482,6 +482,7 @@ fn disabled_native_policy_keeps_admission_and_executable_storage_empty() {
         array_kernels: false,
         array_numeric_loops: false,
         affine_i32_loops: false,
+        numeric_i32_bitwise_loops: false,
         numeric_f64_loops: false,
         optimizing_view: false,
     };
@@ -743,6 +744,7 @@ fn native_dispatch_rebuilds_evicted_typed_entry_in_normal_driver() {
         array_kernels: false,
         array_numeric_loops: false,
         affine_i32_loops: false,
+        numeric_i32_bitwise_loops: false,
         numeric_f64_loops: false,
         optimizing_view: false,
     };
