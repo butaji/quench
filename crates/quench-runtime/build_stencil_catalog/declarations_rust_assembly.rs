@@ -271,6 +271,12 @@ rust_assembly_catalog! {
             "JumpIfFalse", "Add", "Sub", "StoreLocal", "UpdateLocal", "Return"],
         x86: &[], aarch64: &[], x86_holes: &[], aarch64_holes: &[]
     },
+    NestedXorLoop {
+        name: "nested_xor_loop", abi: NestedXorLoop,
+        ops: ["LoadLocal", "LoadConst", "Binary", "Add", "StoreLocal",
+            "UpdateLocal", "Return"],
+        x86: &[], aarch64: &[], x86_holes: &[], aarch64_holes: &[]
+    },
     NumericIntegerLoop {
         name: "numeric_integer_loop", abi: AffineI32Loop,
         ops: ["Mul", "Add", "Binary", "Jump"],

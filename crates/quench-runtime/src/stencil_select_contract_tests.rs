@@ -143,6 +143,10 @@ fn generated_abi_classification_matches_physical_entry_shape() {
                 assert_eq!(record.name, "branch_recurrence_loop");
                 assert!(record.operations.contains(&crate::ir::Opcode::JumpIfFalse));
             }
+            RegionAbi::NestedXorLoop => {
+                assert_eq!(record.name, "nested_xor_loop");
+                assert!(record.operations.contains(&crate::ir::Opcode::UpdateLocal));
+            }
             RegionAbi::NumericF64Loop => {
                 assert_eq!(record.name, "numeric_floating_loop");
                 assert!(record.operations.ends_with(&[crate::ir::Opcode::Jump]));
