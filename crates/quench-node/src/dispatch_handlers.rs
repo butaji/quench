@@ -9618,6 +9618,29 @@ pub fn cp_spawn_output_emit(
         (&command, execute::get_property(&child_options, "shell")),
         (Value::String(value), Value::Boolean(true)) if value == "does-not-exist"
     );
+    // A shell-backed child owns its exit status.  Re-evaluate that generic
+    // host boundary here so the lifecycle event observes the same status as
+    // `exec()`'s captured output even when the child object is a copy-on-write
+    // alias and hidden status properties are not shared across wrappers.
+    let shell_status = if matches!(
+        execute::get_property(child, "\0childShellStatus"),
+        Value::Number(_)
+    ) {
+        None
+    } else {
+        match (
+            &command,
+            execute::get_property(&child_options, "shell"),
+        ) {
+            (Value::String(command), Value::Boolean(true)) => crate::modules::child_process::shell_output(
+                command,
+                Some(&child_options),
+            )
+            .ok()
+            .map(|output| child_status_code(&output.status)),
+            _ => None,
+        }
+    };
     let child_pid = match execute::get_property(child, "pid") {
         Value::Number(pid) if pid.is_finite() && pid > 0.0 => Some(pid as i64),
         _ => None,
@@ -9629,6 +9652,10 @@ pub fn cp_spawn_output_emit(
         vec![Value::Null, signal]
     } else if shell_missing {
         vec![Value::Number(127.0), Value::Null]
+    } else if let Some(status) = shell_status {
+        vec![Value::Number(status as f64), Value::Null]
+    } else if let Value::Number(status) = execute::get_property(child, "\0childShellStatus") {
+        vec![Value::Number(status), Value::Null]
     } else if matches!(
         execute::get_property(child, "\0forkStartupFailed"),
         Value::Boolean(true)
@@ -11719,6 +11746,64 @@ pub fn cp_exec_sync(
         );
         return Err(VmError::Thrown(error));
     }
+
+    // `execSync()` always executes through the platform shell. Keep that
+    // behavior at the Rust host boundary instead of returning a synthetic
+    // empty result whenever a command falls outside the small compatibility
+    // probes above. Passing the shell explicitly lets `spawn_sync` retain
+    // ordinary cwd/env/input/encoding semantics.
+    if let Some(command) = command.as_deref() {
+        let shell = if cfg!(windows) { "cmd.exe" } else { "/bin/sh" };
+        let shell_args = if cfg!(windows) {
+            host_api::array(vec![
+                Value::String("/d".into()),
+                Value::String("/s".into()),
+                Value::String("/c".into()),
+                Value::String(command.into()),
+            ])
+        } else {
+            host_api::array(vec![
+                Value::String("-c".into()),
+                Value::String(command.into()),
+            ])
+        };
+        let options = match args.get(1).cloned().unwrap_or(Value::Undefined) {
+            Value::Object(_) | Value::ObjectAlias(_) => execute::set_property(
+                args.get(1).cloned().unwrap_or(Value::Undefined),
+                "shell",
+                Value::Undefined,
+            ),
+            value => value,
+        };
+        let result = crate::modules::child_process::spawn_sync(
+            state,
+            &[Value::String(shell.into()), shell_args, options],
+        )?;
+        if let Some(error) = match execute::get_property(&result, "error") {
+            Value::Undefined => None,
+            value => Some(value),
+        } {
+            return Err(VmError::Thrown(error));
+        }
+        let status = execute::get_property(&result, "status");
+        let signal = execute::get_property(&result, "signal");
+        let failed = matches!(status, Value::Number(value) if value != 0.0)
+            || !matches!(signal, Value::Null | Value::Undefined);
+        if failed {
+            let mut error = quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String(format!("Command failed: {command}"))],
+            );
+            for key in ["status", "signal", "stdout", "stderr", "output"] {
+                let value = execute::get_property(&result, key);
+                if !matches!(value, Value::Undefined) {
+                    execute::set_property_in_place(&mut error, key, value);
+                }
+            }
+            return Err(VmError::Thrown(error));
+        }
+        return Ok(execute::get_property(&result, "stdout"));
+    }
     Ok(Value::String(String::new()))
 }
 
@@ -12055,9 +12140,9 @@ pub fn cp_async(
             command_text = command_text.replace(&format!("${{{key}}}"), &value);
         }
         let eval_script = command_text.contains(" -e ");
-        let shell_capture = if timeout.is_some() || eval_script {
+        let shell_capture = if timeout.is_some() || eval_script || signal.is_some() {
             None
-        } else if !eval_script && crate::modules::child_process::needs_shell(&command_text) {
+        } else if !eval_script {
             crate::modules::child_process::shell_output(&command_text, Some(&options))
                 .ok()
                 .map(|output| {
@@ -12071,6 +12156,17 @@ pub fn cp_async(
         } else {
             None
         };
+        // The shell is the process whose exit status `exec()` exposes. Keep
+        // that status on the child lifecycle object so the queued spawn
+        // output transition emits the same code as the captured command.
+        if let Some((_, _, _, status)) = shell_capture.as_ref() {
+            let canonical_child = execute::canonical_value(&child);
+            execute::set_property_in_place(
+                &canonical_child,
+                "\0childShellStatus",
+                Value::Number(*status as f64),
+            );
+        }
         let missing_self_script = if command_text.contains(&state.borrow().process.exec_path) {
             command_text.split_whitespace().skip(1).find_map(|token| {
                 let path = token.trim_matches(['"', '\'']);
@@ -12097,6 +12193,7 @@ pub fn cp_async(
                     &[Value::String(format!("Command failed: {command_text}"))],
                 );
                 execute::set_property_in_place(&mut error, "code", Value::Number(*status as f64));
+                execute::set_property_in_place(&mut error, "cmd", command.clone());
                 callback_error = error;
             }
             stdout.clone()
