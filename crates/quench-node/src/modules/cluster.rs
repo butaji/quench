@@ -43,6 +43,12 @@ pub struct ClusterState {
     fork_processes: HashMap<u64, Value>,
     worker_listen_slots: HashMap<u64, usize>,
     pending_cluster_listening: Vec<(Value, Value)>,
+    /// Immutable parent argv snapshot used as the base for each logical
+    /// worker re-entry. Worker bootstrap mutates the shared process view;
+    /// deriving a later worker's argv from that view would duplicate prior
+    /// worker arguments.
+    parent_argv: Option<Value>,
+    settings_explicit: bool,
 }
 impl ClusterState {
     pub fn new() -> Self {
@@ -59,6 +65,8 @@ impl ClusterState {
             fork_processes: HashMap::new(),
             worker_listen_slots: HashMap::new(),
             pending_cluster_listening: Vec::new(),
+            parent_argv: None,
+            settings_explicit: false,
         }
     }
 
@@ -229,6 +237,7 @@ pub fn setup_primary(
         let mut host = state.borrow_mut();
         host.cluster.settings = merged.clone();
         host.cluster.stdio = Some(stdio);
+        host.cluster.settings_explicit = true;
     }
     if let Some(module) = module {
         execute::set_property_in_place(&module, "settings", merged);
@@ -451,6 +460,11 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
         "prototype",
         worker_prototype.clone(),
     );
+    if state.borrow().cluster.parent_argv.is_none() {
+        let global = quench_runtime::vm::current_global_object();
+        let argv = execute::get_property(&execute::get_property(&global, "process"), "argv");
+        state.borrow_mut().cluster.parent_argv = Some(argv);
+    }
     state.borrow_mut().cluster.worker_prototype = Some(worker_prototype.clone());
     for (key, value) in vec![
         ("isPrimary", Value::Boolean(true)),
@@ -698,6 +712,8 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
         let _ = execute::set_property_in_place(&module, key, value);
     }
     let global = quench_runtime::vm::current_global_object();
+    let previous_quench_argv = execute::get_property(&global, "__quench_argv");
+    let previous_quench_argv_values = array_values(&previous_quench_argv);
     let process_value = execute::get_property_result(&global, "process").ok();
     let previous_process_id = process_value
         .as_ref()
@@ -717,17 +733,52 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
     let env_restore = process_value
         .as_ref()
         .map(|process| enter_worker_env(process, worker));
-    let previous_argv = process_value
-        .as_ref()
-        .map(|process| execute::get_property(process, "argv"));
-    let worker_args = state.borrow().cluster.settings.clone();
+    let previous_argv = state
+        .borrow()
+        .cluster
+        .parent_argv
+        .clone()
+        .or_else(|| {
+            process_value
+                .as_ref()
+                .map(|process| execute::get_property(process, "argv"))
+        });
+    let worker_args = if state.borrow().cluster.settings_explicit {
+        state.borrow().cluster.settings.clone()
+    } else {
+        process_value
+            .as_ref()
+            .map(process_args)
+            .unwrap_or_else(|| host_api::array(Vec::new()))
+    };
     if let (Some(process), Some(previous_argv)) = (&process_value, &previous_argv) {
-        let args = execute::get_property(&worker_args, "args");
+        let args = if state.borrow().cluster.settings_explicit {
+            execute::get_property(&worker_args, "args")
+        } else {
+            worker_args.clone()
+        };
         let mut values = array_values(previous_argv);
         if let Value::Array(args) = args {
             values.extend(array_values(&Value::Array(args)));
         }
-        execute::set_property_in_place(process, "argv", host_api::array(values));
+        let worker_argv = host_api::array(values.clone());
+        execute::set_property_in_place(process, "argv", worker_argv.clone());
+        // The globals bootstrap reconstructs `process.argv` from this host
+        // fact on every logical worker re-entry. Keep that derived surface in
+        // sync with the worker view so nested cluster workers receive the
+        // same command-line arguments instead of re-entering as primaries.
+        let qargv_target = execute::get_property(&global, "__quench_argv");
+        if matches!(qargv_target, Value::Array(_)) {
+            execute::set_array_length_in_place(&qargv_target, 0);
+            for (index, value) in values.iter().cloned().enumerate() {
+                execute::set_array_element_in_place(&qargv_target, index, value);
+            }
+        } else {
+            let _ = execute::set_property_in_place(&global, "__quench_argv", worker_argv.clone());
+        }
+        if std::env::var_os("QUENCH_DEBUG_FORK").is_some() {
+            eprintln!("cluster worker {id} argv={:?} process.argv={:?} qargv={:?}", values, execute::get_property(process, "argv"), execute::get_property(&global, "__quench_argv"));
+        }
     }
     if let Ok(process) = execute::get_property_result(&global, "process") {
         let _ = execute::set_property_in_place(&process, ID, Value::Number(id as f64));
@@ -765,7 +816,11 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
     let fetch_surface = crate::polyfills::bootstrap::lookup("fetch").unwrap_or("");
     let worker_bootstrap =
         format!("{web_streams_surface}\n{globals_surface}\n{fetch_surface}\nconst fetch = globalThis.fetch;");
-    let wrapped = format!("{worker_bootstrap}\n{wrapped}");
+    // Each logical worker re-entry gets a fresh lexical scope. The shared VM
+    // global is restored after execution, but top-level `const`/`let`
+    // bindings live in the realm's lexical environment and would otherwise
+    // collide when the next worker bootstraps the same helpers.
+    let wrapped = format!("{{\n{worker_bootstrap}\n{wrapped}\n}}");
     let result =
         quench_runtime::reduce::reduce_global_script_source(&wrapped).and_then(|program| {
             // Cluster workers re-enter this VM synchronously. Bound only this
@@ -779,6 +834,9 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
                 .map(|_| ())
                 .map_err(|error| vec![error.render()])
         });
+    if std::env::var_os("QUENCH_DEBUG_FORK").is_some() {
+        eprintln!("cluster worker {id} after bootstrap result={:?} process.argv={:?} qargv={:?} isPrimary={:?}", result.as_ref().map(|_| "ok"), execute::get_property(&execute::get_property(&global, "process"), "argv"), execute::get_property(&global, "__quench_argv"), execute::get_property(&module, "isPrimary"));
+    }
     // Promise-backed fallbacks used by worker bootstrap APIs (for example
     // dgram's setImmediate compatibility path) must settle while the worker
     // process view is still installed. Otherwise their callbacks observe the
@@ -876,6 +934,14 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
         let _ = execute::set_property_in_place(&module, key, value);
     }
     let global = restored_global;
+    if matches!(previous_quench_argv, Value::Array(_)) {
+        execute::set_array_length_in_place(&previous_quench_argv, 0);
+        for (index, value) in previous_quench_argv_values.into_iter().enumerate() {
+            execute::set_array_element_in_place(&previous_quench_argv, index, value);
+        }
+    } else {
+        let _ = execute::set_property_in_place(&global, "__quench_argv", previous_quench_argv);
+    }
     if let Ok(process) = execute::get_property_result(&global, "process") {
         if let Some(previous_argv) = previous_argv {
             let _ = execute::set_property_in_place(&process, "argv", previous_argv);
