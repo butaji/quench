@@ -11,9 +11,9 @@ function run() {
   return read(receiver);
 }
 function verify(result) {
-if (result !== 42) {
-  throw new Error("prototype shadow fallback mismatch");
-}
+  if (result !== 42) {
+    throw new Error("prototype shadow specialization mismatch");
+  }
   return result;
 }
 return { run: run, verify: verify };

@@ -21,9 +21,8 @@ impl NativePropertyReturnCallPlan {
         let target = environment.retain_proven_function(self.selection.callee_slot)?;
         let fact =
             crate::function_property_return_fact::stable_own_field_return(&mut self.fact, &target)?;
-        environment.with_proven_object(self.selection.receiver_slot, |receiver| {
-            execute_read(&target, &fact, receiver)
-        })?
+        let receiver = environment.retain_proven_object(self.selection.receiver_slot)?;
+        execute_read(&target, &fact, &receiver)
     }
 
     pub(crate) const fn span(&self) -> usize {
@@ -44,14 +43,23 @@ fn execute_read(
     let metadata = code.metadata_at(1)?;
     (metadata.name.as_deref()? == fact.field.as_ref()).then_some(())?;
     let shape = crate::identity::ShapeId(receiver.semantic_layout_id());
-    let property = crate::identity::property_key_id(&fact.field);
-    let slot = code
-        .quickening_site(1)?
-        .borrow_mut()
-        .probe_shape(shape, property)?;
+    let slot = observed_or_layout_slot(code, receiver, shape, &fact.field)?;
     receiver
         .guarded_plain_slot(shape.0, slot, &fact.field)?
         .load_own_number_now()
+}
+
+fn observed_or_layout_slot(
+    code: crate::machine::CodeView<'_>,
+    receiver: &crate::value::ObjectData,
+    shape: crate::identity::ShapeId,
+    field: &str,
+) -> Option<u32> {
+    let property = crate::identity::property_key_id(field);
+    if let Some(slot) = code.quickening_site(1)?.borrow_mut().probe_shape(shape, property) {
+        return Some(slot);
+    }
+    u32::try_from(receiver.physical_slot_for_name(field)?).ok()
 }
 
 pub(crate) fn select_property_return_call(
