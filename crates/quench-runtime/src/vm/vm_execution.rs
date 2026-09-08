@@ -27,7 +27,10 @@ pub fn execute_with_registers(ops: &[Op], registers: Vec<Value>) -> Result<Value
     execute_with_registers_context(ops, registers, &context)
 }
 
-pub fn execute_in_place(ops: &[Op], registers: &mut crate::register_file::RegisterFile) -> Result<Value, VmError> {
+pub fn execute_in_place(
+    ops: &[Op],
+    registers: &mut crate::register_file::RegisterFile,
+) -> Result<Value, VmError> {
     let context = current_context_or_default();
     execute_in_place_context(ops, registers, &context)
 }
@@ -125,16 +128,23 @@ pub fn execute_script_in_current_context(
 }
 
 pub fn create_script_context(context: Value) -> Result<Value, VmError> {
-    if !matches!(context, Value::Object(_) | Value::ObjectAlias(_) | Value::Array(_)) {
+    if !matches!(
+        context,
+        Value::Object(_) | Value::ObjectAlias(_) | Value::Array(_)
+    ) {
         return Err(crate::execute::type_error("context must be an object"));
     }
-    let updated = crate::execute::set_property(context.clone(), "\0vmContext", Value::Boolean(true));
+    let updated =
+        crate::execute::set_property(context.clone(), "\0vmContext", Value::Boolean(true));
     crate::execute::replace_value(&context, &updated);
     Ok(context)
 }
 
 pub fn is_script_context(value: &Value) -> bool {
-    matches!(crate::execute::get_property(value, "\0vmContext"), Value::Boolean(true))
+    matches!(
+        crate::execute::get_property(value, "\0vmContext"),
+        Value::Boolean(true)
+    )
 }
 
 /// Call a function value from host code through the current context.
@@ -191,7 +201,8 @@ pub fn execute_in_place_context(
 ) -> Result<Value, VmError> {
     prepare_register_stack(registers);
     let parent = crate::locals::current();
-    let environment = crate::environment::Environment::in_place_child(&parent, registers.to_values());
+    let environment =
+        crate::environment::Environment::in_place_child(&parent, registers.to_values());
     execute_in_environment(ops, registers, context, environment)
 }
 
@@ -202,7 +213,8 @@ pub fn execute_code_in_place_context(
 ) -> Result<Value, VmError> {
     prepare_register_stack(registers);
     let parent = crate::locals::current();
-    let environment = crate::environment::Environment::in_place_child(&parent, registers.to_values());
+    let environment =
+        crate::environment::Environment::in_place_child(&parent, registers.to_values());
     execute_code_in_environment(code, registers, context, environment)
 }
 
@@ -266,6 +278,8 @@ pub(crate) fn execute_function_code_completion_step_in_current_frame(
     registers: &mut crate::register_file::RegisterFile,
 ) -> Result<CompletionStep, VmError> {
     let code = owner.code().ok_or(VmError::MissingReturn)?;
+    #[cfg(test)]
+    crate::test_execution_profile::executed_code(code);
     let context = current_context_or_default();
     let _ = owner.enter_invocation();
     let mut pc = 0;
@@ -276,11 +290,13 @@ pub(crate) fn execute_function_code_completion_step_in_current_frame(
         };
         match crate::vm::vm_ops::execute_call_continuation(registers, continuation) {
             Ok(()) => pc = step.next,
-            Err(VmError::Thrown(value)) => return Ok(CompletionStep {
-                completion: crate::completion::Completion::Throw(value),
-                next: step.next,
-                suspended_pc: None,
-            }),
+            Err(VmError::Thrown(value)) => {
+                return Ok(CompletionStep {
+                    completion: crate::completion::Completion::Throw(value),
+                    next: step.next,
+                    suspended_pc: None,
+                })
+            }
             Err(error) => return Err(error),
         }
     }
@@ -293,9 +309,16 @@ pub(crate) fn execute_function_code_completion_with_context(
     context: &VmContext,
 ) -> Result<crate::completion::Completion, VmError> {
     let _ = owner.enter_invocation();
-    if let (Some(optimizing), Some(baseline)) = (owner.executable_optimizing_plan(), owner.baseline_plan()) {
+    if let (Some(optimizing), Some(baseline)) =
+        (owner.executable_optimizing_plan(), owner.baseline_plan())
+    {
         drive_code_completion_with_optimizing_plan(
-            code, registers, context, &optimizing, &baseline, 0,
+            code,
+            registers,
+            context,
+            &optimizing,
+            &baseline,
+            0,
         )
     } else if let Some(plan) = owner.baseline_plan() {
         drive_code_completion_with_plan(code, registers, context, &plan, Some(owner))
@@ -325,9 +348,16 @@ pub(crate) fn execute_code_completion_with_owner(
     registers: &mut crate::register_file::RegisterFile,
 ) -> Result<crate::completion::Completion, VmError> {
     let context = current_context_or_default();
-    if let (Some(optimizing), Some(baseline)) = (owner.executable_optimizing_plan(), owner.baseline_plan()) {
+    if let (Some(optimizing), Some(baseline)) =
+        (owner.executable_optimizing_plan(), owner.baseline_plan())
+    {
         drive_code_completion_with_optimizing_plan(
-            code, registers, &context, &optimizing, &baseline, 0,
+            code,
+            registers,
+            &context,
+            &optimizing,
+            &baseline,
+            0,
         )
     } else if let Some(plan) = owner.baseline_plan() {
         drive_code_completion_with_plan(code, registers, &context, &plan, Some(owner))
@@ -358,20 +388,18 @@ pub(crate) fn execute_code_completion_step_with_owner(
             &context,
         )?;
         let suspended_pc = completion.is_suspension().then(|| next.saturating_sub(1));
-        return Ok(CompletionStep { completion, next, suspended_pc });
+        return Ok(CompletionStep {
+            completion,
+            next,
+            suspended_pc,
+        });
     }
     if let Some(plan) = owner.baseline_plan() {
         return crate::vm::execute_baseline_completion_step_from_with_owner(
             code, &plan, pc, registers, &context, owner,
         );
     }
-    run_code_completion_step_from_with_owner(
-        code,
-        pc,
-        registers,
-        &context,
-        Some(owner),
-    )
+    run_code_completion_step_from_with_owner(code, pc, registers, &context, Some(owner))
 }
 
 fn drive_completion(
@@ -437,12 +465,19 @@ fn drive_code_completion_with_plan(
             let (completion, next) = crate::vm::execute_baseline_code_step_from_with_owner(
                 code, plan, pc, registers, context, owner,
             )?;
-            crate::vm::CompletionStep { completion, next, suspended_pc: None }
+            crate::vm::CompletionStep {
+                completion,
+                next,
+                suspended_pc: None,
+            }
         } else {
-            let (completion, next) = crate::vm::execute_baseline_code_step_from(
-                code, plan, pc, registers, context,
-            )?;
-            crate::vm::CompletionStep { completion, next, suspended_pc: None }
+            let (completion, next) =
+                crate::vm::execute_baseline_code_step_from(code, plan, pc, registers, context)?;
+            crate::vm::CompletionStep {
+                completion,
+                next,
+                suspended_pc: None,
+            }
         };
         pc = step.next;
         match step.completion {
@@ -508,12 +543,7 @@ fn drive_code_completion_with_optimizing_plan(
     let mut pc = start;
     loop {
         let (completion, next) = crate::vm::execute_optimized_code_step_from(
-            code,
-            optimizing,
-            baseline,
-            pc,
-            registers,
-            context,
+            code, optimizing, baseline, pc, registers, context,
         )?;
         pc = next;
         match completion {
@@ -547,13 +577,8 @@ fn drive_code_completion_with_tier(
 ) -> Result<crate::completion::Completion, VmError> {
     let mut pc = 0;
     loop {
-        let (completion, next) = crate::vm::execute_function_code_step_from(
-            code,
-            owner,
-            pc,
-            registers,
-            context,
-        )?;
+        let (completion, next) =
+            crate::vm::execute_function_code_step_from(code, owner, pc, registers, context)?;
         pc = next;
         match completion {
             crate::completion::Completion::Call(continuation) => {
@@ -634,10 +659,7 @@ pub(crate) fn execute_in_environment(
                     destination: 0,
                     guards: crate::completion::ContinuationGuards::default(),
                 };
-                crate::vm::vm_ops::execute_call_continuation(
-                    &mut caller_registers,
-                    continuation,
-                )?;
+                crate::vm::vm_ops::execute_call_continuation(&mut caller_registers, continuation)?;
                 let value = crate::vm::read_register(&caller_registers, 0)?;
                 *registers = caller_registers;
                 return Ok(value);
@@ -682,10 +704,7 @@ pub(crate) fn execute_code_in_environment(
                     destination: 0,
                     guards: crate::completion::ContinuationGuards::default(),
                 };
-                crate::vm::vm_ops::execute_call_continuation(
-                    &mut caller_registers,
-                    continuation,
-                )?;
+                crate::vm::vm_ops::execute_call_continuation(&mut caller_registers, continuation)?;
                 let value = crate::vm::read_register(&caller_registers, 0)?;
                 *registers = caller_registers;
                 return Ok(value);
@@ -770,6 +789,8 @@ pub(crate) fn execute_code_frame_completion_with_owner(
     context: &VmContext,
     environment: Rc<crate::environment::Environment>,
 ) -> Result<crate::completion::Completion, VmError> {
+    #[cfg(test)]
+    crate::test_execution_profile::executed_code(code);
     let _context_guard = ContextGuard::install(context);
     let _global_guard = GlobalObjectGuard::install();
     let pooled = Rc::clone(&environment);
@@ -808,7 +829,8 @@ pub(crate) fn execute_indirect_eval(code: crate::machine::CodeView<'_>) -> Resul
         .unwrap_or_else(|| Rc::new(VmContext::default()));
     let caller = crate::locals::current();
     let caller_global = caller.get(0);
-    if matches!(&caller_global, Value::Object(object) if object.iter().any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW)) {
+    if matches!(&caller_global, Value::Object(object) if object.iter().any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW))
+    {
         let environment = crate::environment::Environment::new();
         environment.set(0, caller_global.clone());
         let mut registers = crate::register_file::RegisterFile::new();
@@ -846,11 +868,9 @@ mod tests {
 
     fn run_source(source: &str, message: &str) {
         let program = crate::reduce::reduce_source(source).expect("source reduces");
-        let result = crate::vm::execute_code_with_context(
-            program.code(),
-            &crate::vm::VmContext::default(),
-        )
-        .expect(message);
+        let result =
+            crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default())
+                .expect(message);
         assert_eq!(result, Value::Undefined);
     }
 
@@ -859,9 +879,15 @@ mod tests {
         use crate::ops::{Constant, Op};
 
         let function = crate::machine::FunctionCode::from_ops(vec![
-            Op::Const { dst: 0, value: Constant::Number(1.0) },
+            Op::Const {
+                dst: 0,
+                value: Constant::Number(1.0),
+            },
             Op::StoreLocal { slot: 0, src: 0 },
-            Op::Const { dst: 1, value: Constant::Number(2.0) },
+            Op::Const {
+                dst: 1,
+                value: Constant::Number(2.0),
+            },
             Op::StoreLocal { slot: 1, src: 1 },
             Op::Return { src: 1 },
         ]);
@@ -936,11 +962,9 @@ mod tests {
             if (read(receiver) !== 13) throw "prototype mutation was stale";
         "#;
         let program = crate::reduce::reduce_source(source).expect("source reduces");
-        let result = crate::vm::execute_code_with_context(
-            program.code(),
-            &crate::vm::VmContext::default(),
-        )
-        .expect("prototype source executes");
+        let result =
+            crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default())
+                .expect("prototype source executes");
         assert_eq!(result, Value::Undefined);
     }
 
@@ -1070,10 +1094,8 @@ mod tests {
 
     #[test]
     fn owner_baseline_step_retires_completed_fragment() {
-        let owner = crate::machine::FunctionCode::from_ops(vec![crate::ops::Op::Move {
-            dst: 0,
-            src: 0,
-        }]);
+        let owner =
+            crate::machine::FunctionCode::from_ops(vec![crate::ops::Op::Move { dst: 0, src: 0 }]);
         owner.set_tier_threshold_for_test(1);
         owner.retire(1);
         assert_eq!(
@@ -1081,9 +1103,8 @@ mod tests {
             crate::machine::TierTransition::CompileBaseline
         );
         let code = owner.code().expect("materialized owner code");
-        let mut registers = crate::register_file::RegisterFile::from_values(vec![
-            Value::Number(7.0),
-        ]);
+        let mut registers =
+            crate::register_file::RegisterFile::from_values(vec![Value::Number(7.0)]);
         let completion = super::execute_code_completion_with_owner(code, &owner, &mut registers)
             .expect("baseline fragment executes");
         assert_eq!(completion, crate::completion::Completion::Normal);
@@ -1105,11 +1126,9 @@ mod tests {
             }
         "#;
         let program = crate::reduce::reduce_source(source).expect("source reduces");
-        let result = crate::vm::execute_code_with_context(
-            program.code(),
-            &crate::vm::VmContext::default(),
-        )
-        .expect("statement completions run");
+        let result =
+            crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default())
+                .expect("statement completions run");
         assert_eq!(result, Value::Undefined);
     }
 
@@ -1244,11 +1263,9 @@ mod tests {
             if (caller() !== 42) throw "caller continuation was reclaimed";
         "#;
         let program = crate::reduce::reduce_source(source).expect("source reduces");
-        let result = crate::vm::execute_code_with_context(
-            program.code(),
-            &crate::vm::VmContext::default(),
-        )
-        .expect("allocation churn preserves continuation");
+        let result =
+            crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default())
+                .expect("allocation churn preserves continuation");
         assert_eq!(result, Value::Undefined);
     }
 
@@ -1275,11 +1292,9 @@ mod tests {
             if (reader() !== 42) throw "returned closure was reclaimed";
         "#;
         let program = crate::reduce::reduce_source(source).expect("source reduces");
-        let result = crate::vm::execute_code_with_context(
-            program.code(),
-            &crate::vm::VmContext::default(),
-        )
-        .expect("returned closure survives collection");
+        let result =
+            crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default())
+                .expect("returned closure survives collection");
         assert_eq!(result, Value::Undefined);
     }
 

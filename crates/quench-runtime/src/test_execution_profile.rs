@@ -19,7 +19,7 @@ pub(crate) struct ExecutionProfile {
     pub(crate) stencils: BTreeMap<&'static str, RouteCount>,
     pub(crate) events: BTreeMap<&'static str, u64>,
     region_routes: Vec<Vec<&'static str>>,
-    lowered_route: Vec<&'static str>,
+    lowered_routes: Vec<Vec<&'static str>>,
 }
 
 const EXECUTION_CASE_SCHEMA: u32 = 1;
@@ -28,6 +28,7 @@ const PROFILE_VERIFY_PROPERTY: &str = "verify";
 const PROFILE_ARGUMENTS_PROPERTY: &str = "arguments";
 const PROFILE_CASE_FILTER: &str = "QUENCH_EXECUTION_PROFILE_CASE";
 const PROFILE_CHILD_PROCESS: &str = "QUENCH_EXECUTION_PROFILE_CHILD";
+const PROFILE_DETAILS: &str = "QUENCH_EXECUTION_PROFILE_DETAILS";
 const PROFILE_MISMATCH_MARKER: &str = "QUENCH_PROFILE_MISMATCH:";
 
 struct PreparedExecution {
@@ -302,7 +303,7 @@ impl ExpectedPlan {
         if route != self.operation_route {
             differences.push(format!(
                 "plan route: expected {:?}, actual {route:?}, lowered {:?}",
-                self.operation_route, actual.lowered_route
+                self.operation_route, actual.lowered_routes
             ));
         }
         if fallback != self.fallback {
@@ -395,7 +396,7 @@ impl ExecutionProfile {
                 .collect(),
             events: scaled_counts(&self.events, executions),
             region_routes: self.region_routes.clone(),
-            lowered_route: self.lowered_route.clone(),
+            lowered_routes: self.lowered_routes.clone(),
         }
     }
 }
@@ -469,6 +470,28 @@ pub(crate) fn dynamic_region_route(route: impl IntoIterator<Item = &'static str>
         let route = route.into_iter().collect::<Vec<_>>();
         if !route.is_empty() && !profile.region_routes.contains(&route) {
             profile.region_routes.push(route);
+        }
+    });
+}
+
+pub(crate) fn executed_code(code: crate::machine::CodeView<'_>) {
+    update(|profile| {
+        let instructions = (0..code.len())
+            .filter_map(|pc| code.instruction(pc).map(|instruction| (pc, instruction)))
+            .collect::<Vec<_>>();
+        if std::env::var_os(PROFILE_DETAILS).is_some() {
+            eprintln!("execution-profile code:");
+            for (pc, instruction) in &instructions {
+                eprintln!("  {pc}: {instruction:?}");
+            }
+        }
+        let route = instructions
+            .into_iter()
+            .map(|(_, instruction)| instruction)
+            .map(|instruction| instruction.opcode.name())
+            .collect::<Vec<_>>();
+        if !route.is_empty() && !profile.lowered_routes.contains(&route) {
+            profile.lowered_routes.push(route);
         }
     });
 }

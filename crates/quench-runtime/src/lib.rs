@@ -148,6 +148,7 @@ mod stencil_cfg;
 mod stencil_compare_branch_tests;
 #[cfg(test)]
 mod stencil_control_composition_tests;
+mod stencil_dense_array_update;
 pub mod stencil_fact;
 mod stencil_fusion;
 #[cfg(test)]

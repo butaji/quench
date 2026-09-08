@@ -34,7 +34,9 @@ fn execute_once(
         invoke(context, &prepared.run, &prepared.arguments)
     })?;
     let mut profile = profile;
-    profile.lowered_route = lowered_route(&prepared.run);
+    if profile.lowered_routes.is_empty() {
+        profile.lowered_routes.push(lowered_route(&prepared.run));
+    }
     let verified = invoke(context, &prepared.verify, &[result])?;
     Ok((verified, profile))
 }
@@ -46,12 +48,31 @@ fn lowered_route(function: &crate::value::Value) -> Vec<&'static str> {
     let Some(code) = function.code.code() else {
         return Vec::new();
     };
-    (0..code.len())
-        .filter_map(|pc| {
-            code.instruction(pc)
-                .map(|instruction| instruction.opcode.name())
-        })
-        .collect()
+    let mut route = Vec::new();
+    append_lowered_route(code, 0, &mut route);
+    route
+}
+
+fn append_lowered_route(
+    code: crate::machine::CodeView<'_>,
+    depth: usize,
+    route: &mut Vec<&'static str>,
+) {
+    const MAX_LOWERED_ROUTE_DEPTH: usize = 8;
+    route.extend((0..code.len()).filter_map(|pc| {
+        code.instruction(pc)
+            .map(|instruction| instruction.opcode.name())
+    }));
+    if depth == MAX_LOWERED_ROUTE_DEPTH {
+        return;
+    }
+    code.cold_ops().for_each(|(_, operation)| {
+        operation.visit_bodies(&mut |body| {
+            if let Some(nested) = body.code() {
+                append_lowered_route(nested, depth + 1, route);
+            }
+        });
+    });
 }
 
 fn capture_result<T>(
