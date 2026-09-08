@@ -340,6 +340,98 @@ q_boolean_reduction_loop_end:
 );
 "##;
 
+const AARCH64_BRANCH_RECURRENCE_LOOP: &str = r##"#![no_std]
+use core::arch::global_asm;
+
+#[repr(C)]
+struct BranchRecurrenceContext {
+    index: i32,
+    end: i32,
+    state: f64,
+    score: i64,
+    multiplier: f64,
+    addend: f64,
+    predicate_mask: u32,
+    predicate_expected: u32,
+    predicate_invert: u32,
+    true_mask: u32,
+    true_sign: i32,
+    false_mask: u32,
+    false_sign: i32,
+    _padding: u32,
+    interrupt: *const u8,
+}
+
+global_asm!(r#"
+.text
+.p2align 2
+.globl q_branch_recurrence_loop
+q_branch_recurrence_loop:
+  ldr w1, [x0, #{index}]
+  ldr w2, [x0, #{end}]
+  ldr d0, [x0, #{state}]
+  ldr x3, [x0, #{score}]
+  ldr d1, [x0, #{multiplier}]
+  ldr d2, [x0, #{addend}]
+1:
+  cmp w1, w2
+  b.ge 5f
+  fmul d0, d0, d1
+  fadd d0, d0, d2
+  fcvtzu x4, d0
+  ucvtf d0, w4
+  ldr w5, [x0, #{predicate_mask}]
+  and w6, w4, w5
+  ldr w7, [x0, #{predicate_expected}]
+  cmp w6, w7
+  cset w6, eq
+  ldr w7, [x0, #{predicate_invert}]
+  eor w6, w6, w7
+  cbz w6, 2f
+  ldr w7, [x0, #{true_mask}]
+  ldr w8, [x0, #{true_sign}]
+  b 3f
+2:
+  ldr w7, [x0, #{false_mask}]
+  ldr w8, [x0, #{false_sign}]
+3:
+  and w7, w1, w7
+  sxtw x7, w7
+  sxtw x8, w8
+  madd x3, x7, x8, x3
+  add w1, w1, #1
+  str w1, [x0, #{index}]
+  str d0, [x0, #{state}]
+  str x3, [x0, #{score}]
+  ldr x9, [x0, #{interrupt}]
+  ldrb w10, [x9]
+  cbnz w10, 4f
+  b 1b
+4:
+  mov w0, #4
+  ret
+5:
+  mov w0, #1
+  ret
+q_branch_recurrence_loop_end:
+"#,
+    index = const core::mem::offset_of!(BranchRecurrenceContext, index),
+    end = const core::mem::offset_of!(BranchRecurrenceContext, end),
+    state = const core::mem::offset_of!(BranchRecurrenceContext, state),
+    score = const core::mem::offset_of!(BranchRecurrenceContext, score),
+    multiplier = const core::mem::offset_of!(BranchRecurrenceContext, multiplier),
+    addend = const core::mem::offset_of!(BranchRecurrenceContext, addend),
+    predicate_mask = const core::mem::offset_of!(BranchRecurrenceContext, predicate_mask),
+    predicate_expected = const core::mem::offset_of!(BranchRecurrenceContext, predicate_expected),
+    predicate_invert = const core::mem::offset_of!(BranchRecurrenceContext, predicate_invert),
+    true_mask = const core::mem::offset_of!(BranchRecurrenceContext, true_mask),
+    true_sign = const core::mem::offset_of!(BranchRecurrenceContext, true_sign),
+    false_mask = const core::mem::offset_of!(BranchRecurrenceContext, false_mask),
+    false_sign = const core::mem::offset_of!(BranchRecurrenceContext, false_sign),
+    interrupt = const core::mem::offset_of!(BranchRecurrenceContext, interrupt),
+);
+"##;
+
 const AARCH64_NUMERIC_INTEGER_LOOP: &str = r##"#![no_std]
 use core::arch::global_asm;
 
@@ -869,6 +961,7 @@ pub(crate) fn assembly_source(recipe: super::RustAssemblyRecipe) -> String {
         AffineI32Loop => AARCH64_AFFINE_I32_LOOP.to_owned(),
         I32CounterLoop => AARCH64_I32_COUNTER_LOOP.to_owned(),
         BooleanReductionLoop => AARCH64_BOOLEAN_REDUCTION_LOOP.to_owned(),
+        BranchRecurrenceLoop => AARCH64_BRANCH_RECURRENCE_LOOP.to_owned(),
         NumericIntegerLoop => AARCH64_NUMERIC_INTEGER_LOOP.to_owned(),
         NumericFloatingLoop => AARCH64_NUMERIC_FLOATING_LOOP.to_owned(),
         NumericBitwiseLoop => AARCH64_NUMERIC_BITWISE_LOOP.to_owned(),

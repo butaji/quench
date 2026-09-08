@@ -8,9 +8,8 @@ pub(super) fn select(
     update: CodeView<'_>,
     per_iteration: &[u16],
 ) -> Option<Reduction> {
-    let (index_slot, start) = select_init(init)?;
-    let end = select_test(test, index_slot)?;
-    select_update(update, index_slot)?;
+    let counted = crate::stencil_counted_loop::select(init, test, update)?;
+    let (index_slot, start, end) = (counted.index_slot, counted.start, counted.end);
     let (count_slot, left_slot, left, right_slot, right, truth_table) =
         select_body(body, index_slot)?;
     iteration_slots_match(per_iteration, index_slot, left_slot, right_slot)?;
@@ -111,71 +110,6 @@ fn select_function_slow(
         }
         _ => None,
     }
-}
-
-fn select_init(code: CodeView<'_>) -> Option<(u16, i32)> {
-    let mut constant = None;
-    let mut initialized = None;
-    for pc in 0..code.len() {
-        let instruction = code.instruction(pc)?;
-        match instruction.opcode {
-            Opcode::LoadConst => match code.constant(instruction.b)? {
-                crate::ops::Constant::Number(value) => {
-                    constant = Some((
-                        instruction.a,
-                        crate::stencil_numeric_integer_selection::exact_i32(*value)?,
-                    ));
-                }
-                crate::ops::Constant::Undefined => {}
-                _ => return None,
-            },
-            Opcode::InitLocal => initialized = Some((instruction.a, instruction.b)),
-            Opcode::Return => {}
-            Opcode::Slow if marker(code, pc, None) => {}
-            _ => return None,
-        }
-    }
-    let (register, value) = constant?;
-    let (slot, source) = initialized?;
-    (register == source).then_some((slot, value))
-}
-
-fn select_test(code: CodeView<'_>, index_slot: u16) -> Option<i32> {
-    let mut index_register = None;
-    let mut bound = None;
-    for pc in 0..code.len() {
-        let instruction = code.instruction(pc)?;
-        match instruction.opcode {
-            Opcode::LoadLocal | Opcode::LoadLocalChecked if instruction.b == index_slot => {
-                index_register = Some(instruction.a)
-            }
-            Opcode::LoadConst => bound = Some((instruction.a, number(code, instruction.b)?)),
-            Opcode::Binary => {
-                let less = crate::ir::compact_binary_operator(instruction.flags)?
-                    == crate::ops::BinaryOp::LessThan;
-                (less && instruction.b == index_register? && instruction.c == bound?.0)
-                    .then_some(())?;
-            }
-            Opcode::Return => {}
-            _ => return None,
-        }
-    }
-    Some(bound?.1)
-}
-
-fn select_update(code: CodeView<'_>, index_slot: u16) -> Option<()> {
-    let mut update = false;
-    for pc in 0..code.len() {
-        let instruction = code.instruction(pc)?;
-        match instruction.opcode {
-            Opcode::UpdateLocal if instruction.flags == 0 && instruction.c == index_slot => {
-                update = true
-            }
-            Opcode::Return => {}
-            _ => return None,
-        }
-    }
-    update.then_some(())
 }
 
 fn select_body(code: CodeView<'_>, index_slot: u16) -> Option<(u16, u16, Atom, u16, Atom, u8)> {

@@ -31,6 +31,7 @@ mod aarch64 {
     pub(super) const INDIRECT_BRANCH: P = P::new(0xFFFF_FC1F, 0xD61F_0000);
     pub(super) const INDIRECT_CALL: P = P::new(0xFFFF_FC1F, 0xD63F_0000);
     pub(super) const CONDITIONAL_BRANCH: P = P::new(0xFF00_0010, 0x5400_0000);
+    pub(super) const COMPARE_BRANCH_ZERO: P = P::new(0x7F00_0000, 0x3400_0000);
     pub(super) const COMPARE_BRANCH_NONZERO: P = P::new(0x7F00_0000, 0x3500_0000);
     pub(super) const LOAD_X: P = P::new(0xFFC0_0000, 0xF940_0000);
     pub(super) const LOAD_W: P = P::new(0xFFC0_0000, 0xB940_0000);
@@ -55,6 +56,8 @@ mod aarch64 {
     pub(super) const FP_DIV: P = P::new(0xFF20_FC00, 0x1E20_1800);
     pub(super) const FP_IMMEDIATE: P = P::new(0xFF20_1FE0, 0x1E20_1000);
     pub(super) const FP_COMPARE: P = P::new(0xFF20_FC00, 0x1E20_2000);
+    pub(super) const FP_TO_UNSIGNED_X: P = P::new(0xFFFF_FC00, 0x9E79_0000);
+    pub(super) const UNSIGNED_W_TO_FP: P = P::new(0xFFFF_FC00, 0x1E63_0000);
     pub(super) const LOAD_LITERAL_X: P = P::new(0xFF00_0000, 0x5800_0000);
     pub(super) const CONDITIONAL_SELECT: P = P::new(0xFFE0_07E0, 0x1A80_07E0);
     pub(super) const CONDITIONAL_INCREMENT: P = P::new(0x7FE0_0C00, 0x1A80_0400);
@@ -68,6 +71,8 @@ mod aarch64 {
     pub(super) const COMPARE_X: P = P::new(0xFFE0_FC1F, 0xEB00_001F);
     pub(super) const COMPARE_W: P = P::new(0xFFE0_FC1F, 0x6B00_001F);
     pub(super) const COMPARE_W_IMMEDIATE: P = P::new(0xFFC0_001F, 0x7100_001F);
+    pub(super) const SIGN_EXTEND_W_TO_X: P = P::new(0xFFFF_FC00, 0x9340_7C00);
+    pub(super) const MULTIPLY_ADD_X: P = P::new(0xFFE0_8000, 0x9B00_0000);
 }
 
 pub(crate) fn contains_call(bytes: &[u8]) -> bool {
@@ -137,10 +142,15 @@ pub(crate) fn simd_clobber_mask(bytes: &[u8]) -> u16 {
             .filter_map(|word| {
                 let encoded = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
                 let fp_load = aarch64::LOAD_D.matches(encoded);
-                let fp_arith = aarch64::FP_ADD.matches(encoded);
+                let fp_arith = aarch64::FP_ADD.matches(encoded)
+                    || aarch64::FP_SUB.matches(encoded)
+                    || aarch64::FP_MUL.matches(encoded)
+                    || aarch64::FP_DIV.matches(encoded);
                 let fp_move = aarch64::FP_MOVE.matches(encoded);
                 let fp_immediate = aarch64::FP_IMMEDIATE.matches(encoded);
-                (fp_load || fp_arith || fp_move || fp_immediate).then_some((encoded & 0x1f) as u16)
+                let integer_to_fp = aarch64::UNSIGNED_W_TO_FP.matches(encoded);
+                (fp_load || fp_arith || fp_move || fp_immediate || integer_to_fp)
+                    .then_some((encoded & 0x1f) as u16)
             })
             .fold(0u16, |mask, register| {
                 if register < 16 {
@@ -172,10 +182,14 @@ pub(crate) fn gpr_clobber_mask(bytes: &[u8]) -> u16 {
                     || aarch64::MUL_W.matches(encoded)
                     || aarch64::SIGNED_DIVIDE_W.matches(encoded)
                     || aarch64::MULTIPLY_SUBTRACT_W.matches(encoded)
+                    || aarch64::MULTIPLY_ADD_X.matches(encoded)
                     || aarch64::ADD_X_IMMEDIATE.matches(encoded)
                     || aarch64::ADD_W_IMMEDIATE.matches(encoded)
                     || aarch64::MOVE_W_IMMEDIATE.matches(encoded)
                     || aarch64::LOAD_BYTE.matches(encoded);
+                let writes_rt = writes_rt
+                    || aarch64::FP_TO_UNSIGNED_X.matches(encoded)
+                    || aarch64::SIGN_EXTEND_W_TO_X.matches(encoded);
                 let writes_rt = writes_rt || aarch64::AND_W_IMMEDIATE.matches(encoded);
                 let conditional_select = aarch64::CONDITIONAL_INCREMENT.matches(encoded);
                 (writes_rt || conditional_select).then_some((encoded & 0x1f) as u16)
@@ -229,6 +243,7 @@ fn branch_target_is_local(encoded: u32, index: usize, length: usize) -> bool {
     let (immediate, bits) = if aarch64::DIRECT_BRANCH.matches(encoded) {
         (encoded & BRANCH26_IMMEDIATE_MASK, 26)
     } else if aarch64::CONDITIONAL_BRANCH.matches(encoded)
+        || aarch64::COMPARE_BRANCH_ZERO.matches(encoded)
         || aarch64::COMPARE_BRANCH_NONZERO.matches(encoded)
     {
         ((encoded >> 5) & BRANCH19_IMMEDIATE_MASK, 19)
@@ -297,6 +312,7 @@ fn known_aarch64_instruction(encoded: u32) -> bool {
         aarch64::MOVE_W_IMMEDIATE,
         aarch64::DIRECT_BRANCH,
         aarch64::CONDITIONAL_BRANCH,
+        aarch64::COMPARE_BRANCH_ZERO,
         aarch64::COMPARE_BRANCH_NONZERO,
         aarch64::FP_ADD,
         aarch64::FP_SUB,
@@ -308,6 +324,8 @@ fn known_aarch64_instruction(encoded: u32) -> bool {
         aarch64::INDIRECT_BRANCH,
         aarch64::INDIRECT_CALL,
         aarch64::FP_COMPARE,
+        aarch64::FP_TO_UNSIGNED_X,
+        aarch64::UNSIGNED_W_TO_FP,
         aarch64::CONDITIONAL_SELECT,
         aarch64::CONDITIONAL_INCREMENT,
         aarch64::AND_W,
@@ -320,6 +338,8 @@ fn known_aarch64_instruction(encoded: u32) -> bool {
         aarch64::COMPARE_X,
         aarch64::COMPARE_W,
         aarch64::COMPARE_W_IMMEDIATE,
+        aarch64::SIGN_EXTEND_W_TO_X,
+        aarch64::MULTIPLY_ADD_X,
     ];
     encoded == aarch64::RETURN
         || encoded == aarch64::FMOV_D1_XZR
