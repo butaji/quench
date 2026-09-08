@@ -57,7 +57,8 @@ impl ValueGraph<MAX_BLOCK_VALUES> {
             ValueDefinition::Alias(id) => NumericDefinition::Alias(id.register),
             ValueDefinition::NegateConstant { .. }
             | ValueDefinition::AddConstant { .. }
-            | ValueDefinition::Binary { .. } => return None,
+            | ValueDefinition::Binary { .. }
+            | ValueDefinition::IntrinsicBinary { .. } => return None,
         };
         Some(NumericProducer {
             output: node.id.register,
@@ -237,6 +238,10 @@ impl ValueGraph<MAX_BLOCK_VALUES> {
             }
             ValueDefinition::AddConstant { source, .. } => self.mark(source, marked),
             ValueDefinition::Binary { lhs, rhs, .. } => {
+                self.mark(lhs, marked);
+                self.mark(rhs, marked);
+            }
+            ValueDefinition::IntrinsicBinary { lhs, rhs, .. } => {
                 self.mark(lhs, marked);
                 self.mark(rhs, marked);
             }

@@ -310,6 +310,21 @@ impl SlotWord {
     }
 
     #[inline(always)]
+    pub(crate) fn with_object<R>(
+        &self,
+        use_object: impl FnOnce(&crate::value::ObjectData) -> R,
+    ) -> Option<R> {
+        let tagged = self.with_word(OwnedWord::tagged);
+        let DecodedValue::ObjectPtr(pointer) = tagged.decode() else {
+            return None;
+        };
+        // SAFETY: the word owns the object throughout the non-escaping call.
+        Some(use_object(unsafe {
+            &*(pointer as *const crate::value::ObjectData)
+        }))
+    }
+
+    #[inline(always)]
     pub(crate) fn store(&self, value: Value) {
         // SAFETY: property mutation is serialized by the VM's single-threaded
         // execution model. No reference to the contained value is exposed.

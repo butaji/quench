@@ -1136,13 +1136,10 @@ pub(crate) fn proven_own_slot(object: &crate::value::ObjectData, key: &str) -> O
         return None;
     }
     let slot = object.physical_slot_for_name(key)?;
-    if !plain_metadata
-        && object
-            .descriptor_metadata_for_key(key)
-            .as_ref()
-            .is_some_and(accessor_descriptor)
-    {
-        return None;
+    if !plain_metadata {
+        if object.has_accessor_descriptor(key)? {
+            return None;
+        }
     }
     let own = object.hot_properties().slot_word(slot)?;
     // These are internal indirections, not observable property values. The

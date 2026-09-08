@@ -95,6 +95,10 @@ fn try_execute_physical(
         record_typed_lane(function);
         return Ok(Some(crate::value::Value::Number(value)));
     }
+    if let Some(value) = try_execute_counted_i32(function)? {
+        record_counted_i32(function);
+        return Ok(Some(crate::value::Value::Number(value)));
+    }
     if let Some(value) = try_execute_two_state_i32(function)? {
         record_two_state_i32(function);
         return Ok(Some(crate::value::Value::Number(f64::from(value))));
@@ -165,6 +169,33 @@ fn record_typed_lane(function: &crate::value::FunctionValue) {
     }
     #[cfg(test)]
     crate::test_execution_profile::dynamic_region_route(["typed_lane_arithmetic"]);
+}
+
+fn try_execute_counted_i32(
+    function: &crate::value::FunctionValue,
+) -> Result<Option<f64>, crate::execute::VmError> {
+    if function.params != 0 || !crate::functions::direct_call_eligible(function) {
+        return Ok(None);
+    }
+    let Some(code) = function.code.code() else {
+        return Ok(None);
+    };
+    let Some(selected) = crate::stencil_counted_i32_recurrence::select_function(code) else {
+        return Ok(None);
+    };
+    selected.execute_native(function)
+}
+
+fn record_counted_i32(function: &crate::value::FunctionValue) {
+    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+    if let Some(code) = function.code.code() {
+        crate::execution_trace::stencil_observation(code, 0, "counted_i32_recurrence", true);
+    }
+    #[cfg(test)]
+    crate::test_execution_profile::dynamic_region_route([
+        "counted_region",
+        "i32_ushr_xor_imul",
+    ]);
 }
 
 fn try_execute_two_state_i32(
