@@ -12,6 +12,11 @@ Vector.prototype.dot = function (other) {
 };
 var left = new Vector(1, 2, 3);
 var right = new Vector(4, 5, 6);
-var result = left.dot(right);
+function run() {
+  return left.dot(right);
+}
+function verify(result) {
 assert(result === 32, "three-component dot product");
-return result;
+  return result;
+}
+return { run: run, verify: verify };

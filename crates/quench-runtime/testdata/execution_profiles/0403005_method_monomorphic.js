@@ -8,8 +8,13 @@ Counter.prototype.increment = function increment(delta) {
 
 var counter = new Counter(40);
 counter.increment(1);
-var result = counter.increment(1);
+function run() {
+  return counter.increment(1);
+}
+function verify(result) {
 if (result !== 42) {
   throw new Error("monomorphic method mismatch");
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

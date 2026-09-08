@@ -4,8 +4,13 @@ function parse(input) {
 }
 
 parse("aba");
-var result = parse("aaabbbaaa");
+function run() {
+  return parse("aaabbbaaa");
+}
+function verify(result) {
 if (result !== "aaa:bbb") {
   throw new Error("regexp capture/backtrack mismatch: " + result);
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

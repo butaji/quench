@@ -4,8 +4,13 @@ function read(object) {
 
 var receiver = { value: 19 };
 read(receiver);
-var result = read(receiver);
+function run() {
+  return read(receiver);
+}
+function verify(result) {
 if (result !== 19) {
   throw new Error("monomorphic property assertion failed: " + result);
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

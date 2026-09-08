@@ -3,8 +3,13 @@ function inspect(value) {
 }
 
 var source = "x\ud800";
-var result = inspect(source);
+function run() {
+  return inspect(source);
+}
+function verify(result) {
 if (result !== 55296) {
   throw new Error("lone surrogate was not preserved: " + result);
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

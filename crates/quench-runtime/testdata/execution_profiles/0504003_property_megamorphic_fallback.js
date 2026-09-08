@@ -8,8 +8,13 @@ var c = { first: 1, second: 2, value: 12 };
 read(a);
 read(b);
 read(c);
-var result = read(c);
+function run() {
+  return read(c);
+}
+function verify(result) {
 if (result !== 12) {
   throw new Error("megamorphic property fallback mismatch");
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

@@ -17,11 +17,17 @@ ScaleConstraint.prototype.execute = function () {
 var input = new Variable(0);
 var output = new Variable(0);
 var constraint = new ScaleConstraint(input, output, 3, 2);
-var result = 0;
-for (var i = 0; i < 8; i++) {
-  input.value = i;
-  constraint.execute();
-  result += output.value;
+function run() {
+  var result = 0;
+  for (var i = 0; i < 8; i++) {
+    input.value = i;
+    constraint.execute();
+    result += output.value;
+  }
+  return result;
 }
+function verify(result) {
 assert(result === 100, "propagated values");
-return result;
+  return result;
+}
+return { run: run, verify: verify };

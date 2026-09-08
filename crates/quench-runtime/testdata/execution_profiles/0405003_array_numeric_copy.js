@@ -5,8 +5,13 @@ function copy(source, target) {
 
 copy([1, 2], [0, 0]);
 var target = [0, 0, 0, 0];
-var result = copy([19, 20, 21, 23], target);
+function run() {
+  return copy([19, 20, 21, 23], target);
+}
+function verify(result) {
 if (result !== 42 || target.join(",") !== "19,20,21,23") {
   throw new Error("numeric copy mismatch");
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

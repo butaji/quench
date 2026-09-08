@@ -16,8 +16,13 @@ function run(state, count) {
 }
 
 run({ kind: 0, value: 1 }, 2);
-var result = run({ kind: 0, value: 3 }, 4);
+function profileRun() {
+  return run({ kind: 0, value: 3 }, 4);
+}
+function profileVerify(result) {
 if (result !== 30) {
   throw new Error("object state-machine mismatch: " + result);
 }
-return result;
+  return result;
+}
+return { run: profileRun, verify: profileVerify };

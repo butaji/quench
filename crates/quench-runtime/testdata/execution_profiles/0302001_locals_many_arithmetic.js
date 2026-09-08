@@ -9,8 +9,13 @@ function calculate(a, b) {
 }
 
 calculate(1, 2);
-var result = calculate(3, 4);
+function run() {
+  return calculate(3, 4);
+}
+function verify(result) {
 if (result !== 28) {
   throw new Error("many-local arithmetic mismatch: " + result);
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

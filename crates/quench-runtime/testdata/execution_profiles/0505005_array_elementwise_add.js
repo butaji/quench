@@ -5,8 +5,13 @@ function add(left, right, target) {
 
 add([1], [2], [0]);
 var target = [0, 0, 0];
-var result = add([10, 20, 30], [9, 2, 12], target);
+function run() {
+  return add([10, 20, 30], [9, 2, 12], target);
+}
+function verify(result) {
 if (result !== 61 || target.join(",") !== "19,22,42") {
   throw new Error("elementwise add mismatch");
 }
-return result;
+  return result;
+}
+return { run: run, verify: verify };

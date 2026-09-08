@@ -13,12 +13,18 @@ function append(head, packet) {
   tail.link = packet;
   return head;
 }
-var head = null;
-for (var i = 1; i <= 6; i++) head = append(head, new Packet(i));
-var result = 0;
-while (head !== null) {
-  result += head.value;
-  head = head.link;
+function run() {
+  var head = null;
+  for (var i = 1; i <= 6; i++) head = append(head, new Packet(i));
+  var result = 0;
+  while (head !== null) {
+    result += head.value;
+    head = head.link;
+  }
+  return result;
 }
+function verify(result) {
 assert(result === 21, "queue preserves insertion order");
-return result;
+  return result;
+}
+return { run: run, verify: verify };

@@ -11,8 +11,14 @@ function removeEven(values) {
   values.length = write;
   return values;
 }
-var values = removeEven([0, 1, 2, 3, 4, 5, 6, 7]);
-var result = values[0] + values[1] + values[2] + values[3];
+var values;
+function run() {
+  values = removeEven([0, 1, 2, 3, 4, 5, 6, 7]);
+  return values[0] + values[1] + values[2] + values[3];
+}
+function verify(result) {
 assert(values.length === 4, "compacted length");
 assert(result === 16, "stable retained values");
-return result;
+  return result;
+}
+return { run: run, verify: verify };
