@@ -8918,7 +8918,8 @@ fn cp_run_host_child(
     crate::modules::child_process::clear_worker_markers(&mut process);
     process.args(&args).env("QUENCH_CHILD_RUNNER", "1");
     if let Value::String(cwd) = execute::get_property(options, "cwd") {
-        process.current_dir(cwd);
+        process.current_dir(&cwd);
+        process.env("QUENCH_CWD", &cwd);
     }
     if matches!(env, Value::Object(_) | Value::ObjectAlias(_)) {
         let mut values = Vec::new();
