@@ -515,6 +515,149 @@ q_nested_xor_loop_end:
 );
 "##;
 
+const AARCH64_SWITCH_REDUCTION_LOOP: &str = r##"#![no_std]
+use core::arch::global_asm;
+
+const ACTION_ADD_SIGNED: u32 = 1;
+const ACTION_XOR: u32 = 2;
+const ACTION_ADD_INDEX_MASKED: u32 = 3;
+const ACTION_SHIFT_LEFT_OR: u32 = 4;
+const ACTION_SHIFT_RIGHT_UNSIGNED: u32 = 5;
+
+#[repr(C)]
+struct SwitchReductionContext {
+    index: i32, end: i32, total: i64,
+    selector_sign: i32, selector_bias: i32, divisor: i32, case_count: u32,
+    case_values: [i32; 8], action_kinds: [u32; 8],
+    action_a: [i32; 8], action_b: [i32; 8],
+    default_kind: u32, default_a: i32, default_b: i32, _padding: u32,
+    interrupt: *const u8,
+}
+
+global_asm!(r#"
+.text
+.p2align 2
+.globl q_switch_reduction_loop
+q_switch_reduction_loop:
+  ldr w1, [x0, #{index}]
+  ldr w2, [x0, #{end}]
+  ldr x4, [x0, #{total}]
+1:
+  cmp w1, w2
+  b.ge 9f
+  ldr w5, [x0, #{selector_sign}]
+  ldr w6, [x0, #{selector_bias}]
+  madd w5, w1, w5, w6
+  ldr w6, [x0, #{divisor}]
+  sdiv w7, w5, w6
+  msub w5, w7, w6, w5
+  ldr w8, [x0, #{case_count}]
+  mov w9, #0
+2:
+  cmp w9, w8
+  b.ge 4f
+  add x10, x0, #{case_values}
+  add x10, x10, x9, lsl #2
+  ldr w11, [x10]
+  cmp w5, w11
+  b.eq 3f
+  add w9, w9, #1
+  b 2b
+3:
+  add x10, x0, #{action_kinds}
+  add x10, x10, x9, lsl #2
+  ldr w11, [x10]
+  add x10, x0, #{action_a}
+  add x10, x10, x9, lsl #2
+  ldr w12, [x10]
+  add x10, x0, #{action_b}
+  add x10, x10, x9, lsl #2
+  ldr w13, [x10]
+  b 5f
+4:
+  ldr w11, [x0, #{default_kind}]
+  ldr w12, [x0, #{default_a}]
+  ldr w13, [x0, #{default_b}]
+5:
+  cmp w11, #{action_add_signed}
+  b.ne 6f
+  sxtw x12, w12
+  add x4, x4, x12
+  b 8f
+6:
+  cmp w11, #{action_xor}
+  b.ne 10f
+  eor w4, w4, w12
+  sxtw x4, w4
+  b 8f
+10:
+  cmp w11, #{action_add_index_masked}
+  b.ne 11f
+  and w12, w1, w12
+  sxtw x12, w12
+  cmp w13, #0
+  b.ge 15f
+  sub x4, x4, x12
+  b 8f
+15:
+  add x4, x4, x12
+  b 8f
+11:
+  cmp w11, #{action_shift_left_or}
+  b.ne 12f
+  lslv w4, w4, w12
+  orr w4, w4, w13
+  sxtw x4, w4
+  b 8f
+12:
+  cmp w11, #{action_shift_right_unsigned}
+  b.ne 13f
+  lsrv w4, w4, w12
+  b 8f
+13:
+  mov w0, #2
+  ret
+8:
+  add w1, w1, #1
+  str w1, [x0, #{index}]
+  str x4, [x0, #{total}]
+  ldr x14, [x0, #{interrupt}]
+  ldrb w15, [x14]
+  cbnz w15, 14f
+  b 1b
+9:
+  sxtw x4, w4
+  str x4, [x0, #{total}]
+  mov w0, #1
+  ret
+14:
+  mov w0, #4
+  ret
+q_switch_reduction_loop_end:
+"#,
+    index = const core::mem::offset_of!(SwitchReductionContext, index),
+    end = const core::mem::offset_of!(SwitchReductionContext, end),
+    total = const core::mem::offset_of!(SwitchReductionContext, total),
+    selector_sign = const core::mem::offset_of!(SwitchReductionContext, selector_sign),
+    selector_bias = const core::mem::offset_of!(SwitchReductionContext, selector_bias),
+    divisor = const core::mem::offset_of!(SwitchReductionContext, divisor),
+    case_count = const core::mem::offset_of!(SwitchReductionContext, case_count),
+    case_values = const core::mem::offset_of!(SwitchReductionContext, case_values),
+    action_kinds = const core::mem::offset_of!(SwitchReductionContext, action_kinds),
+    action_a = const core::mem::offset_of!(SwitchReductionContext, action_a),
+    action_b = const core::mem::offset_of!(SwitchReductionContext, action_b),
+    default_kind = const core::mem::offset_of!(SwitchReductionContext, default_kind),
+    default_a = const core::mem::offset_of!(SwitchReductionContext, default_a),
+    default_b = const core::mem::offset_of!(SwitchReductionContext, default_b),
+    interrupt = const core::mem::offset_of!(SwitchReductionContext, interrupt),
+    action_add_signed = const ACTION_ADD_SIGNED,
+    action_xor = const ACTION_XOR,
+    action_add_index_masked = const ACTION_ADD_INDEX_MASKED,
+    action_shift_left_or = const ACTION_SHIFT_LEFT_OR,
+    action_shift_right_unsigned = const ACTION_SHIFT_RIGHT_UNSIGNED,
+);
+"##;
+
 const AARCH64_NUMERIC_INTEGER_LOOP: &str = r##"#![no_std]
 use core::arch::global_asm;
 
@@ -1046,6 +1189,7 @@ pub(crate) fn assembly_source(recipe: super::RustAssemblyRecipe) -> String {
         BooleanReductionLoop => AARCH64_BOOLEAN_REDUCTION_LOOP.to_owned(),
         BranchRecurrenceLoop => AARCH64_BRANCH_RECURRENCE_LOOP.to_owned(),
         NestedXorLoop => AARCH64_NESTED_XOR_LOOP.to_owned(),
+        SwitchReductionLoop => AARCH64_SWITCH_REDUCTION_LOOP.to_owned(),
         NumericIntegerLoop => AARCH64_NUMERIC_INTEGER_LOOP.to_owned(),
         NumericFloatingLoop => AARCH64_NUMERIC_FLOATING_LOOP.to_owned(),
         NumericBitwiseLoop => AARCH64_NUMERIC_BITWISE_LOOP.to_owned(),
