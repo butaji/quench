@@ -7,13 +7,10 @@ function invoke(fn) {
 }
 
 invoke(target);
-function run() {
-  return invoke(target);
-}
 function verify(result) {
 if (result !== 42) {
   throw new Error("direct zero-argument call mismatch");
 }
   return result;
 }
-return { run: run, verify: verify };
+return { run: invoke, arguments: [target], verify: verify };

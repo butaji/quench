@@ -35,7 +35,7 @@ assert(typeof operation === "function", "scenario operation is callable");
 function verify(value) {
   if (check) check(value, state, "depth");
   const signature = JSON.stringify(encode(value));
-  assert(signature === "[\"number\",\"2016\"]", "exact encoded result");
+  assert(signature === "[\"number\",\"2016\"]", "exact encoded result: " + signature);
   return signature;
 }
 return { run: operation, arguments: [state], verify: verify };

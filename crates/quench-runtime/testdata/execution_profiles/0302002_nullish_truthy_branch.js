@@ -3,9 +3,9 @@ function choose(value, fallback) {
 }
 
 choose(1, false);
-var zero = choose(0, true);
-var missing = choose(null, true);
 function run() {
+  var zero = choose(0, true);
+  var missing = choose(null, true);
   return zero + missing;
 }
 function verify(result) {
