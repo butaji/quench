@@ -2,11 +2,11 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
-use quench_runtime::value::{PromiseState, Value};
+use quench_runtime::value::{PromiseState, Value, WeakObject};
 
 use crate::host::HostState;
 use crate::registry::{
@@ -58,7 +58,12 @@ impl ChannelData {
 
 pub struct DiagnosticsState {
     next_id: u64,
-    channels: HashMap<String, (u64, Rc<RefCell<ChannelData>>, Value)>,
+    // A name registry must preserve channel identity while user code still
+    // owns the object, but it must not become a process-lifetime root.  The
+    // previous strong `Value` entry kept every one-shot channel created by
+    // static subscribe()/unsubscribe() alive forever.  Keep the semantic
+    // channel data by id, while the name index only observes the object.
+    channels: HashMap<String, (u64, Rc<RefCell<ChannelData>>, WeakObject)>,
     by_id: HashMap<u64, Rc<RefCell<ChannelData>>>,
 }
 
@@ -129,21 +134,52 @@ pub fn channel(
         host.diagnostics
             .channels
             .get(&key)
-            .map(|(_, _, object)| object.clone())
+            .and_then(|(_, _, object)| object.upgrade().map(Value::Object))
     };
     if let Some(object) = existing {
         return Ok(object);
     }
     let mut host = state.borrow_mut();
+    // A static subscribe()/unsubscribe() pair can legitimately be the only
+    // owner between calls.  Re-materialize the same channel identity from
+    // its retained data instead of allocating a new data record: otherwise
+    // unsubscribe would be unable to reach the callback added by subscribe.
+    if let Some((id, data, weak)) = host.diagnostics.channels.get_mut(&key) {
+        let object = channel_object(*id, data.borrow().name.clone());
+        *weak = weak_object(&object);
+        return Ok(object);
+    }
     let id = host.diagnostics.next_id;
     host.diagnostics.next_id += 1;
     let data = Rc::new(RefCell::new(ChannelData::new(name.clone())));
     let object = channel_object(id, name);
     host.diagnostics
         .channels
-        .insert(key, (id, data.clone(), object.clone()));
+        .insert(key, (id, data.clone(), weak_object(&object)));
     host.diagnostics.by_id.insert(id, data);
     Ok(object)
+}
+
+fn weak_object(value: &Value) -> WeakObject {
+    match value {
+        Value::Object(object) => Rc::downgrade(object),
+        _ => Weak::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::weak_object;
+    use quench_runtime::host_api;
+
+    #[test]
+    fn name_index_weak_reference_does_not_root_channel_object() {
+        let object = host_api::object(Vec::new());
+        let weak = weak_object(&object);
+        assert!(weak.upgrade().is_some());
+        drop(object);
+        assert!(weak.upgrade().is_none());
+    }
 }
 
 pub fn new_channel(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
@@ -452,9 +488,18 @@ pub fn module_import_begin(
 ) -> Result<Option<Value>, VmError> {
     let channels = TRACE_CHANNELS
         .iter()
-        .map(|name| channel(state, None, &[Value::String(format!("tracing:module.import:{name}"))]))
+        .map(|name| {
+            channel(
+                state,
+                None,
+                &[Value::String(format!("tracing:module.import:{name}"))],
+            )
+        })
         .collect::<Result<Vec<_>, _>>()?;
-    if !channels.iter().any(|value| channel_has_subscribers(state, value)) {
+    if !channels
+        .iter()
+        .any(|value| channel_has_subscribers(state, value))
+    {
         return Ok(None);
     }
     let event = host_api::object(vec![
@@ -473,19 +518,19 @@ pub fn module_import_parent_url(state: &Rc<RefCell<HostState>>) -> String {
         .module_stack
         .last()
         .cloned()
-        .or_else(|| quench_runtime::vm::current_context().source_name().map(str::to_owned))
+        .or_else(|| {
+            quench_runtime::vm::current_context()
+                .source_name()
+                .map(str::to_owned)
+        })
         .unwrap_or_default();
     if parent.starts_with("file://") {
         return parent;
     }
-    crate::modules::url_file::path_to_file_url(
-        state,
-        None,
-        &[Value::String(parent.clone())],
-    )
-    .ok()
-    .and_then(|url| execute::to_js_string(&execute::get_property(&url, "href")).ok())
-    .unwrap_or(parent)
+    crate::modules::url_file::path_to_file_url(state, None, &[Value::String(parent.clone())])
+        .ok()
+        .and_then(|url| execute::to_js_string(&execute::get_property(&url, "href")).ok())
+        .unwrap_or(parent)
 }
 
 pub fn module_import_end(
@@ -495,7 +540,13 @@ pub fn module_import_end(
 ) -> Result<(), VmError> {
     let channels = TRACE_CHANNELS
         .iter()
-        .map(|name| channel(state, None, &[Value::String(format!("tracing:module.import:{name}"))]))
+        .map(|name| {
+            channel(
+                state,
+                None,
+                &[Value::String(format!("tracing:module.import:{name}"))],
+            )
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let (value, error) = match result {
         Ok(value) => (Some(value), None),
@@ -720,7 +771,10 @@ pub(crate) fn tracing_promise_settle(
         PromiseState::Pending => return Ok(()),
     };
     let key = error.as_ref().map(|_| "error").unwrap_or("result");
-    let value = error.clone().or_else(|| result.clone()).unwrap_or(Value::Undefined);
+    let value = error
+        .clone()
+        .or_else(|| result.clone())
+        .unwrap_or(Value::Undefined);
     let descriptor = host_api::object(vec![
         ("value".into(), value),
         ("configurable".into(), Value::Boolean(true)),
