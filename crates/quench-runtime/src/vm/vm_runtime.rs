@@ -1992,11 +1992,29 @@ fn record_dense_fill(code: crate::machine::CodeView<'_>, pc: usize) {
     ]);
 }
 
-fn record_integer_loop(code: crate::machine::CodeView<'_>, pc: usize) {
-    crate::execution_trace::stencil_observation(code, pc, "numeric_integer_region", true);
+fn record_integer_loop(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    profile: crate::stencil_numeric_integer_loop::IntegerLoopProfile,
+) {
+    use crate::stencil_numeric_integer_loop::IntegerLoopProfile;
+    let name = match profile {
+        IntegerLoopProfile::Numeric => "numeric_integer_region",
+        IntegerLoopProfile::Affine => "affine_i32_loop",
+    };
+    crate::execution_trace::stencil_observation(code, pc, name, true);
     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
     #[cfg(test)]
-    crate::test_execution_profile::dynamic_region_route(["numeric", "integer"]);
+    match profile {
+        IntegerLoopProfile::Numeric => {
+            crate::test_execution_profile::dynamic_region_route(["numeric", "integer"])
+        }
+        IntegerLoopProfile::Affine => crate::test_execution_profile::dynamic_region_route([
+            "LoadLocal", "LoadLocal", "GetN", "Binary", "JumpIfFalse", "LoadLocal",
+            "LoadConst", "Mul", "AddConst", "LoadConst", "Binary", "StoreLocal", "Move",
+            "LoadLocal", "LoadConst", "Binary", "StoreLocal", "Unary", "Jump",
+        ]),
+    }
 }
 
 fn record_floating_loop(code: crate::machine::CodeView<'_>, pc: usize) {
@@ -2300,15 +2318,22 @@ pub(crate) fn execute_optimized_code_step_from(
             integer_loop.borrow_mut().execute(code, environment, context)
         });
         match result {
-            Ok(Some(crate::stencil_numeric_integer_loop::IntegerLoopOutcome::Completed(value))) => {
-                record_integer_loop(code, start);
+            Ok(Some(crate::stencil_numeric_integer_loop::IntegerLoopOutcome::Completed {
+                value,
+                next,
+                profile,
+            })) => {
+                record_integer_loop(code, start, profile);
                 return Ok((
                     crate::completion::Completion::Return(crate::value::Value::Number(f64::from(value))),
-                    crate::stencil_numeric_integer_loop::REGION_END,
+                    next,
                 ));
             }
-            Ok(Some(crate::stencil_numeric_integer_loop::IntegerLoopOutcome::Resume { pc })) => {
-                record_integer_loop(code, start);
+            Ok(Some(crate::stencil_numeric_integer_loop::IntegerLoopOutcome::Resume {
+                pc,
+                profile,
+            })) => {
+                record_integer_loop(code, start, profile);
                 return Ok((crate::completion::Completion::Normal, pc));
             }
             Ok(None) | Err(crate::machine::NativeDispatchError::Physical(_)) => {}
@@ -3309,16 +3334,23 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
         }
         if let (Some(environment), Some(integer_loop)) = (environment, plan.integer_loop_at(pc)) {
             match integer_loop.borrow_mut().execute(code, environment, context) {
-                Ok(Some(crate::stencil_numeric_integer_loop::IntegerLoopOutcome::Completed(value))) => {
-                    record_integer_loop(code, pc);
+                Ok(Some(crate::stencil_numeric_integer_loop::IntegerLoopOutcome::Completed {
+                    value,
+                    next,
+                    profile,
+                })) => {
+                    record_integer_loop(code, pc, profile);
                     return completion_step_after_transition(
                         registers,
                         crate::completion::Completion::Return(crate::value::Value::Number(f64::from(value))),
-                        crate::stencil_numeric_integer_loop::REGION_END,
+                        next,
                     );
                 }
-                Ok(Some(crate::stencil_numeric_integer_loop::IntegerLoopOutcome::Resume { pc })) => {
-                    record_integer_loop(code, 0);
+                Ok(Some(crate::stencil_numeric_integer_loop::IntegerLoopOutcome::Resume {
+                    pc,
+                    profile,
+                })) => {
+                    record_integer_loop(code, 0, profile);
                     return completion_step_after_transition(
                         registers,
                         crate::completion::Completion::Normal,

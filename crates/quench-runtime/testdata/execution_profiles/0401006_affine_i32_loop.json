@@ -18,12 +18,6 @@
     "stencils": {
       "affine_i32_loop": { "entries": 1, "fallbacks": 0 }
     },
-    "events": {
-      "binding_load": 1,
-      "leaf_hit": 1,
-      "local_word_read": 1,
-      "owned_word_read": 4,
-      "register_file_read": 3
-    }
+    "events": { "leaf_hit": 1 }
   }
 }
