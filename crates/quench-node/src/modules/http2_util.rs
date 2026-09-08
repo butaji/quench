@@ -562,6 +562,23 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
         .find(|value| quench_runtime::is_callable(value))
         .cloned();
     let target = connect_target_options(authority, extra_options)?;
+    let secure = execute::to_js_string(&execute::get_property(&target, "protocol"))
+        .unwrap_or_default()
+        .eq_ignore_ascii_case("https:");
+    if secure
+        && matches!(
+            execute::get_property(&target, "ALPNProtocols"),
+            Value::Undefined
+        )
+    {
+        // RFC 7301 negotiation is part of the HTTPS HTTP/2 endpoint fact;
+        // keep it on the normalized options object shared with tls.connect.
+        execute::set_property_in_place(
+            &target,
+            "ALPNProtocols",
+            host_api::array(vec![Value::String("h2".into())]),
+        );
+    }
     let create_connection = execute::get_property(&target, "createConnection");
     if quench_runtime::is_callable(&create_connection) {
         let socket = execute::call(
@@ -590,7 +607,7 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
                 execute::set_property_in_place(&socket, "close", destroy);
             }
         }
-        decorate_client_session(&socket)?;
+        decorate_client_session(&socket, secure)?;
         if let Some(callback) = callback {
             // `createConnection` may return either an already-connected
             // socket or one that is still opening.  Preserve the transport's
@@ -610,7 +627,8 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
         }
         return Ok(socket);
     }
-    let net = crate::modules::require::require(state, &[Value::String("net".into())])?;
+    let module_name = if secure { "tls" } else { "net" };
+    let net = crate::modules::require::require(state, &[Value::String(module_name.into())])?;
     let net_connect = execute::get_property(&net, "connect");
     if !quench_runtime::is_callable(&net_connect) {
         return Err(VmError::NotCallable);
@@ -651,7 +669,7 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
             execute::set_property_in_place(&socket, "close", destroy);
         }
     }
-    decorate_client_session(&socket)?;
+    decorate_client_session(&socket, secure)?;
     Ok(socket)
 }
 
@@ -662,11 +680,15 @@ fn session_capability(kind: &str) -> Value {
     )
 }
 
-fn decorate_client_session(socket: &Value) -> Result<(), VmError> {
+fn decorate_client_session(socket: &Value, secure: bool) -> Result<(), VmError> {
     execute::set_property_in_place(socket, "request", session_capability("sessionRequest"));
     execute::set_property_in_place(socket, "close", session_capability("sessionClose"));
     execute::set_property_in_place(socket, "pendingSettingsAck", Value::Boolean(false));
-    execute::set_property_in_place(socket, "alpnProtocol", Value::String("h2c".into()));
+    execute::set_property_in_place(
+        socket,
+        "alpnProtocol",
+        Value::String(if secure { "h2" } else { "h2c" }.into()),
+    );
     Ok(())
 }
 
@@ -1086,6 +1108,15 @@ fn connect_target_options(
             execute::set_property_in_place(&target, "host", hostname);
         }
     }
+    if let Value::String(protocol) = execute::get_property(&target, "protocol") {
+        if !protocol.ends_with(':') {
+            execute::set_property_in_place(
+                &target,
+                "protocol",
+                Value::String(format!("{protocol}:").into()),
+            );
+        }
+    }
     Ok(target)
 }
 
@@ -1136,6 +1167,10 @@ fn parse_authority(authority: &Value) -> Result<Value, VmError> {
         "80"
     };
     Ok(host_api::object(vec![
+        (
+            "protocol".into(),
+            Value::String(format!("{scheme}:").into()),
+        ),
         (
             "host".into(),
             Value::String(host.trim_matches(['[', ']']).into()),

@@ -266,17 +266,20 @@ impl Session {
             }
             FrameType::Ping if stream_zero && length == 8 => Ok(()),
             FrameType::Ping => Err(ProtocolError::InvalidFrameLength(FrameType::Ping, length)),
-            FrameType::Priority if stream_zero || length != 5 => {
-                Err(ProtocolError::InvalidFrameLength(FrameType::Priority, length))
-            }
-            FrameType::RstStream if stream_zero || length != 4 => {
-                Err(ProtocolError::InvalidFrameLength(FrameType::RstStream, length))
-            }
+            FrameType::Priority if stream_zero || length != 5 => Err(
+                ProtocolError::InvalidFrameLength(FrameType::Priority, length),
+            ),
+            FrameType::RstStream if stream_zero || length != 4 => Err(
+                ProtocolError::InvalidFrameLength(FrameType::RstStream, length),
+            ),
             FrameType::WindowUpdate if length != 4 => Err(ProtocolError::InvalidFrameLength(
                 FrameType::WindowUpdate,
                 length,
             )),
-            FrameType::WindowUpdate if u32::from_be_bytes(frame.payload.clone().try_into().unwrap()) & 0x7fff_ffff == 0 => {
+            FrameType::WindowUpdate
+                if u32::from_be_bytes(frame.payload.clone().try_into().unwrap()) & 0x7fff_ffff
+                    == 0 =>
+            {
                 Err(ProtocolError::InvalidWindowIncrement)
             }
             FrameType::GoAway if !stream_zero && length >= 8 => {
@@ -287,14 +290,16 @@ impl Session {
                 Ok(())
             }
             FrameType::GoAway => Err(ProtocolError::InvalidFrameLength(FrameType::GoAway, length)),
-            FrameType::Data | FrameType::Headers | FrameType::Continuation
-                if stream_zero => Err(ProtocolError::InvalidStream(frame.header.kind)),
+            FrameType::Data | FrameType::Headers | FrameType::Continuation if stream_zero => {
+                Err(ProtocolError::InvalidStream(frame.header.kind))
+            }
             FrameType::PushPromise if stream_zero => {
                 Err(ProtocolError::InvalidStream(FrameType::PushPromise))
             }
-            FrameType::Data | FrameType::Headers | FrameType::PushPromise | FrameType::Continuation => {
-                self.apply_stream_frame(frame)
-            }
+            FrameType::Data
+            | FrameType::Headers
+            | FrameType::PushPromise
+            | FrameType::Continuation => self.apply_stream_frame(frame),
             _ => Ok(()),
         }
     }
@@ -455,7 +460,11 @@ mod tests {
 
     #[test]
     fn settings_update_frame_limit() {
-        let payload = [5u16.to_be_bytes().as_slice(), 32_768u32.to_be_bytes().as_slice()].concat();
+        let payload = [
+            5u16.to_be_bytes().as_slice(),
+            32_768u32.to_be_bytes().as_slice(),
+        ]
+        .concat();
         let frame = Frame::new(FrameType::Settings, 0, 0, payload);
         let mut session = Session::new(Role::Client);
         session.feed(&frame.encode()).unwrap();
@@ -481,8 +490,7 @@ mod tests {
     #[test]
     fn decodes_huffman_string_literal() {
         let block = [
-            0x41, 0x8c, 0xf1, 0xe3, 0xc2, 0xe5, 0xf2, 0x3a, 0x6b, 0xa0, 0xab, 0x90, 0xf4,
-            0xff,
+            0x41, 0x8c, 0xf1, 0xe3, 0xc2, 0xe5, 0xf2, 0x3a, 0x6b, 0xa0, 0xab, 0x90, 0xf4, 0xff,
         ];
         let frame = Frame::new(FrameType::Headers, 0x4, 1, block.to_vec());
         let mut session = Session::new(Role::Client);
