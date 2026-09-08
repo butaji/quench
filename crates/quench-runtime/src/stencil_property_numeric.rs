@@ -105,8 +105,6 @@ impl PropertyNumericSelection {
             .take(usize::from(self.len))
             .enumerate()
         {
-            #[cfg(test)]
-            crate::test_execution_profile::event("portable_recipe_step");
             values[index] = evaluate_node(
                 node.recipe,
                 &self.nodes,
