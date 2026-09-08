@@ -23,6 +23,7 @@ pub(crate) struct ExecutionProfile {
 const EXECUTION_CASE_SCHEMA: u32 = 1;
 const PROFILE_RUN_PROPERTY: &str = "run";
 const PROFILE_VERIFY_PROPERTY: &str = "verify";
+const PROFILE_ARGUMENTS_PROPERTY: &str = "arguments";
 const PROFILE_CASE_FILTER: &str = "QUENCH_EXECUTION_PROFILE_CASE";
 const PROFILE_CHILD_PROCESS: &str = "QUENCH_EXECUTION_PROFILE_CHILD";
 const PROFILE_MISMATCH_MARKER: &str = "QUENCH_PROFILE_MISMATCH:";
@@ -30,6 +31,7 @@ const PROFILE_MISMATCH_MARKER: &str = "QUENCH_PROFILE_MISMATCH:";
 struct PreparedExecution {
     run: crate::value::Value,
     verify: crate::value::Value,
+    arguments: Vec<crate::value::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -157,7 +159,27 @@ fn prepare_execution(
     if !crate::conversion::is_callable(&run) || !crate::conversion::is_callable(&verify) {
         return Ok(None);
     }
-    Ok(Some(PreparedExecution { run, verify }))
+    let arguments = profile_arguments(value)?;
+    Ok(Some(PreparedExecution {
+        run,
+        verify,
+        arguments,
+    }))
+}
+
+fn profile_arguments(
+    contract: &crate::value::Value,
+) -> Result<Vec<crate::value::Value>, crate::execute::VmError> {
+    let value = crate::execute::get_property_result(contract, PROFILE_ARGUMENTS_PROPERTY)?;
+    match value {
+        crate::value::Value::Undefined => Ok(Vec::new()),
+        crate::value::Value::Array(values) => values
+            .packed_values()
+            .ok_or_else(|| crate::execute::type_error("profile arguments must be a packed array")),
+        _ => Err(crate::execute::type_error(
+            "profile arguments must be an array",
+        )),
+    }
 }
 
 fn settle(value: crate::value::Value) -> Result<crate::value::Value, crate::execute::VmError> {
@@ -192,7 +214,7 @@ fn execute_contract(
     let Some(prepared) = prepare_execution(&initialized)? else {
         return Ok(initialized);
     };
-    let result = invoke(context, &prepared.run, &[])?;
+    let result = invoke(context, &prepared.run, &prepared.arguments)?;
     invoke(context, &prepared.verify, &[result])
 }
 
@@ -443,7 +465,9 @@ mod tests {
         let Some(prepared) = prepare_execution(&initialized)? else {
             return capture_result(measured, || Ok(initialized));
         };
-        let (result, profile) = capture_result(measured, || invoke(context, &prepared.run, &[]))?;
+        let (result, profile) = capture_result(measured, || {
+            invoke(context, &prepared.run, &prepared.arguments)
+        })?;
         let verified = invoke(context, &prepared.verify, &[result])?;
         Ok((verified, profile))
     }
