@@ -344,6 +344,17 @@ impl Session {
         match frame.header.kind {
             FrameType::Headers => self.apply_headers(id, frame)?,
             FrameType::Continuation => self.apply_continuation(id, frame)?,
+            FrameType::PushPromise => {
+                if frame.payload.len() < 4 {
+                    return Err(ProtocolError::InvalidFrameLength(
+                        FrameType::PushPromise,
+                        frame.payload.len(),
+                    ));
+                }
+                let promised_id =
+                    u32::from_be_bytes(frame.payload[..4].try_into().unwrap()) & 0x7fff_ffff;
+                self.decode_headers(promised_id, &frame.payload[4..])?;
+            }
             _ => {}
         }
         Ok(())
