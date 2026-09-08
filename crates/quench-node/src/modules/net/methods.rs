@@ -3187,9 +3187,9 @@ pub fn socket_destroy(
     }
     if emit_close {
         set_socket_state(&receiver, true, false, "closed");
-        super::replace_socket_property(&receiver, "pending", Value::Boolean(true));
+        super::set_socket_property(&receiver, "pending", Value::Boolean(true));
         super::set_socket_bytes_read(&receiver, bytes_read);
-        super::replace_socket_property(&receiver, "_handle", Value::Null);
+        super::set_socket_property(&receiver, "_handle", Value::Null);
         crate::modules::http_client::mark_socket_destroyed_in_agents(state, &receiver);
         // Node delivers socket close on the next loop turn, allowing a
         // listener attached immediately after `destroy()` to observe it.
