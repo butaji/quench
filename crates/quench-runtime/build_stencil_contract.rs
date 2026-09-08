@@ -39,6 +39,7 @@ pub(crate) enum DeclAbi {
     ArrayReductionLoop,
     AffineI32Loop,
     I32CounterLoop,
+    BooleanReductionLoop,
     NumericI32BitwiseLoop,
     NumericI32PairLoop,
     NumericF64Loop,
