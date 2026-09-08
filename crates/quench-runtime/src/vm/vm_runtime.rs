@@ -2041,13 +2041,17 @@ fn record_string_concat(code: crate::machine::CodeView<'_>, pc: usize, constant_
     let _ = constant_call;
 }
 
-fn record_string_case(code: crate::machine::CodeView<'_>, pc: usize) {
-    crate::execution_trace::stencil_observation(code, pc, "builtins_string_case_region", true);
+fn record_string_builtin(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    plan: &crate::stencil_string_builtin::StringBuiltinPlan,
+) {
+    crate::execution_trace::stencil_observation(code, pc, plan.trace_name(), true);
     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
     #[cfg(test)]
     {
         crate::test_execution_profile::portable_recipe();
-        crate::test_execution_profile::dynamic_region_route(["builtins", "string_case"]);
+        crate::test_execution_profile::dynamic_region_route(plan.route());
     }
 }
 
@@ -2314,14 +2318,15 @@ pub(crate) fn execute_optimized_code_step_from(
             ));
         }
     }
-    if let Some(plan) = entry.string_case() {
+    if let Some(plan) = entry.string_builtin() {
         let result = crate::locals::with_current_ref(|environment| match environment {
             Some(environment) => plan.borrow().execute(environment),
             None => Ok(None),
         })?;
         if let Some(value) = result {
-            let span = plan.borrow().span();
-            record_string_case(code, start);
+            let plan = plan.borrow();
+            let span = plan.span();
+            record_string_builtin(code, start, &plan);
             return Ok((crate::completion::Completion::Return(value), start + span));
         }
     }
@@ -3109,10 +3114,12 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                 );
             }
         }
-        if let (Some(environment), Some(string_case)) = (environment, plan.string_case_at(pc)) {
-            if let Some(value) = string_case.borrow().execute(environment)? {
-                let span = string_case.borrow().span();
-                record_string_case(code, pc);
+        if let (Some(environment), Some(string_builtin)) = (environment, plan.string_builtin_at(pc))
+        {
+            if let Some(value) = string_builtin.borrow().execute(environment)? {
+                let string_builtin = string_builtin.borrow();
+                let span = string_builtin.span();
+                record_string_builtin(code, pc, &string_builtin);
                 return completion_step_after_transition(
                     registers,
                     crate::completion::Completion::Return(value),
