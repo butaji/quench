@@ -154,6 +154,12 @@ impl SharedStencilSlab {
         crate::stencil_select::RegionAbi::ScalarWordBool
     );
     typed_owned_entry!(
+        owned_word_pair_entry,
+        word_pair_entry,
+        extern "C" fn(u64, u64) -> u64,
+        crate::stencil_select::RegionAbi::ScalarWordPair
+    );
+    typed_owned_entry!(
         owned_word_pair_bool_entry,
         word_pair_bool_entry,
         extern "C" fn(u64, u64) -> u64,
@@ -254,6 +260,16 @@ impl SharedStencilSlab {
         self.slab_for(address)
             .ok_or(ArenaError::ProtectionFailed)?
             .bool_entry(address)
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn word_pair_entry(
+        &self,
+        address: usize,
+    ) -> Result<extern "C" fn(u64, u64) -> u64, ArenaError> {
+        self.slab_for(address)
+            .ok_or(ArenaError::ProtectionFailed)?
+            .word_pair_entry(address)
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]

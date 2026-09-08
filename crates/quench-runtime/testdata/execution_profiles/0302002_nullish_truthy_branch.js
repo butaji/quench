@@ -3,15 +3,11 @@ function choose(value, fallback) {
 }
 
 choose(1, false);
-function run() {
-  var zero = choose(0, true);
-  var missing = choose(null, true);
-  return zero + missing;
-}
 function verify(result) {
-if (result !== 41) {
-  throw new Error("nullish/truthy branch mismatch");
-}
+  if (choose(0, true) !== 0) throw new Error("non-nullish zero mismatch");
+  if (choose(null, true) !== 41) throw new Error("truthy fallback mismatch");
+  if (choose(null, false) !== 7) throw new Error("falsy fallback mismatch");
+  if (result !== 0) throw new Error("measured zero mismatch");
   return result;
 }
-return { run: run, verify: verify };
+return { run: choose, verify: verify, arguments: [0, true] };

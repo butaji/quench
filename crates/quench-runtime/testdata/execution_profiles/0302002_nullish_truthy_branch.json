@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "warmup": 1,
-  "result": { "kind": "number", "value": 41 },
+  "result": { "kind": "number", "value": 0 },
   "plan": {
     "execution_kind": "native_machine_code",
     "operation_route": ["LoadLocalChecked", "Unary", "JumpIfFalse", "LoadLocalChecked", "JumpIfFalse", "Return"],
@@ -10,7 +10,7 @@
   "profile": {
     "residual": {},
     "slow": {},
-    "stencils": { "nullish_truthy_branch_return": { "entries": 2, "fallbacks": 0 } },
-    "events": { "leaf_hit": 2 }
+    "stencils": { "nullish_truthy_branch_return": { "entries": 1, "fallbacks": 0 } },
+    "events": { "leaf_hit": 1 }
   }
 }
