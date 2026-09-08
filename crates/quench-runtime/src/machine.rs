@@ -5568,6 +5568,7 @@ enum NativeAdmission {
     Reduction(Rc<RefCell<crate::stencil_ordered_reduction::NativeReductionPlan>>),
     I32Pattern(Rc<RefCell<crate::stencil_i32_pattern::NativeI32PatternPlan>>),
     LocalAffineSum(Rc<RefCell<crate::stencil_local_affine_sum::NativeLocalAffineSumPlan>>),
+    LocalRecursiveSum(Rc<RefCell<crate::stencil_local_recursive_sum::NativeLocalRecursiveSumPlan>>),
     CallReturn(Rc<RefCell<crate::stencil_call_return::NativeCallReturnPlan>>),
     ForwardCall(Rc<RefCell<crate::stencil_forward_call::NativeForwardCallPlan>>),
     ForwardPair(Rc<RefCell<crate::stencil_forward_call::NativeForwardPairPlan>>),
@@ -5653,6 +5654,9 @@ impl AdmissionEntry for NativeAdmission {
             Self::LocalAffineSum(_) => {
                 shared_value_bytes::<RefCell<crate::stencil_local_affine_sum::NativeLocalAffineSumPlan>>()
             }
+            Self::LocalRecursiveSum(_) => shared_value_bytes::<
+                RefCell<crate::stencil_local_recursive_sum::NativeLocalRecursiveSumPlan>,
+            >(),
             Self::CallReturn(_) => {
                 shared_value_bytes::<RefCell<crate::stencil_call_return::NativeCallReturnPlan>>()
             }
@@ -5728,6 +5732,7 @@ impl std::fmt::Debug for NativeAdmission {
             Self::Reduction(_) => "reduction",
             Self::I32Pattern(_) => "i32_pattern",
             Self::LocalAffineSum(_) => "local_affine_sum",
+            Self::LocalRecursiveSum(_) => "local_recursive_sum",
             Self::CallReturn(_) => "call_return",
             Self::ForwardCall(_) => "forward_call",
             Self::ForwardPair(_) => "forward_pair",
@@ -6202,6 +6207,22 @@ fn local_affine_sum_admission(
     )?;
     let plan = crate::stencil_local_affine_sum::NativeLocalAffineSumPlan::new(selection, policy)?;
     Some(NativeAdmission::LocalAffineSum(Rc::new(RefCell::new(plan))))
+}
+
+fn local_recursive_sum_admission(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+) -> Option<NativeAdmission> {
+    let selection = crate::stencil_local_recursive_sum::select_local_recursive_sum(
+        code, entries, cfg, pc,
+    )?;
+    let plan = crate::stencil_local_recursive_sum::NativeLocalRecursiveSumPlan::new(
+        selection, policy,
+    )?;
+    Some(NativeAdmission::LocalRecursiveSum(Rc::new(RefCell::new(plan))))
 }
 
 fn floating_loop_admission(
@@ -6985,6 +7006,10 @@ fn collect_admissions_at(
     );
     builder.push_optional(
         pc,
+        local_recursive_sum_admission(code, entries, cfg, pc, policy),
+    );
+    builder.push_optional(
+        pc,
         floating_loop_admission(code, entries, cfg, pc, policy, arena),
     );
     builder.push_optional(
@@ -7152,6 +7177,7 @@ impl BaselinePlan {
         let reduction = self.reduction_at(0).is_some();
         let i32_pattern = self.i32_pattern_at(0).is_some();
         let local_affine_sum = self.local_affine_sum_at(0).is_some();
+        let local_recursive_sum = self.local_recursive_sum_at(0).is_some();
         let call_return = self.call_return_at(0).is_some();
         let forward_call = (0..self.len()).any(|pc| self.forward_call_at(pc).is_some());
         let forward_pair = self.forward_pair_at(0).is_some();
@@ -7180,6 +7206,7 @@ impl BaselinePlan {
             || reduction
             || i32_pattern
             || local_affine_sum
+            || local_recursive_sum
             || call_return
             || forward_call
             || forward_pair
@@ -7317,6 +7344,12 @@ impl BaselinePlan {
         local_affine_sum_at,
         LocalAffineSum,
         crate::stencil_local_affine_sum::NativeLocalAffineSumPlan
+    );
+    typed_admission_accessors!(
+        local_recursive_sum_handle_at,
+        local_recursive_sum_at,
+        LocalRecursiveSum,
+        crate::stencil_local_recursive_sum::NativeLocalRecursiveSumPlan
     );
     typed_admission_accessors!(
         call_return_handle_at,
@@ -7569,6 +7602,11 @@ impl OptimizingEntry<'_> {
         local_affine_sum,
         LocalAffineSum,
         crate::stencil_local_affine_sum::NativeLocalAffineSumPlan
+    );
+    optimizing_admission_accessors!(
+        local_recursive_sum,
+        LocalRecursiveSum,
+        crate::stencil_local_recursive_sum::NativeLocalRecursiveSumPlan
     );
     optimizing_admission_accessors!(
         call_return,

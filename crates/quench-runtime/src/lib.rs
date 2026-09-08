@@ -170,6 +170,7 @@ mod stencil_fusion_store_tests;
 mod stencil_fusion_tests;
 mod stencil_i32_pattern;
 mod stencil_local_affine_sum;
+mod stencil_local_recursive_sum;
 mod stencil_installation;
 mod stencil_layout;
 pub mod stencil_lifecycle;
