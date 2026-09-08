@@ -246,6 +246,7 @@ impl QuicTransportState {
 
     fn receive(&mut self, endpoint_id: u64) {
         let mut datagrams = Vec::new();
+        let mut received = Vec::new();
         {
             let Some(endpoint) = self.endpoints.get_mut(&endpoint_id) else {
                 return;
@@ -255,7 +256,7 @@ impl QuicTransportState {
                 match endpoint.socket.recv_from(&mut buffer) {
                     Ok((size, peer)) => {
                         let payload = buffer[..size].to_vec();
-                        self.received.push_back(ReceivedDatagram {
+                        received.push(ReceivedDatagram {
                             endpoint: endpoint_id,
                             peer,
                             payload: payload.clone(),
@@ -275,6 +276,10 @@ impl QuicTransportState {
             }
         }
 
+        for datagram in received {
+            self.enqueue_received(datagram);
+        }
+
         // Feed every received datagram through the protocol state in the same
         // pump tick.  `received` remains available to the eventual session
         // adapter; protocol processing has its own copy so consuming one queue
@@ -282,6 +287,20 @@ impl QuicTransportState {
         for (peer, payload) in datagrams {
             self.handle_protocol_datagram(endpoint_id, peer, payload);
         }
+    }
+
+    /// Keep the VM-facing receive queue bounded independently from the
+    /// protocol parser.  The parser receives its own copy in `receive`, so a
+    /// slow future endpoint/session adapter cannot turn unconsumed datagrams
+    /// into unbounded host memory.  Reporting the overflow preserves the
+    /// transport fact while allowing protocol processing to continue.
+    fn enqueue_received(&mut self, datagram: ReceivedDatagram) {
+        if self.received.len() >= MAX_PENDING_DATAGRAMS {
+            self.errors
+                .push_back(TransportError::QueueFull(datagram.endpoint));
+            return;
+        }
+        self.received.push_back(datagram);
     }
 
     fn handle_protocol_datagram(&mut self, endpoint_id: u64, peer: SocketAddr, payload: Vec<u8>) {
@@ -496,5 +515,26 @@ mod tests {
         );
         assert!(!state.endpoints.get(&first).unwrap().server_configured);
         assert!(!state.endpoints.get(&second).unwrap().server_configured);
+    }
+
+    #[test]
+    fn receive_queue_is_bounded_and_reports_backpressure() {
+        let mut state = QuicTransportState::new();
+        let endpoint = state.bind(loopback()).unwrap();
+        let peer = loopback();
+
+        for _ in 0..(MAX_PENDING_DATAGRAMS + 1) {
+            state.enqueue_received(ReceivedDatagram {
+                endpoint,
+                peer,
+                payload: vec![1],
+            });
+        }
+
+        assert_eq!(state.pending_received(), MAX_PENDING_DATAGRAMS);
+        assert_eq!(
+            state.take_error(),
+            Some(TransportError::QueueFull(endpoint))
+        );
     }
 }
