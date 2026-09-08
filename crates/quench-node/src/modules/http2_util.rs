@@ -723,9 +723,13 @@ fn create_server(
         crate::modules::net::create_server(state, transport_values)?
     };
     if let Some(request_listener) = request_listener {
-        execute::set_property_in_place(&server, "_http2RequestListener", request_listener);
+        execute::set_property_in_place(
+            &server,
+            "\0quench:http2-request-listener",
+            request_listener,
+        );
     }
-    execute::set_property_in_place(&server, "_http2", Value::Boolean(true));
+    execute::set_property_in_place(&server, "\0quench:http2-server", Value::Boolean(true));
     Ok(server)
 }
 
