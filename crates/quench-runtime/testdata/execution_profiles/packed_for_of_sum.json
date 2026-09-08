@@ -4,13 +4,13 @@
   "result": { "kind": "number", "value": 42 },
   "plan": {
     "execution_kind": "native_machine_code",
-    "operation_route": ["Binary", "JumpIfFalse", "GetNQuickened", "Add", "GetNQuickened", "Jump", "Return"],
+    "operation_route": ["IteratorInit", "IteratorNext", "Add", "Jump", "IteratorClose", "Return"],
     "fallback": false
   },
   "profile": {
     "residual": {},
     "slow": {},
-    "stencils": { "monomorphic_linked_list_sum": { "entries": 1, "fallbacks": 0 } },
+    "stencils": { "packed_array_for_of_sum": { "entries": 1, "fallbacks": 0 } },
     "events": { "leaf_hit": 1 }
   }
 }

@@ -3,14 +3,14 @@
   "warmup": 0,
   "result": { "kind": "string", "value": "boom:1" },
   "plan": {
-    "execution_kind": "ordinary_fallback",
+    "execution_kind": "portable_recipe",
     "operation_route": ["GetN", "Call", "Throw"],
-    "fallback": true
+    "fallback": false
   },
   "profile": {
-    "residual": { "GetN": 1 },
+    "residual": {},
     "slow": { "GetN": 1, "Call": 1 },
-    "stencils": { "property": { "entries": 0, "fallbacks": 1 } },
-    "events": { "register_file_read": 1 }
+    "stencils": { "accessor_get_throw_boundary": { "entries": 1, "fallbacks": 0 } },
+    "events": { "leaf_hit": 1 }
   }
 }
