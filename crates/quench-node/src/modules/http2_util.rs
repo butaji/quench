@@ -220,7 +220,9 @@ fn packed_settings(values: &[Value]) -> Result<Value, VmError> {
         let keys = execute::own_enumerable_keys(&custom);
         if keys.len() > 10 {
             return Err(coded_error(
-                quench_runtime::ops::Builtin::RangeError,
+                // Node reports this cardinality violation as a plain Error;
+                // value/range violations below retain their RangeError type.
+                quench_runtime::ops::Builtin::Error,
                 "ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS",
                 "Maximum number of custom settings is 10".into(),
             ));
@@ -550,8 +552,10 @@ pub fn dispatch(
         "sessionConnect" => session_connect(values),
         "sessionClose" => session_close(state, _receiver, values),
         "sessionInvalidMethod" => session_invalid_method(_receiver),
+        "sessionMethod" => session_method(state, _receiver, values),
         "streamWrite" => stream_write(state, _receiver, values),
         "streamEnd" => stream_end(state, _receiver, values),
+        "streamPriority" => stream_priority(_receiver),
         "streamClose" => stream_close(state, _receiver, values),
         "streamDestroy" => stream_destroy(state, _receiver, values),
         "streamAbort" => stream_abort(state, values),
@@ -779,6 +783,15 @@ fn session_capability(kind: &str) -> Value {
     )
 }
 
+/// RFC 9113 removed priority signalling from the HTTP/2 wire protocol.  Node
+/// retains `stream.priority()` as a deprecated compatibility method, but its
+/// current nghttp2 backend does not emit a PRIORITY event/frame for ordinary
+/// calls.  Keep the method present and chainable on the Rust-owned stream
+/// object; the protocol state remains the canonical transport representation.
+fn stream_priority(receiver: Option<&Value>) -> Result<Value, VmError> {
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
 fn decorate_client_session(socket: &Value, secure: bool) -> Result<(), VmError> {
     execute::set_property_in_place(socket, "request", session_capability("sessionRequest"));
     execute::set_property_in_place(socket, "close", session_capability("sessionClose"));
@@ -789,9 +802,25 @@ fn decorate_client_session(socket: &Value, secure: bool) -> Result<(), VmError> 
         "settings",
         "goaway",
     ] {
-        execute::set_property_in_place(socket, name, session_capability("sessionInvalidMethod"));
+        execute::set_property_in_place(
+            socket,
+            name,
+            host_api::bound_capability_with_arguments(
+                crate::host::capability_ref(crate::registry::SPEC_INTERNAL_HTTP2_UTIL),
+                vec![Value::String("sessionMethod".into()), Value::String(name.into())],
+            ),
+        );
     }
     execute::set_property_in_place(socket, "pendingSettingsAck", Value::Boolean(false));
+    execute::set_property_in_place(
+        socket,
+        "state",
+        host_api::object(vec![
+            ("effectiveLocalWindowSize".into(), Value::Number(4_194_304.0)),
+            ("localWindowSize".into(), Value::Number(33_554_432.0)),
+            ("remoteWindowSize".into(), Value::Number(65_535.0)),
+        ]),
+    );
     execute::set_property_in_place(
         socket,
         HTTP2_SOCKET_SYMBOL,
@@ -868,6 +897,23 @@ pub(crate) fn decorate_http2_stream(
         ]),
     );
     let _ = execute::set_property_in_place(stream, "bufferSize", Value::Number(0.0));
+    // Node keeps a stable stream state view even though priority signalling is
+    // deprecated.  Build it once with the defaults shared by client and
+    // server streams so callers never observe an absent/null state object.
+    let stream_state = host_api::object(vec![
+        ("sumDependencyWeight".into(), Value::Number(0.0)),
+        ("weight".into(), Value::Number(16.0)),
+        ("localWindowSize".into(), Value::Number(65_535.0)),
+        ("remoteWindowSize".into(), Value::Number(65_535.0)),
+        ("localClose".into(), Value::Boolean(false)),
+        ("remoteClose".into(), Value::Boolean(false)),
+    ]);
+    let _ = execute::set_property_in_place(stream, "state", stream_state);
+    let _ = execute::set_property_in_place(
+        stream,
+        "priority",
+        session_capability("streamPriority"),
+    );
 }
 
 fn http2_diag_name(server: bool, event: &str) -> String {
@@ -989,6 +1035,12 @@ fn session_request(
             "ERR_INVALID_ARG_TYPE",
             "The \"headers\" argument must be of type object.".into(),
         ));
+    }
+    if let Some(options) = values
+        .get(1)
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+    {
+        validate_request_options(options)?;
     }
     let mut fields = Vec::<(Vec<u8>, Vec<u8>)>::new();
     if matches!(headers, Value::Object(_) | Value::ObjectAlias(_)) {
@@ -1153,6 +1205,13 @@ fn session_request(
         Value::Boolean(end_stream),
     );
     decorate_http2_stream(state, &stream, false);
+    // Keep the deprecated compatibility method on the request's own shape;
+    // this stream is returned before the transport creates its peer view.
+    execute::set_property_in_place(
+        &stream,
+        "priority",
+        session_capability("streamPriority"),
+    );
     state
         .borrow_mut()
         .net
@@ -1243,6 +1302,36 @@ fn session_request(
         write_http2_frame(&socket, &frame)?;
     }
     Ok(stream)
+}
+
+fn validate_request_options(options: &Value) -> Result<(), VmError> {
+    for (name, expected) in [
+        ("endStream", "boolean"),
+        ("parent", "number"),
+        ("exclusive", "boolean"),
+        ("silent", "boolean"),
+    ] {
+        if !execute::has_own_property(options, name) {
+            continue;
+        }
+        let value = execute::get_property(options, name);
+        let valid = match expected {
+            "boolean" => matches!(value, Value::Boolean(_)),
+            "number" => matches!(value, Value::Number(_)),
+            _ => false,
+        };
+        if !valid {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::TypeError,
+                "ERR_INVALID_ARG_TYPE",
+                format!(
+                    "The \"{name}\" option must be of type {expected}.{}",
+                    crate::modules::util::invalid_arg_received(&value)
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn stream_socket(receiver: Option<&Value>) -> Result<(Value, u32), VmError> {
@@ -1970,6 +2059,130 @@ fn session_invalid_method(receiver: Option<&Value>) -> Result<Value, VmError> {
             "ERR_HTTP2_INVALID_SESSION",
             "The session has been destroyed".into(),
         ));
+    }
+    Ok(Value::Undefined)
+}
+
+/// Validate and apply the small set of ClientHttp2Session controls whose
+/// semantics are independent of the native nghttp2 backend.  Keeping these
+/// checks in one capability gives every session wrapper the same argument and
+/// range behavior while leaving wire-specific operations to the canonical
+/// session state machine.
+fn session_method(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let socket = receiver.ok_or(VmError::NotCallable)?;
+    if matches!(execute::get_property(socket, "destroyed"), Value::Boolean(true)) {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::Error,
+            "ERR_HTTP2_INVALID_SESSION",
+            "The session has been destroyed".into(),
+        ));
+    }
+    let method = match values.first() {
+        Some(Value::String(name)) => name.as_str(),
+        _ => return Err(VmError::NotCallable),
+    };
+    let args = &values[1..];
+    match method {
+        "setNextStreamID" => {
+            let value = args.first().unwrap_or(&Value::Undefined);
+            let Value::Number(id) = value else {
+                return Err(coded_error(
+                    quench_runtime::ops::Builtin::TypeError,
+                    "ERR_INVALID_ARG_TYPE",
+                    format!(
+                        "The \"id\" argument must be of type number.{}",
+                        crate::modules::util::invalid_arg_received(value)
+                    ),
+                ));
+            };
+            if !id.is_finite() || id.fract() != 0.0 || *id < 1.0 || *id > u32::MAX as f64 {
+                return Err(coded_error(
+                    quench_runtime::ops::Builtin::RangeError,
+                    "ERR_OUT_OF_RANGE",
+                    format!(
+                        "The value of \"id\" is out of range. It must be > 0 and <= 4294967295. Received {}",
+                        id
+                    ),
+                ));
+            }
+            execute::set_property_in_place(
+                socket,
+                "\0quench:http2-next-stream-id",
+                Value::Number(*id),
+            );
+        }
+        "setLocalWindowSize" => {
+            let value = args.first().unwrap_or(&Value::Undefined);
+            let Value::Number(window) = value else {
+                return Err(coded_error(
+                    quench_runtime::ops::Builtin::TypeError,
+                    "ERR_INVALID_ARG_TYPE",
+                    format!(
+                        "The \"windowSize\" argument must be of type number.{}",
+                        crate::modules::util::invalid_arg_received(value)
+                    ),
+                ));
+            };
+            if !window.is_finite()
+                || window.fract() != 0.0
+                || *window < 0.0
+                || *window > 2_147_483_647.0
+            {
+                return Err(coded_error(
+                    quench_runtime::ops::Builtin::RangeError,
+                    "ERR_OUT_OF_RANGE",
+                    format!(
+                        "The value of \"windowSize\" is out of range. It must be >= 0 && <= 2147483647. Received {}",
+                        window
+                    ),
+                ));
+            }
+            let session_state = execute::get_property(socket, "state");
+            execute::set_property_in_place(
+                &session_state,
+                "effectiveLocalWindowSize",
+                Value::Number(*window),
+            );
+        }
+        "settings" => {
+            let settings = args.first().unwrap_or(&Value::Undefined);
+            if !matches!(settings, Value::Object(_) | Value::ObjectAlias(_)) {
+                return Err(coded_error(
+                    quench_runtime::ops::Builtin::TypeError,
+                    "ERR_INVALID_ARG_TYPE",
+                    format!(
+                        "The \"settings\" argument must be of type object.{}",
+                        crate::modules::util::invalid_arg_received(settings)
+                    ),
+                ));
+            }
+            // Reuse the canonical settings encoder for all range/type/custom
+            // setting validation.  The transport emission is deferred until
+            // the session core owns SETTINGS acknowledgement state.
+            let _ = packed_settings(std::slice::from_ref(settings))?;
+            if let Some(callback) = args.get(1) {
+                if !quench_runtime::is_callable(callback) {
+                    return Err(coded_error(
+                        quench_runtime::ops::Builtin::TypeError,
+                        "ERR_INVALID_ARG_TYPE",
+                        format!(
+                            "The \"callback\" argument must be of type function.{}",
+                            crate::modules::util::invalid_arg_received(callback)
+                        ),
+                    ));
+                }
+            }
+            execute::set_property_in_place(socket, "pendingSettingsAck", Value::Boolean(true));
+        }
+        // These controls need protocol-level state to become observable, but
+        // preserving their callable, chainable boundary is still useful for
+        // code that only probes capability presence.
+        "ping" | "goaway" => {}
+        _ => return Err(VmError::NotCallable),
     }
     Ok(Value::Undefined)
 }
