@@ -152,6 +152,7 @@ mod stencil_dense_array_update;
 mod stencil_dense_array_copy;
 mod stencil_ordered_reduction;
 mod stencil_i32_pattern;
+mod stencil_call_return;
 pub mod stencil_fact;
 mod stencil_fusion;
 #[cfg(test)]
