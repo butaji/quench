@@ -8,16 +8,11 @@
     "fallback": true
   },
   "profile": {
-    "residual": { "GetN": 1, "Return": 1 },
+    "residual": { "GetN": 1 },
     "slow": {},
     "stencils": {
       "property": { "entries": 0, "fallbacks": 1 }
     },
-    "events": {
-      "named_get_cache_empty": 2,
-      "named_property_miss": 1,
-      "owned_word_read": 26,
-      "register_file_read": 3
-    }
+    "events": { "leaf_reject": 1 }
   }
 }

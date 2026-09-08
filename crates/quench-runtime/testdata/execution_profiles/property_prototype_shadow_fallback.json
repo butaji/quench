@@ -8,9 +8,9 @@
     "fallback": true
   },
   "profile": {
-    "residual": { "GetN": 1, "Return": 1 },
+    "residual": { "GetN": 1 },
     "slow": {},
     "stencils": { "prototype_property": { "entries": 0, "fallbacks": 1 } },
-    "events": { "owned_word_read": 1, "register_file_read": 2 }
+    "events": { "leaf_reject": 1 }
   }
 }

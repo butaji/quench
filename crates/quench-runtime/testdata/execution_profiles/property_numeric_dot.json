@@ -3,26 +3,11 @@
   "warmup": 1,
   "result": { "kind": "number", "value": 32 },
   "plan": {
-    "execution_kind": "portable_recipe",
+    "execution_kind": "native_machine_code",
     "operation_route": [
-      "local",
-      "guarded_property_number",
-      "local",
-      "guarded_property_number",
-      "number_multiply",
-      "local",
-      "guarded_property_number",
-      "local",
-      "guarded_property_number",
-      "number_multiply",
-      "number_add",
-      "local",
-      "guarded_property_number",
-      "local",
-      "guarded_property_number",
-      "number_multiply",
-      "number_add",
-      "return"
+      "GetNQuickened", "GetNQuickened", "Mul",
+      "GetNQuickened", "GetNQuickened", "Mul", "Add",
+      "GetNQuickened", "GetNQuickened", "Mul", "Add", "Return"
     ],
     "fallback": false
   },
@@ -30,18 +15,16 @@
     "residual": {},
     "slow": {},
     "stencils": {
-      "property_numeric_portable": { "entries": 1, "fallbacks": 0 }
+      "guarded_vector3_dot_return": { "entries": 1, "fallbacks": 0 }
     },
     "events": {
-      "leaf_hit": 1,
-      "portable_recipe_step": 17,
-      "register_file_read": 1
+      "leaf_hit": 1
     }
   },
   "scaled": [
     {
       "executions": 1000000,
-      "events": { "portable_recipe_step": 17000000 }
+      "events": { "leaf_hit": 1000000 }
     }
   ]
 }

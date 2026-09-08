@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "warmup": 2,
+  "result": { "kind": "number", "value": 41 },
+  "plan": {
+    "execution_kind": "native_machine_code",
+    "operation_route": ["LoadLocalChecked", "Call", "Return"],
+    "fallback": false
+  },
+  "profile": {
+    "residual": {},
+    "slow": {},
+    "stencils": { "polymorphic_call_return": { "entries": 2, "fallbacks": 0 } },
+    "events": { "leaf_hit": 2 }
+  }
+}
