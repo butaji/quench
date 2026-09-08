@@ -2096,13 +2096,41 @@ fn record_i32_pattern(code: crate::machine::CodeView<'_>, pc: usize) {
     );
 }
 
-fn record_call_return(code: crate::machine::CodeView<'_>, pc: usize) {
-    crate::execution_trace::stencil_observation(code, pc, "monomorphic_call_return", true);
+fn record_call_return(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    call: &crate::stencil_call_return::NativeCallReturnPlan,
+) {
+    crate::execution_trace::stencil_observation(code, pc, call.profile_name(), true);
     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
     #[cfg(test)]
-    crate::test_execution_profile::dynamic_region_route(
-        crate::stencil_call_return::NativeCallReturnPlan::route(),
+    crate::test_execution_profile::dynamic_region_route(call.route());
+}
+
+fn record_forward_call(code: crate::machine::CodeView<'_>, pc: usize) {
+    crate::execution_trace::stencil_observation(
+        code,
+        pc,
+        crate::stencil_forward_call::PROFILE_NAME,
+        true,
     );
+    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+    #[cfg(test)]
+    crate::test_execution_profile::dynamic_region_route(crate::stencil_forward_call::route());
+}
+
+fn record_forward_pair(code: crate::machine::CodeView<'_>, pc: usize) {
+    for _ in 0..crate::stencil_forward_call::pair_profile_entries() {
+        crate::execution_trace::stencil_observation(
+            code,
+            pc,
+            crate::stencil_forward_call::PROFILE_NAME,
+            true,
+        );
+        crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+    }
+    #[cfg(test)]
+    crate::test_execution_profile::dynamic_region_route(crate::stencil_forward_call::route());
 }
 
 fn record_string_concat(code: crate::machine::CodeView<'_>, pc: usize, constant_call: bool) {
@@ -2590,18 +2618,59 @@ pub(crate) fn execute_optimized_code_step_from(
         );
         crate::execution_trace::leaf_rejection("bitwise_shift_mask_return");
     }
-    if let Some(call) = entry.call_return() {
-        let value =
-            crate::locals::with_current_ref(|environment| call.borrow_mut().execute(environment?));
+    if let Some(pair) = entry.forward_pair() {
+        let (value, span) = {
+            let mut pair = pair.borrow_mut();
+            let value = crate::locals::with_current_ref(|environment| pair.execute(environment?));
+            (value, pair.span())
+        };
         if let Some(value) = value {
-            record_call_return(code, start);
+            record_forward_pair(code, start);
+            return Ok((
+                crate::completion::Completion::Return(crate::value::Value::Number(f64::from(
+                    value,
+                ))),
+                start + span,
+            ));
+        }
+        crate::execution_trace::stencil_observation(
+            code,
+            start,
+            crate::stencil_forward_call::PROFILE_NAME,
+            false,
+        );
+        crate::execution_trace::leaf_rejection(crate::stencil_forward_call::PROFILE_NAME);
+    }
+    if let Some(call) = entry.call_return() {
+        let mut call = call.borrow_mut();
+        let value = crate::locals::with_current_ref(|environment| call.execute(environment?));
+        if let Some(value) = value {
+            record_call_return(code, start, &call);
             return Ok((
                 crate::completion::Completion::Return(value),
-                start + call.borrow().span(),
+                start + call.span(),
             ));
         }
         crate::execution_trace::stencil_observation(code, start, "monomorphic_call_return", false);
         crate::execution_trace::leaf_rejection("monomorphic_call_return");
+    }
+    if let Some(call) = entry.forward_call() {
+        let executed = {
+            let mut call = call.borrow_mut();
+            (call.execute(registers), call.destination())
+        };
+        if let (Some(value), destination) = executed {
+            registers.write_number(usize::from(destination), f64::from(value));
+            record_forward_call(code, start);
+            return Ok((crate::completion::Completion::Normal, start + 1));
+        }
+        crate::execution_trace::stencil_observation(
+            code,
+            start,
+            crate::stencil_forward_call::PROFILE_NAME,
+            false,
+        );
+        crate::execution_trace::leaf_rejection(crate::stencil_forward_call::PROFILE_NAME);
     }
     if let Some(missing) = entry.missing_property() {
         let executed = crate::locals::with_current_ref(|environment| {
@@ -3643,11 +3712,35 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
             );
             crate::execution_trace::leaf_rejection("bitwise_shift_mask_return");
         }
-        if let (Some(environment), Some(call)) = (environment, plan.call_return_at(pc)) {
-            let value = call.borrow_mut().execute(environment);
+        if let (Some(environment), Some(pair)) = (environment, plan.forward_pair_at(pc)) {
+            let (value, span) = {
+                let mut pair = pair.borrow_mut();
+                (pair.execute(environment), pair.span())
+            };
             if let Some(value) = value {
-                let span = call.borrow().span();
-                record_call_return(code, pc);
+                record_forward_pair(code, pc);
+                return completion_step_after_transition(
+                    registers,
+                    crate::completion::Completion::Return(crate::value::Value::Number(f64::from(
+                        value,
+                    ))),
+                    pc + span,
+                );
+            }
+            crate::execution_trace::stencil_observation(
+                code,
+                pc,
+                crate::stencil_forward_call::PROFILE_NAME,
+                false,
+            );
+            crate::execution_trace::leaf_rejection(crate::stencil_forward_call::PROFILE_NAME);
+        }
+        if let (Some(environment), Some(call)) = (environment, plan.call_return_at(pc)) {
+            let mut call = call.borrow_mut();
+            let value = call.execute(environment);
+            if let Some(value) = value {
+                let span = call.span();
+                record_call_return(code, pc, &call);
                 return completion_step_after_transition(
                     registers,
                     crate::completion::Completion::Return(value),
@@ -3656,6 +3749,25 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
             }
             crate::execution_trace::stencil_observation(code, pc, "monomorphic_call_return", false);
             crate::execution_trace::leaf_rejection("monomorphic_call_return");
+        }
+        if let Some(call) = plan.forward_call_at(pc) {
+            let executed = {
+                let mut call = call.borrow_mut();
+                (call.execute(registers), call.destination())
+            };
+            if let (Some(value), destination) = executed {
+                registers.write_number(usize::from(destination), f64::from(value));
+                record_forward_call(code, pc);
+                pc += 1;
+                continue;
+            }
+            crate::execution_trace::stencil_observation(
+                code,
+                pc,
+                crate::stencil_forward_call::PROFILE_NAME,
+                false,
+            );
+            crate::execution_trace::leaf_rejection(crate::stencil_forward_call::PROFILE_NAME);
         }
         if let (Some(environment), Some(missing)) =
             (environment, plan.missing_property_at(pc))

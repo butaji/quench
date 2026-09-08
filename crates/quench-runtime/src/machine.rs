@@ -5568,6 +5568,8 @@ enum NativeAdmission {
     Reduction(Rc<RefCell<crate::stencil_ordered_reduction::NativeReductionPlan>>),
     I32Pattern(Rc<RefCell<crate::stencil_i32_pattern::NativeI32PatternPlan>>),
     CallReturn(Rc<RefCell<crate::stencil_call_return::NativeCallReturnPlan>>),
+    ForwardCall(Rc<RefCell<crate::stencil_forward_call::NativeForwardCallPlan>>),
+    ForwardPair(Rc<RefCell<crate::stencil_forward_call::NativeForwardPairPlan>>),
     StringConcat(Rc<RefCell<crate::stencil_string_concat::StringConcatPlan>>),
     StringBuiltin(Rc<RefCell<crate::stencil_string_builtin::StringBuiltinPlan>>),
     PropertyNumeric(Rc<RefCell<crate::stencil_property_numeric::PropertyNumericPlan>>),
@@ -5644,6 +5646,12 @@ impl AdmissionEntry for NativeAdmission {
             Self::CallReturn(_) => {
                 shared_value_bytes::<RefCell<crate::stencil_call_return::NativeCallReturnPlan>>()
             }
+            Self::ForwardCall(_) => {
+                shared_value_bytes::<RefCell<crate::stencil_forward_call::NativeForwardCallPlan>>()
+            }
+            Self::ForwardPair(_) => {
+                shared_value_bytes::<RefCell<crate::stencil_forward_call::NativeForwardPairPlan>>()
+            }
             Self::StringConcat(_) => {
                 shared_value_bytes::<RefCell<crate::stencil_string_concat::StringConcatPlan>>()
             }
@@ -5692,6 +5700,8 @@ impl std::fmt::Debug for NativeAdmission {
             Self::Reduction(_) => "reduction",
             Self::I32Pattern(_) => "i32_pattern",
             Self::CallReturn(_) => "call_return",
+            Self::ForwardCall(_) => "forward_call",
+            Self::ForwardPair(_) => "forward_pair",
             Self::StringConcat(_) => "string_concat",
             Self::StringBuiltin(_) => "string_builtin",
             Self::PropertyNumeric(_) => "property_numeric",
@@ -6274,6 +6284,34 @@ fn call_return_admission(
     Some(NativeAdmission::CallReturn(Rc::new(RefCell::new(plan))))
 }
 
+fn forward_call_admission(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    policy.local_fusions.numeric().then_some(())?;
+    let selection = crate::stencil_forward_call::select_forward_call(code, entries, cfg, pc)?;
+    let plan = crate::stencil_forward_call::NativeForwardCallPlan::new(selection, Rc::clone(arena))?;
+    Some(NativeAdmission::ForwardCall(Rc::new(RefCell::new(plan))))
+}
+
+fn forward_pair_admission(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    policy.local_fusions.numeric().then_some(())?;
+    let selection = crate::stencil_forward_call::select_forward_pair(code, entries, cfg, pc)?;
+    let plan = crate::stencil_forward_call::NativeForwardPairPlan::new(selection, Rc::clone(arena))?;
+    Some(NativeAdmission::ForwardPair(Rc::new(RefCell::new(plan))))
+}
+
 fn string_concat_admission(
     code: CodeView<'_>,
     entries: &[BaselineEntry],
@@ -6616,6 +6654,12 @@ fn eager_straight_line_candidate(code: CodeView<'_>) -> bool {
         if instruction.opcode.control_flow() == ControlFlow::Return {
             return pc > 0;
         }
+        if instruction.opcode == crate::ir::Opcode::Call
+            && instruction.flags == 2
+            && code.operand_window_at(pc).is_some_and(|window| window.len() == 2)
+        {
+            continue;
+        }
         if !eager_operation_candidate(instruction) {
             return false;
         }
@@ -6775,6 +6819,14 @@ fn collect_admissions_at(
         i32_pattern_admission(code, entries, cfg, pc, policy, arena),
     );
     builder.push_optional(pc, call_return_admission(entries, cfg, pc, policy, arena));
+    builder.push_optional(
+        pc,
+        forward_call_admission(code, entries, cfg, pc, policy, arena),
+    );
+    builder.push_optional(
+        pc,
+        forward_pair_admission(code, entries, cfg, pc, policy, arena),
+    );
     builder.push_optional(pc, string_concat_admission(code, entries, cfg, pc, policy));
     builder.push_optional(pc, string_builtin_admission(code, entries, cfg, pc, policy));
     collect_numeric_admissions(builder, entries, cfg, pc, entry, code, policy, arena);
@@ -6903,6 +6955,7 @@ impl BaselinePlan {
         let reduction = self.reduction_at(0).is_some();
         let i32_pattern = self.i32_pattern_at(0).is_some();
         let call_return = self.call_return_at(0).is_some();
+        let forward_call = (0..self.len()).any(|pc| self.forward_call_at(pc).is_some());
         let string_concat = self.string_concat_at(0).is_some();
         let string_builtin = self.string_builtin_at(0).is_some();
         let numeric = self
@@ -6922,6 +6975,7 @@ impl BaselinePlan {
             || reduction
             || i32_pattern
             || call_return
+            || forward_call
             || string_concat
             || string_builtin
             || numeric
@@ -7050,6 +7104,18 @@ impl BaselinePlan {
         call_return_at,
         CallReturn,
         crate::stencil_call_return::NativeCallReturnPlan
+    );
+    typed_admission_accessors!(
+        forward_call_handle_at,
+        forward_call_at,
+        ForwardCall,
+        crate::stencil_forward_call::NativeForwardCallPlan
+    );
+    typed_admission_accessors!(
+        forward_pair_handle_at,
+        forward_pair_at,
+        ForwardPair,
+        crate::stencil_forward_call::NativeForwardPairPlan
     );
     typed_admission_accessors!(
         string_concat_handle_at,
@@ -7248,6 +7314,16 @@ impl OptimizingEntry<'_> {
         call_return,
         CallReturn,
         crate::stencil_call_return::NativeCallReturnPlan
+    );
+    optimizing_admission_accessors!(
+        forward_call,
+        ForwardCall,
+        crate::stencil_forward_call::NativeForwardCallPlan
+    );
+    optimizing_admission_accessors!(
+        forward_pair,
+        ForwardPair,
+        crate::stencil_forward_call::NativeForwardPairPlan
     );
     optimizing_admission_accessors!(
         string_concat,
