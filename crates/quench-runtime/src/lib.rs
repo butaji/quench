@@ -142,6 +142,7 @@ pub mod stencil_arena;
 #[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
 mod stencil_arithmetic_integration_tests;
 mod stencil_binding;
+mod stencil_branch_recurrence;
 #[cfg(test)]
 mod stencil_bitwise_fusion_tests;
 mod stencil_boolean_reduction;
@@ -152,6 +153,7 @@ mod stencil_call_return;
 mod stencil_cfg;
 #[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
 mod stencil_compare_branch_tests;
+mod stencil_counted_loop;
 #[cfg(test)]
 mod stencil_control_composition_tests;
 mod stencil_dense_array_copy;
