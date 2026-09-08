@@ -263,6 +263,11 @@ rust_assembly_catalog! {
         ops: ["Mul", "Binary", "Div", "Add", "Jump"],
         x86: &[], aarch64: &[], x86_holes: &[], aarch64_holes: &[]
     },
+    NumericBitwiseLoop {
+        name: "numeric_bitwise_loop", abi: NumericI32BitwiseLoop,
+        ops: ["Binary", "Jump"],
+        x86: &[], aarch64: &[], x86_holes: &[], aarch64_holes: &[]
+    },
     Property {
         name: "property", abi: PropertyGuard, ops: ["GetN"],
         x86: &X86_PROPERTY_BYTES, aarch64: &AARCH64_PROPERTY_GUARD_BYTES,
