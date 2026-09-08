@@ -171,6 +171,7 @@ impl ExecutionPolicy {
             RegionAbi::SwitchReductionLoop => false,
             RegionAbi::MatrixReductionLoop => false,
             RegionAbi::TypedLaneLoop => false,
+            RegionAbi::TwoStateI32Loop => false,
             RegionAbi::NumericI32BitwiseLoop => self.numeric_i32_bitwise_loops,
             RegionAbi::NumericI32PairLoop => self.numeric_i32_pair_loops,
             RegionAbi::NumericF64Loop => self.numeric_f64_loops,

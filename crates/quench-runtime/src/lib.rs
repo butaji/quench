@@ -175,6 +175,7 @@ mod stencil_local_affine_sum;
 mod stencil_local_recursive_sum;
 mod stencil_matrix_reduction;
 mod stencil_typed_lane;
+mod stencil_two_state_i32;
 mod stencil_method_call;
 mod stencil_missing_property;
 mod stencil_nested_xor;
