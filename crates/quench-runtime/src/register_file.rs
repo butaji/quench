@@ -298,6 +298,18 @@ impl SlotWord {
     }
 
     #[inline(always)]
+    pub(crate) fn is_builtin(&self, expected: crate::ops::Builtin) -> bool {
+        let tagged = self.with_word(OwnedWord::tagged);
+        let DecodedValue::HeapPtr(pointer) = tagged.decode() else {
+            return false;
+        };
+        // SAFETY: HeapPtr values originate from `encode`; this slot retains
+        // the aligned payload for the duration of the read-only comparison.
+        let value = unsafe { &*(pointer as *const AlignedValue) };
+        matches!(value.0, Value::Builtin(actual) if actual == expected)
+    }
+
+    #[inline(always)]
     pub(crate) fn store(&self, value: Value) {
         // SAFETY: property mutation is serialized by the VM's single-threaded
         // execution model. No reference to the contained value is exposed.
