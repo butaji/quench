@@ -42,6 +42,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             capability_function(HostCapabilityKind::Custom(CapabilityName::InternalBinding)),
         )]));
     }
+    if name == "internal/blocklist" || name == "node:internal/blocklist" {
+        return Ok(crate::modules::net::block_list_internal_module());
+    }
     if name == "internal/http2/util" || name == "node:internal/http2/util" {
         return Ok(crate::modules::http2_util::module());
     }

@@ -2385,6 +2385,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         }
         "internal/net" => Some(crate::modules::net::internal_module()),
         "internal/socketaddress" => Some(crate::modules::net::socket_address_module()),
+        "internal/blocklist" => Some(crate::modules::net::block_list_internal_module()),
         "internal/assert" => Some(crate::host::capability(crate::registry::SPEC_ASSERT_OK)),
         "internal/assert/myers_diff" => Some(crate::host::namespace_object_from_pairs(vec![(
             "myersDiff".into(),
@@ -2502,6 +2503,9 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             "internalBinding".to_string(),
             crate::host::capability(crate::registry::SPEC_INTERNAL_BINDING),
         )])),
+        "internal/blocklist" | "node:internal/blocklist" => {
+            Some(crate::modules::net::block_list_internal_module())
+        }
         "internal/test_runner/utils" => Some(crate::host::namespace_object_from_pairs(vec![
             (
                 "convertStringToRegExp".into(),
