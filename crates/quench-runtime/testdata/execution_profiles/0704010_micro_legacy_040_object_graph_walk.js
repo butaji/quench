@@ -6,10 +6,14 @@ const graphs = [];
 function microRun() {
   const root = { value: 9, next: null }; let cursor = root; for (let i = 0; i < 200; i++) { cursor.next = { value: i + 9, next: null }; cursor = cursor.next; } graphs.push(root); if (graphs.length > 8) graphs.shift(); let total = 0; for (let node = root; node; node = node.next) total += node.value; return total + 8;
 }
-globalThis.microRun = microRun;
-const result = microRun();
+function run() {
+  return microRun();
+}
+function verify(result) {
 assert(Number.isFinite(result), "result");
 assert(typeof microRun === "function", "scenario entry is callable");
 const __profileResult = JSON.stringify(result);
 assert(__profileResult === "21717", "exact encoded result");
-return __profileResult;
+  return __profileResult;
+}
+return { run: run, verify: verify };

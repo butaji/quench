@@ -6,10 +6,14 @@ const ring = new Array(32).fill(0);
 function microRun() {
   ring.fill(0); let total = 0; for (let i = 0; i < 3120; i++) { ring[i & 31] = (i + 7) & 255; total += ring[(i + 7) & 31]; } return total;
 }
-globalThis.microRun = microRun;
-const result = microRun();
+function run() {
+  return microRun();
+}
+function verify(result) {
 assert(Number.isFinite(result), "result");
 assert(typeof microRun === "function", "scenario entry is callable");
 const __profileResult = JSON.stringify(result);
 assert(__profileResult === "392094", "exact encoded result");
-return __profileResult;
+  return __profileResult;
+}
+return { run: run, verify: verify };

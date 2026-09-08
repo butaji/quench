@@ -21,6 +21,13 @@ pub(crate) struct ExecutionProfile {
 }
 
 const EXECUTION_CASE_SCHEMA: u32 = 1;
+const PROFILE_RUN_PROPERTY: &str = "run";
+const PROFILE_VERIFY_PROPERTY: &str = "verify";
+
+struct PreparedExecution {
+    run: crate::value::Value,
+    verify: crate::value::Value,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -120,7 +127,7 @@ impl ExecutionCase {
         let program = crate::reduce::reduce_source(&self.source)
             .unwrap_or_else(|errors| panic!("case does not lower: {}", errors.join("; ")));
         let context = crate::vm::current_context_or_default();
-        let result = crate::vm::execute_code_with_context(program.code(), &context)
+        let result = execute_contract(program.code(), &context)
             .unwrap_or_else(|error| panic!("standalone case failed: {error:?}"));
         self.result.assert(&result, &self.source);
     }
@@ -136,9 +143,55 @@ impl ExecutionCase {
     }
 }
 
+fn prepare_execution(
+    value: &crate::value::Value,
+) -> Result<Option<PreparedExecution>, crate::execute::VmError> {
+    if !matches!(value, crate::value::Value::Object(_)) {
+        return Ok(None);
+    }
+    let run = crate::execute::get_property_result(value, PROFILE_RUN_PROPERTY)?;
+    let verify = crate::execute::get_property_result(value, PROFILE_VERIFY_PROPERTY)?;
+    if !crate::conversion::is_callable(&run) || !crate::conversion::is_callable(&verify) {
+        return Ok(None);
+    }
+    Ok(Some(PreparedExecution { run, verify }))
+}
+
+fn settle(value: crate::value::Value) -> Result<crate::value::Value, crate::execute::VmError> {
+    let crate::value::Value::Promise(promise) = value else { return Ok(value) };
+    crate::promise::drain_microtasks_all();
+    let state = promise.state.borrow().clone();
+    match state {
+        crate::value::PromiseState::Fulfilled(value) => Ok(value),
+        crate::value::PromiseState::Rejected(value) => Err(crate::execute::VmError::Thrown(value)),
+        crate::value::PromiseState::Pending => Err(crate::execute::VmError::Suspended(promise)),
+    }
+}
+
+fn invoke(
+    context: &crate::vm::VmContext,
+    function: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let result = crate::vm::with_current_context(context, || {
+        crate::execute::call(function, &crate::value::Value::Undefined, arguments)
+    })?;
+    crate::vm::with_current_context(context, || settle(result))
+}
+
+fn execute_contract(
+    code: crate::machine::CodeView<'_>,
+    context: &crate::vm::VmContext,
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let initialized = crate::vm::execute_code_with_context(code, context)?;
+    let Some(prepared) = prepare_execution(&initialized)? else { return Ok(initialized) };
+    let result = invoke(context, &prepared.run, &[])?;
+    invoke(context, &prepared.verify, &[result])
+}
+
 impl ExpectedValue {
-    fn assert(&self, actual: &crate::value::Value, source: &str) {
-        let matches = match (self, actual) {
+    fn matches(&self, actual: &crate::value::Value) -> bool {
+        match (self, actual) {
             (Self::Number { value }, crate::value::Value::Number(actual)) => value == actual,
             (Self::Nan, crate::value::Value::Number(actual)) => actual.is_nan(),
             (Self::PositiveInfinity, crate::value::Value::Number(actual)) => {
@@ -155,8 +208,11 @@ impl ExpectedValue {
             (Self::Undefined, crate::value::Value::Undefined) => true,
             (Self::Null, crate::value::Value::Null) => true,
             _ => false,
-        };
-        assert!(matches, "wrong JS result for {source}: {actual:?}");
+        }
+    }
+
+    fn assert(&self, actual: &crate::value::Value, source: &str) {
+        assert!(self.matches(actual), "wrong JS result for {source}: {actual:?}");
     }
 }
 
@@ -166,6 +222,24 @@ impl ExpectedProfile {
         assert_eq!(string_counts(&actual.slow_ops), self.slow);
         assert_eq!(string_routes(&actual.stencils), self.stencils);
         assert_eq!(string_counts(&actual.events), self.events);
+    }
+
+    fn differences(&self, actual: &ExecutionProfile) -> Vec<String> {
+        let comparisons = [
+            ("residual", string_counts(&actual.residual_ops), self.residual.clone()),
+            ("slow", string_counts(&actual.slow_ops), self.slow.clone()),
+            ("events", string_counts(&actual.events), self.events.clone()),
+        ];
+        let mut differences = comparisons
+            .into_iter()
+            .filter(|(_, actual, expected)| actual != expected)
+            .map(|(name, actual, expected)| format!("{name}: expected {expected:?}, actual {actual:?}"))
+            .collect::<Vec<_>>();
+        let actual = string_routes(&actual.stencils);
+        if actual != self.stencils {
+            differences.push(format!("stencils: expected {:?}, actual {actual:?}", self.stencils));
+        }
+        differences
     }
 }
 
@@ -314,6 +388,56 @@ fn scaled_counts(
 mod tests {
     use super::*;
 
+    fn execute_profile(case: &ExecutionCase) -> Result<(crate::value::Value, ExecutionProfile), String> {
+        let program = crate::reduce::reduce_source(case.source())
+            .map_err(|errors| format!("lowering failed: {}", errors.join("; ")))?;
+        let context = crate::vm::current_context_or_default();
+        for _ in 0..case.warmup() {
+            execute_profile_once(program.code(), &context, false)
+                .map_err(|error| format!("warmup failed: {error:?}"))?;
+        }
+        execute_profile_once(program.code(), &context, true)
+            .map_err(|error| format!("profiled execution failed: {error:?}"))
+    }
+
+    fn execute_profile_once(
+        code: crate::machine::CodeView<'_>,
+        context: &crate::vm::VmContext,
+        measured: bool,
+    ) -> Result<(crate::value::Value, ExecutionProfile), crate::execute::VmError> {
+        let initialized = crate::vm::execute_code_with_context(code, context)?;
+        let Some(prepared) = prepare_execution(&initialized)? else {
+            return capture_result(measured, || Ok(initialized));
+        };
+        let (result, profile) = capture_result(measured, || invoke(context, &prepared.run, &[]))?;
+        let verified = invoke(context, &prepared.verify, &[result])?;
+        Ok((verified, profile))
+    }
+
+    fn capture_result<T>(
+        measured: bool,
+        execute: impl FnOnce() -> Result<T, crate::execute::VmError>,
+    ) -> Result<(T, ExecutionProfile), crate::execute::VmError> {
+        if measured {
+            let (result, profile) = capture(execute);
+            return result.map(|result| (result, profile));
+        }
+        execute().map(|result| (result, ExecutionProfile::default()))
+    }
+
+    fn case_mismatch(name: &str) -> Option<String> {
+        let case = ExecutionCase::load(name);
+        let (result, profile) = match execute_profile(&case) {
+            Ok(execution) => execution,
+            Err(error) => return Some(format!("{name}: {error}")),
+        };
+        let mut differences = case.profile.differences(&profile);
+        if !case.result.matches(&result) {
+            differences.push(format!("result: actual {result:?}"));
+        }
+        (!differences.is_empty()).then(|| format!("{name}: {}", differences.join("; ")))
+    }
+
     #[test]
     fn capture_is_invocation_local_and_deterministic() {
         let (_, first) = capture(|| {
@@ -336,5 +460,19 @@ mod tests {
             assert!(!case.source().trim().is_empty(), "empty JS case: {name}");
             case.assert_standalone();
         }
+    }
+
+    #[test]
+    fn every_json_contract_matches_ideal_execution_profile() {
+        let mismatches = fixture_names()
+            .iter()
+            .filter_map(|name| case_mismatch(name))
+            .collect::<Vec<_>>();
+        assert!(
+            mismatches.is_empty(),
+            "{} execution-profile mismatches:\n{}",
+            mismatches.len(),
+            mismatches.join("\n")
+        );
     }
 }
