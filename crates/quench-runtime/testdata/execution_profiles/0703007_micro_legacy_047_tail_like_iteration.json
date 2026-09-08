@@ -4,13 +4,13 @@
   "result": { "kind": "string", "value": "155958264" },
   "plan": {
     "execution_kind": "native_machine_code",
-    "operation_route": ["tail_like_iteration"],
+    "operation_route": ["direct_i32_counter_recurrence_reduction"],
     "fallback": false
   },
   "profile": {
     "residual": {},
     "slow": {},
-    "stencils": { "tail_like_iteration_region": { "entries": 1, "fallbacks": 0 } },
+    "stencils": { "direct_i32_counter_recurrence_reduction": { "entries": 1, "fallbacks": 0 } },
     "events": { "leaf_hit": 1 }
   }
 }
