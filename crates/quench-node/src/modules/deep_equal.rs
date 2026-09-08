@@ -1116,11 +1116,11 @@ fn same_enumerable_symbols(
             return Ok(false);
         }
     }
-    if strict {
-        same_enumerable_symbols_shallow(left, right)
-    } else {
-        Ok(true)
-    }
+    // Symbol-keyed values use the same recursive semantics as ordinary
+    // properties. A second SameValue-only pass would reject distinct but
+    // structurally equal arrays/objects such as HTTP/2 sensitive-header
+    // lists.
+    Ok(true)
 }
 
 fn is_typed_array(value: &Value) -> bool {

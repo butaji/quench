@@ -538,6 +538,7 @@ pub fn dispatch(
         "streamDestroy" => stream_destroy(state, _receiver, values),
         "streamAbort" => stream_abort(state, values),
         "streamRespond" => stream_respond(state, _receiver, values),
+        "streamPushStream" => stream_push_stream(state, _receiver, values),
         "streamSetEncoding" => stream_set_encoding(state, _receiver, values),
         "streamResume" | "streamPause" => Ok(_receiver.cloned().unwrap_or(Value::Undefined)),
         "createServer" => create_server(state, values, false),
@@ -589,6 +590,7 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
             &Value::Undefined,
             &[authority.clone(), target.clone()],
         )?;
+        remember_http2_authority(&socket, &target);
         execute::set_property_in_place(
             &socket,
             crate::modules::http2_protocol::CLIENT_MARKER,
@@ -639,8 +641,9 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
     if !quench_runtime::is_callable(&net_connect) {
         return Err(VmError::NotCallable);
     }
-    let net_args = vec![target];
+    let net_args = vec![target.clone()];
     let socket = execute::call(&net_connect, &Value::Undefined, &net_args)?;
+    remember_http2_authority(&socket, &target);
     execute::set_property_in_place(
         &socket,
         crate::modules::http2_protocol::CLIENT_MARKER,
@@ -690,6 +693,22 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
         }
     }
     Ok(socket)
+}
+
+fn remember_http2_authority(socket: &Value, target: &Value) {
+    let host = execute::to_js_string(&execute::get_property(target, "host")).ok();
+    let port = execute::to_js_string(&execute::get_property(target, "port")).ok();
+    let Some(host) = host.filter(|value| !value.is_empty()) else {
+        return;
+    };
+    let authority = port
+        .filter(|value| !value.is_empty())
+        .map_or(host.clone(), |port| format!("{host}:{port}"));
+    execute::set_property_in_place(
+        socket,
+        "\0quench:http2-authority",
+        Value::String(authority.into()),
+    );
 }
 
 fn session_callback(callback: &Value, socket: &Value) -> Value {
@@ -790,7 +809,13 @@ pub(crate) fn decorate_http2_stream(
             .into()),
         ),
     ]);
-    let _ = execute::set_property_in_place(stream, "constructor", constructor);
+    let constructor_descriptor = host_api::object(vec![
+        ("value".into(), constructor),
+        ("writable".into(), Value::Boolean(true)),
+        ("enumerable".into(), Value::Boolean(false)),
+        ("configurable".into(), Value::Boolean(true)),
+    ]);
+    let _ = execute::define_property(stream.clone(), "constructor", constructor_descriptor);
     let _ = execute::set_property_in_place(stream, "closed", Value::Boolean(false));
     let _ = execute::set_property_in_place(stream, "destroyed", Value::Boolean(false));
 }
@@ -847,7 +872,6 @@ pub(crate) fn publish_http2_stream_diagnostic(
 
 pub(crate) fn http2_diagnostic_headers(fields: &[(Vec<u8>, Vec<u8>)]) -> Value {
     let headers = host_api::object(Vec::new());
-    let _ = execute::set_prototype_of(&headers, &Value::Null);
     for (name, value) in fields {
         let key = String::from_utf8_lossy(name).into_owned();
         let value = if key == ":status" {
@@ -874,6 +898,10 @@ pub(crate) fn http2_diagnostic_headers(fields: &[(Vec<u8>, Vec<u8>)]) -> Value {
         };
         let _ = execute::set_property_in_place(&headers, &key, next);
     }
+    // Populate first: the host object writer requires the ordinary object
+    // shape while installing fields, after which the observable null
+    // prototype can be applied for Node's header-record identity.
+    let _ = execute::set_prototype_of(&headers, &Value::Null);
     headers
 }
 
@@ -889,7 +917,7 @@ fn session_request(
     let headers = values.first().unwrap_or(&Value::Undefined);
     if !matches!(
         headers,
-        Value::Undefined | Value::Object(_) | Value::ObjectAlias(_)
+        Value::Undefined | Value::Object(_) | Value::ObjectAlias(_) | Value::Array(_)
     ) {
         return Err(coded_error(
             quench_runtime::ops::Builtin::TypeError,
@@ -903,6 +931,29 @@ fn session_request(
             let value = execute::get_property(headers, &key);
             let text = execute::to_js_string(&value)?;
             fields.push((key.to_ascii_lowercase().into_bytes(), text.into_bytes()));
+        }
+    } else if let Value::Array(items) = headers {
+        // Node accepts the legacy alternating `[name, value, ...]` header
+        // form on ClientHttp2Session#request(). Treat it as a header record
+        // rather than rejecting the array at the API boundary.
+        let length = items.logical_len();
+        let mut index = 0;
+        while index + 1 < length {
+            let name = execute::to_js_string(&execute::get_property(
+                headers,
+                &index.to_string(),
+            ))?;
+            let value = execute::to_js_string(&execute::get_property(
+                headers,
+                &(index + 1).to_string(),
+            ))?;
+            let wire_name = if name.starts_with(':') {
+                name.to_ascii_lowercase()
+            } else {
+                name
+            };
+            fields.push((wire_name.into_bytes(), value.into_bytes()));
+            index += 2;
         }
     }
     let method = fields
@@ -955,15 +1006,14 @@ fn session_request(
         .iter()
         .any(|(name, _)| name.as_slice() == b":authority")
     {
-        let host = match execute::get_property(&socket, "host") {
+        let host = match execute::get_property(&socket, "\0quench:http2-authority") {
+            Value::String(authority) if !authority.is_empty() => authority,
+            _ => match execute::get_property(&socket, "host") {
             Value::String(host) if !host.is_empty() => host,
             _ => "localhost".into(),
+            },
         };
-        let port = match execute::get_property(&socket, "port") {
-            Value::Number(port) if port.is_finite() && port > 0.0 => format!(":{}", port as u16),
-            _ => String::new(),
-        };
-        fields.push((b":authority".to_vec(), format!("{host}{port}").into_bytes()));
+        fields.push((b":authority".to_vec(), host.into_bytes()));
     }
     let stream_id = state
         .borrow()
@@ -1021,6 +1071,7 @@ fn session_request(
     execute::set_property_in_place(&stream, "close", session_capability("streamClose"));
     execute::set_property_in_place(&stream, "destroy", session_capability("streamDestroy"));
     execute::set_property_in_place(&stream, "respond", session_capability("streamRespond"));
+    execute::set_property_in_place(&stream, "pushStream", session_capability("streamPushStream"));
     execute::set_property_in_place(
         &stream,
         "setEncoding",
@@ -1053,6 +1104,34 @@ fn session_request(
     };
     execute::set_property_in_place(&streams, &stream_id.to_string(), stream.clone());
     let diagnostic_headers = http2_diagnostic_headers(&fields);
+    execute::set_property_in_place(
+        &stream,
+        "__quenchHttp2RequestDiagnostics",
+        diagnostic_headers.clone(),
+    );
+    let request_diagnostics = match execute::get_property(
+        &socket,
+        "\0quench:http2-request-diagnostics-map",
+    ) {
+        Value::Object(_) | Value::ObjectAlias(_) => execute::get_property(
+            &socket,
+            "\0quench:http2-request-diagnostics-map",
+        ),
+        _ => {
+            let map = host_api::object(Vec::new());
+            execute::set_property_in_place(
+                &socket,
+                "\0quench:http2-request-diagnostics-map",
+                map.clone(),
+            );
+            map
+        }
+    };
+    execute::set_property_in_place(
+        &request_diagnostics,
+        &stream_id.to_string(),
+        diagnostic_headers.clone(),
+    );
     publish_http2_stream_diagnostic(
         state,
         &stream,
@@ -1309,6 +1388,141 @@ fn stream_destroy(
     );
     write_http2_frame(&socket, &frame)?;
     Ok(stream.clone())
+}
+
+fn stream_push_stream(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let parent = receiver.ok_or(VmError::NotCallable)?;
+    let (socket, parent_id) = stream_socket(Some(parent))?;
+    let headers = values.first().unwrap_or(&Value::Undefined);
+    if !matches!(headers, Value::Undefined | Value::Object(_) | Value::ObjectAlias(_)) {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::TypeError,
+            "ERR_INVALID_ARG_TYPE",
+            "The \"headers\" argument must be of type object.".into(),
+        ));
+    }
+    let mut fields = Vec::new();
+    if matches!(headers, Value::Object(_) | Value::ObjectAlias(_)) {
+        for key in execute::own_enumerable_keys(headers) {
+            fields.push((
+                key.to_ascii_lowercase().into_bytes(),
+                execute::to_js_string(&execute::get_property(headers, &key))?.into_bytes(),
+            ));
+        }
+    }
+    for (name, value) in [
+        (b":method".to_vec(), b"GET".to_vec()),
+        (b":path".to_vec(), b"/".to_vec()),
+        (b":scheme".to_vec(), b"http".to_vec()),
+    ] {
+        if !fields.iter().any(|(key, _)| *key == name) {
+            fields.push((name, value));
+        }
+    }
+    if !fields.iter().any(|(key, _)| key.as_slice() == b":authority") {
+        let authority = match execute::get_property(parent, "__quenchHttp2RequestDiagnostics") {
+            Value::Object(_) | Value::ObjectAlias(_) => execute::to_js_string(
+                &execute::get_property(
+                    &execute::get_property(parent, "__quenchHttp2RequestDiagnostics"),
+                    ":authority",
+                ),
+            )
+            .unwrap_or_else(|_| "localhost".into()),
+            _ => {
+                let map = execute::get_property(
+                    &socket,
+                    "\0quench:http2-request-diagnostics-map",
+                );
+                let request = execute::get_property(&map, &parent_id.to_string());
+                execute::to_js_string(&execute::get_property(&request, ":authority"))
+                    .unwrap_or_else(|_| "localhost".into())
+            }
+        };
+        fields.push((b":authority".to_vec(), authority.into_bytes()));
+    }
+    // Header records preserve wire/creation order.  Node emits the request
+    // pseudo-headers first (`:method`, `:authority`, `:scheme`, `:path`),
+    // followed by ordinary push headers; keeping that order also makes the
+    // diagnostics object deterministic across HPACK table state.
+    let mut ordered = Vec::with_capacity(fields.len());
+    for name in [":method", ":authority", ":scheme", ":path"] {
+        if let Some((_, value)) = fields.iter().find(|(key, _)| key.as_slice() == name.as_bytes()) {
+            ordered.push((name.as_bytes().to_vec(), value.clone()));
+        }
+    }
+    ordered.extend(
+        fields
+            .into_iter()
+            .filter(|(key, _)| !matches!(key.as_slice(), b":method" | b":authority" | b":scheme" | b":path")),
+    );
+    fields = ordered;
+    let promised_id = state
+        .borrow()
+        .net
+        .http2_sessions
+        .get(&crate::modules::net::net_id(&socket).ok_or(VmError::NotCallable)?)
+        .and_then(|session| session.streams.keys().copied().max())
+        // Server push stream identifiers are even-numbered.  The parent
+        // request is normally odd, so choosing `max + 2` would accidentally
+        // create another client-style odd stream and lose push lifecycle
+        // semantics on the receiving session.
+        .map(|id| {
+            let next = id.saturating_add(1).max(2);
+            if next % 2 == 0 { next } else { next.saturating_add(1) }
+        })
+        .unwrap_or(2);
+    let block = {
+        let mut host = state.borrow_mut();
+        let socket_id = crate::modules::net::net_id(&socket).ok_or(VmError::NotCallable)?;
+        let session = host.net.http2_sessions.get_mut(&socket_id).ok_or(VmError::NotCallable)?;
+        session.streams.insert(
+            promised_id,
+            crate::modules::http2_protocol::Stream {
+                state: crate::modules::http2_protocol::StreamState::Open,
+                recv_window: 65_535,
+                send_window: 65_535,
+            },
+        );
+        session.encode_headers(
+            &fields.iter().map(|(name, value)| (name.as_slice(), value.as_slice())).collect::<Vec<_>>(),
+        )
+    };
+    let mut payload = promised_id.to_be_bytes().to_vec();
+    payload.extend_from_slice(&block);
+    let frame = crate::modules::http2_protocol::Frame::new(
+        crate::modules::http2_protocol::FrameType::PushPromise,
+        0x4,
+        parent_id,
+        payload,
+    );
+    let stream = crate::modules::events::new_emitter_object(state)?;
+    execute::set_property_in_place(&stream, "\0quench:http2-socket", socket.clone());
+    execute::set_property_in_place(&stream, "\0quench:http2-stream-id", Value::Number(promised_id as f64));
+    for (name, capability) in [
+        ("write", "streamWrite"),
+        ("end", "streamEnd"),
+        ("close", "streamClose"),
+        ("destroy", "streamDestroy"),
+        ("respond", "streamRespond"),
+        ("setEncoding", "streamSetEncoding"),
+    ] {
+        execute::set_property_in_place(&stream, name, session_capability(capability));
+    }
+    execute::set_property_in_place(&stream, "session", socket.clone());
+    decorate_http2_stream(state, &stream, true);
+    let socket_id = crate::modules::net::net_id(&socket).ok_or(VmError::NotCallable)?;
+    state.borrow_mut().net.http2_streams.insert((socket_id, promised_id), stream.clone());
+    if let Some(callback) = values.get(1).filter(|value| quench_runtime::is_callable(value)) {
+        // Node's pushStream callback is error-first.  `common.mustSucceed`
+        // relies on the leading null before receiving the stream object.
+        execute::call(callback, &Value::Undefined, &[Value::Null, stream.clone()])?;
+    }
+    write_http2_frame(&socket, &frame)?;
+    Ok(stream)
 }
 
 fn stream_abort(
