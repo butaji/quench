@@ -2,10 +2,10 @@
   "schema": 1,
   "warmup": 1,
   "result": { "kind": "number", "value": -6 },
-  "plan": { "execution_kind": "native_machine_code", "operation_route": ["bitwise_mixer"], "fallback": false },
+  "plan": { "execution_kind": "native_machine_code", "operation_route": ["counted_region", "i32_ushr_xor_imul"], "fallback": false },
   "profile": {
     "residual": {}, "slow": {},
-    "stencils": { "bitwise_mixer_region": { "entries": 1, "fallbacks": 0 } },
+    "stencils": { "counted_i32_recurrence": { "entries": 1, "fallbacks": 0 } },
     "events": { "leaf_hit": 1 }
   }
 }
