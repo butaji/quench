@@ -382,6 +382,11 @@ pub fn new_message_port(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError
             state.borrow_mut().targets.objects.insert(id, port.clone());
         }
     }
+    // MessagePorts are async resources in Node. Attach the resource identity
+    // after the final prototype transition so `async_hooks` receives the same
+    // object that MessageChannel returns and host delivery retains it.
+    crate::modules::async_hooks::attach_resource(state, port.clone(), "MESSAGEPORT")?;
+    remember_target_object(state, &port)?;
     Ok(port)
 }
 
