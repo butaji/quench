@@ -1652,6 +1652,7 @@ fn stream_destroy(
         "destroyed",
         Value::Boolean(error.is_some()),
     );
+    execute::set_property_in_place(&receiver, "rstCode", Value::Number(code as f64));
     let is_server = matches!(
         execute::get_property(&socket, crate::modules::http2_protocol::SERVER_MARKER),
         Value::Boolean(true)
