@@ -727,6 +727,7 @@ fn http2_stream(
     execute::set_property_in_place(&stream, "close", http2_capability("streamClose"));
     execute::set_property_in_place(&stream, "destroy", http2_capability("streamDestroy"));
     execute::set_property_in_place(&stream, "respond", http2_capability("streamRespond"));
+    execute::set_property_in_place(&stream, "pushStream", http2_capability("streamPushStream"));
     execute::set_property_in_place(
         &stream,
         "setEncoding",
@@ -754,14 +755,21 @@ fn dispatch_http2_frames(
     frames: &[crate::modules::http2_protocol::Frame],
 ) -> Result<(), VmError> {
     let socket_js = socket.borrow().js.clone();
-    let is_server = socket
+    let socket_id = socket.borrow().id;
+    // The protocol session role is the canonical source of direction.  Socket
+    // markers can be shared through aliases when a server and client are
+    // created in one VM, but a Session owns exactly one HTTP/2 role.
+    let is_server = state
         .borrow()
-        .server_id
-        .is_some_and(|server_id| state.borrow().net.http2_servers.contains(&server_id))
-        || matches!(
-            execute::get_property(&socket_js, crate::modules::http2_protocol::SERVER_MARKER),
-            Value::Boolean(true)
-        );
+        .net
+        .http2_sessions
+        .get(&socket_id)
+        .is_some_and(|session| {
+            matches!(
+                session.role(),
+                crate::modules::http2_protocol::Role::Server
+            )
+        });
     // `Session::feed` may complete a header block on a CONTINUATION frame;
     // consume completed blocks once per stream instead of assuming the first
     // HEADERS frame is self-contained.  Preserve the stream/end flags from
@@ -823,6 +831,92 @@ fn dispatch_http2_frames(
                     }
                 }
             }
+            crate::modules::http2_protocol::FrameType::PushPromise => {
+                if is_server || frame.payload.len() < 4 {
+                    continue;
+                }
+                let promised_id = u32::from_be_bytes(frame.payload[..4].try_into().unwrap()) & 0x7fff_ffff;
+                let fields = completed_headers.get(&promised_id).cloned().unwrap_or_default();
+                let (push_stream, _) = http2_stream(state, &socket_js, promised_id)?;
+                crate::modules::http2_util::decorate_http2_stream(state, &push_stream, false);
+                execute::set_property_in_place(
+                    &push_stream,
+                    "__quenchHttp2PushStream",
+                    Value::Boolean(true),
+                );
+                let mut entries = fields
+                    .iter()
+                    .map(|(name, value)| {
+                        let key = String::from_utf8_lossy(name).into_owned();
+                        let value = if key == ":status" {
+                            String::from_utf8_lossy(value)
+                                .parse::<f64>()
+                                .map(Value::Number)
+                                .unwrap_or_else(|_| {
+                                    Value::String(String::from_utf8_lossy(value).into_owned())
+                                })
+                        } else {
+                            Value::String(String::from_utf8_lossy(value).into_owned())
+                        };
+                        (key, value)
+                    })
+                    .collect::<Vec<_>>();
+                if let Value::String(sensitive) = crate::modules::http2_util::sensitive_headers() {
+                    let pseudo_count = fields
+                        .iter()
+                        .take_while(|(name, _)| name.first() == Some(&b':'))
+                        .count();
+                    entries.insert(pseudo_count, (sensitive, host_api::array(Vec::new())));
+                }
+                let headers = host_api::object(entries);
+                let headers = execute::set_prototype_of(&headers, &Value::Null).unwrap_or(headers);
+                if let Value::String(sensitive) = crate::modules::http2_util::sensitive_headers() {
+                    let _ = execute::set_property_in_place(
+                        &headers,
+                        &sensitive,
+                        host_api::array(Vec::new()),
+                    );
+                }
+                // A pushed stream receives a second HEADERS frame when the
+                // server sends its response.  Keep the original request
+                // headers from PUSH_PROMISE attached to the stream so the
+                // client diagnostics `created` event reports the same
+                // metadata as Node instead of the response headers.
+                execute::set_property_in_place(
+                    &push_stream,
+                    "__quenchHttp2PushDiagnostics",
+                    headers.clone(),
+                );
+                emit_socket_scoped(
+                    state,
+                    socket,
+                    &socket_js,
+                    "stream",
+                    vec![
+                        push_stream.clone(),
+                        headers.clone(),
+                        Value::Number(frame.header.flags as f64),
+                    ],
+                )?;
+                // Deliver `push` on the next host turn.  Node emits the
+                // session `stream` notification first, allowing user code to
+                // install the push listener before this stream event fires.
+                if !matches!(
+                    execute::get_property(&push_stream, "__quenchHttp2PushEmitted"),
+                    Value::Boolean(true)
+                ) {
+                    execute::set_property_in_place(
+                        &push_stream,
+                        "__quenchHttp2PushEmitted",
+                        Value::Boolean(true),
+                    );
+                    state.borrow_mut().net.pending_events.push((
+                        push_stream,
+                        "push".into(),
+                        vec![headers],
+                    ));
+                }
+            }
             crate::modules::http2_protocol::FrameType::Headers
             | crate::modules::http2_protocol::FrameType::Continuation => {
                 if !processed_headers.insert(stream_id) {
@@ -832,7 +926,100 @@ fn dispatch_http2_frames(
                 let Some(fields) = fields else { continue };
                 let (stream, fresh) = http2_stream(state, &socket_js, stream_id)?;
                 crate::modules::http2_util::decorate_http2_stream(state, &stream, is_server);
-                let headers = http2_headers_value(&fields);
+                let mut headers = if !is_server {
+                    match execute::get_property(&stream, "__quenchHttp2RequestDiagnostics") {
+                        Value::Object(_) | Value::ObjectAlias(_) => {
+                            execute::get_property(&stream, "__quenchHttp2RequestDiagnostics")
+                        }
+                        _ => match execute::get_property(
+                            &socket_js,
+                            "\0quench:http2-request-diagnostics-map",
+                        ) {
+                            Value::Object(_) | Value::ObjectAlias(_) => {
+                                match execute::get_property(
+                                    &execute::get_property(
+                                        &socket_js,
+                                        "\0quench:http2-request-diagnostics-map",
+                                    ),
+                                    &stream_id.to_string(),
+                                ) {
+                                    Value::Object(_) | Value::ObjectAlias(_) => execute::get_property(
+                                        &execute::get_property(
+                                            &socket_js,
+                                            "\0quench:http2-request-diagnostics-map",
+                                        ),
+                                        &stream_id.to_string(),
+                                    ),
+                                    _ => http2_headers_value(&fields),
+                                }
+                            }
+                            _ => http2_headers_value(&fields),
+                        },
+                    }
+                } else {
+                    http2_headers_value(&fields)
+                };
+                if !is_server
+                    && (stream_id % 2 == 0
+                        || matches!(
+                            execute::get_property(&stream, "__quenchHttp2PushStream"),
+                            Value::Boolean(true)
+                        ))
+                {
+                    if stream_id % 2 == 0 {
+                        execute::set_property_in_place(
+                            &stream,
+                            "__quenchHttp2PushStream",
+                            Value::Boolean(true),
+                        );
+                    }
+                    if matches!(
+                        execute::get_property(&stream, "__quenchHttp2PushDiagnostics"),
+                        Value::Object(_) | Value::ObjectAlias(_)
+                    ) {
+                        headers = execute::get_property(
+                            &stream,
+                            "__quenchHttp2PushDiagnostics",
+                        );
+                    }
+                    if let Value::String(sensitive) =
+                        crate::modules::http2_util::sensitive_headers()
+                    {
+                        let _ = execute::set_property_in_place(
+                            &headers,
+                            &sensitive,
+                            host_api::array(Vec::new()),
+                        );
+                    }
+                    headers =
+                        execute::set_prototype_of(&headers, &Value::Null).unwrap_or(headers);
+                }
+                if is_server {
+                    execute::set_property_in_place(
+                        &stream,
+                        "__quenchHttp2RequestDiagnostics",
+                        headers.clone(),
+                    );
+                    let map = match execute::get_property(
+                        &socket_js,
+                        "\0quench:http2-request-diagnostics-map",
+                    ) {
+                        Value::Object(_) | Value::ObjectAlias(_) => execute::get_property(
+                            &socket_js,
+                            "\0quench:http2-request-diagnostics-map",
+                        ),
+                        _ => {
+                            let map = host_api::object(Vec::new());
+                            execute::set_property_in_place(
+                                &socket_js,
+                                "\0quench:http2-request-diagnostics-map",
+                                map.clone(),
+                            );
+                            map
+                        }
+                    };
+                    execute::set_property_in_place(&map, &stream_id.to_string(), headers.clone());
+                }
                 let args = vec![
                     stream.clone(),
                     headers.clone(),
@@ -927,13 +1114,23 @@ fn dispatch_http2_frames(
                         Some(header_flags.get(&stream_id).copied().unwrap_or(frame.header.flags)),
                         None,
                     )?;
-                    emit_socket_scoped(
-                        state,
-                        socket,
-                        &stream,
-                        "response",
-                        vec![http2_headers_value(&fields)],
-                    )?;
+                    if !matches!(
+                        execute::get_property(&stream, "__quenchHttp2ResponseEmitted"),
+                        Value::Boolean(true)
+                    ) {
+                        execute::set_property_in_place(
+                            &stream,
+                            "__quenchHttp2ResponseEmitted",
+                            Value::Boolean(true),
+                        );
+                        emit_socket_scoped(
+                            state,
+                            socket,
+                            &stream,
+                            "response",
+                            vec![http2_headers_value(&fields)],
+                        )?;
+                    }
                 }
                 // `header_flags` also includes a later DATA frame so the
                 // callback can observe Node's flags value (5).  END_STREAM
