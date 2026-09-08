@@ -319,7 +319,7 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
         address === "" ||
         address === "undefined"
       ) {
-        throw new Error("EINVAL");
+        throw Object.assign(new Error("EINVAL"), { code: "EINVAL" });
       }
       return socket;
     },
