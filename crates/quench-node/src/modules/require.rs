@@ -3580,6 +3580,7 @@ pub(crate) fn http2_module_value() -> Value {
     };
     crate::host::namespace_object_from_pairs(vec![
         ("connect".into(), connect),
+        ("constants".into(), crate::modules::http2_util::constants()),
         (
             "createServer".into(),
             quench_runtime::host_api::bound_capability_with_arguments(
