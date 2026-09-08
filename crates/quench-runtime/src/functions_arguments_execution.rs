@@ -91,6 +91,10 @@ fn try_execute_physical(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     arguments: &[crate::value::Value],
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
+    if let Some(value) = try_execute_typed_lane(function, arguments)? {
+        record_typed_lane(function);
+        return Ok(Some(crate::value::Value::Number(value)));
+    }
     if let Some(value) = try_execute_matrix_reduction(function, arguments)? {
         record_matrix_reduction(function);
         return Ok(Some(crate::value::Value::Number(value)));
@@ -132,6 +136,31 @@ fn try_execute_physical(
         return Ok(Some(crate::value::Value::Number(f64::from(value))));
     }
     Ok(None)
+}
+
+fn try_execute_typed_lane(
+    function: &crate::value::FunctionValue,
+    arguments: &[crate::value::Value],
+) -> Result<Option<f64>, crate::execute::VmError> {
+    if function.params < 1 || !crate::functions::direct_call_eligible(function) {
+        return Ok(None);
+    }
+    let Some(code) = function.code.code() else {
+        return Ok(None);
+    };
+    let Some(fact) = crate::stencil_typed_lane::select_function(code) else {
+        return Ok(None);
+    };
+    fact.execute_native(function, arguments)
+}
+
+fn record_typed_lane(function: &crate::value::FunctionValue) {
+    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+    if let Some(code) = function.code.code() {
+        crate::execution_trace::stencil_observation(code, 0, "typed_lane_arithmetic_region", true);
+    }
+    #[cfg(test)]
+    crate::test_execution_profile::dynamic_region_route(["typed_lane_arithmetic"]);
 }
 
 fn try_execute_matrix_reduction(

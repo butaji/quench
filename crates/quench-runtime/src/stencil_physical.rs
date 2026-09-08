@@ -37,6 +37,7 @@ mod aarch64 {
     pub(super) const LOAD_W: P = P::new(0xFFC0_0000, 0xB940_0000);
     pub(super) const STORE_X: P = P::new(0xFFC0_0000, 0xF900_0000);
     pub(super) const STORE_W: P = P::new(0xFFC0_0000, 0xB900_0000);
+    pub(super) const STORE_W_REGISTER_OFFSET: P = P::new(0xFFE0_FC00, 0xB820_7800);
     pub(super) const LOAD_D: P = P::new(0xFFC0_0000, 0xFD40_0000);
     pub(super) const STORE_D: P = P::new(0xFFC0_0000, 0xFD00_0000);
     pub(super) const LOAD_BYTE: P = P::new(0xFFC0_0000, 0x3940_0000);
@@ -60,6 +61,7 @@ mod aarch64 {
     pub(super) const FP_COMPARE: P = P::new(0xFF20_FC00, 0x1E20_2000);
     pub(super) const FP_TO_UNSIGNED_X: P = P::new(0xFFFF_FC00, 0x9E79_0000);
     pub(super) const UNSIGNED_W_TO_FP: P = P::new(0xFFFF_FC00, 0x1E63_0000);
+    pub(super) const SIGNED_W_TO_FP: P = P::new(0xFFFF_FC00, 0x1E62_0000);
     pub(super) const LOAD_LITERAL_X: P = P::new(0xFF00_0000, 0x5800_0000);
     pub(super) const CONDITIONAL_SELECT: P = P::new(0xFFE0_07E0, 0x1A80_07E0);
     pub(super) const CONDITIONAL_INCREMENT: P = P::new(0x7FE0_0C00, 0x1A80_0400);
@@ -150,7 +152,8 @@ pub(crate) fn simd_clobber_mask(bytes: &[u8]) -> u16 {
                     || aarch64::FP_DIV.matches(encoded);
                 let fp_move = aarch64::FP_MOVE.matches(encoded);
                 let fp_immediate = aarch64::FP_IMMEDIATE.matches(encoded);
-                let integer_to_fp = aarch64::UNSIGNED_W_TO_FP.matches(encoded);
+                let integer_to_fp = aarch64::UNSIGNED_W_TO_FP.matches(encoded)
+                    || aarch64::SIGNED_W_TO_FP.matches(encoded);
                 (fp_load || fp_arith || fp_move || fp_immediate || integer_to_fp)
                     .then_some((encoded & 0x1f) as u16)
             })
@@ -195,6 +198,10 @@ pub(crate) fn gpr_clobber_mask(bytes: &[u8]) -> u16 {
                     || aarch64::FP_TO_UNSIGNED_X.matches(encoded)
                     || aarch64::SIGN_EXTEND_W_TO_X.matches(encoded);
                 let writes_rt = writes_rt || aarch64::AND_W_IMMEDIATE.matches(encoded);
+                let writes_rt = writes_rt
+                    || aarch64::AND_W.matches(encoded)
+                    || aarch64::OR_W.matches(encoded)
+                    || aarch64::XOR_W.matches(encoded);
                 let conditional_select = aarch64::CONDITIONAL_INCREMENT.matches(encoded);
                 (writes_rt || conditional_select).then_some((encoded & 0x1f) as u16)
             })
@@ -302,6 +309,7 @@ fn known_aarch64_instruction(encoded: u32) -> bool {
         aarch64::LOAD_W,
         aarch64::STORE_X,
         aarch64::STORE_W,
+        aarch64::STORE_W_REGISTER_OFFSET,
         aarch64::LOAD_D,
         aarch64::STORE_D,
         aarch64::LOAD_BYTE,
@@ -332,6 +340,7 @@ fn known_aarch64_instruction(encoded: u32) -> bool {
         aarch64::FP_COMPARE,
         aarch64::FP_TO_UNSIGNED_X,
         aarch64::UNSIGNED_W_TO_FP,
+        aarch64::SIGNED_W_TO_FP,
         aarch64::CONDITIONAL_SELECT,
         aarch64::CONDITIONAL_INCREMENT,
         aarch64::AND_W,
