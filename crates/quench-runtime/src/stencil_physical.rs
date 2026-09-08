@@ -41,6 +41,7 @@ mod aarch64 {
     pub(super) const LOAD_BYTE: P = P::new(0xFFC0_0000, 0x3940_0000);
     pub(super) const ADD_X_SHIFTED: P = P::new(0xFFE0_0000, 0x8B00_0000);
     pub(super) const ADD_W_SHIFTED: P = P::new(0x7FE0_0000, 0x0B00_0000);
+    pub(super) const SUB_W_SHIFTED: P = P::new(0x7FE0_0000, 0x4B00_0000);
     pub(super) const MUL_W: P = P::new(0xFFE0_FC00, 0x1B00_7C00);
     pub(super) const ADD_X_IMMEDIATE: P = P::new(0xFFC0_0000, 0x9100_0000);
     pub(super) const MOVE_W_IMMEDIATE: P = P::new(0xFF80_0000, 0x5280_0000);
@@ -163,6 +164,7 @@ pub(crate) fn gpr_clobber_mask(bytes: &[u8]) -> u16 {
                 let writes_rt = load
                     || aarch64::ADD_X_SHIFTED.matches(encoded)
                     || aarch64::ADD_W_SHIFTED.matches(encoded)
+                    || aarch64::SUB_W_SHIFTED.matches(encoded)
                     || aarch64::MUL_W.matches(encoded)
                     || aarch64::ADD_X_IMMEDIATE.matches(encoded)
                     || aarch64::MOVE_W_IMMEDIATE.matches(encoded)
@@ -278,6 +280,7 @@ fn known_aarch64_instruction(encoded: u32) -> bool {
         aarch64::LOAD_BYTE,
         aarch64::ADD_X_SHIFTED,
         aarch64::ADD_W_SHIFTED,
+        aarch64::SUB_W_SHIFTED,
         aarch64::MUL_W,
         aarch64::ADD_X_IMMEDIATE,
         aarch64::MOVE_W_IMMEDIATE,

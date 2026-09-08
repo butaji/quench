@@ -91,8 +91,8 @@ fn try_execute_physical(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     arguments: &[crate::value::Value],
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
-    if let Some(value) = try_execute_counter_recurrence(function, arguments) {
-        record_counter_recurrence(function);
+    if let Some((value, native)) = try_execute_counter_recurrence(function, arguments) {
+        record_counter_recurrence(function, native);
         return Ok(Some(crate::value::Value::Number(f64::from(value))));
     }
     #[cfg(not(target_arch = "aarch64"))]
@@ -117,16 +117,17 @@ fn try_execute_physical(
 fn try_execute_counter_recurrence(
     function: &crate::value::FunctionValue,
     arguments: &[crate::value::Value],
-) -> Option<i32> {
+) -> Option<(i32, bool)> {
     (function.params >= 2 && crate::functions::direct_call_eligible(function)).then_some(())?;
     let fact = function.code.numeric_counter_recurrence()?;
     let first = u16::try_from(function.captures.len()).ok()?;
     (fact.value_parameter == first && fact.counter_parameter == first.checked_add(1)?)
         .then_some(())?;
-    fact.execute(arguments)
+    fact.execute_native(arguments)
+        .or_else(|| fact.execute(arguments).map(|value| (value, false)))
 }
 
-fn record_counter_recurrence(function: &crate::value::FunctionValue) {
+fn record_counter_recurrence(function: &crate::value::FunctionValue, native: bool) {
     crate::execution_trace::kernel("PrecompiledI32CounterRecurrence", false);
     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
     if let Some(code) = function.code.code() {
@@ -134,7 +135,9 @@ fn record_counter_recurrence(function: &crate::value::FunctionValue) {
     }
     #[cfg(test)]
     {
-        crate::test_execution_profile::portable_recipe();
+        if !native {
+            crate::test_execution_profile::portable_recipe();
+        }
         crate::test_execution_profile::dynamic_region_route(["i32_counter_recurrence"]);
     }
 }

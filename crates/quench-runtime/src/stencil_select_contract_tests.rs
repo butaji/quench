@@ -130,6 +130,11 @@ fn generated_abi_classification_matches_physical_entry_shape() {
                 assert!(matches!(record.stencil.bytes.len(), 4 | 12 | 84));
                 assert!(record.operations.ends_with(&[crate::ir::Opcode::Jump]));
             }
+            RegionAbi::I32CounterLoop => {
+                assert_eq!(record.name, "i32_counter_loop");
+                assert!(record.operations.contains(&crate::ir::Opcode::Jump));
+                assert!(record.operations.contains(&crate::ir::Opcode::Return));
+            }
             RegionAbi::NumericF64Loop => {
                 assert_eq!(record.name, "numeric_floating_loop");
                 assert!(record.operations.ends_with(&[crate::ir::Opcode::Jump]));
