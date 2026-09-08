@@ -15,7 +15,8 @@ thread_local! {
 }
 use super::http2_asserts;
 use super::http2_facts::{
-    CONNECTION_HEADERS, HEADER_CONSTANTS, OPTION_FIELDS, SINGLE_VALUE_HEADERS,
+    CONNECTION_HEADERS, HEADER_CONSTANTS, METHOD_CONSTANTS, NUMERIC_CONSTANTS, OPTION_FIELDS,
+    SINGLE_VALUE_HEADERS, STATUS_CONSTANTS,
 };
 
 pub(crate) fn coded_error(
@@ -402,12 +403,41 @@ pub fn binding() -> Value {
 }
 
 fn header_constants() -> Value {
-    host_api::object(
+    constants()
+}
+
+/// Build the public `http2.constants` object from the canonical constant
+/// tables.  The same object is also returned by the internal binding, which
+/// keeps numeric error/frame values and header/method spellings identical for
+/// Node's public and internal consumers.
+pub(crate) fn constants() -> Value {
+    let mut properties = Vec::with_capacity(
+        NUMERIC_CONSTANTS.len()
+            + STATUS_CONSTANTS.len()
+            + METHOD_CONSTANTS.len()
+            + HEADER_CONSTANTS.len(),
+    );
+    properties.extend(
+        NUMERIC_CONSTANTS
+            .iter()
+            .map(|(name, value)| ((*name).into(), Value::Number(*value))),
+    );
+    properties.extend(
+        STATUS_CONSTANTS
+            .iter()
+            .map(|(name, value)| ((*name).into(), Value::Number(*value))),
+    );
+    properties.extend(
+        METHOD_CONSTANTS
+            .iter()
+            .map(|(name, value)| ((*name).into(), Value::String((*value).into()))),
+    );
+    properties.extend(
         HEADER_CONSTANTS
             .iter()
-            .map(|(name, value)| ((*name).into(), Value::String((*value).into())))
-            .collect(),
-    )
+            .map(|(name, value)| ((*name).into(), Value::String((*value).into()))),
+    );
+    host_api::object(properties)
 }
 
 fn options_buffer() -> Value {
