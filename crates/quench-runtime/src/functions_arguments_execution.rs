@@ -91,6 +91,10 @@ fn try_execute_physical(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     arguments: &[crate::value::Value],
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
+    if let Some(value) = try_execute_counter_recurrence(function, arguments) {
+        record_counter_recurrence(function);
+        return Ok(Some(crate::value::Value::Number(f64::from(value))));
+    }
     #[cfg(not(target_arch = "aarch64"))]
     if let Some(fact) = function.code.numeric_affine_named_loop() {
         match execute_numeric_affine_named_loop(function, arguments, &fact) {
@@ -108,6 +112,31 @@ fn try_execute_physical(
         return Ok(Some(crate::value::Value::Number(f64::from(value))));
     }
     Ok(None)
+}
+
+fn try_execute_counter_recurrence(
+    function: &crate::value::FunctionValue,
+    arguments: &[crate::value::Value],
+) -> Option<i32> {
+    (function.params >= 2 && crate::functions::direct_call_eligible(function)).then_some(())?;
+    let fact = function.code.numeric_counter_recurrence()?;
+    let first = u16::try_from(function.captures.len()).ok()?;
+    (fact.value_parameter == first && fact.counter_parameter == first.checked_add(1)?)
+        .then_some(())?;
+    fact.execute(arguments)
+}
+
+fn record_counter_recurrence(function: &crate::value::FunctionValue) {
+    crate::execution_trace::kernel("PrecompiledI32CounterRecurrence", false);
+    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+    if let Some(code) = function.code.code() {
+        crate::execution_trace::stencil_observation(code, 0, "i32_counter_recurrence", true);
+    }
+    #[cfg(test)]
+    {
+        crate::test_execution_profile::portable_recipe();
+        crate::test_execution_profile::dynamic_region_route(["i32_counter_recurrence"]);
+    }
 }
 
 #[cfg(test)]
