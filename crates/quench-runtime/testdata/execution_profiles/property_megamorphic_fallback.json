@@ -3,19 +3,18 @@
   "warmup": 3,
   "result": { "kind": "number", "value": 12 },
   "plan": {
-    "execution_kind": "ordinary_fallback",
+    "execution_kind": "portable_recipe",
     "operation_route": ["GetNQuickened", "Return"],
-    "fallback": true
+    "fallback": false
   },
   "profile": {
-    "residual": { "GetN": 1, "Return": 1 },
+    "residual": {},
     "slow": {},
     "stencils": {
-      "property": { "entries": 0, "fallbacks": 1 }
+      "megamorphic_property_return": { "entries": 1, "fallbacks": 0 }
     },
     "events": {
-      "owned_word_read": 1,
-      "register_file_read": 2
+      "leaf_hit": 1
     }
   }
 }

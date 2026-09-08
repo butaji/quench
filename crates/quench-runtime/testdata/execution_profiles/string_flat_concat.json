@@ -1,10 +1,10 @@
 {
   "schema": 1,
   "warmup": 1,
-  "result": { "kind": "string", "value": "x23" },
+  "result": { "kind": "string", "value": "value=42!" },
   "plan": {
     "execution_kind": "portable_recipe",
-    "operation_route": ["Add", "Add", "Return"],
+    "operation_route": ["LoadLocalChecked", "LoadLocalChecked", "Add", "LoadLocalChecked", "Add", "Return"],
     "fallback": false
   },
   "profile": {

@@ -8,7 +8,7 @@
     "fallback": false
   },
   "profile": {
-    "residual": { "Return": 1 },
+    "residual": {},
     "slow": {},
     "stencils": { "ordered_dense_array_update_loop": { "entries": 1, "fallbacks": 0 } },
     "events": { "leaf_hit": 1 }

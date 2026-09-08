@@ -13,7 +13,7 @@
     "fallback": false
   },
   "profile": {
-    "residual": { "Return": 1 },
+    "residual": {},
     "slow": {},
     "stencils": {
       "baseline_region": { "entries": 1, "fallbacks": 0 }
