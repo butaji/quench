@@ -1610,6 +1610,24 @@ impl ObjectData {
         }
     }
 
+    /// Derive accessor state from canonical descriptor storage without
+    /// materializing its public JavaScript value.
+    pub(crate) fn has_accessor_descriptor(&self, key: &str) -> Option<bool> {
+        let slot = self
+            .properties
+            .names()
+            .rposition(|name| crate::builtins::is_descriptor_key_for(name.as_str(), key));
+        let Some(slot) = slot else {
+            return Some(false);
+        };
+        self.descriptor_metadata_state.set(2);
+        self.properties.slot_word(slot)?.with_object(|fields| {
+            fields
+                .names()
+                .any(|name| matches!(name.as_str(), "get" | "set"))
+        })
+    }
+
     #[inline]
     pub(crate) fn replace_with(&self, replacement: Rc<ObjectData>) {
         *self.replacement.borrow_mut() = Some(replacement);

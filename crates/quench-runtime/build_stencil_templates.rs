@@ -1193,6 +1193,7 @@ pub(crate) fn assembly_source(recipe: super::RustAssemblyRecipe) -> String {
         MatrixReductionLoop => matrix_reduction::AARCH64.to_owned(),
         TypedLaneLoop => typed_lane::AARCH64.to_owned(),
         TwoStateI32Loop => two_state_i32::AARCH64.to_owned(),
+        CountedI32Recurrence => counted_i32_recurrence::AARCH64.to_owned(),
         NumericIntegerLoop => AARCH64_NUMERIC_INTEGER_LOOP.to_owned(),
         NumericFloatingLoop => AARCH64_NUMERIC_FLOATING_LOOP.to_owned(),
         NumericBitwiseLoop => AARCH64_NUMERIC_BITWISE_LOOP.to_owned(),
@@ -1220,3 +1221,5 @@ mod matrix_reduction;
 mod typed_lane;
 #[path = "build_stencil_templates/two_state_i32.rs"]
 mod two_state_i32;
+#[path = "build_stencil_templates/counted_i32_recurrence.rs"]
+mod counted_i32_recurrence;

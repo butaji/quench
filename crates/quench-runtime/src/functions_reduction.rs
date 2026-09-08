@@ -625,12 +625,12 @@ fn make_function_value(
     }));
     if let crate::value::Value::Function(function) = &value {
         crate::cycle_collector::track_function(function);
-        if let Some(token) = crate::vm::realm_token(function_realm) {
-            function
-                .properties
-                .borrow_mut()
-                .push(("\0realm".to_string(), token));
-        }
+        let marker = crate::vm::realm_token(function_realm)
+            .unwrap_or(crate::value::Value::Number(0.0));
+        function
+            .properties
+            .borrow_mut()
+            .push(("\0realm".to_string(), marker));
     }
     value
 }
