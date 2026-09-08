@@ -228,6 +228,10 @@ impl SharedStencilSlab {
         owned_numeric_i32_pair_loop_entry,
         crate::stencil_select::RegionAbi::NumericI32PairLoop
     );
+    typed_dispatch_entry!(
+        owned_numeric_f64_mixed_loop_entry,
+        crate::stencil_select::RegionAbi::NumericF64MixedLoop
+    );
 
     pub(crate) fn with_owned<F: Copy, R>(
         &self,

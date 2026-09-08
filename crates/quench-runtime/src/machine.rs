@@ -1172,31 +1172,49 @@ impl CodeArena {
 /// call JS, suspend, or mutate shape/prototype state stays on the complete
 /// ordinary fragment path until it has an explicit region declaration.
 fn ops_are_stitchable_numeric(ops: &[Op]) -> bool {
-    ops.iter().all(|op| {
-        trace_source(op).is_some()
-            || matches!(
-                op,
-                Op::Const { .. }
-                    | Op::StoreLocal { .. }
-                    | Op::Move { .. }
-                    | Op::LoadLocal { .. }
-                    | Op::LoadParameter { .. }
-                    | Op::LoadBinding { .. }
-                    | Op::LoadResolvedBinding { .. }
-                    | Op::LoadResolvedLocalBinding { .. }
-                    | Op::InitializeLocal { .. }
-                    | Op::Binary { .. }
-                    | Op::Unary { .. }
-                    | Op::CheckInitialized { .. }
-                    | Op::RequireObjectCoercible { .. }
-                    | Op::GetProperty { .. }
-                    | Op::GetPropertyDynamic { .. }
-                    | Op::SetPropertyDynamic { .. }
-                    | Op::Call { .. }
-                    | Op::CallMethod { .. }
-                    | Op::Return { .. }
-            )
-    })
+    ops.iter().all(op_is_stitchable_numeric)
+}
+
+fn op_is_stitchable_numeric(op: &Op) -> bool {
+    if trace_source(op).is_some() || op_is_numeric_leaf(op) {
+        return true;
+    }
+    let Op::Conditional {
+        consequent,
+        alternate,
+        ..
+    } = op
+    else {
+        return false;
+    };
+    [consequent, alternate]
+        .into_iter()
+        .all(|arm| arm.source_ops().is_some_and(ops_are_stitchable_numeric))
+}
+
+fn op_is_numeric_leaf(op: &Op) -> bool {
+    matches!(
+        op,
+        Op::Const { .. }
+            | Op::StoreLocal { .. }
+            | Op::Move { .. }
+            | Op::LoadLocal { .. }
+            | Op::LoadParameter { .. }
+            | Op::LoadBinding { .. }
+            | Op::LoadResolvedBinding { .. }
+            | Op::LoadResolvedLocalBinding { .. }
+            | Op::InitializeLocal { .. }
+            | Op::Binary { .. }
+            | Op::Unary { .. }
+            | Op::CheckInitialized { .. }
+            | Op::RequireObjectCoercible { .. }
+            | Op::GetProperty { .. }
+            | Op::GetPropertyDynamic { .. }
+            | Op::SetPropertyDynamic { .. }
+            | Op::Call { .. }
+            | Op::CallMethod { .. }
+            | Op::Return { .. }
+    )
 }
 
 #[cfg(feature = "execution-trace")]
@@ -4957,6 +4975,7 @@ fn validate_physical_view(
             | crate::stencil_select::RegionAbi::AffineI32Loop
             | crate::stencil_select::RegionAbi::NumericI32BitwiseLoop
             | crate::stencil_select::RegionAbi::NumericI32PairLoop
+            | crate::stencil_select::RegionAbi::NumericF64MixedLoop
     ) {
         crate::stencil_physical::validate_raw_instruction_stream(stencil.bytes)?;
         let actual = crate::stencil_physical::simd_clobber_mask(stencil.bytes);
@@ -5000,6 +5019,7 @@ fn raw_region_declares_allocation(contract: crate::stencil_select::RegionContrac
             | crate::stencil_select::RegionAbi::AffineI32Loop
             | crate::stencil_select::RegionAbi::NumericI32BitwiseLoop
             | crate::stencil_select::RegionAbi::NumericI32PairLoop
+            | crate::stencil_select::RegionAbi::NumericF64MixedLoop
     ) && contract.has_effect(crate::facts::OperationEffect::Allocate)
 }
 
@@ -5028,6 +5048,9 @@ fn installed_region_entry(
             Err(crate::stencil_arena::ArenaError::ProtectionFailed)
         }
         crate::stencil_select::RegionAbi::NumericI32PairLoop => {
+            Err(crate::stencil_arena::ArenaError::ProtectionFailed)
+        }
+        crate::stencil_select::RegionAbi::NumericF64MixedLoop => {
             Err(crate::stencil_arena::ArenaError::ProtectionFailed)
         }
         _ => Err(crate::stencil_arena::ArenaError::ProtectionFailed),
@@ -5280,6 +5303,7 @@ impl NativeRegionPlan {
                     | crate::stencil_select::RegionAbi::AffineI32Loop
                     | crate::stencil_select::RegionAbi::NumericI32BitwiseLoop
                     | crate::stencil_select::RegionAbi::NumericI32PairLoop
+                    | crate::stencil_select::RegionAbi::NumericF64MixedLoop
             ) {
                 return crate::vm::execute_region_fallback(&mut region);
             }
@@ -5360,6 +5384,11 @@ impl NativeRegionPlan {
                 crate::stencil_select::RegionAbi::NumericI32PairLoop => {
                     return Err(NativeDispatchError::Physical(
                         "numeric-i32-pair loop ABI requires its typed entry".into(),
+                    ));
+                }
+                crate::stencil_select::RegionAbi::NumericF64MixedLoop => {
+                    return Err(NativeDispatchError::Physical(
+                        "numeric-f64-mixed loop ABI requires its typed entry".into(),
                     ));
                 }
                 crate::stencil_select::RegionAbi::Bridge => {}
@@ -5533,6 +5562,7 @@ enum NativeAdmission {
     FloatingLoop(Rc<RefCell<crate::stencil_numeric_floating_loop::NativeFloatingLoopPlan>>),
     BitwiseLoop(Rc<RefCell<crate::stencil_numeric_bitwise_loop::NativeBitwiseLoopPlan>>),
     IndependentLoop(Rc<RefCell<crate::stencil_numeric_independent_loop::NativeIndependentLoopPlan>>),
+    MixedLoop(Rc<RefCell<crate::stencil_numeric_mixed_loop::NativeMixedLoopPlan>>),
     DenseUpdate(Rc<RefCell<crate::stencil_dense_array_update::NativeDenseUpdatePlan>>),
     DenseCopy(Rc<RefCell<crate::stencil_dense_array_copy::NativeDenseCopyPlan>>),
     Reduction(Rc<RefCell<crate::stencil_ordered_reduction::NativeReductionPlan>>),
@@ -5596,6 +5626,9 @@ impl AdmissionEntry for NativeAdmission {
             Self::IndependentLoop(_) => shared_value_bytes::<
                 RefCell<crate::stencil_numeric_independent_loop::NativeIndependentLoopPlan>,
             >(),
+            Self::MixedLoop(_) => shared_value_bytes::<
+                RefCell<crate::stencil_numeric_mixed_loop::NativeMixedLoopPlan>,
+            >(),
             Self::DenseUpdate(_) => shared_value_bytes::<
                 RefCell<crate::stencil_dense_array_update::NativeDenseUpdatePlan>,
             >(),
@@ -5653,6 +5686,7 @@ impl std::fmt::Debug for NativeAdmission {
             Self::FloatingLoop(_) => "floating_loop",
             Self::BitwiseLoop(_) => "bitwise_loop",
             Self::IndependentLoop(_) => "independent_loop",
+            Self::MixedLoop(_) => "mixed_loop",
             Self::DenseUpdate(_) => "dense_update",
             Self::DenseCopy(_) => "dense_copy",
             Self::Reduction(_) => "reduction",
@@ -6162,6 +6196,21 @@ fn independent_loop_admission(
         selection, policy, Rc::clone(arena),
     )?;
     Some(NativeAdmission::IndependentLoop(Rc::new(RefCell::new(plan))))
+}
+
+fn mixed_loop_admission(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    let selection = crate::stencil_numeric_mixed_loop::select_mixed_loop(code, entries, cfg, pc)?;
+    let plan = crate::stencil_numeric_mixed_loop::NativeMixedLoopPlan::new(
+        selection, policy, Rc::clone(arena),
+    )?;
+    Some(NativeAdmission::MixedLoop(Rc::new(RefCell::new(plan))))
 }
 
 fn dense_copy_admission(
@@ -6711,6 +6760,10 @@ fn collect_admissions_at(
     );
     builder.push_optional(
         pc,
+        mixed_loop_admission(code, entries, cfg, pc, policy, arena),
+    );
+    builder.push_optional(
+        pc,
         dense_copy_admission(code, entries, cfg, pc, policy, arena),
     );
     builder.push_optional(
@@ -6963,6 +7016,12 @@ impl BaselinePlan {
         crate::stencil_numeric_independent_loop::NativeIndependentLoopPlan
     );
     typed_admission_accessors!(
+        mixed_loop_handle_at,
+        mixed_loop_at,
+        MixedLoop,
+        crate::stencil_numeric_mixed_loop::NativeMixedLoopPlan
+    );
+    typed_admission_accessors!(
         dense_update_handle_at,
         dense_update_at,
         DenseUpdate,
@@ -7159,6 +7218,11 @@ impl OptimizingEntry<'_> {
         independent_loop,
         IndependentLoop,
         crate::stencil_numeric_independent_loop::NativeIndependentLoopPlan
+    );
+    optimizing_admission_accessors!(
+        mixed_loop,
+        MixedLoop,
+        crate::stencil_numeric_mixed_loop::NativeMixedLoopPlan
     );
     optimizing_admission_accessors!(
         dense_update,
