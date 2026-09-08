@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "warmup": 0,
+  "result": { "kind": "string", "value": "x23" },
+  "plan": {
+    "execution_kind": "ordinary_fallback",
+    "operation_route": ["Add", "Add", "Return"],
+    "fallback": true
+  },
+  "profile": {
+    "residual": { "Add": 2, "Return": 1 },
+    "slow": {},
+    "stencils": {
+      "binary": { "entries": 0, "fallbacks": 2 },
+      "load_local": { "entries": 2, "fallbacks": 1 },
+      "local_binary": { "entries": 0, "fallbacks": 1 }
+    },
+    "events": {
+      "binding_load": 1,
+      "leaf_hit": 2,
+      "leaf_reject": 2,
+      "local_word_read": 1,
+      "register_file_read": 6
+    }
+  }
+}

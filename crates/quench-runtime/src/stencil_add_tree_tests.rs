@@ -96,10 +96,20 @@ fn ordinary_source_add_tree_executes_native_and_guarded_fallback() {
         let ordered = execute_source_add_chain(view, overflow_inputs()).expect("overflow case");
         assert_eq!(ordered.0, Completion::Return(Value::Number(f64::INFINITY)));
         assert_eq!(ordered.1, 1);
-        let fallback = execute_source_add_chain(view, string_inputs()).expect("guard fallback");
+        let fallback_case =
+            crate::test_execution_profile::ExecutionCase::load("add_chain_string_fallback");
+        fallback_case.assert_standalone();
+        let (fallback, fallback_profile) = crate::test_execution_profile::capture(|| {
+            execute_source_add_chain(view, string_inputs()).expect("guard fallback")
+        });
         assert_eq!(fallback.0, Completion::Return(Value::String("x23".into())));
         assert_eq!(fallback.1, 0);
         assert!(fallback.2.is_none());
+        fallback_case.assert(&Value::String("x23".into()), &fallback_profile);
+        fallback_case.assert_plan(
+            crate::test_execution_profile::ExecutionKind::OrdinaryFallback,
+            &route,
+        );
         checked = true;
     });
     assert!(

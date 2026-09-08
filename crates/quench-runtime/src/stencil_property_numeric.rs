@@ -466,20 +466,30 @@ mod tests {
 
     #[test]
     fn broken_receiver_fact_uses_complete_ordinary_path() {
-        let case = crate::test_execution_profile::ExecutionCase::load("property_numeric_dot");
+        let case =
+            crate::test_execution_profile::ExecutionCase::load("property_numeric_dot_fallback");
+        case.assert_standalone();
         let (body, plan, pc, slots) = source_plan(case.source());
         let code = body.code().unwrap();
-        let value = execute(
-            code,
-            &plan,
-            pc,
-            slots,
-            [
-                Value::String("not an object".into()),
-                object([4.0, 5.0, 6.0]),
-            ],
+        let (value, profile) = crate::test_execution_profile::capture(|| {
+            execute(
+                code,
+                &plan,
+                pc,
+                slots,
+                [
+                    Value::String("not an object".into()),
+                    object([4.0, 5.0, 6.0]),
+                ],
+            )
+        });
+        assert!(matches!(&value, Value::Number(number) if number.is_nan()));
+        case.assert(&value, &profile);
+        let selection = plan.property_numeric_at(pc).unwrap().borrow().selection();
+        case.assert_plan(
+            crate::test_execution_profile::ExecutionKind::OrdinaryFallback,
+            &selection.operation_route(),
         );
-        assert!(matches!(value, Value::Number(number) if number.is_nan()));
         assert_eq!(
             plan.property_numeric_at(pc).unwrap().borrow().entry_count(),
             0
