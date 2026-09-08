@@ -50,6 +50,8 @@ pub(crate) fn get_named_property_result(
             ));
         } else if let Some(entry) = cacheable_immediate_prototype(object, key) {
             install_prototype_cache(cache, entry);
+        } else if let Some(entry) = cacheable_missing_prototype(object, key) {
+            install_prototype_cache(cache, entry);
         } else if let Some(entry) = cacheable_virtual_builtin_method(object, key, &result) {
             install_virtual_builtin_cache(cache, entry);
         }
@@ -196,6 +198,20 @@ pub(crate) fn get_named_cached_number(
     }
 }
 
+pub(crate) fn get_named_cached_missing(
+    object: &crate::value::ObjectData,
+    key: &str,
+    cache: &std::cell::Cell<u64>,
+) -> bool {
+    if object.has_replacement() {
+        return false;
+    }
+    let layout = object.semantic_layout_id();
+    let cached = cache.get();
+    let site = cache as *const _ as usize;
+    prototype_missing_cache_hit(object, key, layout, cached, site)
+}
+
 #[inline(always)]
 fn named_cached_payload(value: &Value) -> NamedCachedPayload {
     match value {
@@ -234,7 +250,14 @@ struct PrototypeNamedCache {
     receiver_layout: u32,
     depth: u8,
     links: [Option<PrototypeLink>; 4],
-    value_slot: u32,
+    terminal: PrototypeCacheTerminal,
+}
+
+#[derive(Clone, Copy)]
+enum PrototypeCacheTerminal {
+    Data { value_slot: u32 },
+    MissingNull { layout: u32, prototype_slot: u32 },
+    MissingObjectPrototype { layout: u32, generation: u64 },
 }
 
 #[derive(Clone)]
@@ -269,10 +292,41 @@ fn prototype_cache_hit(
         if set.site != site {
             return None;
         }
-        let entry = set.entries.iter().flatten().find(|entry| {
-            entry.receiver_layout == receiver_layout
-        })?;
+        let entry = set
+            .entries
+            .iter()
+            .flatten()
+            .find(|entry| entry.receiver_layout == receiver_layout)?;
         prototype_entry_hit(receiver, key, entry)
+    })
+}
+
+fn prototype_missing_cache_hit(
+    receiver: &crate::value::ObjectData,
+    key: &str,
+    receiver_layout: u32,
+    cache: u64,
+    site: usize,
+) -> bool {
+    let Some(index) = prototype_cache_index(cache) else {
+        return false;
+    };
+    PROTOTYPE_NAMED_CACHES.with(|caches| {
+        let caches = caches.borrow();
+        let Some(set) = caches.get(index).and_then(Option::as_ref) else {
+            return false;
+        };
+        let Some(entry) = set.entries.iter().flatten().find(|entry| {
+            entry.receiver_layout == receiver_layout
+                && matches!(
+                    entry.terminal,
+                    PrototypeCacheTerminal::MissingNull { .. }
+                        | PrototypeCacheTerminal::MissingObjectPrototype { .. }
+                )
+        }) else {
+            return false;
+        };
+        set.site == site && prototype_entry_hit(receiver, key, entry).is_some()
     })
 }
 
@@ -303,15 +357,42 @@ fn prototype_entry_hit(
         }
         owners[depth] = prototype;
     }
-    let owner = unsafe { owners[usize::from(entry.depth).checked_sub(1)?].as_ref()? };
-    let owner_layout = entry.links[..usize::from(entry.depth)]
-        .iter()
-        .flatten()
-        .last()
-        .map(|link| link.prototype_layout)?;
-    let word = cached_plain_own_word(owner, key, owner_layout, entry.value_slot)?;
-    word.trace_named_payload("prototype");
-    Some(NamedCachedPayload::Word(word))
+    let owner = terminal_owner(receiver, &owners, entry.depth)?;
+    match entry.terminal {
+        PrototypeCacheTerminal::Data { value_slot } => {
+            let layout = owner.semantic_layout_id();
+            let word = cached_plain_own_word(owner, key, layout, value_slot)?;
+            word.trace_named_payload("prototype");
+            Some(NamedCachedPayload::Word(word))
+        }
+        PrototypeCacheTerminal::MissingNull {
+            layout,
+            prototype_slot,
+        } => {
+            (owner.semantic_layout_id() == layout).then_some(())?;
+            let prototype = owner.hot_properties().slot_word(prototype_slot as usize)?;
+            prototype.object_or_null_ptr()?.is_none().then_some(())?;
+            Some(NamedCachedPayload::Value(Value::Undefined))
+        }
+        PrototypeCacheTerminal::MissingObjectPrototype { layout, generation } => {
+            (owner.semantic_layout_id() == layout).then_some(())?;
+            (owner.hot_properties().position_rev("\0prototype").is_none()).then_some(())?;
+            (crate::builtins::intrinsic_override_generation() == generation).then_some(())?;
+            Some(NamedCachedPayload::Value(Value::Undefined))
+        }
+    }
+}
+
+fn terminal_owner<'a>(
+    receiver: &'a crate::value::ObjectData,
+    owners: &'a [*const crate::value::ObjectData; 4],
+    depth: u8,
+) -> Option<&'a crate::value::ObjectData> {
+    if depth == 0 {
+        Some(receiver)
+    } else {
+        unsafe { owners[usize::from(depth) - 1].as_ref() }
+    }
 }
 
 pub(crate) fn get_named_cached_prototype_guard(
@@ -351,13 +432,14 @@ fn prototype_entry_guard(
             retained[depth - 1].as_deref()?
         };
         prototype_owner_is_plain(owner).then_some(())?;
-        let slot = owner.hot_properties().slot_word(link.prototype_slot as usize)?;
+        let slot = owner
+            .hot_properties()
+            .slot_word(link.prototype_slot as usize)?;
         let prototype = link.prototype.upgrade()?;
         prototype_owner_is_plain(&prototype).then_some(())?;
-        let expected_word = crate::tagged_value::TaggedValue::object_ptr(
-            std::rc::Rc::as_ptr(&prototype) as usize,
-        )?
-        .bits();
+        let expected_word =
+            crate::tagged_value::TaggedValue::object_ptr(std::rc::Rc::as_ptr(&prototype) as usize)?
+                .bits();
         let layout = prototype.layout_guard().0;
         guards[depth] = crate::native_property::PrototypeGuardLink::new(
             slot,
@@ -377,12 +459,15 @@ fn finish_prototype_guard(
     retained: &[Option<std::rc::Rc<crate::value::ObjectData>>; 4],
     guards: &[crate::native_property::PrototypeGuardLink; 4],
 ) -> Option<crate::native_property::GuardedPropertySlot> {
+    let PrototypeCacheTerminal::Data { value_slot } = entry.terminal else {
+        return None;
+    };
     let depth = usize::from(entry.depth);
     let owner = retained[depth.checked_sub(1)?].as_deref()?;
     let owner_layout = entry.links[usize::from(entry.depth).checked_sub(1)?]
         .as_ref()?
         .prototype_layout;
-    let slot = owner.guarded_plain_slot(owner_layout, entry.value_slot, key)?;
+    let slot = owner.guarded_plain_slot(owner_layout, value_slot, key)?;
     slot.with_prototype_chain(
         (receiver.layout_guard().0, entry.receiver_layout),
         &guards[..depth],
@@ -405,7 +490,9 @@ fn cacheable_immediate_prototype(
         if shadows_named_property(owner, key) {
             return None;
         }
-        let prototype_slot = owner.hot_properties().position_rev("\0prototype")?;
+        let Some(prototype_slot) = owner.hot_properties().position_rev("\0prototype") else {
+            return cacheable_default_object_missing(receiver, key, depth, links, owner);
+        };
         let Value::Object(prototype) = owner.hot_properties().slot_value(prototype_slot)? else {
             return None;
         };
@@ -421,12 +508,92 @@ fn cacheable_immediate_prototype(
                 receiver_layout: receiver.semantic_layout_id(),
                 depth: u8::try_from(depth + 1).ok()?,
                 links,
-                value_slot,
+                terminal: PrototypeCacheTerminal::Data { value_slot },
             });
         }
         retained[depth] = Some(prototype);
     }
     None
+}
+
+fn cacheable_missing_prototype(
+    receiver: &crate::value::ObjectData,
+    key: &str,
+) -> Option<PrototypeNamedCache> {
+    let mut links = std::array::from_fn(|_| None);
+    let mut retained = std::array::from_fn::<_, 4, _>(|_| None);
+    for depth in 0..=links.len() {
+        let owner = if depth == 0 {
+            receiver
+        } else {
+            retained[depth - 1].as_deref()?
+        };
+        prototype_owner_is_plain(owner).then_some(())?;
+        (!shadows_named_property(owner, key)).then_some(())?;
+        let prototype_slot = owner.hot_properties().position_rev("\0prototype")?;
+        match owner.hot_properties().slot_value(prototype_slot)? {
+            Value::Null => {
+                return Some(missing_cache(
+                    receiver,
+                    depth,
+                    links,
+                    owner,
+                    prototype_slot,
+                )?)
+            }
+            Value::Object(prototype) if depth < links.len() => {
+                links[depth] = Some(PrototypeLink {
+                    prototype_slot: u32::try_from(prototype_slot).ok()?,
+                    prototype: std::rc::Rc::downgrade(&prototype),
+                    prototype_layout: prototype.semantic_layout_id(),
+                });
+                retained[depth] = Some(prototype);
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+fn missing_cache(
+    receiver: &crate::value::ObjectData,
+    depth: usize,
+    links: [Option<PrototypeLink>; 4],
+    terminal: &crate::value::ObjectData,
+    prototype_slot: usize,
+) -> Option<PrototypeNamedCache> {
+    Some(PrototypeNamedCache {
+        receiver_layout: receiver.semantic_layout_id(),
+        depth: u8::try_from(depth).ok()?,
+        links,
+        terminal: PrototypeCacheTerminal::MissingNull {
+            layout: terminal.semantic_layout_id(),
+            prototype_slot: u32::try_from(prototype_slot).ok()?,
+        },
+    })
+}
+
+fn cacheable_default_object_missing(
+    receiver: &crate::value::ObjectData,
+    key: &str,
+    depth: usize,
+    links: [Option<PrototypeLink>; 4],
+    terminal: &crate::value::ObjectData,
+) -> Option<PrototypeNamedCache> {
+    let generation = crate::builtins::intrinsic_override_generation();
+    matches!(
+        crate::builtins::property(crate::ops::Builtin::ObjectPrototype, key),
+        Value::Undefined
+    )
+    .then_some(PrototypeNamedCache {
+        receiver_layout: receiver.semantic_layout_id(),
+        depth: u8::try_from(depth).ok()?,
+        links,
+        terminal: PrototypeCacheTerminal::MissingObjectPrototype {
+            layout: terminal.semantic_layout_id(),
+            generation,
+        },
+    })
 }
 
 fn prototype_owner_is_plain(object: &crate::value::ObjectData) -> bool {
@@ -453,7 +620,10 @@ fn install_prototype_cache(cache: &std::cell::Cell<u64>, entry: PrototypeNamedCa
         }
         let site = cache as *const _ as usize;
         let current = prototype_cache_index(cache.get()).filter(|index| {
-            caches.get(*index).and_then(Option::as_ref).is_some_and(|set| set.site == site)
+            caches
+                .get(*index)
+                .and_then(Option::as_ref)
+                .is_some_and(|set| set.site == site)
         });
         let start = site.wrapping_mul(0x9e37_79b1) & (PROTOTYPE_CACHE_SLOTS - 1);
         let index = current.unwrap_or_else(|| {
@@ -462,11 +632,13 @@ fn install_prototype_cache(cache: &std::cell::Cell<u64>, entry: PrototypeNamedCa
                 .find(|index| caches[*index].as_ref().is_none_or(|set| set.site == site))
                 .unwrap_or(start)
         });
-        let set = caches[index].get_or_insert_with(|| Box::new(PrototypeNamedCacheSet {
-            site,
-            entries: std::array::from_fn(|_| None),
-            next_replace: 0,
-        }));
+        let set = caches[index].get_or_insert_with(|| {
+            Box::new(PrototypeNamedCacheSet {
+                site,
+                entries: std::array::from_fn(|_| None),
+                next_replace: 0,
+            })
+        });
         if set.site != site {
             **set = PrototypeNamedCacheSet {
                 site,
@@ -477,9 +649,11 @@ fn install_prototype_cache(cache: &std::cell::Cell<u64>, entry: PrototypeNamedCa
         let slot = set
             .entries
             .iter()
-            .position(|cached| cached.as_ref().is_some_and(|cached| {
-                cached.receiver_layout == entry.receiver_layout
-            }))
+            .position(|cached| {
+                cached
+                    .as_ref()
+                    .is_some_and(|cached| cached.receiver_layout == entry.receiver_layout)
+            })
             .or_else(|| set.entries.iter().position(Option::is_none))
             .unwrap_or_else(|| {
                 let slot = usize::from(set.next_replace) % set.entries.len();
@@ -817,9 +991,7 @@ pub(crate) fn proven_own_data(value: &Value, key: &str) -> Option<Value> {
         let own = properties.hot_properties().slot_value(slot)?;
         if matches!(
             own,
-            Value::Builtin(
-                Builtin::IntlNumberFormatFormat | Builtin::IntlDateTimeFormatFormat
-            )
+            Value::Builtin(Builtin::IntlNumberFormatFormat | Builtin::IntlDateTimeFormatFormat)
         ) && key == "format"
         {
             return None;
@@ -847,9 +1019,7 @@ pub(crate) fn proven_own_data(value: &Value, key: &str) -> Option<Value> {
     if key == "format"
         && matches!(
             own,
-            Value::Builtin(
-                Builtin::IntlNumberFormatFormat | Builtin::IntlDateTimeFormatFormat
-            )
+            Value::Builtin(Builtin::IntlNumberFormatFormat | Builtin::IntlDateTimeFormatFormat)
         )
     {
         // Reading Intl's format accessor must capture the formatter receiver.
@@ -872,14 +1042,20 @@ pub(crate) fn proven_function_own_data(
     let mut own = None;
     let mut metadata = None;
     for (name, value) in properties.iter().rev() {
-        if crate::builtins::is_deleted_key_for(name, key) { return None; }
-        if own.is_none() && name == key { own = Some(value.clone()); }
+        if crate::builtins::is_deleted_key_for(name, key) {
+            return None;
+        }
+        if own.is_none() && name == key {
+            own = Some(value.clone());
+        }
         if metadata.is_none() && crate::builtins::is_descriptor_key_for(name, key) {
             metadata = Some(value.clone());
         }
     }
     let own = own?;
-    if metadata.as_ref().is_some_and(accessor_descriptor) { return None; }
+    if metadata.as_ref().is_some_and(accessor_descriptor) {
+        return None;
+    }
     Some(property_value(&own))
 }
 
@@ -887,10 +1063,7 @@ pub(crate) fn proven_function_own_data(
 /// property vector remains authoritative through the deletion and descriptor
 /// checks; a failed proof must use the complete lookup path.
 #[inline(always)]
-pub(crate) fn proven_own_slot(
-    object: &crate::value::ObjectData,
-    key: &str,
-) -> Option<usize> {
+pub(crate) fn proven_own_slot(object: &crate::value::ObjectData, key: &str) -> Option<usize> {
     let plain_metadata = object.cache_plain_metadata_state().is_some();
     if !plain_metadata && object.has_deleted_key(key) {
         return None;
@@ -910,9 +1083,7 @@ pub(crate) fn proven_own_slot(
     if own.plain_tagged_bits().is_none() {
         return None;
     }
-    if key == "format"
-        && own.is_intl_format_builtin()
-    {
+    if key == "format" && own.is_intl_format_builtin() {
         return None;
     }
     Some(slot)
@@ -1125,10 +1296,7 @@ fn object_inherited_property_result(
             _ => None,
         };
         if let Some(method) = method {
-            return Some(Ok(crate::vm::bind_method(
-                receiver,
-                Value::Builtin(method),
-            )));
+            return Some(Ok(crate::vm::bind_method(receiver, Value::Builtin(method))));
         }
     }
     Some(get_property_with_receiver(&prototype, key, receiver))
@@ -1646,7 +1814,9 @@ fn is_accessor_builtin(builtin: Builtin) -> bool {
 
 #[cfg(test)]
 mod proven_own_data_tests {
-    use super::{get_named_cached_payload, get_named_property_result, proven_own_data, proven_own_slot};
+    use super::{
+        get_named_cached_payload, get_named_property_result, proven_own_data, proven_own_slot,
+    };
     use crate::value::{BindingCell, ObjectData, Value};
     use std::rc::Rc;
 
