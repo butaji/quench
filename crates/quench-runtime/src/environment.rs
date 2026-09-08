@@ -1052,6 +1052,26 @@ impl Environment {
         }))
     }
 
+    /// Borrow an array from a proven non-cell slot for one non-reentrant
+    /// region. The environment owns the tagged word throughout the closure;
+    /// callers may not allocate, invoke JavaScript, or expose the reference.
+    #[inline(always)]
+    pub(crate) fn with_proven_array<R>(
+        &self,
+        slot: u16,
+        use_array: impl FnOnce(&crate::value::ArrayData) -> R,
+    ) -> Option<R> {
+        let bits = self.proven_tagged_bits(slot)?;
+        let crate::tagged_value::DecodedValue::ArrayPtr(pointer) =
+            crate::tagged_value::TaggedValue::from_bits(bits).decode()
+        else {
+            return None;
+        };
+        Some(use_array(unsafe {
+            &*(pointer as *const crate::value::ArrayData)
+        }))
+    }
+
     /// Commit a tagged word into a proven ordinary local slot. The register
     /// file performs the retain/release edge; cell-backed and invalidated
     /// bindings return false so callers use the complete store path.
