@@ -384,6 +384,48 @@ const AARCH64_ARRAY_LOOP_BYTES: [u8; 100] = {
     out
 };
 
+/// Two-array dense numeric copy ABI:
+/// `{source,destination,len,index,interrupt}`. Both backings and the complete
+/// range are proven before entry, so the native loop performs ordered scalar
+/// loads/stores, publishes progress, polls, and branches without a Rust
+/// operation bridge.
+const AARCH64_ARRAY_COPY_LOOP_BYTES: [u8; 80] = {
+    const LOOP_HEADER: i32 = 8;
+    const DONE: i32 = 64;
+    const INTERRUPTED: i32 = 72;
+    const SOURCE_OFFSET: u16 = 0;
+    const DESTINATION_OFFSET: u16 = 8;
+    const LENGTH_OFFSET: u16 = 16;
+    const INDEX_OFFSET: u16 = 24;
+    const INTERRUPT_OFFSET: u16 = 32;
+    let mut out = [0; 80];
+    put32(&mut out, 0, aarch64_ldr_x(1, 0, INDEX_OFFSET));
+    put32(&mut out, 4, aarch64_ldr_x(2, 0, LENGTH_OFFSET));
+    put32(&mut out, 8, aarch64_cmp_x(1, 2));
+    put32(
+        &mut out,
+        12,
+        aarch64_b_cond((DONE - 12) / 4, AARCH64_CONDITION_UNSIGNED_HIGH_OR_SAME),
+    );
+    put32(&mut out, 16, aarch64_ldr_x(3, 0, SOURCE_OFFSET));
+    put32(&mut out, 20, aarch64_ldr_x(4, 0, DESTINATION_OFFSET));
+    put32(&mut out, 24, aarch64_add_x_shifted(5, 3, 1, 3));
+    put32(&mut out, 28, aarch64_ldr_d(0, 5, 0));
+    put32(&mut out, 32, aarch64_add_x_shifted(6, 4, 1, 3));
+    put32(&mut out, 36, aarch64_str_d(0, 6, 0));
+    put32(&mut out, 40, aarch64_add_x_imm(1, 1, 1));
+    put32(&mut out, 44, aarch64_str_x(1, 0, INDEX_OFFSET));
+    put32(&mut out, 48, aarch64_ldr_x(7, 0, INTERRUPT_OFFSET));
+    put32(&mut out, 52, aarch64_ldr_byte(7, 7, 0));
+    put32(&mut out, 56, aarch64_cbnz_w(7, (INTERRUPTED - 56) / 4));
+    put32(&mut out, 60, aarch64_b_imm26((LOOP_HEADER - 60) / 4));
+    put32(&mut out, 64, aarch64_mov_w_imm0(NATIVE_STATUS_COMPLETED));
+    put32(&mut out, 68, aarch64_ret());
+    put32(&mut out, 72, aarch64_mov_w_imm0(NATIVE_STATUS_INTERRUPTED));
+    put32(&mut out, 76, aarch64_ret());
+    out
+};
+
 // The affine loop is supplied by the Rust object-artifact pipeline. The
 // legacy catalog view remains a non-callable return until that exact generated
 // identity is selected; its interruptible ABI validator rejects this fallback.

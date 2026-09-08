@@ -5322,6 +5322,11 @@ impl NativeRegionPlan {
                     }
                     return crate::vm::execute_region_fallback(&mut region);
                 }
+                crate::stencil_select::RegionAbi::ArrayCopyLoop => {
+                    return Err(NativeDispatchError::Physical(
+                        "array-copy ABI requires its typed entry".into(),
+                    ));
+                }
                 crate::stencil_select::RegionAbi::Bridge => {}
                 crate::stencil_select::RegionAbi::ScalarF64Binary
                 | crate::stencil_select::RegionAbi::ScalarF64Unary
@@ -5481,6 +5486,7 @@ enum NativeAdmission {
     LocalProperty(Rc<RefCell<crate::stencil_fusion::NativeLocalPropertyPlan>>),
     NumericDag(Rc<RefCell<crate::stencil_numeric_dag::NativeNumericDagPlan>>),
     DenseUpdate(Rc<RefCell<crate::stencil_dense_array_update::NativeDenseUpdatePlan>>),
+    DenseCopy(Rc<RefCell<crate::stencil_dense_array_copy::NativeDenseCopyPlan>>),
     PropertyNumeric(Rc<RefCell<crate::stencil_property_numeric::PropertyNumericPlan>>),
     Move(Rc<RefCell<NativeMovePlan>>),
     LoadLocal(Rc<RefCell<NativeMovePlan>>),
@@ -5516,6 +5522,9 @@ impl AdmissionEntry for NativeAdmission {
             Self::DenseUpdate(_) => shared_value_bytes::<
                 RefCell<crate::stencil_dense_array_update::NativeDenseUpdatePlan>,
             >(),
+            Self::DenseCopy(_) => shared_value_bytes::<
+                RefCell<crate::stencil_dense_array_copy::NativeDenseCopyPlan>,
+            >(),
             Self::PropertyNumeric(_) => shared_value_bytes::<
                 RefCell<crate::stencil_property_numeric::PropertyNumericPlan>,
             >(),
@@ -5545,6 +5554,7 @@ impl std::fmt::Debug for NativeAdmission {
             Self::LocalProperty(_) => "local_property",
             Self::NumericDag(_) => "numeric_dag",
             Self::DenseUpdate(_) => "dense_update",
+            Self::DenseCopy(_) => "dense_copy",
             Self::PropertyNumeric(_) => "property_numeric",
             Self::Move(_) => "move",
             Self::LoadLocal(_) => "load_local",
@@ -5909,6 +5919,23 @@ fn dense_update_admission(
     Some(NativeAdmission::DenseUpdate(Rc::new(RefCell::new(plan))))
 }
 
+fn dense_copy_admission(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    let selection = crate::stencil_dense_array_copy::select_dense_copy(code, entries, cfg, pc)?;
+    let plan = crate::stencil_dense_array_copy::NativeDenseCopyPlan::new(
+        selection,
+        policy,
+        Rc::clone(arena),
+    )?;
+    Some(NativeAdmission::DenseCopy(Rc::new(RefCell::new(plan))))
+}
+
 fn local_property_admission(
     code: CodeView<'_>,
     entries: &[BaselineEntry],
@@ -6257,6 +6284,10 @@ fn collect_admissions_at(
         pc,
         dense_update_admission(code, entries, cfg, pc, policy, arena),
     );
+    builder.push_optional(
+        pc,
+        dense_copy_admission(code, entries, cfg, pc, policy, arena),
+    );
     collect_numeric_admissions(builder, entries, cfg, pc, entry, code, policy, arena);
     builder.push_optional(pc, add_chain_admission(entries, cfg, pc, policy, arena));
     builder.push_optional(
@@ -6361,13 +6392,14 @@ impl BaselinePlan {
     fn has_eager_return_entry(&self) -> bool {
         let dag = self.numeric_dag_at(0).is_some();
         let dense = self.dense_update_at(0).is_some();
+        let copy = self.dense_copy_at(0).is_some();
         let numeric = self
             .native_local_binary_at(0)
             .is_some_and(|plan| plan.borrow().selection().returns);
         let property = self
             .native_local_property_at(0)
             .is_some_and(|plan| plan.borrow().returns());
-        dag || dense || numeric || property
+        dag || dense || copy || numeric || property
     }
 
     fn native_handle<T>(
@@ -6414,6 +6446,12 @@ impl BaselinePlan {
         dense_update_at,
         DenseUpdate,
         crate::stencil_dense_array_update::NativeDenseUpdatePlan
+    );
+    typed_admission_accessors!(
+        dense_copy_handle_at,
+        dense_copy_at,
+        DenseCopy,
+        crate::stencil_dense_array_copy::NativeDenseCopyPlan
     );
     typed_admission_accessors!(
         property_numeric_handle_at,
@@ -6535,6 +6573,11 @@ impl OptimizingEntry<'_> {
         dense_update,
         DenseUpdate,
         crate::stencil_dense_array_update::NativeDenseUpdatePlan
+    );
+    optimizing_admission_accessors!(
+        dense_copy,
+        DenseCopy,
+        crate::stencil_dense_array_copy::NativeDenseCopyPlan
     );
     optimizing_admission_accessors!(
         property_numeric,
