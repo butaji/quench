@@ -4976,6 +4976,7 @@ pub(crate) fn validate_physical_view(
             | crate::stencil_select::RegionAbi::NestedXorLoop
             | crate::stencil_select::RegionAbi::SwitchReductionLoop
             | crate::stencil_select::RegionAbi::MatrixReductionLoop
+            | crate::stencil_select::RegionAbi::TypedLaneLoop
             | crate::stencil_select::RegionAbi::NumericI32BitwiseLoop
             | crate::stencil_select::RegionAbi::NumericI32PairLoop
             | crate::stencil_select::RegionAbi::NumericF64MixedLoop
@@ -5026,6 +5027,7 @@ fn raw_region_declares_allocation(contract: crate::stencil_select::RegionContrac
             | crate::stencil_select::RegionAbi::NestedXorLoop
             | crate::stencil_select::RegionAbi::SwitchReductionLoop
             | crate::stencil_select::RegionAbi::MatrixReductionLoop
+            | crate::stencil_select::RegionAbi::TypedLaneLoop
             | crate::stencil_select::RegionAbi::NumericI32BitwiseLoop
             | crate::stencil_select::RegionAbi::NumericI32PairLoop
             | crate::stencil_select::RegionAbi::NumericF64MixedLoop
@@ -5316,6 +5318,7 @@ impl NativeRegionPlan {
                     | crate::stencil_select::RegionAbi::NestedXorLoop
                     | crate::stencil_select::RegionAbi::SwitchReductionLoop
                     | crate::stencil_select::RegionAbi::MatrixReductionLoop
+                    | crate::stencil_select::RegionAbi::TypedLaneLoop
                     | crate::stencil_select::RegionAbi::NumericI32BitwiseLoop
                     | crate::stencil_select::RegionAbi::NumericI32PairLoop
                     | crate::stencil_select::RegionAbi::NumericF64MixedLoop
@@ -5404,6 +5407,11 @@ impl NativeRegionPlan {
                 crate::stencil_select::RegionAbi::MatrixReductionLoop => {
                     return Err(NativeDispatchError::Physical(
                         "matrix-reduction loop ABI requires its typed entry".into(),
+                    ));
+                }
+                crate::stencil_select::RegionAbi::TypedLaneLoop => {
+                    return Err(NativeDispatchError::Physical(
+                        "typed-lane loop ABI requires its typed entry".into(),
                     ));
                 }
                 crate::stencil_select::RegionAbi::ArrayCopyLoop => {
