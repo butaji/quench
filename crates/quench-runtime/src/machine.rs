@@ -5493,6 +5493,7 @@ enum NativeAdmission {
     DenseUpdate(Rc<RefCell<crate::stencil_dense_array_update::NativeDenseUpdatePlan>>),
     DenseCopy(Rc<RefCell<crate::stencil_dense_array_copy::NativeDenseCopyPlan>>),
     Reduction(Rc<RefCell<crate::stencil_ordered_reduction::NativeReductionPlan>>),
+    I32Pattern(Rc<RefCell<crate::stencil_i32_pattern::NativeI32PatternPlan>>),
     PropertyNumeric(Rc<RefCell<crate::stencil_property_numeric::PropertyNumericPlan>>),
     Move(Rc<RefCell<NativeMovePlan>>),
     LoadLocal(Rc<RefCell<NativeMovePlan>>),
@@ -5534,6 +5535,9 @@ impl AdmissionEntry for NativeAdmission {
             Self::Reduction(_) => shared_value_bytes::<
                 RefCell<crate::stencil_ordered_reduction::NativeReductionPlan>,
             >(),
+            Self::I32Pattern(_) => shared_value_bytes::<
+                RefCell<crate::stencil_i32_pattern::NativeI32PatternPlan>,
+            >(),
             Self::PropertyNumeric(_) => shared_value_bytes::<
                 RefCell<crate::stencil_property_numeric::PropertyNumericPlan>,
             >(),
@@ -5565,6 +5569,7 @@ impl std::fmt::Debug for NativeAdmission {
             Self::DenseUpdate(_) => "dense_update",
             Self::DenseCopy(_) => "dense_copy",
             Self::Reduction(_) => "reduction",
+            Self::I32Pattern(_) => "i32_pattern",
             Self::PropertyNumeric(_) => "property_numeric",
             Self::Move(_) => "move",
             Self::LoadLocal(_) => "load_local",
@@ -5963,6 +5968,23 @@ fn reduction_admission(
     Some(NativeAdmission::Reduction(Rc::new(RefCell::new(plan))))
 }
 
+fn i32_pattern_admission(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    let selection = crate::stencil_i32_pattern::select_i32_pattern(code, entries, cfg, pc)?;
+    let plan = crate::stencil_i32_pattern::NativeI32PatternPlan::new(
+        selection,
+        policy,
+        Rc::clone(arena),
+    )?;
+    Some(NativeAdmission::I32Pattern(Rc::new(RefCell::new(plan))))
+}
+
 fn local_property_admission(
     code: CodeView<'_>,
     entries: &[BaselineEntry],
@@ -6319,6 +6341,10 @@ fn collect_admissions_at(
         pc,
         reduction_admission(code, entries, cfg, pc, policy, arena),
     );
+    builder.push_optional(
+        pc,
+        i32_pattern_admission(code, entries, cfg, pc, policy, arena),
+    );
     collect_numeric_admissions(builder, entries, cfg, pc, entry, code, policy, arena);
     builder.push_optional(pc, add_chain_admission(entries, cfg, pc, policy, arena));
     builder.push_optional(
@@ -6425,13 +6451,14 @@ impl BaselinePlan {
         let dense = self.dense_update_at(0).is_some();
         let copy = self.dense_copy_at(0).is_some();
         let reduction = self.reduction_at(0).is_some();
+        let i32_pattern = self.i32_pattern_at(0).is_some();
         let numeric = self
             .native_local_binary_at(0)
             .is_some_and(|plan| plan.borrow().selection().returns);
         let property = self
             .native_local_property_at(0)
             .is_some_and(|plan| plan.borrow().returns());
-        dag || dense || copy || reduction || numeric || property
+        dag || dense || copy || reduction || i32_pattern || numeric || property
     }
 
     fn native_handle<T>(
@@ -6490,6 +6517,12 @@ impl BaselinePlan {
         reduction_at,
         Reduction,
         crate::stencil_ordered_reduction::NativeReductionPlan
+    );
+    typed_admission_accessors!(
+        i32_pattern_handle_at,
+        i32_pattern_at,
+        I32Pattern,
+        crate::stencil_i32_pattern::NativeI32PatternPlan
     );
     typed_admission_accessors!(
         property_numeric_handle_at,
@@ -6621,6 +6654,11 @@ impl OptimizingEntry<'_> {
         reduction,
         Reduction,
         crate::stencil_ordered_reduction::NativeReductionPlan
+    );
+    optimizing_admission_accessors!(
+        i32_pattern,
+        I32Pattern,
+        crate::stencil_i32_pattern::NativeI32PatternPlan
     );
     optimizing_admission_accessors!(
         property_numeric,
