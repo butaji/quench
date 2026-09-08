@@ -876,9 +876,12 @@ fn numeric_subtract_sort(elements: &mut [Value], compare: Option<&Value>) -> boo
     let Some(Value::Function(function)) = compare else {
         return false;
     };
-    if crate::function_call_fact::numeric_subtract_comparator(function).is_none()
-        || !elements.iter().all(|value| matches!(value, Value::Number(_)))
-    {
+    let Some(crate::function_call_fact::NumericComparatorFact::Subtract) =
+        crate::function_call_fact::numeric_subtract_comparator(function)
+    else {
+        return false;
+    };
+    if !elements.iter().all(|value| matches!(value, Value::Number(_))) {
         return false;
     }
     elements.sort_by(|left, right| {
