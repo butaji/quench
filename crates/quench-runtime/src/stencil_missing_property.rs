@@ -20,6 +20,13 @@ pub(crate) struct NativeMissingPropertyPlan {
     installed: Option<crate::stencil_arena::EntryToken<extern "C" fn() -> u64>>,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum MissingPropertyExecution {
+    Completed(u64),
+    GuardMiss,
+    NotSelected,
+}
+
 impl NativeMissingPropertyPlan {
     pub(crate) fn new(
         selection: MissingPropertySelection,
@@ -49,17 +56,36 @@ impl NativeMissingPropertyPlan {
         code: CodeView<'_>,
         start: usize,
         environment: &crate::environment::Environment,
-    ) -> Option<u64> {
-        let metadata = code.metadata_at(start.checked_add(PROPERTY_OFFSET)?)?;
-        let key = metadata.name.as_deref()?;
+    ) -> MissingPropertyExecution {
+        let Some(metadata) = start
+            .checked_add(PROPERTY_OFFSET)
+            .and_then(|pc| code.metadata_at(pc))
+        else {
+            return MissingPropertyExecution::NotSelected;
+        };
+        if !crate::vm::named_cache_has_missing_terminal(&metadata.named_cache) {
+            return MissingPropertyExecution::NotSelected;
+        }
+        let Some(key) = metadata.name.as_deref() else {
+            return MissingPropertyExecution::NotSelected;
+        };
         let missing = environment.with_proven_object(self.selection.receiver_slot, |object| {
             crate::vm::get_named_cached_missing(object, key, &metadata.named_cache)
-        })?;
-        missing.then_some(())?;
-        let entry = self.entry()?;
-        let lease =
-            crate::stencil_arena::SharedStencilSlab::acquire_owned(&self.owner, entry).ok()?;
-        lease.invoke(|call| call()).ok()
+        });
+        if missing != Some(true) {
+            return MissingPropertyExecution::GuardMiss;
+        }
+        let Some(entry) = self.entry() else {
+            return MissingPropertyExecution::GuardMiss;
+        };
+        let Ok(lease) = crate::stencil_arena::SharedStencilSlab::acquire_owned(&self.owner, entry)
+        else {
+            return MissingPropertyExecution::GuardMiss;
+        };
+        lease
+            .invoke(|call| call())
+            .map(MissingPropertyExecution::Completed)
+            .unwrap_or(MissingPropertyExecution::GuardMiss)
     }
 
     fn entry(&mut self) -> Option<crate::stencil_arena::EntryToken<extern "C" fn() -> u64>> {

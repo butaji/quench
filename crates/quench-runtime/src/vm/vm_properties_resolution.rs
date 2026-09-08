@@ -212,6 +212,30 @@ pub(crate) fn get_named_cached_missing(
     prototype_missing_cache_hit(object, key, layout, cached, site)
 }
 
+pub(crate) fn named_cache_has_missing_terminal(cache: &std::cell::Cell<u64>) -> bool {
+    let cached = cache.get();
+    let Some(index) = prototype_cache_index(cached) else {
+        return false;
+    };
+    let site = cache as *const _ as usize;
+    PROTOTYPE_NAMED_CACHES.with(|caches| {
+        caches
+            .borrow()
+            .get(index)
+            .and_then(Option::as_ref)
+            .filter(|set| set.site == site)
+            .is_some_and(|set| set.entries.iter().flatten().any(is_missing_terminal))
+    })
+}
+
+fn is_missing_terminal(entry: &PrototypeNamedCache) -> bool {
+    matches!(
+        entry.terminal,
+        PrototypeCacheTerminal::MissingNull { .. }
+            | PrototypeCacheTerminal::MissingObjectPrototype { .. }
+    )
+}
+
 #[inline(always)]
 fn named_cached_payload(value: &Value) -> NamedCachedPayload {
     match value {
