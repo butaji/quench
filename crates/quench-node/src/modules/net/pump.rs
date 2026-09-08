@@ -1230,8 +1230,6 @@ fn dispatch_http2_frames(
                     .map(|bytes| u32::from_be_bytes(bytes.try_into().unwrap()))
                     .unwrap_or(0);
                 execute::set_property_in_place(&stream, "rstCode", Value::Number(code as f64));
-                execute::set_property_in_place(&stream, "__traceRst", Value::Number(code as f64));
-                eprintln!("TRACE rst={:?} trace={:?} object={} alias={} set={}", execute::get_property(&stream, "rstCode"), execute::get_property(&stream, "__traceRst"), matches!(stream, Value::Object(_)), matches!(stream, Value::ObjectAlias(_)), execute::set_property_in_place(&stream, "__traceRst2", Value::Number(code as f64)));
                 execute::set_property_in_place(&stream, "destroyed", Value::Boolean(true));
                 // NGHTTP2_CANCEL is the normal peer-side result of an
                 // AbortSignal stream destroy. Node exposes rstCode and close
