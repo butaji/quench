@@ -1023,6 +1023,28 @@ impl Environment {
             .flatten()
     }
 
+    /// Borrow an ordinary object from a proven non-cell slot for one
+    /// non-reentrant operation. The slot retains the object for the closure;
+    /// callers must not allocate, invoke JavaScript, or mutate this frame.
+    #[inline(always)]
+    pub(crate) fn with_proven_object<R>(
+        &self,
+        slot: u16,
+        use_object: impl FnOnce(&crate::value::ObjectData) -> R,
+    ) -> Option<R> {
+        let bits = self.proven_tagged_bits(slot)?;
+        let crate::tagged_value::DecodedValue::ObjectPtr(pointer) =
+            crate::tagged_value::TaggedValue::from_bits(bits).decode()
+        else {
+            return None;
+        };
+        // SAFETY: the proven slot owns this ObjectData for the closure's
+        // duration; the API does not expose the borrowed reference.
+        Some(use_object(unsafe {
+            &*(pointer as *const crate::value::ObjectData)
+        }))
+    }
+
     /// Commit a tagged word into a proven ordinary local slot. The register
     /// file performs the retain/release edge; cell-backed and invalidated
     /// bindings return false so callers use the complete store path.

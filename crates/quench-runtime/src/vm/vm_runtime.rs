@@ -2134,17 +2134,17 @@ pub(crate) fn execute_optimized_code_step_from(
             crate::stencil_fusion::execute_local_property(
                 native,
                 environment,
-                |property, receiver| {
-                    let object = native_property_object(receiver)?;
-                    native_property_bits_plan(property, code, property_pc, object)
-                },
+                |property, object| native_property_bits_plan(property, code, property_pc, object),
             )?
             .commit(registers, environment)
         });
-        if let Some(span) = span {
+        if let Some(committed) = span {
             crate::execution_trace::stencil_observation(code, start, "local_property", true);
             crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
-            return Ok((crate::completion::Completion::Normal, start + span));
+            let completion = committed
+                .completion
+                .unwrap_or(crate::completion::Completion::Normal);
+            return Ok((completion, start + committed.span));
         }
         crate::execution_trace::stencil_observation(code, start, "local_property", false);
         crate::execution_trace::leaf_rejection("optimizing_native_local_property");
@@ -2737,15 +2737,21 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
             let result = crate::stencil_fusion::execute_local_property(
                 native,
                 environment,
-                |property, receiver| {
-                    let object = native_property_object(receiver)?;
-                    native_property_bits_plan(property, code, property_pc, object)
-                },
+                |property, object| native_property_bits_plan(property, code, property_pc, object),
             );
-            if let Some(span) = result.and_then(|result| result.commit(registers, environment)) {
+            if let Some(committed) = result.and_then(|result| result.commit(registers, environment)) {
                 crate::execution_trace::stencil_observation(code, pc, "local_property", true);
                 crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
-                pc += span;
+                #[cfg(test)]
+                crate::test_execution_profile::local_property_route(code, pc, committed.span);
+                if let Some(completion) = committed.completion {
+                    return completion_step_after_transition(
+                        registers,
+                        completion,
+                        pc + committed.span,
+                    );
+                }
+                pc += committed.span;
                 continue;
             }
             crate::execution_trace::stencil_observation(code, pc, "local_property", false);

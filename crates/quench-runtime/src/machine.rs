@@ -63,8 +63,7 @@ fn invoke_f64x3_entry(
 
 const OPTIMIZATION_WARMUP_MULTIPLIER: u32 = 8;
 const BASELINE_RETIREMENT_THRESHOLD: u32 = 32;
-const EAGER_STRAIGHT_LINE_MAX_INSTRUCTIONS: usize =
-    crate::stencil_plan::MAX_BLOCK_VALUES + 2;
+const EAGER_STRAIGHT_LINE_MAX_INSTRUCTIONS: usize = crate::stencil_plan::MAX_BLOCK_VALUES + 2;
 
 // Code stores are isolate-local and never shared across runtime threads. The
 // OnceLock is retained only for the construction cycle: nested FunctionCode
@@ -6033,7 +6032,22 @@ fn select_local_property(
     let selection = select_value_window(code, entries, cfg, pc, |_, graph, operation, live| {
         graph.select_property(operation, live)
     })?;
-    extend_local_store(entries, cfg, pc, selection).or(Some(selection))
+    let selection = extend_local_store(entries, cfg, pc, selection).unwrap_or(selection);
+    extend_local_property_return(entries, cfg, pc, selection).or(Some(selection))
+}
+
+fn extend_local_property_return(
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    selection: crate::stencil_plan::LocalPropertySelection,
+) -> Option<crate::stencil_plan::LocalPropertySelection> {
+    let return_pc = pc.checked_add(usize::from(selection.span))?;
+    let instruction = entries.get(return_pc)?.instruction;
+    (instruction.opcode == crate::ir::Opcode::Return && instruction.a == selection.result.register)
+        .then_some(())?;
+    cfg.region_control(pc, return_pc.checked_add(1)?)?;
+    selection.with_return()
 }
 
 fn select_value_window<T: crate::stencil_plan::RankedSelection>(
@@ -6156,7 +6170,7 @@ fn baseline_osr_entries(code: CodeView<'_>) -> Rc<[u32]> {
 }
 
 fn eager_straight_line_candidate(code: CodeView<'_>) -> bool {
-    use crate::facts::{ControlFlow, OperationEffect};
+    use crate::facts::ControlFlow;
     for pc in 0..code.len().min(EAGER_STRAIGHT_LINE_MAX_INSTRUCTIONS) {
         let Some(instruction) = code.instruction(pc) else {
             return false;
@@ -6164,15 +6178,23 @@ fn eager_straight_line_candidate(code: CodeView<'_>) -> bool {
         if instruction.opcode.control_flow() == ControlFlow::Return {
             return pc > 0;
         }
-        if instruction.opcode.control_flow() != ControlFlow::Next
-            || instruction.opcode.has_effect(OperationEffect::Observable)
-            || instruction.opcode.has_effect(OperationEffect::ReadHeap)
-            || instruction.opcode.has_effect(OperationEffect::WriteHeap)
-        {
+        if !eager_operation_candidate(instruction) {
             return false;
         }
     }
     false
+}
+
+fn eager_operation_candidate(instruction: crate::ir::Instruction) -> bool {
+    use crate::facts::{ControlFlow, OperationEffect};
+    if instruction.opcode.control_flow() != ControlFlow::Next
+        || instruction.opcode.has_effect(OperationEffect::WriteHeap)
+    {
+        return false;
+    }
+    let effect_free = !instruction.opcode.has_effect(OperationEffect::Observable)
+        && !instruction.opcode.has_effect(OperationEffect::ReadHeap);
+    effect_free || instruction.opcode == crate::ir::Opcode::GetN
 }
 
 fn collect_admissions_at(
@@ -6282,9 +6304,14 @@ impl BaselinePlan {
             .map_or(&[], |storage| storage.entries_at(pc))
     }
 
-    fn has_eager_numeric_entry(&self) -> bool {
-        self.native_local_binary_at(0)
-            .is_some_and(|plan| plan.borrow().selection().returns)
+    fn has_eager_return_entry(&self) -> bool {
+        let numeric = self
+            .native_local_binary_at(0)
+            .is_some_and(|plan| plan.borrow().selection().returns);
+        let property = self
+            .native_local_property_at(0)
+            .is_some_and(|plan| plan.borrow().returns());
+        numeric || property
     }
 
     fn native_handle<T>(
@@ -7033,11 +7060,11 @@ impl FunctionCode {
 
     fn eager_baseline_plan(&self) -> Option<Rc<BaselinePlan>> {
         let policy = crate::stencil_policy::current();
-        policy.local_fusions.numeric().then_some(())?;
+        policy.allows_admission().then_some(())?;
         let code = self.code()?;
         eager_straight_line_candidate(code).then_some(())?;
         let plan = Rc::new(BaselinePlan::compile(code, policy));
-        plan.has_eager_numeric_entry().then_some(plan)
+        plan.has_eager_return_entry().then_some(plan)
     }
 
     /// Account one function entry and compile the baseline plan when prior

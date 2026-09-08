@@ -464,15 +464,31 @@ pub(crate) fn region_route(operations: &'static [crate::ir::Opcode]) {
     });
 }
 
-pub(crate) fn local_numeric_route(
-    code: crate::machine::CodeView<'_>,
-    start: usize,
-    span: usize,
-) {
+pub(crate) fn local_numeric_route(code: crate::machine::CodeView<'_>, start: usize, span: usize) {
     update(|profile| {
         let route = (start..start.saturating_add(span))
             .filter_map(|pc| code.instruction(pc))
             .filter(|instruction| local_numeric_route_instruction(*instruction))
+            .map(|instruction| instruction.opcode.name())
+            .collect::<Vec<_>>();
+        if !route.is_empty() && !profile.region_routes.contains(&route) {
+            profile.region_routes.push(route);
+        }
+    });
+}
+
+pub(crate) fn local_property_route(code: crate::machine::CodeView<'_>, start: usize, span: usize) {
+    update(|profile| {
+        let route = (start..start.saturating_add(span))
+            .filter_map(|pc| code.instruction(pc))
+            .filter(|instruction| {
+                matches!(
+                    instruction.opcode,
+                    crate::ir::Opcode::GetN
+                        | crate::ir::Opcode::GetNQuickened
+                        | crate::ir::Opcode::Return
+                )
+            })
             .map(|instruction| instruction.opcode.name())
             .collect::<Vec<_>>();
         if !route.is_empty() && !profile.region_routes.contains(&route) {
