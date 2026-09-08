@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "warmup": 1,
+  "result": { "kind": "number", "value": 1445341 },
+  "plan": {
+    "execution_kind": "native_machine_code",
+    "operation_route": [
+      "LoadLocal", "LoadLocal", "GetN", "Binary", "JumpIfFalse",
+      "LoadLocal", "LoadConst", "Mul", "AddConst", "LoadConst",
+      "Binary", "StoreLocal", "Move", "LoadLocal", "LoadConst", "Binary",
+      "StoreLocal", "Unary", "Jump"
+    ],
+    "fallback": false
+  },
+  "profile": {
+    "residual": { "Return": 1 },
+    "slow": {},
+    "stencils": {
+      "baseline_region": { "entries": 1, "fallbacks": 0 }
+    },
+    "events": {
+      "binding_load": 1,
+      "leaf_hit": 1,
+      "local_word_read": 1,
+      "owned_word_read": 4,
+      "register_file_read": 3
+    }
+  }
+}

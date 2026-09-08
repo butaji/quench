@@ -172,6 +172,19 @@ fn fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/execution_profiles")
 }
 
+fn fixture_names() -> Vec<String> {
+    let mut names = std::fs::read_dir(fixture_root())
+        .expect("execution-profile fixture directory")
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            (entry.path().extension()?.to_str()? == "json")
+                .then(|| entry.path().file_stem()?.to_str().map(str::to_owned))?
+        })
+        .collect::<Vec<_>>();
+    names.sort();
+    names
+}
+
 fn string_counts(input: &BTreeMap<&'static str, u64>) -> BTreeMap<String, u64> {
     input
         .iter()
@@ -298,5 +311,16 @@ mod tests {
         assert_eq!(first.stencils.get("add").unwrap().entries, 1);
         assert_eq!(second.residual_ops.get("Return"), Some(&1));
         assert!(!second.stencils.contains_key("add"));
+    }
+
+    #[test]
+    fn every_json_contract_has_a_complete_standalone_js_case() {
+        let names = fixture_names();
+        assert!(!names.is_empty(), "execution-profile cases must exist");
+        for name in names {
+            let case = ExecutionCase::load(&name);
+            assert!(!case.source().trim().is_empty(), "empty JS case: {name}");
+            case.assert_standalone();
+        }
     }
 }

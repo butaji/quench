@@ -2523,9 +2523,7 @@ fn ordinary_source_lowering_executes_fused_indexed_numeric_update() {
 }
 
 #[cfg(target_arch = "aarch64")]
-fn affine_i32_source_body() -> (super::FunctionCode, usize) {
-    let source =
-        "function f(s){var x=s.seed;for(var i=0;i<s.n;i++)x=(x*33+7)|0;return x} f({seed:1,n:4});";
+fn affine_i32_source_body(source: &str) -> (super::FunctionCode, usize) {
     let program = crate::reduce::reduce_source(source).expect("affine source lowers");
     let record =
         crate::stencil_select::select_region(crate::stencil_select::affine_i32_loop_region_key())
@@ -2590,9 +2588,11 @@ fn affine_i32_environment(
 #[cfg(all(target_arch = "aarch64", quench_generated_stencil_artifacts))]
 #[test]
 fn ordinary_source_executes_generated_affine_i32_loop_region() {
+    let case = crate::test_execution_profile::ExecutionCase::load("affine_i32_loop");
+    case.assert_standalone();
     let key = crate::stencil_select::affine_i32_loop_region_key();
     let record = crate::stencil_select::select_region(key).expect("affine declaration");
-    let (function, pc) = affine_i32_source_body();
+    let (function, pc) = affine_i32_source_body(case.source());
     let code = function.code().expect("linked affine function");
     let entries = super::baseline_entries(code);
     let windows = (0..entries.len())
@@ -2627,7 +2627,8 @@ fn ordinary_source_executes_generated_affine_i32_loop_region() {
     assert_eq!(region.borrow().key_for_test(), key);
     let mut registers =
         crate::register_file::RegisterFile::with_undefined(usize::from(code.register_count()));
-    let completion = crate::vm::execute_baseline_code_from(
+    assert_eq!(case.warmup(), 1, "this runner performs one declared warmup");
+    crate::vm::execute_baseline_code_from(
         code,
         &plan,
         pc,
@@ -2635,11 +2636,32 @@ fn ordinary_source_executes_generated_affine_i32_loop_region() {
         &crate::vm::current_context_or_default(),
         affine_i32_environment(code, pc, 1.0, 4.0),
     )
-    .expect("normal driver executes affine loop")
-    .0;
+    .expect("affine loop warmup");
+    let (completion, profile) = crate::test_execution_profile::capture(|| {
+        crate::vm::execute_baseline_code_from(
+            code,
+            &plan,
+            pc,
+            &mut registers,
+            &crate::vm::current_context_or_default(),
+            affine_i32_environment(code, pc, 1.0, 4.0),
+        )
+        .expect("normal driver executes affine loop")
+        .0
+    });
     assert_eq!(
         completion,
         crate::completion::Completion::Return(super::Value::Number(1_445_341.0))
+    );
+    case.assert(&super::Value::Number(1_445_341.0), &profile);
+    let operation_route = record
+        .operations
+        .iter()
+        .map(|opcode| opcode.name())
+        .collect::<Vec<_>>();
+    case.assert_plan(
+        crate::test_execution_profile::ExecutionKind::NativeMachineCode,
+        &operation_route,
     );
     assert!(region.borrow().last_native_execution());
     assert!(region

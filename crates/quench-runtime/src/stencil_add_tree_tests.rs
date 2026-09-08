@@ -82,9 +82,13 @@ fn ordinary_source_add_tree_executes_native_and_guarded_fallback() {
         };
         assert_eq!(numeric.0, Completion::Return(Value::Number(7.0)));
         case.assert(&Value::Number(7.0), &profile);
+        let route = match numeric.4 {
+            crate::stencil_plan::LocalNumericInputs::AddChain { .. } => ["Add", "Add", "Return"],
+            _ => panic!("expected selected add-chain contract"),
+        };
         case.assert_plan(
             crate::test_execution_profile::ExecutionKind::NativeMachineCode,
-            &["add", "add", "return"],
+            &route,
         );
         assert_eq!(numeric.1, 1);
         #[cfg(quench_generated_stencil_artifacts)]
