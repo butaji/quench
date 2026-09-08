@@ -63,7 +63,8 @@ fn invoke_f64x3_entry(
 
 const OPTIMIZATION_WARMUP_MULTIPLIER: u32 = 8;
 const BASELINE_RETIREMENT_THRESHOLD: u32 = 32;
-const EAGER_STRAIGHT_LINE_MAX_INSTRUCTIONS: usize = crate::stencil_plan::MAX_BLOCK_VALUES + 2;
+const EAGER_STRAIGHT_LINE_MAX_INSTRUCTIONS: usize =
+    crate::stencil_numeric_dag::MAX_DAG_INSTRUCTIONS;
 
 // Code stores are isolate-local and never shared across runtime threads. The
 // OnceLock is retained only for the construction cycle: nested FunctionCode
@@ -5478,6 +5479,7 @@ enum NativeAdmission {
     LocalBinary(Rc<RefCell<crate::stencil_fusion::NativeLocalBinaryPlan>>),
     LocalPredicate(Rc<RefCell<crate::stencil_fusion::NativeLocalPredicatePlan>>),
     LocalProperty(Rc<RefCell<crate::stencil_fusion::NativeLocalPropertyPlan>>),
+    NumericDag(Rc<RefCell<crate::stencil_numeric_dag::NativeNumericDagPlan>>),
     PropertyNumeric(Rc<RefCell<crate::stencil_property_numeric::PropertyNumericPlan>>),
     Move(Rc<RefCell<NativeMovePlan>>),
     LoadLocal(Rc<RefCell<NativeMovePlan>>),
@@ -5507,6 +5509,9 @@ impl AdmissionEntry for NativeAdmission {
             Self::LocalProperty(_) => {
                 shared_value_bytes::<RefCell<crate::stencil_fusion::NativeLocalPropertyPlan>>()
             }
+            Self::NumericDag(_) => {
+                shared_value_bytes::<RefCell<crate::stencil_numeric_dag::NativeNumericDagPlan>>()
+            }
             Self::PropertyNumeric(_) => shared_value_bytes::<
                 RefCell<crate::stencil_property_numeric::PropertyNumericPlan>,
             >(),
@@ -5534,6 +5539,7 @@ impl std::fmt::Debug for NativeAdmission {
             Self::LocalBinary(_) => "local_binary",
             Self::LocalPredicate(_) => "local_predicate",
             Self::LocalProperty(_) => "local_property",
+            Self::NumericDag(_) => "numeric_dag",
             Self::PropertyNumeric(_) => "property_numeric",
             Self::Move(_) => "move",
             Self::LoadLocal(_) => "load_local",
@@ -5867,6 +5873,20 @@ fn local_binary_admission(
     Some(NativeAdmission::LocalBinary(Rc::new(RefCell::new(plan))))
 }
 
+fn numeric_dag_admission(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    let selection = crate::stencil_numeric_dag::select_numeric_dag_return(code, entries, cfg, pc)?;
+    let plan =
+        crate::stencil_numeric_dag::NativeNumericDagPlan::new(selection, policy, Rc::clone(arena))?;
+    Some(NativeAdmission::NumericDag(Rc::new(RefCell::new(plan))))
+}
+
 fn local_property_admission(
     code: CodeView<'_>,
     entries: &[BaselineEntry],
@@ -6187,9 +6207,13 @@ fn eager_straight_line_candidate(code: CodeView<'_>) -> bool {
 
 fn eager_operation_candidate(instruction: crate::ir::Instruction) -> bool {
     use crate::facts::{ControlFlow, OperationEffect};
-    if instruction.opcode.control_flow() != ControlFlow::Next
-        || instruction.opcode.has_effect(OperationEffect::WriteHeap)
-    {
+    if instruction.opcode.control_flow() != ControlFlow::Next {
+        return false;
+    }
+    if instruction.opcode == crate::ir::Opcode::StoreLocal {
+        return true;
+    }
+    if instruction.opcode.has_effect(OperationEffect::WriteHeap) {
         return false;
     }
     let effect_free = !instruction.opcode.has_effect(OperationEffect::Observable)
@@ -6209,6 +6233,10 @@ fn collect_admissions_at(
     let entry = entries[pc];
     collect_numeric_admissions(builder, entries, cfg, pc, entry, code, policy, arena);
     builder.push_optional(pc, add_chain_admission(entries, cfg, pc, policy, arena));
+    builder.push_optional(
+        pc,
+        numeric_dag_admission(code, entries, cfg, pc, policy, arena),
+    );
     builder.push_optional(
         pc,
         local_binary_admission(code, entries, cfg, pc, policy, arena),
@@ -6305,13 +6333,14 @@ impl BaselinePlan {
     }
 
     fn has_eager_return_entry(&self) -> bool {
+        let dag = self.numeric_dag_at(0).is_some();
         let numeric = self
             .native_local_binary_at(0)
             .is_some_and(|plan| plan.borrow().selection().returns);
         let property = self
             .native_local_property_at(0)
             .is_some_and(|plan| plan.borrow().returns());
-        numeric || property
+        dag || numeric || property
     }
 
     fn native_handle<T>(
@@ -6346,6 +6375,12 @@ impl BaselinePlan {
         native_local_property_at,
         LocalProperty,
         crate::stencil_fusion::NativeLocalPropertyPlan
+    );
+    typed_admission_accessors!(
+        numeric_dag_handle_at,
+        numeric_dag_at,
+        NumericDag,
+        crate::stencil_numeric_dag::NativeNumericDagPlan
     );
     typed_admission_accessors!(
         property_numeric_handle_at,
@@ -6457,6 +6492,11 @@ impl OptimizingEntry<'_> {
         native_local_property,
         LocalProperty,
         crate::stencil_fusion::NativeLocalPropertyPlan
+    );
+    optimizing_admission_accessors!(
+        numeric_dag,
+        NumericDag,
+        crate::stencil_numeric_dag::NativeNumericDagPlan
     );
     optimizing_admission_accessors!(
         property_numeric,

@@ -262,6 +262,13 @@ impl SlotStore {
     }
 
     #[inline(always)]
+    fn is_direct_slot(&self, index: usize) -> bool {
+        self.bridges()
+            .and_then(|bridges| bridges.get(index))
+            .is_none_or(Option::is_none)
+    }
+
+    #[inline(always)]
     fn tagged_bits(&self, index: usize) -> Option<u64> {
         if self
             .bridges()
@@ -1072,6 +1079,25 @@ impl Environment {
                     store.can_store_tagged_bits(index)
                 })
                 .unwrap_or(false)
+    }
+
+    /// Whether a terminal native region may keep this local only in its
+    /// machine-state graph and omit the otherwise dead environment write.
+    /// Captures, mapped arguments and lexical state make the write observable
+    /// and therefore reject this proof. The caller separately proves that the
+    /// region ends in `Return`, so no later direct eval can inspect the value.
+    #[inline(always)]
+    pub(crate) fn can_elide_terminal_store(&self, slot: u16) -> bool {
+        let index = usize::from(slot);
+        if index < self.captured_len() || self.is_deleted_slot(slot) {
+            return false;
+        }
+        if self.is_immutable_slot(slot) || self.is_uninitialized(slot) {
+            return false;
+        }
+        self.slots_ref()
+            .with_binding(index, SlotStore::is_direct_slot)
+            .unwrap_or(index >= self.len())
     }
 
     pub(crate) fn load_into_fixed<const N: usize>(
