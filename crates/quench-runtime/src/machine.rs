@@ -3108,7 +3108,7 @@ impl std::fmt::Debug for NativeLoadConstPlan {
 }
 
 impl NativeLoadConstPlan {
-    fn new_with_shared(
+    pub(crate) fn new_with_shared(
         bits: u64,
         policy: crate::stencil_policy::ExecutionPolicy,
         shared: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
@@ -5494,6 +5494,7 @@ enum NativeAdmission {
     DenseCopy(Rc<RefCell<crate::stencil_dense_array_copy::NativeDenseCopyPlan>>),
     Reduction(Rc<RefCell<crate::stencil_ordered_reduction::NativeReductionPlan>>),
     I32Pattern(Rc<RefCell<crate::stencil_i32_pattern::NativeI32PatternPlan>>),
+    CallReturn(Rc<RefCell<crate::stencil_call_return::NativeCallReturnPlan>>),
     PropertyNumeric(Rc<RefCell<crate::stencil_property_numeric::PropertyNumericPlan>>),
     Move(Rc<RefCell<NativeMovePlan>>),
     LoadLocal(Rc<RefCell<NativeMovePlan>>),
@@ -5538,6 +5539,9 @@ impl AdmissionEntry for NativeAdmission {
             Self::I32Pattern(_) => shared_value_bytes::<
                 RefCell<crate::stencil_i32_pattern::NativeI32PatternPlan>,
             >(),
+            Self::CallReturn(_) => shared_value_bytes::<
+                RefCell<crate::stencil_call_return::NativeCallReturnPlan>,
+            >(),
             Self::PropertyNumeric(_) => shared_value_bytes::<
                 RefCell<crate::stencil_property_numeric::PropertyNumericPlan>,
             >(),
@@ -5570,6 +5574,7 @@ impl std::fmt::Debug for NativeAdmission {
             Self::DenseCopy(_) => "dense_copy",
             Self::Reduction(_) => "reduction",
             Self::I32Pattern(_) => "i32_pattern",
+            Self::CallReturn(_) => "call_return",
             Self::PropertyNumeric(_) => "property_numeric",
             Self::Move(_) => "move",
             Self::LoadLocal(_) => "load_local",
@@ -5985,6 +5990,22 @@ fn i32_pattern_admission(
     Some(NativeAdmission::I32Pattern(Rc::new(RefCell::new(plan))))
 }
 
+fn call_return_admission(
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    let selection = crate::stencil_call_return::select_call_return(entries, cfg, pc)?;
+    let plan = crate::stencil_call_return::NativeCallReturnPlan::new(
+        selection,
+        policy,
+        Rc::clone(arena),
+    )?;
+    Some(NativeAdmission::CallReturn(Rc::new(RefCell::new(plan))))
+}
+
 fn local_property_admission(
     code: CodeView<'_>,
     entries: &[BaselineEntry],
@@ -6288,6 +6309,9 @@ fn baseline_osr_entries(code: CodeView<'_>) -> Rc<[u32]> {
 }
 
 fn eager_straight_line_candidate(code: CodeView<'_>) -> bool {
+    if eager_call_return_candidate(code) {
+        return true;
+    }
     use crate::facts::ControlFlow;
     for pc in 0..code.len().min(EAGER_STRAIGHT_LINE_MAX_INSTRUCTIONS) {
         let Some(instruction) = code.instruction(pc) else {
@@ -6301,6 +6325,24 @@ fn eager_straight_line_candidate(code: CodeView<'_>) -> bool {
         }
     }
     false
+}
+
+fn eager_call_return_candidate(code: CodeView<'_>) -> bool {
+    let Some(load) = code.instruction(0) else {
+        return false;
+    };
+    let Some(call) = code.instruction(1) else {
+        return false;
+    };
+    let Some(ret) = code.instruction(2) else {
+        return false;
+    };
+    load.opcode == crate::ir::Opcode::LoadLocal
+        && call.opcode == crate::ir::Opcode::Call
+        && call.flags == 0
+        && call.b == load.a
+        && ret.opcode == crate::ir::Opcode::Return
+        && ret.a == call.a
 }
 
 fn eager_operation_candidate(instruction: crate::ir::Instruction) -> bool {
@@ -6344,6 +6386,10 @@ fn collect_admissions_at(
     builder.push_optional(
         pc,
         i32_pattern_admission(code, entries, cfg, pc, policy, arena),
+    );
+    builder.push_optional(
+        pc,
+        call_return_admission(entries, cfg, pc, policy, arena),
     );
     collect_numeric_admissions(builder, entries, cfg, pc, entry, code, policy, arena);
     builder.push_optional(pc, add_chain_admission(entries, cfg, pc, policy, arena));
@@ -6452,13 +6498,14 @@ impl BaselinePlan {
         let copy = self.dense_copy_at(0).is_some();
         let reduction = self.reduction_at(0).is_some();
         let i32_pattern = self.i32_pattern_at(0).is_some();
+        let call_return = self.call_return_at(0).is_some();
         let numeric = self
             .native_local_binary_at(0)
             .is_some_and(|plan| plan.borrow().selection().returns);
         let property = self
             .native_local_property_at(0)
             .is_some_and(|plan| plan.borrow().returns());
-        dag || dense || copy || reduction || i32_pattern || numeric || property
+        dag || dense || copy || reduction || i32_pattern || call_return || numeric || property
     }
 
     fn native_handle<T>(
@@ -6523,6 +6570,12 @@ impl BaselinePlan {
         i32_pattern_at,
         I32Pattern,
         crate::stencil_i32_pattern::NativeI32PatternPlan
+    );
+    typed_admission_accessors!(
+        call_return_handle_at,
+        call_return_at,
+        CallReturn,
+        crate::stencil_call_return::NativeCallReturnPlan
     );
     typed_admission_accessors!(
         property_numeric_handle_at,
@@ -6659,6 +6712,11 @@ impl OptimizingEntry<'_> {
         i32_pattern,
         I32Pattern,
         crate::stencil_i32_pattern::NativeI32PatternPlan
+    );
+    optimizing_admission_accessors!(
+        call_return,
+        CallReturn,
+        crate::stencil_call_return::NativeCallReturnPlan
     );
     optimizing_admission_accessors!(
         property_numeric,
