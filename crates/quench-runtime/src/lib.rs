@@ -171,6 +171,7 @@ mod stencil_numeric_bitwise_loop;
 mod stencil_numeric_dag;
 mod stencil_numeric_floating_loop;
 mod stencil_numeric_integer_loop;
+mod stencil_numeric_independent_loop;
 mod stencil_ordered_reduction;
 pub mod stencil_patch;
 mod stencil_physical;
