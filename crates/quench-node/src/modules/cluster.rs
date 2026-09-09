@@ -1231,6 +1231,83 @@ fn close_worker_net(state: &Rc<RefCell<HostState>>, worker_id: u64) {
     }
 }
 
+/// Complete a primary-side `Worker.disconnect()` after the worker's own
+/// referenced handles have closed. Disconnecting IPC must not tear down those
+/// handles: Node keeps the worker alive until its event loop becomes idle.
+pub(crate) fn finalize_disconnected_workers(state: &Rc<RefCell<HostState>>) {
+    // The disconnect notification is queued by `Worker.disconnect()`. Give
+    // that turn a chance to run before a zero-handle worker is finalized, so
+    // observers always see `disconnect` before `exit`.
+    if !state.borrow().event_loop.microtasks.borrow().is_empty() {
+        return;
+    }
+    let ids = {
+        let guard = state.borrow();
+        guard
+            .cluster
+            .workers
+            .iter()
+            .filter_map(|(id, worker)| {
+                if worker.connected || worker.dead || worker.pending_exit.is_some() {
+                    return None;
+                }
+                let live = guard.net.servers.values().any(|server| {
+                    let server = server.borrow();
+                    server.owner_worker == Some(*id)
+                        && server.listening
+                        && server.refed
+                        && !server.closed
+                }) || guard.net.sockets.values().any(|socket| {
+                    let socket = socket.borrow();
+                    socket.owner_worker == Some(*id)
+                        && socket.refed
+                        && socket.state != crate::modules::net::SocketState::Closed
+                });
+                (!live).then_some(*id)
+            })
+            .collect::<Vec<_>>()
+    };
+    for id in ids {
+        let Some(worker) = state.borrow().cluster.worker_object(id) else {
+            continue;
+        };
+        let has_exit_listener = state
+            .borrow()
+            .cluster
+            .workers
+            .get(&id)
+            .is_some_and(|entry| entry.listeners.contains_key("exit"));
+        if let Some(entry) = state.borrow_mut().cluster.workers.get_mut(&id) {
+            entry.dead = true;
+            if !has_exit_listener {
+                entry.pending_exit = Some((0, None));
+            }
+        }
+        let _ = execute::set_property_in_place(&worker, "state", Value::String("dead".into()));
+        let _ = emit(
+            state,
+            Some(&worker),
+            &[
+                Value::String("exit".into()),
+                Value::Number(0.0),
+                Value::Null,
+            ],
+        );
+        if let Some(module) = state.borrow().cluster.module.clone() {
+            let _ = crate::modules::events::method_emit(
+                state,
+                Some(&module),
+                &[
+                    Value::String("exit".into()),
+                    worker,
+                    Value::Number(0.0),
+                    Value::Null,
+                ],
+            );
+        }
+    }
+}
+
 pub fn close_worker_net_binding(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
@@ -1487,6 +1564,13 @@ pub fn disconnect(
 ) -> Result<Value, VmError> {
     let (id, obj) = worker(state, r)?;
     let child_call = state.borrow().cluster.worker_context == Some(id);
+    let parent_has_disconnect = child_call
+        && state
+            .borrow()
+            .cluster
+            .workers
+            .get(&id)
+            .is_some_and(|worker| worker.listeners.contains_key("disconnect"));
     if let Some(w) = state.borrow_mut().cluster.workers.get_mut(&id) {
         w.connected = false;
         let _ = execute::set_property_in_place(&obj, "exitedAfterDisconnect", Value::Boolean(true));
@@ -1495,13 +1579,43 @@ pub fn disconnect(
             let _ = execute::set_property_in_place(&process, "connected", Value::Boolean(false));
         }
     }
-    let _ = emit(state, Some(&obj), &[Value::String("disconnect".into())]);
-    if let Some(module) = state.borrow().cluster.module.clone() {
-        let _ = crate::modules::events::method_emit(
-            state,
-            Some(&module),
-            &[Value::String("disconnect".into()), obj.clone()],
+    if child_call {
+        if parent_has_disconnect {
+            state.borrow().event_loop.queue_microtask_with_receiver_scope(
+                crate::host::capability(SPEC_CLUSTER_WORKER_EMIT),
+                vec![Value::String("disconnect".into())],
+                obj.clone(),
+                0,
+            );
+        }
+        let _ = emit(state, Some(&obj), &[Value::String("disconnect".into())]);
+        if let Some(module) = state.borrow().cluster.module.clone() {
+            state.borrow().event_loop.queue_microtask_with_receiver_scope(
+                crate::host::capability(SPEC_EVENTS_EMIT),
+                vec![Value::String("disconnect".into()), obj.clone()],
+                module,
+                0,
+            );
+        }
+    } else {
+        // Node delivers Worker disconnect asynchronously.  Queue both the
+        // worker and cluster-level observers so listeners installed after
+        // worker.disconnect() can still observe the transition.
+        let scope = state.borrow().cluster.process_scope();
+        state.borrow().event_loop.queue_microtask_with_receiver_scope(
+            crate::host::capability(SPEC_CLUSTER_WORKER_EMIT),
+            vec![Value::String("disconnect".into())],
+            obj.clone(),
+            scope,
         );
+        if let Some(module) = state.borrow().cluster.module.clone() {
+            state.borrow().event_loop.queue_microtask_with_receiver_scope(
+                crate::host::capability(SPEC_EVENTS_EMIT),
+                vec![Value::String("disconnect".into()), obj.clone()],
+                module,
+                scope,
+            );
+        }
     }
     let previous_context = state.borrow().cluster.worker_context;
     set_worker_mode(state, id, &obj, true);
@@ -1511,16 +1625,24 @@ pub fn disconnect(
     state.borrow_mut().process.exit_code = None;
     state.borrow_mut().cluster.worker_context = previous_context;
     set_worker_mode(state, id, &obj, false);
-    {
+    if child_call {
         let code = child_exit.unwrap_or(if child_result.is_ok() { 0 } else { 1 });
         close_worker_net(state, id);
+        let parent_has_exit = state
+            .borrow()
+            .cluster
+            .workers
+            .get(&id)
+            .is_some_and(|worker| worker.listeners.contains_key("exit"));
         if let Some(w) = state.borrow_mut().cluster.workers.get_mut(&id) {
             w.dead = true;
-            if child_call {
-                // A worker can disconnect while fork() is still re-entering
-                // its script; retain terminal events until the parent adds
-                // listeners after fork() returns.
+            // A worker can disconnect while fork() is still re-entering
+            // its script; retain terminal events until the parent adds
+            // listeners after fork() returns.
+            if !parent_has_disconnect {
                 w.pending_disconnect = true;
+            }
+            if !parent_has_exit {
                 w.pending_exit = Some((code, None));
             }
         }
@@ -1529,26 +1651,30 @@ pub fn disconnect(
         // Restore primary context before dispatch so `emit` selects the
         // parent's listener set rather than the child's.
         state.borrow_mut().cluster.worker_context = None;
-        let _ = emit(
-            state,
-            Some(&obj),
-            &[
-                Value::String("exit".into()),
-                Value::Number(code as f64),
-                Value::Null,
-            ],
-        );
+        if parent_has_exit {
+            state.borrow().event_loop.queue_microtask_with_receiver_scope(
+                crate::host::capability(SPEC_CLUSTER_WORKER_EMIT),
+                vec![
+                    Value::String("exit".into()),
+                    Value::Number(code as f64),
+                    Value::Null,
+                ],
+                obj.clone(),
+                0,
+            );
+        }
         let module = state.borrow().cluster.module.clone();
         if let Some(module) = module {
-            let _ = crate::modules::events::method_emit(
-                state,
-                Some(&module),
-                &[
+            state.borrow().event_loop.queue_microtask_with_receiver_scope(
+                crate::host::capability(SPEC_EVENTS_EMIT),
+                vec![
                     Value::String("exit".into()),
                     obj.clone(),
                     Value::Number(code as f64),
                     Value::Null,
                 ],
+                module,
+                0,
             );
         }
     }
