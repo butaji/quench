@@ -493,6 +493,7 @@ fn accept_one(
             &object,
             crate::modules::http2_protocol::Role::Server,
         );
+        crate::modules::http2_util::decorate_server_session(&object)?;
         // A server sends its initial SETTINGS frame after accepting the
         // transport; the client preface is sent by `http2.connect()`.
         let settings = crate::modules::http2_protocol::Frame::new(
@@ -513,6 +514,15 @@ fn accept_one(
         }
     }
     let tls_server = server_js.clone();
+    if is_http2 {
+        if let Some(server) = server_js.clone() {
+            // A session is established when the accepted HTTP/2 transport
+            // reaches the protocol boundary, before request streams arrive.
+            // Keep the accepted socket as the session identity so control
+            // callbacks and teardown share one host-owned resource.
+            emit_server_scoped(state, &server, "session", vec![object.clone()])?;
+        }
+    }
     if let Some(js) = server_js {
         let previous_scope = state.borrow().cluster.process_scope();
         let previous_event_scope = state.borrow().event_loop.process_scope();
@@ -1303,6 +1313,46 @@ fn dispatch_http2_frames(
                     emit_socket_scoped(state, socket, &stream, "error", vec![error])?;
                 }
                 emit_http2_stream_close(state, socket, &stream, is_server, false)?;
+            }
+            crate::modules::http2_protocol::FrameType::Ping => {
+                let payload = frame.payload.as_slice();
+                if frame.header.flags & 0x1 != 0 {
+                    if !crate::modules::http2_util::complete_http2_ping(
+                        state,
+                        socket_id,
+                        payload,
+                    )? {
+                        let error = quench_runtime::builtins::error(
+                            quench_runtime::ops::Builtin::Error,
+                            &[Value::String("Protocol error".into())],
+                        );
+                        let error = execute::set_property(
+                            error,
+                            "code",
+                            Value::String("ERR_HTTP2_ERROR".into()),
+                        );
+                        crate::modules::net::socket_destroy(
+                            state,
+                            Some(&socket_js),
+                            &[error],
+                        )?;
+                    }
+                } else if payload.len() == 8 {
+                    let ack = crate::modules::http2_protocol::Frame::new(
+                        crate::modules::http2_protocol::FrameType::Ping,
+                        0x1,
+                        0,
+                        payload.to_vec(),
+                    );
+                    let write = execute::get_property(&socket_js, "write");
+                    if quench_runtime::is_callable(&write) {
+                        execute::call(
+                            &write,
+                            &socket_js,
+                            &[crate::modules::buffer_proto::make_buffer(&ack.encode())],
+                        )?;
+                    }
+                }
             }
             _ => {}
         }

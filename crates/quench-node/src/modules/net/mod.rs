@@ -13,6 +13,7 @@ use std::io::Write;
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::rc::Rc;
 use std::str::FromStr;
+use std::time::Instant;
 
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
@@ -175,6 +176,10 @@ pub struct NetState {
     /// survive VM aliases so a locally destroyed request cannot later emit a
     /// peer response or end event through a different stream representative.
     pub http2_reset_codes: HashMap<(u64, u32), u32>,
+    /// Outstanding HTTP/2 PING operations keyed by the owning transport.
+    /// Payload, callback, and async resource stay together so ACK/cancel
+    /// transitions consume one canonical operation record.
+    pub http2_pings: HashMap<u64, Vec<PendingHttp2Ping>>,
     /// Canonical socket timeout timers, independent of VM alias properties.
     pub timeout_timers: HashMap<u64, Value>,
     pub pipe_fds: HashMap<i64, String>,
@@ -199,6 +204,13 @@ pub struct PendingLookup {
     pub socket: Value,
     pub options: Value,
     pub args: Vec<Value>,
+}
+
+pub struct PendingHttp2Ping {
+    pub payload: Vec<u8>,
+    pub callback: Value,
+    pub resource: Value,
+    pub started: Instant,
 }
 
 impl Default for NetState {
@@ -231,6 +243,7 @@ impl NetState {
             http2_request_listeners: HashMap::new(),
             http2_streams: HashMap::new(),
             http2_reset_codes: HashMap::new(),
+            http2_pings: HashMap::new(),
             timeout_timers: HashMap::new(),
             pipe_fds: HashMap::new(),
             fd_streams: HashMap::new(),

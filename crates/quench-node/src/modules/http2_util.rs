@@ -636,6 +636,7 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
             }
         }
         decorate_client_session(&socket, secure)?;
+        set_ping_limit(&socket, &target);
         if let Some(callback) = callback {
             // `createConnection` may return either an already-connected
             // socket or one that is still opening.  Preserve the transport's
@@ -695,6 +696,7 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
         }
     }
     decorate_client_session(&socket, secure)?;
+    set_ping_limit(&socket, &target);
     if let Some(callback) = callback {
         let connected = transport_connected(state, &socket);
         if connected {
@@ -708,6 +710,14 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
         }
     }
     Ok(socket)
+}
+
+fn set_ping_limit(socket: &Value, options: &Value) {
+    if let Value::Number(limit) = execute::get_property(options, "maxOutstandingPings") {
+        if limit.is_finite() && limit >= 0.0 && limit.fract() == 0.0 {
+            execute::set_property_in_place(socket, HTTP2_MAX_OUTSTANDING_PINGS, Value::Number(limit));
+        }
+    }
 }
 
 fn remember_http2_authority(socket: &Value, target: &Value) {
@@ -777,6 +787,106 @@ fn session_capability(kind: &str) -> Value {
     )
 }
 
+const HTTP2_MAX_OUTSTANDING_PINGS: &str = "\0quench:http2:max-outstanding-pings";
+
+fn ping_error() -> Value {
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String("HTTP2 ping cancelled".into())],
+    );
+    execute::set_property(error, "code", Value::String("ERR_HTTP2_PING_CANCEL".into()))
+}
+
+fn ping_payload(value: &Value) -> Option<Vec<u8>> {
+    match value {
+        Value::Uint8Array(_)
+        | Value::Int8Array(_)
+        | Value::Uint8ClampedArray(_)
+        | Value::Int16Array(_)
+        | Value::Uint16Array(_)
+        | Value::Int32Array(_)
+        | Value::Uint32Array(_)
+        | Value::Float32Array(_)
+        | Value::Float64Array(_)
+        | Value::BigInt64Array(_)
+        | Value::BigUint64Array(_)
+        | Value::DataView(_) => crate::modules::crypto::bytes_from_value(value),
+        _ => None,
+    }
+}
+
+fn invoke_ping_callback(
+    state: &Rc<RefCell<HostState>>,
+    pending: crate::modules::net::PendingHttp2Ping,
+    error: Option<Value>,
+) -> Result<(), VmError> {
+    let callback = pending.callback;
+    let resource = pending.resource;
+    if quench_runtime::is_callable(&callback) {
+        crate::modules::async_hooks::resource_before(state, Some(&resource), &[])?;
+        let result = execute::call(
+            &callback,
+            &Value::Undefined,
+            &[
+                error.unwrap_or(Value::Null),
+                Value::Number(pending.started.elapsed().as_secs_f64() * 1000.0),
+                crate::modules::buffer_proto::make_buffer(&pending.payload),
+            ],
+        );
+        crate::modules::async_hooks::resource_after(state, None, &[])?;
+        crate::modules::async_hooks::resource_destroy(state, Some(&resource), &[])?;
+        result.map(|_| ())
+    } else {
+        crate::modules::async_hooks::resource_destroy(state, Some(&resource), &[])?;
+        Ok(())
+    }
+}
+
+/// Complete one wire PING acknowledgement.  The pending map is the sole
+/// operation ledger, so an ACK can never invoke a callback twice or attach to
+/// a different session after a transport alias is replaced.
+pub(crate) fn complete_http2_ping(
+    state: &Rc<RefCell<HostState>>,
+    socket_id: u64,
+    payload: &[u8],
+) -> Result<bool, VmError> {
+    let pending = {
+        let mut net = state.borrow_mut();
+        let Some(entries) = net.net.http2_pings.get_mut(&socket_id) else {
+            return Ok(false);
+        };
+        let Some(index) = entries.iter().position(|entry| entry.payload == payload) else {
+            return Ok(false);
+        };
+        let pending = entries.remove(index);
+        if entries.is_empty() {
+            net.net.http2_pings.remove(&socket_id);
+        }
+        pending
+    };
+    invoke_ping_callback(state, pending, None)?;
+    Ok(true)
+}
+
+/// Cancel all outstanding operations when the owning socket reaches its
+/// terminal state.  This is shared by protocol errors and explicit destroy,
+/// preserving Node's callback/error and async-resource lifecycle.
+pub(crate) fn cancel_http2_pings(
+    state: &Rc<RefCell<HostState>>,
+    socket_id: u64,
+) -> Result<(), VmError> {
+    let pending = state
+        .borrow_mut()
+        .net
+        .http2_pings
+        .remove(&socket_id)
+        .unwrap_or_default();
+    for pending in pending {
+        invoke_ping_callback(state, pending, Some(ping_error()))?;
+    }
+    Ok(())
+}
+
 /// RFC 9113 removed priority signalling from the HTTP/2 wire protocol.  Node
 /// retains `stream.priority()` as a deprecated compatibility method, but its
 /// current nghttp2 backend does not emit a PRIORITY event/frame for ordinary
@@ -808,6 +918,11 @@ fn decorate_client_session(socket: &Value, secure: bool) -> Result<(), VmError> 
     execute::set_property_in_place(socket, "pendingSettingsAck", Value::Boolean(false));
     execute::set_property_in_place(
         socket,
+        HTTP2_MAX_OUTSTANDING_PINGS,
+        Value::Number(10.0),
+    );
+    execute::set_property_in_place(
+        socket,
         "state",
         host_api::object(vec![
             (
@@ -826,6 +941,10 @@ fn decorate_client_session(socket: &Value, secure: bool) -> Result<(), VmError> 
         Value::String(if secure { "h2" } else { "h2c" }.into()),
     );
     Ok(())
+}
+
+pub(crate) fn decorate_server_session(socket: &Value) -> Result<(), VmError> {
+    decorate_client_session(socket, false)
 }
 
 pub(crate) const HTTP2_DIAG_CREATED: &str = "created";
@@ -2362,6 +2481,12 @@ fn session_method(
         }
         "settings" => {
             let settings = args.first().unwrap_or(&Value::Undefined);
+            if matches!(settings, Value::Undefined) {
+                // `session.settings(undefined, callback)` is a valid
+                // no-op shape used when callers only exercise destruction;
+                // Node does not invoke the callback for this absent update.
+                return Ok(Value::Undefined);
+            }
             if !matches!(settings, Value::Object(_) | Value::ObjectAlias(_)) {
                 return Err(coded_error(
                     quench_runtime::ops::Builtin::TypeError,
@@ -2390,10 +2515,92 @@ fn session_method(
             }
             execute::set_property_in_place(socket, "pendingSettingsAck", Value::Boolean(true));
         }
-        // These controls need protocol-level state to become observable, but
-        // preserving their callable, chainable boundary is still useful for
-        // code that only probes capability presence.
-        "ping" | "goaway" => {}
+        "ping" => {
+            let (payload, callback) = match args.first() {
+                Some(value) if quench_runtime::is_callable(value) => (vec![0; 8], value.clone()),
+                Some(value) => {
+                    let payload = ping_payload(value).ok_or_else(|| {
+                        coded_error(
+                            quench_runtime::ops::Builtin::TypeError,
+                            "ERR_INVALID_ARG_TYPE",
+                            format!(
+                                "The \"payload\" argument must be an instance of Buffer, TypedArray, or DataView.{}",
+                                crate::modules::util::invalid_arg_received(value)
+                            ),
+                        )
+                    })?;
+                    (payload, args.get(1).cloned().unwrap_or(Value::Undefined))
+                }
+                None => (vec![0; 8], Value::Undefined),
+            };
+            if payload.len() != 8 {
+                return Err(coded_error(
+                    quench_runtime::ops::Builtin::RangeError,
+                    "ERR_HTTP2_PING_LENGTH",
+                    "HTTP2 ping payload must be 8 bytes".into(),
+                ));
+            }
+            if !matches!(callback, Value::Undefined) && !quench_runtime::is_callable(&callback) {
+                return Err(coded_error(
+                    quench_runtime::ops::Builtin::TypeError,
+                    "ERR_INVALID_ARG_TYPE",
+                    format!(
+                        "The \"callback\" argument must be of type function.{}",
+                        crate::modules::util::invalid_arg_received(&callback)
+                    ),
+                ));
+            }
+            let resource = crate::modules::async_hooks::new_resource(
+                _state,
+                &[Value::String("HTTP2PING".into())],
+            )?;
+            let limit = match execute::get_property(socket, HTTP2_MAX_OUTSTANDING_PINGS) {
+                Value::Number(limit) if limit.is_finite() && limit >= 0.0 => limit as usize,
+                _ => 10,
+            };
+            let socket_id = crate::modules::net::net_id(socket).ok_or(VmError::NotCallable)?;
+            let outstanding = _state
+                .borrow()
+                .net
+                .http2_pings
+                .get(&socket_id)
+                .map_or(0, Vec::len);
+            let pending = crate::modules::net::PendingHttp2Ping {
+                payload: payload.clone(),
+                callback,
+                resource,
+                started: std::time::Instant::now(),
+            };
+            if outstanding >= limit {
+                invoke_ping_callback(_state, pending, Some(ping_error()))?;
+                return Ok(Value::Boolean(false));
+            }
+            let frame = crate::modules::http2_protocol::Frame::new(
+                crate::modules::http2_protocol::FrameType::Ping,
+                0,
+                0,
+                payload,
+            );
+            let write = execute::get_property(socket, "write");
+            if quench_runtime::is_callable(&write) {
+                execute::call(
+                    &write,
+                    socket,
+                    &[crate::modules::buffer_proto::make_buffer(&frame.encode())],
+                )?;
+            }
+            _state
+                .borrow_mut()
+                .net
+                .http2_pings
+                .entry(socket_id)
+                .or_default()
+                .push(pending);
+            return Ok(Value::Boolean(true));
+        }
+        // GOAWAY still needs the session state machine; preserving its
+        // callable boundary avoids inventing a wire transition here.
+        "goaway" => {}
         _ => return Err(VmError::NotCallable),
     }
     Ok(Value::Undefined)
