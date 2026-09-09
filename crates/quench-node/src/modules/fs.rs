@@ -2226,6 +2226,7 @@ const DIR_PATH_KEY: &str = "\0quench:fs:dir:path";
 const DIR_PROTO_KEY: &str = "\0quench:fs:dir:prototype";
 const DIRENT_PROTO_KEY: &str = "\0quench:fs:dirent:prototype";
 const WRITE_STREAM_AUTO_CLOSE_KEY: &str = "\0quench:fs:write-stream:auto-close";
+const WRITE_STREAM_HANDLE_KEY: &str = "\0quench:fs:write-stream:file-handle";
 
 fn dir_error(code: &str, message: &str) -> VmError {
     let error = quench_runtime::builtins::error(
@@ -4808,8 +4809,11 @@ pub fn validate_write_stream_options(
         matches!(value, Value::Object(_) | Value::ObjectAlias(_))
             .then(|| execute::get_property(value, "fd"))
     });
-    let has_handle_fd = handle_fd.is_some();
-    let supplied_fd = handle_fd.unwrap_or(raw_fd);
+    let raw_handle_fd = file_handle_descriptor(&raw_fd)?;
+    let has_handle_fd = handle_fd.is_some() || raw_handle_fd.is_some();
+    let supplied_fd = handle_fd
+        .or_else(|| raw_handle_fd.map(|fd| Value::Number(fd as f64)))
+        .unwrap_or(raw_fd.clone());
     let (fd, path) = if matches!(supplied_fd, Value::Number(_))
         && (matches!(args.first(), None | Some(Value::Null | Value::Undefined)) || has_handle_fd)
     {
@@ -4900,6 +4904,9 @@ pub fn validate_write_stream_options(
     ] {
         let _ = execute::set_property_in_place(&stream, name, value);
     }
+    if matches!(raw_fd, Value::Object(_) | Value::ObjectAlias(_)) {
+        let _ = execute::set_property_in_place(&stream, WRITE_STREAM_HANDLE_KEY, raw_fd);
+    }
     if let Some(receiver) = supplied_receiver {
         for key in execute::own_keys(&stream) {
             let Value::String(key) = key else {
@@ -4964,8 +4971,28 @@ pub fn write_stream_write(
             ))
         })?,
     };
-    let fd = descriptor_arg(execute::get_property_result(stream, "fd").ok().as_ref())?;
     let buffer = crate::modules::buffer_proto::make_buffer(&bytes);
+    let file_handle = execute::get_property(stream, WRITE_STREAM_HANDLE_KEY);
+    if matches!(file_handle, Value::Object(_) | Value::ObjectAlias(_)) {
+        let write = execute::get_property(&file_handle, "write");
+        if quench_runtime::is_callable(&write) {
+            let result = execute::call(
+                &write,
+                &file_handle,
+                &[
+                    buffer,
+                    Value::Number(0.0),
+                    Value::Number(bytes.len() as f64),
+                    Value::Null,
+                ],
+            );
+            if let Some(callback) = callback {
+                defer(state, &callback, vec![err_value(&result)]);
+            }
+            return result.map(|_| Value::Boolean(true));
+        }
+    }
+    let fd = descriptor_arg(execute::get_property_result(stream, "fd").ok().as_ref())?;
     let result = write_sync(
         state,
         None,
