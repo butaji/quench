@@ -152,6 +152,7 @@ pub enum ProtocolError {
     InvalidStream(FrameType),
     InvalidSettings,
     InvalidWindowIncrement,
+    FlowControlError,
     InvalidHeaderBlock,
     FrameAfterGoAway,
 }
@@ -187,6 +188,9 @@ pub struct Session {
     pub max_frame_size: u32,
     pub goaway: bool,
     pub streams: HashMap<u32, Stream>,
+    /// Connection-level receive window, kept as a signed fact so overflow
+    /// validation cannot wrap before it reaches the protocol boundary.
+    connection_recv_window: i64,
     /// Decoded header fields, keyed by stream ID.
     pub headers: HashMap<u32, Vec<(Vec<u8>, Vec<u8>)>>,
 }
@@ -209,6 +213,7 @@ impl Session {
             max_frame_size: DEFAULT_MAX_FRAME_SIZE,
             goaway: false,
             streams: HashMap::new(),
+            connection_recv_window: 65_535,
             headers: HashMap::new(),
         }
     }
@@ -287,6 +292,7 @@ impl Session {
             {
                 Err(ProtocolError::InvalidWindowIncrement)
             }
+            FrameType::WindowUpdate if stream_zero => self.apply_window_update(frame),
             FrameType::GoAway if !stream_zero && length >= 8 => {
                 Err(ProtocolError::InvalidStream(FrameType::GoAway))
             }
@@ -330,6 +336,16 @@ impl Session {
                 _ => {}
             }
         }
+        Ok(())
+    }
+
+    fn apply_window_update(&mut self, frame: &Frame) -> Result<(), ProtocolError> {
+        let increment = (u32::from_be_bytes(frame.payload[..4].try_into().unwrap())
+            & 0x7fff_ffff) as i64;
+        if self.connection_recv_window.saturating_add(increment) > 0x7fff_ffff {
+            return Err(ProtocolError::FlowControlError);
+        }
+        self.connection_recv_window += increment;
         Ok(())
     }
 
