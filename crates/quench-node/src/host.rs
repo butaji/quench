@@ -129,6 +129,10 @@ pub struct HostState {
     pub child_process_prototype: Option<Value>,
     /// One canonical source-to-stdin edge for in-process stdio pipelines.
     pub child_pipes: std::collections::HashMap<u64, Value>,
+    /// Shell children whose completion is owned by the host pump.  The OS
+    /// waiter lives outside the VM thread; only its completed byte output is
+    /// imported at a pump boundary.
+    pub pending_shell_execs: Vec<PendingShellExec>,
     /// Process scopes whose IPC channel has closed but whose network handles
     /// still need their callbacks to drain before scope-local listeners are
     /// retired.  Keeping this fact in the host envelope preserves the final
@@ -142,6 +146,14 @@ pub struct HostState {
     /// Stateful native decompressors owned by zlib stream objects.
     pub zlib_decompressors:
         std::collections::HashMap<u64, crate::modules::zlib::IncrementalDecompressor>,
+}
+
+pub struct PendingShellExec {
+    pub child: Value,
+    pub callback: Option<Value>,
+    pub command: String,
+    pub use_buffer: bool,
+    pub process: crate::modules::child_process::AsyncShellChild,
 }
 
 /// Host-side handoff record for one in-flight CJS module load.
@@ -210,6 +222,7 @@ impl NodeHost {
             identity_roots: Vec::new(),
             child_process_prototype: None,
             child_pipes: std::collections::HashMap::new(),
+            pending_shell_execs: Vec::new(),
             deferred_emitter_scopes: HashSet::new(),
             zlib_compressors: std::collections::HashMap::new(),
             zlib_decompressors: std::collections::HashMap::new(),
