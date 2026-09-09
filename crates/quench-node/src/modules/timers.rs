@@ -192,7 +192,11 @@ fn schedule(
             legacy_stores,
         );
     }
-    let process_scope = state.borrow().event_loop.process_scope();
+    let process_scope = state
+        .borrow()
+        .cluster
+        .active_worker_event_scope()
+        .unwrap_or_else(|| state.borrow().event_loop.process_scope());
     state.borrow_mut().timers.timers.insert(
         id,
         Timer {
