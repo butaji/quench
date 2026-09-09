@@ -2529,6 +2529,13 @@ const READ_STREAM_CUSTOM_FS_KEY: &str = "\0quench:fs_read_stream_custom_fs";
 const READ_STREAM_CUSTOM_OPTIONS_KEY: &str = "\0quench:fs_read_stream_custom_options";
 const READ_STREAM_CUSTOM_STAGE_KEY: &str = "\0quench:fs_read_stream_custom_stage";
 const READ_STREAM_CUSTOM_OWNED_KEY: &str = "\0quench:fs_read_stream_custom_owned";
+// ReadStream's host open callback may be re-entered for each bounded read.
+// Keep the cursor and one-time open notification on the stream itself so the
+// mechanism applies uniformly to ordinary paths, numeric descriptors, and
+// custom-fs callbacks without mutating caller-owned options.
+const READ_STREAM_OFFSET_KEY: &str = "\0quench:fs_read_stream_offset";
+const READ_STREAM_OPENED_KEY: &str = "\0quench:fs_read_stream_opened";
+const READ_STREAM_END_KEY: &str = "\0quench:fs_read_stream_end";
 
 /// Canonical constructor/prototype pair shared by every `fs.promises.open`
 /// result and by `internal/fs/promises`.  The fd is a prototype accessor so
@@ -3820,6 +3827,24 @@ pub fn create_read_stream(
         "destroyed",
         Value::BindingCell(quench_runtime::value::BindingCell::new(Value::Boolean(false))),
     );
+    execute::set_property_in_place(
+        &stream,
+        READ_STREAM_OPENED_KEY,
+        Value::Boolean(false),
+    );
+    let initial_start = stream_number_option(&options, "start").unwrap_or(0);
+    execute::set_property_in_place(
+        &stream,
+        READ_STREAM_OFFSET_KEY,
+        Value::BindingCell(quench_runtime::value::BindingCell::new(Value::Number(
+            initial_start as f64,
+        ))),
+    );
+    execute::set_property_in_place(
+        &stream,
+        READ_STREAM_END_KEY,
+        Value::BindingCell(quench_runtime::value::BindingCell::new(Value::Undefined)),
+    );
     // ReadStream exposes the normalized range/lifecycle options as public
     // state.  Read them through the ordinary property path so options supplied
     // via an inherited `__proto__` are reflected just like own properties.
@@ -4148,13 +4173,90 @@ pub fn read_stream_open(
             return emit_stream_event(state, stream, "error", vec![error]);
         }
     };
-    let start = stream_number_option(&options, "start").unwrap_or(0);
-    let end = stream_number_option(&options, "end")
-        .map(|value| value.saturating_add(1))
-        .unwrap_or(bytes.len());
-    let end = end.min(bytes.len());
-    let start = start.min(end);
-    let stream_fd = supplied_fd.unwrap_or_else(|| {
+    // A ReadStream reads in bounded chunks and re-enters its open callback
+    // until the snapshot's EOF.  The cursor is private stream state rather
+    // than a mutation of the options object supplied by the caller.
+    let requested_start = execute::get_property(stream, READ_STREAM_OFFSET_KEY);
+    let requested_start = match requested_start {
+        Value::Number(value) if value.is_finite() && value >= 0.0 && value.fract() == 0.0 => {
+            value as usize
+        }
+        _ => stream_number_option(&options, "start").unwrap_or(0),
+    };
+    let stored_end = execute::get_property(stream, READ_STREAM_END_KEY);
+    let explicit_end = stream_number_option(&options, "end").is_some();
+    let mut end = match stored_end {
+        Value::Number(value) if value.is_finite() && value >= 0.0 && value.fract() == 0.0 => {
+            let stored = value as usize;
+            // A short regular-file read is not itself EOF.  If the file grew
+            // before the follow-up read, expose that newly available range;
+            // otherwise the next empty read confirms EOF.  An explicit end
+            // option remains the hard upper bound.
+            let option_end = stream_number_option(&options, "end")
+                .map(|value| value.saturating_add(1));
+            if requested_start >= stored && bytes.len() > stored {
+                let grown = option_end.unwrap_or(bytes.len()).min(bytes.len());
+                execute::set_property_in_place(
+                    stream,
+                    READ_STREAM_END_KEY,
+                    Value::Number(grown as f64),
+                );
+                grown
+            } else {
+                stored.min(bytes.len())
+            }
+        }
+        _ => {
+            let end = stream_number_option(&options, "end")
+                .map(|value| value.saturating_add(1))
+                .unwrap_or(bytes.len())
+                .min(bytes.len());
+            execute::set_property_in_place(
+                stream,
+                READ_STREAM_END_KEY,
+                Value::Number(end as f64),
+            );
+            end
+        }
+    };
+    let start = requested_start.min(end);
+    let readable_state = execute::get_property(stream, "_readableState");
+    let high_water_mark = match execute::get_property(&readable_state, "highWaterMark") {
+        Value::Number(value)
+            if value.is_finite() && value > 0.0 && value.fract() == 0.0 && value <= usize::MAX as f64 =>
+        {
+            value as usize
+        }
+        _ => 16 * 1024,
+    };
+    // The explicit small-HWM form is the public growing-file pattern: Node
+    // must issue a follow-up read after a short read so bytes appended between
+    // reads are observable.  Ordinary static streams can finish at their
+    // captured EOF directly, avoiding an otherwise unnecessary host turn for
+    // every short fixture read.
+    let may_grow = matches!(
+        execute::get_property(&options, "highWaterMark"),
+        Value::Number(value) if value.is_finite() && value >= 0.0
+    );
+    let encoding = execute::get_property(&options, "encoding");
+    let mut chunk_end = start.saturating_add(high_water_mark).min(end);
+    // Keep UTF-8 code points intact when a host chunk boundary falls in the
+    // middle of a multibyte sequence. The stream decoder then receives the
+    // same complete units Node's fs reader exposes across successive reads.
+    if matches!(&encoding, Value::String(name) if name.eq_ignore_ascii_case("utf8") || name.eq_ignore_ascii_case("utf-8"))
+        && chunk_end < end
+    {
+        while chunk_end > start && (bytes[chunk_end] & 0b1100_0000) == 0b1000_0000 {
+            chunk_end -= 1;
+        }
+    }
+    let existing_fd = match execute::get_property(stream, "fd") {
+        Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value >= 0.0 => {
+            Some(value as i32)
+        }
+        _ => None,
+    };
+    let stream_fd = supplied_fd.or(existing_fd).unwrap_or_else(|| {
         let Ok(metadata) = std::fs::metadata(&path) else {
             return 3;
         };
@@ -4178,10 +4280,37 @@ pub fn read_stream_open(
     });
     let fd = Value::Number(stream_fd as f64);
     execute::set_property_in_place(&stream, "fd", fd.clone());
-    if !custom_done {
+    let opened = matches!(
+        execute::get_property(stream, READ_STREAM_OPENED_KEY),
+        Value::Boolean(true)
+    );
+    if !custom_done && !opened {
         emit_stream_event(state, stream, "open", vec![fd])?;
+        execute::set_property_in_place(stream, READ_STREAM_OPENED_KEY, Value::Boolean(true));
     }
-    let chunk = &bytes[start..end];
+    let chunk = &bytes[start..chunk_end];
+    let has_more = chunk_end < end;
+    let short_read = !chunk.is_empty() && chunk.len() < high_water_mark;
+    let continue_after_short = short_read && !explicit_end;
+    if continue_after_short {
+        // A regular file can grow between reads. Preserve a short read as a
+        // low-water signal but allow one more read turn before declaring EOF;
+        // this matches Node's growing-file behavior and lets the next append
+        // become observable to the stream consumer.
+        end = bytes.len();
+        execute::set_property_in_place(
+            stream,
+            READ_STREAM_END_KEY,
+            Value::Number(end as f64),
+        );
+    }
+    if has_more || continue_after_short || (may_grow && !chunk.is_empty()) {
+        execute::set_property_in_place(
+            stream,
+            READ_STREAM_OFFSET_KEY,
+            Value::Number(chunk_end as f64),
+        );
+    }
     // Exercise a supplied FileHandle's public read method through the same
     // host-owned operation path Node uses.  The stream keeps its own bounded
     // read below, while this call preserves observable overrides (for example
@@ -4208,18 +4337,27 @@ pub fn read_stream_open(
             }
         }
     }
-    let encoding = execute::get_property(&options, "encoding");
+    let encoded = matches!(encoding, Value::String(_));
     let data = if let Value::String(encoding) = encoding {
         crate::modules::buffer_enc::decode_str(chunk, &encoding)
     } else {
         crate::modules::buffer_proto::make_buffer(chunk)
     };
-    execute::set_property_in_place(&stream, "bytesRead", Value::Number(chunk.len() as f64));
+    // `bytesRead` is cumulative across the bounded reads that make up one
+    // ReadStream, matching Node's observable stream counter.
+    let previous_bytes_read = match execute::get_property(stream, "bytesRead") {
+        Value::Number(value) if value.is_finite() && value >= 0.0 => value,
+        _ => 0.0,
+    };
+    execute::set_property_in_place(
+        &stream,
+        "bytesRead",
+        Value::Number(previous_bytes_read + chunk.len() as f64),
+    );
     // A flowing stream can deliver its single bounded chunk directly.  If a
     // data listener pauses during that delivery, retain only the terminal
     // transition through push(null); this preserves pause/resume ordering
     // without paying the full buffered path for every ordinary read.
-    let readable_state = execute::get_property(stream, "_readableState");
     let flowing = matches!(
         execute::get_property(&readable_state, "flowing"),
         Value::Boolean(true)
@@ -4229,11 +4367,15 @@ pub fn read_stream_open(
         quench_runtime::is_callable(&method)
             && matches!(execute::call(&method, stream, &[]), Ok(Value::Boolean(true)))
     };
-    if flowing && !is_paused() {
+    if flowing && !is_paused() && !encoded {
         if !chunk.is_empty() {
             emit_stream_event(state, stream, "data", vec![data])?;
         }
-        if is_paused() {
+        if has_more || continue_after_short {
+            schedule_read_stream_next_immediate(state, stream, &path, &options)?;
+        } else if !chunk.is_empty() && may_grow {
+            schedule_read_stream_next(state, stream, &path, &options)?;
+        } else if is_paused() {
             let push = execute::get_property(stream, "push");
             if quench_runtime::is_callable(&push) {
                 execute::call(&push, stream, &[Value::Null])?;
@@ -4294,12 +4436,24 @@ pub fn read_stream_open(
                 let raw_data = crate::modules::buffer_proto::make_buffer(chunk);
                 execute::call(&push, stream, &[raw_data])?;
             }
-            execute::call(&push, stream, &[Value::Null])?;
+            if has_more || continue_after_short {
+                schedule_read_stream_next_immediate(state, stream, &path, &options)?;
+            } else if !chunk.is_empty() && may_grow {
+                schedule_read_stream_next(state, stream, &path, &options)?;
+            } else {
+                execute::call(&push, stream, &[Value::Null])?;
+            }
         } else {
             if !chunk.is_empty() {
                 emit_stream_event(state, stream, "data", vec![data])?;
             }
-            emit_stream_event(state, stream, "end", Vec::new())?;
+            if has_more || continue_after_short {
+                schedule_read_stream_next_immediate(state, stream, &path, &options)?;
+            } else if !chunk.is_empty() && may_grow {
+                schedule_read_stream_next(state, stream, &path, &options)?;
+            } else {
+                emit_stream_event(state, stream, "end", Vec::new())?;
+            }
         }
     }
     Ok(Value::Undefined)
@@ -4313,6 +4467,53 @@ fn bind_read_stream_open_callback(stream: &Value) -> Value {
         std::slice::from_ref(stream),
     )
     .unwrap_or(capability)
+}
+
+fn schedule_read_stream_next(
+    state: &Rc<RefCell<HostState>>,
+    stream: &Value,
+    path: &str,
+    options: &Value,
+) -> Result<(), VmError> {
+    // A zero-delay timeout yields the current I/O turn.  Re-queueing this
+    // continuation as an immediate would drain the whole file before timers
+    // (including a writer appending to the file) get a chance to run.
+    let timeout = crate::host::capability(crate::registry::SPEC_TIMERS_SETTIMEOUT);
+    let callback = bind_read_stream_open_callback(stream);
+    execute::call(
+        &timeout,
+        &Value::Undefined,
+        &[
+            callback,
+            Value::Number(1.0),
+            stream.clone(),
+            Value::String(path.into()),
+            options.clone(),
+        ],
+    )?;
+    Ok(())
+}
+
+fn schedule_read_stream_next_immediate(
+    state: &Rc<RefCell<HostState>>,
+    stream: &Value,
+    path: &str,
+    options: &Value,
+) -> Result<(), VmError> {
+    let immediate = crate::host::capability(crate::registry::SPEC_TIMERS_SETIMMEDIATE);
+    let callback = bind_read_stream_open_callback(stream);
+    execute::call(
+        &immediate,
+        &Value::Undefined,
+        &[
+            callback,
+            stream.clone(),
+            Value::String(path.into()),
+            options.clone(),
+        ],
+    )?;
+    let _ = state;
+    Ok(())
 }
 
 fn read_stream_custom_open_result(
@@ -4353,6 +4554,7 @@ fn read_stream_custom_open_result(
         READ_STREAM_CUSTOM_OWNED_KEY,
         Value::Boolean(true),
     );
+    execute::set_property_in_place(stream, READ_STREAM_OPENED_KEY, Value::Boolean(true));
     emit_stream_event(
         state,
         stream,
