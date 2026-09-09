@@ -15,11 +15,17 @@ use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream};
 use std::rc::Rc;
 const ID: &str = "\0quench:cluster:id";
+// Process-event/timer scopes are separate from the transport scope used for
+// listener sharing.  A cluster worker can therefore retain its own
+// `process.on()` handlers without making its net handles look like a
+// different primary process to the cluster scheduler.
+pub(crate) const WORKER_EVENT_SCOPE_BASE: u64 = 1 << 48;
 struct Worker {
     object: Value,
     /// Logical process scope; workers from separately forked primaries must
     /// not share a listener even though they inhabit one host VM.
     scope: u64,
+    event_scope: u64,
     connected: bool,
     dead: bool,
     listeners: HashMap<String, Vec<Value>>,
@@ -94,6 +100,25 @@ impl ClusterState {
     }
 
     pub(crate) fn worker_scope(&self, id: u64) -> Option<u64> {
+        self.workers.get(&id).map(|worker| worker.scope)
+    }
+
+    pub(crate) fn worker_event_scope(&self, id: u64) -> Option<u64> {
+        self.workers.get(&id).map(|worker| worker.event_scope)
+    }
+
+    pub(crate) fn active_worker_event_scope(&self) -> Option<u64> {
+        self.worker_context
+            .and_then(|id| self.worker_event_scope(id))
+    }
+
+    pub(crate) fn worker_for_event_scope(&self, scope: u64) -> Option<u64> {
+        self.workers
+            .iter()
+            .find_map(|(id, worker)| (worker.event_scope == scope).then_some(*id))
+    }
+
+    pub(crate) fn worker_parent_scope(&self, id: u64) -> Option<u64> {
         self.workers.get(&id).map(|worker| worker.scope)
     }
 
@@ -623,6 +648,7 @@ pub fn fork(
         Worker {
             object: worker.clone(),
             scope: process_scope,
+            event_scope: WORKER_EVENT_SCOPE_BASE + id,
             connected: true,
             dead: false,
             listeners: HashMap::new(),
@@ -1411,7 +1437,15 @@ pub(crate) fn has_pending_disconnect(state: &Rc<RefCell<HostState>>) -> bool {
         .cluster
         .workers
         .values()
-        .any(|worker| worker.pending_child_disconnect || worker.pending_disconnect)
+        .any(|worker| {
+            // A terminal worker may retain this marker so a listener added
+            // synchronously after fork() can still observe the late
+            // disconnect. Once the worker is already dead, however, the
+            // marker cannot represent referenced work: keeping it in the
+            // liveness predicate would leave a worker with no listeners
+            // holding the primary event loop open forever.
+            worker.pending_child_disconnect || (worker.pending_disconnect && !worker.dead)
+        })
 }
 
 /// Stop worker-owned listeners during a primary-side disconnect while leaving
@@ -1800,6 +1834,80 @@ pub fn disconnect(
         if let Some(module) = module {
             state.borrow().event_loop.queue_microtask_with_receiver_scope(
                 crate::host::capability(SPEC_EVENTS_EMIT),
+/// Complete a `process.exit()` raised by a callback that was registered by a
+/// logical cluster worker. Cluster workers share the host VM, so the normal
+/// top-level unwind must be consumed and converted into the parent-side
+/// Worker exit event instead of terminating the primary runner.
+pub(crate) fn finish_worker_callback_exit(
+    state: &Rc<RefCell<HostState>>,
+    id: u64,
+    code: i32,
+) {
+    let Some(worker) = state.borrow().cluster.worker_object(id) else {
+        return;
+    };
+    let parent_scope = state
+        .borrow()
+        .cluster
+        .worker_parent_scope(id)
+        .unwrap_or(0);
+    close_worker_net(state, id);
+    let has_exit_listener = state
+        .borrow()
+        .cluster
+        .workers
+        .get(&id)
+        .is_some_and(|entry| entry.listeners.contains_key("exit"));
+    if let Some(entry) = state.borrow_mut().cluster.workers.get_mut(&id) {
+        entry.connected = false;
+        entry.dead = true;
+        entry.pending_child_disconnect = false;
+        entry.pending_disconnect = false;
+        if !has_exit_listener {
+            entry.pending_exit = Some((code, None));
+        } else {
+            entry.pending_exit = None;
+        }
+    }
+    let _ = execute::set_property_in_place(&worker, "state", Value::String("dead".into()));
+    if let Ok(process) = execute::get_property_result(&worker, "process") {
+        let _ = execute::set_property_in_place(&process, "connected", Value::Boolean(false));
+        let _ = execute::set_property_in_place(&process, "exitCode", Value::Number(code as f64));
+        let _ = execute::set_property_in_place(&process, "signalCode", Value::Null);
+    }
+    if has_exit_listener {
+        state
+            .borrow()
+            .event_loop
+            .queue_microtask_with_receiver_scope(
+                crate::host::capability(SPEC_CLUSTER_WORKER_EMIT),
+                vec![
+                    Value::String("exit".into()),
+                    Value::Number(code as f64),
+                    Value::Null,
+                ],
+                worker.clone(),
+                parent_scope,
+            );
+    }
+    if let Some(module) = state.borrow().cluster.module.clone() {
+        state
+            .borrow()
+            .event_loop
+            .queue_microtask_with_receiver_scope(
+                crate::host::capability(SPEC_EVENTS_EMIT),
+                vec![
+                    Value::String("exit".into()),
+                    worker,
+                    Value::Number(code as f64),
+                    Value::Null,
+                ],
+                module,
+                parent_scope,
+            );
+    }
+}
+
                 vec![
                     Value::String("exit".into()),
                     obj.clone(),
