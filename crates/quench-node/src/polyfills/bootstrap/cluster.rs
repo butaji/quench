@@ -40,7 +40,7 @@ pub const JS: &str = quench_js_check::checked_js!(
   const normalizeChunk = (chunk) => {
     if (chunk === null) return [];
     if (Array.isArray(chunk)) return chunk.flatMap(normalizeChunk);
-    if (typeof chunk === "string") return [NodeBuffer.from(chunk)];
+    if (typeof chunk === "string") return [new TextEncoder().encode(chunk)];
     if (chunk instanceof Uint8Array || ArrayBuffer.isView(chunk)) {
       return [
         NodeBuffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength)
@@ -51,7 +51,7 @@ pub const JS: &str = quench_js_check::checked_js!(
   };
   const sourceAsync = async function* (source) {
     if (typeof source === "string") {
-      yield [NodeBuffer.from(source)];
+      yield [new TextEncoder().encode(source)];
       return;
     }
     if (source instanceof ArrayBuffer || ArrayBuffer.isView(source)) {
@@ -88,7 +88,7 @@ pub const JS: &str = quench_js_check::checked_js!(
   };
   const normalizeSyncValue = function* (value) {
     if (typeof value === "string") {
-      yield NodeBuffer.from(value);
+      yield new TextEncoder().encode(value);
       return;
     }
     if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
@@ -314,13 +314,13 @@ pub const JS: &str = quench_js_check::checked_js!(
   const fromAsyncSource = (source) =>
     typeof source === "string"
       ? (async function* () {
-          yield [NodeBuffer.from(source)];
+          yield [new TextEncoder().encode(source)];
         })()
       : sourceAsync(source);
   const fromSyncSource = (source) =>
     typeof source === "string"
       ? (function* () {
-          yield [NodeBuffer.from(source)];
+          yield [new TextEncoder().encode(source)];
         })()
       : sourceSync(source);
   const tapSync = (observer) => {
