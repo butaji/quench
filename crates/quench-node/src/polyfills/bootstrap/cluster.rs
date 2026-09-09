@@ -1275,8 +1275,21 @@ pub const JS: &str = quench_js_check::checked_js!(
   const from = (source) =>
     typeof source?.[Symbol.asyncIterator] === "function"
       ? source
-      : { [Symbol.asyncIterator]: () => sourceAsync(source) };
-  const fromSync = (source) => ({ [Symbol.iterator]: () => sourceSync(source) });
+      : { [Symbol.asyncIterator]: () => fromAsyncSource(source) };
+  const fromSync = (source) => {
+    if (
+      source === null ||
+      source === undefined ||
+      (typeof source !== "string" &&
+        !(source instanceof ArrayBuffer) &&
+        !ArrayBuffer.isView(source) &&
+        typeof source?.[toStreamable] !== "function" &&
+        typeof source?.[Symbol.iterator] !== "function")
+    ) {
+      throw Object.assign(new TypeError("input must be a synchronous streamable"), { code: "ERR_INVALID_ARG_TYPE" });
+    }
+    return { [Symbol.iterator]: () => fromSyncSource(source) };
+  };
   const fromReadable = (readable) => from(readable);
   const pipeTo = async (source, writer, options = {}) => {
     if (!writer || typeof writer.write !== "function") {
@@ -1314,6 +1327,9 @@ pub const JS: &str = quench_js_check::checked_js!(
     if (options.preventClose !== true) writer.endSync?.();
     return undefined;
   };
+  const arrayBuffer = async (source, options) => (await asyncBytes(source, options)).buffer;
+  const arrayBufferSync = (source, options) => syncBytes(source, options).buffer;
+  const ondrain = (writer) => writer?.canWrite === null ? null : Promise.resolve(true);
   const duplex = (options) => {
     if (options !== undefined &&
         (!options || typeof options !== "object" || Array.isArray(options))) {
@@ -1334,37 +1350,63 @@ pub const JS: &str = quench_js_check::checked_js!(
   };
   const Share = { from: share };
   const SyncShare = { fromSync: (source, options) => shareSync(source, options) };
+  const pull = (readable, transform) => {
+    if (
+      transform !== undefined &&
+      typeof transform !== "function" &&
+      typeof transform?.transform !== "function"
+    ) {
+      throw Object.assign(
+        new TypeError("transform must be a function or an object with transform()"),
+        { code: "ERR_INVALID_ARG_TYPE" }
+      );
+    }
+    if (
+      transform?.constructor?.name === "AsyncGeneratorFunction" ||
+      typeof transform?.transform === "function"
+    ) {
+      const transformSource = typeof transform?.transform === "function"
+        ? transform.transform
+        : transform;
+      if (transform?.__quench_direct_transform) {
+        return transformSource(sourceAsync(readable));
+      }
+      return {
+        async *[Symbol.asyncIterator]() {
+          for await (const value of transformSource(sourceAsync(readable))) {
+            yield value;
+          }
+        }
+      };
+    }
+    return {
+      async *[Symbol.asyncIterator]() {
+        for await (const value of readable) {
+          const result = transform ? transform(value) : value;
+          if (result && typeof result[Symbol.asyncIterator] === "function") {
+            for await (const transformed of result) yield transformed;
+          } else {
+            yield result;
+          }
+        }
+      }
+    };
+  };
   const streamNamespace = {
-    push, duplex, from, fromSync, pull: (source) => source, pullSync,
+    push, duplex, from, fromSync, pull, pullSync,
     pipeTo, pipeToSync, bytes: asyncBytes, bytesSync: syncBytes, text: asyncText,
-    textSync: syncText, arrayBuffer: async (source, options) => (await asyncBytes(source, options)).buffer,
-    arrayBufferSync: (source, options) => syncBytes(source, options).buffer,
+    textSync: syncText, arrayBuffer, arrayBufferSync,
     array: asyncArray, arraySync: syncArray, merge, broadcast, share, shareSync,
     broadcastProtocol, shareProtocol, shareSyncProtocol, drainableProtocol,
-    tap, tapSync, ondrain: (writer) => writer?.canWrite === null ? null : Promise.resolve(true)
+    toStreamable, toAsyncStreamable,
+    tap, tapSync, ondrain
   };
   return {
     Stream: Object.freeze(streamNamespace),
     Share,
     SyncShare,
-    from: (source) =>
-      typeof source?.[Symbol.asyncIterator] === "function"
-        ? source
-        : { [Symbol.asyncIterator]: () => fromAsyncSource(source) },
-    fromSync: (source) => {
-      if (
-        source === null ||
-        source === undefined ||
-        (typeof source !== "string" &&
-          !(source instanceof ArrayBuffer) &&
-          !ArrayBuffer.isView(source) &&
-          typeof source?.[toStreamable] !== "function" &&
-          typeof source?.[Symbol.iterator] !== "function")
-      ) {
-        throw Object.assign(new TypeError("input must be a synchronous streamable"), { code: "ERR_INVALID_ARG_TYPE" });
-      }
-      return { [Symbol.iterator]: () => fromSyncSource(source) };
-    },
+    from,
+    fromSync,
     fromReadable,
     duplex,
     pipeTo,
@@ -1373,9 +1415,8 @@ pub const JS: &str = quench_js_check::checked_js!(
     textSync: syncText,
     bytes: asyncBytes,
     bytesSync: syncBytes,
-    arrayBuffer: async (source, options) =>
-      (await asyncBytes(source, options)).buffer,
-    arrayBufferSync: (source, options) => syncBytes(source, options).buffer,
+    arrayBuffer,
+    arrayBufferSync,
     array: asyncArray,
     arraySync: syncArray,
     tap,
@@ -1395,50 +1436,8 @@ pub const JS: &str = quench_js_check::checked_js!(
     Broadcast,
     fromWritable,
     toWritable,
-    ondrain: (writer) =>
-      writer?.canWrite === null ? null : Promise.resolve(true),
-    pull: (readable, transform) => {
-      if (
-        transform !== undefined &&
-        typeof transform !== "function" &&
-        typeof transform?.transform !== "function"
-      ) {
-        throw Object.assign(
-          new TypeError("transform must be a function or an object with transform()"),
-          { code: "ERR_INVALID_ARG_TYPE" }
-        );
-      }
-      if (
-        transform?.constructor?.name === "AsyncGeneratorFunction" ||
-        typeof transform?.transform === "function"
-      ) {
-        const transformSource = typeof transform?.transform === "function"
-          ? transform.transform
-          : transform;
-        if (transform?.__quench_direct_transform) {
-          return transformSource(sourceAsync(readable));
-        }
-        return {
-          async *[Symbol.asyncIterator]() {
-            for await (const value of transformSource(sourceAsync(readable))) {
-              yield value;
-            }
-          }
-        };
-      }
-      return {
-        async *[Symbol.asyncIterator]() {
-          for await (const value of readable) {
-            const result = transform ? transform(value) : value;
-            if (result && typeof result[Symbol.asyncIterator] === "function") {
-              for await (const transformed of result) yield transformed;
-            } else {
-              yield result;
-            }
-          }
-        }
-      };
-    },
+    ondrain,
+    pull,
     toStreamable,
     toAsyncStreamable
   };
