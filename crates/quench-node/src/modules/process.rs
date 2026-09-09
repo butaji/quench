@@ -1363,7 +1363,11 @@ pub fn next_tick(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value
         }
     }
     let domain_stack = crate::modules::domain::stack_values(state);
-    let process_scope = state.borrow().cluster.process_scope();
+    let process_scope = state
+        .borrow()
+        .cluster
+        .active_worker_event_scope()
+        .unwrap_or_else(|| state.borrow().cluster.process_scope());
     state
         .borrow_mut()
         .event_loop
@@ -1482,7 +1486,11 @@ fn push_handler(state: &Rc<RefCell<HostState>>, handler: &Value, event: &str, on
 }
 
 fn push_other_handler(state: &Rc<RefCell<HostState>>, event: &str, handler: &Value, once: bool) {
-    let scope = state.borrow().cluster.process_scope();
+    let scope = state
+        .borrow()
+        .cluster
+        .active_worker_event_scope()
+        .unwrap_or_else(|| state.borrow().cluster.process_scope());
     let mut guard = state.borrow_mut();
     if scope == 0 {
         guard
@@ -1734,7 +1742,10 @@ pub fn emit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
                 None,
             ),
             _ => {
-                let scope = guard.cluster.process_scope();
+                let scope = guard
+                    .cluster
+                    .active_worker_event_scope()
+                    .unwrap_or_else(|| guard.cluster.process_scope());
                 let handlers = if scope == 0 {
                     guard.process.other_handlers.iter().collect::<Vec<_>>()
                 } else {
@@ -1842,7 +1853,10 @@ pub fn remove_all_listeners(
 
 fn remove_other_handler(state: &Rc<RefCell<HostState>>, event: &str, target: &Value) {
     let mut guard = state.borrow_mut();
-    let scope = guard.cluster.process_scope();
+    let scope = guard
+        .cluster
+        .active_worker_event_scope()
+        .unwrap_or_else(|| guard.cluster.process_scope());
     if scope == 0 {
         if let Some(index) = guard
             .process
