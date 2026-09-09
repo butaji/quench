@@ -5076,7 +5076,23 @@ pub fn write_stream_close(
             fsync_sync(state, None, &[Value::Number(fd as f64)])?;
         }
     }
-    let result = close_sync(state, None, &[Value::Number(fd as f64)]);
+    // WriteStream closes through the owning fs module so monkey-patched
+    // `fs.close` implementations observe the same lifecycle edge as Node.
+    // The built-in close requires a callback; when the stream has no callback
+    // to supply, retain the synchronous host fallback used by the ordinary
+    // stream finalizer.
+    let result = {
+        let fs_module = execute::get_property(stream, "__quench_fs_module");
+        let close = execute::get_property(&fs_module, "close");
+        if quench_runtime::is_callable(&close) {
+            match execute::call(&close, &fs_module, &[Value::Number(fd as f64)]) {
+                Ok(_) => Ok(Value::Undefined),
+                Err(_) => close_sync(state, None, &[Value::Number(fd as f64)]),
+            }
+        } else {
+            close_sync(state, None, &[Value::Number(fd as f64)])
+        }
+    };
     execute::set_property_in_place(stream, "closed", Value::Boolean(true));
     if result.is_ok() {
         execute::set_property_in_place(stream, "fd", Value::Null);
