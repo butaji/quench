@@ -1115,6 +1115,17 @@ impl ObjectData {
                 _ => None,
             });
         self.properties.retain_names(|name| name != &deleted);
+        // Host-owned lifecycle slots may be represented by a BindingCell so
+        // copy-on-write object views continue to observe one shared state.
+        // Update the cell rather than replacing the slot in that case.
+        if let Some((_, current)) = self.properties.iter_mut().find(|(name, _)| name == key) {
+            if let Value::BindingCell(cell) = &*current {
+                cell.store(value);
+                self.layout_id.set(0);
+                self.deleted_marker_state.set(0);
+                return;
+            }
+        }
         let value = if let Some(cell) = cell {
             cell.store(value);
             Value::BindingCell(cell)
