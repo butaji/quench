@@ -77,6 +77,7 @@ pub fn poll(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         }
     }
     finalize(state)?;
+    crate::modules::cluster::finalize_disconnected_workers(state);
     let fork_scopes = state.borrow().cluster.fork_scopes();
     for scope in fork_scopes {
         let _ = crate::modules::cluster::finish_idle_fork_process(state, scope)?;
@@ -1832,10 +1833,18 @@ fn read_available(
 
 fn poll_listening(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     let mut announce: Vec<Rc<RefCell<NetServer>>> = Vec::new();
+    let active_worker = state.borrow().cluster.worker_context;
     {
         let host = state.borrow();
         for server in host.net.servers.values() {
             let mut guard = server.borrow_mut();
+            // Worker bootstrap re-enters the shared VM synchronously. Do not
+            // announce a primary-owned listener from that nested turn: its
+            // callback may run before the surrounding `cluster.fork()` has
+            // assigned the returned Worker object.
+            if active_worker.is_some() && guard.owner_worker != active_worker {
+                continue;
+            }
             if guard.listening && !guard.announced {
                 guard.announced = true;
                 announce.push(server.clone());
