@@ -2525,6 +2525,10 @@ fn settle(result: Result<Value, VmError>) -> Value {
 const FILE_HANDLE_CONSTRUCTOR_KEY: &str = "\0quench:fs_file_handle_constructor";
 const FILE_HANDLE_FD_KEY: &str = "\0quench:fs_file_handle_fd";
 const READ_STREAM_HANDLE_KEY: &str = "\0quench:fs_read_stream_handle";
+const READ_STREAM_CUSTOM_FS_KEY: &str = "\0quench:fs_read_stream_custom_fs";
+const READ_STREAM_CUSTOM_OPTIONS_KEY: &str = "\0quench:fs_read_stream_custom_options";
+const READ_STREAM_CUSTOM_STAGE_KEY: &str = "\0quench:fs_read_stream_custom_stage";
+const READ_STREAM_CUSTOM_OWNED_KEY: &str = "\0quench:fs_read_stream_custom_owned";
 
 /// Canonical constructor/prototype pair shared by every `fs.promises.open`
 /// result and by `internal/fs/promises`.  The fd is a prototype accessor so
@@ -3787,23 +3791,35 @@ pub fn create_read_stream(
         path.clone().map(Value::String).unwrap_or(Value::Undefined),
     );
     execute::set_property_in_place(&stream, "bytesRead", Value::Number(0.0));
-    let fd = execute::get_property(&options, "fd");
+    let initial_fd = handle_fd
+        .map(|fd| Value::Number(fd as f64))
+        .or_else(|| matches!(raw_fd, Value::Number(_)).then_some(raw_fd.clone()))
+        .unwrap_or(Value::Null);
     execute::set_property_in_place(
         &stream,
         "fd",
-        handle_fd
-            .map(|fd| Value::Number(fd as f64))
-            .or_else(|| matches!(raw_fd, Value::Number(_)).then_some(raw_fd.clone()))
-            .unwrap_or(Value::Null),
+        Value::BindingCell(quench_runtime::value::BindingCell::new(initial_fd)),
     );
     if let Value::Object(_) | Value::ObjectAlias(_) | Value::Proxy(_) = raw_fd {
         if handle_fd.is_some() {
             let _ = execute::set_property_in_place(&stream, READ_STREAM_HANDLE_KEY, raw_fd);
         }
     }
-    execute::set_property_in_place(&stream, "readable", Value::Boolean(true));
-    execute::set_property_in_place(&stream, "closed", Value::Boolean(false));
-    execute::set_property_in_place(&stream, "destroyed", Value::Boolean(false));
+    execute::set_property_in_place(
+        &stream,
+        "readable",
+        Value::BindingCell(quench_runtime::value::BindingCell::new(Value::Boolean(true))),
+    );
+    execute::set_property_in_place(
+        &stream,
+        "closed",
+        Value::BindingCell(quench_runtime::value::BindingCell::new(Value::Boolean(false))),
+    );
+    execute::set_property_in_place(
+        &stream,
+        "destroyed",
+        Value::BindingCell(quench_runtime::value::BindingCell::new(Value::Boolean(false))),
+    );
     // ReadStream exposes the normalized range/lifecycle options as public
     // state.  Read them through the ordinary property path so options supplied
     // via an inherited `__proto__` are reflected just like own properties.
@@ -3860,10 +3876,26 @@ pub fn create_read_stream(
     Ok(stream)
 }
 
-fn readable_stream(state: &Rc<RefCell<HostState>>, _options: &Value) -> Result<Value, VmError> {
+fn readable_stream(state: &Rc<RefCell<HostState>>, options: &Value) -> Result<Value, VmError> {
     let module = crate::modules::stream::build(state)?;
     let constructor = execute::get_property_result(&module, "Readable")?;
-    execute::construct_value(&constructor, &[host_api::object(Vec::new())])
+    let constructor_options = if matches!(
+        execute::get_property(options, "autoClose"),
+        Value::Boolean(false)
+    ) {
+        // Keep every caller option (including inherited encoding/range
+        // fields) visible while overriding the Readable-only autoDestroy
+        // default.  A prototype-backed view avoids mutating user options.
+        let view = host_api::object(vec![(
+            "autoDestroy".into(),
+            Value::Boolean(false),
+        )]);
+        execute::set_prototype_of(&view, options).unwrap_or(view)
+    } else {
+        let view = host_api::object(Vec::new());
+        execute::set_prototype_of(&view, options).unwrap_or(view)
+    };
+    execute::construct_value(&constructor, &[constructor_options])
         .or_else(|_| crate::modules::events::new_emitter_object(state))
 }
 
@@ -3931,7 +3963,14 @@ fn read_stream_finish(
     }
     execute::set_property_in_place(stream, "fd", Value::Null);
     close_owned_read_handle(state, stream);
-    if !owns_handle {
+    if matches!(
+        execute::get_property(stream, READ_STREAM_CUSTOM_OWNED_KEY),
+        Value::Boolean(true)
+    ) {
+        if let Some(fd) = stream_fd {
+            close_custom_read_stream_fd(state, stream, fd);
+        }
+    } else if !owns_handle {
         if let Some(fd) = stream_fd {
             state.borrow_mut().fs.descriptors.remove(&fd);
         }
@@ -3950,10 +3989,28 @@ fn read_stream_finish(
 
 pub fn read_stream_open(
     state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
+    receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let stream = args.first().ok_or_else(|| execute::type_error("stream"))?;
+    let stream = args
+        .first()
+        .filter(|value| {
+            matches!(value, Value::Object(_) | Value::ObjectAlias(_) | Value::Proxy(_))
+        })
+        .or_else(|| {
+            receiver.filter(|value| {
+                matches!(value, Value::Object(_) | Value::ObjectAlias(_) | Value::Proxy(_))
+            })
+        })
+        .ok_or_else(|| execute::type_error("stream"))?;
+    let custom_stage = execute::get_property(stream, READ_STREAM_CUSTOM_STAGE_KEY);
+    if matches!(&custom_stage, Value::String(stage) if stage == "open") {
+        return read_stream_custom_open_result(state, stream, args);
+    }
+    if matches!(&custom_stage, Value::String(stage) if stage == "read") {
+        return read_stream_custom_read_result(state, stream, args);
+    }
+    let custom_done = matches!(&custom_stage, Value::String(stage) if stage == "done");
     let path = match args.get(1) {
         Some(Value::String(path)) => path,
         _ => return Err(execute::type_error("path")),
@@ -3977,6 +4034,45 @@ pub fn read_stream_open(
         close_owned_read_handle(state, stream);
         return Ok(Value::Undefined);
     }
+    if !custom_done {
+        let custom_fs = execute::get_property(&options, "fs");
+        let custom_open = execute::get_property(&custom_fs, "open");
+        if matches!(
+            custom_fs,
+            Value::Object(_) | Value::ObjectAlias(_) | Value::Proxy(_)
+        ) && quench_runtime::is_callable(&custom_open)
+        {
+            // The callback re-enters this same Rust capability with the
+            // stream bound as receiver, keeping custom fs.open/read/close on
+            // the ordinary host lifecycle rather than inventing a JS stream.
+            let _ = execute::set_property_in_place(
+                stream,
+                READ_STREAM_CUSTOM_FS_KEY,
+                custom_fs.clone(),
+            );
+            let _ = execute::set_property_in_place(
+                stream,
+                READ_STREAM_CUSTOM_OPTIONS_KEY,
+                options.clone(),
+            );
+            let _ = execute::set_property_in_place(
+                stream,
+                READ_STREAM_CUSTOM_STAGE_KEY,
+                Value::String("open".into()),
+            );
+            let callback = bind_read_stream_open_callback(stream);
+            execute::call(
+                &custom_open,
+                &custom_fs,
+                &[
+                    Value::String(path.to_string()),
+                    Value::String("r".into()),
+                    callback,
+                ],
+            )?;
+            return Ok(Value::Undefined);
+        }
+    }
     let fd_value = execute::get_property(&options, "fd");
     let supplied_fd = file_handle_descriptor(&fd_value).ok().flatten();
     let path = if path.is_empty() {
@@ -3996,6 +4092,37 @@ pub fn read_stream_open(
     // A FileHandle may be closed before the deferred ReadStream open turn.
     // Node closes that stream without emitting an unhandled `error` or data.
     if supplied_fd.is_some() && path.is_empty() {
+        let has_file_handle = matches!(
+            execute::get_property(stream, READ_STREAM_HANDLE_KEY),
+            Value::Object(_) | Value::ObjectAlias(_) | Value::Proxy(_)
+        );
+        if !has_file_handle {
+            // Numeric descriptors use the ordinary fs error path.  With
+            // autoClose:false Node reports EBADF but deliberately leaves the
+            // caller-owned descriptor and stream lifecycle untouched.
+            let error = match crate::modules::fs_error::fs_error(
+                "read",
+                None,
+                &std::io::Error::from_raw_os_error(9),
+            ) {
+                VmError::Thrown(value) => value,
+                other => return Err(other),
+            };
+            let auto_close = !matches!(
+                execute::get_property(&options, "autoClose"),
+                Value::Boolean(false)
+            );
+            if auto_close {
+                execute::set_property_in_place(stream, "closed", Value::Boolean(true));
+                execute::set_property_in_place(stream, "destroyed", Value::Boolean(true));
+                execute::set_property_in_place(stream, "fd", Value::Null);
+            }
+            emit_stream_event(state, stream, "error", vec![error])?;
+            if auto_close {
+                emit_stream_event(state, stream, "close", Vec::new())?;
+            }
+            return Ok(Value::Undefined);
+        }
         execute::set_property_in_place(stream, "closed", Value::Boolean(true));
         execute::set_property_in_place(stream, "destroyed", Value::Boolean(true));
         execute::set_property_in_place(stream, "fd", Value::Null);
@@ -4051,7 +4178,9 @@ pub fn read_stream_open(
     });
     let fd = Value::Number(stream_fd as f64);
     execute::set_property_in_place(&stream, "fd", fd.clone());
-    emit_stream_event(state, stream, "open", vec![fd])?;
+    if !custom_done {
+        emit_stream_event(state, stream, "open", vec![fd])?;
+    }
     let chunk = &bytes[start..end];
     // Exercise a supplied FileHandle's public read method through the same
     // host-owned operation path Node uses.  The stream keeps its own bounded
@@ -4086,35 +4215,251 @@ pub fn read_stream_open(
         crate::modules::buffer_proto::make_buffer(chunk)
     };
     execute::set_property_in_place(&stream, "bytesRead", Value::Number(chunk.len() as f64));
-    if !chunk.is_empty() {
-        emit_stream_event(state, stream, "data", vec![data])?;
-    }
-    // A paused readable has no permission to deliver terminal events yet.
-    // Keep the source open; the normal readable `resume()` path may request
-    // another pump later.
-    let paused_method = execute::get_property(stream, "isPaused");
-    let paused = quench_runtime::is_callable(&paused_method)
-        && matches!(
-            execute::call(&paused_method, stream, &[]),
-            Ok(Value::Boolean(true))
-        );
-    if paused {
-        return Ok(Value::Undefined);
-    }
-    emit_stream_event(state, stream, "end", Vec::new())?;
-    if !matches!(
-        execute::get_property(&options, "autoClose"),
-        Value::Boolean(false)
-    ) {
-        execute::set_property_in_place(&stream, "fd", Value::Null);
-        execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
-        close_owned_read_handle(state, stream);
-        if supplied_fd.is_none() {
-            state.borrow_mut().fs.descriptors.remove(&stream_fd);
+    // A flowing stream can deliver its single bounded chunk directly.  If a
+    // data listener pauses during that delivery, retain only the terminal
+    // transition through push(null); this preserves pause/resume ordering
+    // without paying the full buffered path for every ordinary read.
+    let readable_state = execute::get_property(stream, "_readableState");
+    let flowing = matches!(
+        execute::get_property(&readable_state, "flowing"),
+        Value::Boolean(true)
+    );
+    let is_paused = || {
+        let method = execute::get_property(stream, "isPaused");
+        quench_runtime::is_callable(&method)
+            && matches!(execute::call(&method, stream, &[]), Ok(Value::Boolean(true)))
+    };
+    if flowing && !is_paused() {
+        if !chunk.is_empty() {
+            emit_stream_event(state, stream, "data", vec![data])?;
         }
-        emit_stream_event(state, stream, "close", Vec::new())?;
+        if is_paused() {
+            let push = execute::get_property(stream, "push");
+            if quench_runtime::is_callable(&push) {
+                execute::call(&push, stream, &[Value::Null])?;
+            }
+        } else {
+            emit_stream_event(state, stream, "end", Vec::new())?;
+            execute::set_property_in_place(&readable_state, "ended", Value::Boolean(true));
+            execute::set_property_in_place(
+                &readable_state,
+                "endEmitted",
+                Value::Boolean(true),
+            );
+            execute::set_property_in_place(&readable_state, "reading", Value::Boolean(false));
+            execute::set_property_in_place(&readable_state, "readingMore", Value::Boolean(false));
+            execute::set_property_in_place(&stream, "readable", Value::Boolean(false));
+            if !matches!(
+                execute::get_property(&options, "autoClose"),
+                Value::Boolean(false)
+            ) {
+                execute::set_property_in_place(&stream, "fd", Value::Null);
+                execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
+                execute::set_property_in_place(&stream, "destroyed", Value::Boolean(true));
+                if let Some(bound_stream) = receiver.filter(|value| {
+                    matches!(value, Value::Object(_) | Value::ObjectAlias(_) | Value::Proxy(_))
+                        && !execute::same_value(value, stream)
+                }) {
+                    execute::set_property_in_place(bound_stream, "fd", Value::Null);
+                    execute::set_property_in_place(
+                        bound_stream,
+                        "closed",
+                        Value::Boolean(true),
+                    );
+                    execute::set_property_in_place(
+                        bound_stream,
+                        "destroyed",
+                        Value::Boolean(true),
+                    );
+                }
+                close_owned_read_handle(state, stream);
+                if matches!(
+                    execute::get_property(&stream, READ_STREAM_CUSTOM_OWNED_KEY),
+                    Value::Boolean(true)
+                ) {
+                    close_custom_read_stream_fd(state, stream, stream_fd);
+                } else if supplied_fd.is_none() {
+                    state.borrow_mut().fs.descriptors.remove(&stream_fd);
+                }
+                emit_stream_event(state, stream, "close", Vec::new())?;
+            }
+        }
+    } else {
+        // Non-flowing streams must retain the chunk until resume/read; the
+        // shared Readable implementation owns that buffering and terminal
+        // ordering.
+        let push = execute::get_property(stream, "push");
+        if quench_runtime::is_callable(&push) {
+            if !chunk.is_empty() {
+                let raw_data = crate::modules::buffer_proto::make_buffer(chunk);
+                execute::call(&push, stream, &[raw_data])?;
+            }
+            execute::call(&push, stream, &[Value::Null])?;
+        } else {
+            if !chunk.is_empty() {
+                emit_stream_event(state, stream, "data", vec![data])?;
+            }
+            emit_stream_event(state, stream, "end", Vec::new())?;
+        }
     }
     Ok(Value::Undefined)
+}
+
+fn bind_read_stream_open_callback(stream: &Value) -> Value {
+    let capability = crate::host::capability(crate::registry::SPEC_FS_READSTREAM_OPEN);
+    execute::call(
+        &Value::Builtin(quench_runtime::ops::Builtin::FunctionBind),
+        &capability,
+        std::slice::from_ref(stream),
+    )
+    .unwrap_or(capability)
+}
+
+fn read_stream_custom_open_result(
+    state: &Rc<RefCell<HostState>>,
+    stream: &Value,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let error = args.get(0).cloned().unwrap_or(Value::Null);
+    if !matches!(error, Value::Null | Value::Undefined) {
+        let auto_close = !matches!(
+            execute::get_property(
+                &execute::get_property(stream, READ_STREAM_CUSTOM_OPTIONS_KEY),
+                "autoClose"
+            ),
+            Value::Boolean(false)
+        );
+        if auto_close {
+            execute::set_property_in_place(stream, "closed", Value::Boolean(true));
+            execute::set_property_in_place(stream, "destroyed", Value::Boolean(true));
+            execute::set_property_in_place(stream, "fd", Value::Null);
+        }
+        emit_stream_event(state, stream, "error", vec![error])?;
+        if auto_close {
+            emit_stream_event(state, stream, "close", Vec::new())?;
+        }
+        return Ok(Value::Undefined);
+    }
+    let fd = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let fd_number = match fd {
+        Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value >= 0.0 => {
+            value as i32
+        }
+        _ => return Err(execute::type_error("fd")),
+    };
+    execute::set_property_in_place(stream, "fd", Value::Number(fd_number as f64));
+    execute::set_property_in_place(
+        stream,
+        READ_STREAM_CUSTOM_OWNED_KEY,
+        Value::Boolean(true),
+    );
+    emit_stream_event(
+        state,
+        stream,
+        "open",
+        vec![Value::Number(fd_number as f64)],
+    )?;
+    let custom_fs = execute::get_property(stream, READ_STREAM_CUSTOM_FS_KEY);
+    let custom_read = execute::get_property(&custom_fs, "read");
+    if !quench_runtime::is_callable(&custom_read) {
+        execute::set_property_in_place(
+            stream,
+            READ_STREAM_CUSTOM_STAGE_KEY,
+            Value::String("done".into()),
+        );
+        let options = execute::get_property(stream, READ_STREAM_CUSTOM_OPTIONS_KEY);
+        let path = execute::get_property(stream, "path");
+        return read_stream_open(
+            state,
+            Some(stream),
+            &[stream.clone(), path, options],
+        );
+    }
+    execute::set_property_in_place(
+        stream,
+        READ_STREAM_CUSTOM_STAGE_KEY,
+        Value::String("read".into()),
+    );
+    let options = execute::get_property(stream, READ_STREAM_CUSTOM_OPTIONS_KEY);
+    let path = execute::get_property(stream, "path");
+    let path = execute::to_js_string(&path).unwrap_or_default();
+    let length = std::fs::metadata(&path)
+        .ok()
+        .map(|metadata| metadata.len().min(16 * 1024 * 1024) as usize)
+        .filter(|length| *length > 0)
+        .unwrap_or(16 * 1024);
+    let scratch = crate::modules::buffer_proto::make_buffer(&vec![0; length]);
+    let position = stream_number_option(&options, "start")
+        .map(|value| Value::Number(value as f64))
+        .unwrap_or(Value::Null);
+    let callback = bind_read_stream_open_callback(stream);
+    execute::call(
+        &custom_read,
+        &custom_fs,
+        &[
+            Value::Number(fd_number as f64),
+            scratch,
+            Value::Number(0.0),
+            Value::Number(length as f64),
+            position,
+            callback,
+        ],
+    )?;
+    Ok(Value::Undefined)
+}
+
+fn read_stream_custom_read_result(
+    state: &Rc<RefCell<HostState>>,
+    stream: &Value,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let error = args.get(0).cloned().unwrap_or(Value::Null);
+    if !matches!(error, Value::Null | Value::Undefined) {
+        let options = execute::get_property(stream, READ_STREAM_CUSTOM_OPTIONS_KEY);
+        let auto_close = !matches!(
+            execute::get_property(&options, "autoClose"),
+            Value::Boolean(false)
+        );
+        if auto_close {
+            execute::set_property_in_place(stream, "closed", Value::Boolean(true));
+            execute::set_property_in_place(stream, "destroyed", Value::Boolean(true));
+            execute::set_property_in_place(stream, "fd", Value::Null);
+        }
+        emit_stream_event(state, stream, "error", vec![error])?;
+        if auto_close {
+            emit_stream_event(state, stream, "close", Vec::new())?;
+        }
+        return Ok(Value::Undefined);
+    }
+    let fd = execute::get_property(stream, "fd");
+    execute::set_property_in_place(
+        stream,
+        READ_STREAM_CUSTOM_STAGE_KEY,
+        Value::String("done".into()),
+    );
+    let options = execute::get_property(stream, READ_STREAM_CUSTOM_OPTIONS_KEY);
+    let view = host_api::object(vec![("fd".into(), fd)]);
+    let view = execute::set_prototype_of(&view, &options).unwrap_or(view);
+    let path = execute::get_property(stream, "path");
+    read_stream_open(state, Some(stream), &[stream.clone(), path, view])
+}
+
+fn close_custom_read_stream_fd(
+    _state: &Rc<RefCell<HostState>>,
+    stream: &Value,
+    fd: i32,
+) {
+    let custom_fs = execute::get_property(stream, READ_STREAM_CUSTOM_FS_KEY);
+    let close = execute::get_property(&custom_fs, "close");
+    if !quench_runtime::is_callable(&close) {
+        return;
+    }
+    let callback = crate::host::capability(crate::registry::SPEC_INSPECTOR_CLOSE);
+    let _ = execute::call(
+        &close,
+        &custom_fs,
+        &[Value::Number(fd as f64), callback],
+    );
 }
 
 fn close_owned_read_handle(state: &Rc<RefCell<HostState>>, stream: &Value) {
