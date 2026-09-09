@@ -44,6 +44,9 @@ fn resume_branch_frame(
     if let crate::completion::Completion::Return(value) = completion {
         if let Some(dst) = frame.dst {
             crate::execute::write_value(&mut registers_mut(generator), dst, value);
+        } else {
+            generator.machine.borrow_mut().pop_frame();
+            return Ok(Some(crate::completion::Completion::Return(value)));
         }
     } else if !matches!(completion, crate::completion::Completion::Normal) {
         return Ok(Some(completion));
