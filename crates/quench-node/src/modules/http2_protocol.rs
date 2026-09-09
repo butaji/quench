@@ -261,9 +261,12 @@ impl Session {
     }
 
     fn validate_and_apply(&mut self, frame: &Frame) -> Result<(), ProtocolError> {
-        if self.goaway {
-            return Err(ProtocolError::FrameAfterGoAway);
-        }
+        // GOAWAY does not terminate already-established streams.  Frames for
+        // those streams may still arrive after the connection-level control
+        // frame (for example a response to a request sent before GOAWAY), so
+        // keep decoding the existing stream lifecycle here.  New-stream
+        // admission is owned by the endpoint dispatch layer where the
+        // stream's role and last-stream-id are available.
         if !self.pending_headers.is_empty() && frame.header.kind != FrameType::Continuation {
             return Err(ProtocolError::InvalidStream(frame.header.kind));
         }
