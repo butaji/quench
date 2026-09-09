@@ -29,6 +29,7 @@ struct Worker {
     pending_disconnect: bool,
     pending_exit: Option<(i32, Option<String>)>,
     pending_worker_exit: Option<(Option<f64>, Option<String>)>,
+    pending_child_disconnect: bool,
 }
 pub struct ClusterState {
     next_id: u64,
@@ -631,6 +632,7 @@ pub fn fork(
             pending_disconnect: false,
             pending_exit: None,
             pending_worker_exit: None,
+            pending_child_disconnect: false,
         },
     );
     let module = host.cluster.module.clone();
@@ -1241,6 +1243,40 @@ pub(crate) fn finalize_disconnected_workers(state: &Rc<RefCell<HostState>>) {
     if !state.borrow().event_loop.microtasks.borrow().is_empty() {
         return;
     }
+    // A worker's process `disconnect` event follows closure of its listening
+    // servers, but may precede closure of accepted sockets. Deliver it once
+    // the server records have emitted their close events.
+    let child_disconnect_ids = {
+        let guard = state.borrow();
+        guard
+            .cluster
+            .workers
+            .iter()
+            .filter_map(|(id, worker)| {
+                let no_servers = !guard
+                    .net
+                    .servers
+                    .values()
+                    .any(|server| server.borrow().owner_worker == Some(*id));
+                (worker.pending_child_disconnect && no_servers).then_some(*id)
+            })
+            .collect::<Vec<_>>()
+    };
+    for id in child_disconnect_ids {
+        let Some(worker) = state.borrow().cluster.worker_object(id) else {
+            continue;
+        };
+        if let Some(entry) = state.borrow_mut().cluster.workers.get_mut(&id) {
+            entry.pending_child_disconnect = false;
+        }
+        let previous = state.borrow().cluster.worker_context;
+        crate::modules::cluster::set_worker_mode(state, id, &worker, true);
+        state.borrow_mut().cluster.worker_context = Some(id);
+        let _ = crate::modules::process::emit(state, &[Value::String("disconnect".into())]);
+        state.borrow_mut().cluster.worker_context = previous;
+        crate::modules::cluster::set_worker_mode(state, id, &worker, false);
+    }
+
     let ids = {
         let guard = state.borrow();
         guard
@@ -1305,6 +1341,24 @@ pub(crate) fn finalize_disconnected_workers(state: &Rc<RefCell<HostState>>) {
                 ],
             );
         }
+    }
+}
+
+/// Stop worker-owned listeners during a primary-side disconnect while leaving
+/// accepted sockets alive so their normal EOF/close path remains observable.
+fn close_worker_servers(state: &Rc<RefCell<HostState>>, worker_id: u64) {
+    let servers = state
+        .borrow()
+        .net
+        .servers
+        .values()
+        .filter_map(|server| {
+            (server.borrow().owner_worker == Some(worker_id))
+                .then(|| server.borrow().js.clone())
+        })
+        .collect::<Vec<_>>();
+    for server in servers {
+        let _ = crate::modules::net::server_close(state, Some(&server), &[]);
     }
 }
 
@@ -1616,15 +1670,24 @@ pub fn disconnect(
                 scope,
             );
         }
+        close_worker_servers(state, id);
+        if let Some(worker) = state.borrow_mut().cluster.workers.get_mut(&id) {
+            worker.pending_child_disconnect = true;
+        }
     }
-    let previous_context = state.borrow().cluster.worker_context;
-    set_worker_mode(state, id, &obj, true);
-    state.borrow_mut().cluster.worker_context = Some(id);
-    let child_result = emit(state, Some(&obj), &[Value::String("disconnect".into())]);
-    let child_exit = state.borrow().process.exit_code;
-    state.borrow_mut().process.exit_code = None;
-    state.borrow_mut().cluster.worker_context = previous_context;
-    set_worker_mode(state, id, &obj, false);
+    let (child_result, child_exit) = if child_call {
+        let previous_context = state.borrow().cluster.worker_context;
+        set_worker_mode(state, id, &obj, true);
+        state.borrow_mut().cluster.worker_context = Some(id);
+        let result = emit(state, Some(&obj), &[Value::String("disconnect".into())]);
+        let exit = state.borrow().process.exit_code;
+        state.borrow_mut().process.exit_code = None;
+        state.borrow_mut().cluster.worker_context = previous_context;
+        set_worker_mode(state, id, &obj, false);
+        (result, exit)
+    } else {
+        (Ok(Value::Undefined), None)
+    };
     if child_call {
         let code = child_exit.unwrap_or(if child_result.is_ok() { 0 } else { 1 });
         close_worker_net(state, id);
