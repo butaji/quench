@@ -67,6 +67,9 @@ fn clone_typed_view(value: &Value) -> Option<Value> {
 }
 
 pub fn deep_clone(value: Value) -> Value {
+    if let Some(clone) = crate::modules::net::clone_socket_address(&value) {
+        return clone;
+    }
     if let Some(clone) = crate::modules::webcrypto::clone_key(&value) {
         return clone;
     }

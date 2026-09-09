@@ -1954,6 +1954,35 @@ fn socket_address_value(address: String, port: f64, family: &str, flowlabel: f64
     }
 }
 
+/// Rehydrate a SocketAddress through the canonical constructor when a value
+/// crosses a structured-clone boundary.  SocketAddress carries its identity
+/// in host-owned slots and therefore cannot be reconstructed by the generic
+/// enumerable-property clone without losing `isSocketAddress()` and the
+/// prototype methods.
+pub(crate) fn clone_socket_address(value: &Value) -> Option<Value> {
+    if !matches!(
+        execute::get_property(value, SOCKET_ADDRESS_MARKER),
+        Value::Boolean(true)
+    ) {
+        return None;
+    }
+    let global = quench_runtime::vm::current_global_object();
+    let constructor = execute::get_property(&global, SOCKET_ADDRESS_CONSTRUCTOR_GLOBAL_PROP);
+    if !quench_runtime::is_callable(&constructor) {
+        return None;
+    }
+    let options = host_api::object(vec![
+        ("address".into(), execute::get_property(value, "address")),
+        ("port".into(), execute::get_property(value, "port")),
+        ("family".into(), execute::get_property(value, "family")),
+        (
+            "flowlabel".into(),
+            execute::get_property(value, "flowlabel"),
+        ),
+    ]);
+    execute::construct_value(&constructor, &[options]).ok()
+}
+
 fn socket_address_options(options: &Value) -> Result<Value, VmError> {
     let family = execute::get_property(options, "family");
     let family = match family {
