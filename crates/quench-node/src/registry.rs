@@ -1036,6 +1036,8 @@ pub const SPEC_FS_READSTREAM: NodeSpec = NodeSpec::new("fs:ReadStream", 0x1153);
 pub const SPEC_FS_WRITESTREAM: NodeSpec = NodeSpec::new("fs:WriteStream", 0x1154);
 pub const SPEC_FS_CREATE_READSTREAM: NodeSpec = NodeSpec::new("fs:createReadStream", 0x1158);
 pub const SPEC_FS_READSTREAM_OPEN: NodeSpec = NodeSpec::new("fs:ReadStream:open", 0x1159);
+pub const SPEC_FS_HANDLE_READSTREAM: NodeSpec =
+    NodeSpec::new("fs:FileHandle:createReadStream", 0x115B);
 pub const SPEC_FS_OPEN: NodeSpec = NodeSpec::new("fs:open", 0x115A);
 pub const SPEC_FS_OPENDIR: NodeSpec = NodeSpec::new("fs:opendir", 0x1155);
 pub const SPEC_FS_OPENDIRSYNC: NodeSpec = NodeSpec::new("fs:opendirSync", 0x1156);
@@ -1618,6 +1620,7 @@ pub const CAP_FS_WATCH: CapId = SPEC_FS_WATCH.cap;
 pub const CAP_FS_WATCH_CLOSE: CapId = SPEC_FS_WATCH_CLOSE.cap;
 pub const CAP_FS_READSTREAM: CapId = SPEC_FS_READSTREAM.cap;
 pub const CAP_FS_WRITESTREAM: CapId = SPEC_FS_WRITESTREAM.cap;
+pub const CAP_FS_HANDLE_READSTREAM: CapId = SPEC_FS_HANDLE_READSTREAM.cap;
 pub const CAP_FS_CREATE_READSTREAM: CapId = SPEC_FS_CREATE_READSTREAM.cap;
 pub const CAP_FS_READSTREAM_OPEN: CapId = SPEC_FS_READSTREAM_OPEN.cap;
 pub const CAP_FS_OPEN: CapId = SPEC_FS_OPEN.cap;

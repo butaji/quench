@@ -31,6 +31,7 @@ pub fn fs_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_FS_WRITESTREAM => crate::modules::fs::validate_write_stream_options,
         CAP_FS_CREATE_READSTREAM => crate::modules::fs::create_read_stream_factory,
         CAP_FS_READSTREAM_OPEN => crate::modules::fs::read_stream_open,
+        CAP_FS_HANDLE_READSTREAM => crate::modules::fs::file_handle_create_read_stream,
         CAP_FS_OPEN => crate::modules::fs::open,
         CAP_FS_OPENDIR => crate::modules::fs::opendir,
         CAP_FS_OPENDIRSYNC => crate::modules::fs::opendir_sync,

@@ -2524,6 +2524,7 @@ fn settle(result: Result<Value, VmError>) -> Value {
 
 const FILE_HANDLE_CONSTRUCTOR_KEY: &str = "\0quench:fs_file_handle_constructor";
 const FILE_HANDLE_FD_KEY: &str = "\0quench:fs_file_handle_fd";
+const READ_STREAM_HANDLE_KEY: &str = "\0quench:fs_read_stream_handle";
 
 /// Canonical constructor/prototype pair shared by every `fs.promises.open`
 /// result and by `internal/fs/promises`.  The fd is a prototype accessor so
@@ -2616,29 +2617,29 @@ pub fn promises_open(
     };
     let constructor = file_handle_constructor();
     let prototype = execute::get_property(&constructor, "prototype");
-    let mut handle = host_api::object(vec![
-        (FILE_HANDLE_FD_KEY.into(), fd),
+    let handle = crate::modules::events::new_emitter_object(state)?;
+    let _ = execute::set_property_in_place(&handle, FILE_HANDLE_FD_KEY, fd);
+    for (name, capability) in [
+        ("read", crate::host::capability(crate::registry::SPEC_FS_HANDLE_READ)),
         (
-            "read".into(),
-            crate::host::capability(crate::registry::SPEC_FS_HANDLE_READ),
-        ),
-        (
-            "readFile".into(),
+            "readFile",
             crate::host::capability(crate::registry::SPEC_FS_HANDLE_READFILE),
         ),
         (
-            "write".into(),
+            "write",
             crate::host::capability(crate::registry::SPEC_FS_HANDLE_WRITE),
         ),
         (
-            "close".into(),
+            "close",
             crate::host::capability(crate::registry::SPEC_FS_HANDLE_CLOSE),
         ),
         (
-            "Symbol.asyncDispose".into(),
+            "Symbol.asyncDispose",
             crate::host::capability(crate::registry::SPEC_FS_HANDLE_CLOSE),
         ),
-    ]);
+    ] {
+        let _ = execute::set_property_in_place(&handle, name, capability);
+    }
     let write_stream = host_api::bound_capability_with_arguments(
         quench_runtime::ops::HostCapabilityRef {
             realm: quench_runtime::ops::RealmId::ROOT,
@@ -2649,6 +2650,8 @@ pub fn promises_open(
         vec![handle.clone()],
     );
     let _ = execute::set_property_in_place(&handle, "createWriteStream", write_stream);
+    let read_stream = crate::host::capability(crate::registry::SPEC_FS_HANDLE_READSTREAM);
+    let _ = execute::set_property_in_place(&handle, "createReadStream", read_stream);
     let handle = execute::set_prototype_of(&handle, &prototype).unwrap_or(handle);
     Ok(settle(Ok(handle)))
 }
@@ -2674,6 +2677,45 @@ pub fn file_handle_read(
     Ok(settle(result))
 }
 
+pub fn file_handle_create_read_stream(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let handle = receiver.ok_or(VmError::NotCallable)?.clone();
+    let options = args
+        .first()
+        .cloned()
+        .unwrap_or_else(|| host_api::object(Vec::new()));
+    let signal = execute::get_property(&options, "signal");
+    if !matches!(signal, Value::Undefined) {
+        let valid = matches!(
+            signal,
+            Value::Object(_) | Value::ObjectAlias(_) | Value::Proxy(_)
+        ) && matches!(execute::get_property(&signal, "aborted"), Value::Boolean(_));
+        if !valid {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"signal\" option must be an instance of AbortSignal".into(),
+            ));
+        }
+    }
+    let merged = host_api::object(vec![("fd".into(), handle)]);
+    for key in execute::own_keys(&options) {
+        let Value::String(key) = key else {
+            continue;
+        };
+        if key != "fd" {
+            let value = execute::get_property(&options, &key);
+            let _ = execute::set_property_in_place(&merged, &key, value);
+        }
+    }
+    create_read_stream(
+        state,
+        None,
+        &[Value::Null, merged],
+    )
+}
+
 pub fn file_handle_close(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -2681,7 +2723,11 @@ pub fn file_handle_close(
 ) -> Result<Value, VmError> {
     let receiver = receiver.ok_or(VmError::NotCallable)?;
     let fd = descriptor_arg(execute::get_property_result(receiver, "fd").ok().as_ref())?;
-    Ok(settle(close_sync(state, None, &[Value::Number(fd as f64)])))
+    let result = close_sync(state, None, &[Value::Number(fd as f64)]);
+    if result.is_ok() {
+        let _ = emit_stream_event(state, receiver, "close", Vec::new());
+    }
+    Ok(settle(result))
 }
 
 pub fn file_handle_read_file(
@@ -3664,10 +3710,25 @@ pub fn create_read_stream(
         .unwrap_or_else(|| host_api::object(Vec::new()));
     parse_options(Some(&options))?;
     validate_stream_bounds(&options)?;
+    let raw_fd = execute::get_property(&options, "fd");
+    let handle_fd = file_handle_descriptor(&raw_fd)?;
+    if handle_fd.is_some()
+        && !matches!(execute::get_property(&options, "fs"), Value::Undefined)
+    {
+        let error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String(
+                "The FileHandle with fs method is not implemented".into(),
+            )],
+        );
+        return Err(VmError::Thrown(execute::set_property(
+            error,
+            "code",
+            Value::String("ERR_METHOD_NOT_IMPLEMENTED".into()),
+        )));
+    }
     let path = match args.first() {
-        Some(Value::Null | Value::Undefined)
-            if matches!(execute::get_property(&options, "fd"), Value::Number(_)) =>
-        {
+        Some(Value::Null | Value::Undefined) if handle_fd.is_some() => {
             None
         }
         value => Some(path_arg(value)?),
@@ -3730,12 +3791,16 @@ pub fn create_read_stream(
     execute::set_property_in_place(
         &stream,
         "fd",
-        if matches!(fd, Value::Number(_)) {
-            fd
-        } else {
-            Value::Null
-        },
+        handle_fd
+            .map(|fd| Value::Number(fd as f64))
+            .or_else(|| matches!(raw_fd, Value::Number(_)).then_some(raw_fd.clone()))
+            .unwrap_or(Value::Null),
     );
+    if let Value::Object(_) | Value::ObjectAlias(_) | Value::Proxy(_) = raw_fd {
+        if handle_fd.is_some() {
+            let _ = execute::set_property_in_place(&stream, READ_STREAM_HANDLE_KEY, raw_fd);
+        }
+    }
     execute::set_property_in_place(&stream, "readable", Value::Boolean(true));
     execute::set_property_in_place(&stream, "closed", Value::Boolean(false));
     execute::set_property_in_place(&stream, "destroyed", Value::Boolean(false));
@@ -3846,11 +3911,34 @@ fn read_stream_finish(
     destroyed: bool,
 ) -> Result<Value, VmError> {
     let stream = receiver.ok_or_else(|| execute::type_error("stream"))?;
+    let was_closed = matches!(
+        execute::get_property(stream, "closed"),
+        Value::Boolean(true)
+    );
+    let stream_fd = match execute::get_property(stream, "fd") {
+        Value::Number(fd) if fd.is_finite() && fd.fract() == 0.0 && fd >= 0.0 => {
+            Some(fd as i32)
+        }
+        _ => None,
+    };
+    let owns_handle = matches!(
+        execute::get_property(stream, READ_STREAM_HANDLE_KEY),
+        Value::Object(_) | Value::ObjectAlias(_) | Value::Proxy(_)
+    );
     execute::set_property_in_place(stream, "closed", Value::Boolean(true));
     if destroyed {
         execute::set_property_in_place(stream, "destroyed", Value::Boolean(true));
     }
     execute::set_property_in_place(stream, "fd", Value::Null);
+    close_owned_read_handle(state, stream);
+    if !owns_handle {
+        if let Some(fd) = stream_fd {
+            state.borrow_mut().fs.descriptors.remove(&fd);
+        }
+    }
+    if !was_closed {
+        emit_stream_event(state, stream, "close", Vec::new())?;
+    }
     if let Some(callback) = args
         .first()
         .filter(|value| quench_runtime::is_callable(value))
@@ -3874,14 +3962,30 @@ pub fn read_stream_open(
         .get(2)
         .cloned()
         .unwrap_or_else(|| host_api::object(Vec::new()));
+    let signal = execute::get_property(&options, "signal");
+    if execute::is_truthy(&execute::get_property(&signal, "aborted")) {
+        let mut error = crate::modules::fs_error::abort_error();
+        let reason = execute::get_property(&signal, "reason");
+        if !matches!(reason, Value::Undefined) {
+            error = execute::set_property(error, "cause", reason);
+        }
+        execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
+        execute::set_property_in_place(&stream, "destroyed", Value::Boolean(true));
+        execute::set_property_in_place(&stream, "fd", Value::Null);
+        emit_stream_event(state, stream, "error", vec![error])?;
+        emit_stream_event(state, stream, "close", Vec::new())?;
+        close_owned_read_handle(state, stream);
+        return Ok(Value::Undefined);
+    }
     let fd_value = execute::get_property(&options, "fd");
+    let supplied_fd = file_handle_descriptor(&fd_value).ok().flatten();
     let path = if path.is_empty() {
-        match fd_value {
-            Value::Number(fd) => state
+        match supplied_fd {
+            Some(fd) => state
                 .borrow()
                 .fs
                 .descriptors
-                .get(&(fd as i32))
+                .get(&fd)
                 .map(|descriptor| descriptor.path.clone())
                 .unwrap_or_default(),
             _ => String::new(),
@@ -3889,6 +3993,16 @@ pub fn read_stream_open(
     } else {
         path.to_string()
     };
+    // A FileHandle may be closed before the deferred ReadStream open turn.
+    // Node closes that stream without emitting an unhandled `error` or data.
+    if supplied_fd.is_some() && path.is_empty() {
+        execute::set_property_in_place(stream, "closed", Value::Boolean(true));
+        execute::set_property_in_place(stream, "destroyed", Value::Boolean(true));
+        execute::set_property_in_place(stream, "fd", Value::Null);
+        close_owned_read_handle(state, stream);
+        emit_stream_event(state, stream, "close", Vec::new())?;
+        return Ok(Value::Undefined);
+    }
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
         Err(error) => {
@@ -3913,10 +4027,58 @@ pub fn read_stream_open(
         .unwrap_or(bytes.len());
     let end = end.min(bytes.len());
     let start = start.min(end);
-    let fd = Value::Number(3.0);
+    let stream_fd = supplied_fd.unwrap_or_else(|| {
+        let Ok(metadata) = std::fs::metadata(&path) else {
+            return 3;
+        };
+        if !metadata.file_type().is_file() {
+            return 3;
+        }
+        let Ok(file) = std::fs::File::open(&path) else {
+            return 3;
+        };
+        let mut fs = state.borrow_mut();
+        let fd = fs.fs.next_fd;
+        fs.fs.next_fd = fs.fs.next_fd.saturating_add(1);
+        fs.fs.descriptors.insert(
+            fd,
+            FileDescriptor {
+                file,
+                path: path.clone(),
+            },
+        );
+        fd
+    });
+    let fd = Value::Number(stream_fd as f64);
     execute::set_property_in_place(&stream, "fd", fd.clone());
     emit_stream_event(state, stream, "open", vec![fd])?;
     let chunk = &bytes[start..end];
+    // Exercise a supplied FileHandle's public read method through the same
+    // host-owned operation path Node uses.  The stream keeps its own bounded
+    // read below, while this call preserves observable overrides (for example
+    // a `mustCall` wrapper around handle.read).
+    if let Value::Object(_) | Value::ObjectAlias(_) | Value::Proxy(_) = fd_value {
+        let handle = execute::get_property(stream, READ_STREAM_HANDLE_KEY);
+        if matches!(
+            handle,
+            Value::Object(_) | Value::ObjectAlias(_) | Value::Proxy(_)
+        ) {
+            let read = execute::get_property(&handle, "read");
+            if quench_runtime::is_callable(&read) {
+                let scratch = crate::modules::buffer_proto::make_buffer(&vec![0; chunk.len()]);
+                let _ = execute::call(
+                    &read,
+                    &handle,
+                    &[
+                        scratch,
+                        Value::Number(0.0),
+                        Value::Number(chunk.len() as f64),
+                        Value::Number(start as f64),
+                    ],
+                );
+            }
+        }
+    }
     let encoding = execute::get_property(&options, "encoding");
     let data = if let Value::String(encoding) = encoding {
         crate::modules::buffer_enc::decode_str(chunk, &encoding)
@@ -3946,9 +4108,36 @@ pub fn read_stream_open(
     ) {
         execute::set_property_in_place(&stream, "fd", Value::Null);
         execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
+        close_owned_read_handle(state, stream);
+        if supplied_fd.is_none() {
+            state.borrow_mut().fs.descriptors.remove(&stream_fd);
+        }
         emit_stream_event(state, stream, "close", Vec::new())?;
     }
     Ok(Value::Undefined)
+}
+
+fn close_owned_read_handle(state: &Rc<RefCell<HostState>>, stream: &Value) {
+    let handle = execute::get_property(stream, READ_STREAM_HANDLE_KEY);
+    if !matches!(
+        handle,
+        Value::Object(_) | Value::ObjectAlias(_) | Value::Proxy(_)
+    ) {
+        return;
+    }
+    let Some(fd) = file_handle_descriptor(&handle).ok().flatten() else {
+        let _ = execute::set_property_in_place(stream, READ_STREAM_HANDLE_KEY, Value::Undefined);
+        return;
+    };
+    if !state.borrow().fs.descriptors.contains_key(&fd) {
+        let _ = execute::set_property_in_place(stream, READ_STREAM_HANDLE_KEY, Value::Undefined);
+        return;
+    }
+    let close = execute::get_property(&handle, "close");
+    if quench_runtime::is_callable(&close) {
+        let _ = execute::call(&close, &handle, &[]);
+    }
+    let _ = execute::set_property_in_place(stream, READ_STREAM_HANDLE_KEY, Value::Undefined);
 }
 
 fn emit_stream_event(
