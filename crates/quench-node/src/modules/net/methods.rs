@@ -3149,6 +3149,7 @@ pub fn socket_destroy(
     let Some(id) = net_id(&receiver) else {
         return Ok(receiver);
     };
+    crate::modules::http2_util::cancel_http2_pings(state, id)?;
     // Destruction invalidates host-owned protocol/application write queues as
     // one state transition. Leaving a queued frame behind lets the next pump
     // tick call `write()` on the already-destroyed socket, producing a
