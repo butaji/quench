@@ -842,12 +842,14 @@ fn has_referenced_work(state: &Rc<RefCell<HostState>>) -> bool {
 }
 
 fn has_pending(state: &Rc<RefCell<HostState>>) -> bool {
+    let cluster_pending = crate::modules::cluster::has_pending_disconnect(state);
     let guard = state.borrow();
     quench_runtime::has_pending_promise_jobs()
         || quench_runtime::has_pending_unhandled_rejections()
         || !guard.event_loop.microtasks.borrow().is_empty()
         || !guard.event_loop.immediates.borrow().is_empty()
         || !guard.pending_shell_execs.is_empty()
+        || cluster_pending
         || guard
             .timers
             .timers

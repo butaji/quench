@@ -1272,9 +1272,64 @@ pub(crate) fn finalize_disconnected_workers(state: &Rc<RefCell<HostState>>) {
         let previous = state.borrow().cluster.worker_context;
         crate::modules::cluster::set_worker_mode(state, id, &worker, true);
         state.borrow_mut().cluster.worker_context = Some(id);
+        // The control-channel disconnect is observed by the worker's
+        // `cluster.worker` EventEmitter.  The worker-side process may also
+        // expose a disconnect event, but it is a distinct target; dispatch
+        // the cluster worker notification here so listeners installed by the
+        // child entry script run before the worker is finalized.
+        let _ = crate::modules::cluster::emit(
+            state,
+            Some(&worker),
+            &[Value::String("disconnect".into())],
+        );
+        // `process.on('disconnect')` is a separate EventEmitter from
+        // `cluster.worker`; preserve both observable targets for workers that
+        // use the process-level API.
         let _ = crate::modules::process::emit(state, &[Value::String("disconnect".into())]);
-        state.borrow_mut().cluster.worker_context = previous;
-        crate::modules::cluster::set_worker_mode(state, id, &worker, false);
+        // A worker-side listener may call process.exit(code) while handling
+        // this notification.  Capture that logical child status before
+        // restoring the primary process view, then deliver the corresponding
+        // parent-side exit events instead of allowing the status to be lost
+        // (or to terminate the primary runner).
+        let child_exit = state.borrow_mut().process.exit_code.take();
+        if let Some(code) = child_exit {
+            if let Some(entry) = state.borrow_mut().cluster.workers.get_mut(&id) {
+                entry.dead = true;
+                entry.pending_exit = None;
+            }
+            let _ = execute::set_property_in_place(&worker, "state", Value::String("dead".into()));
+            if let Ok(process) = execute::get_property_result(&worker, "process") {
+                let _ = execute::set_property_in_place(&process, "exitCode", Value::Number(code as f64));
+                let _ = execute::set_property_in_place(&process, "signalCode", Value::Null);
+            }
+            state.borrow_mut().cluster.worker_context = previous;
+            crate::modules::cluster::set_worker_mode(state, id, &worker, false);
+            let _ = crate::modules::cluster::emit(
+                state,
+                Some(&worker),
+                &[
+                    Value::String("exit".into()),
+                    Value::Number(code as f64),
+                    Value::Null,
+                ],
+            );
+            if let Some(module) = state.borrow().cluster.module.clone() {
+                let _ = crate::modules::events::method_emit(
+                    state,
+                    Some(&module),
+                    &[
+                        Value::String("exit".into()),
+                        worker.clone(),
+                        Value::Number(code as f64),
+                        Value::Null,
+                    ],
+                );
+            }
+        }
+        if child_exit.is_none() {
+            state.borrow_mut().cluster.worker_context = previous;
+            crate::modules::cluster::set_worker_mode(state, id, &worker, false);
+        }
     }
 
     let ids = {
@@ -1342,6 +1397,21 @@ pub(crate) fn finalize_disconnected_workers(state: &Rc<RefCell<HostState>>) {
             );
         }
     }
+}
+
+/// Whether a worker disconnect transition still needs a pump turn.  The
+/// primary-side `Worker.disconnect()` first queues parent notifications and
+/// then marks the child-side process notification pending.  Neither state is
+/// represented by a socket/timer, so the event-loop liveness check must count
+/// it explicitly or the loop can go idle immediately after draining the
+/// parent microtask.
+pub(crate) fn has_pending_disconnect(state: &Rc<RefCell<HostState>>) -> bool {
+    state
+        .borrow()
+        .cluster
+        .workers
+        .values()
+        .any(|worker| worker.pending_child_disconnect || worker.pending_disconnect)
 }
 
 /// Stop worker-owned listeners during a primary-side disconnect while leaving
