@@ -1314,6 +1314,31 @@ fn dispatch_http2_frames(
                 }
                 emit_http2_stream_close(state, socket, &stream, is_server, false)?;
             }
+            crate::modules::http2_protocol::FrameType::GoAway => {
+                // GOAWAY carries the peer's terminal stream boundary and an
+                // optional opaque diagnostic payload.  Deliver the decoded
+                // wire facts on the session/socket object; this is the same
+                // object exposed by `http2.connect()` and the server's
+                // `session` event.
+                if frame.payload.len() >= 8 {
+                    let last_stream_id = u32::from_be_bytes(
+                        frame.payload[0..4].try_into().unwrap(),
+                    ) & 0x7fff_ffff;
+                    let error_code =
+                        u32::from_be_bytes(frame.payload[4..8].try_into().unwrap());
+                    emit_socket_scoped(
+                        state,
+                        socket,
+                        &socket_js,
+                        "goaway",
+                        vec![
+                            Value::Number(error_code as f64),
+                            Value::Number(last_stream_id as f64),
+                            crate::modules::buffer_proto::make_buffer(&frame.payload[8..]),
+                        ],
+                    )?;
+                }
+            }
             crate::modules::http2_protocol::FrameType::Ping => {
                 let payload = frame.payload.as_slice();
                 if frame.header.flags & 0x1 != 0 {
@@ -1468,6 +1493,41 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
                 crate::modules::http2_protocol::PROTOCOL_ERROR_MARKER,
                 Value::Boolean(true),
             );
+            let goaway_code = if matches!(
+                protocol_error,
+                Some(crate::modules::http2_protocol::ProtocolError::FlowControlError)
+            ) {
+                3_u32 // FLOW_CONTROL_ERROR
+            } else {
+                1_u32 // PROTOCOL_ERROR
+            };
+            let mut goaway_payload = 0_u32.to_be_bytes().to_vec();
+            goaway_payload.extend_from_slice(&goaway_code.to_be_bytes());
+            let goaway = crate::modules::http2_protocol::Frame::new(
+                crate::modules::http2_protocol::FrameType::GoAway,
+                0,
+                0,
+                goaway_payload,
+            );
+            let _ = crate::modules::net::socket_write(
+                state,
+                Some(&js),
+                &[crate::modules::buffer_proto::make_buffer(&goaway.encode())],
+            );
+            // A malformed connection-level frame is a session error, not a
+            // recoverable net.Socket data event.  Surface Node's common
+            // HTTP/2 protocol error and tear down the transport so peer-side
+            // users observe EOF/close instead of waiting forever.
+            let error = quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String("Protocol error".into())],
+            );
+            let error = execute::set_property(
+                error,
+                "code",
+                Value::String("ERR_HTTP2_ERROR".into()),
+            );
+            crate::modules::net::socket_destroy(state, Some(&js), &[error])?;
         }
         let is_http2 = state
             .borrow()
