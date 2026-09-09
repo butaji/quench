@@ -12533,7 +12533,15 @@ pub fn cp_exec_file(
     // process boundary. Reuse the synchronous Rust launcher here to obtain
     // the actual exit status/output, then deliver the callback on the event
     // loop just like Node's asynchronous API.
-    if command.as_deref() == Some(state.borrow().process.exec_path.as_str()) {
+    if command.as_deref() == Some(state.borrow().process.exec_path.as_str())
+        // An argument-less execFile(process.execPath, callback) is the
+        // interactive child form. It remains live until the caller kills
+        // it, so it must use the ordinary ChildProcess lifecycle below
+        // rather than eagerly waiting on the script runner's CLI.
+        && args.iter().any(|value| {
+            matches!(value, Value::Array(values) if values.logical_len() > 0)
+        })
+    {
         let result = crate::modules::child_process::spawn_sync(state, &spawn_args)?;
         let status = execute::get_property(&result, "status");
         let stdout = execute::get_property(&result, "stdout");
@@ -12677,7 +12685,10 @@ pub fn cp_exec_file(
         );
         return Ok(child);
     }
-    if !args.iter().any(|value| matches!(value, Value::Array(_))) {
+    let has_nonempty_args = args.iter().any(|value| {
+        matches!(value, Value::Array(values) if values.logical_len() > 0)
+    });
+    if !has_nonempty_args {
         if command.as_deref() == Some("does-not-exist") {
             let mut error = quench_runtime::builtins::error(
                 quench_runtime::ops::Builtin::Error,
