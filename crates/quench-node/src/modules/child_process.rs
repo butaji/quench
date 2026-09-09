@@ -4,7 +4,9 @@
 //! CLI without a shell.
 
 use std::io::Write;
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use quench_runtime::execute::{self, VmError};
@@ -16,6 +18,39 @@ use crate::host::HostState;
 /// Execute one shell command at the host boundary, preserving the ordinary
 /// `exec()` output contract for commands that use shell syntax.
 pub(crate) fn shell_output(command: &str, options: Option<&Value>) -> std::io::Result<Output> {
+    let process = spawn_shell(command, options)?;
+    wait_with_timeout(process, options)
+}
+
+/// Start a shell command without waiting for its exit.  The child is moved to
+/// a bounded waiter thread so the VM thread never blocks on shell startup or
+/// on a pipe/FIFO opened by the command.  Only the `Output` crosses the thread
+/// boundary; VM values remain owned by the host pump.
+pub(crate) fn spawn_shell_async(
+    command: &str,
+    options: Option<&Value>,
+) -> std::io::Result<AsyncShellChild> {
+    let process = spawn_shell(command, options)?;
+    let result = Arc::new(Mutex::new(None));
+    let result_slot = Arc::clone(&result);
+    let waiter = std::thread::spawn(move || {
+        let output = process.wait_with_output();
+        if let Ok(mut slot) = result_slot.lock() {
+            *slot = Some(output);
+        }
+    });
+    Ok(AsyncShellChild {
+        result,
+        _waiter: waiter,
+    })
+}
+
+pub(crate) struct AsyncShellChild {
+    pub(crate) result: Arc<Mutex<Option<std::io::Result<Output>>>>,
+    pub(crate) _waiter: JoinHandle<()>,
+}
+
+fn spawn_shell(command: &str, options: Option<&Value>) -> std::io::Result<Child> {
     let uses_host_exec = crate::host::command_uses_host_exec(command);
     let command = if uses_host_exec {
         let current = std::env::current_exe()
@@ -71,11 +106,10 @@ pub(crate) fn shell_output(command: &str, options: Option<&Value>) -> std::io::R
         process.env("QUENCH_CHILD_RUNNER", "1");
         process.env("QUENCH_PARENT_PID", std::process::id().to_string());
     }
-    let process = process
+    process
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()?;
-    wait_with_timeout(process, options)
+        .spawn()
 }
 
 /// Wait for a host child without allowing Node's timeout option to be

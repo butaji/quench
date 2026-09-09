@@ -8999,11 +8999,25 @@ pub fn cp_spawn_output_emit(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let Some(child) = args.first() else {
+    let Some(child_arg) = args.first() else {
         return Ok(Value::Undefined);
     };
+    // Host capabilities may receive an older COW wrapper after stream setup
+    // mutates the public child. Resolve the lifecycle object once before
+    // consulting async-completion markers or publishing events.
+    let child_value = execute::canonical_value(child_arg);
+    let child = &child_value;
     if matches!(
         execute::get_property(child, "\0childTerminated"),
+        Value::Boolean(true)
+    ) {
+        return Ok(Value::Undefined);
+    }
+    // The first synthetic spawn transition is only a construction edge.  A
+    // shell command with syntax that can block is completed by the host-pump
+    // result imported in `poll_pending_shell_execs`.
+    if matches!(
+        execute::get_property(child, "\0childAsyncShellPending"),
         Value::Boolean(true)
     ) {
         return Ok(Value::Undefined);
@@ -9123,7 +9137,17 @@ pub fn cp_spawn_output_emit(
             || cp_spawn_script_requires_in_process(&child_args)
             || cp_spawn_script_uses_stdin(&child_args)
             || cp_spawn_eval_requires_in_process(&child_args));
-    let real_child = if source_driven {
+    let real_child = if let (
+        Value::String(stdout),
+        Value::String(stderr),
+        Value::Number(status),
+    ) = (
+        execute::get_property(child, "\0childAsyncRealStdout"),
+        execute::get_property(child, "\0childAsyncRealStderr"),
+        execute::get_property(child, "\0childShellStatus"),
+    ) {
+        Some((stdout.into_bytes(), stderr.into_bytes(), status as i32))
+    } else if source_driven {
         None
     } else {
         cp_run_host_child(state, child, &command, &child_args, &child_options).or_else(|| {
@@ -9667,7 +9691,29 @@ pub fn cp_spawn_output_emit(
     };
     execute::set_property_in_place(child, "\0childTerminated", Value::Boolean(true));
     emit(child, "exit", exit.clone())?;
-    emit(child, "close", exit)
+    emit(child, "close", exit)?;
+    let callback = execute::get_property(child, "\0childAsyncExecCallback");
+    if quench_runtime::is_callable(&callback) {
+        let error = execute::get_property(child, "\0childAsyncExecError");
+        let stdout = execute::get_property(child, "\0childAsyncRealStdout");
+        let stderr = execute::get_property(child, "\0childAsyncRealStderr");
+        let use_buffer = execute::get_property(child, "\0childAsyncExecUseBuffer");
+        let completion = bound_custom(
+            crate::registry::SPEC_CP_EXEC_COMPLETE.cap,
+            vec![callback, child.clone(), error, stdout, stderr, use_buffer],
+        );
+        state.borrow().event_loop.queue_microtask(completion, vec![]);
+        for key in [
+            "\0childAsyncExecCallback",
+            "\0childAsyncExecError",
+            "\0childAsyncRealStdout",
+            "\0childAsyncRealStderr",
+            "\0childAsyncExecUseBuffer",
+        ] {
+            execute::set_property_in_place(child, key, Value::Undefined);
+        }
+    }
+    Ok(Value::Undefined)
 }
 
 pub fn cp_kill(
@@ -12104,6 +12150,48 @@ pub fn cp_async(
             cp_stream_set_encoding(state, Some(&stderr), std::slice::from_ref(&utf8))?;
         }
     }
+    let mut command_text = execute::to_js_string(&command).unwrap_or_default();
+    let env = execute::get_property(&options, "env");
+    for index in 0..8 {
+        let key = format!("ESCAPED_{index}");
+        let value =
+            execute::to_js_string(&execute::get_property(&env, &key)).unwrap_or_default();
+        command_text = command_text.replace(&format!("${{{key}}}"), &value);
+    }
+    let eval_script = command_text.contains(" -e ");
+    // Shell syntax can block before the caller has a chance to create a
+    // reader (for example `echo data > fifo`). Keep this OS operation off the
+    // VM thread and let the host pump publish its result after rendezvous.
+    if !eval_script
+        && signal.is_none()
+        && !matches!(execute::get_property(&options, "timeout"), Value::Number(_))
+        && crate::modules::child_process::needs_shell(&command_text)
+    {
+        if let Ok(process) =
+            crate::modules::child_process::spawn_shell_async(&command_text, Some(&options))
+        {
+            let use_buffer = execute::has_own_property(&options, "encoding")
+                && !matches!(
+                    execute::get_property(&options, "encoding"),
+                    Value::String(ref value) if value == "utf8"
+                );
+            execute::set_property_in_place(
+                &child,
+                "\0childAsyncShellPending",
+                Value::Boolean(true),
+            );
+            state.borrow_mut().pending_shell_execs.push(
+                crate::host::PendingShellExec {
+                    child: child.clone(),
+                    callback: callback.clone(),
+                    command: command_text.clone(),
+                    use_buffer,
+                    process,
+                },
+            );
+            return Ok(child);
+        }
+    }
     if let Some(callback) = callback {
         let timeout = match execute::get_property(&options, "timeout") {
             Value::Number(value) => Some(value),
@@ -12141,15 +12229,6 @@ pub fn cp_async(
         } else {
             Value::Null
         };
-        let env = execute::get_property(&options, "env");
-        let mut command_text = execute::to_js_string(&command).unwrap_or_default();
-        for index in 0..8 {
-            let key = format!("ESCAPED_{index}");
-            let value =
-                execute::to_js_string(&execute::get_property(&env, &key)).unwrap_or_default();
-            command_text = command_text.replace(&format!("${{{key}}}"), &value);
-        }
-        let eval_script = command_text.contains(" -e ");
         let shell_capture = if timeout.is_some() || eval_script || signal.is_some() {
             None
         } else if !eval_script {
@@ -12366,6 +12445,100 @@ pub fn cp_async(
         }
     }
     Ok(child)
+}
+
+/// Import completed shell output at a host-pump boundary.  The waiter thread
+/// owns only the OS child and byte result; all lifecycle/event values stay on
+/// the VM thread and are projected through the existing spawn transition.
+pub fn poll_pending_shell_execs(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
+    let mut ready = Vec::new();
+    {
+        let mut host = state.borrow_mut();
+        let mut pending = std::mem::take(&mut host.pending_shell_execs);
+        for item in pending.drain(..) {
+            let result = item
+                .process
+                .result
+                .lock()
+                .ok()
+                .and_then(|mut slot| slot.take());
+            if let Some(result) = result {
+                ready.push((item, result));
+            } else {
+                host.pending_shell_execs.push(item);
+            }
+        }
+    }
+    for (pending, result) in ready {
+        let output = match result {
+            Ok(output) => output,
+            Err(_) => {
+                execute::set_property_in_place(
+                    &pending.child,
+                    "\0childAsyncShellPending",
+                    Value::Boolean(false),
+                );
+                continue;
+            }
+        };
+        let status = child_status_code(&output.status);
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        let error = if output.status.success() {
+            Value::Null
+        } else {
+            let error = quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String(format!("Command failed: {}", pending.command))],
+            );
+            execute::set_property(
+                execute::set_property(error, "code", Value::Number(status as f64)),
+                "cmd",
+                Value::String(pending.command.clone()),
+            )
+        };
+        execute::set_property_in_place(
+            &pending.child,
+            "\0childShellStatus",
+            Value::Number(status as f64),
+        );
+        execute::set_property_in_place(
+            &pending.child,
+            "\0childAsyncRealStdout",
+            Value::String(stdout),
+        );
+        execute::set_property_in_place(
+            &pending.child,
+            "\0childAsyncRealStderr",
+            Value::String(stderr),
+        );
+        execute::set_property_in_place(&pending.child, "\0childAsyncExecError", error);
+        if let Some(callback) = pending.callback {
+            execute::set_property_in_place(
+                &pending.child,
+                "\0childAsyncExecCallback",
+                callback,
+            );
+        }
+        execute::set_property_in_place(
+            &pending.child,
+            "\0childAsyncExecUseBuffer",
+            Value::Boolean(pending.use_buffer),
+        );
+        execute::set_property_in_place(
+            &pending.child,
+            "\0childAsyncShellPending",
+            Value::Boolean(false),
+        );
+        let streams = vec![
+            pending.child.clone(),
+            execute::get_property(&pending.child, "stdout"),
+            execute::get_property(&pending.child, "stderr"),
+        ];
+        let emit = bound_custom(crate::registry::SPEC_CP_SPAWN_OUTPUT_EMIT.cap, streams);
+        state.borrow().event_loop.queue_immediate(emit, vec![]);
+    }
+    Ok(())
 }
 
 pub fn cp_exec_file(

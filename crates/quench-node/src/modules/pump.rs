@@ -151,6 +151,7 @@ pub fn await_promise(state: &Rc<RefCell<HostState>>, promise: &Value) -> Result<
         if let Some(result) = settled(&data.state.borrow()) {
             return result;
         }
+        crate::dispatch_handlers::poll_pending_shell_execs(state)?;
         crate::modules::net::poll(state)?;
         quench_runtime::expire_async_waiters();
         drain_ticks(state)?;
@@ -198,6 +199,7 @@ pub fn await_promise_with_timeout(
             result?;
             return Ok(false);
         }
+        crate::dispatch_handlers::poll_pending_shell_execs(state)?;
         crate::modules::net::poll(state)?;
         quench_runtime::expire_async_waiters();
         drain_ticks(state)?;
@@ -241,6 +243,7 @@ pub fn run_event_loop(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         if let Some(error) = crate::modules::async_hooks::take_fatal_error(state) {
             return Err(VmError::Thrown(error));
         }
+        crate::dispatch_handlers::poll_pending_shell_execs(state)?;
         crate::modules::net::poll(state)?;
         quench_runtime::expire_async_waiters();
         drain_ticks(state)?;
@@ -844,6 +847,7 @@ fn has_pending(state: &Rc<RefCell<HostState>>) -> bool {
         || quench_runtime::has_pending_unhandled_rejections()
         || !guard.event_loop.microtasks.borrow().is_empty()
         || !guard.event_loop.immediates.borrow().is_empty()
+        || !guard.pending_shell_execs.is_empty()
         || guard
             .timers
             .timers
