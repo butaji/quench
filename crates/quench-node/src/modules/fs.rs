@@ -4982,22 +4982,21 @@ pub fn write_stream_write(
     let fs_write = execute::get_property(&fs_module, "write");
     if quench_runtime::is_callable(&fs_write) {
         let fd = descriptor_arg(execute::get_property_result(stream, "fd").ok().as_ref())?;
-        let callback = callback.clone().ok_or_else(|| {
-            execute::type_error("WriteStream internal write callback")
-        })?;
-        let result = execute::call(
-            &fs_write,
-            &fs_module,
-            &[
-                Value::Number(fd as f64),
-                buffer,
-                Value::Number(0.0),
-                Value::Number(bytes.len() as f64),
-                Value::Null,
-                callback,
-            ],
-        );
-        return result.map(|_| Value::Boolean(true));
+        if let Some(callback) = callback.clone() {
+            let result = execute::call(
+                &fs_write,
+                &fs_module,
+                &[
+                    Value::Number(fd as f64),
+                    buffer,
+                    Value::Number(0.0),
+                    Value::Number(bytes.len() as f64),
+                    Value::Null,
+                    callback,
+                ],
+            );
+            return result.map(|_| Value::Boolean(true));
+        }
     }
     let file_handle = execute::get_property(stream, WRITE_STREAM_HANDLE_KEY);
     if matches!(file_handle, Value::Object(_) | Value::ObjectAlias(_)) {
