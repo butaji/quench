@@ -2598,9 +2598,83 @@ fn session_method(
                 .push(pending);
             return Ok(Value::Boolean(true));
         }
-        // GOAWAY still needs the session state machine; preserving its
-        // callable boundary avoids inventing a wire transition here.
-        "goaway" => {}
+        "goaway" => {
+            let socket_id = crate::modules::net::net_id(socket).ok_or(VmError::NotCallable)?;
+            let code = match args.first().unwrap_or(&Value::Number(0.0)) {
+                Value::Number(value)
+                    if value.is_finite() && value.fract() == 0.0 && *value >= 0.0
+                        && *value <= u32::MAX as f64 => *value as u32,
+                value => {
+                    return Err(coded_error(
+                        quench_runtime::ops::Builtin::TypeError,
+                        "ERR_INVALID_ARG_TYPE",
+                        format!(
+                            "The \"code\" argument must be of type number.{}",
+                            crate::modules::util::invalid_arg_received(value)
+                        ),
+                    ));
+                }
+            };
+            let requested_last = match args.get(1).unwrap_or(&Value::Number(0.0)) {
+                Value::Number(value)
+                    if value.is_finite() && value.fract() == 0.0 && *value >= 0.0
+                        && *value <= u32::MAX as f64 => *value as u32,
+                value => {
+                    return Err(coded_error(
+                        quench_runtime::ops::Builtin::TypeError,
+                        "ERR_INVALID_ARG_TYPE",
+                        format!(
+                            "The \"lastStreamID\" argument must be of type number.{}",
+                            crate::modules::util::invalid_arg_received(value)
+                        ),
+                    ));
+                }
+            };
+            let opaque = match args.get(2) {
+                None | Some(Value::Undefined) => Vec::new(),
+                Some(value) => ping_payload(value).ok_or_else(|| {
+                    coded_error(
+                        quench_runtime::ops::Builtin::TypeError,
+                        "ERR_INVALID_ARG_TYPE",
+                        format!(
+                            "The \"opaqueData\" argument must be an instance of Buffer, TypedArray, or DataView.{}",
+                            crate::modules::util::invalid_arg_received(value)
+                        ),
+                    )
+                })?,
+            };
+            let last_stream_id = if requested_last == 0 {
+                _state
+                    .borrow()
+                    .net
+                    .http2_sessions
+                    .get(&socket_id)
+                    .and_then(|session| session.streams.keys().copied().max())
+                    .unwrap_or(0)
+            } else {
+                requested_last
+            };
+            let mut payload = last_stream_id.to_be_bytes().to_vec();
+            payload.extend_from_slice(&code.to_be_bytes());
+            payload.extend_from_slice(&opaque);
+            let frame = crate::modules::http2_protocol::Frame::new(
+                crate::modules::http2_protocol::FrameType::GoAway,
+                0,
+                0,
+                payload,
+            );
+            let write = execute::get_property(socket, "write");
+            if quench_runtime::is_callable(&write) {
+                execute::call(
+                    &write,
+                    socket,
+                    &[crate::modules::buffer_proto::make_buffer(&frame.encode())],
+                )?;
+            }
+            if let Some(callback) = args.get(3).filter(|value| quench_runtime::is_callable(value)) {
+                execute::call(callback, socket, &[])?;
+            }
+        }
         _ => return Err(VmError::NotCallable),
     }
     Ok(Value::Undefined)
