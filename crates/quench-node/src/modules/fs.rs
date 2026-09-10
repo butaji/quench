@@ -4951,6 +4951,30 @@ pub fn write_stream_write(
         })?,
     };
     let buffer = crate::modules::buffer_proto::make_buffer(&bytes);
+    let file_handle = execute::get_property(stream, WRITE_STREAM_HANDLE_KEY);
+    if matches!(file_handle, Value::Object(_) | Value::ObjectAlias(_)) {
+        // A WriteStream created with `{ fd: FileHandle }` owns the handle as
+        // its I/O edge. Node deliberately dispatches through that object's
+        // `write`/`writev` methods, so instrumentation and handle-specific
+        // state remain observable instead of being flattened to fs.write(fd).
+        let write = execute::get_property(&file_handle, "write");
+        if quench_runtime::is_callable(&write) {
+            let result = execute::call(
+                &write,
+                &file_handle,
+                &[
+                    buffer.clone(),
+                    Value::Number(0.0),
+                    Value::Number(bytes.len() as f64),
+                    Value::Null,
+                ],
+            );
+            if let Some(callback) = callback.clone() {
+                defer(state, &callback, vec![err_value(&result)]);
+            }
+            return result.map(|_| Value::Boolean(true));
+        }
+    }
     // WriteStream delegates I/O through the owning `fs` object.  Besides
     // preserving the ordinary asynchronous callback turn, this is what makes
     // an application's patched `fs.write` (and the `{ fs }` option) observable
@@ -4984,26 +5008,6 @@ pub fn write_stream_write(
                     callback,
                 ],
             );
-            return result.map(|_| Value::Boolean(true));
-        }
-    }
-    let file_handle = execute::get_property(stream, WRITE_STREAM_HANDLE_KEY);
-    if matches!(file_handle, Value::Object(_) | Value::ObjectAlias(_)) {
-        let write = execute::get_property(&file_handle, "write");
-        if quench_runtime::is_callable(&write) {
-            let result = execute::call(
-                &write,
-                &file_handle,
-                &[
-                    buffer,
-                    Value::Number(0.0),
-                    Value::Number(bytes.len() as f64),
-                    Value::Null,
-                ],
-            );
-            if let Some(callback) = callback {
-                defer(state, &callback, vec![err_value(&result)]);
-            }
             return result.map(|_| Value::Boolean(true));
         }
     }
@@ -5227,16 +5231,23 @@ pub fn write_stream_close(
     // The built-in close requires a callback; when the stream has no callback
     // to supply, retain the synchronous host fallback used by the ordinary
     // stream finalizer.
-    let result = {
+    let (result, close_callback_owned) = {
         let fs_module = execute::get_property(stream, "__quench_fs_module");
         let close = execute::get_property(&fs_module, "close");
         if quench_runtime::is_callable(&close) {
-            match execute::call(&close, &fs_module, &[Value::Number(fd as f64)]) {
-                Ok(_) => Ok(Value::Undefined),
-                Err(_) => close_sync(state, None, &[Value::Number(fd as f64)]),
+            let mut close_args = vec![Value::Number(fd as f64)];
+            // `_destroy` supplies the completion edge. Passing it through to
+            // fs.close is required for patched fs implementations and keeps
+            // descriptor release and stream destruction on one callback edge.
+            if let Some(callback) = destroy_callback {
+                close_args.push(callback.clone());
+            }
+            match execute::call(&close, &fs_module, &close_args) {
+                Ok(_) => (Ok(Value::Undefined), destroy_callback.is_some()),
+                Err(_) => (close_sync(state, None, &[Value::Number(fd as f64)]), false),
             }
         } else {
-            close_sync(state, None, &[Value::Number(fd as f64)])
+            (close_sync(state, None, &[Value::Number(fd as f64)]), false)
         }
     };
     execute::set_property_in_place(stream, "closed", Value::Boolean(true));
@@ -5251,7 +5262,12 @@ pub fn write_stream_close(
         let _ = emit_stream_event(state, stream, "close", Vec::new());
     }
     if let Some(callback) = destroy_callback {
-        defer(state, callback, vec![err_value(&result)]);
+        // A successful callback-style fs.close owns completion. If the call
+        // rejected synchronously and we fell back to closeSync, finish the
+        // destroy request here so it cannot remain pending.
+        if !close_callback_owned {
+            defer(state, callback, vec![err_value(&result)]);
+        }
         return result.map(|_| stream.clone());
     }
     if !flush {
