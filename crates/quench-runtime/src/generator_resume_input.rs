@@ -20,12 +20,6 @@ fn install_direct_resume_input(
     let Some(point) = state.suspension.take() else {
         return false;
     };
-    if matches!(
-        point,
-        crate::continuation::SuspensionPoint::YieldStar { .. }
-    ) {
-        generator.machine.borrow_mut().pop_frame();
-    }
     let src = match point {
         crate::continuation::SuspensionPoint::Yield { src, .. }
         | crate::continuation::SuspensionPoint::YieldStar { dst: src, .. }

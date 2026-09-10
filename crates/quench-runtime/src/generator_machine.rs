@@ -208,13 +208,14 @@ fn push_branch_frame(generator: &GeneratorData, state: &GeneratorState) -> Resul
     let Some(ops) = branch.code() else {
         return Ok(false);
     };
-    let Some((index, op)) =
-        ops.find_cold(|op| matches!(op, Op::Yield { .. } | Op::Await { .. }))
+    let Some((index, op)) = ops.find_cold(|op| {
+        matches!(op, Op::Yield { .. } | Op::YieldStar { .. } | Op::Await { .. })
+    })
     else {
         return Ok(false);
     };
     let src = match op {
-        Op::Yield { src } | Op::Await { dst: src, .. } => *src,
+        Op::Yield { src } | Op::YieldStar { dst: src, .. } | Op::Await { dst: src, .. } => *src,
         _ => return Ok(false),
     };
     let resume = parent_resume_range(generator, state);
@@ -233,6 +234,10 @@ fn push_branch_frame(generator: &GeneratorData, state: &GeneratorState) -> Resul
             yield_dst: src,
         },
     )?;
+    if let Op::YieldStar { dst, iterator, .. } = op {
+        let iterator = crate::execute::read_register(&registers(generator), *iterator)?;
+        push_delegate_frame_with_values(generator, iterator, *dst)?;
+    }
     Ok(true)
 }
 

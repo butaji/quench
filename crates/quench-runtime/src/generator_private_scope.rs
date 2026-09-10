@@ -31,7 +31,9 @@ fn suspended_conditional<'a>(
     // Async functions suspend with `Await`, while generators suspend with
     // `Yield`; both need the same branch continuation so a conditional body
     // does not lose its assignment when the awaited promise resumes.
-    let (index, op) = branch.find_cold(|op| matches!(op, Op::Yield { .. } | Op::Await { .. }))?;
+    let (index, op) = branch.find_cold(|op| {
+        matches!(op, Op::Yield { .. } | Op::YieldStar { .. } | Op::Await { .. })
+    })?;
     Some((destination, op, branch.slice(index + 1, branch.len())?))
 }
 
@@ -92,7 +94,7 @@ fn install_nested_resume_input(
 ) {
     if let Some((_, op, _)) = suspended_conditional(generator, state) {
         let destination = match op {
-            Op::Yield { src } | Op::Await { dst: src, .. } => *src,
+            Op::Yield { src } | Op::YieldStar { dst: src, .. } | Op::Await { dst: src, .. } => *src,
             _ => return,
         };
         crate::execute::write_value(&mut registers_mut(generator), destination, input);

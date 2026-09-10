@@ -492,6 +492,17 @@ fn update_machine_frame(
         }
     }
     if push_nested_frame(generator, state)? {
+        // Nested control-flow frames (for-of, conditionals, try/finally)
+        // describe where execution resumes, but a YieldStar still needs its
+        // delegation frame above that control frame so the yielded iterator
+        // result is preserved. Previously the early return here dropped that
+        // frame, producing an extra `undefined` after the delegated value.
+        if matches!(
+            state.suspension.as_ref(),
+            Some(crate::continuation::SuspensionPoint::YieldStar { .. })
+        ) {
+            push_delegate_frame(generator, state)?;
+        }
         return Ok(());
     }
     let Some(crate::continuation::SuspensionPoint::YieldStar { dst, iterator, .. }) =
@@ -502,12 +513,35 @@ fn update_machine_frame(
     let Ok(iterator) = crate::execute::read_register(&registers(generator), *iterator) else {
         return Ok(());
     };
+    push_delegate_frame_with_values(generator, iterator, *dst)
+}
+
+fn push_delegate_frame(
+    generator: &GeneratorData,
+    state: &GeneratorState,
+) -> Result<(), VmError> {
+    let Some(crate::continuation::SuspensionPoint::YieldStar { dst, iterator, .. }) =
+        state.suspension.as_ref()
+    else {
+        return Ok(());
+    };
+    let Ok(iterator) = crate::execute::read_register(&registers(generator), *iterator) else {
+        return Ok(());
+    };
+    push_delegate_frame_with_values(generator, iterator, *dst)
+}
+
+fn push_delegate_frame_with_values(
+    generator: &GeneratorData,
+    iterator: Value,
+    destination: u16,
+) -> Result<(), VmError> {
     try_push_frame(
         &mut generator.machine.borrow_mut(),
         crate::machine::Frame::Delegate {
             phase: 0,
             iterator,
-            destination: *dst,
+            destination,
         },
     )
 }
