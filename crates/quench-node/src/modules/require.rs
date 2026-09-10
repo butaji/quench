@@ -2768,6 +2768,10 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                     crate::registry::SPEC_INTERNAL_ASYNC_HOOKS_ENABLED_HOOKS_EXIST,
                 ),
             ),
+            (
+                "newAsyncId".into(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_ASYNC_HOOKS_NEW_ASYNC_ID),
+            ),
         ])),
         "string_decoder" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::string_decoder::build(),

@@ -94,6 +94,8 @@ const CAP_INTERNAL_ASYNC_CONTEXT_FRAME_CURRENT: u16 =
     crate::registry::SPEC_INTERNAL_ASYNC_CONTEXT_FRAME_CURRENT.cap;
 const CAP_INTERNAL_ASYNC_HOOKS_ENABLED_HOOKS_EXIST: u16 =
     crate::registry::SPEC_INTERNAL_ASYNC_HOOKS_ENABLED_HOOKS_EXIST.cap;
+const CAP_INTERNAL_ASYNC_HOOKS_NEW_ASYNC_ID: u16 =
+    crate::registry::SPEC_INTERNAL_ASYNC_HOOKS_NEW_ASYNC_ID.cap;
 const CAP_BUFFER_NEW: u16 = 0x0805;
 const CAP_DNS_LOOKUP_ADDRESSES: u16 = 0x0E02;
 const CAP_TTY_ISATTY: u16 = 0x0900;
@@ -800,6 +802,7 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_INTERNAL_ASYNC_HOOKS_ENABLED_HOOKS_EXIST => {
             handlers::internal_async_hooks_enabled_hooks_exist
         }
+        CAP_INTERNAL_ASYNC_HOOKS_NEW_ASYNC_ID => crate::modules::async_hooks::new_async_id,
         CAP_INTERNAL_FS_GET_DIRENTS => internal_fs_get_dirents,
         CAP_INTERNAL_FS_GET_DIRENT => internal_fs_get_dirent,
         CAP_INTERNAL_FS_STRING_TO_FLAGS => handlers::fs_string_to_flags,

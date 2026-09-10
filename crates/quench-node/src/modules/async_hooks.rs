@@ -219,6 +219,20 @@ pub fn execution_id(
     Ok(Value::Number(state.borrow().async_hooks.current_id as f64))
 }
 
+/// Allocate the next embedder async id for internal Node consumers.  This is
+/// deliberately a counter operation only: callers such as `net.Socket`
+/// attach the returned id to their own resource before registering its
+/// lifecycle, just as Node's internal `newAsyncId()` helper does.
+pub fn new_async_id(
+    state: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    let trigger = state.borrow().async_hooks.current_id;
+    let (id, _) = state.borrow_mut().async_hooks.allocate(trigger);
+    Ok(Value::Number(id as f64))
+}
+
 pub fn new_async_local_storage(
     state: &Rc<RefCell<HostState>>,
     args: &[Value],

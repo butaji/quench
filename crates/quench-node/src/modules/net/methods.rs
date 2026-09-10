@@ -1444,6 +1444,53 @@ fn connect_with_receiver(
             }
         }
     }
+
+    // A caller may provide a native-style handle on an existing Socket.  Its
+    // `connect(req, address, port)` result is the authoritative libuv status;
+    // do not replace that handle with a real TCP socket before consulting it.
+    // This keeps private handle adapters and ordinary sockets on one generic
+    // connect path, while preserving deferred error delivery to listeners
+    // installed immediately after `socket.connect()` returns.
+    let custom_receiver = receiver.or(lookup_socket_for_result.as_ref());
+    if let Some((handle, connect_method)) = custom_receiver.and_then(|socket| {
+        let handle = execute::get_property(socket, "_handle");
+        let connect = execute::get_property(&handle, "connect");
+        (matches!(handle, Value::Object(_) | Value::ObjectAlias(_))
+            && quench_runtime::is_callable(&connect))
+        .then_some((handle, connect))
+    }) {
+        let request = host_api::object(Vec::new());
+        let status = execute::call(
+            &connect_method,
+            &handle,
+            &[
+                request,
+                Value::String(target_host.to_string()),
+                Value::Number(port as f64),
+            ],
+        )?;
+        if let Value::Number(status) = status {
+            if status != 0.0 {
+                let code = uv_connect_error_name(status as i64);
+                let socket = custom_receiver
+                    .cloned()
+                    .unwrap_or_else(|| host_api::object(Vec::new()));
+                let error = host_api::object(vec![
+                    ("name".into(), Value::String("Error".into())),
+                    (
+                        "message".into(),
+                        Value::String(format!("connect {code} {target_host}:{port}")),
+                    ),
+                    ("code".into(), Value::String(code.into())),
+                    ("syscall".into(), Value::String("connect".into())),
+                    ("address".into(), Value::String(target_host.to_string())),
+                    ("port".into(), Value::Number(port as f64)),
+                ]);
+                state.borrow_mut().net.pending_errors.push((socket.clone(), error));
+                return Ok(socket);
+            }
+        }
+    }
     if port == 0 {
         let loopback = SocketAddr::new(LOCAL_HOST.parse().expect("loopback"), 0);
         return connect_refused(
@@ -1677,6 +1724,17 @@ fn connect_with_receiver(
         }
     }
     Ok(object)
+}
+
+fn uv_connect_error_name(status: i64) -> &'static str {
+    match status {
+        value if value == -(libc::ENETUNREACH as i64) => "ENETUNREACH",
+        value if value == -(libc::ECONNREFUSED as i64) => "ECONNREFUSED",
+        value if value == -(libc::ETIMEDOUT as i64) => "ETIMEDOUT",
+        value if value == -(libc::EADDRINUSE as i64) => "EADDRINUSE",
+        value if value == -(libc::EHOSTUNREACH as i64) => "EHOSTUNREACH",
+        _ => "UNKNOWN",
+    }
 }
 
 /// AbortSignal callback for a net socket. The socket is bound as the first
