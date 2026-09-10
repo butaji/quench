@@ -898,7 +898,17 @@ fn emit_http2_stream_close(
         None,
     )?;
     if emit_end {
+        execute::set_property_in_place(
+            &stream,
+            "\0quench:http2-end-dispatch",
+            Value::Boolean(true),
+        );
         emit_socket_scoped(state, socket, &stream, "end", Vec::new())?;
+        execute::set_property_in_place(
+            &stream,
+            "\0quench:http2-end-dispatch",
+            Value::Boolean(false),
+        );
     }
     // A client response without a `response` listener is auto-discarded by
     // Node and reaches its terminal destroyed state before `close`. Keep that
