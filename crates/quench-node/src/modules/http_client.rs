@@ -5375,7 +5375,11 @@ fn http_url(value: &str) -> Result<RequestOptions, VmError> {
 }
 
 fn option_source_object(args: &[Value]) -> Option<Value> {
-    args.first().and_then(|value| {
+    let source = match args.first() {
+        Some(Value::String(_) | Value::StringUnits(_)) => args.get(1),
+        _ => args.first(),
+    };
+    source.and_then(|value| {
         matches!(value, Value::Object(_) | Value::ObjectAlias(_)).then(|| value.clone())
     })
 }
