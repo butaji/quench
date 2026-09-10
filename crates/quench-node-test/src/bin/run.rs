@@ -9,6 +9,65 @@ use std::sync::{Arc, Mutex};
 
 use quench_node_test::runner::NodeTestRunner;
 
+/// `node -pe` accepts a program (including declarations), then prints the
+/// completion value of its final top-level expression.  Wrapping the whole
+/// program in `console.log(...)` turns valid declaration programs into a
+/// syntax error.  Preserve the program body and only wrap its final statement
+/// expression; this keeps the CLI rule at the argument boundary rather than
+/// teaching child-process callers about particular scripts.
+fn wrap_combined_print_eval(source: &str) -> String {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut paren = 0usize;
+    let mut bracket = 0usize;
+    let mut brace = 0usize;
+    let mut last_top_level_semicolon = None;
+    for (index, ch) in source.char_indices() {
+        if let Some(active) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == active {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '\'' | '"' | '`' => quote = Some(ch),
+            '(' => paren += 1,
+            ')' => paren = paren.saturating_sub(1),
+            '[' => bracket += 1,
+            ']' => bracket = bracket.saturating_sub(1),
+            '{' => brace += 1,
+            '}' => brace = brace.saturating_sub(1),
+            ';' if paren == 0 && bracket == 0 && brace == 0 => {
+                last_top_level_semicolon = Some(index)
+            }
+            _ => {}
+        }
+    }
+    if let Some(separator) = last_top_level_semicolon {
+        let prefix = &source[..=separator];
+        let tail = source[separator + 1..].trim();
+        if !tail.is_empty() {
+            return format!("{prefix}\nconsole.log({tail});");
+        }
+        return format!("{prefix}\nconsole.log(undefined);");
+    }
+    let trimmed = source.trim_start();
+    if trimmed.starts_with("const ")
+        || trimmed.starts_with("let ")
+        || trimmed.starts_with("var ")
+        || trimmed.starts_with("function ")
+        || trimmed.starts_with("class ")
+    {
+        format!("{source}\nconsole.log(undefined);")
+    } else {
+        format!("console.log({source});")
+    }
+}
+
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     // A self-reexecuted compatibility child must honor the same simple CLI
@@ -60,7 +119,15 @@ fn main() -> ExitCode {
             Some("--print" | "-p" | "-pe" | "-ep")
         );
         let source = if is_print {
-            format!("console.log({source});")
+            let combined_print_eval = matches!(
+                arguments.get(index).map(String::as_str),
+                Some("-pe")
+            );
+            if combined_print_eval {
+                wrap_combined_print_eval(source)
+            } else {
+                format!("console.log({source});")
+            }
         } else {
             source.to_string()
         };
