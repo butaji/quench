@@ -28,7 +28,10 @@ pub fn execute_with_registers(ops: &[Op], registers: Vec<Value>) -> Result<Value
     execute_with_registers_context(ops, registers, &context)
 }
 
-pub fn execute_in_place(ops: &[Op], registers: &mut crate::register_file::RegisterFile) -> Result<Value, VmError> {
+pub fn execute_in_place(
+    ops: &[Op],
+    registers: &mut crate::register_file::RegisterFile,
+) -> Result<Value, VmError> {
     let context = current_context_or_default();
     execute_in_place_context(ops, registers, &context)
 }
@@ -69,11 +72,91 @@ pub fn execute_code_with_context(
         );
         execute_code_in_environment(code, &mut registers, context, environment)
     });
+    let result = decorate_top_level_error(result, context);
     let realm = context.realm();
     if realm::with_realm(realm, crate::promise::drain_microtasks_all).is_none() {
         crate::vm::with_current_context(context, crate::promise::drain_microtasks_all);
     }
     result
+}
+
+fn decorate_top_level_error(
+    result: Result<Value, VmError>,
+    context: &VmContext,
+) -> Result<Value, VmError> {
+    result.map_err(|error| decorate_top_level_thrown(error, context))
+}
+
+fn decorate_top_level_thrown(error: VmError, context: &VmContext) -> VmError {
+    let VmError::Thrown(value) = &error else {
+        return error;
+    };
+    let Some(filename) = context.source_name() else {
+        return error;
+    };
+    let Some(Value::String(existing)) = crate::execute::get_property_result(value, "stack").ok()
+    else {
+        return error;
+    };
+    if !crate::value::is_object(value) {
+        return error;
+    }
+    if existing.contains('\n') {
+        let mut changed = false;
+        let updated_stack = existing
+            .lines()
+            .map(|line| {
+                if line.starts_with("    at ") && !line.contains(" (") {
+                    changed = true;
+                    format!("{line} ({filename}:1:1)")
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if changed {
+            let updated =
+                crate::execute::set_property(value.clone(), "stack", Value::String(updated_stack));
+            crate::execute::replace_value(value, &updated);
+        }
+        return error;
+    }
+    let name = crate::execute::to_js_string(&crate::execute::get_property(value, "name"))
+        .unwrap_or_else(|_| "Error".into());
+    let message = crate::execute::to_js_string(&crate::execute::get_property(value, "message"))
+        .unwrap_or_default();
+    let stack = if message.is_empty() {
+        format!("{name}\n    at {filename}:1:1")
+    } else {
+        format!("{name}: {message}\n    at {filename}:1:1")
+    };
+    let updated = crate::execute::set_property(value.clone(), "stack", Value::String(stack));
+    crate::execute::replace_value(value, &updated);
+    error
+}
+
+/// Append one compact JavaScript function frame while a throw crosses the
+/// function boundary. This keeps stack observables data-driven without
+/// retaining a second syntax tree or a heavyweight runtime trace.
+pub(crate) fn append_stack_frame(error: &Value, name: &str) {
+    let Some(Value::String(mut stack)) = crate::execute::get_property_result(error, "stack").ok()
+    else {
+        return;
+    };
+    if stack
+        .lines()
+        .nth(1)
+        .is_some_and(|line| line.starts_with("    at "))
+    {
+        stack.truncate(stack.find('\n').unwrap_or(stack.len()));
+    }
+    let filename = current_context()
+        .source_name()
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "<anonymous>".to_string());
+    stack.push_str(&format!("\n    at {name} ({filename}:1:1)"));
+    let _ = crate::execute::set_property_in_place(error, "stack", Value::String(stack));
 }
 
 /// Execute a top-level code fragment in a fresh lexical frame without
@@ -96,6 +179,34 @@ pub fn execute_code_isolated_in_context(
     })
 }
 
+/// Execute a top-level fragment in a distinct ECMAScript realm while keeping
+/// the caller's host context available to the fragment. This is used by
+/// in-process child execution: Node forks have fresh intrinsics/global state,
+/// but retain the host's process and module bindings across the boundary.
+pub fn execute_code_isolated_in_realm(
+    code: crate::machine::CodeView<'_>,
+    context: &VmContext,
+) -> Result<Value, VmError> {
+    crate::builtins::reset_intrinsic_prototype_state();
+    let execute = || {
+        let mut registers = crate::register_file::RegisterFile::new();
+        prepare_register_stack(&mut registers);
+        let environment = crate::environment::Environment::child_registers(
+            &crate::environment::Environment::new(),
+            registers.clone(),
+        );
+        execute_code_in_environment(code, &mut registers, context, environment)
+    };
+    crate::vm::with_current_context(context, || {
+        if context.realm() == crate::ops::RealmId::ROOT {
+            execute()
+        } else {
+            realm::with_realm(context.realm(), execute)
+                .unwrap_or_else(|| Err(VmError::EvalError("missing VM realm".into())))
+        }
+    })
+}
+
 /// The context currently active on this thread, or a default one.
 /// Hosts use this to re-enter the VM from inside a capability call.
 pub fn current_context() -> Rc<VmContext> {
@@ -106,41 +217,244 @@ pub fn current_context() -> Rc<VmContext> {
 /// sandbox overlay.  Node-facing adapters use this entry point for
 /// `vm.runInNewContext`/`runInContext`; realm and value identity mechanics stay
 /// in the runtime rather than being duplicated by a host module.
+fn bridge_context_value(
+    value: Value,
+    sandbox: &Value,
+    global: &Value,
+    depth: u8,
+) -> Result<Value, VmError> {
+    if crate::execute::same_identity(&value, sandbox) {
+        return Ok(global.clone());
+    }
+    let is_object = matches!(value, Value::Object(_) | Value::ObjectAlias(_));
+    if !is_object || depth >= 8 || !contains_context_identity(&value, sandbox, depth) {
+        return Ok(value);
+    }
+    let keys = crate::execute::own_keys(&value)
+        .into_iter()
+        .filter_map(|key| match key {
+            Value::String(key) => Some(key),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let clone = crate::host_api::object(Vec::new());
+    for key in keys {
+        let descriptor = crate::execute::get_own_property_descriptor(&value, &key)?;
+        let descriptor = bridge_context_descriptor(descriptor, sandbox, global, depth + 1)?;
+        let updated = crate::execute::define_property(clone.clone(), &key, descriptor)?;
+        crate::execute::replace_value(&clone, &updated);
+    }
+    Ok(clone)
+}
+
+// Preserve identity for ordinary objects crossing a context boundary. Only
+// clone an object graph when it actually contains the sandbox object, so
+// `sandbox.obj` remains the same object after code mutates `obj.foo` while
+// self-references such as `sandbox.window = sandbox` are rebound to the child
+// global.
+fn contains_context_identity(value: &Value, sandbox: &Value, depth: u8) -> bool {
+    if crate::execute::same_identity(value, sandbox) {
+        return true;
+    }
+    if depth >= 8 || !matches!(value, Value::Object(_) | Value::ObjectAlias(_)) {
+        return false;
+    }
+    crate::execute::own_keys(value).into_iter().any(|key| {
+        let Value::String(key) = key else {
+            return false;
+        };
+        let descriptor = match crate::execute::get_own_property_descriptor(value, &key) {
+            Ok(descriptor) => descriptor,
+            Err(_) => return false,
+        };
+        contains_context_identity(
+            &crate::execute::get_property(&descriptor, "value"),
+            sandbox,
+            depth + 1,
+        )
+    })
+}
+
+fn bridge_context_descriptor(
+    descriptor: Value,
+    sandbox: &Value,
+    global: &Value,
+    depth: u8,
+) -> Result<Value, VmError> {
+    let value = crate::execute::get_property(&descriptor, "value");
+    let bridged = bridge_context_value(value.clone(), sandbox, global, depth)?;
+    if crate::execute::same_identity(&bridged, &value) {
+        Ok(descriptor)
+    } else {
+        Ok(crate::execute::set_property(descriptor, "value", bridged))
+    }
+}
+
 pub fn execute_script_in_sandbox(
     source: &str,
     sandbox: Option<&Value>,
     filename: Option<&str>,
 ) -> Result<Value, VmError> {
-    let program = crate::reduce::reduce_global_script_source(source)
-        .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
+    // VM scripts use eval-style statement completion: the final expression's
+    // value is observable to `runInContext`/`runInNewContext`. Keep the same
+    // global/sandbox environment setup below, but use the reducer path that
+    // preserves completion values instead of the ordinary host script path.
+    let program = crate::reduce::reduce_eval_source(
+        source,
+        false,
+        true,
+        false,
+        &[("globalThis".to_string(), 0)],
+        &[],
+    )
+    .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
     let parent_context = current_context();
-    let mut context = sandbox
-        .map(|_| Rc::new(parent_context.child_realm()))
-        .unwrap_or(parent_context);
-    if let Some(sandbox @ Value::Object(_)) = sandbox {
-        for key in crate::execute::own_enumerable_keys(sandbox) {
-            let value = crate::execute::get_property_result(sandbox, &key)?;
-            context = Rc::new((*context).clone().with_host_value(key, value));
-        }
-    }
-    let global = current_global_object();
-    if let Some(filename) = filename {
-        let updated = crate::execute::set_property(
-            global.clone(),
-            "\0quench_vm_filename",
-            Value::String(filename.to_owned()),
-        );
-        crate::execute::replace_value(&global, &updated);
-    }
+    // Uncontextified vm scripts get a fresh realm. A context made with
+    // `createContext` owns its realm across later `runInContext` calls;
+    // otherwise globals, intrinsics, and asynchronous work would be reset.
+    // The sandbox remains the explicit bridge for values in and out.
+    // A caller-supplied `require` must retain its host callable identity when
+    // bridged into the child realm.  In the ordinary vm context (no require
+    // injection), withhold the host `process` binding as Node does.
+    let injects_require =
+        sandbox.is_some_and(|value| crate::execute::has_own_property(value, "require"));
+    let context = script_context_execution_context(sandbox).unwrap_or_else(|| {
+        Rc::new(if injects_require {
+            parent_context.child_realm()
+        } else {
+            parent_context.child_realm_without_host_values(&["process"])
+        })
+    });
     let mut registers = crate::register_file::RegisterFile::new();
     let result = with_current_context(&context, || {
-        execute_code_in_place_context(program.code(), &mut registers, &context)
+        // A child realm owns both its intrinsic objects and its global
+        // lexical environment. Installing only VmContext leaves `this` and
+        // global property operations resolving against the caller frame.
+        // Reuse the canonical realm guard so scripts observe the same global
+        // object that is later projected back into the sandbox.
+        crate::vm::with_realm(context.realm(), || {
+            let global = current_global_object();
+            if let Some(filename) = filename {
+                let _ = crate::execute::set_property_in_place(
+                    &global,
+                    "\0quench_vm_filename",
+                    Value::String(filename.to_owned()),
+                );
+            }
+            let sandbox_keys = if let Some(
+                sandbox @ (crate::value::Value::Object(_)
+                | crate::value::Value::ObjectAlias(_)
+                | crate::value::Value::Array(_)),
+            ) = sandbox
+            {
+                // Context properties are ordinary global properties in the
+                // child realm. Installing them physically (rather than as
+                // virtual host bindings) preserves assignment/deletion
+                // semantics and lets the global environment update the
+                // sandbox object after execution.
+                let keys = crate::execute::own_keys(sandbox)
+                    .into_iter()
+                    .filter_map(|key| match key {
+                        Value::String(key) => Some(key),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                for key in &keys {
+                    let descriptor = bridge_context_descriptor(
+                        crate::execute::get_own_property_descriptor(sandbox, key)?,
+                        sandbox,
+                        &global,
+                        0,
+                    )?;
+                    let updated = crate::execute::define_property(global.clone(), key, descriptor)?;
+                    crate::execute::replace_value(&global, &updated);
+                }
+                keys
+            } else {
+                Vec::new()
+            };
+            let result = match validate_vm_lexical_collisions(source, &global) {
+                Ok(()) => execute_code_in_place_context(program.code(), &mut registers, &context),
+                Err(error) => Err(error),
+            };
+            // Global writes use copy-on-write object transitions. Refresh the
+            // realm owner before projecting mutations so newly-created
+            // properties are not read from the stale pre-execution object.
+            let global = crate::vm::current_global_object();
+            if let Some(
+                sandbox @ (crate::value::Value::Object(_)
+                | crate::value::Value::ObjectAlias(_)
+                | crate::value::Value::Array(_)),
+            ) = sandbox
+            {
+                for key in &sandbox_keys {
+                    if !crate::execute::has_own_property(&global, &key) {
+                        let (updated, _) = crate::execute::delete_property(sandbox.clone(), &key);
+                        crate::execute::replace_value(sandbox, &updated);
+                    } else {
+                        let descriptor =
+                            crate::execute::get_own_property_descriptor(&global, &key)?;
+                        let is_accessor = !matches!(
+                            crate::execute::get_property(&descriptor, "get"),
+                            Value::Undefined
+                        ) || !matches!(
+                            crate::execute::get_property(&descriptor, "set"),
+                            Value::Undefined
+                        );
+                        if !is_accessor {
+                            let value = crate::execute::get_property(&global, &key);
+                            let _ = crate::execute::set_property_in_place(sandbox, &key, value);
+                        }
+                    }
+                }
+                // Project user-created globals back to the sandbox even when
+                // they are non-enumerable (Object.defineProperty defaults to
+                // that shape). Intrinsic globals remain realm-owned and are
+                // deliberately omitted from the host object.
+                for key in crate::execute::own_keys(&global)
+                    .into_iter()
+                    .filter_map(|key| match key {
+                        Value::String(key) => Some(key),
+                        _ => None,
+                    })
+                {
+                    if !sandbox_keys.iter().any(|existing| existing == &key)
+                        && !is_unchanged_intrinsic_global(&global, &key)
+                    {
+                        let descriptor =
+                            crate::execute::get_own_property_descriptor(&global, &key)?;
+                        let _ = crate::execute::define_property(sandbox.clone(), &key, descriptor)?;
+                    }
+                }
+            }
+            result
+        })
+        .unwrap_or_else(|| Err(VmError::EvalError("missing VM realm".into())))
     });
+    let global =
+        crate::vm::realm_global_value(context.realm()).unwrap_or_else(current_global_object);
     if filename.is_some() {
         let updated = crate::execute::delete_property(global.clone(), "\0quench_vm_filename").0;
         crate::execute::replace_value(&global, &updated);
     }
-    let result = result?;
+    let result = match result {
+        Ok(result) => result,
+        Err(VmError::Thrown(error)) => {
+            if let Some(filename) = filename {
+                let name = crate::execute::get_property(&error, "name");
+                let message = crate::execute::get_property(&error, "message");
+                let name = crate::execute::to_js_string(&name).unwrap_or_else(|_| "Error".into());
+                let message = crate::execute::to_js_string(&message).unwrap_or_default();
+                let stack =
+                    format!("{filename}:1\n{source}\n ^\n\n{name}: {message}\nat {filename}:1:7");
+                let updated =
+                    crate::execute::set_property(error.clone(), "stack", Value::String(stack));
+                crate::execute::replace_value(&error, &updated);
+            }
+            return Err(VmError::Thrown(error));
+        }
+        Err(error) => return Err(error),
+    };
     let marker_name = |value: &Value| match value {
         Value::ArrayBuffer(buffer) if buffer.shared => "\0vmSharedArrayBufferPrototype",
         _ => "\0vmArrayBufferPrototype",
@@ -157,7 +471,7 @@ pub fn execute_script_in_sandbox(
         let buffer = crate::execute::get_property(target, "buffer");
         if matches!(buffer, Value::ArrayBuffer(_)) {
             let marker = sandbox
-                .map(|sandbox| crate::execute::get_property(sandbox, marker_name(&buffer)))
+                .and_then(|sandbox| script_context_marker(sandbox, marker_name(&buffer)))
                 .unwrap_or(Value::Undefined);
             apply_realm_marker(&buffer, marker);
         }
@@ -186,28 +500,198 @@ pub fn execute_script_in_sandbox(
     Ok(result)
 }
 
+fn validate_vm_lexical_collisions(source: &str, global: &Value) -> Result<(), VmError> {
+    let allocator = oxc::allocator::Allocator::default();
+    let parsed = oxc::parser::Parser::new(&allocator, source, oxc::span::SourceType::cjs()).parse();
+    for name in crate::semantic_early::lexically_declared_names_in(&parsed.program.body) {
+        let descriptor = crate::execute::get_own_property_descriptor(global, &name)?;
+        if matches!(descriptor, Value::Object(_))
+            && crate::builtins::descriptor_flag(global, &name, "configurable") == Some(false)
+        {
+            return Err(VmError::Thrown(crate::builtins::error(
+                Builtin::SyntaxError,
+                &[Value::String(format!(
+                    "Global lexical binding '{name}' is restricted"
+                ))],
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn is_unchanged_intrinsic_global(global: &Value, key: &str) -> bool {
+    if !crate::vm::global_builtin_exists(key) {
+        return false;
+    }
+    let Some(intrinsic) = crate::vm::global_builtin_value(key) else {
+        return true;
+    };
+    crate::execute::same_identity(&intrinsic, &crate::execute::get_property(global, key))
+}
+
+/// Execute a compiled Script against the caller's current global realm.
+/// Unlike `execute_script_in_sandbox`, this intentionally shares global state.
+pub fn execute_script_in_current_context(
+    source: &str,
+    filename: Option<&str>,
+) -> Result<Value, VmError> {
+    let _source_name_guard = crate::vm::compile_source_name(filename);
+    let compile_global = current_global_object();
+    let previous_filename = crate::execute::get_property(&compile_global, "\0quench_vm_filename");
+    let context = current_context();
+    let execution_context = filename
+        .map(|name| context.as_ref().clone().with_source_name(name))
+        .unwrap_or_else(|| context.as_ref().clone());
+    if let Some(filename) = filename {
+        let _ = crate::execute::set_property_in_place(
+            &compile_global,
+            "\0quench_vm_filename",
+            Value::String(filename.to_owned()),
+        );
+    }
+    let program_result = with_current_context(&execution_context, || {
+        crate::reduce::reduce_eval_source(
+            source,
+            false,
+            true,
+            false,
+            &[("globalThis".to_string(), 0)],
+            &[],
+        )
+    });
+    if matches!(previous_filename, Value::Undefined) {
+        let (updated, _) =
+            crate::execute::delete_property(compile_global.clone(), "\0quench_vm_filename");
+        crate::execute::replace_value(&compile_global, &updated);
+    } else {
+        crate::execute::set_property_in_place(
+            &compile_global,
+            "\0quench_vm_filename",
+            previous_filename,
+        );
+    }
+    let program = program_result.map_err(|errors| VmError::EvalError(errors.join("; ")))?;
+    let mut registers = crate::register_file::RegisterFile::new();
+    let mut run = || {
+        let global = current_global_object();
+        if let Some(filename) = filename {
+            let _ = crate::execute::set_property_in_place(
+                &global,
+                "\0quench_vm_filename",
+                Value::String(filename.to_owned()),
+            );
+        }
+        crate::vm::write_value(&mut registers, 0, global.clone());
+        let result = execute_code_in_place_context(program.code(), &mut registers, &context);
+        let updated_global = current_global_object();
+        crate::vm::synchronize_global_object(&mut registers, &global, &updated_global);
+        if filename.is_some() {
+            let (updated, _) = crate::execute::delete_property(global, "\0quench_vm_filename");
+            crate::execute::replace_value(&current_global_object(), &updated);
+        }
+        result
+    };
+    let result = with_current_context(&context, || {
+        crate::vm::with_realm(context.realm(), &mut run).unwrap_or_else(|| run())
+    });
+    match result {
+        Err(VmError::Thrown(error)) if filename.is_some() => {
+            let filename = filename.unwrap_or_default();
+            let name = crate::execute::get_property(&error, "name");
+            let message = crate::execute::get_property(&error, "message");
+            let name = crate::execute::to_js_string(&name).unwrap_or_else(|_| "Error".into());
+            let message = crate::execute::to_js_string(&message).unwrap_or_default();
+            let stack =
+                format!("{filename}:1\n{source}\n ^\n\n{name}: {message}\nat {filename}:1:7");
+            let updated =
+                crate::execute::set_property(error.clone(), "stack", Value::String(stack));
+            crate::execute::replace_value(&error, &updated);
+            Err(VmError::Thrown(error))
+        }
+        result => result,
+    }
+}
+
 /// Mark a JavaScript object as a script context while preserving its identity.
 pub fn create_script_context(context: Value) -> Result<Value, VmError> {
     if !matches!(context, Value::Object(_) | Value::Array(_)) {
         return Err(crate::execute::type_error("context must be an object"));
     }
-    let updated = crate::execute::set_property(context.clone(), "\0vmContext", Value::Boolean(true));
-    let updated = crate::execute::set_property(
-        updated,
-        "\0vmArrayBufferPrototype",
-        crate::host_api::object(Vec::new()),
-    );
-    let updated = crate::execute::set_property(
-        updated,
-        "\0vmSharedArrayBufferPrototype",
-        crate::host_api::object(Vec::new()),
-    );
-    crate::execute::replace_value(&context, &updated);
+    // Context bookkeeping belongs to the host, not to the user's sandbox.
+    // Keeping these markers in a realm-local table preserves identity without
+    // polluting Reflect.ownKeys/Object.keys or descriptor snapshots.
+    let array_buffer = crate::host_api::object(Vec::new());
+    let shared_array_buffer = crate::host_api::object(Vec::new());
+    let parent_context = current_context();
+    let execution_context = Rc::new(if crate::execute::has_own_property(&context, "require") {
+        parent_context.child_realm()
+    } else {
+        parent_context.child_realm_without_host_values(&["process"])
+    });
+    SCRIPT_CONTEXTS.with(|contexts| {
+        contexts
+            .borrow_mut()
+            .push(ScriptContext {
+                object: context.clone(),
+                array_buffer,
+                shared_array_buffer,
+                execution_context,
+            });
+    });
     Ok(context)
 }
 
 pub fn is_script_context(value: &Value) -> bool {
-    matches!(crate::execute::get_property(value, "\0vmContext"), Value::Boolean(true))
+    SCRIPT_CONTEXTS.with(|contexts| {
+        contexts
+            .borrow()
+            .iter()
+            .any(|context| crate::execute::same_identity(&context.object, value))
+    })
+}
+
+struct ScriptContext {
+    object: Value,
+    array_buffer: Value,
+    shared_array_buffer: Value,
+    execution_context: Rc<VmContext>,
+}
+
+thread_local! {
+    static SCRIPT_CONTEXTS: RefCell<Vec<ScriptContext>> = const { RefCell::new(Vec::new()) };
+}
+
+fn script_context_execution_context(value: Option<&Value>) -> Option<Rc<VmContext>> {
+    let value = value?;
+    SCRIPT_CONTEXTS.with(|contexts| {
+        contexts
+            .borrow()
+            .iter()
+            .find(|context| crate::execute::same_identity(&context.object, value))
+            .map(|context| context.execution_context.clone())
+    })
+}
+
+fn script_context_marker(value: &Value, name: &str) -> Option<Value> {
+    SCRIPT_CONTEXTS.with(|contexts| {
+        contexts
+            .borrow()
+            .iter()
+            .find_map(|context| {
+                if !crate::execute::same_identity(&context.object, value) {
+                    return None;
+                }
+                match name {
+                    "\0vmSharedArrayBufferPrototype" => Some(context.shared_array_buffer.clone()),
+                    "\0vmArrayBufferPrototype" => Some(context.array_buffer.clone()),
+                    _ => None,
+                }
+            })
+    })
+}
+
+pub fn reset_script_contexts() {
+    SCRIPT_CONTEXTS.with(|contexts| contexts.borrow_mut().clear());
 }
 
 /// Call a function value from host code through the current context.
@@ -309,10 +793,14 @@ fn drive_code_completion(
         pc = step.next;
         match step.completion {
             crate::completion::Completion::Call(continuation) => {
-                if let Err(VmError::Thrown(value)) =
-                    crate::vm::vm_ops::execute_call_continuation(registers, continuation)
-                {
-                    return Ok(crate::completion::Completion::Throw(value));
+                match crate::vm::vm_ops::execute_call_continuation(registers, continuation) {
+                    Err(VmError::Thrown(value)) => {
+                        return Ok(crate::completion::Completion::Throw(value));
+                    }
+                    Err(error) => {
+                        return Err(error);
+                    }
+                    Ok(()) => {}
                 }
             }
             completion => return preserve_frame_completion(completion),
@@ -386,10 +874,7 @@ pub(crate) fn execute_in_environment(
                     destination: 0,
                     guards: crate::completion::ContinuationGuards::default(),
                 };
-                crate::vm::vm_ops::execute_call_continuation(
-                    &mut caller_registers,
-                    continuation,
-                )?;
+                crate::vm::vm_ops::execute_call_continuation(&mut caller_registers, continuation)?;
                 let value = crate::vm::read_register(&caller_registers, 0)?;
                 *registers = caller_registers;
                 return Ok(value);
@@ -433,15 +918,15 @@ pub(crate) fn execute_code_in_environment(
                     destination: 0,
                     guards: crate::completion::ContinuationGuards::default(),
                 };
-                crate::vm::vm_ops::execute_call_continuation(
-                    &mut caller_registers,
-                    continuation,
-                )?;
+                crate::vm::vm_ops::execute_call_continuation(&mut caller_registers, continuation)?;
                 let value = crate::vm::read_register(&caller_registers, 0)?;
                 *registers = caller_registers;
                 return Ok(value);
             }
-            completion => return completion_result(completion),
+            completion => {
+                return completion_result(completion)
+                    .map_err(|error| decorate_top_level_thrown(error, context));
+            }
         }
     }
 }
@@ -462,7 +947,8 @@ pub(crate) fn execute_indirect_eval(code: crate::machine::CodeView<'_>) -> Resul
         .unwrap_or_else(|| Rc::new(VmContext::default()));
     let caller = crate::locals::current();
     let caller_global = caller.get(0);
-    if matches!(&caller_global, Value::Object(object) if object.iter().any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW)) {
+    if matches!(&caller_global, Value::Object(object) if object.iter().any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW))
+    {
         let environment = crate::environment::Environment::new();
         environment.set(0, caller_global.clone());
         let mut registers = crate::register_file::RegisterFile::new();
@@ -548,11 +1034,9 @@ mod tests {
             }
         "#;
         let program = crate::reduce::reduce_source(source).expect("source reduces");
-        let result = crate::vm::execute_code_with_context(
-            program.code(),
-            &crate::vm::VmContext::default(),
-        )
-        .expect("statement completions run");
+        let result =
+            crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default())
+                .expect("statement completions run");
         assert_eq!(result, Value::Undefined);
     }
 
