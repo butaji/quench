@@ -57,6 +57,7 @@ pub fn fs_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_FS_FSYNC_SYNC => crate::modules::fs::fsync_sync,
         CAP_FS_FSYNC => crate::modules::fs::fsync,
         CAP_FS_WRITE_STREAM_WRITE => crate::modules::fs::write_stream_write,
+        CAP_FS_WRITE_STREAM_RETRY_CALLBACK => crate::modules::fs::write_stream_retry_callback,
         CAP_FS_WRITE_STREAM_OPEN => crate::modules::fs::write_stream_open,
         CAP_FS_WRITE_STREAM_CLOSE => crate::modules::fs::write_stream_close,
         CAP_FS_WRITE_STREAM_AUTO_CLOSE_GET => crate::modules::fs::write_stream_auto_close_get,

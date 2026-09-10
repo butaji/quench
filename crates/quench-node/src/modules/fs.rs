@@ -2632,7 +2632,10 @@ pub fn promises_open(
     let handle = crate::modules::events::new_emitter_object(state)?;
     let _ = execute::set_property_in_place(&handle, FILE_HANDLE_FD_KEY, fd);
     for (name, capability) in [
-        ("read", crate::host::capability(crate::registry::SPEC_FS_HANDLE_READ)),
+        (
+            "read",
+            crate::host::capability(crate::registry::SPEC_FS_HANDLE_READ),
+        ),
         (
             "readFile",
             crate::host::capability(crate::registry::SPEC_FS_HANDLE_READFILE),
@@ -2721,11 +2724,7 @@ pub fn file_handle_create_read_stream(
             let _ = execute::set_property_in_place(&merged, &key, value);
         }
     }
-    create_read_stream(
-        state,
-        None,
-        &[Value::Null, merged],
-    )
+    create_read_stream(state, None, &[Value::Null, merged])
 }
 
 pub fn file_handle_close(
@@ -3532,11 +3531,7 @@ pub fn build() -> Value {
     ];
     let read_stream = crate::host::capability(SPEC_FS_READSTREAM);
     let read_stream_proto = host_api::object(Vec::new());
-    let _ = execute::set_property_in_place(
-        &read_stream_proto,
-        "constructor",
-        read_stream.clone(),
-    );
+    let _ = execute::set_property_in_place(&read_stream_proto, "constructor", read_stream.clone());
     let _ = execute::set_property_in_place(&read_stream, "prototype", read_stream_proto);
     let create_read_stream = crate::host::capability(SPEC_FS_CREATE_READSTREAM);
     let _ = execute::set_property_in_place(
@@ -3724,9 +3719,7 @@ pub fn create_read_stream(
     validate_stream_bounds(&options)?;
     let raw_fd = execute::get_property(&options, "fd");
     let handle_fd = file_handle_descriptor(&raw_fd)?;
-    if handle_fd.is_some()
-        && !matches!(execute::get_property(&options, "fs"), Value::Undefined)
-    {
+    if handle_fd.is_some() && !matches!(execute::get_property(&options, "fs"), Value::Undefined) {
         let error = quench_runtime::builtins::error(
             quench_runtime::ops::Builtin::Error,
             &[Value::String(
@@ -3740,9 +3733,7 @@ pub fn create_read_stream(
         )));
     }
     let path = match args.first() {
-        Some(Value::Null | Value::Undefined) if handle_fd.is_some() => {
-            None
-        }
+        Some(Value::Null | Value::Undefined) if handle_fd.is_some() => None,
         value => Some(path_arg(value)?),
     };
     // `ReadStream` is callable as well as constructable.  In the callable
@@ -3816,23 +3807,25 @@ pub fn create_read_stream(
     execute::set_property_in_place(
         &stream,
         "readable",
-        Value::BindingCell(quench_runtime::value::BindingCell::new(Value::Boolean(true))),
+        Value::BindingCell(quench_runtime::value::BindingCell::new(Value::Boolean(
+            true,
+        ))),
     );
     execute::set_property_in_place(
         &stream,
         "closed",
-        Value::BindingCell(quench_runtime::value::BindingCell::new(Value::Boolean(false))),
+        Value::BindingCell(quench_runtime::value::BindingCell::new(Value::Boolean(
+            false,
+        ))),
     );
     execute::set_property_in_place(
         &stream,
         "destroyed",
-        Value::BindingCell(quench_runtime::value::BindingCell::new(Value::Boolean(false))),
+        Value::BindingCell(quench_runtime::value::BindingCell::new(Value::Boolean(
+            false,
+        ))),
     );
-    execute::set_property_in_place(
-        &stream,
-        READ_STREAM_OPENED_KEY,
-        Value::Boolean(false),
-    );
+    execute::set_property_in_place(&stream, READ_STREAM_OPENED_KEY, Value::Boolean(false));
     let initial_start = stream_number_option(&options, "start").unwrap_or(0);
     execute::set_property_in_place(
         &stream,
@@ -3912,10 +3905,7 @@ fn readable_stream(state: &Rc<RefCell<HostState>>, options: &Value) -> Result<Va
         // Keep every caller option (including inherited encoding/range
         // fields) visible while overriding the Readable-only autoDestroy
         // default.  A prototype-backed view avoids mutating user options.
-        let view = host_api::object(vec![(
-            "autoDestroy".into(),
-            Value::Boolean(false),
-        )]);
+        let view = host_api::object(vec![("autoDestroy".into(), Value::Boolean(false))]);
         execute::set_prototype_of(&view, options).unwrap_or(view)
     } else {
         let view = host_api::object(Vec::new());
@@ -3974,9 +3964,7 @@ fn read_stream_finish(
         Value::Boolean(true)
     );
     let stream_fd = match execute::get_property(stream, "fd") {
-        Value::Number(fd) if fd.is_finite() && fd.fract() == 0.0 && fd >= 0.0 => {
-            Some(fd as i32)
-        }
+        Value::Number(fd) if fd.is_finite() && fd.fract() == 0.0 && fd >= 0.0 => Some(fd as i32),
         _ => None,
     };
     let owns_handle = matches!(
@@ -4021,11 +4009,17 @@ pub fn read_stream_open(
     let stream = args
         .first()
         .filter(|value| {
-            matches!(value, Value::Object(_) | Value::ObjectAlias(_) | Value::Proxy(_))
+            matches!(
+                value,
+                Value::Object(_) | Value::ObjectAlias(_) | Value::Proxy(_)
+            )
         })
         .or_else(|| {
             receiver.filter(|value| {
-                matches!(value, Value::Object(_) | Value::ObjectAlias(_) | Value::Proxy(_))
+                matches!(
+                    value,
+                    Value::Object(_) | Value::ObjectAlias(_) | Value::Proxy(_)
+                )
             })
         })
         .ok_or_else(|| execute::type_error("stream"))?;
@@ -4193,8 +4187,8 @@ pub fn read_stream_open(
             // before the follow-up read, expose that newly available range;
             // otherwise the next empty read confirms EOF.  An explicit end
             // option remains the hard upper bound.
-            let option_end = stream_number_option(&options, "end")
-                .map(|value| value.saturating_add(1));
+            let option_end =
+                stream_number_option(&options, "end").map(|value| value.saturating_add(1));
             if requested_start >= stored && bytes.len() > stored {
                 let grown = option_end.unwrap_or(bytes.len()).min(bytes.len());
                 execute::set_property_in_place(
@@ -4212,11 +4206,7 @@ pub fn read_stream_open(
                 .map(|value| value.saturating_add(1))
                 .unwrap_or(bytes.len())
                 .min(bytes.len());
-            execute::set_property_in_place(
-                stream,
-                READ_STREAM_END_KEY,
-                Value::Number(end as f64),
-            );
+            execute::set_property_in_place(stream, READ_STREAM_END_KEY, Value::Number(end as f64));
             end
         }
     };
@@ -4224,7 +4214,10 @@ pub fn read_stream_open(
     let readable_state = execute::get_property(stream, "_readableState");
     let high_water_mark = match execute::get_property(&readable_state, "highWaterMark") {
         Value::Number(value)
-            if value.is_finite() && value > 0.0 && value.fract() == 0.0 && value <= usize::MAX as f64 =>
+            if value.is_finite()
+                && value > 0.0
+                && value.fract() == 0.0
+                && value <= usize::MAX as f64 =>
         {
             value as usize
         }
@@ -4299,11 +4292,7 @@ pub fn read_stream_open(
         // this matches Node's growing-file behavior and lets the next append
         // become observable to the stream consumer.
         end = bytes.len();
-        execute::set_property_in_place(
-            stream,
-            READ_STREAM_END_KEY,
-            Value::Number(end as f64),
-        );
+        execute::set_property_in_place(stream, READ_STREAM_END_KEY, Value::Number(end as f64));
     }
     if has_more || continue_after_short || (may_grow && !chunk.is_empty()) {
         execute::set_property_in_place(
@@ -4366,7 +4355,10 @@ pub fn read_stream_open(
     let is_paused = || {
         let method = execute::get_property(stream, "isPaused");
         quench_runtime::is_callable(&method)
-            && matches!(execute::call(&method, stream, &[]), Ok(Value::Boolean(true)))
+            && matches!(
+                execute::call(&method, stream, &[]),
+                Ok(Value::Boolean(true))
+            )
     };
     if flowing && !is_paused() && !encoded {
         if !chunk.is_empty() {
@@ -4384,11 +4376,7 @@ pub fn read_stream_open(
         } else {
             emit_stream_event(state, stream, "end", Vec::new())?;
             execute::set_property_in_place(&readable_state, "ended", Value::Boolean(true));
-            execute::set_property_in_place(
-                &readable_state,
-                "endEmitted",
-                Value::Boolean(true),
-            );
+            execute::set_property_in_place(&readable_state, "endEmitted", Value::Boolean(true));
             execute::set_property_in_place(&readable_state, "reading", Value::Boolean(false));
             execute::set_property_in_place(&readable_state, "readingMore", Value::Boolean(false));
             execute::set_property_in_place(&stream, "readable", Value::Boolean(false));
@@ -4400,20 +4388,14 @@ pub fn read_stream_open(
                 execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
                 execute::set_property_in_place(&stream, "destroyed", Value::Boolean(true));
                 if let Some(bound_stream) = receiver.filter(|value| {
-                    matches!(value, Value::Object(_) | Value::ObjectAlias(_) | Value::Proxy(_))
-                        && !execute::same_value(value, stream)
+                    matches!(
+                        value,
+                        Value::Object(_) | Value::ObjectAlias(_) | Value::Proxy(_)
+                    ) && !execute::same_value(value, stream)
                 }) {
                     execute::set_property_in_place(bound_stream, "fd", Value::Null);
-                    execute::set_property_in_place(
-                        bound_stream,
-                        "closed",
-                        Value::Boolean(true),
-                    );
-                    execute::set_property_in_place(
-                        bound_stream,
-                        "destroyed",
-                        Value::Boolean(true),
-                    );
+                    execute::set_property_in_place(bound_stream, "closed", Value::Boolean(true));
+                    execute::set_property_in_place(bound_stream, "destroyed", Value::Boolean(true));
                 }
                 close_owned_read_handle(state, stream);
                 if matches!(
@@ -4550,18 +4532,9 @@ fn read_stream_custom_open_result(
         _ => return Err(execute::type_error("fd")),
     };
     execute::set_property_in_place(stream, "fd", Value::Number(fd_number as f64));
-    execute::set_property_in_place(
-        stream,
-        READ_STREAM_CUSTOM_OWNED_KEY,
-        Value::Boolean(true),
-    );
+    execute::set_property_in_place(stream, READ_STREAM_CUSTOM_OWNED_KEY, Value::Boolean(true));
     execute::set_property_in_place(stream, READ_STREAM_OPENED_KEY, Value::Boolean(true));
-    emit_stream_event(
-        state,
-        stream,
-        "open",
-        vec![Value::Number(fd_number as f64)],
-    )?;
+    emit_stream_event(state, stream, "open", vec![Value::Number(fd_number as f64)])?;
     let custom_fs = execute::get_property(stream, READ_STREAM_CUSTOM_FS_KEY);
     let custom_read = execute::get_property(&custom_fs, "read");
     if !quench_runtime::is_callable(&custom_read) {
@@ -4572,11 +4545,7 @@ fn read_stream_custom_open_result(
         );
         let options = execute::get_property(stream, READ_STREAM_CUSTOM_OPTIONS_KEY);
         let path = execute::get_property(stream, "path");
-        return read_stream_open(
-            state,
-            Some(stream),
-            &[stream.clone(), path, options],
-        );
+        return read_stream_open(state, Some(stream), &[stream.clone(), path, options]);
     }
     execute::set_property_in_place(
         stream,
@@ -4647,22 +4616,14 @@ fn read_stream_custom_read_result(
     read_stream_open(state, Some(stream), &[stream.clone(), path, view])
 }
 
-fn close_custom_read_stream_fd(
-    _state: &Rc<RefCell<HostState>>,
-    stream: &Value,
-    fd: i32,
-) {
+fn close_custom_read_stream_fd(_state: &Rc<RefCell<HostState>>, stream: &Value, fd: i32) {
     let custom_fs = execute::get_property(stream, READ_STREAM_CUSTOM_FS_KEY);
     let close = execute::get_property(&custom_fs, "close");
     if !quench_runtime::is_callable(&close) {
         return;
     }
     let callback = crate::host::capability(crate::registry::SPEC_INSPECTOR_CLOSE);
-    let _ = execute::call(
-        &close,
-        &custom_fs,
-        &[Value::Number(fd as f64), callback],
-    );
+    let _ = execute::call(&close, &custom_fs, &[Value::Number(fd as f64), callback]);
 }
 
 fn close_owned_read_handle(state: &Rc<RefCell<HostState>>, stream: &Value) {
@@ -4836,14 +4797,19 @@ pub fn validate_write_stream_options(
         )?;
         (fd, path)
     };
-    let fs_module = state
+    let option_fs = execute::get_property(raw_options, "fs");
+    let fs_module = if matches!(option_fs, Value::Object(_) | Value::ObjectAlias(_)) {
+        option_fs
+    } else {
+        state
         .borrow()
         .module_cache
         .get("__quench_fs_mocked")
         .cloned()
         .or_else(|| state.borrow().module_cache.get("fs").cloned())
         .or_else(|| receiver.cloned())
-        .unwrap_or_else(build);
+        .unwrap_or_else(build)
+    };
     let module_receiver = state
         .borrow()
         .module_cache
@@ -4854,7 +4820,14 @@ pub fn validate_write_stream_options(
             !module_receiver && matches!(value, Value::Object(_) | Value::ObjectAlias(_))
         })
         .cloned();
-    let mut stream = crate::modules::events::new_emitter_object(state)?;
+    let stream_namespace = crate::modules::stream::build(state)?;
+    let writable = execute::get_property(&stream_namespace, "Writable");
+    let mut stream = if quench_runtime::is_callable(&writable) {
+        execute::construct_value(&writable, &[host_api::object(Vec::new())])
+            .unwrap_or(crate::modules::events::new_emitter_object(state)?)
+    } else {
+        crate::modules::events::new_emitter_object(state)?
+    };
     if let Some(write_ctor) = state
         .borrow()
         .module_cache
@@ -4884,7 +4857,7 @@ pub fn validate_write_stream_options(
             Value::Boolean(matches!(flush, Value::Boolean(true))),
         ),
         (
-            "write",
+            "_write",
             crate::host::capability(crate::registry::SPEC_FS_WRITE_STREAM_WRITE),
         ),
         (
@@ -4892,15 +4865,12 @@ pub fn validate_write_stream_options(
             crate::host::capability(crate::registry::SPEC_FS_WRITE_STREAM_CLOSE),
         ),
         (
-            "destroy",
-            crate::host::capability(crate::registry::SPEC_FS_WRITE_STREAM_CLOSE),
-        ),
-        (
-            "end",
+            "_destroy",
             crate::host::capability(crate::registry::SPEC_FS_WRITE_STREAM_CLOSE),
         ),
         ("writable", Value::Boolean(true)),
         ("closed", Value::Boolean(false)),
+        ("destroyed", Value::Boolean(false)),
     ] {
         let _ = execute::set_property_in_place(&stream, name, value);
     }
@@ -4983,6 +4953,16 @@ pub fn write_stream_write(
     if quench_runtime::is_callable(&fs_write) {
         let fd = descriptor_arg(execute::get_property_result(stream, "fd").ok().as_ref())?;
         if let Some(callback) = callback.clone() {
+            let callback = host_api::bound_capability_with_arguments(
+                crate::host::capability_ref(crate::registry::SPEC_FS_WRITE_STREAM_RETRY_CALLBACK),
+                vec![
+                    fs_module.clone(),
+                    callback,
+                    Value::Number(fd as f64),
+                    buffer.clone(),
+                    Value::Number(bytes.len() as f64),
+                ],
+            );
             let result = execute::call(
                 &fs_write,
                 &fs_module,
@@ -5034,6 +5014,62 @@ pub fn write_stream_write(
         defer(state, &callback, vec![err_value(&result)]);
     }
     result.map(|_| Value::Boolean(true))
+}
+
+/// Bridge the fs.write callback to WriteStream's retry policy.  Node retries
+/// transient EAGAIN writes before handing completion to Writable; keeping the
+/// policy at this Rust I/O edge preserves the canonical stream state machine
+/// while still honoring an injected `fs.write` implementation.
+pub fn write_stream_retry_callback(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let fs_module = args.first().ok_or(VmError::NotCallable)?;
+    let completion = args.get(1).ok_or(VmError::NotCallable)?;
+    let fd = args.get(2).ok_or(VmError::NotCallable)?;
+    let buffer = args.get(3).ok_or(VmError::NotCallable)?;
+    let length = args.get(4).ok_or(VmError::NotCallable)?;
+    if args.len() == 5 {
+        let fs_write = execute::get_property(fs_module, "write");
+        let retry = host_api::bound_capability_with_arguments(
+            crate::host::capability_ref(crate::registry::SPEC_FS_WRITE_STREAM_RETRY_CALLBACK),
+            args[..5].to_vec(),
+        );
+        return execute::call(
+            &fs_write,
+            fs_module,
+            &[
+                fd.clone(),
+                buffer.clone(),
+                Value::Number(0.0),
+                length.clone(),
+                Value::Null,
+                retry,
+            ],
+        );
+    }
+    let callback_args = args.get(5..).unwrap_or_default();
+    let error = callback_args.first().cloned().unwrap_or(Value::Undefined);
+    let eagain = matches!(
+        execute::get_property(&error, "code"),
+        Value::String(code) if code == "EAGAIN"
+    );
+    if eagain {
+        let retry = host_api::bound_capability_with_arguments(
+            crate::host::capability_ref(crate::registry::SPEC_FS_WRITE_STREAM_RETRY_CALLBACK),
+            vec![
+                fs_module.clone(),
+                completion.clone(),
+                fd.clone(),
+                buffer.clone(),
+                length.clone(),
+            ],
+        );
+        defer(state, &retry, Vec::new());
+        return Ok(Value::Undefined);
+    }
+    execute::call(completion, &Value::Undefined, callback_args)
 }
 
 pub fn write_stream_open(
@@ -5100,16 +5136,24 @@ pub fn write_stream_close(
     let callback = args
         .first()
         .filter(|value| quench_runtime::is_callable(value));
+    let destroy_callback = args
+        .get(1)
+        .filter(|value| quench_runtime::is_callable(value));
     // `close()` is idempotent in Node.  Stream finalization can race an
     // explicit close, and callers are still entitled to their callback even
     // after the descriptor has already been released.  Do this check before
     // descriptor validation because the stream intentionally clears `fd`
     // after a successful close.
     let fd_value = execute::get_property(stream, "fd");
-    if matches!(execute::get_property(stream, "closed"), Value::Boolean(true))
-        || matches!(fd_value, Value::Null | Value::Undefined)
+    if matches!(
+        execute::get_property(stream, "closed"),
+        Value::Boolean(true)
+    ) || matches!(fd_value, Value::Null | Value::Undefined)
     {
         if let Some(callback) = callback {
+            defer(state, callback, vec![Value::Null]);
+        }
+        if let Some(callback) = destroy_callback {
             defer(state, callback, vec![Value::Null]);
         }
         return Ok(stream.clone());
@@ -5149,11 +5193,17 @@ pub fn write_stream_close(
     execute::set_property_in_place(stream, "closed", Value::Boolean(true));
     if result.is_ok() {
         execute::set_property_in_place(stream, "fd", Value::Null);
+    }
+    if result.is_ok() && destroy_callback.is_none() {
         // Closing a WriteStream emits exactly one `close` event. Keep the
         // event on the same host-owned lifecycle edge as descriptor release;
         // repeated close() calls take the idempotent path above and cannot
         // emit duplicates.
         let _ = emit_stream_event(state, stream, "close", Vec::new());
+    }
+    if let Some(callback) = destroy_callback {
+        defer(state, callback, vec![err_value(&result)]);
+        return result.map(|_| stream.clone());
     }
     if !flush {
         if let Some(callback) = callback {
@@ -5332,16 +5382,21 @@ pub fn open_as_blob(
 ) -> Result<Value, VmError> {
     let result = (|| {
         let path = path_arg(args.first())?;
-        let options = args.get(1).cloned().unwrap_or_else(|| host_api::object(Vec::new()));
+        let options = args
+            .get(1)
+            .cloned()
+            .unwrap_or_else(|| host_api::object(Vec::new()));
         if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
             return Err(crate::modules::buffer_enc::invalid_arg_type(
                 "The \"options\" argument must be of type object.".into(),
             ));
         }
-        let metadata = std::fs::metadata(&path)
-            .map_err(|error| crate::modules::fs_error::fs_error("openAsBlob", Some(&path), &error))?;
-        let bytes = std::fs::read(&path)
-            .map_err(|error| crate::modules::fs_error::fs_error("openAsBlob", Some(&path), &error))?;
+        let metadata = std::fs::metadata(&path).map_err(|error| {
+            crate::modules::fs_error::fs_error("openAsBlob", Some(&path), &error)
+        })?;
+        let bytes = std::fs::read(&path).map_err(|error| {
+            crate::modules::fs_error::fs_error("openAsBlob", Some(&path), &error)
+        })?;
         let blob_ctor = execute::get_property(&quench_runtime::vm::current_global_object(), "Blob");
         let parts = host_api::array(vec![crate::modules::buffer_proto::make_buffer(&bytes)]);
         let mut blob = execute::construct_value(&blob_ctor, &[parts, options])?;
@@ -5353,7 +5408,10 @@ pub fn open_as_blob(
             .unwrap_or(0.0);
         for (key, value) in [
             ("\0quench:file-backed:path", Value::String(path.into())),
-            ("\0quench:file-backed:size", Value::Number(metadata.len() as f64)),
+            (
+                "\0quench:file-backed:size",
+                Value::Number(metadata.len() as f64),
+            ),
             ("\0quench:file-backed:mtime", Value::Number(modified)),
             ("\0quench:file-backed", Value::Boolean(true)),
         ] {
