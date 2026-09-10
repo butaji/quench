@@ -209,10 +209,8 @@ pub(crate) fn attach_stream_resource(
     state: &Rc<RefCell<HostState>>,
     stream: &Value,
 ) -> Result<(), VmError> {
-    let resource = crate::modules::async_hooks::new_resource(
-        state,
-        &[Value::String("HTTP2STREAM".into())],
-    )?;
+    let resource =
+        crate::modules::async_hooks::new_resource(state, &[Value::String("HTTP2STREAM".into())])?;
     execute::set_property_in_place(stream, HTTP2_ASYNC_RESOURCE_PROP, resource);
     Ok(())
 }
@@ -1034,10 +1032,7 @@ fn setup_external_session(
     Ok(())
 }
 
-fn external_data(
-    state: &Rc<RefCell<HostState>>,
-    values: &[Value],
-) -> Result<Value, VmError> {
+fn external_data(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, VmError> {
     let socket = values.first().ok_or(VmError::NotCallable)?;
     let bytes = values
         .get(1)
@@ -1079,9 +1074,9 @@ fn set_ping_limit(socket: &Value, options: &Value) {
 fn remember_http2_authority(socket: &Value, target: &Value) {
     let host = execute::to_js_string(&execute::get_property(target, "host")).ok();
     let port = execute::to_js_string(&execute::get_property(target, "port")).ok();
-    let Some(host) = host.filter(|value| {
-        !value.is_empty() && value != "undefined" && value != "null"
-    }) else {
+    let Some(host) =
+        host.filter(|value| !value.is_empty() && value != "undefined" && value != "null")
+    else {
         return;
     };
     let port = port.filter(|value| !value.is_empty() && value != "undefined" && value != "null");
@@ -1336,10 +1331,7 @@ const HTTP2_DIAG_ERROR_PROP: &str = "\0quench:http2:diagnostics:error";
 /// consumers.  A private constructor record avoids mutating the global
 /// `Duplex` constructor while retaining Node's concrete stream names.
 pub(crate) fn decorate_http2_stream(state: &Rc<RefCell<HostState>>, stream: &Value, server: bool) {
-    let existing_writable_hwm = match execute::get_property(
-        stream,
-        "_writableState",
-    ) {
+    let existing_writable_hwm = match execute::get_property(stream, "_writableState") {
         Value::Object(_) | Value::ObjectAlias(_) => match execute::get_property(
             &execute::get_property(stream, "_writableState"),
             "highWaterMark",
@@ -2215,7 +2207,10 @@ fn stream_write(
             .http2_streams
             .get(&(socket_id, stream_id))
             .is_some_and(|stream| {
-                matches!(execute::get_property(stream, "destroyed"), Value::Boolean(true))
+                matches!(
+                    execute::get_property(stream, "destroyed"),
+                    Value::Boolean(true)
+                )
             })
     });
     let callback = values
@@ -2226,11 +2221,20 @@ fn stream_write(
     // destroyed stream is deliberately quiet (the compatibility response's
     // `destroy()` has no callback), while an explicitly closed HTTP/2 stream
     // reports the protocol-specific error through write's callback.
-    if mapped_destroyed || receiver.is_some_and(|stream| {
-        matches!(execute::get_property(stream, "destroyed"), Value::Boolean(true))
-    }) || stream.as_ref().is_some_and(|stream| {
-        matches!(execute::get_property(stream, "destroyed"), Value::Boolean(true))
-    }) {
+    if mapped_destroyed
+        || receiver.is_some_and(|stream| {
+            matches!(
+                execute::get_property(stream, "destroyed"),
+                Value::Boolean(true)
+            )
+        })
+        || stream.as_ref().is_some_and(|stream| {
+            matches!(
+                execute::get_property(stream, "destroyed"),
+                Value::Boolean(true)
+            )
+        })
+    {
         return Ok(Value::Boolean(false));
     }
     let pending_final = receiver.is_some_and(|stream| {
@@ -2263,10 +2267,16 @@ fn stream_write(
     let closed = !response_closed
         && (transport_closed
             || receiver.is_some_and(|stream| {
-                matches!(execute::get_property(stream, "closed"), Value::Boolean(true))
+                matches!(
+                    execute::get_property(stream, "closed"),
+                    Value::Boolean(true)
+                )
             })
             || stream.as_ref().is_some_and(|stream| {
-                matches!(execute::get_property(stream, "closed"), Value::Boolean(true))
+                matches!(
+                    execute::get_property(stream, "closed"),
+                    Value::Boolean(true)
+                )
             }));
     if (ended && !pending_final) || closed {
         if let (Some(stream), Some(callback)) = (stream.as_ref(), callback) {
@@ -2337,13 +2347,11 @@ fn stream_write(
         };
         let pending_length = body_len as f64;
         write_result = pending_length < high_water_mark;
-        execute::set_property_in_place(
-            &writable_state,
-            "length",
-            Value::Number(pending_length),
-        );
+        execute::set_property_in_place(&writable_state, "length", Value::Number(pending_length));
         let canonical_writable_state = execute::get_property(&stream, "_writableState");
-        if !matches!(canonical_writable_state, Value::Undefined) && canonical_writable_state != writable_state {
+        if !matches!(canonical_writable_state, Value::Undefined)
+            && canonical_writable_state != writable_state
+        {
             execute::set_property_in_place(
                 &canonical_writable_state,
                 "length",
@@ -2394,11 +2402,11 @@ fn stream_write(
             if matches!(response, Value::Object(_) | Value::ObjectAlias(_))
                 && !execute::same_value(&drain_receiver, &response)
             {
-                state
-                    .borrow_mut()
-                    .net
-                    .pending_http2_events
-                    .push((response, "drain".into(), Vec::new()));
+                state.borrow_mut().net.pending_http2_events.push((
+                    response,
+                    "drain".into(),
+                    Vec::new(),
+                ));
             }
             execute::set_property_in_place(&writable_state, "needDrain", Value::Boolean(false));
         }
@@ -2433,19 +2441,22 @@ fn stream_end(
         Value::Boolean(true)
     );
     if receiver.is_some_and(|stream| {
-        matches!(execute::get_property(stream, "closed"), Value::Boolean(true))
-            && !matches!(
-                execute::get_property(stream, "\0quench:http2-end-dispatch"),
-                Value::Boolean(true)
-            )
-            && !matches!(
-                execute::get_property(stream, "\0quench:http2-remote-end"),
-                Value::Boolean(true)
-            )
-            && !writable_after_response_close(stream, transport_closed)
+        matches!(
+            execute::get_property(stream, "closed"),
+            Value::Boolean(true)
+        ) && !matches!(
+            execute::get_property(stream, "\0quench:http2-end-dispatch"),
+            Value::Boolean(true)
+        ) && !matches!(
+            execute::get_property(stream, "\0quench:http2-remote-end"),
+            Value::Boolean(true)
+        ) && !writable_after_response_close(stream, transport_closed)
     }) {
         if let Some(stream) = receiver {
-            if !matches!(execute::get_property(stream, "destroyed"), Value::Boolean(true)) {
+            if !matches!(
+                execute::get_property(stream, "destroyed"),
+                Value::Boolean(true)
+            ) {
                 let destroy = execute::get_property(stream, "_destroy");
                 if quench_runtime::is_callable(&destroy) {
                     execute::call(&destroy, stream, &[Value::Null])?;
@@ -2631,11 +2642,7 @@ fn stream_end(
         Value::Boolean(true)
     ) {
         execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
-        execute::set_property_in_place(
-            &stream,
-            "__quenchHttp2CloseEmitted",
-            Value::Boolean(true),
-        );
+        execute::set_property_in_place(&stream, "__quenchHttp2CloseEmitted", Value::Boolean(true));
         state.borrow_mut().net.pending_http2_events.push((
             stream.clone(),
             "close".into(),
@@ -2680,11 +2687,11 @@ fn stream_end(
                 "__quenchHttp2CloseEmitted",
                 Value::Boolean(true),
             );
-            state.borrow_mut().net.pending_http2_events.push((
-                stream,
-                "close".into(),
-                Vec::new(),
-            ));
+            state
+                .borrow_mut()
+                .net
+                .pending_http2_events
+                .push((stream, "close".into(), Vec::new()));
         }
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
@@ -2709,11 +2716,7 @@ pub(crate) fn compat_server_request_response(
     // Preserve the request pseudo-headers on the canonical stream so server
     // push can derive the peer authority/scheme without relying on a socket
     // alias that may not expose the diagnostics map.
-    execute::set_property_in_place(
-        stream,
-        "__quenchHttp2RequestDiagnostics",
-        headers.clone(),
-    );
+    execute::set_property_in_place(stream, "__quenchHttp2RequestDiagnostics", headers.clone());
     let mut request = crate::modules::events::new_emitter_object(state)?;
     let method = request_method;
     let path = execute::get_property(headers, ":path");
@@ -2749,11 +2752,7 @@ pub(crate) fn compat_server_request_response(
     ] {
         execute::set_property_in_place(&request, name, method);
     }
-    execute::set_property_in_place(
-        stream,
-        "\0quench:http2-compat-request",
-        request.clone(),
-    );
+    execute::set_property_in_place(stream, "\0quench:http2-compat-request", request.clone());
 
     let mut response = crate::modules::events::new_emitter_object(state)?;
     for (name, value) in [
@@ -2794,11 +2793,7 @@ pub(crate) fn compat_server_request_response(
         "\0quench:http2-stream-id",
         execute::get_property(stream, "\0quench:http2-stream-id"),
     );
-    execute::set_property_in_place(
-        &response,
-        COMPAT_STATUS_CODE_PROP,
-        Value::Number(200.0),
-    );
+    execute::set_property_in_place(&response, COMPAT_STATUS_CODE_PROP, Value::Number(200.0));
     let status_accessor = http2_capability("compatResponseStatusCode");
     let status_descriptor = host_api::object(vec![
         ("get".into(), status_accessor.clone()),
@@ -2826,12 +2821,24 @@ pub(crate) fn compat_server_request_response(
         ("hasHeader", http2_capability("compatResponseHasHeader")),
         ("getHeader", http2_capability("compatResponseGetHeader")),
         ("getHeaders", http2_capability("compatResponseGetHeaders")),
-        ("getHeaderNames", http2_capability("compatResponseGetHeaderNames")),
-        ("removeHeader", http2_capability("compatResponseRemoveHeader")),
-        ("appendHeader", http2_capability("compatResponseAppendHeader")),
+        (
+            "getHeaderNames",
+            http2_capability("compatResponseGetHeaderNames"),
+        ),
+        (
+            "removeHeader",
+            http2_capability("compatResponseRemoveHeader"),
+        ),
+        (
+            "appendHeader",
+            http2_capability("compatResponseAppendHeader"),
+        ),
         ("setTrailer", http2_capability("compatResponseSetTrailer")),
         ("addTrailers", http2_capability("compatResponseAddTrailers")),
-        ("flushHeaders", http2_capability("compatResponseFlushHeaders")),
+        (
+            "flushHeaders",
+            http2_capability("compatResponseFlushHeaders"),
+        ),
         ("setTimeout", http2_capability("compatResponseSetTimeout")),
         (
             "createPushResponse",
@@ -2855,10 +2862,7 @@ pub(crate) fn compat_server_request_response(
 /// Queue the compatibility response's terminal `close` event alongside the
 /// underlying HTTP/2 stream close.  The two are distinct EventEmitters in
 /// Node's compatibility API, despite sharing one transport stream.
-pub(crate) fn queue_compat_response_close(
-    state: &Rc<RefCell<HostState>>,
-    stream: &Value,
-) {
+pub(crate) fn queue_compat_response_close(state: &Rc<RefCell<HostState>>, stream: &Value) {
     let response = execute::get_property(stream, COMPAT_RESPONSE_PROP);
     if !matches!(response, Value::Object(_) | Value::ObjectAlias(_))
         || matches!(
@@ -2960,7 +2964,10 @@ fn compat_response_set_header(
     values: &[Value],
 ) -> Result<Value, VmError> {
     let response = receiver.ok_or(VmError::NotCallable)?;
-    if matches!(execute::get_property(response, "headersSent"), Value::Boolean(true)) {
+    if matches!(
+        execute::get_property(response, "headersSent"),
+        Value::Boolean(true)
+    ) {
         return Err(coded_error(
             quench_runtime::ops::Builtin::Error,
             "ERR_HTTP2_HEADERS_SENT",
@@ -3018,7 +3025,10 @@ fn compat_response_header_value(name: &str, value: Option<&Value>) -> Result<Val
     }
     if let Value::Array(_) = value {
         for key in execute::own_enumerable_keys(value) {
-            if matches!(execute::get_property(value, &key), Value::Undefined | Value::Null) {
+            if matches!(
+                execute::get_property(value, &key),
+                Value::Undefined | Value::Null
+            ) {
                 return Err(coded_error(
                     quench_runtime::ops::Builtin::TypeError,
                     "ERR_HTTP2_INVALID_HEADER_VALUE",
@@ -3088,7 +3098,10 @@ fn compat_response_remove_header(
     values: &[Value],
 ) -> Result<Value, VmError> {
     let response = receiver.ok_or(VmError::NotCallable)?;
-    if matches!(execute::get_property(response, "headersSent"), Value::Boolean(true)) {
+    if matches!(
+        execute::get_property(response, "headersSent"),
+        Value::Boolean(true)
+    ) {
         return Err(coded_error(
             quench_runtime::ops::Builtin::Error,
             "ERR_HTTP2_HEADERS_SENT",
@@ -3110,7 +3123,10 @@ fn compat_response_append_header(
     values: &[Value],
 ) -> Result<Value, VmError> {
     let response = receiver.ok_or(VmError::NotCallable)?;
-    if matches!(execute::get_property(response, "headersSent"), Value::Boolean(true)) {
+    if matches!(
+        execute::get_property(response, "headersSent"),
+        Value::Boolean(true)
+    ) {
         return Err(coded_error(
             quench_runtime::ops::Builtin::Error,
             "ERR_HTTP2_HEADERS_SENT",
@@ -3165,7 +3181,8 @@ fn compat_response_add_trailers(
     }
     for key in execute::own_enumerable_keys(headers) {
         let name = compat_response_header_name(Some(&Value::String(key.clone())))?;
-        let value = compat_response_header_value(&name, Some(&execute::get_property(headers, &key)))?;
+        let value =
+            compat_response_header_value(&name, Some(&execute::get_property(headers, &key)))?;
         let trailers = execute::get_property(response, COMPAT_TRAILERS_PROP);
         let updated = execute::set_property(trailers, &name, value);
         execute::set_property_in_place(response, COMPAT_TRAILERS_PROP, updated);
@@ -3178,7 +3195,10 @@ fn compat_response_flush_headers(
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
     let response = receiver.ok_or(VmError::NotCallable)?;
-    if !matches!(execute::get_property(response, "headersSent"), Value::Boolean(true)) {
+    if !matches!(
+        execute::get_property(response, "headersSent"),
+        Value::Boolean(true)
+    ) {
         let status = execute::get_property(response, COMPAT_STATUS_CODE_PROP);
         compat_response_write_head(state, Some(response), &[status])?;
     }
@@ -3221,14 +3241,20 @@ fn compat_response_set_timeout(
         }
     }
     if let Some(timer) = match execute::get_property(response, COMPAT_TIMEOUT_PROP) {
-        Value::Object(_) | Value::ObjectAlias(_) => Some(execute::get_property(response, COMPAT_TIMEOUT_PROP)),
+        Value::Object(_) | Value::ObjectAlias(_) => {
+            Some(execute::get_property(response, COMPAT_TIMEOUT_PROP))
+        }
         _ => None,
     } {
         crate::modules::timers::clear_timeout(state, &[timer])?;
     }
     execute::set_property_in_place(response, "timeout", Value::Number(timeout));
     execute::set_property_in_place(response, COMPAT_TIMEOUT_PROP, Value::Undefined);
-    if matches!(execute::get_property(response, "finished"), Value::Boolean(true)) || timeout == 0.0 {
+    if matches!(
+        execute::get_property(response, "finished"),
+        Value::Boolean(true)
+    ) || timeout == 0.0
+    {
         return Ok(response.clone());
     }
     if let Some(callback) = values.get(1) {
@@ -3240,12 +3266,13 @@ fn compat_response_set_timeout(
     }
     let timer_callback = host_api::bound_capability_with_arguments(
         crate::host::capability_ref(crate::registry::SPEC_INTERNAL_HTTP2_UTIL),
-        vec![Value::String("compatResponseTimeout".into()), response.clone()],
+        vec![
+            Value::String("compatResponseTimeout".into()),
+            response.clone(),
+        ],
     );
-    let timer = crate::modules::timers::set_timeout(
-        state,
-        &[timer_callback, Value::Number(timeout)],
-    )?;
+    let timer =
+        crate::modules::timers::set_timeout(state, &[timer_callback, Value::Number(timeout)])?;
     execute::set_property_in_place(response, COMPAT_TIMEOUT_PROP, timer);
     Ok(response.clone())
 }
@@ -3258,7 +3285,10 @@ fn compat_response_timeout_fire(
         return Ok(Value::Undefined);
     };
     execute::set_property_in_place(response, COMPAT_TIMEOUT_PROP, Value::Undefined);
-    if matches!(execute::get_property(response, "finished"), Value::Boolean(true)) {
+    if matches!(
+        execute::get_property(response, "finished"),
+        Value::Boolean(true)
+    ) {
         return Ok(Value::Undefined);
     }
     crate::modules::net::emit(state, response, "timeout", Vec::new())?;
@@ -3286,9 +3316,13 @@ fn compat_response_create_push_response(
         ));
     }
     let parent = compat_response_stream(Some(response))?;
-    if matches!(execute::get_property(&parent, "closed"), Value::Boolean(true))
-        || matches!(execute::get_property(&parent, "destroyed"), Value::Boolean(true))
-    {
+    if matches!(
+        execute::get_property(&parent, "closed"),
+        Value::Boolean(true)
+    ) || matches!(
+        execute::get_property(&parent, "destroyed"),
+        Value::Boolean(true)
+    ) {
         let error = quench_runtime::builtins::error(
             quench_runtime::ops::Builtin::Error,
             &[Value::String("Stream is not writable".into())],
@@ -3310,11 +3344,13 @@ fn compat_response_create_push_response(
         crate::host::capability_ref(crate::registry::SPEC_INTERNAL_HTTP2_UTIL),
         vec![Value::String("compatPushResponseEnd".into()), push.clone()],
     );
-    let push_response = host_api::object(vec![
-        ("stream".into(), push.clone()),
-        ("end".into(), end),
-    ]);
-    execute::call(callback, &Value::Undefined, &[Value::Null, push_response.clone()])?;
+    let push_response =
+        host_api::object(vec![("stream".into(), push.clone()), ("end".into(), end)]);
+    execute::call(
+        callback,
+        &Value::Undefined,
+        &[Value::Null, push_response.clone()],
+    )?;
     Ok(push_response)
 }
 
@@ -3328,8 +3364,14 @@ fn compat_response_write_head(
     // finished as a harmless no-op. Keep this lifecycle fact on the response
     // rather than letting a second wire HEADERS frame corrupt the stream.
     if let Some(response) = receiver {
-        if matches!(execute::get_property(response, "headersSent"), Value::Boolean(true)) {
-            if matches!(execute::get_property(response, "finished"), Value::Boolean(true)) {
+        if matches!(
+            execute::get_property(response, "headersSent"),
+            Value::Boolean(true)
+        ) {
+            if matches!(
+                execute::get_property(response, "finished"),
+                Value::Boolean(true)
+            ) {
                 return Ok(response.clone());
             }
             return Err(coded_error(
@@ -3374,9 +3416,10 @@ fn compat_response_write_head(
         );
     }
     let status = values.first().cloned().unwrap_or(Value::Number(200.0));
-    if values.get(1).is_some_and(|value| {
-        matches!(value, Value::String(_) | Value::StringUnits(_))
-    }) {
+    if values
+        .get(1)
+        .is_some_and(|value| matches!(value, Value::String(_) | Value::StringUnits(_)))
+    {
         if let Some(response) = receiver {
             let _ = compat_response_status_message(state, Some(response), &[])?;
         }
@@ -3395,11 +3438,19 @@ fn compat_response_write_head(
     }
     let headers_value = values
         .get(1)
-        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_) | Value::Array(_)))
+        .filter(|value| {
+            matches!(
+                value,
+                Value::Object(_) | Value::ObjectAlias(_) | Value::Array(_)
+            )
+        })
         .or_else(|| {
-            values
-                .get(2)
-                .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_) | Value::Array(_)))
+            values.get(2).filter(|value| {
+                matches!(
+                    value,
+                    Value::Object(_) | Value::ObjectAlias(_) | Value::Array(_)
+                )
+            })
         });
     if let Some(value) = headers_value {
         let provided = if matches!(value, Value::Array(_)) {
@@ -3452,16 +3503,15 @@ fn compat_response_end(
     // has not called writeHead(). This is essential for an invalid optional
     // header argument that is caught by user code before a fallback end().
     if receiver.is_some_and(|response| {
-        matches!(execute::get_property(response, "headersSent"), Value::Boolean(false))
+        matches!(
+            execute::get_property(response, "headersSent"),
+            Value::Boolean(false)
+        )
     }) {
         let status = receiver
             .map(|response| execute::get_property(response, COMPAT_STATUS_CODE_PROP))
             .unwrap_or(Value::Number(200.0));
-        compat_response_write_head(
-            state,
-            receiver,
-            &[status, host_api::object(Vec::new())],
-        )?;
+        compat_response_write_head(state, receiver, &[status, host_api::object(Vec::new())])?;
     }
     if receiver.is_some_and(|response| {
         let request = execute::get_property(response, "req");
@@ -3548,11 +3598,11 @@ fn compat_response_end(
             Value::Boolean(true)
         ) {
             execute::set_property_in_place(response, finish_marker, Value::Boolean(true));
-            state
-                .borrow_mut()
-                .net
-                .pending_events
-                .push((response.clone(), "finish".into(), Vec::new()));
+            state.borrow_mut().net.pending_events.push((
+                response.clone(),
+                "finish".into(),
+                Vec::new(),
+            ));
         }
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
@@ -3731,8 +3781,10 @@ fn stream_destroy_with_error_event(
         .cloned();
     let prior_rst_code = match execute::get_property(&receiver, "rstCode") {
         Value::Number(code)
-            if code.is_finite() && code.fract() == 0.0 && code > 0.0
-                && code <= u32::MAX as f64 => Some(code as u32),
+            if code.is_finite() && code.fract() == 0.0 && code > 0.0 && code <= u32::MAX as f64 =>
+        {
+            Some(code as u32)
+        }
         _ => None,
     };
     let code = if error
@@ -3937,13 +3989,11 @@ fn stream_push_stream(
                     !authority.is_empty() && authority != "undefined" && authority != "null"
                 })
         })
-        .or_else(|| {
-            match execute::get_property(&socket, "localPort") {
-                Value::Number(port) if port.is_finite() && port > 0.0 => {
-                    Some(format!("localhost:{port}"))
-                }
-                _ => None,
+        .or_else(|| match execute::get_property(&socket, "localPort") {
+            Value::Number(port) if port.is_finite() && port > 0.0 => {
+                Some(format!("localhost:{port}"))
             }
+            _ => None,
         })
         .unwrap_or_else(|| "localhost".into());
         fields.push((b":authority".to_vec(), authority.into_bytes()));
@@ -4130,6 +4180,26 @@ fn stream_respond(
             fields.push((name, value.into_bytes()));
         }
     }
+    // HTTP/2 response status is constrained to the three-digit HTTP status
+    // space. Validate the semantic fact before HPACK encoding so malformed
+    // values cannot reach the wire (and every caller gets Node's stable
+    // RangeError shape rather than a later protocol failure).
+    if let Some((_, raw_status)) = fields
+        .iter()
+        .find(|(name, _)| name.as_slice() == b":status")
+    {
+        let status = String::from_utf8_lossy(raw_status).to_string();
+        let valid = status.len() == 3
+            && status.as_bytes().iter().all(|byte| byte.is_ascii_digit())
+            && status.parse::<u16>().is_ok_and(|value| (100..=599).contains(&value));
+        if !valid {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::RangeError,
+                "ERR_HTTP2_STATUS_INVALID",
+                format!("Invalid status code: {status}"),
+            ));
+        }
+    }
     if !fields.iter().any(|(name, _)| name.as_slice() == b":status") {
         fields.push((b":status".to_vec(), b"200".to_vec()));
     }
@@ -4254,10 +4324,15 @@ pub(crate) fn maybe_finalize_session_close(
         return Ok(());
     }
     let streams = execute::get_property(socket, "\0quench:http2-streams");
-    let active = execute::own_enumerable_keys(&streams).into_iter().any(|key| {
-        let stream = execute::get_property(&streams, &key);
-        !matches!(execute::get_property(&stream, "closed"), Value::Boolean(true))
-    });
+    let active = execute::own_enumerable_keys(&streams)
+        .into_iter()
+        .any(|key| {
+            let stream = execute::get_property(&streams, &key);
+            !matches!(
+                execute::get_property(&stream, "closed"),
+                Value::Boolean(true)
+            )
+        });
     if !active {
         let destroy = execute::get_property(socket, "destroy");
         if quench_runtime::is_callable(&destroy) {
