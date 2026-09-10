@@ -2749,13 +2749,36 @@ pub fn server_close_idle(
         .values()
         .filter_map(|socket| {
             let socket = socket.borrow();
+            let is_http_idle = host
+                .http
+                .conns
+                .get(&socket.id)
+                .is_some_and(|conn| conn.response_done || conn.req.is_none());
+            let is_http2_idle = host.net.http2_sessions.contains_key(&socket.id)
+                && host
+                    .net
+                    .http2_streams
+                    .iter()
+                    .filter(|((socket_id, _), _)| *socket_id == socket.id)
+                    .all(|((_, stream_id), stream)| {
+                        matches!(execute::get_property(stream, "closed"), Value::Boolean(true))
+                            || matches!(
+                                execute::get_property(stream, "destroyed"),
+                                Value::Boolean(true)
+                            )
+                            || host
+                                .net
+                                .http2_sessions
+                                .get(&socket.id)
+                                .and_then(|session| session.streams.get(stream_id))
+                                .is_some_and(|stream| {
+                                    stream.state
+                                        != crate::modules::http2_protocol::StreamState::Open
+                                })
+                    });
             let is_idle = socket.server_id == Some(id)
                 && socket.state != SocketState::Closed
-                && host
-                    .http
-                    .conns
-                    .get(&socket.id)
-                    .is_some_and(|conn| conn.response_done || conn.req.is_none());
+                && (is_http_idle || is_http2_idle);
             is_idle.then(|| socket.js.clone())
         })
         .collect();

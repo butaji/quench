@@ -1314,8 +1314,39 @@ fn dispatch_http2_frames(
                     .net
                     .http2_reset_codes
                     .insert((socket_id, stream_id), code);
+                // A host-created stream can have a copy-on-write public
+                // representative distinct from the transport canonical. Keep
+                // the reset facts visible through both identities before the
+                // close event canonicalizes its receiver.
+                execute::set_property_in_place(
+                    &stream_value,
+                    "rstCode",
+                    Value::Number(code as f64),
+                );
+                execute::set_property_in_place(
+                    &stream_value,
+                    "destroyed",
+                    Value::Boolean(true),
+                );
                 execute::set_property_in_place(&stream, "rstCode", Value::Number(code as f64));
                 execute::set_property_in_place(&stream, "destroyed", Value::Boolean(true));
+                // Keep the socket's public stream table in sync as well. A
+                // stream event may have handed JavaScript a table value that
+                // predates a copy-on-write canonical replacement.
+                if let Value::Object(_) | Value::ObjectAlias(_) =
+                    execute::get_property(&socket_js, "\0quench:http2-streams")
+                {
+                    let public = execute::get_property(
+                        &execute::get_property(&socket_js, "\0quench:http2-streams"),
+                        &stream_id.to_string(),
+                    );
+                    execute::set_property_in_place(
+                        &public,
+                        "rstCode",
+                        Value::Number(code as f64),
+                    );
+                    execute::set_property_in_place(&public, "destroyed", Value::Boolean(true));
+                }
                 // NGHTTP2_CANCEL is the normal peer-side result of an
                 // AbortSignal stream destroy. Node exposes rstCode and close
                 // for this cancellation without treating it as an error;
@@ -1366,11 +1397,8 @@ fn dispatch_http2_frames(
             crate::modules::http2_protocol::FrameType::Ping => {
                 let payload = frame.payload.as_slice();
                 if frame.header.flags & 0x1 != 0 {
-                    if !crate::modules::http2_util::complete_http2_ping(
-                        state,
-                        socket_id,
-                        payload,
-                    )? {
+                    if !crate::modules::http2_util::complete_http2_ping(state, socket_id, payload)?
+                    {
                         let error = quench_runtime::builtins::error(
                             quench_runtime::ops::Builtin::Error,
                             &[Value::String("Protocol error".into())],

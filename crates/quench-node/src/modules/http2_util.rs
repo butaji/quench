@@ -1019,6 +1019,8 @@ pub(crate) fn decorate_http2_stream(state: &Rc<RefCell<HostState>>, stream: &Val
         ]),
     );
     let _ = execute::set_property_in_place(stream, "bufferSize", Value::Number(0.0));
+    let _ = execute::set_property_in_place(stream, "writableEnded", Value::Boolean(false));
+    let _ = execute::set_property_in_place(stream, "writableFinished", Value::Boolean(false));
     // Node keeps a stable stream state view even though priority signalling is
     // deprecated.  Build it once with the defaults shared by client and
     // server streams so callers never observe an absent/null state object.
@@ -1698,6 +1700,24 @@ fn stream_end(
         stream_id,
         bytes,
     );
+    if let Some(session) = state
+        .borrow_mut()
+        .net
+        .http2_sessions
+        .get_mut(&crate::modules::net::net_id(&socket).unwrap_or_default())
+    {
+        if let Some(protocol_stream) = session.streams.get_mut(&stream_id) {
+            protocol_stream.state = match protocol_stream.state {
+                crate::modules::http2_protocol::StreamState::HalfClosedRemote => {
+                    crate::modules::http2_protocol::StreamState::Closed
+                }
+                crate::modules::http2_protocol::StreamState::Closed => {
+                    crate::modules::http2_protocol::StreamState::Closed
+                }
+                _ => crate::modules::http2_protocol::StreamState::HalfClosedLocal,
+            };
+        }
+    }
     // Match Node's writable-stream ordering: `end(chunk)` queues its final
     // DATA frame, allowing writes made later in the same callback turn to be
     // flushed first. The host pump drains this queue in FIFO order on the
