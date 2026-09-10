@@ -4,7 +4,15 @@ fn collect_for_of_frames(
     registers: &crate::register_file::RegisterFile,
     frames: &mut Vec<crate::machine::Frame>,
 ) -> Result<bool, VmError> {
-    let Op::ForOf { slot, body, .. } = op else {
+    let Op::ForOf {
+        slot,
+        body,
+        r#await,
+        per_iteration,
+        iteration_slots,
+        ..
+    } = op
+    else {
         return Ok(false);
     };
     let Some(loop_iterator) = crate::loops::take_live_for_of() else {
@@ -13,7 +21,18 @@ fn collect_for_of_frames(
     let Some(ops) = body.code() else {
         return Err(VmError::MissingReturn);
     };
-    collect_loop_body_frames(ops, body.range, loop_iterator, *slot, resume, registers, frames)
+    collect_loop_body_frames(
+        ops,
+        body.range,
+        loop_iterator,
+        *slot,
+        resume,
+        *r#await,
+        *per_iteration,
+        iteration_slots,
+        registers,
+        frames,
+    )
 }
 
 fn collect_loop_body_frames(
@@ -22,6 +41,9 @@ fn collect_loop_body_frames(
     loop_iterator: Value,
     slot: u16,
     resume: crate::machine::CodeRange,
+    await_values: bool,
+    per_iteration: bool,
+    iteration_slots: &[u16],
     registers: &crate::register_file::RegisterFile,
     frames: &mut Vec<crate::machine::Frame>,
 ) -> Result<bool, VmError> {
@@ -34,6 +56,9 @@ fn collect_loop_body_frames(
                 resume,
                 0,
                 slot,
+                await_values,
+                per_iteration,
+                iteration_slots,
             ));
             return Ok(true);
         }
@@ -45,6 +70,9 @@ fn collect_loop_body_frames(
                 resume,
                 *src,
                 slot,
+                await_values,
+                per_iteration,
+                iteration_slots,
             ));
             return Ok(true);
         }
@@ -61,6 +89,9 @@ fn collect_loop_body_frames(
                 resume,
                 0,
                 slot,
+                await_values,
+                per_iteration,
+                iteration_slots,
             ));
             let iterator_value = crate::execute::read_register(registers, *iterator)?;
             let iterator = if matches!(iterator_value, Value::Undefined) {
@@ -79,6 +110,9 @@ fn collect_loop_body_frames(
         if let Op::ForOf {
             slot: nested_slot,
             body: nested_body,
+            r#await: nested_await,
+            per_iteration: nested_per_iteration,
+            iteration_slots: nested_iteration_slots,
             ..
         } = op
         {
@@ -93,12 +127,18 @@ fn collect_loop_body_frames(
                 resume,
                 0,
                 slot,
+                await_values,
+                per_iteration,
+                iteration_slots,
             ));
             if collect_nested_for_of_frame(
                 nested_iterator,
                 nested_body,
                 nested_resume,
                 *nested_slot,
+                *nested_await,
+                *nested_per_iteration,
+                nested_iteration_slots,
                 registers,
                 frames,
             )? {
@@ -114,6 +154,9 @@ fn collect_loop_body_frames(
                 resume,
                 0,
                 slot,
+                await_values,
+                per_iteration,
+                iteration_slots,
             ));
             if collect_iterator_frames(op, range_after_iterator_op(body, index), registers, frames)?
             {
@@ -130,6 +173,9 @@ fn collect_loop_body_frames(
                 resume,
                 0,
                 slot,
+                await_values,
+                per_iteration,
+                iteration_slots,
             ));
             return Ok(true);
         }
@@ -141,6 +187,9 @@ fn collect_loop_body_frames(
                 resume,
                 0,
                 slot,
+                await_values,
+                per_iteration,
+                iteration_slots,
             ));
             if collect_try_frames(
                 op,
@@ -270,6 +319,9 @@ fn for_of_repeat_frame(
     resume: crate::machine::CodeRange,
     yield_dst: u16,
     slot: u16,
+    await_values: bool,
+    per_iteration: bool,
+    iteration_slots: &[u16],
 ) -> crate::machine::Frame {
     iterator_binding_frame(
         iterator,
@@ -277,7 +329,15 @@ fn for_of_repeat_frame(
         body,
         body_resume,
         resume,
-        (yield_dst, true, true, slot),
+        IteratorFrameConfig {
+            yield_dst,
+            close_normal: true,
+            repeat: true,
+            slot,
+            await_values,
+            per_iteration,
+            iteration_slots: iteration_slots.to_vec(),
+        },
     )
 }
 
@@ -378,6 +438,9 @@ fn collect_nested_for_of_frame(
     body: &crate::machine::FunctionCode,
     resume: crate::machine::CodeRange,
     slot: u16,
+    await_values: bool,
+    per_iteration: bool,
+    iteration_slots: &[u16],
     _registers: &crate::register_file::RegisterFile,
     frames: &mut Vec<crate::machine::Frame>,
 ) -> Result<bool, VmError> {
@@ -400,6 +463,9 @@ fn collect_nested_for_of_frame(
         resume,
         yield_dst,
         slot,
+        await_values,
+        per_iteration,
+        iteration_slots,
     ));
     Ok(true)
 }
@@ -431,7 +497,15 @@ fn collect_nested_yield_frame(
         body,
         range_after_iterator_op(code.range, index),
         resume,
-        (src, close_normal, false, 0),
+        IteratorFrameConfig {
+            yield_dst: src,
+            close_normal,
+            repeat: false,
+            slot: 0,
+            await_values: false,
+            per_iteration: false,
+            iteration_slots: Vec::new(),
+        },
     ));
     Ok(true)
 }
