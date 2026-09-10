@@ -523,13 +523,44 @@ fn accept_one(
             crate::modules::http2_protocol::Role::Server,
         );
         crate::modules::http2_util::decorate_server_session(&object)?;
+        let server_settings = state
+            .borrow()
+            .net
+            .http2_server_settings
+            .get(&server_id)
+            .cloned()
+            .or_else(|| {
+                server_js
+                    .as_ref()
+                    .map(|server| execute::get_property(server, "\0quench:http2-settings"))
+            });
+        crate::modules::http2_util::configure_session_settings(
+            &object,
+            server_settings
+                .as_ref()
+                .filter(|settings| matches!(settings, Value::Object(_) | Value::ObjectAlias(_))),
+        );
+        let server_remote_custom = state
+            .borrow()
+            .net
+            .http2_server_remote_custom
+            .get(&server_id)
+            .cloned();
+        if let Some(custom) = server_remote_custom {
+            execute::set_property_in_place(&object, "\0quench:http2-remote-custom", custom);
+        }
         // A server sends its initial SETTINGS frame after accepting the
         // transport; the client preface is sent by `http2.connect()`.
+        let settings_payload = server_settings
+            .as_ref()
+            .filter(|settings| matches!(settings, Value::Object(_) | Value::ObjectAlias(_)))
+            .and_then(|settings| crate::modules::http2_util::packed_settings_payload(settings))
+            .unwrap_or_default();
         let settings = crate::modules::http2_protocol::Frame::new(
             crate::modules::http2_protocol::FrameType::Settings,
             0,
             0,
-            Vec::new(),
+            settings_payload,
         );
         let write = execute::get_property(&object, "write");
         if quench_runtime::is_callable(&write) {
@@ -552,10 +583,7 @@ fn accept_one(
         && !negotiated_h2
         && server_js.as_ref().is_some_and(|server| {
             matches!(
-                execute::get_property(
-                    &execute::get_property(server, "_tlsOptions"),
-                    "allowHTTP1"
-                ),
+                execute::get_property(&execute::get_property(server, "_tlsOptions"), "allowHTTP1"),
                 Value::Boolean(true)
             )
         });
@@ -820,7 +848,17 @@ fn http2_stream(
     );
     execute::set_property_in_place(&stream, "resume", http2_capability("streamResume"));
     execute::set_property_in_place(&stream, "pause", http2_capability("streamPause"));
-    execute::set_property_in_place(&stream, "session", socket.clone());
+    let session_socket = crate::modules::net::net_id(socket)
+        .and_then(|id| {
+            state
+                .borrow()
+                .net
+                .sockets
+                .get(&id)
+                .map(|entry| entry.borrow().js.clone())
+        })
+        .unwrap_or_else(|| socket.clone());
+    execute::set_property_in_place(&stream, "session", session_socket);
     execute::set_property_in_place(&stream, "rstCode", Value::Number(0.0));
     crate::modules::http2_util::decorate_http2_stream(state, &stream, false);
     if let Some(socket_id) = crate::modules::net::net_id(socket) {
@@ -930,15 +968,14 @@ fn dispatch_http2_frames(
     let batch_resets = frames
         .iter()
         .filter_map(|frame| {
-            (frame.header.kind == crate::modules::http2_protocol::FrameType::RstStream)
-                .then(|| {
-                    let code = frame
-                        .payload
-                        .get(..4)
-                        .map(|bytes| u32::from_be_bytes(bytes.try_into().unwrap()))
-                        .unwrap_or(0);
-                    (frame.header.stream_id, code)
-                })
+            (frame.header.kind == crate::modules::http2_protocol::FrameType::RstStream).then(|| {
+                let code = frame
+                    .payload
+                    .get(..4)
+                    .map(|bytes| u32::from_be_bytes(bytes.try_into().unwrap()))
+                    .unwrap_or(0);
+                (frame.header.stream_id, code)
+            })
         })
         .collect::<std::collections::HashMap<_, _>>();
     for frame in frames {
@@ -986,6 +1023,39 @@ fn dispatch_http2_frames(
                             &[crate::modules::buffer_proto::make_buffer(&ack.encode())],
                         )?;
                     }
+                    let remote = crate::modules::http2_util::settings_from_payload(&frame.payload);
+                    let allowed = {
+                        let hidden = execute::get_property(&socket_js, "\0quench:http2-remote-custom");
+                        if matches!(hidden, Value::Array(_)) {
+                            hidden
+                        } else {
+                            let server_id = state
+                                .borrow()
+                                .net
+                                .sockets
+                                .get(&socket_id)
+                                .and_then(|entry| entry.borrow().server_id);
+                            server_id
+                                .and_then(|id| state.borrow().net.http2_server_remote_custom.get(&id).cloned())
+                                .unwrap_or(Value::Undefined)
+                        }
+                    };
+                    crate::modules::http2_util::filter_custom_settings(
+                        &remote,
+                        matches!(allowed, Value::Array(_)).then_some(&allowed),
+                    );
+                    super::replace_socket_property(&socket_js, "remoteSettings", remote.clone());
+                    super::emit(state, &socket_js, "remoteSettings", vec![remote])?;
+                    if !is_server {
+                        let local = execute::get_property(&socket_js, "localSettings");
+                        super::emit(state, &socket_js, "localSettings", vec![local])?;
+                    }
+                } else {
+                    execute::set_property_in_place(
+                        &socket_js,
+                        "pendingSettingsAck",
+                        Value::Boolean(false),
+                    );
                 }
             }
             crate::modules::http2_protocol::FrameType::PushPromise => {
@@ -1378,11 +1448,7 @@ fn dispatch_http2_frames(
                     "rstCode",
                     Value::Number(code as f64),
                 );
-                execute::set_property_in_place(
-                    &stream_value,
-                    "destroyed",
-                    Value::Boolean(true),
-                );
+                execute::set_property_in_place(&stream_value, "destroyed", Value::Boolean(true));
                 execute::set_property_in_place(&stream, "rstCode", Value::Number(code as f64));
                 execute::set_property_in_place(&stream, "destroyed", Value::Boolean(true));
                 // Keep the socket's public stream table in sync as well. A
@@ -1395,11 +1461,7 @@ fn dispatch_http2_frames(
                         &execute::get_property(&socket_js, "\0quench:http2-streams"),
                         &stream_id.to_string(),
                     );
-                    execute::set_property_in_place(
-                        &public,
-                        "rstCode",
-                        Value::Number(code as f64),
-                    );
+                    execute::set_property_in_place(&public, "rstCode", Value::Number(code as f64));
                     execute::set_property_in_place(&public, "destroyed", Value::Boolean(true));
                 }
                 // NGHTTP2_CANCEL is the normal peer-side result of an
@@ -1446,6 +1508,32 @@ fn dispatch_http2_frames(
                         ],
                     )?;
                 }
+            }
+            crate::modules::http2_protocol::FrameType::AltSvc => {
+                if frame.payload.len() < 2 {
+                    continue;
+                }
+                let origin_len =
+                    u16::from_be_bytes(frame.payload[..2].try_into().unwrap()) as usize;
+                if frame.payload.len() < 2 + origin_len {
+                    continue;
+                }
+                let origin_start = 2;
+                let alt_start = origin_start + origin_len;
+                let origin =
+                    String::from_utf8_lossy(&frame.payload[origin_start..alt_start]).into_owned();
+                let alt = String::from_utf8_lossy(&frame.payload[alt_start..]).into_owned();
+                emit_socket_scoped(
+                    state,
+                    socket,
+                    &socket_js,
+                    "altsvc",
+                    vec![
+                        Value::String(alt),
+                        Value::String(origin),
+                        Value::Number(frame.header.stream_id as f64),
+                    ],
+                )?;
             }
             crate::modules::http2_protocol::FrameType::Ping => {
                 let payload = frame.payload.as_slice();

@@ -25,17 +25,144 @@ use super::http2_facts::{
 /// state machine and the current endpoint boundary cannot diverge on the
 /// connection preface or the mandatory initial SETTINGS frame.
 pub(crate) fn client_preface() -> Vec<u8> {
+    client_preface_with_settings(None)
+}
+
+/// Construct a client preface with the caller's initial SETTINGS payload.
+/// Keeping the payload at the transport boundary makes the public
+/// `localSettings` object and the wire representation derive from one value.
+pub(crate) fn client_preface_with_settings(settings: Option<&Value>) -> Vec<u8> {
     let mut bytes = crate::modules::http2_protocol::CONNECTION_PREFACE.to_vec();
+    let payload = settings
+        .and_then(|settings| packed_settings(&[settings.clone()]).ok())
+        .and_then(|value| typed_array_elements(&value))
+        .unwrap_or_default();
     bytes.extend_from_slice(
         &crate::modules::http2_protocol::Frame::new(
             crate::modules::http2_protocol::FrameType::Settings,
             0,
             0,
-            Vec::new(),
+            payload,
         )
         .encode(),
     );
     bytes
+}
+
+/// Add Node's stable settings fields to a wire/options subset.  The object is
+/// allocated once and then updated in place so repeated property reads retain
+/// identity, as they do for a ClientHttp2Session.
+pub(crate) fn settings_object(settings: Option<&Value>) -> Value {
+    let result = default_settings();
+    let custom = host_api::object(Vec::new());
+    if matches!(settings, Some(Value::Object(_) | Value::ObjectAlias(_))) {
+        let settings = settings.expect("matched settings object");
+        for name in [
+            "headerTableSize",
+            "enablePush",
+            "initialWindowSize",
+            "maxFrameSize",
+            "maxConcurrentStreams",
+            "maxHeaderListSize",
+            "maxHeaderSize",
+            "enableConnectProtocol",
+        ] {
+            let value = execute::get_property(settings, name);
+            if !matches!(value, Value::Undefined) {
+                set_property(&result, name, value);
+            }
+        }
+        let supplied_custom = execute::get_property(settings, "customSettings");
+        if matches!(supplied_custom, Value::Object(_) | Value::ObjectAlias(_)) {
+            for key in execute::own_enumerable_keys(&supplied_custom) {
+                set_property(&custom, &key, execute::get_property(&supplied_custom, &key));
+            }
+        }
+    }
+    set_property(&result, "customSettings", custom);
+    result
+}
+
+/// Decode one received SETTINGS payload into the public settings shape.
+pub(crate) fn settings_from_payload(payload: &[u8]) -> Value {
+    let decoded = unpacked_settings(&[crate::modules::buffer_proto::make_buffer(payload)])
+        .unwrap_or_else(|_| host_api::object(Vec::new()));
+    let result = settings_object(Some(&decoded));
+    let custom = execute::get_property(&decoded, "customSettings");
+    let result_custom = execute::get_property(&result, "customSettings");
+    if matches!(custom, Value::Object(_) | Value::ObjectAlias(_)) {
+        for key in execute::own_enumerable_keys(&custom) {
+            set_property(&result_custom, &key, execute::get_property(&custom, &key));
+        }
+    }
+    result
+}
+
+pub(crate) fn filter_custom_settings(settings: &Value, allowed: Option<&Value>) {
+    let Some(allowed) = allowed else { return };
+    let custom = execute::get_property(settings, "customSettings");
+    if !matches!(custom, Value::Object(_) | Value::ObjectAlias(_)) {
+        return;
+    }
+    let allowed = execute::own_enumerable_keys(allowed)
+        .into_iter()
+        .filter_map(|key| match execute::get_property(allowed, &key) {
+            Value::Number(value) => Some(value),
+            _ => None,
+        })
+        .filter(|value| value.is_finite() && value.fract() == 0.0)
+        .map(|value| (value as u32).to_string())
+        .collect::<HashSet<_>>();
+    let filtered = host_api::object(
+        execute::own_enumerable_keys(&custom)
+            .into_iter()
+            .filter(|key| allowed.contains(key))
+            .map(|key| (key.clone(), execute::get_property(&custom, &key)))
+            .collect(),
+    );
+    set_property(settings, "customSettings", filtered);
+}
+
+pub(crate) fn packed_settings_payload(settings: &Value) -> Option<Vec<u8>> {
+    packed_settings(&[settings.clone()])
+        .ok()
+        .and_then(|value| typed_array_elements(&value))
+}
+
+pub(crate) fn configure_session_settings(socket: &Value, local: Option<&Value>) {
+    set_property(socket, "localSettings", settings_object(local));
+    set_property(socket, "remoteSettings", settings_object(None));
+}
+
+fn update_local_settings(socket: &Value, update: &Value) {
+    let current = execute::get_property(socket, "localSettings");
+    if !matches!(current, Value::Object(_) | Value::ObjectAlias(_)) {
+        set_property(socket, "localSettings", settings_object(Some(update)));
+        return;
+    }
+    for name in [
+        "headerTableSize",
+        "enablePush",
+        "initialWindowSize",
+        "maxFrameSize",
+        "maxConcurrentStreams",
+        "maxHeaderListSize",
+        "maxHeaderSize",
+        "enableConnectProtocol",
+    ] {
+        if execute::has_own_property(update, name) {
+            set_property(&current, name, execute::get_property(update, name));
+        }
+    }
+    let custom = execute::get_property(&current, "customSettings");
+    let update_custom = execute::get_property(update, "customSettings");
+    if matches!(custom, Value::Object(_) | Value::ObjectAlias(_))
+        && matches!(update_custom, Value::Object(_) | Value::ObjectAlias(_))
+    {
+        for key in execute::own_enumerable_keys(&update_custom) {
+            set_property(&custom, &key, execute::get_property(&update_custom, &key));
+        }
+    }
 }
 
 /// Shared private key used by Node's internal HTTP/2 tests to retrieve the
@@ -149,6 +276,7 @@ fn default_settings() -> Value {
         ("maxHeaderSize".into(), Value::Number(65_535.0)),
         ("maxHeaderListSize".into(), Value::Number(65_535.0)),
         ("enableConnectProtocol".into(), Value::Boolean(false)),
+        ("customSettings".into(), host_api::object(Vec::new())),
     ])
 }
 
@@ -360,7 +488,7 @@ fn unpacked_settings(values: &[Value]) -> Result<Value, VmError> {
         execute::get_property(values.get(1).unwrap(), "validate"),
         Value::Boolean(true)
     );
-    let mut result = host_api::object(Vec::new());
+    let mut result = default_settings();
     let mut custom = host_api::object(Vec::new());
     for chunk in bytes.chunks_exact(6) {
         let id = u16::from_be_bytes([chunk[0], chunk[1]]);
@@ -639,11 +767,7 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
     // option set so the TLS host can defer certificate rejection while a
     // session AbortSignal is still able to cancel the opening transport.
     if secure {
-        execute::set_property_in_place(
-            &target,
-            "\0quench:http2-session",
-            Value::Boolean(true),
-        );
+        execute::set_property_in_place(&target, "\0quench:http2-session", Value::Boolean(true));
     }
     let create_connection = execute::get_property(&target, "createConnection");
     if quench_runtime::is_callable(&create_connection) {
@@ -665,7 +789,11 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
         );
         let write = execute::get_property(&socket, "write");
         if quench_runtime::is_callable(&write) {
-            let preface = crate::modules::buffer_proto::make_buffer(&client_preface());
+            let target_settings = execute::get_property(&target, "settings");
+            let settings = matches!(target_settings, Value::Object(_) | Value::ObjectAlias(_))
+                .then_some(&target_settings);
+            let preface =
+                crate::modules::buffer_proto::make_buffer(&client_preface_with_settings(settings));
             execute::call(&write, &socket, &[preface])?;
         }
         if matches!(execute::get_property(&socket, "close"), Value::Undefined) {
@@ -675,6 +803,12 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
             }
         }
         decorate_client_session(&socket, secure)?;
+        let target_settings = execute::get_property(&target, "settings");
+        configure_session_settings(
+            &socket,
+            matches!(target_settings, Value::Object(_) | Value::ObjectAlias(_))
+                .then_some(&target_settings),
+        );
         set_ping_limit(&socket, &target);
         if let Some(callback) = callback {
             // `createConnection` may return either an already-connected
@@ -727,11 +861,16 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
     // connected, so the protocol preface follows the same transport path as
     // application writes and is not lost before the first pump tick.
     let write = execute::get_property(&socket, "write");
+    let target_settings = execute::get_property(&target, "settings");
     if quench_runtime::is_callable(&write) {
+        let settings = matches!(target_settings, Value::Object(_) | Value::ObjectAlias(_))
+            .then_some(&target_settings);
         execute::call(
             &write,
             &socket,
-            &[crate::modules::buffer_proto::make_buffer(&client_preface())],
+            &[crate::modules::buffer_proto::make_buffer(
+                &client_preface_with_settings(settings),
+            )],
         )?;
     }
     // A raw net.Socket has `destroy()` rather than the client-session
@@ -745,6 +884,11 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
         }
     }
     decorate_client_session(&socket, secure)?;
+    configure_session_settings(
+        &socket,
+        matches!(target_settings, Value::Object(_) | Value::ObjectAlias(_))
+            .then_some(&target_settings),
+    );
     set_ping_limit(&socket, &target);
     if let Some(callback) = callback {
         let connected = transport_connected(state, &socket);
@@ -963,6 +1107,7 @@ fn decorate_client_session(socket: &Value, secure: bool) -> Result<(), VmError> 
         "ping",
         "settings",
         "goaway",
+        "altsvc",
     ] {
         execute::set_property_in_place(
             socket,
@@ -977,6 +1122,13 @@ fn decorate_client_session(socket: &Value, secure: bool) -> Result<(), VmError> 
         );
     }
     execute::set_property_in_place(socket, "pendingSettingsAck", Value::Boolean(false));
+    // Session settings are stable snapshots in Node.  Keep one object per
+    // direction on the Rust-owned session identity so repeated property reads
+    // preserve object identity even before the first peer SETTINGS frame.
+    let local_settings = default_settings();
+    let remote_settings = default_settings();
+    execute::set_property_in_place(socket, "localSettings", local_settings);
+    execute::set_property_in_place(socket, "remoteSettings", remote_settings);
     execute::set_property_in_place(socket, HTTP2_MAX_OUTSTANDING_PINGS, Value::Number(10.0));
     execute::set_property_in_place(
         socket,
@@ -1668,17 +1820,11 @@ fn session_request(
         );
         execute::set_property_in_place(&stream, "destroyed", Value::Boolean(true));
         execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
-        execute::set_property_in_place(
-            &stream,
-            "__quenchHttp2CloseEmitted",
-            Value::Boolean(true),
-        );
+        execute::set_property_in_place(&stream, "__quenchHttp2CloseEmitted", Value::Boolean(true));
         let mut host = state.borrow_mut();
-        host.net.pending_http2_events.push((
-            stream.clone(),
-            "error".into(),
-            vec![error],
-        ));
+        host.net
+            .pending_http2_events
+            .push((stream.clone(), "error".into(), vec![error]));
         host.net
             .pending_http2_events
             .push((stream.clone(), "close".into(), Vec::new()));
@@ -2256,15 +2402,19 @@ fn stream_destroy(
         // what makes same-turn AbortSignal cancellation win over the queued
         // request HEADERS (and also prevents a queued final DATA frame from
         // overtaking the RST_STREAM).
-        state.borrow_mut().net.pending_writes.retain(|(queued, bytes)| {
-            if crate::modules::net::net_id(queued) != Some(socket_id) {
-                return true;
-            }
-            match crate::modules::http2_protocol::FrameHeader::decode(bytes) {
-                Ok(Some(header)) => header.stream_id != stream_id,
-                _ => true,
-            }
-        });
+        state
+            .borrow_mut()
+            .net
+            .pending_writes
+            .retain(|(queued, bytes)| {
+                if crate::modules::net::net_id(queued) != Some(socket_id) {
+                    return true;
+                }
+                match crate::modules::http2_protocol::FrameHeader::decode(bytes) {
+                    Ok(Some(header)) => header.stream_id != stream_id,
+                    _ => true,
+                }
+            });
     }
     execute::set_property_in_place(&stream, "rstCode", Value::Number(code as f64));
     execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
@@ -2321,11 +2471,7 @@ fn stream_destroy(
         execute::get_property(&stream, "__quenchHttp2CloseEmitted"),
         Value::Boolean(true)
     ) {
-        execute::set_property_in_place(
-            &stream,
-            "__quenchHttp2CloseEmitted",
-            Value::Boolean(true),
-        );
+        execute::set_property_in_place(&stream, "__quenchHttp2CloseEmitted", Value::Boolean(true));
         state.borrow_mut().net.pending_http2_events.push((
             stream.clone(),
             "close".into(),
@@ -2666,8 +2812,172 @@ fn session_invalid_method(receiver: Option<&Value>) -> Result<Value, VmError> {
 /// checks in one capability gives every session wrapper the same argument and
 /// range behavior while leaving wire-specific operations to the canonical
 /// session state machine.
+fn session_altsvc(
+    state: &Rc<RefCell<HostState>>,
+    socket: &Value,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let alt = match args.first().unwrap_or(&Value::Undefined) {
+        Value::String(value) => value.clone(),
+        Value::StringUnits(value) => String::from_utf16_lossy(value),
+        value => {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::TypeError,
+                "ERR_INVALID_ARG_TYPE",
+                format!(
+                    "The \"alt\" argument must be of type string.{}",
+                    crate::modules::util::invalid_arg_received(value)
+                ),
+            ));
+        }
+    };
+    if !alt.bytes().all(|byte| (0x20..=0x7e).contains(&byte)) {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::TypeError,
+            "ERR_INVALID_CHAR",
+            "Invalid character in alt".into(),
+        ));
+    }
+    let origin_or_stream = args.get(1).unwrap_or(&Value::Undefined);
+    let (stream_id, origin) = match origin_or_stream {
+        Value::Undefined | Value::Null => (0_u32, String::new()),
+        Value::Number(value)
+            if value.is_finite()
+                && value.fract() == 0.0
+                && *value > 0.0
+                && *value <= u32::MAX as f64 =>
+        {
+            (*value as u32, String::new())
+        }
+        Value::Number(value) => {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::RangeError,
+                "ERR_OUT_OF_RANGE",
+                format!(
+                    "The value of \"originOrStream\" is out of range. It must be > 0 && < 4294967296. Received {}",
+                    display_number(*value)
+                ),
+            ));
+        }
+        Value::String(value) => (
+            0,
+            valid_alt_origin(value).ok_or_else(|| {
+                coded_error(
+                    quench_runtime::ops::Builtin::TypeError,
+                    "ERR_HTTP2_ALTSVC_INVALID_ORIGIN",
+                    "HTTP/2 ALTSVC frames require a valid origin".into(),
+                )
+            })?,
+        ),
+        Value::StringUnits(value) => {
+            let value = String::from_utf16_lossy(value);
+            (
+                0,
+                valid_alt_origin(&value).ok_or_else(|| {
+                    coded_error(
+                        quench_runtime::ops::Builtin::TypeError,
+                        "ERR_HTTP2_ALTSVC_INVALID_ORIGIN",
+                        "HTTP/2 ALTSVC frames require a valid origin".into(),
+                    )
+                })?,
+            )
+        }
+        Value::Object(_) | Value::ObjectAlias(_) => {
+            let value = execute::get_property(origin_or_stream, "origin");
+            let Value::String(value) = value else {
+                return Err(coded_error(
+                    quench_runtime::ops::Builtin::TypeError,
+                    "ERR_INVALID_ARG_TYPE",
+                    "The \"originOrStream\" argument must be of type string or number".into(),
+                ));
+            };
+            (
+                0,
+                valid_alt_origin(&value).ok_or_else(|| {
+                    coded_error(
+                        quench_runtime::ops::Builtin::TypeError,
+                        "ERR_HTTP2_ALTSVC_INVALID_ORIGIN",
+                        "HTTP/2 ALTSVC frames require a valid origin".into(),
+                    )
+                })?,
+            )
+        }
+        value => {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::TypeError,
+                "ERR_INVALID_ARG_TYPE",
+                format!(
+                    "The \"originOrStream\" argument must be of type string or number.{}",
+                    crate::modules::util::invalid_arg_received(value)
+                ),
+            ));
+        }
+    };
+    if origin.len() + alt.len() + 2 > 16_382 {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::TypeError,
+            "ERR_HTTP2_ALTSVC_LENGTH",
+            "HTTP/2 ALTSVC frames are limited to 16382 bytes".into(),
+        ));
+    }
+    if stream_id != 0 {
+        let exists = state
+            .borrow()
+            .net
+            .http2_streams
+            .contains_key(&(crate::modules::net::net_id(socket).unwrap_or(0), stream_id));
+        if !exists {
+            return Ok(Value::Undefined);
+        }
+    }
+    let mut payload = (origin.len() as u16).to_be_bytes().to_vec();
+    payload.extend_from_slice(origin.as_bytes());
+    payload.extend_from_slice(alt.as_bytes());
+    let frame = crate::modules::http2_protocol::Frame::new(
+        crate::modules::http2_protocol::FrameType::AltSvc,
+        0,
+        stream_id,
+        payload,
+    );
+    let write = execute::get_property(socket, "write");
+    if quench_runtime::is_callable(&write) {
+        execute::call(
+            &write,
+            socket,
+            &[crate::modules::buffer_proto::make_buffer(&frame.encode())],
+        )?;
+    }
+    Ok(Value::Undefined)
+}
+
+fn valid_alt_origin(value: &str) -> Option<String> {
+    let (scheme, rest) = value.split_once("://")?;
+    if !matches!(scheme, "http" | "https") || rest.is_empty() {
+        return None;
+    }
+    let authority = rest.split('/').next().unwrap_or_default();
+    if authority.is_empty() || authority.bytes().any(|byte| byte <= 0x20) {
+        return None;
+    }
+    Some(format!("{scheme}://{authority}"))
+}
+
+fn display_number(value: f64) -> String {
+    if value.is_nan() {
+        "NaN".into()
+    } else if value.is_infinite() {
+        if value.is_sign_negative() {
+            "-Infinity".into()
+        } else {
+            "Infinity".into()
+        }
+    } else {
+        value.to_string()
+    }
+}
+
 fn session_method(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     values: &[Value],
 ) -> Result<Value, VmError> {
@@ -2688,6 +2998,7 @@ fn session_method(
     };
     let args = &values[1..];
     match method {
+        "altsvc" => return session_altsvc(state, socket, args),
         "setNextStreamID" => {
             let value = args.first().unwrap_or(&Value::Undefined);
             let Value::Number(id) = value else {
@@ -2717,6 +3028,7 @@ fn session_method(
             );
             let session_state = execute::get_property(socket, "state");
             execute::set_property_in_place(&session_state, "nextStreamID", Value::Number(*id));
+            return Ok(Value::Undefined);
         }
         "setLocalWindowSize" => {
             let value = args.first().unwrap_or(&Value::Undefined);
@@ -2750,6 +3062,7 @@ fn session_method(
                 "effectiveLocalWindowSize",
                 Value::Number(*window),
             );
+            return Ok(Value::Undefined);
         }
         "settings" => {
             let settings = args.first().unwrap_or(&Value::Undefined);
@@ -2770,9 +3083,15 @@ fn session_method(
                 ));
             }
             // Reuse the canonical settings encoder for all range/type/custom
-            // setting validation.  The transport emission is deferred until
-            // the session core owns SETTINGS acknowledgement state.
-            let _ = packed_settings(std::slice::from_ref(settings))?;
+            // setting validation, then send the same bytes through the
+            // transport and update the stable localSettings object.
+            let payload = packed_settings_payload(settings).ok_or_else(|| {
+                coded_error(
+                    quench_runtime::ops::Builtin::Error,
+                    "ERR_HTTP2_INVALID_SETTING_VALUE",
+                    "Unable to encode HTTP/2 settings".into(),
+                )
+            })?;
             if let Some(callback) = args.get(1) {
                 if !quench_runtime::is_callable(callback) {
                     return Err(coded_error(
@@ -2785,7 +3104,30 @@ fn session_method(
                     ));
                 }
             }
+            let write = execute::get_property(socket, "write");
+            if quench_runtime::is_callable(&write) {
+                let frame = crate::modules::http2_protocol::Frame::new(
+                    crate::modules::http2_protocol::FrameType::Settings,
+                    0,
+                    0,
+                    payload,
+                );
+                execute::call(
+                    &write,
+                    socket,
+                    &[crate::modules::buffer_proto::make_buffer(&frame.encode())],
+                )?;
+            }
+            update_local_settings(socket, settings);
+            let local = execute::get_property(socket, "localSettings");
+            crate::modules::net::emit(state, socket, "localSettings", vec![local])?;
             execute::set_property_in_place(socket, "pendingSettingsAck", Value::Boolean(true));
+            if let Some(callback) = args.get(1) {
+                if quench_runtime::is_callable(callback) {
+                    execute::call(callback, &Value::Undefined, &[])?;
+                }
+            }
+            return Ok(Value::Undefined);
         }
         "ping" => {
             let (payload, callback) = match args.first() {
@@ -2823,7 +3165,7 @@ fn session_method(
                 ));
             }
             let resource = crate::modules::async_hooks::new_resource(
-                _state,
+                state,
                 &[Value::String("HTTP2PING".into())],
             )?;
             let limit = match execute::get_property(socket, HTTP2_MAX_OUTSTANDING_PINGS) {
@@ -2831,7 +3173,7 @@ fn session_method(
                 _ => 10,
             };
             let socket_id = crate::modules::net::net_id(socket).ok_or(VmError::NotCallable)?;
-            let outstanding = _state
+            let outstanding = state
                 .borrow()
                 .net
                 .http2_pings
@@ -2844,7 +3186,7 @@ fn session_method(
                 started: std::time::Instant::now(),
             };
             if outstanding >= limit {
-                invoke_ping_callback(_state, pending, Some(ping_error()))?;
+                invoke_ping_callback(state, pending, Some(ping_error()))?;
                 return Ok(Value::Boolean(false));
             }
             let frame = crate::modules::http2_protocol::Frame::new(
@@ -2861,7 +3203,7 @@ fn session_method(
                     &[crate::modules::buffer_proto::make_buffer(&frame.encode())],
                 )?;
             }
-            _state
+            state
                 .borrow_mut()
                 .net
                 .http2_pings
@@ -2926,7 +3268,7 @@ fn session_method(
                 })?,
             };
             let last_stream_id = if requested_last == 0 {
-                _state
+                state
                     .borrow()
                     .net
                     .http2_sessions
@@ -3229,6 +3571,20 @@ fn create_server(
             "\0quench:http2-request-listener",
             request_listener,
         );
+    }
+    if let Some(options) = values
+        .first()
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+    {
+        let settings = execute::get_property(options, "settings");
+        if matches!(settings, Value::Object(_) | Value::ObjectAlias(_)) {
+            execute::set_property_in_place(&server, "\0quench:http2-settings", settings.clone());
+            crate::modules::net::register_http2_server_settings(state, &server, settings);
+        }
+        let remote_custom = execute::get_property(options, "remoteCustomSettings");
+        if matches!(remote_custom, Value::Array(_)) {
+            crate::modules::net::register_http2_server_remote_custom(state, &server, remote_custom);
+        }
     }
     execute::set_property_in_place(
         &server,

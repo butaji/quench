@@ -155,6 +155,10 @@ pub struct NetState {
     /// callback is allowed to close the session and discard that control
     /// frame.
     pub pending_http2_events: Vec<(Value, String, Vec<Value>)>,
+    /// Server-side END_STREAM closes wait one transport turn. A request
+    /// callback may synchronously cancel its peer, and the peer's RST_STREAM
+    /// must win over the earlier half-close observation.
+    pub pending_http2_closes: Vec<(Value, Value, bool, bool)>,
     pub paths: HashMap<String, u16>,
     pub pending_writes: Vec<(Value, Vec<u8>)>,
     pub pending_connect_writes: HashMap<u64, Vec<u8>>,
@@ -167,6 +171,8 @@ pub struct NetState {
     /// kept beside the canonical server registry because mutating a copied JS
     /// value cannot reliably identify the transport owner after COW.
     pub http2_servers: HashSet<u64>,
+    pub http2_server_settings: HashMap<u64, Value>,
+    pub http2_server_remote_custom: HashMap<u64, Value>,
     pub http2_request_listeners: HashMap<u64, Value>,
     /// Canonical stream emitters keyed by transport/session identity. JS
     /// properties remain a public convenience, but COW object updates must
@@ -234,12 +240,15 @@ impl NetState {
             pending_lookups: Vec::new(),
             pending_events: Vec::new(),
             pending_http2_events: Vec::new(),
+            pending_http2_closes: Vec::new(),
             paths: HashMap::new(),
             pending_writes: Vec::new(),
             pending_connect_writes: HashMap::new(),
             pending_request_writes: Vec::new(),
             http2_sessions: HashMap::new(),
             http2_servers: HashSet::new(),
+            http2_server_settings: HashMap::new(),
+            http2_server_remote_custom: HashMap::new(),
             http2_request_listeners: HashMap::new(),
             http2_streams: HashMap::new(),
             http2_reset_codes: HashMap::new(),
@@ -264,6 +273,7 @@ pub fn has_work(state: &Rc<RefCell<HostState>>) -> bool {
     }) || !host.net.pending_errors.is_empty()
         || !host.net.pending_events.is_empty()
         || !host.net.pending_http2_events.is_empty()
+        || !host.net.pending_http2_closes.is_empty()
         || host.net.sockets.values().any(|s| {
             let socket = s.borrow();
             let paused = matches!(
@@ -699,6 +709,34 @@ pub(crate) fn register_http2_session(
 pub(crate) fn register_http2_server(state: &Rc<RefCell<HostState>>, server: &Value) {
     if let Some(id) = net_id(server) {
         state.borrow_mut().net.http2_servers.insert(id);
+    }
+}
+
+pub(crate) fn register_http2_server_settings(
+    state: &Rc<RefCell<HostState>>,
+    server: &Value,
+    settings: Value,
+) {
+    if let Some(id) = net_id(server) {
+        state
+            .borrow_mut()
+            .net
+            .http2_server_settings
+            .insert(id, settings);
+    }
+}
+
+pub(crate) fn register_http2_server_remote_custom(
+    state: &Rc<RefCell<HostState>>,
+    server: &Value,
+    custom: Value,
+) {
+    if let Some(id) = net_id(server) {
+        state
+            .borrow_mut()
+            .net
+            .http2_server_remote_custom
+            .insert(id, custom);
     }
 }
 
