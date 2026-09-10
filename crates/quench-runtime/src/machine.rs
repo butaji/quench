@@ -1722,7 +1722,7 @@ pub enum Frame {
         phase: BranchPhase,
         branch_resume: CodeRange,
         resume: CodeRange,
-        dst: u16,
+        dst: Option<u16>,
         yield_dst: u16,
     },
     Private {
