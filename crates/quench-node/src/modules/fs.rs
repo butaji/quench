@@ -393,6 +393,43 @@ fn normalize_write_args(args: &[Value]) -> Result<Vec<Value>, VmError> {
     ])
 }
 
+/// Validate the portion of an async read that Node checks before starting I/O.
+/// Argument errors are synchronous; only descriptor/file errors belong in the
+/// callback path below.
+fn validate_async_read_args(args: &[Value]) -> Result<(), VmError> {
+    let offset = index_arg(args.get(2), "offset", 0)?;
+    let view_length = io_view(args.get(1))?.3;
+    let length = io_length_arg(args.get(3), view_length.saturating_sub(offset))?;
+    if view_length == 0 && length > 0 {
+        let value = args.get(1).cloned().unwrap_or(Value::Undefined);
+        return Err(crate::modules::buffer_enc::invalid_arg_value(format!(
+            "The argument 'buffer' is empty and cannot be written.{}",
+            crate::modules::util::invalid_arg_received(&value)
+        )));
+    }
+    if length > view_length.saturating_sub(offset) {
+        return Err(crate::modules::buffer_enc::out_of_range(
+            "length",
+            &format!("<= {}", view_length.saturating_sub(offset)),
+            &crate::modules::buffer_enc::fmt_num(length as f64),
+        ));
+    }
+    let _ = position_arg(args.get(4))?;
+    Ok(())
+}
+
+/// Validate the portion of an async write that Node checks before starting
+/// I/O. Buffer/range/type failures must escape synchronously, while the actual
+/// descriptor write remains callback-based.
+fn validate_async_write_args(args: &[Value]) -> Result<(), VmError> {
+    let offset = index_arg(args.get(2), "offset", 0)?;
+    let view_length = io_view(args.get(1))?.3;
+    let length = io_length_arg(args.get(3), view_length.saturating_sub(offset))?;
+    let _ = io_range(args.get(1), offset, length)?;
+    let _ = position_arg(args.get(4))?;
+    Ok(())
+}
+
 fn index_arg(value: Option<&Value>, name: &str, default: usize) -> Result<usize, VmError> {
     match value {
         None | Some(Value::Undefined | Value::Null) => Ok(default),
@@ -1671,6 +1708,7 @@ pub fn read(
     let normalized = normalize_read_args(leading)?;
     descriptor_arg(normalized.first())?;
     let callback = require_callback(Some(callback))?;
+    validate_async_read_args(&normalized)?;
     let result = read_sync(state, None, &normalized);
     let callback_args = match result {
         Ok(count) => vec![
@@ -1695,6 +1733,7 @@ pub fn write(
     let normalized = normalize_write_args(leading)?;
     descriptor_arg(normalized.first())?;
     let callback = require_callback(Some(callback))?;
+    validate_async_write_args(&normalized)?;
     let result = write_sync(state, None, &normalized);
     let callback_args = match result {
         Ok(count) => vec![
