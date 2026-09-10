@@ -2227,6 +2227,9 @@ const DIR_PROTO_KEY: &str = "\0quench:fs:dir:prototype";
 const DIRENT_PROTO_KEY: &str = "\0quench:fs:dirent:prototype";
 const WRITE_STREAM_AUTO_CLOSE_KEY: &str = "\0quench:fs:write-stream:auto-close";
 const WRITE_STREAM_HANDLE_KEY: &str = "\0quench:fs:write-stream:file-handle";
+const WRITE_STREAM_OPENED_KEY: &str = "\0quench:fs:write-stream:opened";
+const WRITE_STREAM_FINAL_CALLBACK_KEY: &str = "\0quench:fs:write-stream:final-callback";
+const WRITE_STREAM_WROTE_KEY: &str = "\0quench:fs:write-stream:wrote";
 
 fn dir_error(code: &str, message: &str) -> VmError {
     let error = quench_runtime::builtins::error(
@@ -4868,12 +4871,17 @@ pub fn validate_write_stream_options(
             "_destroy",
             crate::host::capability(crate::registry::SPEC_FS_WRITE_STREAM_CLOSE),
         ),
+        (
+            "_final",
+            crate::host::capability(crate::registry::SPEC_FS_WRITE_STREAM_FINAL),
+        ),
         ("writable", Value::Boolean(true)),
         ("closed", Value::Boolean(false)),
         ("destroyed", Value::Boolean(false)),
     ] {
         let _ = execute::set_property_in_place(&stream, name, value);
     }
+    let _ = execute::set_property_in_place(&stream, WRITE_STREAM_OPENED_KEY, Value::Boolean(false));
     if matches!(raw_fd, Value::Object(_) | Value::ObjectAlias(_)) {
         let _ = execute::set_property_in_place(&stream, WRITE_STREAM_HANDLE_KEY, raw_fd);
     }
@@ -4925,6 +4933,7 @@ pub fn write_stream_write(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let stream = receiver.ok_or(VmError::NotCallable)?;
+    execute::set_property_in_place(stream, WRITE_STREAM_WROTE_KEY, Value::Boolean(true));
     let (callback, data) = match args.split_last() {
         Some((value, rest)) if quench_runtime::is_callable(value) => (
             Some(value.clone()),
@@ -5079,7 +5088,47 @@ pub fn write_stream_open(
 ) -> Result<Value, VmError> {
     let stream = args.first().ok_or(VmError::NotCallable)?;
     let fd = args.get(1).cloned().unwrap_or(Value::Undefined);
-    emit_stream_event(state, stream, "open", vec![fd])
+    let result = emit_stream_event(state, stream, "open", vec![fd]);
+    if result.is_ok() {
+        execute::set_property_in_place(stream, WRITE_STREAM_OPENED_KEY, Value::Boolean(true));
+        let callback = execute::get_property(stream, WRITE_STREAM_FINAL_CALLBACK_KEY);
+        if quench_runtime::is_callable(&callback) {
+            execute::set_property_in_place(stream, WRITE_STREAM_FINAL_CALLBACK_KEY, Value::Undefined);
+            execute::call(&callback, &Value::Undefined, &[])?;
+        }
+    }
+    result
+}
+
+/// A WriteStream cannot finish before its asynchronous `open` event.  The
+/// canonical Writable invokes `_final` after `end()` has drained the write
+/// queue; retain that completion edge until the host-owned open transition
+/// has fired.  This is a reusable lifecycle barrier for all write streams,
+/// including empty streams, rather than a fixture-specific event reorder.
+pub fn write_stream_final(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let stream = receiver.ok_or(VmError::NotCallable)?;
+    let callback = args.first().filter(|value| quench_runtime::is_callable(value));
+    let Some(callback) = callback else {
+        return Ok(Value::Undefined);
+    };
+    let opened = matches!(
+        execute::get_property(stream, WRITE_STREAM_OPENED_KEY),
+        Value::Boolean(true)
+    );
+    let wrote = matches!(
+        execute::get_property(stream, WRITE_STREAM_WROTE_KEY),
+        Value::Boolean(true)
+    );
+    if opened || wrote {
+        execute::call(callback, &Value::Undefined, &[])?;
+    } else {
+        execute::set_property_in_place(stream, WRITE_STREAM_FINAL_CALLBACK_KEY, callback.clone());
+    }
+    Ok(Value::Undefined)
 }
 
 pub fn write_stream_auto_close_get(
