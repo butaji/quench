@@ -45,6 +45,35 @@ pub fn poll(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             Some(&socket),
             &[quench_runtime::host_api::bytes(&bytes)],
         )?;
+        // A server response may call `end(chunk)` before `respond()` and then
+        // write more data in the same callback turn. Once its queued
+        // END_STREAM frame reaches the transport, the temporary allowance for
+        // those same-turn writes is no longer valid.
+        if let Ok(Some(header)) = crate::modules::http2_protocol::FrameHeader::decode(&bytes) {
+            if header.flags & 0x1 != 0 {
+                if let Some(socket_id) = super::net_id(&socket) {
+                    let stream = state
+                        .borrow()
+                        .net
+                        .http2_streams
+                        .get(&(socket_id, header.stream_id))
+                        .cloned();
+                    if let Some(stream) = stream {
+                        execute::set_property_in_place(
+                            &stream,
+                            crate::modules::http2_util::HTTP2_PENDING_FINAL_PROP,
+                            quench_runtime::value::Value::Boolean(false),
+                        );
+                        let canonical = execute::canonical_value(&stream);
+                        execute::set_property_in_place(
+                            &canonical,
+                            crate::modules::http2_util::HTTP2_PENDING_FINAL_PROP,
+                            quench_runtime::value::Value::Boolean(false),
+                        );
+                    }
+                }
+            }
+        }
     }
     let request_writes = std::mem::take(&mut state.borrow_mut().net.pending_request_writes);
     for (socket, bytes, request) in request_writes {
@@ -861,6 +890,27 @@ fn http2_stream(
     execute::set_property_in_place(&stream, "session", session_socket);
     execute::set_property_in_place(&stream, "rstCode", Value::Number(0.0));
     crate::modules::http2_util::decorate_http2_stream(state, &stream, false);
+    // A client-side even stream is a server push response, not a writable
+    // request. Mark its local side complete so END_STREAM closes it instead of
+    // waiting forever for a nonexistent upload `.end()`.
+    let push_response = state
+        .borrow()
+        .net
+        .http2_sessions
+        .get(&crate::modules::net::net_id(socket).unwrap_or_default())
+        .is_some_and(|session| {
+            matches!(session.role(), crate::modules::http2_protocol::Role::Client)
+                && stream_id % 2 == 0
+        });
+    if push_response {
+        execute::set_property_in_place(
+            &stream,
+            "\0quench:http2-end-stream",
+            Value::Boolean(true),
+        );
+        execute::set_property_in_place(&stream, "writableEnded", Value::Boolean(true));
+        execute::set_property_in_place(&stream, "writableFinished", Value::Boolean(true));
+    }
     if let Some(socket_id) = crate::modules::net::net_id(socket) {
         state
             .borrow_mut()
@@ -1142,6 +1192,11 @@ fn dispatch_http2_frames(
                 execute::set_property_in_place(
                     &push_stream,
                     "__quenchHttp2PushStream",
+                    Value::Boolean(true),
+                );
+                execute::set_property_in_place(
+                    &push_stream,
+                    "\0quench:http2:end-stream",
                     Value::Boolean(true),
                 );
                 let mut entries = fields
