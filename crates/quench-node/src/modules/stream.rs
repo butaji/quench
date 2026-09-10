@@ -53,7 +53,7 @@ pub fn pipeline(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
     }
     let terminal = raw_stages
         .last()
-        .filter(|value| quench_runtime::is_callable(value))
+        .filter(|value| is_terminal_pipeline_function(value))
         .cloned();
     let stream_args = terminal.as_ref().map_or_else(
         || raw_stages.clone(),
@@ -333,6 +333,10 @@ pub fn web_pipeline_complete(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    if let Some(context) = args.first().filter(|value| is_pipeline_callback_context(value)) {
+        settle_pipeline_callback(context, None)?;
+        return Ok(Value::Undefined);
+    }
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
     if quench_runtime::is_callable(&callback) {
         let arguments = if matches!(args.get(1), Some(Value::Boolean(true))) {
@@ -353,6 +357,10 @@ pub fn web_pipeline_error(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    if let Some(context) = args.first().filter(|value| is_pipeline_callback_context(value)) {
+        settle_pipeline_callback(context, args.get(1).cloned())?;
+        return Ok(Value::Undefined);
+    }
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
     let error = args.get(1).cloned().unwrap_or(Value::Undefined);
     if quench_runtime::is_callable(&callback) {
@@ -420,11 +428,26 @@ fn normalize_pipeline(
 }
 
 fn is_sync_generator(stage: &Value) -> bool {
+    pipeline_function_kind(stage) == Some("GeneratorFunction")
+}
+
+fn is_terminal_pipeline_function(stage: &Value) -> bool {
+    quench_runtime::is_callable(stage)
+        && !matches!(
+            pipeline_function_kind(stage),
+            Some("GeneratorFunction" | "AsyncGeneratorFunction")
+        )
+}
+
+fn pipeline_function_kind(stage: &Value) -> Option<&str> {
     let constructor = execute::get_property(stage, "constructor");
-    matches!(
-        execute::get_property(&constructor, "name"),
-        Value::String(name) if name == "GeneratorFunction"
-    )
+    match execute::get_property(&constructor, "name") {
+        Value::String(name) if name == "GeneratorFunction" => Some("GeneratorFunction"),
+        Value::String(name) if name == "AsyncGeneratorFunction" => {
+            Some("AsyncGeneratorFunction")
+        }
+        _ => None,
+    }
 }
 
 fn is_stage_list(values: &[Value]) -> bool {
@@ -516,13 +539,28 @@ fn attach_pipeline_callback(stages: &[Value], callback: Value) -> Result<(), VmE
         // readable (for example PassThrough). Node completes the callback on
         // that terminal's `finish`; waiting for `end` would require a reader
         // to consume the destination and leaves empty pipelines pending.
-        let event = "finish";
+        let context = host_api::object(vec![
+            ("\0pipelineCallbackContext".into(), Value::Boolean(true)),
+            ("callback".into(), callback.clone()),
+            ("stream".into(), last.clone()),
+            ("settled".into(), Value::Boolean(false)),
+            ("cleanupError".into(), Value::Boolean(has_callable(last, "read"))),
+        ]);
+        let complete = host_api::bound_capability_with_arguments(
+            crate::host::capability_ref(SPEC_STREAM_WEB_PIPELINE_COMPLETE),
+            vec![context.clone()],
+        );
+        let failed = host_api::bound_capability_with_arguments(
+            crate::host::capability_ref(SPEC_STREAM_WEB_PIPELINE_ERROR),
+            vec![context.clone()],
+        );
+        execute::set_property_in_place(&context, "errorHandler", failed.clone());
         execute::call(
             &once,
             last,
-            &[Value::String(event.into()), callback.clone()],
+            &[Value::String("finish".into()), complete],
         )?;
-        execute::call(&once, last, &[Value::String("error".into()), callback])?;
+        execute::call(&once, last, &[Value::String("error".into()), failed])?;
     }
     for pair in stages.windows(2) {
         let source_error = execute::get_property(&pair[0], "once");
@@ -542,6 +580,31 @@ fn attach_pipeline_callback(stages: &[Value], callback: Value) -> Result<(), VmE
         )?;
     }
     Ok(())
+}
+
+fn is_pipeline_callback_context(value: &Value) -> bool {
+    matches!(
+        execute::get_property(value, "\0pipelineCallbackContext"),
+        Value::Boolean(true)
+    )
+}
+
+fn settle_pipeline_callback(context: &Value, error: Option<Value>) -> Result<(), VmError> {
+    if execute::is_truthy(&execute::get_property(context, "settled")) {
+        return Ok(());
+    }
+    execute::set_property_in_place(context, "settled", Value::Boolean(true));
+    if error.is_none() && execute::is_truthy(&execute::get_property(context, "cleanupError")) {
+        let stream = execute::get_property(context, "stream");
+        let remove = execute::get_property(&stream, "removeListener");
+        let handler = execute::get_property(context, "errorHandler");
+        if quench_runtime::is_callable(&remove) {
+            execute::call(&remove, &stream, &[Value::String("error".into()), handler])?;
+        }
+    }
+    let callback = execute::get_property(context, "callback");
+    let arguments = error.into_iter().collect::<Vec<_>>();
+    execute::call(&callback, &Value::Undefined, &arguments).map(|_| ())
 }
 
 fn pipeline_error(message: &str, code: &str) -> VmError {
