@@ -23,10 +23,76 @@ fn iterator_frame_chain(
     let registers = registers(generator);
     if collect_for_of_frames(op, resume, &registers, &mut frames)?
         || collect_iterator_frames(op, resume, &registers, &mut frames)?
+        || collect_selected_nested_frames(op, &registers, &mut frames)?
     {
         return Ok(Some(frames));
     }
     Ok(None)
+}
+
+/// Locate an iterator suspended below the selected arm of a conditional.
+///
+/// A generator can yield from a `for await` nested inside an `if`.  The
+/// machine PC then identifies the conditional, not the loop, so the ordinary
+/// top-level frame collector cannot see the live iterator.  Walk only the
+/// selected arm (using the condition value while it is still live) and give
+/// the iterator the arm's suffix as its continuation.  This keeps the
+/// selected control path in the frame itself instead of re-evaluating the
+/// condition after loop registers have been reused.
+fn collect_selected_nested_frames(
+    op: &Op,
+    registers: &crate::register_file::RegisterFile,
+    frames: &mut Vec<crate::machine::Frame>,
+) -> Result<bool, VmError> {
+    let branch = match op {
+        Op::Conditional {
+            condition,
+            consequent,
+            alternate,
+            ..
+        } => {
+            if crate::execute::is_truthy(&crate::execute::read_register(registers, *condition)?) {
+                consequent
+            } else {
+                alternate
+            }
+        }
+        Op::Branch {
+            condition,
+            then_ops,
+            else_ops,
+        } => {
+            if crate::execute::is_truthy(&crate::execute::read_register(registers, *condition)?) {
+                then_ops
+            } else {
+                else_ops
+            }
+        }
+        _ => return Ok(false),
+    };
+    let Some(branch) = branch.code() else {
+        return Ok(false);
+    };
+    collect_nested_iterator_in_view(branch, registers, frames)
+}
+
+fn collect_nested_iterator_in_view(
+    view: crate::machine::CodeView<'_>,
+    registers: &crate::register_file::RegisterFile,
+    frames: &mut Vec<crate::machine::Frame>,
+) -> Result<bool, VmError> {
+    for (index, nested) in view.cold_ops() {
+        let resume = range_after_iterator_op(view.range(), index);
+        if collect_for_of_frames(nested, resume, registers, frames)?
+            || collect_iterator_frames(nested, resume, registers, frames)?
+        {
+            return Ok(true);
+        }
+        if collect_selected_nested_frames(nested, registers, frames)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 include!("generator_for_of_frames.rs");
