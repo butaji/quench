@@ -3526,6 +3526,7 @@ fn nghttp_error_message(errno: i64) -> &'static str {
         -508 => "Operation would block",
         -509 => "Stream ID not available",
         -510 => "Stream closed",
+        -523 => "Protocol error",
         -517 => "GOAWAY has already been sent",
         -522 => "Frame size error",
         -901 => "Out of memory",

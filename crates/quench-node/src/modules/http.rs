@@ -28,6 +28,7 @@ pub(crate) const RESPONSE_CLOSE_PENDING_PROP: &str = "\0quench:http:response:clo
 const REQUIRE_HOST_HEADER_PROP: &str = "\0quench:http:require-host";
 const SERVER_RESPONSE_PROP: &str = "\0quench:http:server-response";
 const SERVER_REQUEST_PROP: &str = "\0quench:http:server-request";
+const HTTP2_CONNECTION_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
 pub struct HttpState {
     next_res: u64,
@@ -77,6 +78,8 @@ pub struct Conn {
     /// Whether the peer keeps this connection alive for the next request.
     pub keep_alive: bool,
     pub require_host_header: bool,
+    /// Whether the HTTP/1 parser has reported an HTTP/2 preface.
+    pub protocol_error: bool,
 }
 
 /// One pending response, keyed by `RES_ID_PROP` on the `res` object.
@@ -286,6 +289,7 @@ pub fn connection_handler(
             response_done: false,
             keep_alive: true,
             require_host_header,
+            protocol_error: false,
         },
     );
     let data_cap = crate::host::capability(crate::registry::SPEC_HTTP_DATA);
@@ -347,8 +351,7 @@ pub(crate) fn server_close(state: &Rc<RefCell<HostState>>, server: &Value) {
         .values()
         .filter(|response| {
             response.ended
-                && net::net_id(&response.socket)
-                    .is_some_and(|id| socket_ids.contains(&id))
+                && net::net_id(&response.socket).is_some_and(|id| socket_ids.contains(&id))
         })
         .map(|response| response.socket.clone())
         .collect::<Vec<_>>();
@@ -399,9 +402,7 @@ pub(crate) fn connection_close(
 /// queued message listeners have run. A close listener may still produce a
 /// half-open response, so the socket decision belongs to this post-dispatch
 /// edge rather than the destroy method itself.
-pub(crate) fn finalize_destroyed_requests(
-    state: &Rc<RefCell<HostState>>,
-) -> Result<(), VmError> {
+pub(crate) fn finalize_destroyed_requests(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     let sockets = state
         .borrow()
         .http
@@ -409,7 +410,10 @@ pub(crate) fn finalize_destroyed_requests(
         .values()
         .filter(|conn| {
             conn.req.as_ref().is_some_and(|request| {
-                matches!(execute::get_property(request, "destroyed"), Value::Boolean(true))
+                matches!(
+                    execute::get_property(request, "destroyed"),
+                    Value::Boolean(true)
+                )
             }) && !conn.response_done
         })
         .map(|conn| conn.socket.clone())
@@ -539,6 +543,14 @@ pub fn data_handler(
 
 /// Try to consume a head, then stream whatever body bytes are buffered.
 fn feed_conn(state: &Rc<RefCell<HostState>>, socket_id: u64) -> Result<Value, VmError> {
+    match http2_preface_status(state, socket_id) {
+        PrefaceStatus::Partial => return Ok(Value::Undefined),
+        PrefaceStatus::Complete => {
+            report_http2_preface(state, socket_id)?;
+            return Ok(Value::Undefined);
+        }
+        PrefaceStatus::None => {}
+    }
     if !conn_has_head(state, socket_id) {
         if let Some(head) = take_head(state, socket_id) {
             emit_request(state, socket_id, &head)?;
@@ -547,6 +559,60 @@ fn feed_conn(state: &Rc<RefCell<HostState>>, socket_id: u64) -> Result<Value, Vm
     drain_body(state, socket_id)?;
     reset_keep_alive_conn(state, socket_id);
     Ok(Value::Undefined)
+}
+
+enum PrefaceStatus {
+    None,
+    Partial,
+    Complete,
+}
+
+fn http2_preface_status(state: &Rc<RefCell<HostState>>, socket_id: u64) -> PrefaceStatus {
+    let host = state.borrow();
+    let Some(conn) = host.http.conns.get(&socket_id) else {
+        return PrefaceStatus::None;
+    };
+    if conn.protocol_error || conn.head_parsed || conn.req.is_some() {
+        return PrefaceStatus::None;
+    }
+    let prefix_len = conn.buffer.len().min(HTTP2_CONNECTION_PREFACE.len());
+    if conn.buffer[..prefix_len] != HTTP2_CONNECTION_PREFACE[..prefix_len] {
+        return PrefaceStatus::None;
+    }
+    if conn.buffer.len() < HTTP2_CONNECTION_PREFACE.len() {
+        PrefaceStatus::Partial
+    } else {
+        PrefaceStatus::Complete
+    }
+}
+
+fn report_http2_preface(
+    state: &Rc<RefCell<HostState>>,
+    socket_id: u64,
+) -> Result<(), VmError> {
+    let (server, socket) = {
+        let mut host = state.borrow_mut();
+        let Some(conn) = host.http.conns.get_mut(&socket_id) else {
+            return Ok(());
+        };
+        if conn.protocol_error {
+            return Ok(());
+        }
+        conn.protocol_error = true;
+        conn.buffer.clear();
+        (conn.server.clone(), conn.socket.clone())
+    };
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String("Parse Error".into())],
+    );
+    let error = execute::set_property(
+        error,
+        "code",
+        Value::String("HPE_PAUSED_H2_UPGRADE".into()),
+    );
+    let error = execute::set_property(error, "bytesParsed", Value::Number(24.0));
+    net::emit(state, &server, "clientError", vec![error, socket])
 }
 
 fn reset_keep_alive_conn(state: &Rc<RefCell<HostState>>, socket_id: u64) {
@@ -878,7 +944,10 @@ fn emit_request(
         }
         return Ok(Value::Undefined);
     }
-    let event = expect.is_some().then_some("checkContinue").unwrap_or("request");
+    let event = expect
+        .is_some()
+        .then_some("checkContinue")
+        .unwrap_or("request");
     net::emit(state, &server, event, vec![req.clone(), res])?;
     let body_done = state
         .borrow()
@@ -1158,17 +1227,18 @@ pub fn request_destroy(
     let Some(receiver) = receiver else {
         return Ok(Value::Undefined);
     };
-    let Some((socket_id, req, _socket)) = state
-        .borrow()
-        .http
-        .conns
-        .iter()
-        .find_map(|(socket_id, conn)| {
-            conn.req
-                .as_ref()
-                .filter(|req| execute::same_identity(req, receiver))
-                .map(|req| (*socket_id, req.clone(), conn.socket.clone()))
-        })
+    let Some((socket_id, req, _socket)) =
+        state
+            .borrow()
+            .http
+            .conns
+            .iter()
+            .find_map(|(socket_id, conn)| {
+                conn.req
+                    .as_ref()
+                    .filter(|req| execute::same_identity(req, receiver))
+                    .map(|req| (*socket_id, req.clone(), conn.socket.clone()))
+            })
     else {
         return Ok(receiver.clone());
     };
@@ -1460,9 +1530,8 @@ fn res_cap(spec: crate::registry::NodeSpec) -> Value {
 // Response methods live in `http_res`; re-exported here for dispatch.
 pub use crate::modules::http_res::{
     res_add_trailers, res_cork, res_end, res_get_header, res_get_header_names, res_get_headers,
-    res_remove_header, res_set_header, res_set_headers, res_uncork, res_write,
-    res_write_continue, res_write_early_hints, res_write_head, res_write_information,
-    res_write_processing,
+    res_remove_header, res_set_header, res_set_headers, res_uncork, res_write, res_write_continue,
+    res_write_early_hints, res_write_head, res_write_information, res_write_processing,
 };
 pub use crate::modules::http_res::{res_destroy, res_flush_headers};
 
@@ -1764,11 +1833,8 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
             crate::registry::SPEC_HTTP_OUTGOING_DETACH_SOCKET,
         ),
     ] {
-        outgoing_prototype = execute::set_property(
-            outgoing_prototype,
-            name,
-            crate::host::capability(spec),
-        );
+        outgoing_prototype =
+            execute::set_property(outgoing_prototype, name, crate::host::capability(spec));
     }
     state.borrow_mut().http.outgoing_prototype = Some(outgoing_prototype.clone());
     let outgoing = quench_runtime::execute::set_property(
