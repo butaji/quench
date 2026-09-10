@@ -1284,16 +1284,25 @@ fn session_request(
     // `endStream: true`) is observed. This is the stream contract needed for
     // POST bodies and for AbortSignal cancellation to reach the peer before
     // any terminal close event is surfaced.
-    // Node closes header-only requests immediately for methods that do not
-    // normally carry a body, while body-bearing methods stay open until
-    // `end()` (unless the caller explicitly overrides `endStream`). Keep this
-    // method fact in the single request state used by both the wire flags and
-    // the later `end()` no-op check.
+    let has_abort_signal = values
+        .get(1)
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+        .is_some_and(|options| {
+            matches!(
+                execute::get_property(options, "signal"),
+                Value::Object(_) | Value::ObjectAlias(_)
+            )
+        });
     let end_stream = match values
         .get(1)
         .map(|value| execute::get_property(value, "endStream"))
     {
         Some(Value::Boolean(value)) => value,
+        // Keep an AbortSignal-backed request open until its cancellation can
+        // reach the peer. Otherwise a header-only GET's END_STREAM is
+        // observed first and the server closes with rstCode 0 before the
+        // cancellation RST_STREAM arrives.
+        _ if has_abort_signal => false,
         _ => !matches!(method.as_slice(), b"POST" | b"PUT" | b"PATCH"),
     };
     let frame = crate::modules::http2_protocol::Frame::new(
@@ -1503,16 +1512,7 @@ fn session_request(
         // the initial HEADERS in the host queue until the next pump tick so
         // synchronous cancellation wins before a request becomes visible to
         // the peer. Requests without a signal retain immediate submission.
-        let has_signal = values
-            .get(1)
-            .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
-            .is_some_and(|options| {
-                matches!(
-                    execute::get_property(options, "signal"),
-                    Value::Object(_) | Value::ObjectAlias(_)
-                )
-            });
-        if has_signal {
+        if has_abort_signal {
             state
                 .borrow_mut()
                 .net
