@@ -19,6 +19,7 @@ use crate::registry::{
     SPEC_STREAM_IS_READABLE, SPEC_STREAM_IS_WRITABLE, SPEC_STREAM_PIPELINE,
     SPEC_STREAM_PROMISES_CALLBACK, SPEC_STREAM_PROMISES_FINISHED, SPEC_STREAM_PROMISES_PIPELINE,
     SPEC_STREAM_READABLE, SPEC_STREAM_READABLE_BUFFER, SPEC_STREAM_SET_DEFAULT_HWM,
+    SPEC_STREAM_READABLE_WRAP, SPEC_STREAM_READABLE_WRAP_EVENT, SPEC_STREAM_READABLE_WRAP_PROXY,
     SPEC_STREAM_TRANSFORM, SPEC_STREAM_WEB_PIPELINE_COMPLETE, SPEC_STREAM_WEB_PIPELINE_ERROR,
     SPEC_STREAM_WRITABLE, SPEC_STREAM_WRITABLE_HAS_INSTANCE, SPEC_STREAM_WRITABLE_WRITE_ADAPTER,
 };
@@ -632,6 +633,159 @@ fn unable_to_pipe(error: VmError) -> Value {
         );
     }
     value
+}
+
+const READABLE_WRAP_SOURCE: &str = "\0quench:stream:wrap-source";
+
+/// Forward one event from a legacy stream into the native Readable state
+/// machine.  `wrap()` is deliberately implemented as a host capability: the
+/// event subscriptions and their retained target/source identities are
+/// observable lifecycle state, not a second JavaScript stream implementation.
+pub fn readable_wrap(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let target = receiver.cloned().ok_or(VmError::NotCallable)?;
+    let source = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(
+        source,
+        Value::Object(_)
+            | Value::ObjectAlias(_)
+            | Value::Array(_)
+            | Value::Function(_)
+            | Value::BoundFunction(_)
+    ) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"stream\" argument must be an object".into(),
+        ));
+    }
+    execute::set_property_in_place(&target, READABLE_WRAP_SOURCE, source.clone());
+
+    // Node's wrapper copies callable own properties without replacing the
+    // Readable API itself.  Bind each forwarding method to the old stream so
+    // `this` remains the legacy source rather than the new Readable.
+    for key in execute::own_enumerable_keys(&source) {
+        let method = execute::get_property(&source, &key);
+        if !quench_runtime::is_callable(&method)
+            || !matches!(execute::get_property(&target, &key), Value::Undefined)
+        {
+            continue;
+        }
+        let proxy = host_api::bound_capability_with_arguments(
+            crate::host::capability_ref(SPEC_STREAM_READABLE_WRAP_PROXY),
+            vec![source.clone(), Value::String(key.clone())],
+        );
+        execute::set_property_in_place(&target, &key, proxy);
+    }
+
+    let on = execute::get_property(&source, "on");
+    if !quench_runtime::is_callable(&on) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"stream\" argument must provide an on() method".into(),
+        ));
+    }
+    for event in ["data", "end", "error", "close", "destroy"] {
+        let listener = host_api::bound_capability_with_arguments(
+            crate::host::capability_ref(SPEC_STREAM_READABLE_WRAP_EVENT),
+            vec![target.clone(), Value::String(event.into())],
+        );
+        execute::call(
+            &on,
+            &source,
+            &[Value::String(event.into()), listener],
+        )?;
+    }
+    Ok(target)
+}
+
+pub fn readable_wrap_event(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
+    let event = match args.get(1) {
+        Some(Value::String(event)) => event.as_str(),
+        _ => return Ok(Value::Undefined),
+    };
+    match event {
+        "data" => {
+            let push = execute::get_property(&target, "push");
+            if quench_runtime::is_callable(&push) {
+                let chunk = args.get(2).cloned().unwrap_or(Value::Undefined);
+                let accepted = execute::call(&push, &target, &[chunk])?;
+                if matches!(accepted, Value::Boolean(false)) {
+                    let source = execute::get_property(&target, READABLE_WRAP_SOURCE);
+                    let pause = execute::get_property(&source, "pause");
+                    if quench_runtime::is_callable(&pause) {
+                        execute::call(&pause, &source, &[])?;
+                    }
+                }
+            }
+        }
+        "end" => {
+            let push = execute::get_property(&target, "push");
+            if quench_runtime::is_callable(&push) {
+                execute::call(&push, &target, &[Value::Null])?;
+            }
+        }
+        "error" => {
+            let error = args.get(2).cloned().unwrap_or(Value::Undefined);
+            let state = execute::get_property(&target, "_readableState");
+            execute::set_property_in_place(&state, "errored", error.clone());
+            let auto_destroy = !matches!(execute::get_property(&state, "autoDestroy"), Value::Boolean(false));
+            if auto_destroy {
+                let destroy = execute::get_property(&target, "destroy");
+                if quench_runtime::is_callable(&destroy) {
+                    execute::call(&destroy, &target, &[error])?;
+                }
+            } else {
+                execute::set_property_in_place(&state, "errorEmitted", Value::Boolean(true));
+                emit_wrapped_event(&target, "error", &[error])?;
+            }
+        }
+        "close" | "destroy" => {
+            let destroyed = execute::get_property(&target, "destroyed");
+            if !matches!(destroyed, Value::Boolean(true)) {
+                let destroy = execute::get_property(&target, "destroy");
+                if quench_runtime::is_callable(&destroy) {
+                    execute::call(&destroy, &target, &[])?;
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(Value::Undefined)
+}
+
+fn emit_wrapped_event(target: &Value, event: &str, args: &[Value]) -> Result<(), VmError> {
+    let emitter = execute::get_property(target, "_emitter");
+    let emit = execute::get_property(&emitter, "emit");
+    if quench_runtime::is_callable(&emit) {
+        let mut call_args = Vec::with_capacity(args.len() + 1);
+        call_args.push(Value::String(event.into()));
+        call_args.extend_from_slice(args);
+        execute::call(&emit, &emitter, &call_args)?;
+    }
+    Ok(())
+}
+
+pub fn readable_wrap_proxy(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let source = args.first().cloned().unwrap_or(Value::Undefined);
+    let key = match args.get(1) {
+        Some(Value::String(key)) => key,
+        _ => return Err(VmError::NotCallable),
+    };
+    let method = execute::get_property(&source, key);
+    if !quench_runtime::is_callable(&method) {
+        return Err(VmError::NotCallable);
+    }
+    execute::call(&method, &source, args.get(2..).unwrap_or_default())
 }
 
 pub fn is_readable(
@@ -2213,10 +2367,16 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
         ("configurable".into(), Value::Boolean(false)),
     ]);
     if let Ok(updated_prototype) =
-        execute::define_property(readable_prototype, "readableBuffer", readable_buffer)
+        execute::define_property(readable_prototype.clone(), "readableBuffer", readable_buffer)
     {
         let _ = execute::set_property_in_place(&readable, "prototype", updated_prototype);
     }
+    let readable_prototype = execute::get_property(&readable, "prototype");
+    execute::set_property_in_place(
+        &readable_prototype,
+        "wrap",
+        crate::host::capability(SPEC_STREAM_READABLE_WRAP),
+    );
     if let Ok(compose) = quench_runtime::execute::get_property_result(&module, "compose") {
         state.borrow_mut().stream_compose_impl = Some(compose);
     }
