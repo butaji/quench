@@ -684,11 +684,15 @@ fn resume_suspended_contexts(
         let _with = crate::with_scope::FunctionGuard::install(&generator.function.with_captures);
         let _locals = crate::locals::EnvironmentGuard::install(machine_environment(generator)?);
         let input = crate::execute::read_register(&registers(generator), spec.await_dst)?;
+        generator.machine.borrow_mut().pop_await_frame();
         let (next, pending) =
             crate::loops::resume_async_for_of(&mut registers_mut(generator), &spec, input)?;
         state.async_for_of = pending;
         if matches!(next, crate::completion::Completion::Normal) {
             return Ok(None);
+        }
+        if matches!(next, crate::completion::Completion::Yield(_)) {
+            update_machine_frame(generator, state, &next)?;
         }
         return resume_machine_frame(generator, state, next).map(Some);
     }

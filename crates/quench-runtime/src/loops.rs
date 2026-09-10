@@ -859,7 +859,7 @@ fn capture_iteration_bindings(
         .collect()
 }
 
-fn bind_iteration(
+pub(crate) fn bind_iteration(
     registers: &mut crate::register_file::RegisterFile,
     slot: u16,
     value: crate::value::Value,

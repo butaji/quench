@@ -1,4 +1,5 @@
 struct IteratorFrameResume {
+    phase: crate::machine::IteratorPhase,
     iterator: Value,
     body_resume: crate::machine::CodeRange,
     resume: crate::machine::CodeRange,
@@ -6,6 +7,20 @@ struct IteratorFrameResume {
     repeat: bool,
     slot: u16,
     body: crate::machine::CodeRange,
+    await_values: bool,
+    per_iteration: bool,
+    iteration_slots: Vec<u16>,
+    pending_next: Option<Value>,
+}
+
+struct IteratorFrameConfig {
+    yield_dst: u16,
+    close_normal: bool,
+    repeat: bool,
+    slot: u16,
+    await_values: bool,
+    per_iteration: bool,
+    iteration_slots: Vec<u16>,
 }
 
 fn iterator_frame_chain(
@@ -113,7 +128,15 @@ fn iterator_frame(
         body,
         range_after_iterator_op(body, index),
         resume,
-        (yield_dst, close_normal, false, 0),
+        IteratorFrameConfig {
+            yield_dst,
+            close_normal,
+            repeat: false,
+            slot: 0,
+            await_values: false,
+            per_iteration: false,
+            iteration_slots: Vec::new(),
+        },
     ))
 }
 
@@ -123,7 +146,7 @@ fn iterator_binding_frame(
     body: crate::machine::CodeRange,
     body_resume: crate::machine::CodeRange,
     resume: crate::machine::CodeRange,
-    config: (u16, bool, bool, u16),
+    config: IteratorFrameConfig,
 ) -> crate::machine::Frame {
     crate::machine::Frame::Iterator {
         phase: crate::machine::IteratorPhase::Body,
@@ -132,10 +155,14 @@ fn iterator_binding_frame(
         body,
         body_resume,
         resume,
-        yield_dst: config.0,
-        close_normal: config.1,
-        repeat: config.2,
-        slot: config.3,
+        yield_dst: config.yield_dst,
+        close_normal: config.close_normal,
+        repeat: config.repeat,
+        slot: config.slot,
+        await_values: config.await_values,
+        per_iteration: config.per_iteration,
+        iteration_slots: config.iteration_slots,
+        pending_next: None,
     }
 }
 
@@ -153,6 +180,7 @@ fn range_after_iterator_op(
 fn iterator_frame_resume(generator: &GeneratorData) -> Option<IteratorFrameResume> {
     let frame = generator.machine.borrow().frames.frames.last()?.clone();
     let crate::machine::Frame::Iterator {
+        phase,
         iterator,
         body_resume,
         resume,
@@ -160,12 +188,17 @@ fn iterator_frame_resume(generator: &GeneratorData) -> Option<IteratorFrameResum
         repeat,
         slot,
         body,
+        await_values,
+        per_iteration,
+        iteration_slots,
+        pending_next,
         ..
     } = frame
     else {
         return None;
     };
     Some(IteratorFrameResume {
+        phase,
         iterator,
         body_resume,
         resume,
@@ -173,6 +206,10 @@ fn iterator_frame_resume(generator: &GeneratorData) -> Option<IteratorFrameResum
         repeat,
         slot,
         body,
+        await_values,
+        per_iteration,
+        iteration_slots,
+        pending_next,
     })
 }
 
@@ -197,6 +234,9 @@ fn resume_iterator_frame(
         .clone()
         .ok_or(VmError::MissingReturn)?;
     let frame_body = store.code(frame.body).ok_or(VmError::MissingReturn)?;
+    if matches!(frame.phase, crate::machine::IteratorPhase::AwaitNext) {
+        return resume_for_of_next(generator, state, resume, &frame).map(Some);
+    }
     if frame.repeat && code_needs_nested_resume(frame_body, true) {
         return resume_for_of_repeat_frame(generator, state, resume, &frame).map(Some);
     }
@@ -472,7 +512,18 @@ fn continue_for_of(
         .ok_or(VmError::MissingReturn)?;
     let body = store.code(frame.body).ok_or(VmError::MissingReturn)?;
     loop {
-        let next = crate::collections::iterator::step_value(&frame.iterator)?;
+        let next = match if frame.await_values {
+            crate::collections::iterator::step_value_await(&frame.iterator)
+        } else {
+            crate::collections::iterator::step_value(&frame.iterator)
+        } {
+            Ok(next) => next,
+            Err(VmError::Suspended(promise)) if frame.await_values => {
+                set_iterator_phase(generator, crate::machine::IteratorPhase::AwaitNext);
+                return Err(VmError::Suspended(promise));
+            }
+            Err(error) => return Err(error),
+        };
         let Some(value) = next else {
             crate::loops::take_live_for_of();
             generator.machine.borrow_mut().pop_frame();
@@ -483,17 +534,7 @@ fn continue_for_of(
                 crate::completion::Completion::Normal,
             );
         };
-        let step = execute_with_generator_registers(generator, |registers| {
-            reset_yield_star_iterators(body, registers);
-            crate::locals::write(frame.slot, value.clone());
-            crate::vm::execute_generator_code_step(
-                body,
-                registers,
-                machine_environment(generator)?,
-                0,
-                crate::completion::Completion::Normal,
-            )
-        })?;
+        let step = execute_for_of_value(generator, frame, body, value)?;
         if step.completion.is_suspension() {
             if !push_for_of_body_frame(generator, frame, &body)? {
                 advance_frame_after_yield(generator, frame.body, step.pc)?;
@@ -505,6 +546,89 @@ fn continue_for_of(
             return finish_iterator_frame(generator, state, frame, step.completion);
         }
     }
+}
+
+fn resume_for_of_next(
+    generator: &GeneratorData,
+    state: &mut GeneratorState,
+    resume: crate::completion::Completion,
+    frame: &IteratorFrameResume,
+) -> Result<crate::completion::Completion, VmError> {
+    if !matches!(resume, crate::completion::Completion::Normal) {
+        generator.machine.borrow_mut().pop_frame();
+        return resume_after_iterator(generator, state, frame.resume, resume);
+    }
+    let result = frame.pending_next.clone().ok_or(VmError::MissingReturn)?;
+    clear_pending_iterator_result(generator);
+    let Some(value) = crate::collections::iterator::resume_async_result(&frame.iterator, result)?
+    else {
+        crate::loops::take_live_for_of();
+        generator.machine.borrow_mut().pop_frame();
+        return resume_after_iterator(
+            generator,
+            state,
+            frame.resume,
+            crate::completion::Completion::Normal,
+        );
+    };
+    let store = generator
+        .machine
+        .borrow()
+        .store
+        .clone()
+        .ok_or(VmError::MissingReturn)?;
+    let body = store.code(frame.body).ok_or(VmError::MissingReturn)?;
+    let step = execute_for_of_value(generator, frame, body, value)?;
+    if step.completion.is_suspension() {
+        if !push_for_of_body_frame(generator, frame, &body)? {
+            advance_frame_after_yield(generator, frame.body, step.pc)?;
+        }
+        set_iterator_phase(generator, crate::machine::IteratorPhase::Body);
+        return Ok(step.completion);
+    }
+    if !matches!(step.completion, crate::completion::Completion::Normal) {
+        return finish_iterator_frame(generator, state, frame, step.completion);
+    }
+    continue_for_of(generator, state, frame)
+}
+
+fn execute_for_of_value(
+    generator: &GeneratorData,
+    frame: &IteratorFrameResume,
+    body: crate::machine::CodeView<'_>,
+    value: Value,
+) -> Result<crate::vm::GeneratorStep, VmError> {
+    execute_with_generator_registers(generator, |registers| {
+        reset_yield_star_iterators(body, registers);
+        let _binding = crate::loops::bind_iteration(
+            registers,
+            frame.slot,
+            value,
+            frame.per_iteration,
+            &frame.iteration_slots,
+        );
+        crate::vm::execute_generator_code_step(
+            body,
+            registers,
+            machine_environment(generator)?,
+            0,
+            crate::completion::Completion::Normal,
+        )
+    })
+}
+
+fn clear_pending_iterator_result(generator: &GeneratorData) {
+    let machine = generator.machine.borrow_mut();
+    let Some(crate::machine::Frame::Iterator {
+        phase,
+        pending_next,
+        ..
+    }) = machine.frames.frames.last_mut()
+    else {
+        return;
+    };
+    *phase = crate::machine::IteratorPhase::Bind;
+    *pending_next = None;
 }
 
 fn reset_yield_star_iterators(
@@ -648,6 +772,19 @@ fn close_iterator_frame(
 }
 
 fn install_iterator_frame_input(generator: &GeneratorData, input: &Value) -> bool {
+    {
+        let machine = generator.machine.borrow_mut();
+        if let Some(crate::machine::Frame::Iterator {
+            phase: crate::machine::IteratorPhase::AwaitNext,
+            pending_next,
+            ..
+        }) = machine.frames.frames.iter_mut().rev().find(|frame| {
+            matches!(frame, crate::machine::Frame::Iterator { .. })
+        }) {
+            *pending_next = Some(input.clone());
+            return true;
+        }
+    }
     let frames = generator.machine.borrow().frames.frames.clone();
     for frame in frames.iter().rev() {
         let crate::machine::Frame::Iterator { yield_dst, .. } = frame else {
