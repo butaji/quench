@@ -827,9 +827,16 @@ fn http2_capability(kind: &str) -> Value {
 }
 
 fn http2_headers_value(fields: &[(Vec<u8>, Vec<u8>)]) -> Value {
-    let headers = host_api::object(Vec::new());
+    let mut headers = host_api::object(Vec::new());
     for (name, value) in fields {
         let key = String::from_utf8_lossy(name).into_owned();
+        // Empty header names are ignored by Node's HTTP/2 header decoder.
+        // Keep this at the single wire-to-JS boundary so ordinary headers,
+        // pseudo-headers, and compatibility request views share the same
+        // validation rather than each filtering independently.
+        if key.is_empty() {
+            continue;
+        }
         // Node exposes the response `:status` pseudo-header as a number;
         // ordinary and request pseudo-headers remain strings.  Keeping this
         // conversion at the single wire-to-JS boundary prevents every
@@ -856,7 +863,32 @@ fn http2_headers_value(fields: &[(Vec<u8>, Vec<u8>)]) -> Value {
         };
         let _ = execute::set_property_in_place(&headers, &key, next);
     }
-    headers
+    if let Value::String(sensitive) = crate::modules::http2_util::sensitive_headers() {
+        headers = http2_define_symbol_property(
+            headers,
+            &Value::String(sensitive),
+            host_api::array(Vec::new()),
+        );
+    }
+    execute::set_prototype_of(&headers, &Value::Null).unwrap_or(headers)
+}
+
+fn http2_define_symbol_property(object: Value, key: &Value, value: Value) -> Value {
+    let global = quench_runtime::vm::current_global_object();
+    let object_constructor = execute::get_property(&global, "Object");
+    let define_property = execute::get_property(&object_constructor, "defineProperty");
+    let descriptor = host_api::object(vec![
+        ("value".into(), value),
+        ("writable".into(), Value::Boolean(true)),
+        ("enumerable".into(), Value::Boolean(true)),
+        ("configurable".into(), Value::Boolean(true)),
+    ]);
+    execute::call(
+        &define_property,
+        &object_constructor,
+        &[object.clone(), key.clone(), descriptor],
+    )
+    .unwrap_or(object)
 }
 
 /// Preserve the wire header sequence for Node's `stream` event.  The object

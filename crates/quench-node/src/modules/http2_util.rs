@@ -13,6 +13,7 @@ use crate::host::HostState;
 thread_local! {
     static OPTIONS_BUFFER: RefCell<Option<Value>> = const { RefCell::new(None) };
     static HTTP2_BINDING_SESSION_PROTOTYPE: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static SENSITIVE_HEADERS_SYMBOL: RefCell<Option<Value>> = const { RefCell::new(None) };
 }
 use super::http2_asserts;
 use super::http2_facts::{
@@ -295,7 +296,19 @@ pub fn module() -> Value {
 }
 
 pub fn sensitive_headers() -> Value {
-    Value::String("Symbol.nodejs.http2.sensitiveHeaders\0quench".into())
+    SENSITIVE_HEADERS_SYMBOL.with(|stored| {
+        stored
+            .borrow_mut()
+            .get_or_insert_with(|| {
+                execute::execute_builtin_with_receiver(
+                    quench_runtime::ops::Builtin::Symbol,
+                    &[Value::String("nodejs.http2.sensitiveHeaders".into())],
+                    None,
+                )
+                .unwrap_or_else(|_| Value::String("Symbol.nodejs.http2.sensitiveHeaders\0quench".into()))
+            })
+            .clone()
+    })
 }
 
 /// The defaults used by the Rust HTTP/2 settings codec.  This is deliberately
