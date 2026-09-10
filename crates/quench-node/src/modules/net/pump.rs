@@ -1368,7 +1368,16 @@ fn dispatch_http2_frames(
                             socket,
                             &stream,
                             "response",
-                            vec![http2_headers_value(&fields)],
+                            vec![
+                                http2_headers_value(&fields),
+                                Value::Number(
+                                    header_flags
+                                        .get(&stream_id)
+                                        .copied()
+                                        .unwrap_or(frame.header.flags)
+                                        as f64,
+                                ),
+                            ],
                         )?;
                         if matches!(
                             execute::get_property(&stream, "__quenchHttp2PushStream"),
