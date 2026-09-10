@@ -64,6 +64,13 @@ fn call_guarded_report(
     let VmError::Thrown(thrown) = error else {
         return Err(error);
     };
+    // `process.exit()` deliberately unwinds the current callback.  Its
+    // internal throw is not a JavaScript exception and must not be routed
+    // back through `uncaughtException` (which can recursively schedule the
+    // same exit request).
+    if state.borrow().process.exit_requested {
+        return Err(VmError::Thrown(thrown));
+    }
     let has_capture = state
         .borrow()
         .process
@@ -557,17 +564,33 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
     }
     let result = match result {
         Err(error) if task.process_scope != 0 => {
-            let handled = crate::modules::pump::handle_uncaught(state, error)
-                .and_then(|_| crate::modules::pump::run_uncaught(state));
-            let code = if let Err(error) = &handled {
-                quench_runtime::execute::set_property_in_place(
-                    &process,
-                    "\0forkStderr",
-                    Value::String(format!("{}\n", error.render())),
-                );
-                7
+            let requested_exit = {
+                let mut guard = state.borrow_mut();
+                let requested = guard.process.exit_requested;
+                if requested {
+                    guard.process.exit_requested = false;
+                }
+                requested.then(|| {
+                    let code = guard.process.exit_code.unwrap_or(0);
+                    guard.process.exit_code = None;
+                    code
+                })
+            };
+            let code = if let Some(code) = requested_exit {
+                code
             } else {
-                1
+                let handled = crate::modules::pump::handle_uncaught(state, error)
+                    .and_then(|_| crate::modules::pump::run_uncaught(state));
+                if let Err(error) = &handled {
+                    quench_runtime::execute::set_property_in_place(
+                        &process,
+                        "\0forkStderr",
+                        Value::String(format!("{}\n", error.render())),
+                    );
+                    7
+                } else {
+                    1
+                }
             };
             let _ = crate::modules::cluster::fail_fork_process(state, task.process_scope, code)?;
             Ok(())

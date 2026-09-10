@@ -878,7 +878,12 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
         );
     }
     let parent_exit_code = state.borrow().process.exit_code;
-    state.borrow_mut().process.exit_code = None;
+    let parent_exit_requested = state.borrow().process.exit_requested;
+    {
+        let mut guard = state.borrow_mut();
+        guard.process.exit_code = None;
+        guard.process.exit_requested = false;
+    }
     state.borrow_mut().cluster.worker_context = Some(id);
     state.borrow_mut().cluster.worker_listen_slots.insert(id, 0);
     let wrapped = crate::modules::require::wrap_cjs(state, &filename, &source);
@@ -998,7 +1003,11 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
             });
         (!waits_for_ipc && !net_work).then_some(0)
     });
-    state.borrow_mut().process.exit_code = parent_exit_code;
+    {
+        let mut guard = state.borrow_mut();
+        guard.process.exit_code = parent_exit_code;
+        guard.process.exit_requested = parent_exit_requested;
+    }
     if let (Some(process), Some(previous)) = (&process_value, env_restore) {
         restore_worker_env(process, previous);
     }

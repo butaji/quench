@@ -41,6 +41,10 @@ pub struct ProcessState {
     pub version: String,
     pub versions: Vec<(String, String)>,
     pub exit_code: Option<i32>,
+    /// Whether `process.exit()` requested a non-local termination.  Keep this
+    /// separate from `exitCode`, which is also writable as ordinary process
+    /// state and must not turn an unrelated callback error into termination.
+    pub exit_requested: bool,
     /// Invocation policy: abort instead of reporting an unhandled exception.
     /// This is carried in the host state so child re-execs observe the same
     /// process-level flag without inspecting fixture names or source text.
@@ -117,6 +121,7 @@ impl ProcessState {
             version: "v22.0.0".into(),
             versions,
             exit_code: None,
+            exit_requested: false,
             abort_on_uncaught_exception: false,
             cwd,
             umask: 0o022,
@@ -1172,7 +1177,11 @@ pub fn versions_props() -> Vec<(String, Value)> {
 /// after `exit` handlers run. Never kills the host process.
 pub fn exit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let code = args.first().map(value_to_i32).unwrap_or(0);
-    state.borrow_mut().process.exit_code = Some(code);
+    {
+        let process = &mut state.borrow_mut().process;
+        process.exit_code = Some(code);
+        process.exit_requested = true;
+    }
     // Node's public `process.exit()` funnels through the internal
     // `reallyExit` hook. Keep that edge observable so embedders and test
     // harnesses that replace `process.reallyExit` see the same final output;
