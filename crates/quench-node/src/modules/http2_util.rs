@@ -181,6 +181,11 @@ const COMPAT_RESPONSE_PROP: &str = "\0quench:http2-compat-response";
 // response can reach END_STREAM before the request's writable side has sent
 // its final DATA frame, so keep that half-close fact separate from `closed`.
 pub(crate) const HTTP2_RESPONSE_CLOSED_PROP: &str = "\0quench:http2-response-closed";
+// `Writable#end(chunk)` queues its terminal DATA frame for the next transport
+// tick. Node still permits writes made later in the same callback turn before
+// that queued frame is flushed; retain this fact on the stream so the write
+// path can distinguish it from a genuine write-after-end.
+pub(crate) const HTTP2_PENDING_FINAL_PROP: &str = "\0quench:http2-pending-final";
 const COMPAT_STATUS_MESSAGE_WARNING: &str =
     "Status message is not supported by HTTP/2 (RFC7540 8.1.2.4)";
 
@@ -2091,6 +2096,17 @@ fn stream_write(
     }) {
         return Ok(Value::Boolean(false));
     }
+    let pending_final = receiver.is_some_and(|stream| {
+        matches!(
+            execute::get_property(stream, HTTP2_PENDING_FINAL_PROP),
+            Value::Boolean(true)
+        )
+    }) || stream.as_ref().is_some_and(|stream| {
+        matches!(
+            execute::get_property(stream, HTTP2_PENDING_FINAL_PROP),
+            Value::Boolean(true)
+        )
+    });
     let ended = receiver.is_some_and(|stream| {
         matches!(
             execute::get_property(stream, "writableEnded"),
@@ -2115,7 +2131,7 @@ fn stream_write(
             || stream.as_ref().is_some_and(|stream| {
                 matches!(execute::get_property(stream, "closed"), Value::Boolean(true))
             }));
-    if ended || closed {
+    if (ended && !pending_final) || closed {
         if let (Some(stream), Some(callback)) = (stream.as_ref(), callback) {
             let (code, message) = if ended {
                 ("ERR_STREAM_WRITE_AFTER_END", "write after end")
@@ -2407,6 +2423,15 @@ fn stream_end(
             .net
             .pending_writes
             .push((socket.clone(), frame.encode()));
+        if let Some(stream) = receiver {
+            execute::set_property_in_place(stream, HTTP2_PENDING_FINAL_PROP, Value::Boolean(true));
+            let canonical = execute::canonical_value(stream);
+            execute::set_property_in_place(
+                &canonical,
+                HTTP2_PENDING_FINAL_PROP,
+                Value::Boolean(true),
+            );
+        }
         if has_trailers {
             let block = {
                 let mut host = state.borrow_mut();
