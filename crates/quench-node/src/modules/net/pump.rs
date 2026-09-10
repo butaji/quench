@@ -897,7 +897,12 @@ fn http2_define_symbol_property(object: Value, key: &Value, value: Value) -> Val
 fn http2_raw_headers_value(fields: &[(Vec<u8>, Vec<u8>)]) -> Value {
     let mut raw = Vec::with_capacity(fields.len() * 2);
     for (name, value) in fields {
-        raw.push(Value::String(String::from_utf8_lossy(name).into_owned()));
+        let name = String::from_utf8_lossy(name);
+        raw.push(Value::String(if name.starts_with(':') {
+            name.into_owned()
+        } else {
+            name.to_ascii_lowercase()
+        }));
         raw.push(Value::String(String::from_utf8_lossy(value).into_owned()));
     }
     host_api::array(raw)
