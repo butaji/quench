@@ -2987,6 +2987,23 @@ fn create_server(
         ));
     }
     if matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
+        let alpn_callback = execute::get_property(options, "ALPNCallback");
+        let alpn_protocols = execute::get_property(options, "ALPNProtocols");
+        // Node's TLS server treats these as mutually exclusive: a callback
+        // owns protocol selection, so a static protocol list would make the
+        // negotiation fact ambiguous.  HTTP/2 delegates its secure server
+        // transport to the same TLS boundary and must preserve that error
+        // before creating a listener.
+        if secure
+            && !matches!(alpn_callback, Value::Undefined | Value::Null)
+            && !matches!(alpn_protocols, Value::Undefined | Value::Null)
+        {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::TypeError,
+                "ERR_TLS_ALPN_CALLBACK_WITH_PROTOCOLS",
+                "The ALPNCallback and ALPNProtocols options are mutually exclusive".into(),
+            ));
+        }
         let settings = execute::get_property(options, "settings");
         if !matches!(
             settings,

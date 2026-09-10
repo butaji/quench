@@ -589,6 +589,17 @@ pub fn create_server(
         }
     };
     if let Some(options) = options {
+        let alpn_callback = option(options, "ALPNCallback");
+        let alpn_protocols = option(options, "ALPNProtocols");
+        if !matches!(alpn_callback, Value::Undefined | Value::Null)
+            && !matches!(alpn_protocols, Value::Undefined | Value::Null)
+        {
+            return Err(coded_error(
+                Builtin::TypeError,
+                "ERR_TLS_ALPN_CALLBACK_WITH_PROTOCOLS",
+                "The ALPNCallback and ALPNProtocols options are mutually exclusive".into(),
+            ));
+        }
         validate_options(options)?;
         validate_server_material(options, "cert")?;
         validate_server_material(options, "key")?;
@@ -785,9 +796,12 @@ pub fn connect(
             execute::set_property_in_place(target, "alpnProtocol", alpn.clone());
         }
         if let Some(server) = server_alpn.as_ref() {
-            if !alpn_names(&option(&server, "ALPNProtocols")).is_empty()
-                && !alpn_names(&option(options, "ALPNProtocols")).is_empty()
-                && negotiated.is_none()
+            let server_protocols = alpn_names(&option(server, "ALPNProtocols"));
+            let client_protocols = alpn_names(&option(options, "ALPNProtocols"));
+            let callback_selects = quench_runtime::is_callable(&option(server, "ALPNCallback"));
+            if negotiated.is_none()
+                && ((!server_protocols.is_empty() && !client_protocols.is_empty())
+                    || (callback_selects && !client_protocols.is_empty()))
             {
                 mark_rejected(&socket);
                 let error = host_api::object(vec![
@@ -1123,6 +1137,27 @@ fn der_length(bytes: &[u8]) -> Option<(usize, usize)> {
 }
 
 pub(crate) fn negotiate_alpn(server: &Value, client: &Value) -> Option<String> {
+    let callback = option(server, "ALPNCallback");
+    if quench_runtime::is_callable(&callback) {
+        let protocols = alpn_names(&option(client, "ALPNProtocols"));
+        let protocol_values =
+            host_api::array(protocols.iter().cloned().map(Value::String).collect());
+        let callback_input = host_api::object(vec![
+            ("servername".into(), option(client, "servername")),
+            ("protocols".into(), protocol_values),
+        ]);
+        let selected = execute::call(&callback, &Value::Undefined, &[callback_input]).ok()?;
+        return match selected {
+            Value::String(selected) if protocols.iter().any(|name| name == &selected) => {
+                Some(selected)
+            }
+            // An omitted/undefined result means that no protocol was
+            // negotiated.  The caller handles the resulting transport
+            // rejection exactly as it does for a static ALPN mismatch.
+            Value::Undefined | Value::Null => None,
+            _ => None,
+        };
+    }
     let server_protocols = alpn_names(&option(server, "ALPNProtocols"));
     let client_protocols = alpn_names(&option(client, "ALPNProtocols"));
     server_protocols
