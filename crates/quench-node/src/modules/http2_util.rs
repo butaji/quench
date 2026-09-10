@@ -2109,7 +2109,15 @@ fn stream_write(
             Value::Boolean(true)
         )
     {
-        write_http2_frame(&socket, &frame)?;
+        // Preserve FIFO ordering with DATA/HEADERS writes already queued by
+        // this turn. A direct socket write would put RST_STREAM ahead of an
+        // `end()` frame, causing the peer to observe an aborted stream before
+        // its readable side receives END_STREAM.
+        state
+            .borrow_mut()
+            .net
+            .pending_writes
+            .push((socket.clone(), frame.encode()));
     }
     let mut write_result = true;
     if let Some(receiver) = receiver {
