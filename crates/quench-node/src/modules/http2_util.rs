@@ -721,6 +721,8 @@ pub fn dispatch(
         "range" => http2_asserts::range(values),
         "sessionName" => session_name(values),
         "connect" => connect(state, values),
+        "externalData" => external_data(state, values),
+        "externalConnection" => external_connection(state, _receiver, values),
         "sessionRequest" => session_request(state, _receiver, values),
         "sessionConnect" => session_connect(values),
         "sessionClose" => session_close(state, _receiver, values),
@@ -824,11 +826,20 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
             crate::modules::http2_protocol::CLIENT_MARKER,
             Value::Boolean(true),
         );
-        crate::modules::net::register_http2_session(
-            state,
-            &socket,
-            crate::modules::http2_protocol::Role::Client,
-        );
+        if crate::modules::net::net_id(&socket).is_some() {
+            crate::modules::net::register_http2_session(
+                state,
+                &socket,
+                crate::modules::http2_protocol::Role::Client,
+            );
+        } else {
+            setup_external_session(
+                state,
+                &socket,
+                crate::modules::http2_protocol::Role::Client,
+                None,
+            )?;
+        }
         let write = execute::get_property(&socket, "write");
         if quench_runtime::is_callable(&write) {
             let target_settings = execute::get_property(&target, "settings");
@@ -950,6 +961,87 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
         }
     }
     Ok(socket)
+}
+
+/// Install HTTP/2 framing on a caller-owned readable/writable transport.
+/// Unlike a TCP socket, the object has no `NetSocket` poll record; its data
+/// event is therefore routed directly into the shared Rust protocol reducer.
+fn setup_external_session(
+    state: &Rc<RefCell<HostState>>,
+    socket: &Value,
+    role: crate::modules::http2_protocol::Role,
+    server: Option<&Value>,
+) -> Result<(), VmError> {
+    let id = crate::modules::net::ensure_id(state, socket);
+    state
+        .borrow_mut()
+        .net
+        .http2_sessions
+        .entry(id)
+        .or_insert_with(|| crate::modules::http2_protocol::Session::new(role));
+    let marker = match role {
+        crate::modules::http2_protocol::Role::Client => {
+            crate::modules::http2_protocol::CLIENT_MARKER
+        }
+        crate::modules::http2_protocol::Role::Server => {
+            crate::modules::http2_protocol::SERVER_MARKER
+        }
+    };
+    execute::set_property_in_place(socket, marker, Value::Boolean(true));
+    if let Some(server) = server {
+        execute::set_property_in_place(socket, "server", server.clone());
+        let custom = execute::get_property(server, "\0quench:http2-remote-custom");
+        if matches!(custom, Value::Array(_)) {
+            execute::set_property_in_place(socket, "\0quench:http2-remote-custom", custom);
+        }
+    }
+    decorate_server_session(socket)?;
+    let listener_marker = "\0quench:http2-external-data-listener";
+    if !matches!(
+        execute::get_property(socket, listener_marker),
+        Value::Boolean(true)
+    ) {
+        crate::modules::events::method_on(
+            state,
+            Some(socket),
+            &[
+                Value::String("data".into()),
+                http2_capability("externalData"),
+            ],
+        )?;
+        execute::set_property_in_place(socket, listener_marker, Value::Boolean(true));
+    }
+    Ok(())
+}
+
+fn external_data(
+    state: &Rc<RefCell<HostState>>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let socket = values.first().ok_or(VmError::NotCallable)?;
+    let bytes = values
+        .get(1)
+        .and_then(crate::modules::crypto::bytes_from_value)
+        .ok_or(VmError::NotCallable)?;
+    crate::modules::net::dispatch_external_http2_bytes(state, socket, &bytes)?;
+    Ok(Value::Undefined)
+}
+
+fn external_connection(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let socket = values.first().ok_or(VmError::NotCallable)?;
+    if crate::modules::net::net_id(socket).is_none() {
+        setup_external_session(
+            state,
+            socket,
+            crate::modules::http2_protocol::Role::Server,
+            receiver,
+        )?;
+    }
+    Ok(Value::Undefined)
 }
 
 fn set_ping_limit(socket: &Value, options: &Value) {
@@ -4920,6 +5012,18 @@ fn create_server(
         Value::Boolean(true),
     );
     crate::modules::net::register_http2_server(state, &server);
+    // A custom `createConnection` may hand HTTP/2 a generic readable/writable
+    // pair rather than a TCP socket. Accepted TCP sockets already have a
+    // session installed by the net pump; this listener only initializes the
+    // external transport path and is otherwise a no-op.
+    crate::modules::events::method_on(
+        state,
+        Some(&server),
+        &[
+            Value::String("connection".into()),
+            http2_capability("externalConnection"),
+        ],
+    )?;
     Ok(server)
 }
 
