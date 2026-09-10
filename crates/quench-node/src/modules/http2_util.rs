@@ -2109,15 +2109,7 @@ fn stream_write(
             Value::Boolean(true)
         )
     {
-        // Preserve FIFO ordering with DATA/HEADERS writes already queued by
-        // this turn. A direct socket write would put RST_STREAM ahead of an
-        // `end()` frame, causing the peer to observe an aborted stream before
-        // its readable side receives END_STREAM.
-        state
-            .borrow_mut()
-            .net
-            .pending_writes
-            .push((socket.clone(), frame.encode()));
+        write_http2_frame(&socket, &frame)?;
     }
     let mut write_result = true;
     if let Some(receiver) = receiver {
@@ -3329,7 +3321,11 @@ fn stream_close(
         execute::get_property(&socket, "destroyed"),
         Value::Boolean(true)
     ) {
-        write_http2_frame(&socket, &frame)?;
+        state
+            .borrow_mut()
+            .net
+            .pending_writes
+            .push((socket.clone(), frame.encode()));
     }
     if let Some(stream) = receiver {
         execute::set_property_in_place(stream, "rstCode", Value::Number(code as f64));
