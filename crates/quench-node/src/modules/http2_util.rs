@@ -2200,6 +2200,7 @@ pub(crate) fn compat_server_request_response(
         ("writableEnded", Value::Boolean(false)),
         ("destroyed", Value::Boolean(false)),
         ("closed", Value::Boolean(false)),
+        ("sendDate", Value::Boolean(true)),
         // Node exposes the underlying ServerHttp2Stream through the
         // compatibility response. Keep this as the same identity used by
         // the host-only bridge rather than manufacturing a second wrapper.
@@ -2235,6 +2236,20 @@ fn compat_response_write_head(
     values: &[Value],
 ) -> Result<Value, VmError> {
     let stream = compat_response_stream(receiver)?;
+    let send_date = receiver
+        .map(|response| execute::get_property(response, "sendDate"))
+        .unwrap_or(Value::Boolean(true));
+    execute::set_property_in_place(
+        &stream,
+        "\0quench:http2-compat-send-date",
+        send_date.clone(),
+    );
+    let canonical_stream = execute::canonical_value(&stream);
+    execute::set_property_in_place(
+        &canonical_stream,
+        "\0quench:http2-compat-send-date",
+        send_date,
+    );
     if receiver.is_some_and(|response| {
         let request = execute::get_property(response, "req");
         matches!(
@@ -2861,7 +2876,11 @@ fn stream_respond(
     // Node's HTTP/2 server adds a Date header by default when responding.
     // Keep this host-owned response fact in the encoded header block so
     // clients observe the same shape as the HTTP/1 response path.
-    if !fields.iter().any(|(name, _)| name.as_slice() == b"date") {
+    let send_date = !matches!(
+        receiver.map(|stream| execute::get_property(stream, "\0quench:http2-compat-send-date")),
+        Some(Value::Boolean(false))
+    );
+    if send_date && !fields.iter().any(|(name, _)| name.as_slice() == b"date") {
         fields.push((b"date".to_vec(), b"Thu, 01 Jan 1970 00:00:00 GMT".to_vec()));
     }
     let block = {
