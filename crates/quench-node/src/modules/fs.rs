@@ -4803,7 +4803,11 @@ fn validate_stream_endpoint(options: &Value, key: &str) -> Result<Option<usize>,
     let value = execute::get_property(options, key);
     match value {
         Value::Undefined => Ok(None),
-        Value::Number(number) if number.is_infinite() && number.is_sign_positive() => Ok(None),
+        Value::Number(number)
+            if key == "end" && number.is_infinite() && number.is_sign_positive() =>
+        {
+            Ok(None)
+        }
         Value::Number(number)
             if number.is_finite()
                 && number >= 0.0
@@ -4812,10 +4816,14 @@ fn validate_stream_endpoint(options: &Value, key: &str) -> Result<Option<usize>,
         {
             Ok(Some(number as usize))
         }
-        Value::Number(number) if number.is_nan() => {
-            Err(stream_range_error(key, &number.to_string()))
+        Value::Number(number) if !number.is_finite() || number.fract() != 0.0 => {
+            Err(stream_range_error(key, "an integer", number))
         }
-        Value::Number(number) => Err(stream_range_error(key, &number.to_string())),
+        Value::Number(number) => Err(stream_range_error(
+            key,
+            ">= 0 && <= 9007199254740991",
+            number,
+        )),
         other => Err(crate::modules::buffer_enc::invalid_arg_type(format!(
             "The \"{key}\" option must be of type number.{}",
             crate::modules::util::invalid_arg_received(&other)
@@ -4823,11 +4831,12 @@ fn validate_stream_endpoint(options: &Value, key: &str) -> Result<Option<usize>,
     }
 }
 
-fn stream_range_error(key: &str, received: &str) -> VmError {
+fn stream_range_error(key: &str, expected: &str, received: f64) -> VmError {
     let error = quench_runtime::builtins::error(
         quench_runtime::ops::Builtin::RangeError,
         &[Value::String(format!(
-            "The \"{key}\" option is out of range. Received {received}"
+            "The value of \"{key}\" is out of range. It must be {expected}. Received {}",
+            crate::modules::buffer_enc::fmt_num(received)
         ))],
     );
     VmError::Thrown(execute::set_property(
@@ -4859,10 +4868,9 @@ pub fn validate_write_stream_options(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let parsed_options = parse_options(args.get(1))?;
+    parse_options(args.get(1))?;
     let raw_options = args.get(1).unwrap_or(&Value::Undefined);
     validate_stream_fs_methods(raw_options, &["open", "close", "write", "writev"])?;
-    validate_stream_bounds(raw_options)?;
     let start = validate_stream_endpoint(raw_options, "start")?;
     let flush = execute::get_property(raw_options, "flush");
     if !matches!(flush, Value::Undefined | Value::Null | Value::Boolean(_)) {
@@ -4871,7 +4879,17 @@ pub fn validate_write_stream_options(
             crate::modules::util::invalid_arg_received(&flush)
         )));
     }
-    let flags = parsed_options.flag.as_deref().unwrap_or("w");
+    let raw_flags = execute::get_property(raw_options, "flags");
+    let flags = match &raw_flags {
+        Value::Undefined => "w",
+        Value::String(flags) => flags,
+        other => {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+                "The \"flags\" option must be of type string.{}",
+                crate::modules::util::invalid_arg_received(other)
+            )));
+        }
+    };
     let raw_fd = execute::get_property(raw_options, "fd");
     let handle_fd = args.first().and_then(|value| {
         matches!(value, Value::Object(_) | Value::ObjectAlias(_))
@@ -4939,13 +4957,19 @@ pub fn validate_write_stream_options(
         .cloned();
     let stream_namespace = crate::modules::stream::build(state)?;
     let writable = execute::get_property(&stream_namespace, "Writable");
-    let writable_options = host_api::object(vec![(
-        "autoDestroy".into(),
-        Value::Boolean(!matches!(
-            execute::get_property(raw_options, "autoClose"),
-            Value::Boolean(false)
-        )),
-    )]);
+    let writable_options = host_api::object(vec![
+        (
+            "autoDestroy".into(),
+            Value::Boolean(!matches!(
+                execute::get_property(raw_options, "autoClose"),
+                Value::Boolean(false)
+            )),
+        ),
+        (
+            "highWaterMark".into(),
+            execute::get_property(raw_options, "highWaterMark"),
+        ),
+    ]);
     let mut stream = if quench_runtime::is_callable(&writable) {
         execute::construct_value(&writable, &[writable_options])
             .unwrap_or(crate::modules::events::new_emitter_object(state)?)
@@ -4997,6 +5021,8 @@ pub fn validate_write_stream_options(
             crate::host::capability(crate::registry::SPEC_FS_WRITE_STREAM_FINAL),
         ),
         ("writable", Value::Boolean(true)),
+        ("bytesWritten", Value::Number(0.0)),
+        ("pending", Value::Boolean(true)),
         ("closed", Value::Boolean(false)),
         ("destroyed", Value::Boolean(false)),
     ] {
@@ -5006,7 +5032,16 @@ pub fn validate_write_stream_options(
     let initial_position = start
         .map(|value| Value::Number(value as f64))
         .unwrap_or(Value::Null);
-    let _ = execute::set_property_in_place(&stream, WRITE_STREAM_POSITION_KEY, initial_position);
+    let _ = execute::set_property_in_place(
+        &stream,
+        WRITE_STREAM_POSITION_KEY,
+        initial_position.clone(),
+    );
+    if let Some(start) = start {
+        let start = Value::Number(start as f64);
+        let _ = execute::set_property_in_place(&stream, "start", start.clone());
+        let _ = execute::set_property_in_place(&stream, "pos", start);
+    }
     if let Some(handle) = args
         .first()
         .filter(|value| file_handle_descriptor(value).ok().flatten().is_some())
@@ -5105,18 +5140,6 @@ pub fn write_stream_write(
         })?,
     };
     let position = execute::get_property(stream, WRITE_STREAM_POSITION_KEY);
-    if let Value::Number(value) = position {
-        if value.is_finite() && value >= 0.0 && value.fract() == 0.0 {
-            let next = value + bytes.len() as f64;
-            if next.is_finite() && next <= ((1u64 << 53) - 1) as f64 {
-                let _ = execute::set_property_in_place(
-                    stream,
-                    WRITE_STREAM_POSITION_KEY,
-                    Value::Number(next),
-                );
-            }
-        }
-    }
     let buffer = crate::modules::buffer_proto::make_buffer(&bytes);
     let file_handle = execute::get_property(stream, WRITE_STREAM_HANDLE_KEY);
     if matches!(file_handle, Value::Object(_) | Value::ObjectAlias(_)) {
@@ -5162,6 +5185,7 @@ pub fn write_stream_write(
                     buffer.clone(),
                     Value::Number(bytes.len() as f64),
                     position.clone(),
+                    stream.clone(),
                 ],
             );
             let result = execute::call(
@@ -5188,9 +5212,12 @@ pub fn write_stream_write(
             buffer,
             Value::Number(0.0),
             Value::Number(bytes.len() as f64),
-            position,
+            position.clone(),
         ],
     );
+    if let Ok(count) = &result {
+        record_write_stream_completion(stream, &position, count);
+    }
     if let Some(callback) = callback {
         defer(state, &callback, vec![err_value(&result)]);
     }
@@ -5212,11 +5239,12 @@ pub fn write_stream_retry_callback(
     let buffer = args.get(3).ok_or(VmError::NotCallable)?;
     let length = args.get(4).ok_or(VmError::NotCallable)?;
     let position = args.get(5).cloned().unwrap_or(Value::Null);
-    if args.len() == 6 {
+    let stream = args.get(6).ok_or(VmError::NotCallable)?;
+    if args.len() == 7 {
         let fs_write = execute::get_property(fs_module, "write");
         let retry = host_api::bound_capability_with_arguments(
             crate::host::capability_ref(crate::registry::SPEC_FS_WRITE_STREAM_RETRY_CALLBACK),
-            args[..6].to_vec(),
+            args[..7].to_vec(),
         );
         return execute::call(
             &fs_write,
@@ -5231,7 +5259,7 @@ pub fn write_stream_retry_callback(
             ],
         );
     }
-    let callback_args = args.get(6..).unwrap_or_default();
+    let callback_args = args.get(7..).unwrap_or_default();
     let error = callback_args.first().cloned().unwrap_or(Value::Undefined);
     let eagain = matches!(
         execute::get_property(&error, "code"),
@@ -5247,12 +5275,39 @@ pub fn write_stream_retry_callback(
                 buffer.clone(),
                 length.clone(),
                 position,
+                stream.clone(),
             ],
         );
         defer(state, &retry, Vec::new());
         return Ok(Value::Undefined);
     }
+    if matches!(error, Value::Null | Value::Undefined) {
+        if let Some(count) = callback_args.get(1) {
+            record_write_stream_completion(stream, &position, count);
+        }
+    }
     execute::call(completion, &Value::Undefined, callback_args)
+}
+
+fn record_write_stream_completion(stream: &Value, position: &Value, count: &Value) {
+    let Value::Number(count) = count else {
+        return;
+    };
+    let written = match execute::get_property(stream, "bytesWritten") {
+        Value::Number(written) => written,
+        _ => 0.0,
+    };
+    let _ = execute::set_property_in_place(stream, "bytesWritten", Value::Number(written + count));
+    let Value::Number(position) = position else {
+        return;
+    };
+    let next = position + count;
+    let _ = execute::set_property_in_place(
+        stream,
+        WRITE_STREAM_POSITION_KEY,
+        Value::Number(next),
+    );
+    let _ = execute::set_property_in_place(stream, "pos", Value::Number(next));
 }
 
 pub fn write_stream_open(
@@ -5264,6 +5319,7 @@ pub fn write_stream_open(
     let fd = args.get(1).cloned().unwrap_or(Value::Undefined);
     let result = emit_stream_event(state, stream, "open", vec![fd]);
     if result.is_ok() {
+        execute::set_property_in_place(stream, "pending", Value::Boolean(false));
         execute::set_property_in_place(stream, WRITE_STREAM_OPENED_KEY, Value::Boolean(true));
         let callback = execute::get_property(stream, WRITE_STREAM_FINAL_CALLBACK_KEY);
         if quench_runtime::is_callable(&callback) {
