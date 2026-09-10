@@ -667,6 +667,16 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
                 let once = execute::get_property(&socket, "once");
                 if quench_runtime::is_callable(&once) {
                     execute::call(&once, &socket, &[Value::String("connect".into()), listener])?;
+                    // `http2.connect` reports opening failures through its
+                    // callback as the sole error argument.  Registering the
+                    // same callback on the transport's one-shot error event
+                    // lets util.promisify reject without treating a socket
+                    // error as a successful session value.
+                    execute::call(
+                        &once,
+                        &socket,
+                        &[Value::String("error".into()), callback.clone()],
+                    )?;
                 }
             }
         }
@@ -723,6 +733,11 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
             let once = execute::get_property(&socket, "once");
             if quench_runtime::is_callable(&once) {
                 execute::call(&once, &socket, &[Value::String("connect".into()), listener])?;
+                execute::call(
+                    &once,
+                    &socket,
+                    &[Value::String("error".into()), callback.clone()],
+                )?;
             }
         }
     }

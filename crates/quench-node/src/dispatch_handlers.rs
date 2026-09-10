@@ -2025,6 +2025,17 @@ pub fn util_promisified_call(
         crate::modules::util::PROMISIFY_CUSTOM_ARGS_KEY,
     )
     .unwrap_or(Value::Undefined);
+    let success_only = matches!(
+        execute::get_property(original, "\0quench:promisify-success-only"),
+        Value::Boolean(true)
+    );
+    if success_only {
+        // Some Node callbacks intentionally omit the error slot and deliver
+        // their sole successful result as the first argument.  Preserve that
+        // completion fact through the shared callback capability rather than
+        // teaching util.promisify about a particular module name.
+        custom_args = Value::String("\0quench:promisify-success-only".into());
+    }
     let is_exec_like = is_child_process_async_capability(&original);
     if is_exec_like && matches!(custom_args, Value::Undefined) {
         custom_args = host_api::array(vec![
@@ -2118,6 +2129,29 @@ pub fn util_promisified_callback(
         return Err(VmError::NotCallable);
     };
     let custom_args = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if matches!(
+        custom_args,
+        Value::String(ref mode) if mode == "\0quench:promisify-success-only"
+    ) {
+        let value = args.get(2).cloned().unwrap_or(Value::Undefined);
+        // The ordinary success path supplies a ClientHttp2Session/socket,
+        // while transport setup failures supply an Error as the sole
+        // callback argument.  Preserve both halves of this non-error-first
+        // API without confusing an object-valued session for a rejection.
+        let is_error = matches!(
+            (
+                execute::get_property(&value, "name"),
+                execute::get_property(&value, "message")
+            ),
+            (Value::String(_), Value::String(_))
+        );
+        if is_error {
+            quench_runtime::reject_promise(&promise, value);
+        } else {
+            quench_runtime::resolve_promise(&promise, value);
+        }
+        return Ok(Value::Undefined);
+    }
     let mut error = args.get(2).cloned().unwrap_or(Value::Undefined);
     if !matches!(error, Value::Undefined | Value::Null) {
         // Node's child-process custom promisifier copies the named callback

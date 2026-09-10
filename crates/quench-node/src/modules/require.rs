@@ -3564,6 +3564,15 @@ pub(crate) fn http2_module_value() -> Value {
         vec![Value::String("connect".into())],
     );
     let connect = execute::set_property(connect, "name", Value::String("connect".into()));
+    // `http2.connect` uses a one-argument success callback (`session`), not
+    // Node's usual error-first callback convention.  Keep that API fact on
+    // the function so the shared Rust promisifier can select the same
+    // completion shape without a module-specific wrapper.
+    let connect = execute::set_property(
+        connect,
+        "\0quench:promisify-success-only",
+        Value::Boolean(true),
+    );
     // The request/response constructors are part of the public HTTP/2
     // namespace even when the transport is unavailable.  Keep their
     // prototype identities real so compatibility consumers can perform the
