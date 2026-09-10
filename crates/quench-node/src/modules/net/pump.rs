@@ -1547,6 +1547,14 @@ fn dispatch_http2_frames(
                     .get(..4)
                     .map(|bytes| u32::from_be_bytes(bytes.try_into().unwrap()))
                     .unwrap_or(0);
+                // A peer RST can acknowledge a locally closed stream.  In
+                // that case Node reports close without synthesizing a second
+                // client error (notably for `stream.end(); stream.close()`).
+                let locally_reset = state
+                    .borrow()
+                    .net
+                    .http2_reset_codes
+                    .contains_key(&(socket_id, stream_id));
                 state
                     .borrow_mut()
                     .net
@@ -1585,7 +1593,11 @@ fn dispatch_http2_frames(
                     execute::get_property(&stream, "\0quenchHttp2ResetErrorEmitted"),
                     Value::Boolean(true)
                 );
-                if code != 8 && !reset_error_emitted {
+                let close_already_emitted = matches!(
+                    execute::get_property(&stream, "__quenchHttp2CloseEmitted"),
+                    Value::Boolean(true)
+                );
+                if code != 8 && !locally_reset && !close_already_emitted && !reset_error_emitted {
                     execute::set_property_in_place(
                         &stream,
                         "\0quenchHttp2ResetErrorEmitted",
