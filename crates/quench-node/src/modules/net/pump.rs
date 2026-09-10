@@ -501,7 +501,16 @@ fn accept_one(
         .servers
         .get(&server_id)
         .map(|server| server.borrow().js.clone());
-    let is_http2 = state.borrow().net.http2_servers.contains(&server_id);
+    let http2_server = state.borrow().net.http2_servers.contains(&server_id);
+    let tls_server = matches!(
+        execute::get_property(&object, crate::modules::tls::TLS_SOCKET_PROP),
+        Value::Boolean(true)
+    );
+    let negotiated_h2 = matches!(
+        execute::get_property(&object, crate::modules::tls::TLS_NEGOTIATED_ALPN_PROP),
+        Value::String(protocol) if protocol == "h2"
+    );
+    let is_http2 = http2_server && (!tls_server || negotiated_h2);
     if is_http2 {
         execute::set_property_in_place(
             &object,
@@ -531,6 +540,28 @@ fn accept_one(
                     &settings.encode(),
                 )],
             )?;
+        }
+    }
+    // A secure HTTP/2 server with `allowHTTP1` accepts an ordinary HTTP/1.1
+    // ALPN result on the same listener.  Only negotiated `h2` sessions use
+    // the frame parser above; attach the canonical HTTP parser for the
+    // alternate protocol so request/response events retain normal identity
+    // and lifecycle semantics.
+    let allow_http1 = http2_server
+        && tls_server
+        && !negotiated_h2
+        && server_js.as_ref().is_some_and(|server| {
+            matches!(
+                execute::get_property(
+                    &execute::get_property(server, "_tlsOptions"),
+                    "allowHTTP1"
+                ),
+                Value::Boolean(true)
+            )
+        });
+    if allow_http1 {
+        if let Some(server) = server_js.as_ref() {
+            crate::modules::http::connection_handler(state, Some(server), &[object.clone()])?;
         }
     }
     let tls_server = server_js.clone();
@@ -1588,12 +1619,15 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             // recoverable net.Socket data event.  Surface Node's common
             // HTTP/2 protocol error and tear down the transport so peer-side
             // users observe EOF/close instead of waiting forever.
-            let error = quench_runtime::builtins::error(
-                quench_runtime::ops::Builtin::Error,
-                &[Value::String("Protocol error".into())],
+            let error = crate::modules::http2_util::construct_nghttp_error(
+                state,
+                &[Value::Undefined, Value::Number(-523.0)],
+            )?;
+            execute::set_property_in_place(
+                &js,
+                crate::modules::http2_protocol::SESSION_ERROR_PROP,
+                error.clone(),
             );
-            let error =
-                execute::set_property(error, "code", Value::String("ERR_HTTP2_ERROR".into()));
             crate::modules::net::socket_destroy(state, Some(&js), &[error])?;
         }
         let is_http2 = state
