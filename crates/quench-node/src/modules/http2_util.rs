@@ -2026,6 +2026,26 @@ fn stream_end(
     ) {
         return complete_binding_request(state, &socket, receiver, stream_id);
     }
+    // A non-clean `close(code)` still enters Writable's destroy lifecycle
+    // when the request is ended. This is intentionally resolved here rather
+    // than by fabricating a filename-specific result: callers may install an
+    // `_destroy` wrapper between the synchronous close and `.end()`.
+    if receiver.is_some_and(|stream| {
+        matches!(execute::get_property(stream, "closed"), Value::Boolean(true))
+    }) {
+        if let Some(stream) = receiver {
+            if !matches!(execute::get_property(stream, "destroyed"), Value::Boolean(true)) {
+                let destroy = execute::get_property(stream, "_destroy");
+                if quench_runtime::is_callable(&destroy) {
+                    execute::call(&destroy, stream, &[Value::Null])?;
+                }
+                execute::set_property_in_place(stream, "destroyed", Value::Boolean(true));
+                let canonical = execute::canonical_value(stream);
+                execute::set_property_in_place(&canonical, "destroyed", Value::Boolean(true));
+            }
+        }
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    }
     let body = values.first().unwrap_or(&Value::Undefined);
     let bytes = crate::modules::crypto::bytes_from_value(body)
         .or_else(|| {
@@ -2273,7 +2293,7 @@ fn compat_response_destroy(
 }
 
 fn stream_close(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     values: &[Value],
 ) -> Result<Value, VmError> {
@@ -2343,6 +2363,26 @@ fn stream_close(
     if let Some(stream) = receiver {
         execute::set_property_in_place(stream, "rstCode", Value::Number(code as f64));
         execute::set_property_in_place(stream, "closed", Value::Boolean(true));
+        if code != 0 {
+            let message = format!(
+                "Stream closed with error code {}",
+                crate::modules::http2_facts::error_name(code).unwrap_or("UNKNOWN_ERROR")
+            );
+            let error = quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String(message)],
+            );
+            let error = execute::set_property(
+                error,
+                "code",
+                Value::String("ERR_HTTP2_STREAM_ERROR".into()),
+            );
+            state.borrow_mut().net.pending_http2_events.push((
+                stream.clone(),
+                "error".into(),
+                vec![error],
+            ));
+        }
         if let Some(callback) = values.get(1) {
             execute::call(callback, stream, &[])?;
         }
@@ -2378,6 +2418,14 @@ fn stream_destroy(
     } else {
         2_u32 // NGHTTP2_INTERNAL_ERROR
     };
+    let already_reset = matches!(
+        execute::get_property(&stream, "closed"),
+        Value::Boolean(true)
+    ) && matches!(
+        execute::get_property(&stream, "rstCode"),
+        Value::Number(code)
+            if code.is_finite() && code.fract() == 0.0 && code > 0.0
+    );
     if let Some(socket_id) = crate::modules::net::net_id(&socket) {
         let mapped = state
             .borrow()
@@ -2475,13 +2523,15 @@ fn stream_destroy(
             Vec::new(),
         ));
     }
-    let frame = crate::modules::http2_protocol::Frame::new(
-        crate::modules::http2_protocol::FrameType::RstStream,
-        0,
-        stream_id,
-        code.to_be_bytes().to_vec(),
-    );
-    write_http2_frame(&socket, &frame)?;
+    if !already_reset {
+        let frame = crate::modules::http2_protocol::Frame::new(
+            crate::modules::http2_protocol::FrameType::RstStream,
+            0,
+            stream_id,
+            code.to_be_bytes().to_vec(),
+        );
+        write_http2_frame(&socket, &frame)?;
+    }
     Ok(receiver)
 }
 
