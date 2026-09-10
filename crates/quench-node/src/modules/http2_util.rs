@@ -2362,11 +2362,19 @@ fn stream_destroy(
         .first()
         .filter(|value| !matches!(value, Value::Undefined | Value::Null))
         .cloned();
+    let prior_rst_code = match execute::get_property(&receiver, "rstCode") {
+        Value::Number(code)
+            if code.is_finite() && code.fract() == 0.0 && code > 0.0
+                && code <= u32::MAX as f64 => Some(code as u32),
+        _ => None,
+    };
     let code = if error
         .as_ref()
         .is_some_and(|value| matches!(execute::get_property(value, "code"), Value::String(code) if code == "ABORT_ERR"))
     {
         8_u32 // NGHTTP2_CANCEL
+    } else if error.is_none() {
+        prior_rst_code.unwrap_or(2_u32) // NGHTTP2_INTERNAL_ERROR
     } else {
         2_u32 // NGHTTP2_INTERNAL_ERROR
     };
