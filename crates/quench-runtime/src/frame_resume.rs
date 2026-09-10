@@ -122,7 +122,14 @@ impl Frame {
                 ids
             }
             Self::Iterator { binding, yield_dst, slot, .. } => vec![*binding, *yield_dst, *slot],
-            Self::Branch { dst, yield_dst, .. } => vec![*dst, *yield_dst],
+            Self::Branch { dst, yield_dst, .. } => {
+                let mut ids = Vec::new();
+                if let Some(dst) = dst {
+                    ids.push(*dst);
+                }
+                ids.push(*yield_dst);
+                ids
+            }
             Self::Private { yield_dst, .. } => vec![*yield_dst],
             Self::Loop { dst, yield_dst, .. } => vec![*dst, *yield_dst],
             Self::Await { .. } | Self::Delegate { .. } => Vec::new(),
