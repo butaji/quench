@@ -369,7 +369,10 @@ impl Session {
             return Err(ProtocolError::InvalidStream(frame.header.kind));
         }
         if frame.header.flags & 0x1 != 0 {
-            stream.state = StreamState::HalfClosedRemote;
+            stream.state = match stream.state {
+                StreamState::HalfClosedLocal => StreamState::Closed,
+                _ => StreamState::HalfClosedRemote,
+            };
         }
         match frame.header.kind {
             FrameType::Headers => self.apply_headers(id, frame)?,
