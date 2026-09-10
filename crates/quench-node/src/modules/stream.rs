@@ -905,7 +905,10 @@ pub fn finished(
     let want_writable = (option_enabled(options, "writable")
         && has_writable_state
         && !matches!(
-            execute::get_property(&stream, "writable"),
+            execute::get_property(
+                &execute::get_property(&stream, "_writableState"),
+                "writable"
+            ),
             Value::Boolean(false)
         ))
         || (option_enabled(options, "writable") && no_stream_sides)
@@ -952,6 +955,26 @@ pub fn finished(
         ("writableDone".into(), Value::Boolean(!want_writable)),
     ]);
     execute::set_property_in_place(&state_object, "stream", stream.clone());
+    if matches!(execute::get_property(&stream, "destroyed"), Value::Boolean(true))
+        && !matches!(
+            execute::get_property(
+                &execute::get_property(&stream, "_writableState"),
+                "finished"
+            ),
+            Value::Boolean(true)
+        )
+    {
+        let error = execute::set_property(
+            quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String("Premature close".into())],
+            ),
+            "code",
+            Value::String("ERR_STREAM_PREMATURE_CLOSE".into()),
+        );
+        execute::set_property_in_place(&state_object, "done", Value::Boolean(true));
+        execute::call(&callback, &Value::Undefined, &[error])?;
+    }
     let event = |side: &str| {
         host_api::bound_capability_with_arguments(
             crate::host::capability_ref(SPEC_STREAM_FINISHED_EVENT),
@@ -1055,6 +1078,44 @@ pub fn finished(
         execute::set_property_in_place(&state_object, "done", Value::Boolean(true));
         finished_cleanup(state, None, &[state_object.clone(), stream.clone()])?;
         execute::call(&callback, &Value::Undefined, &[])?;
+    }
+    // `finished()` may be installed after `end()` synchronously completed.
+    // Project already-terminal sides into the same record used by event
+    // callbacks so the promise observes the canonical state machine.
+    if !matches!(execute::get_property(&state_object, "done"), Value::Boolean(true)) {
+        if want_writable
+            && matches!(
+                execute::get_property(
+                    &execute::get_property(&stream, "_writableState"),
+                    "finished"
+                ),
+                Value::Boolean(true)
+            )
+        {
+            execute::set_property_in_place(&state_object, "writableDone", Value::Boolean(true));
+        }
+        if want_readable
+            && matches!(
+                execute::get_property(
+                    &execute::get_property(&stream, "_readableState"),
+                    "endEmitted"
+                ),
+                Value::Boolean(true)
+            )
+        {
+            execute::set_property_in_place(&state_object, "readableDone", Value::Boolean(true));
+        }
+        if matches!(
+            execute::get_property(&state_object, "readableDone"),
+            Value::Boolean(true)
+        ) && matches!(
+            execute::get_property(&state_object, "writableDone"),
+            Value::Boolean(true)
+        ) {
+            execute::set_property_in_place(&state_object, "done", Value::Boolean(true));
+            finished_cleanup(state, None, &[state_object.clone(), stream.clone()])?;
+            execute::call(&callback, &Value::Undefined, &[])?;
+        }
     }
     Ok(host_api::bound_capability_with_arguments(
         crate::host::capability_ref(SPEC_STREAM_FINISHED_CLEANUP),
