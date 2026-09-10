@@ -661,8 +661,17 @@ fn accept_one(
             // Keep this as a transport fact: user internalMessage listeners
             // can close/reject the handle, while ordinary workers fall back
             // to the normal connection callback below.
-            let has_internal_listener =
-                crate::modules::process::has_listener(state, "internalMessage");
+            let has_internal_listener = state
+                .borrow()
+                .cluster
+                .worker_event_scope(worker_id)
+                .is_some_and(|scope| {
+                    crate::modules::process::has_listener_in_scope(
+                        state,
+                        "internalMessage",
+                        scope,
+                    )
+                });
             if has_internal_listener {
                 let worker = state
                     .borrow()
@@ -670,8 +679,18 @@ fn accept_one(
                     .worker_object(worker_id)
                     .ok_or_else(|| execute::type_error("cluster worker"))?;
                 let previous_worker = state.borrow().cluster.worker_context;
+                let previous_event_scope = state.borrow().event_loop.process_scope();
+                let worker_event_scope = state
+                    .borrow()
+                    .cluster
+                    .worker_event_scope(worker_id)
+                    .unwrap_or(server_scope);
                 crate::modules::cluster::set_worker_mode(state, worker_id, &worker, true);
                 state.borrow_mut().cluster.worker_context = Some(worker_id);
+                state
+                    .borrow()
+                    .event_loop
+                    .set_process_scope(worker_event_scope);
                 let message =
                     host_api::object(vec![("act".into(), Value::String("newconn".into()))]);
                 let result = crate::modules::process::emit(
@@ -683,6 +702,10 @@ fn accept_one(
                     ],
                 );
                 state.borrow_mut().cluster.worker_context = previous_worker;
+                state
+                    .borrow()
+                    .event_loop
+                    .set_process_scope(previous_event_scope);
                 crate::modules::cluster::set_worker_mode(state, worker_id, &worker, false);
                 result?;
 
@@ -749,10 +772,24 @@ fn accept_one(
             Ok(())
         } else if let Some((worker_id, worker)) = owner {
             let previous = state.borrow().cluster.worker_context;
+            let previous_event_scope = state.borrow().event_loop.process_scope();
+            let worker_event_scope = state
+                .borrow()
+                .cluster
+                .worker_event_scope(worker_id)
+                .unwrap_or(server_scope);
             crate::modules::cluster::set_worker_mode(state, worker_id, &worker, true);
             state.borrow_mut().cluster.worker_context = Some(worker_id);
+            state
+                .borrow()
+                .event_loop
+                .set_process_scope(worker_event_scope);
             let result = emit(state, &js, "connection", vec![object.clone()]);
             state.borrow_mut().cluster.worker_context = previous;
+            state
+                .borrow()
+                .event_loop
+                .set_process_scope(previous_event_scope);
             crate::modules::cluster::set_worker_mode(state, worker_id, &worker, false);
             result
         } else {
