@@ -2218,6 +2218,10 @@ fn stream_end(
     // `_destroy` wrapper between the synchronous close and `.end()`.
     if receiver.is_some_and(|stream| {
         matches!(execute::get_property(stream, "closed"), Value::Boolean(true))
+            && !matches!(
+                execute::get_property(stream, "\0quench:http2-end-dispatch"),
+                Value::Boolean(true)
+            )
     }) {
         if let Some(stream) = receiver {
             if !matches!(execute::get_property(stream, "destroyed"), Value::Boolean(true)) {
