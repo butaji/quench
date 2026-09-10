@@ -1195,31 +1195,14 @@ pub(crate) fn decorate_http2_stream(state: &Rc<RefCell<HostState>>, stream: &Val
     // Duplex exposes lifecycle accessors on its prototype.  HTTP/2 streams
     // need writable own state so close/destroy transitions remain observable
     // even when the inherited accessor has no setter.
-    for name in ["closed", "destroyed"] {
-        let _ = execute::define_property(
-            stream.clone(),
-            name,
-            host_api::object(vec![
-                ("value".into(), Value::Boolean(false)),
-                ("writable".into(), Value::Boolean(true)),
-                ("enumerable".into(), Value::Boolean(true)),
-                ("configurable".into(), Value::Boolean(true)),
-            ]),
-        );
+    // These lifecycle slots are host-owned state. Define-property is an
+    // ordinary COW operation and returns a replacement value, which this
+    // borrowed host handle cannot publish back to its caller. In-place writes
+    // keep the canonical stream identity visible through all aliases while
+    // still shadowing Duplex's inherited accessors.
+    for name in ["closed", "destroyed", "aborted"] {
+        let _ = execute::set_property_in_place(stream, name, Value::Boolean(false));
     }
-    // Duplex exposes an `aborted` accessor on its prototype. Define an own
-    // writable data property so HTTP/2 streams retain Node's boolean state
-    // instead of silently routing the write through a getter-only slot.
-    let _ = execute::define_property(
-        stream.clone(),
-        "aborted",
-        host_api::object(vec![
-            ("value".into(), Value::Boolean(false)),
-            ("writable".into(), Value::Boolean(true)),
-            ("enumerable".into(), Value::Boolean(true)),
-            ("configurable".into(), Value::Boolean(true)),
-        ]),
-    );
     let _ = execute::set_property_in_place(&stream, "bufferSize", Value::Number(0.0));
     let _ = execute::set_property_in_place(&stream, "writableEnded", Value::Boolean(false));
     let _ = execute::set_property_in_place(&stream, "writableFinished", Value::Boolean(false));
