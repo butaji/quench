@@ -174,6 +174,7 @@ const COMPAT_STATUS_CODE_PROP: &str = "\0quench:http2-compat-status-code";
 const COMPAT_STATUS_MESSAGE_PROP: &str = "\0quench:http2-compat-status-message";
 const COMPAT_STATUS_MESSAGE_WARNED_PROP: &str = "\0quench:http2-compat-status-message-warned";
 const COMPAT_HEADERS_PROP: &str = "\0quench:http2-compat-headers";
+const COMPAT_TIMEOUT_PROP: &str = "\0quench:http2-compat-timeout";
 const COMPAT_STATUS_MESSAGE_WARNING: &str =
     "Status message is not supported by HTTP/2 (RFC7540 8.1.2.4)";
 
@@ -734,6 +735,8 @@ pub fn dispatch(
         "compatResponseRemoveHeader" => compat_response_remove_header(_receiver, values),
         "compatResponseAppendHeader" => compat_response_append_header(_receiver, values),
         "compatResponseFlushHeaders" => compat_response_flush_headers(state, _receiver),
+        "compatResponseSetTimeout" => compat_response_set_timeout(state, _receiver, values),
+        "compatResponseTimeout" => compat_response_timeout_fire(state, values),
         "compatResponseWrite" => compat_response_write(state, _receiver, values),
         "compatResponseEnd" => compat_response_end(state, _receiver, values),
         "compatResponseDestroy" => compat_response_destroy(state, _receiver, values),
@@ -1980,11 +1983,78 @@ fn write_http2_frame(
 }
 
 fn stream_write(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     values: &[Value],
 ) -> Result<Value, VmError> {
     let (socket, stream_id) = stream_socket(receiver)?;
+    let stream = receiver.map(execute::canonical_value);
+    let socket_id = crate::modules::net::net_id(&socket);
+    let transport_closed = socket_id.is_some_and(|socket_id| {
+        state
+            .borrow()
+            .net
+            .http2_reset_codes
+            .contains_key(&(socket_id, stream_id))
+    });
+    let mapped_destroyed = socket_id.is_some_and(|socket_id| {
+        state
+            .borrow()
+            .net
+            .http2_streams
+            .get(&(socket_id, stream_id))
+            .is_some_and(|stream| {
+                matches!(execute::get_property(stream, "destroyed"), Value::Boolean(true))
+            })
+    });
+    let callback = values
+        .iter()
+        .skip(1)
+        .find(|value| quench_runtime::is_callable(value));
+    // Writable rejects terminal writes before touching the transport. A
+    // destroyed stream is deliberately quiet (the compatibility response's
+    // `destroy()` has no callback), while an explicitly closed HTTP/2 stream
+    // reports the protocol-specific error through write's callback.
+    if mapped_destroyed || receiver.is_some_and(|stream| {
+        matches!(execute::get_property(stream, "destroyed"), Value::Boolean(true))
+    }) || stream.as_ref().is_some_and(|stream| {
+        matches!(execute::get_property(stream, "destroyed"), Value::Boolean(true))
+    }) {
+        return Ok(Value::Boolean(false));
+    }
+    let ended = receiver.is_some_and(|stream| {
+        matches!(
+            execute::get_property(stream, "writableEnded"),
+            Value::Boolean(true)
+        )
+    }) || stream.as_ref().is_some_and(|stream| {
+        matches!(
+            execute::get_property(stream, "writableEnded"),
+            Value::Boolean(true)
+        )
+    });
+    let closed = transport_closed || receiver.is_some_and(|stream| {
+        matches!(execute::get_property(stream, "closed"), Value::Boolean(true))
+    }) || stream.as_ref().is_some_and(|stream| {
+        matches!(execute::get_property(stream, "closed"), Value::Boolean(true))
+    });
+    eprintln!("WS ended={ended} closed={closed} tc={transport_closed} md={mapped_destroyed}");
+    if ended || closed {
+        if let (Some(stream), Some(callback)) = (stream.as_ref(), callback) {
+            let (code, message) = if ended {
+                ("ERR_STREAM_WRITE_AFTER_END", "write after end")
+            } else {
+                ("ERR_HTTP2_INVALID_STREAM", "The stream has been destroyed")
+            };
+            let error = quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String(message.into())],
+            );
+            let error = execute::set_property(error, "code", Value::String(code.into()));
+            execute::call(callback, stream, &[error])?;
+        }
+        return Ok(Value::Boolean(false));
+    }
     let body = values.first().unwrap_or(&Value::Undefined);
     let bytes = crate::modules::crypto::bytes_from_value(body)
         .or_else(|| {
@@ -2027,10 +2097,7 @@ fn stream_write(
             "bufferSize",
             Value::Number(current + body_len as f64),
         );
-        if let Some(callback) = values
-            .get(1)
-            .filter(|value| quench_runtime::is_callable(value))
-        {
+        if let Some(callback) = callback {
             execute::call(callback, &stream, &[])?;
         }
     }
@@ -2101,6 +2168,20 @@ fn stream_end(
             Some(Value::Boolean(true))
         )
     {
+        if let Some(stream) = receiver {
+            execute::set_property_in_place(stream, "writableEnded", Value::Boolean(true));
+            execute::set_property_in_place(stream, "writableFinished", Value::Boolean(true));
+            let canonical = execute::canonical_value(stream);
+            execute::set_property_in_place(&canonical, "writableEnded", Value::Boolean(true));
+            execute::set_property_in_place(&canonical, "writableFinished", Value::Boolean(true));
+            if let Some(callback) = values
+                .iter()
+                .skip(1)
+                .find(|value| quench_runtime::is_callable(value))
+            {
+                execute::call(callback, &canonical, &[])?;
+            }
+        }
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     }
     let frame = crate::modules::http2_protocol::Frame::new(
@@ -2276,6 +2357,7 @@ pub(crate) fn compat_server_request_response(
         ("removeHeader", http2_capability("compatResponseRemoveHeader")),
         ("appendHeader", http2_capability("compatResponseAppendHeader")),
         ("flushHeaders", http2_capability("compatResponseFlushHeaders")),
+        ("setTimeout", http2_capability("compatResponseSetTimeout")),
         ("write", http2_capability("compatResponseWrite")),
         ("end", http2_capability("compatResponseEnd")),
         ("destroy", http2_capability("compatResponseDestroy")),
@@ -2552,6 +2634,86 @@ fn compat_response_flush_headers(
     Ok(response.clone())
 }
 
+fn compat_response_set_timeout(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let response = receiver.ok_or(VmError::NotCallable)?;
+    let timeout = match values.first().unwrap_or(&Value::Undefined) {
+        Value::Number(value) if value.is_finite() && *value >= 0.0 => *value,
+        Value::Number(_) => {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::RangeError,
+                "ERR_OUT_OF_RANGE",
+                "The value of \"msecs\" is out of range".into(),
+            ));
+        }
+        value => {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::TypeError,
+                "ERR_INVALID_ARG_TYPE",
+                format!(
+                    "The \"msecs\" argument must be of type number.{}",
+                    crate::modules::util::invalid_arg_received(value)
+                ),
+            ));
+        }
+    };
+    if let Some(callback) = values.get(1) {
+        if !quench_runtime::is_callable(callback) {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::TypeError,
+                "ERR_INVALID_ARG_TYPE",
+                "The \"callback\" argument must be of type function".into(),
+            ));
+        }
+    }
+    if let Some(timer) = match execute::get_property(response, COMPAT_TIMEOUT_PROP) {
+        Value::Object(_) | Value::ObjectAlias(_) => Some(execute::get_property(response, COMPAT_TIMEOUT_PROP)),
+        _ => None,
+    } {
+        crate::modules::timers::clear_timeout(state, &[timer])?;
+    }
+    execute::set_property_in_place(response, "timeout", Value::Number(timeout));
+    execute::set_property_in_place(response, COMPAT_TIMEOUT_PROP, Value::Undefined);
+    if matches!(execute::get_property(response, "finished"), Value::Boolean(true)) || timeout == 0.0 {
+        return Ok(response.clone());
+    }
+    if let Some(callback) = values.get(1) {
+        crate::modules::events::method_once(
+            state,
+            Some(response),
+            &[Value::String("timeout".into()), callback.clone()],
+        )?;
+    }
+    let timer_callback = host_api::bound_capability_with_arguments(
+        crate::host::capability_ref(crate::registry::SPEC_INTERNAL_HTTP2_UTIL),
+        vec![Value::String("compatResponseTimeout".into()), response.clone()],
+    );
+    let timer = crate::modules::timers::set_timeout(
+        state,
+        &[timer_callback, Value::Number(timeout)],
+    )?;
+    execute::set_property_in_place(response, COMPAT_TIMEOUT_PROP, timer);
+    Ok(response.clone())
+}
+
+fn compat_response_timeout_fire(
+    state: &Rc<RefCell<HostState>>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let Some(response) = values.first() else {
+        return Ok(Value::Undefined);
+    };
+    execute::set_property_in_place(response, COMPAT_TIMEOUT_PROP, Value::Undefined);
+    if matches!(execute::get_property(response, "finished"), Value::Boolean(true)) {
+        return Ok(Value::Undefined);
+    }
+    crate::modules::net::emit(state, response, "timeout", Vec::new())?;
+    Ok(Value::Undefined)
+}
+
 fn compat_response_write_head(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -2671,8 +2833,9 @@ fn compat_response_write(
     values: &[Value],
 ) -> Result<Value, VmError> {
     let stream = compat_response_stream(receiver)?;
-    stream_write(state, Some(&stream), values)?;
-    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+    // `ServerResponse.write()` returns Writable's boolean backpressure result,
+    // not the response receiver (unlike `end()`).
+    stream_write(state, Some(&stream), values)
 }
 
 fn compat_response_end(
@@ -2759,6 +2922,11 @@ fn compat_response_end(
         execute::set_property_in_place(response, "finished", Value::Boolean(true));
         execute::set_property_in_place(response, "writableEnded", Value::Boolean(true));
         execute::set_property_in_place(response, "closed", Value::Boolean(true));
+        // Node detaches the compatibility response's socket references once
+        // writable completion is observed; the underlying HTTP/2 stream
+        // remains available through `response.stream`.
+        execute::set_property_in_place(response, "socket", Value::Undefined);
+        execute::set_property_in_place(response, "connection", Value::Undefined);
         let finish_marker = "\0quench:http2-compat-finish-emitted";
         if !matches!(
             execute::get_property(response, finish_marker),
@@ -2860,6 +3028,12 @@ fn stream_close(
     if let Some(stream) = receiver {
         execute::set_property_in_place(stream, "rstCode", Value::Number(code as f64));
         execute::set_property_in_place(stream, "closed", Value::Boolean(true));
+        // Aliased stream wrappers share transport state through the canonical
+        // representative. Publish terminal flags there as well so a later
+        // compatibility-response write cannot miss the close transition.
+        let canonical = execute::canonical_value(stream);
+        execute::set_property_in_place(&canonical, "rstCode", Value::Number(code as f64));
+        execute::set_property_in_place(&canonical, "closed", Value::Boolean(true));
         if code != 0 {
             let message = format!(
                 "Stream closed with error code {}",
@@ -2883,6 +3057,13 @@ fn stream_close(
         if let Some(callback) = values.get(1) {
             execute::call(callback, stream, &[])?;
         }
+    }
+    if let Some(socket_id) = crate::modules::net::net_id(&socket) {
+        state
+            .borrow_mut()
+            .net
+            .http2_reset_codes
+            .insert((socket_id, stream_id), code);
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
@@ -2938,7 +3119,7 @@ fn stream_destroy(
         if let Some(mapped) = mapped {
             execute::set_property_in_place(&mapped, "rstCode", Value::Number(code as f64));
             execute::set_property_in_place(&mapped, "closed", Value::Boolean(true));
-            execute::set_property_in_place(&mapped, "destroyed", Value::Boolean(error.is_some()));
+            execute::set_property_in_place(&mapped, "destroyed", Value::Boolean(true));
         }
         // Drop any not-yet-flushed frames for this terminal stream. This is
         // what makes same-turn AbortSignal cancellation win over the queued
@@ -2960,7 +3141,7 @@ fn stream_destroy(
     }
     execute::set_property_in_place(&stream, "rstCode", Value::Number(code as f64));
     execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
-    execute::set_property_in_place(&stream, "destroyed", Value::Boolean(error.is_some()));
+    execute::set_property_in_place(&stream, "destroyed", Value::Boolean(true));
     // Preserve the public receiver's lifecycle fields when a property write
     // promotes a copy-on-write representative. Abort-before-connect returns
     // this original object synchronously, so callers must observe the same
@@ -2976,7 +3157,7 @@ fn stream_destroy(
             ("configurable".into(), Value::Boolean(true)),
         ]),
     );
-    execute::set_property_in_place(&receiver, "destroyed", Value::Boolean(error.is_some()));
+    execute::set_property_in_place(&receiver, "destroyed", Value::Boolean(true));
     execute::set_property_in_place(&receiver, "rstCode", Value::Number(code as f64));
     let is_server = matches!(
         execute::get_property(&socket, crate::modules::http2_protocol::SERVER_MARKER),
