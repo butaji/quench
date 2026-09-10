@@ -12,14 +12,15 @@ use crate::host::HostState;
 use crate::registry::{
     SPEC_FS_WRITE_STREAM_AUTO_CLOSE_GET, SPEC_FS_WRITE_STREAM_AUTO_CLOSE_SET,
     SPEC_STREAM_ADD_ABORT_SIGNAL, SPEC_STREAM_COMPOSE, SPEC_STREAM_DESTROY, SPEC_STREAM_DUPLEX,
-    SPEC_STREAM_DUPLEX_PAIR, SPEC_STREAM_DUPLEX_PAIR_FINAL, SPEC_STREAM_DUPLEX_PAIR_UNCORK,
-    SPEC_STREAM_DUPLEX_PAIR_WRITE, SPEC_STREAM_FINISHED, SPEC_STREAM_FINISHED_ABORT,
-    SPEC_STREAM_FINISHED_CLEANUP, SPEC_STREAM_FINISHED_EVENT, SPEC_STREAM_IS_DISTURBED,
-    SPEC_STREAM_IS_ERRORED, SPEC_STREAM_IS_READABLE, SPEC_STREAM_IS_WRITABLE, SPEC_STREAM_PIPELINE,
+    SPEC_STREAM_CONSTRUCTOR_ADAPTER, SPEC_STREAM_DUPLEX_PAIR, SPEC_STREAM_DUPLEX_PAIR_FINAL,
+    SPEC_STREAM_DUPLEX_PAIR_UNCORK, SPEC_STREAM_DUPLEX_PAIR_WRITE, SPEC_STREAM_FINISHED,
+    SPEC_STREAM_FINISHED_ABORT, SPEC_STREAM_FINISHED_CLEANUP, SPEC_STREAM_FINISHED_EVENT,
+    SPEC_STREAM_GET_DEFAULT_HWM, SPEC_STREAM_IS_DISTURBED, SPEC_STREAM_IS_ERRORED,
+    SPEC_STREAM_IS_READABLE, SPEC_STREAM_IS_WRITABLE, SPEC_STREAM_PIPELINE,
     SPEC_STREAM_PROMISES_CALLBACK, SPEC_STREAM_PROMISES_FINISHED, SPEC_STREAM_PROMISES_PIPELINE,
-    SPEC_STREAM_READABLE, SPEC_STREAM_READABLE_BUFFER, SPEC_STREAM_TRANSFORM,
-    SPEC_STREAM_WEB_PIPELINE_COMPLETE, SPEC_STREAM_WEB_PIPELINE_ERROR, SPEC_STREAM_WRITABLE,
-    SPEC_STREAM_WRITABLE_HAS_INSTANCE, SPEC_STREAM_WRITABLE_WRITE_ADAPTER,
+    SPEC_STREAM_READABLE, SPEC_STREAM_READABLE_BUFFER, SPEC_STREAM_SET_DEFAULT_HWM,
+    SPEC_STREAM_TRANSFORM, SPEC_STREAM_WEB_PIPELINE_COMPLETE, SPEC_STREAM_WEB_PIPELINE_ERROR,
+    SPEC_STREAM_WRITABLE, SPEC_STREAM_WRITABLE_HAS_INSTANCE, SPEC_STREAM_WRITABLE_WRITE_ADAPTER,
 };
 
 const PRELUDE: &str = include_str!("stream_prelude.js");
@@ -1835,6 +1836,206 @@ pub fn readable_buffer(
     Ok(host_api::array(values))
 }
 
+const DEFAULT_BYTE_HWM: f64 = 65_536.0;
+const DEFAULT_OBJECT_HWM: f64 = 16.0;
+
+/// Construct through the original stream family, then apply the process-local
+/// default only when the caller did not supply a side-specific or shared HWM.
+/// Every public constructor shares the same defaults record.
+pub fn constructor_adapter(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let original = args.first().ok_or(VmError::NotCallable)?;
+    let defaults = args.get(1).ok_or(VmError::NotCallable)?;
+    let readable = matches!(args.get(2), Some(Value::Boolean(true)));
+    let writable = matches!(args.get(3), Some(Value::Boolean(true)));
+    let constructor_args = args.get(4..).unwrap_or_default();
+    // The prelude's public family functions are deliberately callable
+    // factories (including the Reflect.construct-backed Duplex families).
+    // Calling them also avoids introducing a second nested `newTarget` edge;
+    // the outer host constructor applies the public wrapper prototype.
+    let stream = execute::call(original, &Value::Undefined, constructor_args)?;
+    let options = constructor_args.first().unwrap_or(&Value::Undefined);
+    if readable {
+        apply_default_hwm(&stream, options, defaults, "readable")?;
+    }
+    if writable {
+        apply_default_hwm(&stream, options, defaults, "writable")?;
+    }
+    Ok(stream)
+}
+
+pub fn constructor_adapter_construct(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    constructor_adapter(state, None, args)
+}
+
+fn apply_default_hwm(
+    stream: &Value,
+    options: &Value,
+    defaults: &Value,
+    side: &str,
+) -> Result<(), VmError> {
+    let side_option = if side == "readable" {
+        "readableHighWaterMark"
+    } else {
+        "writableHighWaterMark"
+    };
+    let explicit = execute::get_property(options, side_option);
+    let shared = execute::get_property(options, "highWaterMark");
+    if !matches!(explicit, Value::Undefined | Value::Null)
+        || !matches!(shared, Value::Undefined | Value::Null)
+    {
+        return Ok(());
+    }
+    let state = execute::get_property(stream, &format!("_{side}State"));
+    if matches!(state, Value::Undefined | Value::Null) {
+        return Ok(());
+    }
+    let object_mode = execute::is_truthy(&execute::get_property(&state, "objectMode"));
+    let key = if object_mode { "object" } else { "bytes" };
+    let value = execute::get_property(defaults, key);
+    execute::set_property_in_place(&state, "highWaterMark", value);
+    Ok(())
+}
+
+pub fn get_default_high_water_mark(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let defaults = args.first().ok_or(VmError::NotCallable)?;
+    let object_mode = args.get(1).is_some_and(execute::is_truthy);
+    Ok(execute::get_property(
+        defaults,
+        if object_mode { "object" } else { "bytes" },
+    ))
+}
+
+pub fn set_default_high_water_mark(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let defaults = args.first().ok_or(VmError::NotCallable)?;
+    let object_mode = args.get(1).is_some_and(execute::is_truthy);
+    let value = match args.get(2) {
+        Some(Value::Number(value)) if value.is_finite() && value.fract() == 0.0
+            && (0.0..=9_007_199_254_740_991.0).contains(value) => *value,
+        Some(Value::Number(value)) => {
+            return Err(crate::modules::buffer_enc::out_of_range(
+                "value",
+                "an integer >= 0 && <= 9007199254740991",
+                &value.to_string(),
+            ));
+        }
+        Some(value) => {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+                "The \"value\" argument must be of type number.{}",
+                crate::modules::util::invalid_arg_received(value)
+            )));
+        }
+        None => {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"value\" argument must be of type number. Received undefined".into(),
+            ));
+        }
+    };
+    execute::set_property_in_place(
+        defaults,
+        if object_mode { "object" } else { "bytes" },
+        Value::Number(value),
+    );
+    Ok(Value::Undefined)
+}
+
+fn wrap_stream_constructor(
+    original: &Value,
+    defaults: &Value,
+    readable: bool,
+    writable: bool,
+) -> Value {
+    let wrapper = host_api::bound_capability_with_arguments(
+        crate::host::capability_ref(SPEC_STREAM_CONSTRUCTOR_ADAPTER),
+        vec![
+            original.clone(),
+            defaults.clone(),
+            Value::Boolean(readable),
+            Value::Boolean(writable),
+        ],
+    );
+    for name in [
+        "prototype",
+        "from",
+        "fromWeb",
+        "toWeb",
+        "isDisturbed",
+        "destroy",
+    ] {
+        if let Ok(value) = execute::get_property_result(original, name) {
+            if !matches!(value, Value::Undefined) {
+                execute::set_property_in_place(&wrapper, name, value);
+            }
+        }
+    }
+    wrapper
+}
+
+fn install_hwm_constructor(
+    module: &Value,
+    defaults: &Value,
+    name: &str,
+    readable: bool,
+    writable: bool,
+) {
+    let original = execute::get_property(module, name);
+    if !quench_runtime::is_callable(&original) {
+        return;
+    }
+    let wrapper = wrap_stream_constructor(&original, defaults, readable, writable);
+    let prototype = execute::get_property(&original, "prototype");
+    execute::set_property_in_place(&wrapper, "prototype", prototype.clone());
+    execute::set_property_in_place(&prototype, "constructor", wrapper.clone());
+    if name == "Writable" {
+        let _ = execute::set_callable_property(
+            &wrapper,
+            "Symbol.hasInstance",
+            crate::host::capability(SPEC_STREAM_WRITABLE_HAS_INSTANCE),
+        );
+    }
+    execute::set_property_in_place(module, name, wrapper);
+}
+
+fn install_default_high_water_marks(module: &Value) {
+    let defaults = host_api::object(vec![
+        ("bytes".into(), Value::Number(DEFAULT_BYTE_HWM)),
+        ("object".into(), Value::Number(DEFAULT_OBJECT_HWM)),
+    ]);
+    for (name, readable, writable) in [
+        ("Readable", true, false),
+        ("Writable", false, true),
+        ("Duplex", true, true),
+        ("Transform", true, true),
+        ("PassThrough", true, true),
+    ] {
+        install_hwm_constructor(module, &defaults, name, readable, writable);
+    }
+    for (name, spec) in [
+        ("getDefaultHighWaterMark", SPEC_STREAM_GET_DEFAULT_HWM),
+        ("setDefaultHighWaterMark", SPEC_STREAM_SET_DEFAULT_HWM),
+    ] {
+        let function = host_api::bound_capability_with_arguments(
+            crate::host::capability_ref(spec),
+            vec![defaults.clone()],
+        );
+        execute::set_property_in_place(module, name, function);
+    }
+}
+
 pub fn build(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     if let Some(cached) = state.borrow().stream_module.clone() {
         return Ok(cached);
@@ -1959,6 +2160,7 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     if let Ok(pipeline) = quench_runtime::execute::get_property_result(&module, "pipeline") {
         state.borrow_mut().stream_pipeline_impl = Some(pipeline);
     }
+    install_default_high_water_marks(&module);
     // Node exposes `stream` itself as the callable Stream constructor and
     // hangs the family namespace off that same function.  Preserve one
     // identity rather than returning a parallel object namespace.
@@ -1981,6 +2183,8 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
                 "isWritable",
                 "isErrored",
                 "isDisturbed",
+                "getDefaultHighWaterMark",
+                "setDefaultHighWaterMark",
             ] {
                 if let Ok(value) = quench_runtime::execute::get_property_result(&module, name) {
                     stream = quench_runtime::execute::set_property(stream, name, value);

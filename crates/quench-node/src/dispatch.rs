@@ -587,6 +587,9 @@ const CAP_STREAM_FINISHED: u16 = SPEC_STREAM_FINISHED.cap;
 const CAP_STREAM_FINISHED_EVENT: u16 = SPEC_STREAM_FINISHED_EVENT.cap;
 const CAP_STREAM_FINISHED_ABORT: u16 = SPEC_STREAM_FINISHED_ABORT.cap;
 const CAP_STREAM_FINISHED_CLEANUP: u16 = SPEC_STREAM_FINISHED_CLEANUP.cap;
+const CAP_STREAM_CONSTRUCTOR_ADAPTER: u16 = SPEC_STREAM_CONSTRUCTOR_ADAPTER.cap;
+const CAP_STREAM_GET_DEFAULT_HWM: u16 = SPEC_STREAM_GET_DEFAULT_HWM.cap;
+const CAP_STREAM_SET_DEFAULT_HWM: u16 = SPEC_STREAM_SET_DEFAULT_HWM.cap;
 const CAP_STREAM_COMPOSE: u16 = SPEC_STREAM_COMPOSE.cap;
 const CAP_STREAM_DUPLEX_PAIR_WRITE: u16 = SPEC_STREAM_DUPLEX_PAIR_WRITE.cap;
 const CAP_STREAM_DUPLEX_PAIR_UNCORK: u16 = SPEC_STREAM_DUPLEX_PAIR_UNCORK.cap;
@@ -1258,6 +1261,9 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_STREAM_WRITABLE_WRITE_ADAPTER => crate::modules::stream::writable_write_adapter,
         CAP_STREAM_READABLE_BUFFER => crate::modules::stream::readable_buffer,
         CAP_STREAM_WRITABLE_HAS_INSTANCE => crate::modules::stream::writable_has_instance,
+        CAP_STREAM_CONSTRUCTOR_ADAPTER => crate::modules::stream::constructor_adapter,
+        CAP_STREAM_GET_DEFAULT_HWM => crate::modules::stream::get_default_high_water_mark,
+        CAP_STREAM_SET_DEFAULT_HWM => crate::modules::stream::set_default_high_water_mark,
         CAP_DNS_LOOKUP => dns_lookup,
         CAP_DNS_RESOLVE4 => dns_resolve4,
         CAP_HTTP_REQUEST => http_request,
@@ -1802,6 +1808,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_STREAM_WRITABLE => stream_writable,
         CAP_STREAM_DUPLEX => stream_duplex,
         CAP_STREAM_TRANSFORM => stream_transform,
+        CAP_STREAM_CONSTRUCTOR_ADAPTER => crate::modules::stream::constructor_adapter_construct,
         CAP_STRING_DECODER => string_decoder_new,
         CAP_URL_NEW => url_new,
         CAP_URL_LEGACY_NEW => url_legacy_new,
