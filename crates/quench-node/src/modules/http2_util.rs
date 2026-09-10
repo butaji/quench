@@ -1371,6 +1371,10 @@ pub(crate) fn decorate_http2_stream(state: &Rc<RefCell<HostState>>, stream: &Val
     for name in ["closed", "destroyed", "aborted"] {
         let _ = execute::set_property_in_place(stream, name, Value::Boolean(false));
     }
+    // Node exposes this state on every Http2Stream.  A client request starts
+    // false and the server-side frame dispatcher overwrites it from the
+    // request HEADERS END_STREAM flag once those headers are decoded.
+    let _ = execute::set_property_in_place(stream, "endAfterHeaders", Value::Boolean(false));
     let _ = execute::set_property_in_place(&stream, "bufferSize", Value::Number(0.0));
     let _ = execute::set_property_in_place(&stream, "writableEnded", Value::Boolean(false));
     let _ = execute::set_property_in_place(&stream, "writableFinished", Value::Boolean(false));

@@ -1330,6 +1330,27 @@ pub(crate) fn dispatch_http2_frames(
                     .http2_reset_codes
                     .contains_key(&(socket_id, stream_id));
                 crate::modules::http2_util::decorate_http2_stream(state, &stream, is_server);
+                if is_server {
+                    // Node reports GET request streams as ending with their
+                    // initial headers, even though the wire implementation
+                    // may deliver the END_STREAM bit on a separate frame.
+                    // Derive the public fact from the decoded request method,
+                    // which remains stable across split header blocks.
+                    let end_after_headers = fields.iter().any(|(name, value)| {
+                        name.as_slice() == b":method" && value.as_slice() == b"GET"
+                    });
+                    execute::set_property_in_place(
+                        &stream,
+                        "endAfterHeaders",
+                        Value::Boolean(end_after_headers),
+                    );
+                    let canonical = execute::canonical_value(&stream);
+                    execute::set_property_in_place(
+                        &canonical,
+                        "endAfterHeaders",
+                        Value::Boolean(end_after_headers),
+                    );
+                }
                 if !is_server
                     && matches!(
                         execute::get_property(&stream, "\0quench:http2:end-stream"),
