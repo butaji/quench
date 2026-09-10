@@ -808,7 +808,13 @@ pub fn connect(
             }
         }
     }
-    if should_reject_client(options_ref) {
+    let defer_http2_verification = options_ref.is_some_and(|options| {
+        matches!(
+            option(options, "\0quench:http2-session"),
+            Value::Boolean(true)
+        )
+    });
+    if should_reject_client(options_ref) && !defer_http2_verification {
         mark_rejected(&socket);
         state.borrow_mut().net.pending_events.push((
             socket.clone(),

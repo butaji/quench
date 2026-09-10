@@ -1700,9 +1700,9 @@ pub fn socket_abort(
         // TLS verification).  Drop those deferred socket errors so the
         // AbortSignal contract exposes one ABORT_ERR rather than a stale
         // pre-abort failure on the next pump turn.
-        net.net.pending_events.retain(|(receiver, event, _)| {
-            !(event == "error" && net_id(receiver) == Some(id))
-        });
+        net.net
+            .pending_events
+            .retain(|(receiver, event, _)| !(event == "error" && net_id(receiver) == Some(id)));
     }
     // `AbortSignal` dispatch is synchronous, but net errors are delivered on
     // the next loop turn so listeners attached immediately after `abort()`
@@ -2413,6 +2413,7 @@ pub fn server_listen(
     // explicit port matches by port; `listen(0)` matches by logical slot so
     // separate server constructions remain distinct across workers.
     let cluster_listener = (state.borrow().cluster.worker_context.is_some()
+        && crate::modules::cluster::shares_listening_handle(state)
         && (port != 0 || cluster_ephemeral_slot.is_some()))
     .then(|| {
         let requested_ipv6 = resolve(host.as_deref().unwrap_or("0.0.0.0"), port).is_ipv6();
@@ -3173,13 +3174,155 @@ pub fn socket_destroy(
         return Ok(receiver);
     };
     crate::modules::http2_util::cancel_http2_pings(state, id)?;
+    // Session teardown is terminal for every stream owned by that transport.
+    // Keep public stream representatives and the protocol ledger synchronized
+    // and deliver the same cancellation lifecycle Node exposes for pending
+    // client requests.  Requests made after this transition are handled by
+    // `http2_util::session_request` as ERR_HTTP2_INVALID_SESSION.
+    let (http2_role, http2_streams) = {
+        let host = state.borrow();
+        let role = host
+            .net
+            .http2_sessions
+            .get(&id)
+            .map(|session| session.role());
+        let streams = host
+            .net
+            .http2_streams
+            .iter()
+            .filter(|((socket_id, _), _)| *socket_id == id)
+            .filter(|(_, stream)| {
+                !matches!(
+                    execute::get_property(stream, "destroyed"),
+                    Value::Boolean(true)
+                )
+            })
+            .map(|(_, stream)| stream.clone())
+            .collect::<Vec<_>>();
+        (role, streams)
+    };
+    {
+        for stream in &http2_streams {
+            if matches!(
+                execute::get_property(stream, "destroyed"),
+                Value::Boolean(true)
+            ) {
+                continue;
+            }
+            let has_error_listener = crate::modules::events::method_listener_count(
+                state,
+                Some(stream),
+                &[Value::String("error".into())],
+            )
+            .ok()
+            .is_some_and(|value| matches!(value, Value::Number(count) if count > 0.0));
+            if matches!(http2_role, Some(crate::modules::http2_protocol::Role::Client))
+                && !has_error_listener
+            {
+                continue;
+            }
+            execute::set_property_in_place(stream, "closed", Value::Boolean(true));
+            execute::set_property_in_place(stream, "destroyed", Value::Boolean(true));
+            if matches!(http2_role, Some(crate::modules::http2_protocol::Role::Client)) {
+                execute::set_property_in_place(stream, "rstCode", Value::Number(8.0));
+            }
+        }
+    }
+    {
+        let mut host = state.borrow_mut();
+        if let Some(session) = host.net.http2_sessions.get_mut(&id) {
+            for stream in session.streams.values_mut() {
+                stream.state = crate::modules::http2_protocol::StreamState::Closed;
+            }
+        }
+    }
+    for stream in http2_streams {
+        let stream = execute::canonical_value(&stream);
+        let already_closed = matches!(
+            execute::get_property(&stream, "__quenchHttp2TeardownQueued"),
+            Value::Boolean(true)
+        );
+        if already_closed {
+            continue;
+        }
+        if matches!(
+            execute::get_property(&stream, "__quenchHttp2CloseEmitted"),
+            Value::Boolean(true)
+        ) {
+            execute::set_property_in_place(
+                &stream,
+                "__quenchHttp2TeardownQueued",
+                Value::Boolean(true),
+            );
+            continue;
+        }
+        // Mark the close as scheduled so a peer RST or EOF cannot emit a
+        // second close event for the same representative.
+        execute::set_property_in_place(
+            &stream,
+            "__quenchHttp2CloseEmitted",
+            Value::Boolean(true),
+        );
+        execute::set_property_in_place(
+            &stream,
+            "__quenchHttp2TeardownQueued",
+            Value::Boolean(true),
+        );
+        let is_client = matches!(
+            http2_role,
+            Some(crate::modules::http2_protocol::Role::Client)
+        );
+        let stream_socket = execute::get_property(&stream, "\0quench:http2-socket");
+        let graceful_close = matches!(
+            execute::get_property(&stream_socket, "\0quench:http2-close-requested"),
+            Value::Boolean(true)
+        );
+        let has_error_listener = crate::modules::events::method_listener_count(
+            state,
+            Some(&stream),
+            &[Value::String("error".into())],
+        )
+        .ok()
+        .is_some_and(|value| matches!(value, Value::Number(count) if count > 0.0));
+        let mut host = state.borrow_mut();
+        if is_client && has_error_listener {
+            let (code, message) = if graceful_close {
+                (
+                    "ERR_HTTP2_GOAWAY_SESSION",
+                    "New streams cannot be created after receiving a GOAWAY",
+                )
+            } else {
+                (
+                    "ERR_HTTP2_STREAM_CANCEL",
+                    "The pending stream has been canceled",
+                )
+            };
+            let error = quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String(message.into())],
+            );
+            let error = execute::set_property(
+                error,
+                "code",
+                Value::String(code.into()),
+            );
+            host.net
+                .pending_http2_events
+                .push((stream.clone(), "error".into(), vec![error]));
+        }
+        host.net
+            .pending_http2_events
+            .push((stream, "close".into(), Vec::new()));
+    }
     // Destruction invalidates host-owned protocol/application write queues as
     // one state transition. Leaving a queued frame behind lets the next pump
     // tick call `write()` on the already-destroyed socket, producing a
     // spurious ERR_STREAM_DESTROYED (not an observable Node close event).
     {
         let mut net = state.borrow_mut();
-        net.net.pending_writes.retain(|(socket, _)| net_id(socket) != Some(id));
+        net.net
+            .pending_writes
+            .retain(|(socket, _)| net_id(socket) != Some(id));
         net.net
             .pending_request_writes
             .retain(|(socket, _, _)| net_id(socket) != Some(id));
@@ -3195,10 +3338,12 @@ pub fn socket_destroy(
     }
     let mut emit_close = false;
     let mut bytes_read = 0;
+    let mut transport_js = None;
     let socket_entry = state.borrow().net.sockets.get(&id).cloned();
     if let Some(sock) = socket_entry {
         let mut guard = sock.borrow_mut();
         bytes_read = guard.bytes_read;
+        transport_js = Some(guard.js.clone());
         let error = args.first().cloned();
         let was_closed = guard.state == SocketState::Closed;
         if guard.state != SocketState::Closed {
@@ -3218,6 +3363,9 @@ pub fn socket_destroy(
     }
     if emit_close {
         set_socket_state(&receiver, true, false, "closed");
+        if let Some(transport_js) = transport_js.as_ref() {
+            set_socket_state(transport_js, true, false, "closed");
+        }
         super::set_socket_property(&receiver, "pending", Value::Boolean(true));
         super::set_socket_bytes_read(&receiver, bytes_read);
         super::set_socket_property(&receiver, "_handle", Value::Null);
