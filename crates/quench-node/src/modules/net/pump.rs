@@ -873,6 +873,24 @@ fn dispatch_http2_frames(
         .map(|session| session.take_push_promises())
         .unwrap_or_default();
     let mut header_flags = std::collections::HashMap::<u32, u8>::new();
+    // A peer may coalesce request HEADERS and an immediate RST_STREAM (as
+    // AbortSignal cancellation does) into one read. Record those resets up
+    // front so the server's `stream` callback observes the terminal rstCode,
+    // matching Node's stream lifecycle ordering.
+    let batch_resets = frames
+        .iter()
+        .filter_map(|frame| {
+            (frame.header.kind == crate::modules::http2_protocol::FrameType::RstStream)
+                .then(|| {
+                    let code = frame
+                        .payload
+                        .get(..4)
+                        .map(|bytes| u32::from_be_bytes(bytes.try_into().unwrap()))
+                        .unwrap_or(0);
+                    (frame.header.stream_id, code)
+                })
+        })
+        .collect::<std::collections::HashMap<_, _>>();
     for frame in frames {
         if matches!(
             frame.header.kind,
@@ -1005,6 +1023,10 @@ fn dispatch_http2_frames(
                 let fields = completed_headers.get(&stream_id).cloned();
                 let Some(fields) = fields else { continue };
                 let (stream, fresh) = http2_stream(state, &socket_js, stream_id)?;
+                if let Some(code) = batch_resets.get(&stream_id).copied() {
+                    execute::set_property_in_place(&stream, "rstCode", Value::Number(code as f64));
+                    execute::set_property_in_place(&stream, "destroyed", Value::Boolean(true));
+                }
                 let locally_reset = state
                     .borrow()
                     .net
@@ -1280,7 +1302,8 @@ fn dispatch_http2_frames(
                 }
             }
             crate::modules::http2_protocol::FrameType::RstStream => {
-                let (stream, _) = http2_stream(state, &socket_js, stream_id)?;
+                let (stream_value, _) = http2_stream(state, &socket_js, stream_id)?;
+                let stream = execute::canonical_value(&stream_value);
                 let code = frame
                     .payload
                     .get(..4)
