@@ -919,6 +919,7 @@ fn emit_http2_stream_close(
         execute::set_property_in_place(&stream, "destroyed", Value::Boolean(true));
     }
     emit_socket_scoped(state, socket, &stream, "close", Vec::new())?;
+    crate::modules::http2_util::queue_compat_response_close(state, &stream);
     Ok(())
 }
 
@@ -944,7 +945,7 @@ fn dispatch_http2_frames(
     // consume completed blocks once per stream instead of assuming the first
     // HEADERS frame is self-contained.  Preserve the stream/end flags from
     // all fragments for the observable event dispatch below.
-    let completed_headers = state
+    let mut completed_headers = state
         .borrow_mut()
         .net
         .http2_sessions
@@ -952,7 +953,13 @@ fn dispatch_http2_frames(
         .map(|session| session.take_new_headers())
         .unwrap_or_default()
         .into_iter()
-        .collect::<std::collections::HashMap<_, _>>();
+        .fold(
+            std::collections::HashMap::<u32, std::collections::VecDeque<_>>::new(),
+            |mut headers, (id, fields)| {
+                headers.entry(id).or_default().push_back(fields);
+                headers
+            },
+        );
     let push_promise_headers = state
         .borrow_mut()
         .net
@@ -997,7 +1004,10 @@ fn dispatch_http2_frames(
             *header_flags.entry(frame.header.stream_id).or_default() |= 1;
         }
     }
-    let mut processed_headers = std::collections::HashSet::new();
+    // A CONTINUATION belongs to the preceding HEADERS block and must not
+    // consume a second queued block. Once END_HEADERS arrives, the next
+    // HEADERS on the same stream is a distinct response/trailer block.
+    let mut open_header_blocks = std::collections::HashSet::new();
     for frame in frames {
         let stream_id = frame.header.stream_id;
         match frame.header.kind {
@@ -1067,9 +1077,16 @@ fn dispatch_http2_frames(
                 let fields = push_promise_headers
                     .get(&promised_id)
                     .cloned()
-                    .or_else(|| completed_headers.get(&promised_id).cloned())
+                    .or_else(|| {
+                        completed_headers
+                            .get(&promised_id)
+                            .and_then(|fields| fields.front().cloned())
+                    })
                     .unwrap_or_default();
                 let (push_stream, push_fresh) = http2_stream(state, &socket_js, promised_id)?;
+                // Compatibility push responses expose the underlying stream
+                // through `.stream`, matching ServerHttp2Stream wrappers.
+                execute::set_property_in_place(&push_stream, "stream", push_stream.clone());
                 crate::modules::http2_util::decorate_http2_stream(state, &push_stream, false);
                 execute::set_property_in_place(
                     &push_stream,
@@ -1137,10 +1154,25 @@ fn dispatch_http2_frames(
             }
             crate::modules::http2_protocol::FrameType::Headers
             | crate::modules::http2_protocol::FrameType::Continuation => {
-                if !processed_headers.insert(stream_id) {
+                let is_continuation =
+                    frame.header.kind == crate::modules::http2_protocol::FrameType::Continuation;
+                if is_continuation {
+                    if !open_header_blocks.remove(&stream_id) {
+                        continue;
+                    }
+                    if frame.header.flags & 0x4 == 0 {
+                        open_header_blocks.insert(stream_id);
+                        continue;
+                    }
+                } else if open_header_blocks.contains(&stream_id) {
+                    continue;
+                } else if frame.header.flags & 0x4 == 0 {
+                    open_header_blocks.insert(stream_id);
                     continue;
                 }
-                let fields = completed_headers.get(&stream_id).cloned();
+                let fields = completed_headers
+                    .get_mut(&stream_id)
+                    .and_then(std::collections::VecDeque::pop_front);
                 let Some(fields) = fields else { continue };
                 let (stream, fresh) = http2_stream(state, &socket_js, stream_id)?;
                 if let Some(code) = batch_resets.get(&stream_id).copied() {
@@ -1361,6 +1393,43 @@ fn dispatch_http2_frames(
                         None,
                     )?;
                     emit_socket_scoped(state, socket, &socket_js, "stream", args)?;
+                } else if !is_server
+                    && matches!(
+                        execute::get_property(&stream, "__quenchHttp2ResponseEmitted"),
+                        Value::Boolean(true)
+                    )
+                {
+                    // A second HEADERS block on a client stream is the
+                    // response's trailing headers. It is not another
+                    // `response` event and must not overwrite the initial
+                    // response metadata.
+                    emit_socket_scoped(
+                        state,
+                        socket,
+                        &stream,
+                        "trailers",
+                        vec![http2_headers_value(&fields)],
+                    )?;
+                } else if is_server
+                    && matches!(
+                        execute::get_property(&stream, "__quenchHttp2RequestHeadersEmitted"),
+                        Value::Boolean(true)
+                    )
+                {
+                    // Server-side request trailers are delivered to both the
+                    // raw stream and the compatibility request view.
+                    let trailers = http2_headers_value(&fields);
+                    emit_socket_scoped(
+                        state,
+                        socket,
+                        &stream,
+                        "trailers",
+                        vec![trailers.clone()],
+                    )?;
+                    let request = execute::get_property(&stream, "\0quench:http2-compat-request");
+                    if matches!(request, Value::Object(_) | Value::ObjectAlias(_)) {
+                        emit_socket_scoped(state, socket, &request, "trailers", vec![trailers])?;
+                    }
                 } else {
                     crate::modules::http2_util::publish_http2_stream_diagnostic(
                         state,
@@ -1422,6 +1491,13 @@ fn dispatch_http2_frames(
                             ));
                         }
                     }
+                }
+                if is_server && fresh {
+                    execute::set_property_in_place(
+                        &stream,
+                        "__quenchHttp2RequestHeadersEmitted",
+                        Value::Boolean(true),
+                    );
                 }
                 // `header_flags` also includes a later DATA frame so the
                 // callback can observe Node's flags value (5).  END_STREAM
@@ -1501,23 +1577,38 @@ fn dispatch_http2_frames(
                     execute::set_property_in_place(&public, "rstCode", Value::Number(code as f64));
                     execute::set_property_in_place(&public, "destroyed", Value::Boolean(true));
                 }
-                // NGHTTP2_CANCEL is the normal peer-side result of an
-                // AbortSignal stream destroy. Node exposes rstCode and close
-                // for this cancellation without treating it as an error;
-                // protocol/internal reset codes remain observable errors.
-                if code != 0 && code != 8 {
-                    let code_name = crate::modules::http2_facts::error_name(code)
-                        .map_or_else(|| code.to_string(), str::to_owned);
+                // NGHTTP2_NO_ERROR is still surfaced as an aborted client
+                // stream when the peer resets it before END_STREAM. CANCEL
+                // remains the quiet AbortSignal path; protocol/internal reset
+                // codes retain the normal stream-error diagnostic.
+                let reset_error_emitted = matches!(
+                    execute::get_property(&stream, "\0quenchHttp2ResetErrorEmitted"),
+                    Value::Boolean(true)
+                );
+                if code != 8 && !reset_error_emitted {
+                    execute::set_property_in_place(
+                        &stream,
+                        "\0quenchHttp2ResetErrorEmitted",
+                        Value::Boolean(true),
+                    );
+                    let (error_code, message) = if code == 0 {
+                        ("ERR_HTTP2_STREAM_ABORTED", "The stream was aborted".to_owned())
+                    } else {
+                        let code_name = crate::modules::http2_facts::error_name(code)
+                            .map_or_else(|| code.to_string(), str::to_owned);
+                        (
+                            "ERR_HTTP2_STREAM_ERROR",
+                            format!("Stream closed with error code {code_name}"),
+                        )
+                    };
                     let error = quench_runtime::builtins::error(
                         quench_runtime::ops::Builtin::Error,
-                        &[Value::String(format!(
-                            "Stream closed with error code {code_name}"
-                        ))],
+                        &[Value::String(message)],
                     );
                     let error = execute::set_property(
                         error,
                         "code",
-                        Value::String("ERR_HTTP2_STREAM_ERROR".into()),
+                        Value::String(error_code.into()),
                     );
                     emit_socket_scoped(state, socket, &stream, "error", vec![error])?;
                 }

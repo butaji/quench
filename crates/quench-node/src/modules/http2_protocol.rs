@@ -6,7 +6,7 @@
 //! wire state here means those layers consume one canonical representation of
 //! frame boundaries instead of each reparsing TCP chunks.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 pub const CONNECTION_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 pub const DEFAULT_MAX_FRAME_SIZE: u32 = 16_384;
@@ -184,7 +184,9 @@ pub struct Session {
     decoder: hpack::Decoder<'static>,
     encoder: hpack::Encoder<'static>,
     pending_headers: HashMap<u32, Vec<u8>>,
-    announced_headers: HashSet<u32>,
+    /// Header blocks completed since the last transport dispatch. A stream
+    /// can receive more than one block (response trailers), so keep a queue.
+    new_headers: Vec<(u32, Vec<(Vec<u8>, Vec<u8>)>)>,
     /// PUSH_PROMISE headers must survive a later response HEADERS block for
     /// the same promised stream ID. Keep that wire event separate from the
     /// ordinary latest-headers map.
@@ -212,7 +214,7 @@ impl Session {
             decoder: hpack::Decoder::new(),
             encoder: hpack::Encoder::new(),
             pending_headers: HashMap::new(),
-            announced_headers: HashSet::new(),
+            new_headers: Vec::new(),
             push_promises: HashMap::new(),
             max_frame_size: DEFAULT_MAX_FRAME_SIZE,
             goaway: false,
@@ -394,7 +396,11 @@ impl Session {
     fn apply_headers(&mut self, id: u32, frame: &Frame) -> Result<(), ProtocolError> {
         let payload = header_block_payload(frame)?;
         if frame.header.flags & 0x4 != 0 {
-            self.decode_headers(id, payload)
+            self.decode_headers(id, payload)?;
+            if let Some(headers) = self.headers.get(&id).cloned() {
+                self.new_headers.push((id, headers));
+            }
+            Ok(())
         } else {
             self.pending_headers.insert(id, payload.to_vec());
             Ok(())
@@ -410,7 +416,11 @@ impl Session {
             self.pending_headers.insert(id, block);
             return Ok(());
         }
-        self.decode_headers(id, &block)
+        self.decode_headers(id, &block)?;
+        if let Some(headers) = self.headers.get(&id).cloned() {
+            self.new_headers.push((id, headers));
+        }
+        Ok(())
     }
 
     fn decode_headers(&mut self, id: u32, block: &[u8]) -> Result<(), ProtocolError> {
@@ -431,15 +441,7 @@ impl Session {
     /// Return each newly completed header block once, leaving the decoded
     /// representation available for diagnostics and protocol consumers.
     pub fn take_new_headers(&mut self) -> Vec<(u32, Vec<(Vec<u8>, Vec<u8>)>)> {
-        let ids = self
-            .headers
-            .keys()
-            .copied()
-            .filter(|id| self.announced_headers.insert(*id))
-            .collect::<Vec<_>>();
-        ids.into_iter()
-            .filter_map(|id| self.headers.get(&id).cloned().map(|headers| (id, headers)))
-            .collect()
+        std::mem::take(&mut self.new_headers)
     }
 
     pub fn take_push_promises(&mut self) -> HashMap<u32, Vec<(Vec<u8>, Vec<u8>)>> {
