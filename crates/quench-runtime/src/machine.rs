@@ -1655,6 +1655,7 @@ impl PartialEq for FunctionCode {
 #[derive(Debug, Clone, PartialEq)]
 pub enum IteratorPhase {
     Fetch,
+    AwaitNext,
     Bind,
     Body,
     Continue,
@@ -1704,6 +1705,10 @@ pub enum Frame {
         close_normal: bool,
         repeat: bool,
         slot: u16,
+        await_values: bool,
+        per_iteration: bool,
+        iteration_slots: Vec<u16>,
+        pending_next: Option<Value>,
     },
     Await {
         phase: u8,
