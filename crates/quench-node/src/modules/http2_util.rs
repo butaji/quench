@@ -1,7 +1,7 @@
 //! Small native subset of `internal/http2/util` used by Node internals.
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use quench_runtime::execute::{self, VmError};
@@ -181,6 +181,7 @@ const COMPAT_RESPONSE_PROP: &str = "\0quench:http2-compat-response";
 // response can reach END_STREAM before the request's writable side has sent
 // its final DATA frame, so keep that half-close fact separate from `closed`.
 pub(crate) const HTTP2_RESPONSE_CLOSED_PROP: &str = "\0quench:http2-response-closed";
+const HTTP2_STRICT_SINGLE_VALUE_FIELDS_PROP: &str = "\0quench:http2-strict-single-value-fields";
 /// Hidden resource identity attached to each HTTP/2 stream. The shared
 /// network emitter uses this identity to enter the stream's async context for
 /// response/data/end callbacks, just as it does for HTTP request streams.
@@ -841,6 +842,14 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
         remember_http2_authority(&socket, &target);
         execute::set_property_in_place(
             &socket,
+            HTTP2_STRICT_SINGLE_VALUE_FIELDS_PROP,
+            Value::Boolean(!matches!(
+                execute::get_property(&target, "strictSingleValueFields"),
+                Value::Boolean(false)
+            )),
+        );
+        execute::set_property_in_place(
+            &socket,
             crate::modules::http2_protocol::CLIENT_MARKER,
             Value::Boolean(true),
         );
@@ -918,6 +927,14 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
     let net_args = vec![target.clone()];
     let socket = execute::call(&net_connect, &Value::Undefined, &net_args)?;
     remember_http2_authority(&socket, &target);
+    execute::set_property_in_place(
+        &socket,
+        HTTP2_STRICT_SINGLE_VALUE_FIELDS_PROP,
+        Value::Boolean(!matches!(
+            execute::get_property(&target, "strictSingleValueFields"),
+            Value::Boolean(false)
+        )),
+    );
     execute::set_property_in_place(
         &socket,
         crate::modules::http2_protocol::CLIENT_MARKER,
@@ -1666,12 +1683,29 @@ fn session_request(
     {
         validate_request_options(options)?;
     }
+    let strict_single_value_fields = values
+        .get(1)
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+        .map(|options| {
+            !matches!(
+                execute::get_property(options, "strictSingleValueFields"),
+                Value::Boolean(false)
+            )
+        })
+        .unwrap_or_else(|| {
+            !matches!(
+                execute::get_property(&socket, HTTP2_STRICT_SINGLE_VALUE_FIELDS_PROP),
+                Value::Boolean(false)
+            )
+        });
     let mut fields = Vec::<(Vec<u8>, Vec<u8>)>::new();
     if matches!(headers, Value::Object(_) | Value::ObjectAlias(_)) {
         for key in execute::own_enumerable_keys(headers) {
             let value = execute::get_property(headers, &key);
-            let text = execute::to_js_string(&value)?;
-            fields.push((key.to_ascii_lowercase().into_bytes(), text.into_bytes()));
+            let name = key.to_ascii_lowercase();
+            for text in header_values(&value) {
+                fields.push((name.as_bytes().to_vec(), text.into_bytes()));
+            }
         }
     } else if let Value::Array(items) = headers {
         // Node accepts the legacy alternating `[name, value, ...]` header
@@ -1690,6 +1724,25 @@ fn session_request(
             };
             fields.push((wire_name.into_bytes(), value.into_bytes()));
             index += 2;
+        }
+    }
+    if strict_single_value_fields {
+        let mut counts = HashMap::<String, usize>::new();
+        for (name, _) in &fields {
+            let name = String::from_utf8_lossy(name).to_ascii_lowercase();
+            if SINGLE_VALUE_HEADERS.contains(&name.as_str()) {
+                *counts.entry(name).or_default() += 1;
+            }
+        }
+        if let Some(name) = counts
+            .into_iter()
+            .find_map(|(name, count)| (count > 1).then_some(name))
+        {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::TypeError,
+                "ERR_HTTP2_HEADER_SINGLE_VALUE",
+                format!("Header field \"{name}\" must only have a single value"),
+            ));
         }
     }
     let method = fields
@@ -1754,6 +1807,21 @@ fn session_request(
         };
         fields.push((b":authority".to_vec(), host.into_bytes()));
     }
+    // HTTP/2 requires pseudo-headers to precede ordinary fields on the wire.
+    // Keep the same canonical order in the decoded `rawHeaders` sequence;
+    // object enumeration order is not a substitute once duplicate names are
+    // preserved as individual fields.
+    let mut pseudo = Vec::new();
+    let mut ordinary = Vec::new();
+    for field in fields.drain(..) {
+        if field.0.first() == Some(&b':') {
+            pseudo.push(field);
+        } else {
+            ordinary.push(field);
+        }
+    }
+    pseudo.extend(ordinary);
+    fields = pseudo;
     let stream_id = match execute::get_property(&socket, "\0quench:http2-next-stream-id") {
         Value::Number(id) if id.is_finite() && id.fract() == 0.0 && id >= 1.0 => id as u32,
         _ => state

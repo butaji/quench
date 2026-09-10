@@ -859,6 +859,18 @@ fn http2_headers_value(fields: &[(Vec<u8>, Vec<u8>)]) -> Value {
     headers
 }
 
+/// Preserve the wire header sequence for Node's `stream` event.  The object
+/// form intentionally coalesces duplicate names; `rawHeaders` must not, since
+/// callers use it to inspect ordering and repeated fields.
+fn http2_raw_headers_value(fields: &[(Vec<u8>, Vec<u8>)]) -> Value {
+    let mut raw = Vec::with_capacity(fields.len() * 2);
+    for (name, value) in fields {
+        raw.push(Value::String(String::from_utf8_lossy(name).into_owned()));
+        raw.push(Value::String(String::from_utf8_lossy(value).into_owned()));
+    }
+    host_api::array(raw)
+}
+
 /// Return the stream emitter associated with a wire stream, creating it once.
 /// The same object is used for client response/data events and server stream
 /// callbacks so listener identity remains stable across pump ticks.
@@ -1290,6 +1302,7 @@ pub(crate) fn dispatch_http2_frames(
                         push_stream.clone(),
                         headers.clone(),
                         Value::Number(frame.header.flags as f64),
+                        http2_raw_headers_value(&fields),
                     ],
                 )?;
                 // Defer `push` until the promised stream's response HEADERS
@@ -1459,6 +1472,7 @@ pub(crate) fn dispatch_http2_frames(
                             .copied()
                             .unwrap_or(frame.header.flags) as f64,
                     ),
+                    http2_raw_headers_value(&fields),
                 ];
                 if is_server {
                     if fresh {
@@ -1649,6 +1663,7 @@ pub(crate) fn dispatch_http2_frames(
                                         .unwrap_or(frame.header.flags)
                                         as f64,
                                 ),
+                                http2_raw_headers_value(&fields),
                             ],
                         )?;
                         if matches!(
