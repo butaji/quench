@@ -177,6 +177,10 @@ const COMPAT_HEADERS_PROP: &str = "\0quench:http2-compat-headers";
 const COMPAT_TRAILERS_PROP: &str = "\0quench:http2-compat-trailers";
 const COMPAT_TIMEOUT_PROP: &str = "\0quench:http2-compat-timeout";
 const COMPAT_RESPONSE_PROP: &str = "\0quench:http2-compat-response";
+// A client response and its request body share one HTTP/2 stream object. The
+// response can reach END_STREAM before the request's writable side has sent
+// its final DATA frame, so keep that half-close fact separate from `closed`.
+pub(crate) const HTTP2_RESPONSE_CLOSED_PROP: &str = "\0quench:http2-response-closed";
 const COMPAT_STATUS_MESSAGE_WARNING: &str =
     "Status message is not supported by HTTP/2 (RFC7540 8.1.2.4)";
 
@@ -1209,6 +1213,19 @@ const HTTP2_DIAG_ERROR_PROP: &str = "\0quench:http2:diagnostics:error";
 /// consumers.  A private constructor record avoids mutating the global
 /// `Duplex` constructor while retaining Node's concrete stream names.
 pub(crate) fn decorate_http2_stream(state: &Rc<RefCell<HostState>>, stream: &Value, server: bool) {
+    let existing_writable_hwm = match execute::get_property(
+        stream,
+        "_writableState",
+    ) {
+        Value::Object(_) | Value::ObjectAlias(_) => match execute::get_property(
+            &execute::get_property(stream, "_writableState"),
+            "highWaterMark",
+        ) {
+            Value::Number(value) if value.is_finite() && value >= 0.0 => Some(value),
+            _ => None,
+        },
+        _ => None,
+    };
     let constructor = host_api::object(vec![(
         "name".into(),
         Value::String(
@@ -1243,7 +1260,10 @@ pub(crate) fn decorate_http2_stream(state: &Rc<RefCell<HostState>>, stream: &Val
     // directly (as Node's `Http2Stream` exposes `_writableState`). Keep the
     // state object host-owned so backpressure and `drain` use the same fact.
     let writable_state = host_api::object(vec![
-        ("highWaterMark".into(), Value::Number(16_384.0)),
+        (
+            "highWaterMark".into(),
+            Value::Number(existing_writable_hwm.unwrap_or(16_384.0)),
+        ),
         ("length".into(), Value::Number(0.0)),
         ("needDrain".into(), Value::Boolean(false)),
         ("finished".into(), Value::Boolean(false)),
@@ -1709,6 +1729,14 @@ fn session_request(
         Value::Boolean(binding_request.is_some()),
     );
     decorate_http2_stream(state, &stream, false);
+    // Header-only requests have already ended their writable side when the
+    // HEADERS frame carries END_STREAM. Mark that half closed before any peer
+    // response arrives; otherwise a response close would be deferred forever
+    // waiting for an `.end()` that Node never requires for GET requests.
+    if end_stream {
+        execute::set_property_in_place(&stream, "writableEnded", Value::Boolean(true));
+        execute::set_property_in_place(&stream, "writableFinished", Value::Boolean(true));
+    }
     // Keep the deprecated compatibility method on the request's own shape;
     // this stream is returned before the transport creates its peer view.
     execute::set_property_in_place(&stream, "priority", session_capability("streamPriority"));
@@ -1958,6 +1986,18 @@ fn stream_socket(receiver: Option<&Value>) -> Result<(Value, u32), VmError> {
     Ok((socket, stream_id))
 }
 
+fn writable_after_response_close(stream: &Value, transport_closed: bool) -> bool {
+    !transport_closed
+        && matches!(
+            execute::get_property(stream, HTTP2_RESPONSE_CLOSED_PROP),
+            Value::Boolean(true)
+        )
+        && !matches!(
+            execute::get_property(stream, "writableEnded"),
+            Value::Boolean(true)
+        )
+}
+
 fn stream_set_encoding(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -2022,7 +2062,10 @@ fn stream_write(
             .net
             .http2_reset_codes
             .contains_key(&(socket_id, stream_id))
-    });
+    }) || matches!(
+        execute::get_property(&socket, "destroyed"),
+        Value::Boolean(true)
+    );
     let mapped_destroyed = socket_id.is_some_and(|socket_id| {
         state
             .borrow()
@@ -2059,11 +2102,19 @@ fn stream_write(
             Value::Boolean(true)
         )
     });
-    let closed = transport_closed || receiver.is_some_and(|stream| {
-        matches!(execute::get_property(stream, "closed"), Value::Boolean(true))
-    }) || stream.as_ref().is_some_and(|stream| {
-        matches!(execute::get_property(stream, "closed"), Value::Boolean(true))
-    });
+    let response_closed = receiver
+        .is_some_and(|stream| writable_after_response_close(stream, transport_closed))
+        || stream
+            .as_ref()
+            .is_some_and(|stream| writable_after_response_close(stream, transport_closed));
+    let closed = !response_closed
+        && (transport_closed
+            || receiver.is_some_and(|stream| {
+                matches!(execute::get_property(stream, "closed"), Value::Boolean(true))
+            })
+            || stream.as_ref().is_some_and(|stream| {
+                matches!(execute::get_property(stream, "closed"), Value::Boolean(true))
+            }));
     if ended || closed {
         if let (Some(stream), Some(callback)) = (stream.as_ref(), callback) {
             let (code, message) = if ended {
@@ -2216,12 +2267,23 @@ fn stream_end(
     // when the request is ended. This is intentionally resolved here rather
     // than by fabricating a filename-specific result: callers may install an
     // `_destroy` wrapper between the synchronous close and `.end()`.
+    let transport_closed = crate::modules::net::net_id(&socket).is_some_and(|socket_id| {
+        state
+            .borrow()
+            .net
+            .http2_reset_codes
+            .contains_key(&(socket_id, stream_id))
+    }) || matches!(
+        execute::get_property(&socket, "destroyed"),
+        Value::Boolean(true)
+    );
     if receiver.is_some_and(|stream| {
         matches!(execute::get_property(stream, "closed"), Value::Boolean(true))
             && !matches!(
                 execute::get_property(stream, "\0quench:http2-end-dispatch"),
                 Value::Boolean(true)
             )
+            && !writable_after_response_close(stream, transport_closed)
     }) {
         if let Some(stream) = receiver {
             if !matches!(execute::get_property(stream, "destroyed"), Value::Boolean(true)) {
@@ -2371,6 +2433,30 @@ fn stream_end(
     let stream = receiver.cloned().unwrap_or(Value::Undefined);
     execute::set_property_in_place(&stream, "writableEnded", Value::Boolean(true));
     execute::set_property_in_place(&stream, "writableFinished", Value::Boolean(true));
+    // A server-side request END_STREAM closes the remote/readable half first;
+    // complete the stream only after this response-side END_STREAM is queued.
+    // Keeping this transition in the shared stream lifecycle lets delayed
+    // writes (such as a response `drain` handler) remain writable.
+    if matches!(
+        execute::get_property(&stream, "\0quench:http2-remote-end"),
+        Value::Boolean(true)
+    ) && !matches!(
+        execute::get_property(&stream, "__quenchHttp2CloseEmitted"),
+        Value::Boolean(true)
+    ) {
+        execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
+        execute::set_property_in_place(
+            &stream,
+            "__quenchHttp2CloseEmitted",
+            Value::Boolean(true),
+        );
+        state.borrow_mut().net.pending_http2_events.push((
+            stream.clone(),
+            "close".into(),
+            Vec::new(),
+        ));
+        queue_compat_response_close(state, &stream);
+    }
     if let Some(receiver) = receiver {
         let stream = execute::canonical_value(receiver);
         execute::set_property_in_place(&stream, "writableEnded", Value::Boolean(true));
@@ -2389,6 +2475,30 @@ fn stream_end(
             .filter(|value| quench_runtime::is_callable(value))
         {
             execute::call(callback, &stream, &[])?;
+        }
+    }
+    // The response readable side may have closed first. Defer the shared
+    // stream's close event until this local writable END_STREAM is queued so
+    // Readable.pipe() is not torn down before the upload reaches EOF.
+    if let Some(receiver) = receiver {
+        let stream = execute::canonical_value(receiver);
+        if matches!(
+            execute::get_property(&stream, HTTP2_RESPONSE_CLOSED_PROP),
+            Value::Boolean(true)
+        ) && !matches!(
+            execute::get_property(&stream, "__quenchHttp2CloseEmitted"),
+            Value::Boolean(true)
+        ) {
+            execute::set_property_in_place(
+                &stream,
+                "__quenchHttp2CloseEmitted",
+                Value::Boolean(true),
+            );
+            state.borrow_mut().net.pending_http2_events.push((
+                stream,
+                "close".into(),
+                Vec::new(),
+            ));
         }
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
@@ -2481,6 +2591,19 @@ pub(crate) fn compat_server_request_response(
     ] {
         execute::set_property_in_place(&response, name, value);
     }
+    // Host lifecycle queues may dispatch directly on the compatibility
+    // response (for example, `drain`); retain the transport identity on that
+    // view so scoped listeners resolve through the owning HTTP/2 socket.
+    execute::set_property_in_place(
+        &response,
+        "\0quench:http2-socket",
+        execute::get_property(stream, "\0quench:http2-socket"),
+    );
+    execute::set_property_in_place(
+        &response,
+        "\0quench:http2-stream-id",
+        execute::get_property(stream, "\0quench:http2-stream-id"),
+    );
     execute::set_property_in_place(
         &response,
         COMPAT_STATUS_CODE_PROP,
@@ -3876,7 +3999,13 @@ fn stream_respond(
         Value::Boolean(true)
     );
     if is_server {
-        decorate_http2_stream(state, receiver.unwrap_or(&Value::Undefined), true);
+        let stream = receiver.unwrap_or(&Value::Undefined);
+        if !matches!(
+            execute::get_property(stream, "_writableState"),
+            Value::Object(_) | Value::ObjectAlias(_)
+        ) {
+            decorate_http2_stream(state, stream, true);
+        }
         publish_http2_stream_diagnostic(
             state,
             receiver.unwrap_or(&Value::Undefined),

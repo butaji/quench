@@ -886,8 +886,47 @@ fn emit_http2_stream_close(
     ) {
         return Ok(());
     }
-    execute::set_property_in_place(&stream, "__quenchHttp2CloseEmitted", Value::Boolean(true));
-    execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
+    let request_writable_open = !matches!(
+        execute::get_property(&stream, "\0quench:http2:end-stream"),
+        Value::Boolean(true)
+    ) && !matches!(
+        execute::get_property(&stream, "writableEnded"),
+        Value::Boolean(true)
+    );
+    // An inbound END_STREAM closes only the readable/request half of a server
+    // stream.  The compatibility response is still allowed to write after
+    // the request body ends (and may do so from a later `drain` callback), so
+    // retain the stream's writable half until the response sends its own
+    // terminal END_STREAM.  RST_STREAM and already-ended responses remain
+    // terminal below.
+    let defer_server_close = server && emit_end && request_writable_open;
+    // A peer RST is terminal for both halves even when the request body was
+    // still open; only a clean response END_STREAM permits a full-duplex
+    // writable half-close to be deferred until the upload calls `end()`.
+    let defer_client_close = !server && emit_end && request_writable_open;
+    // Client response END_STREAM closes the readable side of the shared
+    // request/response stream. Keep the local writable side open until the
+    // upload sends its own END_STREAM (for example, a response can arrive
+    // while a file is still being piped into the request).
+    if defer_client_close {
+        execute::set_property_in_place(
+            &stream,
+            crate::modules::http2_util::HTTP2_RESPONSE_CLOSED_PROP,
+            Value::Boolean(true),
+        );
+    }
+    if !defer_client_close && !defer_server_close {
+        execute::set_property_in_place(&stream, "__quenchHttp2CloseEmitted", Value::Boolean(true));
+    }
+    if defer_server_close {
+        execute::set_property_in_place(
+            &stream,
+            "\0quench:http2-remote-end",
+            Value::Boolean(true),
+        );
+    } else {
+        execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
+    }
     crate::modules::http2_util::publish_http2_stream_diagnostic(
         state,
         &stream,
@@ -928,8 +967,10 @@ fn emit_http2_stream_close(
     if !server && response_listeners == 0 {
         execute::set_property_in_place(&stream, "destroyed", Value::Boolean(true));
     }
-    emit_socket_scoped(state, socket, &stream, "close", Vec::new())?;
-    crate::modules::http2_util::queue_compat_response_close(state, &stream);
+    if !defer_client_close && !defer_server_close {
+        emit_socket_scoped(state, socket, &stream, "close", Vec::new())?;
+        crate::modules::http2_util::queue_compat_response_close(state, &stream);
+    }
     Ok(())
 }
 
@@ -1195,6 +1236,19 @@ fn dispatch_http2_frames(
                     .http2_reset_codes
                     .contains_key(&(socket_id, stream_id));
                 crate::modules::http2_util::decorate_http2_stream(state, &stream, is_server);
+                if !is_server
+                    && matches!(
+                        execute::get_property(&stream, "\0quench:http2:end-stream"),
+                        Value::Boolean(true)
+                    )
+                {
+                    execute::set_property_in_place(&stream, "writableEnded", Value::Boolean(true));
+                    execute::set_property_in_place(
+                        &stream,
+                        "writableFinished",
+                        Value::Boolean(true),
+                    );
+                }
                 let mut headers = if !is_server {
                     match execute::get_property(&stream, "__quenchHttp2RequestDiagnostics") {
                         Value::Object(_) | Value::ObjectAlias(_) => {

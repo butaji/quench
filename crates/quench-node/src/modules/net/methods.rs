@@ -2832,7 +2832,7 @@ pub fn server_close_idle(
                                 .and_then(|session| session.streams.get(stream_id))
                                 .is_some_and(|stream| {
                                     stream.state
-                                        != crate::modules::http2_protocol::StreamState::Open
+                                        == crate::modules::http2_protocol::StreamState::Closed
                                 })
                     });
             let is_idle = socket.server_id == Some(id)
