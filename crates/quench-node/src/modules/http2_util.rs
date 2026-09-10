@@ -186,6 +186,7 @@ pub(crate) const HTTP2_RESPONSE_CLOSED_PROP: &str = "\0quench:http2-response-clo
 // that queued frame is flushed; retain this fact on the stream so the write
 // path can distinguish it from a genuine write-after-end.
 pub(crate) const HTTP2_PENDING_FINAL_PROP: &str = "\0quench:http2-pending-final";
+const HTTP2_RESPONSE_STARTED_PROP: &str = "\0quench:http2-response-started";
 const COMPAT_STATUS_MESSAGE_WARNING: &str =
     "Status message is not supported by HTTP/2 (RFC7540 8.1.2.4)";
 
@@ -2423,14 +2424,32 @@ fn stream_end(
             .net
             .pending_writes
             .push((socket.clone(), frame.encode()));
-        if let Some(stream) = receiver {
-            execute::set_property_in_place(stream, HTTP2_PENDING_FINAL_PROP, Value::Boolean(true));
+        let response_started = receiver.is_some_and(|stream| {
+            matches!(
+                execute::get_property(stream, HTTP2_RESPONSE_STARTED_PROP),
+                Value::Boolean(true)
+            )
+        }) || receiver.is_some_and(|stream| {
             let canonical = execute::canonical_value(stream);
-            execute::set_property_in_place(
-                &canonical,
-                HTTP2_PENDING_FINAL_PROP,
-                Value::Boolean(true),
-            );
+            matches!(
+                execute::get_property(&canonical, HTTP2_RESPONSE_STARTED_PROP),
+                Value::Boolean(true)
+            )
+        });
+        if !response_started {
+            if let Some(stream) = receiver {
+                execute::set_property_in_place(
+                    stream,
+                    HTTP2_PENDING_FINAL_PROP,
+                    Value::Boolean(true),
+                );
+                let canonical = execute::canonical_value(stream);
+                execute::set_property_in_place(
+                    &canonical,
+                    HTTP2_PENDING_FINAL_PROP,
+                    Value::Boolean(true),
+                );
+            }
         }
         if has_trailers {
             let block = {
@@ -4025,6 +4044,15 @@ fn stream_respond(
             block,
         ),
     )?;
+    if let Some(stream) = receiver {
+        execute::set_property_in_place(stream, HTTP2_RESPONSE_STARTED_PROP, Value::Boolean(true));
+        let canonical = execute::canonical_value(stream);
+        execute::set_property_in_place(
+            &canonical,
+            HTTP2_RESPONSE_STARTED_PROP,
+            Value::Boolean(true),
+        );
+    }
     let is_server = matches!(
         execute::get_property(&socket, crate::modules::http2_protocol::SERVER_MARKER),
         Value::Boolean(true)
