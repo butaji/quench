@@ -4401,6 +4401,13 @@ pub fn internal_binding(
     if name == "uv" {
         return Ok(crate::host::namespace_object_from_pairs(vec![
             ("UV_EAI_MEMORY".to_string(), Value::Number(-3001.0)),
+            // libuv exposes platform errno values as negative integers.  The
+            // private net tests use this fact to install a handle that
+            // reports an immediate connect failure.
+            (
+                "UV_ENETUNREACH".to_string(),
+                Value::Number(-(libc::ENETUNREACH as f64)),
+            ),
             ("UV_ENOENT".to_string(), Value::Number(-2.0)),
             ("UV_EEXIST".to_string(), Value::Number(-17.0)),
             ("UV_EBADF".to_string(), Value::Number(-9.0)),
