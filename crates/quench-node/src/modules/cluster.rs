@@ -154,6 +154,25 @@ impl ClusterState {
     }
 }
 
+/// Whether worker TCP servers should adopt a listener from the primary.
+/// `SCHED_NONE` deliberately gives each worker its own bind attempt; the
+/// resulting kernel error is observable by the worker's ordinary `error`
+/// listener. Keep the policy as a fact on the public cluster object so JS
+/// assignments remain the single source of truth without matching fixtures.
+pub(crate) fn shares_listening_handle(state: &Rc<RefCell<HostState>>) -> bool {
+    let global = quench_runtime::vm::current_global_object();
+    let public = execute::get_property(&global, "__nodeCluster");
+    let module = (!matches!(public, Value::Undefined | Value::Null))
+        .then_some(public)
+        .or_else(|| state.borrow().cluster.module.clone());
+    module.is_none_or(|module| {
+        !matches!(
+            execute::get_property(&module, "schedulingPolicy"),
+            Value::Number(policy) if policy == 1.0
+        )
+    })
+}
+
 /// Complete a child-process fork whose last referenced host handle has
 /// closed.  IPC itself is not a reason to keep a Node child alive once its
 /// event loop is idle; the parent observes the normal exit/close pair.
@@ -161,6 +180,14 @@ pub(crate) fn finish_idle_fork_process(
     state: &Rc<RefCell<HostState>>,
     scope: u64,
 ) -> Result<bool, VmError> {
+    // A forked entry can synchronously re-enter cluster.fork().  That nested
+    // worker bootstrap pumps the host while the parent scope is still active,
+    // before the caller has had a chance to attach its IPC listeners.  Never
+    // retire the scope currently executing; once fork() returns, the outer
+    // poll observes the final listener/handle state normally.
+    if state.borrow().cluster.process_scope() == scope {
+        return Ok(false);
+    }
     // `net::poll()` runs before nextTick/microtask draining. Keep a fork alive
     // whenever work already queued for that logical process can still settle
     // its exit status; otherwise a child that throws from nextTick is finalized
@@ -952,12 +979,18 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
     }
     let child_exit_code = state.borrow().process.exit_code.or_else(|| {
         let net_work = crate::modules::net::has_work(state);
+        let worker_has_message_listener = crate::modules::process::has_listener_in_scope(
+            state,
+            "message",
+            WORKER_EVENT_SCOPE_BASE + id,
+        );
         let guard = state.borrow();
         let waits_for_ipc = guard
             .process
             .other_handlers
             .iter()
             .any(|(event, _, _)| event == "message")
+            || worker_has_message_listener
             || guard.cluster.workers.get(&id).is_some_and(|worker| {
                 worker.child_listeners.contains_key("message")
                     || !worker.pending_messages.is_empty()
@@ -1834,6 +1867,26 @@ pub fn disconnect(
         if let Some(module) = module {
             state.borrow().event_loop.queue_microtask_with_receiver_scope(
                 crate::host::capability(SPEC_EVENTS_EMIT),
+                vec![
+                    Value::String("exit".into()),
+                    obj.clone(),
+                    Value::Number(code as f64),
+                    Value::Null,
+                ],
+                module,
+                0,
+            );
+        }
+    }
+    if let Some(cb) = args.first().filter(|v| quench_runtime::is_callable(v)) {
+        state
+            .borrow()
+            .event_loop
+            .queue_microtask(cb.clone(), Vec::new());
+    }
+    Ok(obj)
+}
+
 /// Complete a `process.exit()` raised by a callback that was registered by a
 /// logical cluster worker. Cluster workers share the host VM, so the normal
 /// top-level unwind must be consumed and converted into the parent-side
@@ -1907,27 +1960,6 @@ pub(crate) fn finish_worker_callback_exit(
             );
     }
 }
-
-                vec![
-                    Value::String("exit".into()),
-                    obj.clone(),
-                    Value::Number(code as f64),
-                    Value::Null,
-                ],
-                module,
-                0,
-            );
-        }
-    }
-    if let Some(cb) = args.first().filter(|v| quench_runtime::is_callable(v)) {
-        state
-            .borrow()
-            .event_loop
-            .queue_microtask(cb.clone(), Vec::new());
-    }
-    Ok(obj)
-}
-
 fn remove_worker(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
     let mut host = state.borrow_mut();
     host.cluster.workers.remove(&id);
@@ -2145,7 +2177,7 @@ pub fn send(
             ],
         );
     }
-    if process_result.is_err() {
+    if process_result.is_err() && child_exit.is_none() {
         if let Some(worker) = state.borrow_mut().cluster.workers.get_mut(&id) {
             worker.connected = false;
             worker.dead = true;
