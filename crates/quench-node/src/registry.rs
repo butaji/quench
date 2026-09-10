@@ -790,6 +790,12 @@ pub const SPEC_STREAM_READABLE_BUFFER: NodeSpec =
     NodeSpec::new("stream:Readable.readableBuffer", 2518);
 pub const SPEC_STREAM_WRITABLE_HAS_INSTANCE: NodeSpec =
     NodeSpec::new("stream:Writable.hasInstance", 2519);
+pub const SPEC_STREAM_READABLE_WRAP: NodeSpec =
+    NodeSpec::new("stream:Readable.wrap", 2520);
+pub const SPEC_STREAM_READABLE_WRAP_EVENT: NodeSpec =
+    NodeSpec::new("stream:Readable.wrap:event", 2521);
+pub const SPEC_STREAM_READABLE_WRAP_PROXY: NodeSpec =
+    NodeSpec::new("stream:Readable.wrap:proxy", 2522);
 node_api! {
     (SPEC_STREAM_FINISHED_EVENT, "stream:finished:event", 0x0C06),
     (SPEC_STREAM_FINISHED_ABORT, "stream:finished:abort", 0x0C07),
