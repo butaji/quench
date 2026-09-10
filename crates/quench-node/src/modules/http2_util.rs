@@ -1185,13 +1185,11 @@ pub(crate) fn decorate_http2_stream(state: &Rc<RefCell<HostState>>, stream: &Val
             .into(),
         ),
     )]);
-    let constructor_descriptor = host_api::object(vec![
-        ("value".into(), constructor),
-        ("writable".into(), Value::Boolean(true)),
-        ("enumerable".into(), Value::Boolean(false)),
-        ("configurable".into(), Value::Boolean(true)),
-    ]);
-    let _ = execute::define_property(stream.clone(), "constructor", constructor_descriptor);
+    // The stream is retained by transport maps and may already have aliases;
+    // define-property would publish a COW replacement that this host handle
+    // cannot return. An in-place own slot keeps the concrete constructor name
+    // visible through every diagnostic/event representative.
+    let _ = execute::set_property_in_place(stream, "constructor", constructor);
     // Duplex exposes lifecycle accessors on its prototype.  HTTP/2 streams
     // need writable own state so close/destroy transitions remain observable
     // even when the inherited accessor has no setter.
