@@ -1174,11 +1174,18 @@ const HTTP2_DIAG_ERROR_PROP: &str = "\0quench:http2:diagnostics:error";
 /// consumers.  A private constructor record avoids mutating the global
 /// `Duplex` constructor while retaining Node's concrete stream names.
 pub(crate) fn decorate_http2_stream(state: &Rc<RefCell<HostState>>, stream: &Value, server: bool) {
+    // Setting a prototype may publish a copy-on-write replacement. Resolve
+    // that live object before adding host-owned fields; otherwise properties
+    // installed after the prototype transition land on the stale view and
+    // disappear from the stream returned to JavaScript.
+    let mut stream = execute::canonical_value(stream);
     if let Some(module) = state.borrow().stream_module.clone() {
         let duplex = execute::get_property(&module, "Duplex");
         let prototype = execute::get_property(&duplex, "prototype");
         if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
-            let _ = execute::set_prototype_of(stream, &prototype);
+            if let Ok(updated) = execute::set_prototype_of(&stream, &prototype) {
+                stream = execute::canonical_value(&updated);
+            }
         }
     }
     let constructor = host_api::object(vec![(
@@ -1227,9 +1234,9 @@ pub(crate) fn decorate_http2_stream(state: &Rc<RefCell<HostState>>, stream: &Val
             ("configurable".into(), Value::Boolean(true)),
         ]),
     );
-    let _ = execute::set_property_in_place(stream, "bufferSize", Value::Number(0.0));
-    let _ = execute::set_property_in_place(stream, "writableEnded", Value::Boolean(false));
-    let _ = execute::set_property_in_place(stream, "writableFinished", Value::Boolean(false));
+    let _ = execute::set_property_in_place(&stream, "bufferSize", Value::Number(0.0));
+    let _ = execute::set_property_in_place(&stream, "writableEnded", Value::Boolean(false));
+    let _ = execute::set_property_in_place(&stream, "writableFinished", Value::Boolean(false));
     // Node keeps a stable stream state view even though priority signalling is
     // deprecated.  Build it once with the defaults shared by client and
     // server streams so callers never observe an absent/null state object.
@@ -1241,9 +1248,12 @@ pub(crate) fn decorate_http2_stream(state: &Rc<RefCell<HostState>>, stream: &Val
         ("localClose".into(), Value::Boolean(false)),
         ("remoteClose".into(), Value::Boolean(false)),
     ]);
-    let _ = execute::set_property_in_place(stream, "state", stream_state);
-    let _ =
-        execute::set_property_in_place(stream, "priority", session_capability("streamPriority"));
+    let _ = execute::set_property_in_place(&stream, "state", stream_state);
+    let _ = execute::set_property_in_place(
+        &stream,
+        "priority",
+        session_capability("streamPriority"),
+    );
 }
 
 fn http2_diag_name(server: bool, event: &str) -> String {
