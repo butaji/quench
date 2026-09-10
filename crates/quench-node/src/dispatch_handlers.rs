@@ -8992,6 +8992,20 @@ fn cp_run_host_child(
         .stderr(std::process::Stdio::piped())
         .spawn()
         .ok()?;
+    // The public ChildProcess starts with a bounded logical identity because
+    // OS launch is deferred to the spawn checkpoint. Once the real re-exec
+    // exists, its OS pid becomes the canonical observable identity. Trace
+    // events are emitted by that process and therefore carry this same pid.
+    let real_pid = process.id() as i64;
+    if let Value::Number(logical_pid) = execute::get_property(child, "pid") {
+        state
+            .borrow_mut()
+            .process
+            .alive_pids
+            .remove(&(logical_pid as i64));
+    }
+    state.borrow_mut().process.alive_pids.insert(real_pid);
+    execute::set_property_in_place(child, "pid", Value::Number(real_pid as f64));
     if !input.is_empty() {
         if let Some(mut stdin) = process.stdin.take() {
             let _ = stdin.write_all(input.as_bytes());
