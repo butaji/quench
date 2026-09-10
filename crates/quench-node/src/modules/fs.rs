@@ -3930,6 +3930,9 @@ pub fn create_read_stream(
             false,
         ))),
     );
+    // The descriptor is opened on a deferred host turn.  Expose that
+    // lifecycle state immediately and clear it only after the open edge.
+    execute::set_property_in_place(&stream, "pending", Value::Boolean(true));
     execute::set_property_in_place(&stream, READ_STREAM_OPENED_KEY, Value::Boolean(false));
     let initial_start = stream_number_option(&options, "start").unwrap_or(0);
     execute::set_property_in_place(
@@ -4386,6 +4389,7 @@ pub fn read_stream_open(
     if !custom_done && !opened {
         emit_stream_event(state, stream, "open", vec![fd])?;
         execute::set_property_in_place(stream, READ_STREAM_OPENED_KEY, Value::Boolean(true));
+        execute::set_property_in_place(stream, "pending", Value::Boolean(false));
     }
     let chunk = &bytes[start..chunk_end];
     let has_more = chunk_end < end;
@@ -4640,6 +4644,7 @@ fn read_stream_custom_open_result(
     execute::set_property_in_place(stream, READ_STREAM_CUSTOM_OWNED_KEY, Value::Boolean(true));
     execute::set_property_in_place(stream, READ_STREAM_OPENED_KEY, Value::Boolean(true));
     emit_stream_event(state, stream, "open", vec![Value::Number(fd_number as f64)])?;
+    execute::set_property_in_place(stream, "pending", Value::Boolean(false));
     let custom_fs = execute::get_property(stream, READ_STREAM_CUSTOM_FS_KEY);
     let custom_read = execute::get_property(&custom_fs, "read");
     if !quench_runtime::is_callable(&custom_read) {
