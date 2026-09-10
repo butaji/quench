@@ -3340,7 +3340,11 @@ fn stream_close(
         let canonical = execute::canonical_value(stream);
         execute::set_property_in_place(&canonical, "rstCode", Value::Number(code as f64));
         execute::set_property_in_place(&canonical, "closed", Value::Boolean(true));
-        if code != 0 {
+        // NGHTTP2_CANCEL is a clean caller-requested termination just like
+        // NO_ERROR. Node records the reset code but does not emit a stream
+        // error for either local clean close code; protocol/internal codes
+        // retain the normal ERR_HTTP2_STREAM_ERROR event.
+        if code != 0 && code != 8 {
             let message = format!(
                 "Stream closed with error code {}",
                 crate::modules::http2_facts::error_name(code).unwrap_or("UNKNOWN_ERROR")
