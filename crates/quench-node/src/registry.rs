@@ -794,6 +794,9 @@ node_api! {
     (SPEC_STREAM_FINISHED_EVENT, "stream:finished:event", 0x0C06),
     (SPEC_STREAM_FINISHED_ABORT, "stream:finished:abort", 0x0C07),
     (SPEC_STREAM_FINISHED_CLEANUP, "stream:finished:cleanup", 0x0C08),
+    (SPEC_STREAM_CONSTRUCTOR_ADAPTER, "stream:constructorAdapter", 0x0C09),
+    (SPEC_STREAM_GET_DEFAULT_HWM, "stream:getDefaultHighWaterMark", 0x0C0A),
+    (SPEC_STREAM_SET_DEFAULT_HWM, "stream:setDefaultHighWaterMark", 0x0C0B),
 }
 
 pub const SPEC_STRING_DECODER: NodeSpec = NodeSpec::new("string_decoder:StringDecoder", 0x0D00);
