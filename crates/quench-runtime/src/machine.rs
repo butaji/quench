@@ -1183,6 +1183,10 @@ pub struct CodeView<'a> {
 }
 
 impl<'a> CodeView<'a> {
+    pub(crate) fn range(self) -> CodeRange {
+        self.range
+    }
+
     #[inline]
     #[cfg(feature = "execution-trace")]
     pub(crate) fn trace_identity(self) -> (usize, u32) {
