@@ -51,32 +51,11 @@ fn require_stream_http_modules(
             ]));
         }
         if name == "stream/consumers" || name == "node:stream/consumers" {
-            return Some(quench_runtime::host_api::object(vec![
-                (
-                    "buffer".into(),
-                    capability_function(HostCapabilityKind::Custom(
-                        CapabilityName::StreamConsumerBuffer,
-                    )),
-                ),
-                (
-                    "bytes".into(),
-                    capability_function(HostCapabilityKind::Custom(
-                        CapabilityName::StreamConsumerBytes,
-                    )),
-                ),
-                (
-                    "text".into(),
-                    capability_function(HostCapabilityKind::Custom(
-                        CapabilityName::StreamConsumerText,
-                    )),
-                ),
-                (
-                    "json".into(),
-                    capability_function(HostCapabilityKind::Custom(
-                        CapabilityName::StreamConsumerJson,
-                    )),
-                ),
-            ]));
+            // Keep the early require path on the canonical Rust-owned module.
+            // This helper runs before the general module resolver, so returning
+            // a reduced namespace here silently dropped arrayBuffer/blob and
+            // made the public API depend on which require path reached it.
+            return crate::modules::stream::build_consumers(state).ok();
         }
         /*if name == "node:stream" || name == "stream" {
             let stream = capability_function(HostCapabilityKind::Custom(CapabilityName::Stream));
