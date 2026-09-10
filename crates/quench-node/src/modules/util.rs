@@ -4523,6 +4523,16 @@ fn inspect_object(value: &Value, depth: usize) -> String {
             format!("AbortSignal {{ aborted: {} }}", inspect_shallow(&aborted))
         };
     }
+    // Node's concrete HTTP/2 stream constructors intentionally share the
+    // generic inspect label, while `constructor.name` remains concrete for
+    // diagnostics and identity checks.
+    let inspect_constructor_name = constructor_name.as_deref().map(|name| {
+        if matches!(name, "ClientHttp2Stream" | "ServerHttp2Stream") {
+            "Http2Stream"
+        } else {
+            name
+        }
+    });
     let keys = inspect_enumerable_keys(value);
     let mut keys = keys;
     let plain_symbol = keys
@@ -4540,7 +4550,7 @@ fn inspect_object(value: &Value, depth: usize) -> String {
             } else {
                 "[Object: null prototype] {}".into()
             }
-        } else if let Some(name) = constructor_name {
+        } else if let Some(name) = inspect_constructor_name {
             format!("{name} {{}}")
         } else {
             "{}".into()
@@ -4611,7 +4621,7 @@ fn inspect_object(value: &Value, depth: usize) -> String {
         let name = constructor_name.unwrap_or_else(|| "Object".into());
         return format!("[{name}: null prototype] {{ {body} }}");
     }
-    let prefix = constructor_name
+    let prefix = inspect_constructor_name
         .map(|name| format!("{name} "))
         .unwrap_or_default();
     if visible_length(&body) > 120 || body.contains("<ref *") {
