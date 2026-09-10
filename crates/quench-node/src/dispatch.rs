@@ -147,6 +147,9 @@ const CAP_STREAM_TRANSFORM: u16 = 0x0C03;
 const CAP_STREAM_PIPELINE: u16 = 0x0C04;
 const CAP_STREAM_WRITABLE_HAS_INSTANCE: u16 =
     crate::registry::SPEC_STREAM_WRITABLE_HAS_INSTANCE.cap;
+const CAP_STREAM_READABLE_WRAP: u16 = crate::registry::SPEC_STREAM_READABLE_WRAP.cap;
+const CAP_STREAM_READABLE_WRAP_EVENT: u16 = crate::registry::SPEC_STREAM_READABLE_WRAP_EVENT.cap;
+const CAP_STREAM_READABLE_WRAP_PROXY: u16 = crate::registry::SPEC_STREAM_READABLE_WRAP_PROXY.cap;
 const CAP_STRING_DECODER: u16 = 0x0D00;
 const CAP_STRING_DECODER_WRITE: u16 = 0x0D01;
 const CAP_STRING_DECODER_END: u16 = 0x0D02;
@@ -937,6 +940,7 @@ fn events_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_MESSAGE_PORT_UNREF => event_target::message_port_unref,
         CAP_MESSAGE_PORT_HAS_REF => event_target::message_port_has_ref,
         CAP_MESSAGE_PORT_DELIVER => event_target::message_port_deliver,
+        CAP_MESSAGE_PORT_MOVE => crate::modules::worker_threads::move_message_port_to_context,
         CAP_NODE_EVENT_TARGET_ADD => event_target::node_add_event_listener,
         CAP_NODE_EVENT_TARGET_REMOVE => event_target::node_remove_listener,
         CAP_NODE_EVENT_TARGET_DISPATCH => event_target::dispatch_event,
@@ -1264,6 +1268,9 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_STREAM_CONSTRUCTOR_ADAPTER => crate::modules::stream::constructor_adapter,
         CAP_STREAM_GET_DEFAULT_HWM => crate::modules::stream::get_default_high_water_mark,
         CAP_STREAM_SET_DEFAULT_HWM => crate::modules::stream::set_default_high_water_mark,
+        CAP_STREAM_READABLE_WRAP => crate::modules::stream::readable_wrap,
+        CAP_STREAM_READABLE_WRAP_EVENT => crate::modules::stream::readable_wrap_event,
+        CAP_STREAM_READABLE_WRAP_PROXY => crate::modules::stream::readable_wrap_proxy,
         CAP_DNS_LOOKUP => dns_lookup,
         CAP_DNS_RESOLVE4 => dns_resolve4,
         CAP_HTTP_REQUEST => http_request,
