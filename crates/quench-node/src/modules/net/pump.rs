@@ -826,7 +826,7 @@ fn http2_capability(kind: &str) -> Value {
     )
 }
 
-fn http2_headers_value(fields: &[(Vec<u8>, Vec<u8>)]) -> Value {
+pub(crate) fn http2_headers_value(fields: &[(Vec<u8>, Vec<u8>)]) -> Value {
     let mut headers = host_api::object(Vec::new());
     for (name, value) in fields {
         let key = String::from_utf8_lossy(name).into_owned();
@@ -1603,6 +1603,34 @@ pub(crate) fn dispatch_http2_frames(
                         // host, so dispatch the event on both emitters.
                         emit_socket_scoped(state, socket, &socket_js, "stream", args)?;
                     }
+                } else if !is_server
+                    && fields.iter().any(|(name, value)| {
+                        name.as_slice() == b":status"
+                            && String::from_utf8_lossy(value)
+                                .parse::<u16>()
+                                .is_ok_and(|status| (100..200).contains(&status))
+                    })
+                {
+                    // Informational response HEADERS are delivered through
+                    // the client's `headers` event and do not start the
+                    // terminal response lifecycle.
+                    emit_socket_scoped(
+                        state,
+                        socket,
+                        &stream,
+                        "headers",
+                        vec![
+                            http2_headers_value(&fields),
+                            Value::Number(
+                                header_flags
+                                    .get(&stream_id)
+                                    .copied()
+                                    .unwrap_or(frame.header.flags)
+                                    as f64,
+                            ),
+                            http2_raw_headers_value(&fields),
+                        ],
+                    )?;
                 } else if fresh {
                     crate::modules::http2_util::publish_http2_stream_diagnostic(
                         state,
