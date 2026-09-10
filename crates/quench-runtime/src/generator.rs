@@ -527,8 +527,9 @@ fn push_nested_frame(generator: &GeneratorData, state: &GeneratorState) -> Resul
         return Ok(true);
     }
     if suspended_conditional(generator, state).is_some() {
-        push_branch_frame(generator, state)?;
-        return Ok(true);
+        if push_branch_frame(generator, state)? {
+            return Ok(true);
+        }
     }
     if suspended_private_scope(generator, state).is_some() {
         push_private_frame(generator, state)?;
