@@ -181,6 +181,10 @@ const COMPAT_RESPONSE_PROP: &str = "\0quench:http2-compat-response";
 // response can reach END_STREAM before the request's writable side has sent
 // its final DATA frame, so keep that half-close fact separate from `closed`.
 pub(crate) const HTTP2_RESPONSE_CLOSED_PROP: &str = "\0quench:http2-response-closed";
+/// Hidden resource identity attached to each HTTP/2 stream. The shared
+/// network emitter uses this identity to enter the stream's async context for
+/// response/data/end callbacks, just as it does for HTTP request streams.
+pub(crate) const HTTP2_ASYNC_RESOURCE_PROP: &str = "\0quench:http2:async-resource";
 // `Writable#end(chunk)` queues its terminal DATA frame for the next transport
 // tick. Node still permits writes made later in the same callback turn before
 // that queued frame is flushed; retain this fact on the stream so the write
@@ -195,6 +199,22 @@ fn http2_capability(kind: &str) -> Value {
         crate::host::capability_ref(crate::registry::SPEC_INTERNAL_HTTP2_UTIL),
         vec![Value::String(kind.into())],
     )
+}
+
+/// Give a host-created HTTP/2 stream the async identity that owns all of its
+/// wire callbacks. Stream objects are created before the peer response is
+/// read, so capturing the current resource here preserves the caller's
+/// AsyncLocalStorage context across the later response/data/end events.
+pub(crate) fn attach_stream_resource(
+    state: &Rc<RefCell<HostState>>,
+    stream: &Value,
+) -> Result<(), VmError> {
+    let resource = crate::modules::async_hooks::new_resource(
+        state,
+        &[Value::String("HTTP2STREAM".into())],
+    )?;
+    execute::set_property_in_place(stream, HTTP2_ASYNC_RESOURCE_PROP, resource);
+    Ok(())
 }
 
 pub(crate) fn coded_error(
@@ -1840,6 +1860,7 @@ fn session_request(
         "\0quench:http2-binding-request",
         Value::Boolean(binding_request.is_some()),
     );
+    attach_stream_resource(state, &stream)?;
     decorate_http2_stream(state, &stream, false);
     // Header-only requests have already ended their writable side when the
     // HEADERS frame carries END_STREAM. Mark that half closed before any peer
@@ -2742,6 +2763,10 @@ pub(crate) fn compat_server_request_response(
         // the host-only bridge rather than manufacturing a second wrapper.
         ("stream", stream.clone()),
         ("\0quench:http2-compat-stream", stream.clone()),
+        (
+            HTTP2_ASYNC_RESOURCE_PROP,
+            execute::get_property(stream, HTTP2_ASYNC_RESOURCE_PROP),
+        ),
         (COMPAT_HEADERS_PROP, host_api::object(Vec::new())),
         (COMPAT_TRAILERS_PROP, host_api::object(Vec::new())),
     ] {
@@ -4199,11 +4224,38 @@ fn session_close(
         "\0quench:http2-close-requested",
         Value::Boolean(true),
     );
-    let destroy = execute::get_property(socket, "destroy");
-    if quench_runtime::is_callable(&destroy) {
-        execute::call(&destroy, socket, &[])?;
-    }
+    // A graceful close allows all streams already in flight to finish. The
+    // transport is finalized by `maybe_finalize_session_close` once every
+    // stream has emitted its terminal close event.
+    maybe_finalize_session_close(_state, socket)?;
     Ok(socket.clone())
+}
+
+/// Finish a graceful ClientHttp2Session#close() after active streams drain.
+/// Calling `destroy()` eagerly would discard later DATA/END_STREAM frames and
+/// violate Node's guarantee that existing requests are allowed to complete.
+pub(crate) fn maybe_finalize_session_close(
+    _state: &Rc<RefCell<HostState>>,
+    socket: &Value,
+) -> Result<(), VmError> {
+    if !matches!(
+        execute::get_property(socket, "\0quench:http2-close-requested"),
+        Value::Boolean(true)
+    ) {
+        return Ok(());
+    }
+    let streams = execute::get_property(socket, "\0quench:http2-streams");
+    let active = execute::own_enumerable_keys(&streams).into_iter().any(|key| {
+        let stream = execute::get_property(&streams, &key);
+        !matches!(execute::get_property(&stream, "closed"), Value::Boolean(true))
+    });
+    if !active {
+        let destroy = execute::get_property(socket, "destroy");
+        if quench_runtime::is_callable(&destroy) {
+            execute::call(&destroy, socket, &[])?;
+        }
+    }
+    Ok(())
 }
 
 fn session_invalid_method(receiver: Option<&Value>) -> Result<Value, VmError> {
