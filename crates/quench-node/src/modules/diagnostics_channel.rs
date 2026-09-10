@@ -139,16 +139,28 @@ pub fn channel(
     if let Some(object) = existing {
         return Ok(object);
     }
-    let mut host = state.borrow_mut();
-    // A static subscribe()/unsubscribe() pair can legitimately be the only
-    // owner between calls.  Re-materialize the same channel identity from
-    // its retained data instead of allocating a new data record: otherwise
-    // unsubscribe would be unable to reach the callback added by subscribe.
-    if let Some((id, data, weak)) = host.diagnostics.channels.get_mut(&key) {
-        let object = channel_object(*id, data.borrow().name.clone());
-        *weak = weak_object(&object);
+    // If the last JS owner has gone away, retain the channel's semantic data
+    // by id while rebuilding a fresh object.  Do this from an immutable
+    // snapshot so a host callback that already holds an immutable state borrow
+    // can still publish to an active static subscription; refreshing the weak
+    // index is only an optimization and can be skipped during re-entry.
+    let rematerialized = {
+        let host = state.borrow();
+        host.diagnostics
+            .channels
+            .get(&key)
+            .map(|(id, data, _)| (*id, data.borrow().name.clone()))
+    };
+    if let Some((id, channel_name)) = rematerialized {
+        let object = channel_object(id, channel_name);
+        if let Ok(mut host) = state.try_borrow_mut() {
+            if let Some((_, _, weak)) = host.diagnostics.channels.get_mut(&key) {
+                *weak = weak_object(&object);
+            }
+        }
         return Ok(object);
     }
+    let mut host = state.borrow_mut();
     let id = host.diagnostics.next_id;
     host.diagnostics.next_id += 1;
     let data = Rc::new(RefCell::new(ChannelData::new(name.clone())));
@@ -1012,6 +1024,25 @@ pub(crate) fn publish_named(
     name: &str,
     message: Value,
 ) -> Result<(), VmError> {
+    // Host-owned producers publish opportunistically: when user code has not
+    // registered a subscriber, avoid materializing a channel just to discard
+    // the message.  Besides avoiding unbounded registry growth, this keeps
+    // the publication edge safe when a transport callback re-enters the host
+    // while its state is already borrowed.
+    let active = {
+        let host = state.borrow();
+        host.diagnostics
+            .channels
+            .get(name)
+            .map(|(_, data, _)| {
+                let data = data.borrow();
+                !data.subscribers.is_empty() || !data.stores.is_empty()
+            })
+            .unwrap_or(false)
+    };
+    if !active {
+        return Ok(());
+    }
     let channel = channel(state, None, &[Value::String(name.to_owned())])?;
     publish(state, Some(&channel), &[message])?;
     Ok(())
