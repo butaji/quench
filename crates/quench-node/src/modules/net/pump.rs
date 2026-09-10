@@ -1395,7 +1395,11 @@ fn dispatch_http2_frames(
                 // belongs to this HEADERS frame only when it is set on the
                 // frame itself; using the aggregate here would emit a
                 // duplicate `end`/`close` before DATA is dispatched.
-                if frame.header.flags & 1 != 0 {
+                // A same-read RST_STREAM supersedes END_STREAM on the
+                // request HEADERS. Defer close until the RST branch so the
+                // peer observes the protocol error before close, matching
+                // Node's stream lifecycle ordering.
+                if frame.header.flags & 1 != 0 && !batch_resets.contains_key(&stream_id) {
                     emit_http2_stream_close(state, socket, &stream, is_server, true)?;
                 }
             }
