@@ -1509,7 +1509,22 @@ fn apply_process_env(command: &mut std::process::Command) {
     let global = quench_runtime::vm::current_global_object();
     let process = execute::get_property(&global, "process");
     let env = execute::get_property(&process, "env");
-    let values = execute::own_enumerable_keys(&env)
+    // `process.env` is a JS Proxy.  The canonical key list is maintained by
+    // its bootstrap traps so assignments made after startup remain visible
+    // to host children even when the VM cannot enumerate Proxy own keys.
+    let keys = match execute::get_property(&global, "__quench_env_keys") {
+        Value::Array(values) => (0..values.logical_len())
+            .filter_map(|index| {
+                execute::to_js_string(&execute::get_property(
+                    &Value::Array(values.clone()),
+                    &index.to_string(),
+                ))
+                .ok()
+            })
+            .collect(),
+        _ => execute::own_enumerable_keys(&env),
+    };
+    let values = keys
         .into_iter()
         .filter(|key| !key.starts_with('\0') && !key.starts_with("QUENCH_"))
         .filter_map(|key| {
