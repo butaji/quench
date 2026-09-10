@@ -2185,6 +2185,10 @@ pub(crate) fn compat_server_request_response(
         ("writableEnded", Value::Boolean(false)),
         ("destroyed", Value::Boolean(false)),
         ("closed", Value::Boolean(false)),
+        // Node exposes the underlying ServerHttp2Stream through the
+        // compatibility response. Keep this as the same identity used by
+        // the host-only bridge rather than manufacturing a second wrapper.
+        ("stream", stream.clone()),
         ("\0quench:http2-compat-stream", stream.clone()),
     ] {
         execute::set_property_in_place(&response, name, value);
