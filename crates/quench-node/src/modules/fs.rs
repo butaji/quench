@@ -3561,12 +3561,9 @@ pub fn build() -> Value {
         ("enumerable".into(), Value::Boolean(false)),
         ("configurable".into(), Value::Boolean(false)),
     ]);
-    let write_stream_proto = execute::define_property(
-        write_stream_proto,
-        "autoClose",
-        auto_close_descriptor,
-    )
-    .unwrap_or_else(|_| host_api::object(Vec::new()));
+    let write_stream_proto =
+        execute::define_property(write_stream_proto, "autoClose", auto_close_descriptor)
+            .unwrap_or_else(|_| host_api::object(Vec::new()));
     let _ = execute::set_property_in_place(&write_stream, "prototype", write_stream_proto);
     props.extend([
         ("createReadStream", create_read_stream),
@@ -3720,6 +3717,7 @@ pub fn create_read_stream(
         .cloned()
         .unwrap_or_else(|| host_api::object(Vec::new()));
     parse_options(Some(&options))?;
+    validate_stream_fs_methods(&options, &["open", "close", "read"])?;
     validate_stream_bounds(&options)?;
     let raw_fd = execute::get_property(&options, "fd");
     let handle_fd = file_handle_descriptor(&raw_fd)?;
@@ -4760,6 +4758,7 @@ pub fn validate_write_stream_options(
 ) -> Result<Value, VmError> {
     let parsed_options = parse_options(args.get(1))?;
     let raw_options = args.get(1).unwrap_or(&Value::Undefined);
+    validate_stream_fs_methods(raw_options, &["open", "close", "write", "writev"])?;
     validate_stream_bounds(raw_options)?;
     let start = validate_stream_endpoint(raw_options, "start")?;
     let flush = execute::get_property(raw_options, "flush");
@@ -4807,13 +4806,13 @@ pub fn validate_write_stream_options(
         option_fs
     } else {
         state
-        .borrow()
-        .module_cache
-        .get("__quench_fs_mocked")
-        .cloned()
-        .or_else(|| state.borrow().module_cache.get("fs").cloned())
-        .or_else(|| receiver.cloned())
-        .unwrap_or_else(build)
+            .borrow()
+            .module_cache
+            .get("__quench_fs_mocked")
+            .cloned()
+            .or_else(|| state.borrow().module_cache.get("fs").cloned())
+            .or_else(|| receiver.cloned())
+            .unwrap_or_else(build)
     };
     let module_receiver = state
         .borrow()
@@ -4837,15 +4836,13 @@ pub fn validate_write_stream_options(
         .cloned();
     let stream_namespace = crate::modules::stream::build(state)?;
     let writable = execute::get_property(&stream_namespace, "Writable");
-    let writable_options = host_api::object(vec![
-        (
-            "autoDestroy".into(),
-            Value::Boolean(!matches!(
-                execute::get_property(raw_options, "autoClose"),
-                Value::Boolean(false)
-            )),
-        ),
-    ]);
+    let writable_options = host_api::object(vec![(
+        "autoDestroy".into(),
+        Value::Boolean(!matches!(
+            execute::get_property(raw_options, "autoClose"),
+            Value::Boolean(false)
+        )),
+    )]);
     let mut stream = if quench_runtime::is_callable(&writable) {
         execute::construct_value(&writable, &[writable_options])
             .unwrap_or(crate::modules::events::new_emitter_object(state)?)
@@ -4906,14 +4903,11 @@ pub fn validate_write_stream_options(
     let initial_position = start
         .map(|value| Value::Number(value as f64))
         .unwrap_or(Value::Null);
-    let _ = execute::set_property_in_place(
-        &stream,
-        WRITE_STREAM_POSITION_KEY,
-        initial_position,
-    );
-    if let Some(handle) = args.first().filter(|value| {
-        file_handle_descriptor(value).ok().flatten().is_some()
-    }) {
+    let _ = execute::set_property_in_place(&stream, WRITE_STREAM_POSITION_KEY, initial_position);
+    if let Some(handle) = args
+        .first()
+        .filter(|value| file_handle_descriptor(value).ok().flatten().is_some())
+    {
         let _ = execute::set_property_in_place(&stream, WRITE_STREAM_HANDLE_KEY, handle.clone());
     } else if matches!(raw_fd, Value::Object(_) | Value::ObjectAlias(_)) {
         let _ = execute::set_property_in_place(&stream, WRITE_STREAM_HANDLE_KEY, raw_fd);
@@ -4958,6 +4952,30 @@ pub fn validate_write_stream_options(
         ]),
     )
     .unwrap_or(stream))
+}
+
+/// Validate caller-supplied filesystem hooks before opening a stream.  Node
+/// treats these hooks as an API boundary: a present non-callable value is a
+/// synchronous `ERR_INVALID_ARG_TYPE`, even when the stream would otherwise
+/// be able to fall back to the native filesystem implementation.  Keeping the
+/// check in the shared Rust constructor makes ReadStream and WriteStream agree
+/// without teaching individual I/O paths about option-shape errors.
+fn validate_stream_fs_methods(options: &Value, methods: &[&str]) -> Result<(), VmError> {
+    let fs = execute::get_property(options, "fs");
+    if !matches!(fs, Value::Object(_) | Value::ObjectAlias(_) | Value::Proxy(_)) {
+        return Ok(());
+    }
+    for method in methods {
+        let value = execute::get_property(&fs, method);
+        if matches!(value, Value::Undefined) || quench_runtime::is_callable(&value) {
+            continue;
+        }
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"options.fs.{method}\" property must be of type function.{}",
+            crate::modules::util::invalid_arg_received(&value)
+        )));
+    }
+    Ok(())
 }
 
 pub fn write_stream_write(
@@ -5146,7 +5164,11 @@ pub fn write_stream_open(
         execute::set_property_in_place(stream, WRITE_STREAM_OPENED_KEY, Value::Boolean(true));
         let callback = execute::get_property(stream, WRITE_STREAM_FINAL_CALLBACK_KEY);
         if quench_runtime::is_callable(&callback) {
-            execute::set_property_in_place(stream, WRITE_STREAM_FINAL_CALLBACK_KEY, Value::Undefined);
+            execute::set_property_in_place(
+                stream,
+                WRITE_STREAM_FINAL_CALLBACK_KEY,
+                Value::Undefined,
+            );
             execute::call(&callback, &Value::Undefined, &[])?;
         }
     }
@@ -5164,7 +5186,9 @@ pub fn write_stream_final(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let stream = receiver.ok_or(VmError::NotCallable)?;
-    let callback = args.first().filter(|value| quench_runtime::is_callable(value));
+    let callback = args
+        .first()
+        .filter(|value| quench_runtime::is_callable(value));
     let Some(callback) = callback else {
         return Ok(Value::Undefined);
     };
