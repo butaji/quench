@@ -77,23 +77,25 @@ fn run_loop_after_yield(
     generator: &GeneratorData,
     frame: &LoopFrameResume,
 ) -> Result<crate::completion::Completion, VmError> {
-    let mut body = frame.body_resume;
+    // Branch jumps are encoded relative to the complete loop body. Retain
+    // that coordinate space across suspension and resume from an explicit PC;
+    // slicing at body_resume would reinterpret those jump targets from zero.
+    let mut body_pc = frame
+        .body_resume
+        .start
+        .checked_sub(frame.body.start)
+        .ok_or(VmError::MissingReturn)? as usize;
     loop {
-        let step = execute_loop_body_range(generator, body)?;
+        let step = execute_loop_body_range(generator, frame.body, body_pc)?;
         if step.completion.is_suspension() {
-            if let Some(src) = loop_suspension_destination(generator, body, &step) {
-                update_loop_body_resume(generator, body, step.pc, src)?;
+            if let Some(src) = loop_suspension_destination(generator, frame.body, &step) {
+                update_loop_body_resume(generator, frame.body, step.pc, src)?;
                 return Ok(step.completion);
             }
             return Err(VmError::MissingReturn);
         }
         match step.completion {
             crate::completion::Completion::Normal => {}
-            crate::completion::Completion::Return(value)
-                if step.pc >= body.end.saturating_sub(body.start) as usize =>
-            {
-                let _ = value;
-            }
             crate::completion::Completion::Return(value) => {
                 return Ok(crate::completion::Completion::Return(value));
             }
@@ -112,7 +114,7 @@ fn run_loop_after_yield(
         if !test {
             return Ok(crate::completion::Completion::Normal);
         }
-        body = frame.body;
+        body_pc = 0;
     }
 }
 
@@ -148,6 +150,7 @@ fn loop_suspension_destination(
 fn execute_loop_body_range(
     generator: &GeneratorData,
     range: crate::machine::CodeRange,
+    pc: usize,
 ) -> Result<crate::vm::GeneratorStep, VmError> {
     let store = generator
         .machine
@@ -162,7 +165,7 @@ fn execute_loop_body_range(
             code,
             registers,
             environment,
-            0,
+            pc,
             crate::completion::Completion::Normal,
         )
     })
