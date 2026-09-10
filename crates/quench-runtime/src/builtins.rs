@@ -59,7 +59,11 @@ pub(crate) fn async_iterator_prototype_in(realm: crate::ops::RealmId) -> Value {
             ),
             (
                 "\0prototype".to_string(),
-                crate::vm::realm_intrinsic_for(realm, Builtin::IteratorPrototype),
+                // AsyncIterator.prototype is not a synchronous iterator
+                // prototype. Inheriting Iterator.prototype incorrectly gives
+                // async generators a Symbol.iterator method, causing APIs
+                // such as stream/iter.fromSync() to accept them.
+                crate::vm::realm_intrinsic_for(realm, Builtin::ObjectPrototype),
             ),
         ])));
         for (key, method) in [
