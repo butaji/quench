@@ -2285,6 +2285,10 @@ fn stream_end(
                 execute::get_property(stream, "\0quench:http2-end-dispatch"),
                 Value::Boolean(true)
             )
+            && !matches!(
+                execute::get_property(stream, "\0quench:http2-remote-end"),
+                Value::Boolean(true)
+            )
             && !writable_after_response_close(stream, transport_closed)
     }) {
         if let Some(stream) = receiver {
