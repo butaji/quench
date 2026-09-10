@@ -1730,7 +1730,11 @@ fn session_request(
             let name = execute::to_js_string(&execute::get_property(headers, &index.to_string()))?;
             let value =
                 execute::to_js_string(&execute::get_property(headers, &(index + 1).to_string()))?;
-            let wire_name = name.to_ascii_lowercase();
+            let wire_name = if name.starts_with(':') {
+                name.to_ascii_lowercase()
+            } else {
+                name
+            };
             fields.push((wire_name.into_bytes(), value.into_bytes()));
             index += 2;
         }
