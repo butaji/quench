@@ -86,6 +86,10 @@ fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
     if name == "stream_wrap" {
         return Ok(quench_runtime::host_api::object(vec![
             (
+                "ShutdownWrap".into(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_JS_STREAM),
+            ),
+            (
                 "streamBaseState".into(),
                 quench_runtime::host_api::object(Vec::new()),
             ),

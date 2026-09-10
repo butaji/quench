@@ -4428,6 +4428,10 @@ pub fn internal_binding(
     }
     if name == "stream_wrap" {
         return Ok(crate::host::namespace_object_from_pairs(vec![
+            (
+                "ShutdownWrap".to_string(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_JS_STREAM),
+            ),
             ("streamBaseState".to_string(), host_api::object(Vec::new())),
             (
                 "kReadBytesOrError".to_string(),
@@ -4789,7 +4793,15 @@ pub fn internal_js_stream_construct(
         .unwrap_or_else(|| crate::host::namespace_object_from_pairs(Vec::new()));
     let handle = crate::host::namespace_object_from_pairs(vec![
         (
+            "\0quench:js-stream-handle".into(),
+            Value::Boolean(true),
+        ),
+        (
             "asyncReset".into(),
+            crate::host::capability(crate::registry::SPEC_INTERNAL_JS_STREAM),
+        ),
+        (
+            "shutdown".into(),
             crate::host::capability(crate::registry::SPEC_INTERNAL_JS_STREAM),
         ),
         (
@@ -4806,9 +4818,30 @@ pub fn internal_js_stream_construct(
 
 pub fn internal_js_stream_call(
     state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
+    receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    // Native stream shutdown requests complete through the request object's
+    // callback. Keep the transition on the shared handle capability so both
+    // StreamWrap and ShutdownWrap use one host-owned operation.
+    if receiver.is_some_and(|value| {
+        matches!(
+            execute::get_property(value, "\0quench:js-stream-handle"),
+            Value::Boolean(true)
+        )
+    }) {
+        if let Some(request) = args.first() {
+            let callback = execute::get_property(request, "oncomplete");
+            if quench_runtime::is_callable(&callback) {
+                execute::call(
+                    &callback,
+                    request,
+                    &[Value::Number(-1.0)],
+                )?;
+                return Ok(Value::Undefined);
+            }
+        }
+    }
     if let Some(resource) = args.first().filter(|value| {
         matches!(execute::get_property(value, "type"), Value::String(_))
             && matches!(execute::get_property(value, "handle"), Value::Object(_))
