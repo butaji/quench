@@ -173,9 +173,9 @@ fn push_iterator_frame(generator: &GeneratorData, state: &GeneratorState) -> Res
     Ok(true)
 }
 
-fn push_branch_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(), VmError> {
+fn push_branch_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<bool, VmError> {
     if generator.machine.borrow().frame_count() != 0 {
-        return Ok(());
+        return Ok(false);
     }
     let Some(branch) = generator
         .function
@@ -183,7 +183,7 @@ fn push_branch_frame(generator: &GeneratorData, state: &GeneratorState) -> Resul
         .code()
         .and_then(|code| code.cold_at(machine_pc(generator).wrapping_sub(1)))
     else {
-        return Ok(());
+        return Ok(false);
     };
     let (condition, consequent, alternate, destination) = match branch {
         Op::Conditional {
@@ -197,7 +197,7 @@ fn push_branch_frame(generator: &GeneratorData, state: &GeneratorState) -> Resul
             then_ops,
             else_ops,
         } => (condition, then_ops, else_ops, None),
-        _ => return Ok(()),
+        _ => return Ok(false),
     };
     let test = crate::execute::read_register(&registers(generator), *condition)?;
     let branch = if crate::execute::is_truthy(&test) {
@@ -206,16 +206,16 @@ fn push_branch_frame(generator: &GeneratorData, state: &GeneratorState) -> Resul
         alternate
     };
     let Some(ops) = branch.code() else {
-        return Ok(());
+        return Ok(false);
     };
     let Some((index, op)) =
         ops.find_cold(|op| matches!(op, Op::Yield { .. } | Op::Await { .. }))
     else {
-        return Ok(());
+        return Ok(false);
     };
     let src = match op {
         Op::Yield { src } | Op::Await { dst: src, .. } => *src,
-        _ => return Ok(()),
+        _ => return Ok(false),
     };
     let resume = parent_resume_range(generator, state);
     let branch_resume = crate::machine::CodeRange {
@@ -232,7 +232,8 @@ fn push_branch_frame(generator: &GeneratorData, state: &GeneratorState) -> Resul
             dst: destination,
             yield_dst: src,
         },
-    )
+    )?;
+    Ok(true)
 }
 
 fn push_try_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(), VmError> {
