@@ -1987,6 +1987,11 @@ fn remove_worker(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
     host.cluster.workers.remove(&id);
     host.cluster.worker_listen_slots.remove(&id);
     drop(host);
+    remove_public_worker(state, id);
+    let _ = execute::set_property_in_place(worker, "state", Value::String("dead".into()));
+}
+
+fn remove_public_worker(state: &Rc<RefCell<HostState>>, id: u64) {
     let Some(module) = state.borrow().cluster.module.clone() else {
         return;
     };
@@ -1995,7 +2000,6 @@ fn remove_worker(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
     };
     let (workers, _) = execute::delete_property(workers, &id.to_string());
     let _ = execute::set_property_in_place(&module, "workers", workers);
-    let _ = execute::set_property_in_place(worker, "state", Value::String("dead".into()));
 }
 
 /// Convert an uncaught exception in a forked logical process into that
@@ -2302,7 +2306,12 @@ pub fn disconnect_all(
             .object
             .clone();
         let _ = disconnect(state, Some(&obj), &[])?;
-        remove_worker(state, id, &obj);
+        // Keep the host record until the worker-side disconnect turn has run:
+        // timers and other scoped callbacks still need the event-scope to
+        // worker mapping during teardown.  The public collection, however,
+        // becomes empty as soon as `cluster.disconnect()` starts, matching
+        // the state observed by its completion callback.
+        remove_public_worker(state, id);
     }
     if let Some(cb) = args.first().filter(|v| quench_runtime::is_callable(v)) {
         state
