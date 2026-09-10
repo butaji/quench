@@ -1730,11 +1730,7 @@ fn session_request(
             let name = execute::to_js_string(&execute::get_property(headers, &index.to_string()))?;
             let value =
                 execute::to_js_string(&execute::get_property(headers, &(index + 1).to_string()))?;
-            let wire_name = if name.starts_with(':') {
-                name.to_ascii_lowercase()
-            } else {
-                name
-            };
+            let wire_name = name.to_ascii_lowercase();
             fields.push((wire_name.into_bytes(), value.into_bytes()));
             index += 2;
         }
@@ -1797,16 +1793,6 @@ fn session_request(
     if !fields.iter().any(|(name, _)| name.as_slice() == b":method") {
         fields.push((b":method".to_vec(), b"GET".to_vec()));
     }
-    if !fields.iter().any(|(name, _)| name.as_slice() == b":path")
-        && method.as_slice() != b"CONNECT"
-    {
-        fields.push((b":path".to_vec(), b"/".to_vec()));
-    }
-    if !fields.iter().any(|(name, _)| name.as_slice() == b":scheme")
-        && method.as_slice() != b"CONNECT"
-    {
-        fields.push((b":scheme".to_vec(), b"http".to_vec()));
-    }
     if !fields
         .iter()
         .any(|(name, _)| name.as_slice() == b":authority")
@@ -1819,6 +1805,16 @@ fn session_request(
             },
         };
         fields.push((b":authority".to_vec(), host.into_bytes()));
+    }
+    if !fields.iter().any(|(name, _)| name.as_slice() == b":scheme")
+        && method.as_slice() != b"CONNECT"
+    {
+        fields.push((b":scheme".to_vec(), b"http".to_vec()));
+    }
+    if !fields.iter().any(|(name, _)| name.as_slice() == b":path")
+        && method.as_slice() != b"CONNECT"
+    {
+        fields.push((b":path".to_vec(), b"/".to_vec()));
     }
     // HTTP/2 requires pseudo-headers to precede ordinary fields on the wire.
     // Keep the same canonical order in the decoded `rawHeaders` sequence;
@@ -1902,6 +1898,9 @@ fn session_request(
         block,
     );
     let stream = crate::modules::events::new_emitter_object(state)?;
+    let sent_headers = sent_headers_from_input(headers);
+    ensure_sent_headers_fields(&sent_headers, &fields);
+    execute::set_property_in_place(&stream, "sentHeaders", sent_headers);
     execute::set_property_in_place(&stream, "\0quench:http2-socket", socket.clone());
     execute::set_property_in_place(
         &stream,
@@ -4240,7 +4239,10 @@ fn stream_respond(
         None | Some(Value::Undefined) => &default_headers,
         Some(value) => value,
     };
-    if !matches!(headers, Value::Object(_) | Value::ObjectAlias(_)) {
+    if !matches!(
+        headers,
+        Value::Object(_) | Value::ObjectAlias(_) | Value::Array(_)
+    ) {
         return Err(coded_error(
             quench_runtime::ops::Builtin::TypeError,
             "ERR_INVALID_ARG_TYPE",
@@ -4248,19 +4250,38 @@ fn stream_respond(
         ));
     }
     let mut fields = Vec::new();
-    for key in execute::own_enumerable_keys(headers) {
-        let name = key.to_ascii_lowercase().into_bytes();
-        let raw = execute::get_property(headers, &key);
-        if matches!(raw, Value::Array(_)) {
-            for item in execute::own_enumerable_keys(&raw) {
-                let value = execute::to_js_string(&execute::get_property(&raw, &item))?;
-                fields.push((name.clone(), value.into_bytes()));
+    match headers {
+        Value::Object(_) | Value::ObjectAlias(_) => {
+            for key in execute::own_enumerable_keys(headers) {
+                let name = key.to_ascii_lowercase().into_bytes();
+                let raw = execute::get_property(headers, &key);
+                if matches!(raw, Value::Array(_)) {
+                    for item in execute::own_enumerable_keys(&raw) {
+                        let value = execute::to_js_string(&execute::get_property(&raw, &item))?;
+                        fields.push((name.clone(), value.into_bytes()));
+                    }
+                } else {
+                    let value = execute::to_js_string(&raw)?;
+                    fields.push((name, value.into_bytes()));
+                }
             }
-        } else {
-            let value = execute::to_js_string(&raw)?;
-            fields.push((name, value.into_bytes()));
         }
+        Value::Array(items) => {
+            let length = items.logical_len();
+            let mut index = 0;
+            while index + 1 < length {
+                let name = execute::to_js_string(&execute::get_property(headers, &index.to_string()))?;
+                let value = execute::to_js_string(&execute::get_property(
+                    headers,
+                    &(index + 1).to_string(),
+                ))?;
+                fields.push((name.to_ascii_lowercase().into_bytes(), value.into_bytes()));
+                index += 2;
+            }
+        }
+        _ => unreachable!(),
     }
+    let had_status = fields.iter().any(|(name, _)| name.as_slice() == b":status");
     // HTTP/2 response status is constrained to the three-digit HTTP status
     // space. Validate the semantic fact before HPACK encoding so malformed
     // values cannot reach the wire (and every caller gets Node's stable
@@ -4293,6 +4314,31 @@ fn stream_respond(
     );
     if send_date && !fields.iter().any(|(name, _)| name.as_slice() == b"date") {
         fields.push((b"date".to_vec(), b"Thu, 01 Jan 1970 00:00:00 GMT".to_vec()));
+    }
+    let mut pseudo = Vec::new();
+    let mut ordinary = Vec::new();
+    for field in fields.drain(..) {
+        if field.0.first() == Some(&b':') {
+            pseudo.push(field);
+        } else {
+            ordinary.push(field);
+        }
+    }
+    pseudo.extend(ordinary);
+    fields = pseudo;
+    if let Some(stream) = receiver {
+        let sent_headers = sent_headers_from_input(headers);
+        ensure_sent_headers_fields(&sent_headers, &fields);
+        if !had_status {
+            let _ = execute::set_property_in_place(
+                &sent_headers,
+                ":status",
+                Value::Number(200.0),
+            );
+        }
+        execute::set_property_in_place(stream, "sentHeaders", sent_headers.clone());
+        let canonical = execute::canonical_value(stream);
+        execute::set_property_in_place(&canonical, "sentHeaders", sent_headers);
     }
     let block = {
         let mut host = state.borrow_mut();
@@ -5349,6 +5395,77 @@ fn header_values(value: &Value) -> Vec<String> {
             .filter_map(|key| execute::to_js_string(&execute::get_property(value, &key)).ok())
             .collect(),
         _ => execute::to_js_string(value).ok().into_iter().collect(),
+    }
+}
+
+fn append_sent_header(target: &Value, name: &str, value: Value) {
+    let previous = execute::get_property(target, name);
+    let next = match previous {
+        Value::Undefined => value,
+        Value::Array(_) => {
+            let length = execute::get_property(&previous, "length");
+            if let Value::Number(length) = length {
+                let _ = execute::set_property_in_place(&previous, &length.to_string(), value);
+            }
+            previous
+        }
+        other => host_api::array(vec![other, value]),
+    };
+    let _ = execute::set_property_in_place(target, name, next);
+}
+
+/// Build Node's sent-header snapshot from the caller's input. The wire fields
+/// are normalized to lowercase, but this observable snapshot retains the
+/// caller's spelling and duplicate values.
+fn sent_headers_from_input(headers: &Value) -> Value {
+    let result = host_api::object(Vec::new());
+    let result = execute::set_prototype_of(&result, &Value::Null).unwrap_or(result);
+    match headers {
+        Value::Object(_) | Value::ObjectAlias(_) => {
+            for key in execute::own_enumerable_keys(headers) {
+                for value in header_values(&execute::get_property(headers, &key)) {
+                    append_sent_header(&result, &key, Value::String(value));
+                }
+            }
+        }
+        Value::Array(items) => {
+            let mut index = 0;
+            while index + 1 < items.logical_len() {
+                let key = execute::to_js_string(&execute::get_property(headers, &index.to_string()))
+                    .unwrap_or_default();
+                let value = execute::to_js_string(&execute::get_property(
+                    headers,
+                    &(index + 1).to_string(),
+                ))
+                .unwrap_or_default();
+                append_sent_header(&result, &key, Value::String(value));
+                index += 2;
+            }
+        }
+        _ => {}
+    }
+    result
+}
+
+fn ensure_sent_headers_fields(target: &Value, fields: &[(Vec<u8>, Vec<u8>)]) {
+    for (name, value) in fields {
+        let key = String::from_utf8_lossy(name).into_owned();
+        let exists = execute::own_enumerable_keys(target)
+            .into_iter()
+            .any(|existing| existing.eq_ignore_ascii_case(&key));
+        if !exists {
+            let value = if key == ":status" {
+                String::from_utf8_lossy(value)
+                    .parse::<f64>()
+                    .map(Value::Number)
+                    .unwrap_or_else(|_| {
+                        Value::String(String::from_utf8_lossy(value).into_owned())
+                    })
+            } else {
+                Value::String(String::from_utf8_lossy(value).into_owned())
+            };
+            append_sent_header(target, &key, value);
+        }
     }
 }
 
