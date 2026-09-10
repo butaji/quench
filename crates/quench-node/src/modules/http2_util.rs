@@ -4193,7 +4193,13 @@ fn session_method(
             // Reuse the canonical settings encoder for all range/type/custom
             // setting validation, then send the same bytes through the
             // transport and update the stable localSettings object.
-            let payload = packed_settings_payload(settings).ok_or_else(|| {
+            // Keep the canonical encoder's validation error intact.  Turning
+            // this Result into an Option before entering the session method
+            // erased whether Node should expose a TypeError or RangeError
+            // (and replaced its setting-specific message with a generic
+            // transport error).
+            let packed = packed_settings(&[settings.clone()])?;
+            let payload = typed_array_elements(&packed).ok_or_else(|| {
                 coded_error(
                     quench_runtime::ops::Builtin::Error,
                     "ERR_HTTP2_INVALID_SETTING_VALUE",
