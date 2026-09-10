@@ -727,6 +727,13 @@ pub fn dispatch(
         "compatResponseStatusCode" => compat_response_status_code(_receiver, values),
         "compatResponseStatusMessage" => compat_response_status_message(state, _receiver, values),
         "compatResponseSetHeader" => compat_response_set_header(_receiver, values),
+        "compatResponseHasHeader" => compat_response_has_header(_receiver, values),
+        "compatResponseGetHeader" => compat_response_get_header(_receiver, values),
+        "compatResponseGetHeaders" => compat_response_get_headers(_receiver),
+        "compatResponseGetHeaderNames" => compat_response_get_header_names(_receiver),
+        "compatResponseRemoveHeader" => compat_response_remove_header(_receiver, values),
+        "compatResponseAppendHeader" => compat_response_append_header(_receiver, values),
+        "compatResponseFlushHeaders" => compat_response_flush_headers(state, _receiver),
         "compatResponseWrite" => compat_response_write(state, _receiver, values),
         "compatResponseEnd" => compat_response_end(state, _receiver, values),
         "compatResponseDestroy" => compat_response_destroy(state, _receiver, values),
@@ -2072,6 +2079,18 @@ fn stream_end(
         })
         .unwrap_or_default();
     let body_len = bytes.len();
+    // HEAD responses carry END_STREAM on their response HEADERS. The body
+    // argument is still consumed for writable/callback semantics, but must
+    // never become a DATA frame on the wire.
+    let head_response = matches!(
+        receiver.map(|stream| execute::get_property(stream, "\0quench:http2-head-response")),
+        Some(Value::Boolean(true))
+    ) || matches!(
+        receiver.map(|stream| {
+            execute::get_property(stream, "\0quench:http2-compat-request-method")
+        }),
+        Some(Value::String(method)) if method == "HEAD"
+    );
     // `request()` submits END_STREAM by default.  `request().end()` is still
     // a common spelling for that header-only request, but sending a second
     // empty DATA frame would produce duplicate end/close observations and an
@@ -2112,10 +2131,12 @@ fn stream_end(
     // DATA frame, allowing writes made later in the same callback turn to be
     // flushed first. The host pump drains this queue in FIFO order on the
     // next transport tick.
-    if !matches!(
-        execute::get_property(&socket, "destroyed"),
-        Value::Boolean(true)
-    ) {
+    if !head_response
+        && !matches!(
+            execute::get_property(&socket, "destroyed"),
+            Value::Boolean(true)
+        )
+    {
         state
             .borrow_mut()
             .net
@@ -2204,6 +2225,7 @@ pub(crate) fn compat_server_request_response(
         ("connection", socket),
         ("req", request.clone()),
         ("headersSent", Value::Boolean(false)),
+        ("_header", Value::Boolean(false)),
         ("finished", Value::Boolean(false)),
         ("writableEnded", Value::Boolean(false)),
         ("destroyed", Value::Boolean(false)),
@@ -2247,6 +2269,13 @@ pub(crate) fn compat_server_request_response(
     for (name, method) in [
         ("writeHead", http2_capability("compatResponseWriteHead")),
         ("setHeader", http2_capability("compatResponseSetHeader")),
+        ("hasHeader", http2_capability("compatResponseHasHeader")),
+        ("getHeader", http2_capability("compatResponseGetHeader")),
+        ("getHeaders", http2_capability("compatResponseGetHeaders")),
+        ("getHeaderNames", http2_capability("compatResponseGetHeaderNames")),
+        ("removeHeader", http2_capability("compatResponseRemoveHeader")),
+        ("appendHeader", http2_capability("compatResponseAppendHeader")),
+        ("flushHeaders", http2_capability("compatResponseFlushHeaders")),
         ("write", http2_capability("compatResponseWrite")),
         ("end", http2_capability("compatResponseEnd")),
         ("destroy", http2_capability("compatResponseDestroy")),
@@ -2334,12 +2363,192 @@ fn compat_response_set_header(
     values: &[Value],
 ) -> Result<Value, VmError> {
     let response = receiver.ok_or(VmError::NotCallable)?;
-    let name = execute::to_js_string(values.first().unwrap_or(&Value::Undefined))?.to_ascii_lowercase();
-    validate_header_name(&name)?;
-    let value = execute::to_js_string(values.get(1).unwrap_or(&Value::Undefined))?;
+    if matches!(execute::get_property(response, "headersSent"), Value::Boolean(true)) {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::Error,
+            "ERR_HTTP2_HEADERS_SENT",
+            "Response has already been initiated.".into(),
+        ));
+    }
+    let name = compat_response_header_name(values.first())?;
+    let value = compat_response_header_value(&name, values.get(1))?;
     let headers = execute::get_property(response, COMPAT_HEADERS_PROP);
-    let updated = merge_header_value(headers, &name, value)?;
+    let updated = execute::set_property(headers, &name, value);
     execute::set_property_in_place(response, COMPAT_HEADERS_PROP, updated);
+    Ok(response.clone())
+}
+
+fn compat_response_header_name(value: Option<&Value>) -> Result<String, VmError> {
+    let value = value.unwrap_or(&Value::Undefined);
+    if matches!(value, Value::Undefined | Value::Null) {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::TypeError,
+            "ERR_INVALID_ARG_TYPE",
+            "The \"name\" argument must be of type string. Received undefined".into(),
+        ));
+    }
+    let name = execute::to_js_string(value)?.trim().to_ascii_lowercase();
+    if name.is_empty() {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::TypeError,
+            "ERR_INVALID_HTTP_TOKEN",
+            "Header name must be a valid HTTP token [\"\"]".into(),
+        ));
+    }
+    if name.starts_with(':') {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::TypeError,
+            "ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED",
+            "Cannot set HTTP/2 pseudo-headers".into(),
+        ));
+    }
+    validate_header_name(&name)?;
+    Ok(name)
+}
+
+fn compat_response_header_value(name: &str, value: Option<&Value>) -> Result<Value, VmError> {
+    let value = value.unwrap_or(&Value::Undefined);
+    if matches!(value, Value::Undefined | Value::Null) {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::TypeError,
+            "ERR_HTTP2_INVALID_HEADER_VALUE",
+            format!(
+                "Invalid value \"{}\" for header \"{}\"",
+                execute::to_js_string(value).unwrap_or_default(),
+                name
+            ),
+        ));
+    }
+    if let Value::Array(_) = value {
+        for key in execute::own_enumerable_keys(value) {
+            if matches!(execute::get_property(value, &key), Value::Undefined | Value::Null) {
+                return Err(coded_error(
+                    quench_runtime::ops::Builtin::TypeError,
+                    "ERR_HTTP2_INVALID_HEADER_VALUE",
+                    format!("Invalid value for header \"{}\"", name),
+                ));
+            }
+        }
+        return Ok(value.clone());
+    }
+    Ok(Value::String(execute::to_js_string(value)?))
+}
+
+fn compat_response_header_map(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let response = receiver.ok_or(VmError::NotCallable)?;
+    let headers = execute::get_property(response, COMPAT_HEADERS_PROP);
+    if matches!(headers, Value::Object(_) | Value::ObjectAlias(_)) {
+        Ok(headers)
+    } else {
+        Ok(host_api::object(Vec::new()))
+    }
+}
+
+fn compat_response_has_header(
+    receiver: Option<&Value>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let name = compat_response_header_name(values.first())?;
+    let headers = compat_response_header_map(receiver)?;
+    Ok(Value::Boolean(!matches!(
+        execute::get_property(&headers, &name),
+        Value::Undefined
+    )))
+}
+
+fn compat_response_get_header(
+    receiver: Option<&Value>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let name = compat_response_header_name(values.first())?;
+    let headers = compat_response_header_map(receiver)?;
+    Ok(execute::get_property(&headers, &name))
+}
+
+fn compat_response_get_headers(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let headers = compat_response_header_map(receiver)?;
+    let result = host_api::object(
+        execute::own_enumerable_keys(&headers)
+            .into_iter()
+            .map(|name| (name.clone(), execute::get_property(&headers, &name)))
+            .collect(),
+    );
+    Ok(execute::set_prototype_of(&result, &Value::Null)?)
+}
+
+fn compat_response_get_header_names(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let headers = compat_response_header_map(receiver)?;
+    Ok(host_api::array(
+        execute::own_enumerable_keys(&headers)
+            .into_iter()
+            .map(Value::String)
+            .collect(),
+    ))
+}
+
+fn compat_response_remove_header(
+    receiver: Option<&Value>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let response = receiver.ok_or(VmError::NotCallable)?;
+    if matches!(execute::get_property(response, "headersSent"), Value::Boolean(true)) {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::Error,
+            "ERR_HTTP2_HEADERS_SENT",
+            "Response has already been initiated.".into(),
+        ));
+    }
+    let name = compat_response_header_name(values.first())?;
+    let headers = compat_response_header_map(receiver)?;
+    let (headers, _) = execute::delete_property(headers, &name);
+    execute::set_property_in_place(response, COMPAT_HEADERS_PROP, headers);
+    if name == "date" {
+        execute::set_property_in_place(response, "sendDate", Value::Boolean(false));
+    }
+    Ok(response.clone())
+}
+
+fn compat_response_append_header(
+    receiver: Option<&Value>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let response = receiver.ok_or(VmError::NotCallable)?;
+    if matches!(execute::get_property(response, "headersSent"), Value::Boolean(true)) {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::Error,
+            "ERR_HTTP2_HEADERS_SENT",
+            "Response has already been initiated.".into(),
+        ));
+    }
+    let name = compat_response_header_name(values.first())?;
+    let value = compat_response_header_value(&name, values.get(1))?;
+    let headers = compat_response_header_map(receiver)?;
+    let prior = execute::get_property(&headers, &name);
+    let merged = match prior {
+        Value::Undefined => value,
+        Value::Array(_) => {
+            let mut entries = execute::own_enumerable_keys(&prior)
+                .into_iter()
+                .map(|key| execute::get_property(&prior, &key))
+                .collect::<Vec<_>>();
+            entries.push(value);
+            host_api::array(entries)
+        }
+        current => host_api::array(vec![current, value]),
+    };
+    execute::set_property_in_place(&headers, &name, merged);
+    Ok(response.clone())
+}
+
+fn compat_response_flush_headers(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+) -> Result<Value, VmError> {
+    let response = receiver.ok_or(VmError::NotCallable)?;
+    if !matches!(execute::get_property(response, "headersSent"), Value::Boolean(true)) {
+        let status = execute::get_property(response, COMPAT_STATUS_CODE_PROP);
+        compat_response_write_head(state, Some(response), &[status])?;
+    }
     Ok(response.clone())
 }
 
@@ -2446,6 +2655,7 @@ fn compat_response_write_head(
     stream_respond(state, Some(&stream), &[headers])?;
     if let Some(response) = receiver {
         execute::set_property_in_place(response, "headersSent", Value::Boolean(true));
+        execute::set_property_in_place(response, "_header", Value::Boolean(true));
         execute::set_property_in_place(
             response,
             COMPAT_STATUS_CODE_PROP,
@@ -3049,8 +3259,17 @@ fn stream_respond(
     }
     let mut fields = Vec::new();
     for key in execute::own_enumerable_keys(headers) {
-        let value = execute::to_js_string(&execute::get_property(headers, &key))?;
-        fields.push((key.to_ascii_lowercase().into_bytes(), value.into_bytes()));
+        let name = key.to_ascii_lowercase().into_bytes();
+        let raw = execute::get_property(headers, &key);
+        if matches!(raw, Value::Array(_)) {
+            for item in execute::own_enumerable_keys(&raw) {
+                let value = execute::to_js_string(&execute::get_property(&raw, &item))?;
+                fields.push((name.clone(), value.into_bytes()));
+            }
+        } else {
+            let value = execute::to_js_string(&raw)?;
+            fields.push((name, value.into_bytes()));
+        }
     }
     if !fields.iter().any(|(name, _)| name.as_slice() == b":status") {
         fields.push((b":status".to_vec(), b"200".to_vec()));
