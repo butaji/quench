@@ -1174,20 +1174,6 @@ const HTTP2_DIAG_ERROR_PROP: &str = "\0quench:http2:diagnostics:error";
 /// consumers.  A private constructor record avoids mutating the global
 /// `Duplex` constructor while retaining Node's concrete stream names.
 pub(crate) fn decorate_http2_stream(state: &Rc<RefCell<HostState>>, stream: &Value, server: bool) {
-    // Setting a prototype may publish a copy-on-write replacement. Resolve
-    // that live object before adding host-owned fields; otherwise properties
-    // installed after the prototype transition land on the stale view and
-    // disappear from the stream returned to JavaScript.
-    let mut stream = execute::canonical_value(stream);
-    if let Some(module) = state.borrow().stream_module.clone() {
-        let duplex = execute::get_property(&module, "Duplex");
-        let prototype = execute::get_property(&duplex, "prototype");
-        if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
-            if let Ok(updated) = execute::set_prototype_of(&stream, &prototype) {
-                stream = execute::canonical_value(&updated);
-            }
-        }
-    }
     let constructor = host_api::object(vec![(
         "name".into(),
         Value::String(
@@ -1254,6 +1240,16 @@ pub(crate) fn decorate_http2_stream(state: &Rc<RefCell<HostState>>, stream: &Val
         "priority",
         session_capability("streamPriority"),
     );
+    // Set the shared Duplex prototype after host-owned fields are installed.
+    // Prototype assignment may publish a copy-on-write replacement; doing it
+    // first would leave subsequent in-place fields on the stale stream view.
+    if let Some(module) = state.borrow().stream_module.clone() {
+        let duplex = execute::get_property(&module, "Duplex");
+        let prototype = execute::get_property(&duplex, "prototype");
+        if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
+            let _ = execute::set_prototype_of(stream, &prototype);
+        }
+    }
 }
 
 fn http2_diag_name(server: bool, event: &str) -> String {
