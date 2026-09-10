@@ -2680,12 +2680,20 @@ pub fn promises_open(
             crate::host::capability(crate::registry::SPEC_FS_HANDLE_READ),
         ),
         (
+            "readv",
+            crate::host::capability(crate::registry::SPEC_FS_HANDLE_READV),
+        ),
+        (
             "readFile",
             crate::host::capability(crate::registry::SPEC_FS_HANDLE_READFILE),
         ),
         (
             "write",
             crate::host::capability(crate::registry::SPEC_FS_HANDLE_WRITE),
+        ),
+        (
+            "writev",
+            crate::host::capability(crate::registry::SPEC_FS_HANDLE_WRITEV),
         ),
         (
             "close",
@@ -2731,6 +2739,22 @@ pub fn file_handle_read(
                 args.first().cloned().unwrap_or(Value::Undefined),
             ),
         ])
+    });
+    Ok(settle(result))
+}
+
+pub fn file_handle_readv(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    let fd = descriptor_arg(execute::get_property_result(receiver, "fd").ok().as_ref())?;
+    let mut read_args = vec![Value::Number(fd as f64)];
+    read_args.extend_from_slice(args);
+    let buffers = args.first().cloned().unwrap_or(Value::Undefined);
+    let result = readv_sync(state, None, &read_args).map(|bytes_read| {
+        host_api::object(vec![("bytesRead".into(), bytes_read), ("buffers".into(), buffers)])
     });
     Ok(settle(result))
 }
@@ -2825,6 +2849,25 @@ pub fn file_handle_write(
                 "buffer".into(),
                 args.first().cloned().unwrap_or(Value::Undefined),
             ),
+        ])
+    });
+    Ok(settle(result))
+}
+
+pub fn file_handle_writev(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    let fd = descriptor_arg(execute::get_property_result(receiver, "fd").ok().as_ref())?;
+    let mut write_args = vec![Value::Number(fd as f64)];
+    write_args.extend_from_slice(args);
+    let buffers = args.first().cloned().unwrap_or(Value::Undefined);
+    let result = writev_sync(state, None, &write_args).map(|bytes_written| {
+        host_api::object(vec![
+            ("bytesWritten".into(), bytes_written),
+            ("buffers".into(), buffers),
         ])
     });
     Ok(settle(result))
@@ -3609,6 +3652,22 @@ pub fn build() -> Value {
         execute::define_property(write_stream_proto, "autoClose", auto_close_descriptor)
             .unwrap_or_else(|_| host_api::object(Vec::new()));
     let _ = execute::set_property_in_place(&write_stream, "prototype", write_stream_proto);
+    let readv = execute::set_property(
+        crate::host::capability(SPEC_FS_READV),
+        crate::modules::util::PROMISIFY_CUSTOM_ARGS_KEY,
+        host_api::array(vec![
+            Value::String("bytesRead".into()),
+            Value::String("buffers".into()),
+        ]),
+    );
+    let writev = execute::set_property(
+        crate::host::capability(SPEC_FS_WRITEV),
+        crate::modules::util::PROMISIFY_CUSTOM_ARGS_KEY,
+        host_api::array(vec![
+            Value::String("bytesWritten".into()),
+            Value::String("buffers".into()),
+        ]),
+    );
     props.extend([
         ("createReadStream", create_read_stream),
         ("createWriteStream", write_stream.clone()),
@@ -3630,8 +3689,8 @@ pub fn build() -> Value {
         ("fchown", crate::host::capability(SPEC_FS_FCHOWN)),
         ("futimes", crate::host::capability(SPEC_FS_FUTIMES)),
         ("fdatasync", crate::host::capability(SPEC_FS_FDATASYNC)),
-        ("readv", crate::host::capability(SPEC_FS_READV)),
-        ("writev", crate::host::capability(SPEC_FS_WRITEV)),
+        ("readv", readv),
+        ("writev", writev),
         ("fstatSync", crate::host::capability(SPEC_FS_FSTAT_SYNC)),
         (
             "ftruncateSync",
