@@ -36,8 +36,8 @@ pub use methods::{
     socket_set_timeout, socket_set_type_of_service, socket_timeout_fire, socket_unref,
     socket_write, tcp_bind, tcp_construct,
 };
+pub(crate) use pump::{dispatch_external_http2_bytes, http2_headers_value};
 pub use pump::{finalize, poll};
-pub(crate) use pump::dispatch_external_http2_bytes;
 
 const LOCAL_HOST: &str = "127.0.0.1";
 /// Hidden property that stores the host-side net id on a JS object.

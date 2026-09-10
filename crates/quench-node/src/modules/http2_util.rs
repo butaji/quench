@@ -193,6 +193,9 @@ pub(crate) const HTTP2_ASYNC_RESOURCE_PROP: &str = "\0quench:http2:async-resourc
 // path can distinguish it from a genuine write-after-end.
 pub(crate) const HTTP2_PENDING_FINAL_PROP: &str = "\0quench:http2-pending-final";
 const HTTP2_RESPONSE_STARTED_PROP: &str = "\0quench:http2-response-started";
+const HTTP2_WAIT_FOR_TRAILERS_PROP: &str = "\0quench:http2-wait-for-trailers";
+const HTTP2_TRAILERS_READY_PROP: &str = "\0quench:http2-trailers-ready";
+const HTTP2_TRAILERS_SENT_PROP: &str = "\0quench:http2-trailers-sent";
 const COMPAT_STATUS_MESSAGE_WARNING: &str =
     "Status message is not supported by HTTP/2 (RFC7540 8.1.2.4)";
 
@@ -767,6 +770,8 @@ pub fn dispatch(
         "streamDestroy" => stream_destroy(state, _receiver, values),
         "streamAbort" => stream_abort(state, values),
         "streamRespond" => stream_respond(state, _receiver, values),
+        "streamAdditionalHeaders" => stream_additional_headers(state, _receiver, values),
+        "streamSendTrailers" => stream_send_trailers(state, _receiver, values),
         "streamPushStream" => stream_push_stream(state, _receiver, values),
         "streamSetEncoding" => stream_set_encoding(state, _receiver, values),
         "streamResume" | "streamPause" => Ok(_receiver.cloned().unwrap_or(Value::Undefined)),
@@ -1405,6 +1410,23 @@ pub(crate) fn decorate_http2_stream(state: &Rc<RefCell<HostState>>, stream: &Val
     let _ = execute::set_property_in_place(&stream, "bufferSize", Value::Number(0.0));
     let _ = execute::set_property_in_place(&stream, "writableEnded", Value::Boolean(false));
     let _ = execute::set_property_in_place(&stream, "writableFinished", Value::Boolean(false));
+    let _ = execute::set_property_in_place(&stream, "sentInfoHeaders", host_api::array(Vec::new()));
+    let _ = execute::set_property_in_place(&stream, "sentTrailers", host_api::object(Vec::new()));
+    let _ = execute::set_property_in_place(
+        &stream,
+        HTTP2_WAIT_FOR_TRAILERS_PROP,
+        Value::Boolean(false),
+    );
+    let _ = execute::set_property_in_place(
+        &stream,
+        HTTP2_TRAILERS_READY_PROP,
+        Value::Boolean(false),
+    );
+    let _ = execute::set_property_in_place(
+        &stream,
+        HTTP2_TRAILERS_SENT_PROP,
+        Value::Boolean(false),
+    );
     // Compatibility callers can tune the stream's writable high-water mark
     // directly (as Node's `Http2Stream` exposes `_writableState`). Keep the
     // state object host-owned so backpressure and `drain` use the same fact.
@@ -1449,6 +1471,18 @@ pub(crate) fn decorate_http2_stream(state: &Rc<RefCell<HostState>>, stream: &Val
     let _ = execute::set_property_in_place(&stream, "state", stream_state);
     let _ =
         execute::set_property_in_place(&stream, "priority", session_capability("streamPriority"));
+    if server {
+        let _ = execute::set_property_in_place(
+            stream,
+            "additionalHeaders",
+            session_capability("streamAdditionalHeaders"),
+        );
+    }
+    let _ = execute::set_property_in_place(
+        stream,
+        "sendTrailers",
+        session_capability("streamSendTrailers"),
+    );
     // Set the shared Duplex prototype after host-owned fields are installed.
     // Prototype assignment may publish a copy-on-write replacement; doing it
     // first would leave subsequent in-place fields on the stale stream view.
@@ -2616,9 +2650,18 @@ fn stream_end(
         })
         .unwrap_or_default();
     let has_trailers = !trailer_fields.is_empty();
+    let wait_for_trailers = receiver.is_some_and(|stream| {
+        matches!(
+            execute::get_property(stream, HTTP2_WAIT_FOR_TRAILERS_PROP),
+            Value::Boolean(true)
+        ) && !matches!(
+            execute::get_property(stream, HTTP2_TRAILERS_SENT_PROP),
+            Value::Boolean(true)
+        )
+    });
     let frame = crate::modules::http2_protocol::Frame::new(
         crate::modules::http2_protocol::FrameType::Data,
-        u8::from(!has_trailers),
+        u8::from(!has_trailers && !wait_for_trailers),
         stream_id,
         bytes,
     );
@@ -2709,6 +2752,22 @@ fn stream_end(
                 .net
                 .pending_writes
                 .push((socket.clone(), trailer_frame.encode()));
+        }
+        if wait_for_trailers {
+            if let Some(stream) = receiver {
+                execute::set_property_in_place(
+                    stream,
+                    HTTP2_TRAILERS_READY_PROP,
+                    Value::Boolean(true),
+                );
+                let canonical = execute::canonical_value(stream);
+                execute::set_property_in_place(
+                    &canonical,
+                    HTTP2_TRAILERS_READY_PROP,
+                    Value::Boolean(true),
+                );
+                crate::modules::net::emit(state, stream, "wantTrailers", Vec::new())?;
+            }
         }
     }
     let stream = receiver.cloned().unwrap_or(Value::Undefined);
@@ -4343,6 +4402,22 @@ fn stream_respond(
         execute::set_property_in_place(stream, "sentHeaders", sent_headers.clone());
         let canonical = execute::canonical_value(stream);
         execute::set_property_in_place(&canonical, "sentHeaders", sent_headers);
+        let wait_for_trailers = values.get(1).is_some_and(|options| {
+            matches!(
+                execute::get_property(options, "waitForTrailers"),
+                Value::Boolean(true)
+            )
+        });
+        execute::set_property_in_place(
+            stream,
+            HTTP2_WAIT_FOR_TRAILERS_PROP,
+            Value::Boolean(wait_for_trailers),
+        );
+        execute::set_property_in_place(
+            &canonical,
+            HTTP2_WAIT_FOR_TRAILERS_PROP,
+            Value::Boolean(wait_for_trailers),
+        );
     }
     let block = {
         let mut host = state.borrow_mut();
@@ -4417,6 +4492,196 @@ fn stream_respond(
         )?;
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+fn header_fields_from_value(headers: &Value) -> Result<Vec<(Vec<u8>, Vec<u8>)>, VmError> {
+    if !matches!(
+        headers,
+        Value::Object(_) | Value::ObjectAlias(_) | Value::Array(_)
+    ) {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::TypeError,
+            "ERR_INVALID_ARG_TYPE",
+            "The \"headers\" argument must be of type object.".into(),
+        ));
+    }
+    let mut fields = Vec::new();
+    match headers {
+        Value::Object(_) | Value::ObjectAlias(_) => {
+            for key in execute::own_enumerable_keys(headers) {
+                let name = key.to_ascii_lowercase().into_bytes();
+                for value in header_values(&execute::get_property(headers, &key)) {
+                    fields.push((name.clone(), value.into_bytes()));
+                }
+            }
+        }
+        Value::Array(items) => {
+            let mut index = 0;
+            while index + 1 < items.logical_len() {
+                let name = execute::to_js_string(&execute::get_property(headers, &index.to_string()))?;
+                let value = execute::to_js_string(&execute::get_property(
+                    headers,
+                    &(index + 1).to_string(),
+                ))?;
+                fields.push((name.to_ascii_lowercase().into_bytes(), value.into_bytes()));
+                index += 2;
+            }
+        }
+        _ => unreachable!(),
+    }
+    Ok(fields)
+}
+
+fn stream_additional_headers(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let stream = receiver.ok_or(VmError::NotCallable)?;
+    if matches!(
+        execute::get_property(stream, HTTP2_RESPONSE_STARTED_PROP),
+        Value::Boolean(true)
+    ) {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::Error,
+            "ERR_HTTP2_HEADERS_AFTER_RESPOND",
+            "Cannot specify additional headers after response initiated".into(),
+        ));
+    }
+    let headers = values.first().unwrap_or(&Value::Undefined);
+    let fields = header_fields_from_value(headers)?;
+    if let Some((name, _)) = fields
+        .iter()
+        .find(|(name, _)| name.first() == Some(&b':') && name.as_slice() != b":status")
+    {
+        let name = String::from_utf8_lossy(name);
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::TypeError,
+            "ERR_HTTP2_INVALID_PSEUDOHEADER",
+            format!("\"{name}\" is an invalid pseudoheader or is used incorrectly"),
+        ));
+    }
+    let status = fields
+        .iter()
+        .find(|(name, _)| name.as_slice() == b":status")
+        .map(|(_, value)| String::from_utf8_lossy(value).parse::<u16>().unwrap_or(0))
+        .unwrap_or(100);
+    if status == 101 {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::Error,
+            "ERR_HTTP2_STATUS_101",
+            "HTTP status code 101 (Switching Protocols) is forbidden in HTTP/2".into(),
+        ));
+    }
+    if !(100..200).contains(&status) {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::RangeError,
+            "ERR_HTTP2_INVALID_INFO_STATUS",
+            format!("Invalid informational status code: {status}"),
+        ));
+    }
+    let (socket, stream_id) = stream_socket(Some(stream))?;
+    let block = {
+        let mut host = state.borrow_mut();
+        let socket_id = crate::modules::net::net_id(&socket).ok_or(VmError::NotCallable)?;
+        let session = host
+            .net
+            .http2_sessions
+            .get_mut(&socket_id)
+            .ok_or(VmError::NotCallable)?;
+        session.encode_headers(
+            &fields
+                .iter()
+                .map(|(name, value)| (name.as_slice(), value.as_slice()))
+                .collect::<Vec<_>>(),
+        )
+    };
+    let frame = crate::modules::http2_protocol::Frame::new(
+        crate::modules::http2_protocol::FrameType::Headers,
+        0x4,
+        stream_id,
+        block,
+    );
+    write_http2_frame(&socket, &frame)?;
+    let snapshot = crate::modules::net::http2_headers_value(&fields);
+    let previous = execute::get_property(stream, "sentInfoHeaders");
+    let entries = if let Value::Array(_) = previous {
+        previous
+    } else {
+        host_api::array(Vec::new())
+    };
+    let index = execute::get_property(&entries, "length");
+    if let Value::Number(index) = index {
+        execute::set_property_in_place(&entries, &index.to_string(), snapshot);
+    }
+    execute::set_property_in_place(stream, "sentInfoHeaders", entries);
+    Ok(stream.clone())
+}
+
+fn stream_send_trailers(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let stream = receiver.ok_or(VmError::NotCallable)?;
+    if !matches!(
+        execute::get_property(stream, HTTP2_TRAILERS_READY_PROP),
+        Value::Boolean(true)
+    ) {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::Error,
+            "ERR_HTTP2_TRAILERS_NOT_READY",
+            "Trailers are not ready to be sent".into(),
+        ));
+    }
+    if matches!(
+        execute::get_property(stream, HTTP2_TRAILERS_SENT_PROP),
+        Value::Boolean(true)
+    ) {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::Error,
+            "ERR_HTTP2_TRAILERS_ALREADY_SENT",
+            "Trailers already sent".into(),
+        ));
+    }
+    let fields = header_fields_from_value(values.first().unwrap_or(&Value::Undefined))?;
+    if fields.iter().any(|(name, _)| name.first() == Some(&b':')) {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::TypeError,
+            "ERR_HTTP2_INVALID_PSEUDOHEADER",
+            "Pseudoheaders are not allowed in trailers".into(),
+        ));
+    }
+    let (socket, stream_id) = stream_socket(Some(stream))?;
+    let block = {
+        let mut host = state.borrow_mut();
+        let socket_id = crate::modules::net::net_id(&socket).ok_or(VmError::NotCallable)?;
+        let session = host
+            .net
+            .http2_sessions
+            .get_mut(&socket_id)
+            .ok_or(VmError::NotCallable)?;
+        session.encode_headers(
+            &fields
+                .iter()
+                .map(|(name, value)| (name.as_slice(), value.as_slice()))
+                .collect::<Vec<_>>(),
+        )
+    };
+    let frame = crate::modules::http2_protocol::Frame::new(
+        crate::modules::http2_protocol::FrameType::Headers,
+        0x5,
+        stream_id,
+        block,
+    );
+    write_http2_frame(&socket, &frame)?;
+    let sent_trailers = crate::modules::net::http2_headers_value(&fields);
+    execute::set_property_in_place(stream, HTTP2_TRAILERS_SENT_PROP, Value::Boolean(true));
+    execute::set_property_in_place(stream, "sentTrailers", sent_trailers.clone());
+    let canonical = execute::canonical_value(stream);
+    execute::set_property_in_place(&canonical, HTTP2_TRAILERS_SENT_PROP, Value::Boolean(true));
+    execute::set_property_in_place(&canonical, "sentTrailers", sent_trailers);
+    Ok(stream.clone())
 }
 
 fn session_close(
