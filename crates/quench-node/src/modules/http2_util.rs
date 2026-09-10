@@ -1985,10 +1985,19 @@ fn stream_write(
         stream_id,
         bytes,
     );
-    if !matches!(
-        execute::get_property(&socket, "destroyed"),
-        Value::Boolean(true)
-    ) {
+    let head_response = matches!(
+        receiver.map(|stream| execute::get_property(stream, "\0quench:http2-head-response")),
+        Some(Value::Boolean(true))
+    ) || matches!(
+        receiver.map(|stream| execute::get_property(stream, "\0quench:http2-compat-request-method")),
+        Some(Value::String(method)) if method == "HEAD"
+    );
+    if !head_response
+        && !matches!(
+            execute::get_property(&socket, "destroyed"),
+            Value::Boolean(true)
+        )
+    {
         write_http2_frame(&socket, &frame)?;
     }
     if let Some(receiver) = receiver {
@@ -2138,8 +2147,14 @@ pub(crate) fn compat_server_request_response(
     headers: &Value,
 ) -> Result<(Value, Value), VmError> {
     let socket = execute::get_property(stream, "\0quench:http2-socket");
+    let request_method = execute::get_property(headers, ":method");
+    execute::set_property_in_place(
+        stream,
+        "\0quench:http2-compat-request-method",
+        request_method.clone(),
+    );
     let mut request = crate::modules::events::new_emitter_object(state)?;
-    let method = execute::get_property(headers, ":method");
+    let method = request_method;
     let path = execute::get_property(headers, ":path");
     for (name, value) in [
         ("method", method),
@@ -2220,6 +2235,25 @@ fn compat_response_write_head(
     values: &[Value],
 ) -> Result<Value, VmError> {
     let stream = compat_response_stream(receiver)?;
+    if receiver.is_some_and(|response| {
+        let request = execute::get_property(response, "req");
+        matches!(
+            execute::get_property(&request, "method"),
+            Value::String(method) if method == "HEAD"
+        )
+    }) {
+        execute::set_property_in_place(
+            &stream,
+            "\0quench:http2-head-response",
+            Value::Boolean(true),
+        );
+        let canonical_stream = execute::canonical_value(&stream);
+        execute::set_property_in_place(
+            &canonical_stream,
+            "\0quench:http2-head-response",
+            Value::Boolean(true),
+        );
+    }
     let status = values.first().cloned().unwrap_or(Value::Number(200.0));
     let headers = match values.get(1) {
         Some(Value::Object(_) | Value::ObjectAlias(_)) => {
@@ -2266,16 +2300,70 @@ fn compat_response_end(
     values: &[Value],
 ) -> Result<Value, VmError> {
     let stream = compat_response_stream(receiver)?;
-    stream_end(state, Some(&stream), values)?;
+    if receiver.is_some_and(|response| {
+        let request = execute::get_property(response, "req");
+        matches!(
+            execute::get_property(&request, "method"),
+            Value::String(method) if method == "HEAD"
+        )
+    }) {
+        execute::set_property_in_place(
+            &stream,
+            "\0quench:http2-head-response",
+            Value::Boolean(true),
+        );
+        let canonical_stream = execute::canonical_value(&stream);
+        execute::set_property_in_place(
+            &canonical_stream,
+            "\0quench:http2-head-response",
+            Value::Boolean(true),
+        );
+    }
+    // Writable#end accepts callbacks but invokes only the callback supplied to
+    // the first end() call. Keep the callback in the first stream_end call so
+    // its normal completion timing is preserved, then pass only the body on
+    // repeated calls.
+    let callback_marker = "\0quench:http2-compat-end-callback-called";
+    let callback_called = receiver.is_some_and(|response| {
+        matches!(
+            execute::get_property(response, callback_marker),
+            Value::Boolean(true)
+        )
+    });
+    let callback_present = values
+        .iter()
+        .any(quench_runtime::is_callable);
+    let stream_values = if callback_called && callback_present {
+        values
+            .first()
+            .cloned()
+            .map(|body| vec![body])
+            .unwrap_or_default()
+    } else {
+        values.to_vec()
+    };
+    stream_end(state, Some(&stream), &stream_values)?;
+    if !callback_called && callback_present {
+        if let Some(response) = receiver {
+            execute::set_property_in_place(response, callback_marker, Value::Boolean(true));
+        }
+    }
     if let Some(response) = receiver {
         execute::set_property_in_place(response, "finished", Value::Boolean(true));
         execute::set_property_in_place(response, "writableEnded", Value::Boolean(true));
         execute::set_property_in_place(response, "closed", Value::Boolean(true));
-        state
-            .borrow_mut()
-            .net
-            .pending_events
-            .push((response.clone(), "finish".into(), Vec::new()));
+        let finish_marker = "\0quench:http2-compat-finish-emitted";
+        if !matches!(
+            execute::get_property(response, finish_marker),
+            Value::Boolean(true)
+        ) {
+            execute::set_property_in_place(response, finish_marker, Value::Boolean(true));
+            state
+                .borrow_mut()
+                .net
+                .pending_events
+                .push((response.clone(), "finish".into(), Vec::new()));
+        }
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
@@ -2791,11 +2879,28 @@ fn stream_respond(
                 .collect::<Vec<_>>(),
         )
     };
+    let head_response = matches!(
+        receiver.map(|stream| execute::get_property(stream, "\0quench:http2-head-response")),
+        Some(Value::Boolean(true))
+    ) || matches!(
+        receiver.map(|stream| {
+            execute::get_property(stream, "\0quench:http2-compat-request-method")
+        }),
+        Some(Value::String(method)) if method == "HEAD"
+    );
+    if head_response {
+        execute::set_property_in_place(
+            receiver.unwrap_or(&Value::Undefined),
+            "\0quench:http2-head-response",
+            Value::Boolean(true),
+        );
+    }
+    let response_flags = if head_response { 0x5 } else { 0x4 };
     write_http2_frame(
         &socket,
         &crate::modules::http2_protocol::Frame::new(
             crate::modules::http2_protocol::FrameType::Headers,
-            0x4,
+            response_flags,
             stream_id,
             block,
         ),
@@ -2812,7 +2917,7 @@ fn stream_respond(
             true,
             HTTP2_DIAG_FINISH,
             Some(http2_diagnostic_headers(&fields)),
-            Some(4),
+            Some(response_flags),
             None,
         )?;
     }
