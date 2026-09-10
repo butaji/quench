@@ -2233,12 +2233,14 @@ fn stream_write(
                 _ => stream.clone(),
             };
             state.borrow_mut().net.pending_http2_events.push((
-                drain_receiver,
+                drain_receiver.clone(),
                 "drain".into(),
                 Vec::new(),
             ));
             let response = execute::get_property(&stream, COMPAT_RESPONSE_PROP);
-            if matches!(response, Value::Object(_) | Value::ObjectAlias(_)) {
+            if matches!(response, Value::Object(_) | Value::ObjectAlias(_))
+                && !execute::same_value(&drain_receiver, &response)
+            {
                 state
                     .borrow_mut()
                     .net
