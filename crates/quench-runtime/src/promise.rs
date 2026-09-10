@@ -194,6 +194,18 @@ fn with_promise_trigger<T>(trigger: &Rc<PromiseData>, f: impl FnOnce() -> T) -> 
     result
 }
 
+/// Allocate a promise at the current execution resource rather than inheriting
+/// a trigger left by an enclosing promise reaction. Async-function result
+/// promises are created before their body establishes the function's own
+/// trigger, so a stale thread-local trigger would incorrectly bind successive
+/// async calls to the preceding call's context.
+fn without_promise_trigger<T>(f: impl FnOnce() -> T) -> T {
+    let previous = PROMISE_TRIGGER.with(|slot| slot.replace(None));
+    let result = f();
+    PROMISE_TRIGGER.with(|slot| slot.replace(previous));
+    result
+}
+
 fn process_then_actions(
     then_actions: Vec<(Option<Value>, Option<Value>)>,
     state: &PromiseState,
@@ -461,7 +473,7 @@ pub(crate) fn from_async_function_completion(
 /// body runs. Promise allocations performed by `await` then inherit this
 /// result as their trigger, matching Node's async-resource ordering.
 pub(crate) fn start_async_function(generator: Rc<crate::value::GeneratorData>) -> Value {
-    let promise = PromiseData::allocate(PromiseState::Pending);
+    let promise = without_promise_trigger(|| PromiseData::allocate(PromiseState::Pending));
     promise_phase(&promise, "before");
     let completion = with_promise_trigger(&promise, || {
         crate::generator::resume(

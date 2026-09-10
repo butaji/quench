@@ -1071,6 +1071,7 @@ pub(crate) fn emit(
         crate::modules::http_client::CLIENT_ASYNC_RESOURCE_PROP,
         crate::modules::http_client::RES_ASYNC_RESOURCE_PROP,
         crate::modules::http::REQ_ASYNC_RESOURCE_PROP,
+        crate::modules::http2_util::HTTP2_ASYNC_RESOURCE_PROP,
         crate::modules::net::SERVER_ASYNC_RESOURCE_PROP,
     ];
     let receiver_resource = || {

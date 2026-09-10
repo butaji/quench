@@ -1020,11 +1020,13 @@ fn emit_http2_stream_close(
     if !defer_client_close && !defer_server_close {
         emit_socket_scoped(state, socket, &stream, "close", Vec::new())?;
         crate::modules::http2_util::queue_compat_response_close(state, &stream);
+        let session_socket = socket.borrow().js.clone();
+        crate::modules::http2_util::maybe_finalize_session_close(state, &session_socket)?;
     }
     Ok(())
 }
 
-fn dispatch_http2_frames(
+pub(crate) fn dispatch_http2_frames(
     state: &Rc<RefCell<HostState>>,
     socket: &Rc<RefCell<NetSocket>>,
     frames: &[crate::modules::http2_protocol::Frame],
@@ -1651,7 +1653,11 @@ fn dispatch_http2_frames(
                     Value::String(encoding) if encoding == "utf8" || encoding == "utf-8" => {
                         Value::String(String::from_utf8_lossy(&frame.payload).into_owned())
                     }
-                    _ => host_api::bytes(&frame.payload),
+                    // Node delivers HTTP/2 DATA callbacks as Buffers.  A
+                    // generic Uint8Array makes `.toString()` expose comma
+                    // separated byte values and breaks the observable stream
+                    // contract (and any async-context checks after it).
+                    _ => crate::modules::buffer_proto::make_buffer(&frame.payload),
                 };
                 emit_socket_scoped(state, socket, &stream, "data", vec![data])?;
                 if frame.header.flags & 1 != 0 {
@@ -1831,6 +1837,55 @@ fn dispatch_http2_frames(
         }
     }
     Ok(())
+}
+
+/// Feed bytes from an arbitrary EventEmitter/Readable transport into the
+/// same HTTP/2 state machine used by polled TCP sockets. `duplexPair()` is a
+/// valid `http2.connect({ createConnection })` transport but has no
+/// `NetSocket` record, so this short-lived view supplies only the lifecycle
+/// context required by the shared dispatcher; session and stream state remain
+/// keyed by the transport's canonical net id.
+pub(crate) fn dispatch_external_http2_bytes(
+    state: &Rc<RefCell<HostState>>,
+    socket: &Value,
+    bytes: &[u8],
+) -> Result<(), VmError> {
+    let id = super::net_id(socket).ok_or(VmError::NotCallable)?;
+    let fake = Rc::new(RefCell::new(NetSocket {
+        id,
+        process_scope: state.borrow().cluster.process_scope(),
+        owner_worker: state.borrow().cluster.worker_context,
+        stream: None,
+        js: socket.clone(),
+        state: SocketState::Open,
+        refed: false,
+        server_id: None,
+        write_buf: Vec::new(),
+        write_offset: 0,
+        read_buf: Vec::new(),
+        bytes_read: 0,
+        bytes_written: 0,
+        read_eof: false,
+        close_emitted: false,
+        close_deferred: false,
+        write_shutdown_pending: false,
+        finish_emitted: false,
+        connect_announced: true,
+        peer: None,
+        local: None,
+        encoding: None,
+        decode_buf: Vec::new(),
+    }));
+    let frames = {
+        let mut host = state.borrow_mut();
+        let session = host
+            .net
+            .http2_sessions
+            .get_mut(&id)
+            .ok_or(VmError::NotCallable)?;
+        session.feed(bytes).map_err(|_| VmError::NotCallable)?
+    };
+    dispatch_http2_frames(state, &fake, &frames)
 }
 
 fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
