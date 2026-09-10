@@ -179,6 +179,25 @@ fn emit_socket_scoped(
     event: &str,
     args: Vec<Value>,
 ) -> Result<Value, VmError> {
+    // Deferred HTTP/2 stream errors are delivered through the transport's
+    // canonical representative. Apply the terminal stream fact to the
+    // queued receiver before canonicalization so copy-on-write aliases see
+    // `destroyed === true` inside their error callback.
+    if event == "error"
+        && !matches!(
+            execute::get_property(receiver, "\0quench:http2-stream-id"),
+            Value::Undefined
+        )
+        && args.first().is_some_and(|error| {
+            matches!(
+                execute::get_property(error, "code"),
+                Value::String(code)
+                    if code == "ERR_HTTP2_STREAM_CANCEL" || code == "ERR_HTTP2_GOAWAY_SESSION"
+            )
+        })
+    {
+        execute::set_property_in_place(receiver, "destroyed", Value::Boolean(true));
+    }
     let receiver = execute::canonical_value(receiver);
     let scope = socket.borrow().process_scope;
     let worker = socket
@@ -1189,8 +1208,13 @@ fn dispatch_http2_frames(
                                 )?;
                             execute::call(&request_listener, &server, &[request, response])?;
                         } else {
-                            emit_server_scoped(state, &server, "stream", args)?;
+                            emit_server_scoped(state, &server, "stream", args.clone())?;
                         }
+                        // HTTP/2 exposes the same request stream through the
+                        // owning session as well as the server. The accepted
+                        // socket is the session identity retained by the
+                        // host, so dispatch the event on both emitters.
+                        emit_socket_scoped(state, socket, &socket_js, "stream", args)?;
                     }
                 } else if fresh {
                     crate::modules::http2_util::publish_http2_stream_diagnostic(
@@ -1376,11 +1400,9 @@ fn dispatch_http2_frames(
                 // object exposed by `http2.connect()` and the server's
                 // `session` event.
                 if frame.payload.len() >= 8 {
-                    let last_stream_id = u32::from_be_bytes(
-                        frame.payload[0..4].try_into().unwrap(),
-                    ) & 0x7fff_ffff;
-                    let error_code =
-                        u32::from_be_bytes(frame.payload[4..8].try_into().unwrap());
+                    let last_stream_id =
+                        u32::from_be_bytes(frame.payload[0..4].try_into().unwrap()) & 0x7fff_ffff;
+                    let error_code = u32::from_be_bytes(frame.payload[4..8].try_into().unwrap());
                     emit_socket_scoped(
                         state,
                         socket,
@@ -1408,11 +1430,7 @@ fn dispatch_http2_frames(
                             "code",
                             Value::String("ERR_HTTP2_ERROR".into()),
                         );
-                        crate::modules::net::socket_destroy(
-                            state,
-                            Some(&socket_js),
-                            &[error],
-                        )?;
+                        crate::modules::net::socket_destroy(state, Some(&socket_js), &[error])?;
                     }
                 } else if payload.len() == 8 {
                     let ack = crate::modules::http2_protocol::Frame::new(
@@ -1574,11 +1592,8 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
                 quench_runtime::ops::Builtin::Error,
                 &[Value::String("Protocol error".into())],
             );
-            let error = execute::set_property(
-                error,
-                "code",
-                Value::String("ERR_HTTP2_ERROR".into()),
-            );
+            let error =
+                execute::set_property(error, "code", Value::String("ERR_HTTP2_ERROR".into()));
             crate::modules::net::socket_destroy(state, Some(&js), &[error])?;
         }
         let is_http2 = state

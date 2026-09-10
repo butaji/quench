@@ -110,7 +110,14 @@ pub fn module() -> Value {
         ("kSocket".into(), Value::String(HTTP2_SOCKET_SYMBOL.into())),
     ]);
     let global = quench_runtime::vm::current_global_object();
-    execute::set_property_in_place(&global, "__quenchHttp2Binding", binding());
+    let binding = binding();
+    let descriptor = host_api::object(vec![
+        ("value".into(), binding),
+        ("writable".into(), Value::Boolean(true)),
+        ("configurable".into(), Value::Boolean(true)),
+        ("enumerable".into(), Value::Boolean(false)),
+    ]);
+    let _ = execute::define_property(global, "__quenchHttp2Binding", descriptor);
     module
 }
 
@@ -606,6 +613,16 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
             host_api::array(vec![Value::String("h2".into())]),
         );
     }
+    // The HTTP/2 session owns the handshake lifecycle. Mark this normalized
+    // option set so the TLS host can defer certificate rejection while a
+    // session AbortSignal is still able to cancel the opening transport.
+    if secure {
+        execute::set_property_in_place(
+            &target,
+            "\0quench:http2-session",
+            Value::Boolean(true),
+        );
+    }
     let create_connection = execute::get_property(&target, "createConnection");
     if quench_runtime::is_callable(&create_connection) {
         let socket = execute::call(
@@ -715,10 +732,15 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
 fn set_ping_limit(socket: &Value, options: &Value) {
     if let Value::Number(limit) = execute::get_property(options, "maxOutstandingPings") {
         if limit.is_finite() && limit >= 0.0 && limit.fract() == 0.0 {
-            execute::set_property_in_place(socket, HTTP2_MAX_OUTSTANDING_PINGS, Value::Number(limit));
+            execute::set_property_in_place(
+                socket,
+                HTTP2_MAX_OUTSTANDING_PINGS,
+                Value::Number(limit),
+            );
         }
     }
 }
+
 
 fn remember_http2_authority(socket: &Value, target: &Value) {
     let host = execute::to_js_string(&execute::get_property(target, "host")).ok();
@@ -911,16 +933,15 @@ fn decorate_client_session(socket: &Value, secure: bool) -> Result<(), VmError> 
             name,
             host_api::bound_capability_with_arguments(
                 crate::host::capability_ref(crate::registry::SPEC_INTERNAL_HTTP2_UTIL),
-                vec![Value::String("sessionMethod".into()), Value::String(name.into())],
+                vec![
+                    Value::String("sessionMethod".into()),
+                    Value::String(name.into()),
+                ],
             ),
         );
     }
     execute::set_property_in_place(socket, "pendingSettingsAck", Value::Boolean(false));
-    execute::set_property_in_place(
-        socket,
-        HTTP2_MAX_OUTSTANDING_PINGS,
-        Value::Number(10.0),
-    );
+    execute::set_property_in_place(socket, HTTP2_MAX_OUTSTANDING_PINGS, Value::Number(10.0));
     execute::set_property_in_place(
         socket,
         "state",
@@ -1474,6 +1495,43 @@ fn session_request(
         None,
         None,
     )?;
+    // A destroyed ClientHttp2Session still returns a request-shaped stream,
+    // but it must fail on the next loop turn with the session error.  The
+    // transport entry remains in the registry for event routing, so handle
+    // this terminal state before attempting to submit a frame to the closed
+    // socket (where `socket.write()` intentionally returns false).
+    if matches!(
+        execute::get_property(&socket, "destroyed"),
+        Value::Boolean(true)
+    ) {
+        let stream = execute::canonical_value(&stream);
+        let error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String("The session has been destroyed".into())],
+        );
+        let error = execute::set_property(
+            error,
+            "code",
+            Value::String("ERR_HTTP2_INVALID_SESSION".into()),
+        );
+        execute::set_property_in_place(&stream, "destroyed", Value::Boolean(true));
+        execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
+        execute::set_property_in_place(
+            &stream,
+            "__quenchHttp2CloseEmitted",
+            Value::Boolean(true),
+        );
+        let mut host = state.borrow_mut();
+        host.net.pending_http2_events.push((
+            stream.clone(),
+            "error".into(),
+            vec![error],
+        ));
+        host.net
+            .pending_http2_events
+            .push((stream.clone(), "close".into(), Vec::new()));
+        return Ok(stream);
+    }
     if let Some(options) = values
         .get(1)
         .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
@@ -1933,8 +1991,13 @@ fn stream_close(
     let code = match values.first().unwrap_or(&Value::Undefined) {
         Value::Undefined => 0,
         Value::Number(value)
-            if value.is_finite() && value.fract() == 0.0 && *value >= 0.0
-                && *value <= u32::MAX as f64 => *value as u32,
+            if value.is_finite()
+                && value.fract() == 0.0
+                && *value >= 0.0
+                && *value <= u32::MAX as f64 =>
+        {
+            *value as u32
+        }
         Value::Number(value) => {
             return Err(coded_error(
                 quench_runtime::ops::Builtin::RangeError,
@@ -2078,11 +2141,11 @@ fn stream_destroy(
         )?;
         // Destruction is observable on a later event-loop turn, allowing the
         // usual `destroy(error); stream.on('error', ...)` ordering.
-        state
-            .borrow_mut()
-            .net
-            .pending_http2_events
-            .push((receiver.clone(), "error".into(), vec![error]));
+        state.borrow_mut().net.pending_http2_events.push((
+            receiver.clone(),
+            "error".into(),
+            vec![error],
+        ));
     }
     publish_http2_stream_diagnostic(
         state,
@@ -2093,6 +2156,21 @@ fn stream_destroy(
         None,
         None,
     )?;
+    if !matches!(
+        execute::get_property(&stream, "__quenchHttp2CloseEmitted"),
+        Value::Boolean(true)
+    ) {
+        execute::set_property_in_place(
+            &stream,
+            "__quenchHttp2CloseEmitted",
+            Value::Boolean(true),
+        );
+        state.borrow_mut().net.pending_http2_events.push((
+            stream.clone(),
+            "close".into(),
+            Vec::new(),
+        ));
+    }
     let frame = crate::modules::http2_protocol::Frame::new(
         crate::modules::http2_protocol::FrameType::RstStream,
         0,
@@ -2293,7 +2371,8 @@ fn stream_abort(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Valu
     let Some(stream) = values.first() else {
         return Ok(Value::Undefined);
     };
-    stream_destroy(state, Some(stream), &[abort_error()])
+    let result = stream_destroy(state, Some(stream), &[abort_error()]);
+    result
 }
 
 fn abort_error() -> Value {
@@ -2390,6 +2469,15 @@ fn session_close(
     _values: &[Value],
 ) -> Result<Value, VmError> {
     let socket = receiver.ok_or(VmError::NotCallable)?;
+    // A graceful ClientHttp2Session#close() rejects pending streams with the
+    // GOAWAY-specific error.  Preserve that intent on the transport before
+    // the shared socket teardown path runs; destroy() continues to use the
+    // cancellation error.
+    execute::set_property_in_place(
+        socket,
+        "\0quench:http2-close-requested",
+        Value::Boolean(true),
+    );
     let destroy = execute::get_property(socket, "destroy");
     if quench_runtime::is_callable(&destroy) {
         execute::call(&destroy, socket, &[])?;
@@ -2625,8 +2713,13 @@ fn session_method(
             let socket_id = crate::modules::net::net_id(socket).ok_or(VmError::NotCallable)?;
             let code = match args.first().unwrap_or(&Value::Number(0.0)) {
                 Value::Number(value)
-                    if value.is_finite() && value.fract() == 0.0 && *value >= 0.0
-                        && *value <= u32::MAX as f64 => *value as u32,
+                    if value.is_finite()
+                        && value.fract() == 0.0
+                        && *value >= 0.0
+                        && *value <= u32::MAX as f64 =>
+                {
+                    *value as u32
+                }
                 value => {
                     return Err(coded_error(
                         quench_runtime::ops::Builtin::TypeError,
@@ -2640,8 +2733,13 @@ fn session_method(
             };
             let requested_last = match args.get(1).unwrap_or(&Value::Number(0.0)) {
                 Value::Number(value)
-                    if value.is_finite() && value.fract() == 0.0 && *value >= 0.0
-                        && *value <= u32::MAX as f64 => *value as u32,
+                    if value.is_finite()
+                        && value.fract() == 0.0
+                        && *value >= 0.0
+                        && *value <= u32::MAX as f64 =>
+                {
+                    *value as u32
+                }
                 value => {
                     return Err(coded_error(
                         quench_runtime::ops::Builtin::TypeError,
@@ -2694,7 +2792,10 @@ fn session_method(
                     &[crate::modules::buffer_proto::make_buffer(&frame.encode())],
                 )?;
             }
-            if let Some(callback) = args.get(3).filter(|value| quench_runtime::is_callable(value)) {
+            if let Some(callback) = args
+                .get(3)
+                .filter(|value| quench_runtime::is_callable(value))
+            {
                 execute::call(callback, socket, &[])?;
             }
         }
@@ -2775,6 +2876,26 @@ fn connect_target_options(
                 Value::String(format!("{protocol}:").into()),
             );
         }
+    }
+    // `http2.connect('https://…')` negotiates HTTP/2 via ALPN even when the
+    // caller does not spell out TLS options.  Supplying the protocol token at
+    // this boundary keeps the TLS transport from rejecting an otherwise valid
+    // secure session before the ClientHttp2Session exists.
+    let secure = matches!(
+        execute::get_property(&target, "protocol"),
+        Value::String(protocol) if protocol.eq_ignore_ascii_case("https:")
+    );
+    if secure
+        && matches!(
+            execute::get_property(&target, "ALPNProtocols"),
+            Value::Undefined | Value::Null
+        )
+    {
+        execute::set_property_in_place(
+            &target,
+            "ALPNProtocols",
+            host_api::array(vec![Value::String("h2".into())]),
+        );
     }
     Ok(target)
 }
