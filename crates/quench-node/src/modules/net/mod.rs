@@ -37,6 +37,7 @@ pub use methods::{
     socket_write, tcp_bind, tcp_construct,
 };
 pub use pump::{finalize, poll};
+pub(crate) use pump::dispatch_external_http2_bytes;
 
 const LOCAL_HOST: &str = "127.0.0.1";
 /// Hidden property that stores the host-side net id on a JS object.
@@ -689,6 +690,20 @@ pub(crate) fn net_id(receiver: &Value) -> Option<u64> {
     }
 }
 
+/// Assign a host transport identity to a stream-like object supplied by a
+/// caller (for example `stream.duplexPair()`). Such objects do not belong to
+/// the TCP registry, but protocol layers still need one canonical key for
+/// session state and aliases. The identity is only a marker; ordinary socket
+/// polling remains owned by `NetSocket`.
+pub(crate) fn ensure_id(state: &Rc<RefCell<HostState>>, socket: &Value) -> u64 {
+    if let Some(id) = net_id(socket) {
+        return id;
+    }
+    let id = allocate_id(state);
+    execute::set_property_in_place(socket, NET_ID_PROP, Value::Number(id as f64));
+    id
+}
+
 /// Attach one protocol state machine to a canonical net socket.  The socket
 /// remains an ordinary transport object; HTTP/2 consumes the same bytes at
 /// the pump edge and owns only the framing/session facts here.
@@ -1167,8 +1182,38 @@ pub(crate) fn emit(
                     }
                 }
             }
-            if let Err(error) = execute::call(&listener.callback, receiver, &args) {
-                match error {
+            match execute::call(&listener.callback, receiver, &args) {
+                Ok(value) => {
+                    // HTTP/2 delivers the raw stream as the first argument of
+                    // the session/server `stream` event. Node associates a
+                    // rejected stream listener with that stream, allowing
+                    // its protocol error path to destroy the stream instead
+                    // of turning the rejection into an unrelated server
+                    // error. Keep ordinary network events receiver-scoped.
+                    let rejection_receiver = if event == "stream" {
+                        args.first()
+                            .filter(|stream| {
+                                !matches!(
+                                    execute::get_property(stream, "\0quench:http2-stream-id"),
+                                    Value::Undefined
+                                )
+                            })
+                            .unwrap_or(receiver)
+                    } else {
+                        receiver
+                    };
+                    if let Err(error) = crate::modules::events::handle_listener_result(
+                        state,
+                        rejection_receiver,
+                        event,
+                        &args,
+                        &value,
+                    ) {
+                        result = Err(error);
+                        break;
+                    }
+                }
+                Err(error) => match error {
                     VmError::Thrown(reason) => {
                         match crate::modules::events::route_domain_error(
                             state,
@@ -1186,7 +1231,7 @@ pub(crate) fn emit(
                         result = Err(other);
                         break;
                     }
-                }
+                },
             }
         }
         result
