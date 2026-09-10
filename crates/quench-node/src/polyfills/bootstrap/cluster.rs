@@ -91,8 +91,19 @@ pub const JS: &str = quench_js_check::checked_js!(
       yield new TextEncoder().encode(value);
       return;
     }
-    if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
-      yield value;
+    if (value instanceof ArrayBuffer) {
+      // `fromSync` yields byte chunks, not the backing ArrayBuffer object.
+      // Materialize a Uint8Array view without copying the bytes.
+      yield new Uint8Array(value);
+      return;
+    }
+    if (ArrayBuffer.isView(value)) {
+      // DataView and non-byte typed arrays are normalized to a byte view while
+      // preserving the original byte range. Uint8Array/Buffer retain their
+      // identity and backing store.
+      yield value instanceof Uint8Array
+        ? value
+        : new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
       return;
     }
     if (typeof value?.[toStreamable] === "function") {
