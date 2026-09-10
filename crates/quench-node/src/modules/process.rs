@@ -1681,6 +1681,38 @@ pub fn on(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmErr
     Ok(Value::Undefined)
 }
 
+/// Whether the current logical process has a listener for an ordinary event.
+/// Host event producers use this to preserve Node's distinction between an
+/// IPC notification that is observed by user code and one that should fall
+/// through to the module's default delivery path.
+pub(crate) fn has_listener(state: &Rc<RefCell<HostState>>, event: &str) -> bool {
+    let scope = state.borrow().cluster.process_scope();
+    has_listener_in_scope(state, event, scope)
+}
+
+/// Whether a logical process scope has an ordinary process-event listener.
+///
+/// Host lifecycle phases can run while the parent scope is active even though
+/// a forked child has already installed its `process.on(...)` handlers.  Keep
+/// the scope as an explicit fact instead of mutating the global process scope
+/// merely to inspect listener state.
+pub(crate) fn has_listener_in_scope(
+    state: &Rc<RefCell<HostState>>,
+    event: &str,
+    scope: u64,
+) -> bool {
+    let guard = state.borrow();
+    let handlers = if scope == 0 {
+        &guard.process.other_handlers
+    } else {
+        match guard.process.scoped_handlers.get(&scope) {
+            Some(handlers) => handlers,
+            None => return false,
+        }
+    };
+    handlers.iter().any(|(name, _, _)| name == event)
+}
+
 /// Emit a process event synchronously, preserving listener order and `once` removal.
 pub fn emit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(event)) = args.first() else {
