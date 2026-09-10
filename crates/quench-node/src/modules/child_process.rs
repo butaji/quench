@@ -708,7 +708,7 @@ pub fn spawn_sync(
                 .code()
                 .map_or(Value::Null, |c| Value::Number(c as f64)),
         ),
-        ("signal".to_string(), Value::Null),
+        ("signal".to_string(), exit_signal(&output.status)),
         ("stdout".to_string(), stdout.clone()),
         ("stderr".to_string(), stderr.clone()),
         (
@@ -1328,6 +1328,31 @@ fn value_to_string(value: &Value) -> String {
     }
 }
 
+fn exit_signal(status: &ExitStatus) -> Value {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        let Some(signal) = status.signal() else {
+            return Value::Null;
+        };
+        let name = match signal {
+            2 => "SIGINT",
+            6 => "SIGABRT",
+            9 => "SIGKILL",
+            11 => "SIGSEGV",
+            13 => "SIGPIPE",
+            15 => "SIGTERM",
+            _ => return Value::Number(signal as f64),
+        };
+        return Value::String(name.into());
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = status;
+        Value::Null
+    }
+}
+
 fn run_print_eval(child_args: &[String], options: Option<&Value>) -> Result<Value, VmError> {
     // `process.execPath -p` is a real child boundary.  Evaluating in the
     // parent's VM loses the child's process stream bindings (and therefore
@@ -1362,7 +1387,10 @@ fn run_print_eval(child_args: &[String], options: Option<&Value>) -> Result<Valu
             process.current_dir(&cwd).env("QUENCH_CWD", cwd);
         }
         if let Some(env) = opt_env(options) {
-            process.env_clear().envs(env).env("QUENCH_CHILD_RUNNER", "1");
+            process
+                .env_clear()
+                .envs(env)
+                .env("QUENCH_CHILD_RUNNER", "1");
         } else {
             apply_process_env(&mut process);
             process.env("QUENCH_CHILD_RUNNER", "1");
@@ -1388,10 +1416,12 @@ fn run_print_eval(child_args: &[String], options: Option<&Value>) -> Result<Valu
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|error| VmError::Thrown(host_api::object(vec![
-            ("name".into(), Value::String("Error".into())),
-            ("message".into(), Value::String(error.to_string())),
-        ])))?;
+        .map_err(|error| {
+            VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("Error".into())),
+                ("message".into(), Value::String(error.to_string())),
+            ]))
+        })?;
     let output = wait_with_timeout(process, options).map_err(|error| {
         VmError::Thrown(host_api::object(vec![
             ("name".into(), Value::String("Error".into())),
@@ -1407,7 +1437,7 @@ fn run_print_eval(child_args: &[String], options: Option<&Value>) -> Result<Valu
     Ok(host_api::object(vec![
         ("pid".into(), Value::Number(0.0)),
         ("status".into(), status),
-        ("signal".into(), Value::Null),
+        ("signal".into(), exit_signal(&output.status)),
         ("stdout".into(), stdout.clone()),
         ("stderr".into(), stderr.clone()),
         (
