@@ -1732,6 +1732,9 @@ fn stream_end(
             .pending_writes
             .push((socket.clone(), frame.encode()));
     }
+    let stream = receiver.cloned().unwrap_or(Value::Undefined);
+    execute::set_property_in_place(&stream, "writableEnded", Value::Boolean(true));
+    execute::set_property_in_place(&stream, "writableFinished", Value::Boolean(true));
     if let Some(receiver) = receiver {
         let stream = execute::canonical_value(receiver);
         let current = match execute::get_property(&stream, "bufferSize") {
