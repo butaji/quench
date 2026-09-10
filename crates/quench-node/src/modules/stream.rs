@@ -10,6 +10,7 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 use crate::registry::{
+    SPEC_FS_WRITE_STREAM_AUTO_CLOSE_GET, SPEC_FS_WRITE_STREAM_AUTO_CLOSE_SET,
     SPEC_STREAM_ADD_ABORT_SIGNAL, SPEC_STREAM_COMPOSE, SPEC_STREAM_DESTROY, SPEC_STREAM_DUPLEX,
     SPEC_STREAM_DUPLEX_PAIR, SPEC_STREAM_DUPLEX_PAIR_FINAL, SPEC_STREAM_DUPLEX_PAIR_UNCORK,
     SPEC_STREAM_DUPLEX_PAIR_WRITE, SPEC_STREAM_FINISHED, SPEC_STREAM_FINISHED_ABORT,
@@ -19,8 +20,6 @@ use crate::registry::{
     SPEC_STREAM_READABLE, SPEC_STREAM_READABLE_BUFFER, SPEC_STREAM_TRANSFORM,
     SPEC_STREAM_WEB_PIPELINE_COMPLETE, SPEC_STREAM_WEB_PIPELINE_ERROR, SPEC_STREAM_WRITABLE,
     SPEC_STREAM_WRITABLE_HAS_INSTANCE, SPEC_STREAM_WRITABLE_WRITE_ADAPTER,
-    SPEC_FS_WRITE_STREAM_AUTO_CLOSE_GET,
-    SPEC_FS_WRITE_STREAM_AUTO_CLOSE_SET,
 };
 
 const PRELUDE: &str = include_str!("stream_prelude.js");
@@ -630,9 +629,16 @@ pub fn writable_has_instance(
     let Some(value) = args.first() else {
         return Ok(Value::Boolean(false));
     };
-    if matches!(value, Value::Null | Value::Undefined | Value::Boolean(_) | Value::Number(_)
-        | Value::String(_) | Value::StringUnits(_) | Value::BigInt(_))
-    {
+    if matches!(
+        value,
+        Value::Null
+            | Value::Undefined
+            | Value::Boolean(_)
+            | Value::Number(_)
+            | Value::String(_)
+            | Value::StringUnits(_)
+            | Value::BigInt(_)
+    ) {
         return Ok(Value::Boolean(false));
     }
     let prototype = execute::get_property(receiver, "prototype");
@@ -661,7 +667,10 @@ pub fn writable_has_instance(
     if canonical_writable
         .as_ref()
         .is_some_and(|writable| execute::same_value(receiver, writable))
-        && !matches!(execute::get_property(value, "_writableState"), Value::Null | Value::Undefined)
+        && !matches!(
+            execute::get_property(value, "_writableState"),
+            Value::Null | Value::Undefined
+        )
     {
         return Ok(Value::Boolean(true));
     }
@@ -780,6 +789,18 @@ pub(crate) fn abort_error_for_host() -> Value {
 
 fn abort_error() -> Value {
     abort_error_for_host()
+}
+
+fn premature_close_error() -> Value {
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String("Premature close".into())],
+    );
+    execute::set_property(
+        error,
+        "code",
+        Value::String("ERR_STREAM_PREMATURE_CLOSE".into()),
+    )
 }
 
 pub fn add_abort_signal(
@@ -939,8 +960,25 @@ pub fn finished(
             "ERR_INVALID_ARG_TYPE",
         ));
     }
+    let auto_destroy = matches!(
+        execute::get_property(
+            &execute::get_property(&stream, "_writableState"),
+            "autoDestroy"
+        ),
+        Value::Boolean(true)
+    ) || matches!(
+        execute::get_property(
+            &execute::get_property(&stream, "_readableState"),
+            "autoDestroy"
+        ),
+        Value::Boolean(true)
+    );
     let state_object = host_api::object(vec![
         ("done".into(), Value::Boolean(false)),
+        ("destroyedPending".into(), Value::Boolean(false)),
+        ("closeWanted".into(), Value::Boolean(auto_destroy)),
+        ("closeSeen".into(), Value::Boolean(false)),
+        ("pendingScheduled".into(), Value::Boolean(false)),
         (
             "cleanup".into(),
             Value::Boolean(matches!(
@@ -955,15 +993,16 @@ pub fn finished(
         ("writableDone".into(), Value::Boolean(!want_writable)),
     ]);
     execute::set_property_in_place(&state_object, "stream", stream.clone());
-    if matches!(execute::get_property(&stream, "destroyed"), Value::Boolean(true))
-        && !matches!(
-            execute::get_property(
-                &execute::get_property(&stream, "_writableState"),
-                "finished"
-            ),
-            Value::Boolean(true)
-        )
-    {
+    if matches!(
+        execute::get_property(&stream, "destroyed"),
+        Value::Boolean(true)
+    ) && !matches!(
+        execute::get_property(
+            &execute::get_property(&stream, "_writableState"),
+            "finished"
+        ),
+        Value::Boolean(true)
+    ) {
         let error = execute::set_property(
             quench_runtime::builtins::error(
                 quench_runtime::ops::Builtin::Error,
@@ -972,8 +1011,12 @@ pub fn finished(
             "code",
             Value::String("ERR_STREAM_PREMATURE_CLOSE".into()),
         );
-        execute::set_property_in_place(&state_object, "done", Value::Boolean(true));
-        execute::call(&callback, &Value::Undefined, &[error])?;
+        // Destruction is observed on the next tick.  This gives callers the
+        // same-tick disposer window as Node (`finished(s, cb)();`) while
+        // still reporting the premature-close error when the disposer is not
+        // used.
+        execute::set_property_in_place(&state_object, "destroyedPending", Value::Boolean(true));
+        execute::set_property_in_place(&state_object, "pendingError", error);
     }
     let event = |side: &str| {
         host_api::bound_capability_with_arguments(
@@ -1002,7 +1045,11 @@ pub fn finished(
         execute::call(&once, &stream, &[Value::String("finish".into()), on_finish])?;
     }
     if !web_writable {
-        execute::call(&once, &stream, &[Value::String("error".into()), on_error])?;
+        execute::call(
+            &once,
+            &stream,
+            &[Value::String("error".into()), on_error.clone()],
+        )?;
         execute::call(&once, &stream, &[Value::String("close".into()), on_close])?;
     } else {
         let closed = execute::get_property(&stream, "_closedPromise");
@@ -1082,13 +1129,21 @@ pub fn finished(
     // `finished()` may be installed after `end()` synchronously completed.
     // Project already-terminal sides into the same record used by event
     // callbacks so the promise observes the canonical state machine.
-    if !matches!(execute::get_property(&state_object, "done"), Value::Boolean(true)) {
+    if !matches!(
+        execute::get_property(&state_object, "done"),
+        Value::Boolean(true)
+    ) && !matches!(
+        execute::get_property(&state_object, "destroyedPending"),
+        Value::Boolean(true)
+    ) {
+        let writable_state = execute::get_property(&stream, "_writableState");
         if want_writable
+            && !matches!(
+                execute::get_property(&writable_state, "writable"),
+                Value::Undefined | Value::Null
+            )
             && matches!(
-                execute::get_property(
-                    &execute::get_property(&stream, "_writableState"),
-                    "finished"
-                ),
+                execute::get_property(&writable_state, "finished"),
                 Value::Boolean(true)
             )
         {
@@ -1111,7 +1166,13 @@ pub fn finished(
         ) && matches!(
             execute::get_property(&state_object, "writableDone"),
             Value::Boolean(true)
-        ) {
+        ) && (!matches!(
+            execute::get_property(&state_object, "closeWanted"),
+            Value::Boolean(true)
+        ) || matches!(
+            execute::get_property(&stream, "closed"),
+            Value::Boolean(true)
+        )) {
             execute::set_property_in_place(&state_object, "done", Value::Boolean(true));
             finished_cleanup(state, None, &[state_object.clone(), stream.clone()])?;
             execute::call(&callback, &Value::Undefined, &[])?;
@@ -1119,7 +1180,12 @@ pub fn finished(
     }
     Ok(host_api::bound_capability_with_arguments(
         crate::host::capability_ref(SPEC_STREAM_FINISHED_CLEANUP),
-        vec![state_object, stream],
+        // An explicit invocation of the disposer must remove listeners even
+        // when the `cleanup` option was not requested.  Internal completion
+        // paths call the same capability with only the lifecycle record and
+        // stream, so keep that distinction in the argument vector rather
+        // than giving the state machine a second cleanup implementation.
+        vec![state_object, stream, Value::Boolean(true)],
     ))
 }
 
@@ -1127,7 +1193,16 @@ fn capture_async_callback(
     state: &Rc<RefCell<HostState>>,
     callback: Value,
 ) -> Result<Value, VmError> {
-    crate::modules::async_hooks::local_bind(state, None, &[callback])
+    // Node's end-of-stream observer is bound to a dedicated
+    // `STREAM_END_OF_STREAM` AsyncResource.  Besides preserving
+    // AsyncLocalStorage state, creating the resource is observable through
+    // async_hooks' `init`/`before`/`after` edges (and is required by callers
+    // that use the bindAsyncResource path).
+    let resource = crate::modules::async_hooks::new_resource(
+        state,
+        &[Value::String("STREAM_END_OF_STREAM".into())],
+    )?;
+    crate::modules::async_hooks::resource_bind(state, Some(&resource), &[callback])
 }
 
 /// Event callback used by `finished`; its fixed arguments are the shared
@@ -1146,7 +1221,39 @@ pub fn finished_event(
         Value::String(side) => Some(side.as_str()),
         _ => None,
     });
+    if side != Some("error")
+        && side != Some("close")
+        && (matches!(
+            execute::get_property(&state, "destroyedPending"),
+            Value::Boolean(true)
+        ) || matches!(
+            execute::get_property(&execute::get_property(&state, "stream"), "destroyed"),
+            Value::Boolean(true)
+        ) && !matches!(
+            execute::get_property(&execute::get_property(&state, "stream"), "closed"),
+            Value::Boolean(true)
+        ))
+    {
+        return Ok(Value::Undefined);
+    }
     if side == Some("error") {
+        let stream = execute::get_property(&state, "stream");
+        if matches!(execute::get_property(&stream, "destroyed"), Value::Boolean(true))
+            && !matches!(execute::get_property(&stream, "closed"), Value::Boolean(true))
+        {
+            if let Some(error) = args.get(3).cloned() {
+                execute::set_property_in_place(&state, "pendingError", error);
+            }
+            execute::set_property_in_place(&state, "destroyedPending", Value::Boolean(true));
+            return Ok(Value::Undefined);
+        }
+        let error = match args.get(3).cloned().unwrap_or(Value::Undefined) {
+            Value::Undefined | Value::Null => {
+                let pending = execute::get_property(&state, "pendingError");
+                pending
+            }
+            value => value,
+        };
         execute::set_property_in_place(&state, "done", Value::Boolean(true));
         finished_cleanup(
             _state,
@@ -1156,12 +1263,76 @@ pub fn finished_event(
         execute::call(
             &callback,
             &Value::Undefined,
-            &[args.get(3).cloned().unwrap_or(Value::Undefined)],
+            &[error],
         )?;
         return Ok(Value::Undefined);
     }
     if side == Some("close") {
+        // A stream destroyed in the current turn has a close edge queued by
+        // the stream implementation.  Its completion is represented by the
+        // deferred pending error below so that an immediately-called
+        // disposer can cancel the callback before that edge runs.
+        if matches!(
+            execute::get_property(&state, "destroyedPending"),
+            Value::Boolean(true)
+        ) {
+            let stream = execute::get_property(&state, "stream");
+            if matches!(execute::get_property(&stream, "destroyed"), Value::Boolean(true)) {
+                execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
+            }
+            let pending_error = execute::get_property(&state, "pendingError");
+            if matches!(
+                execute::get_property(&state, "pendingScheduled"),
+                Value::Boolean(true)
+            ) {
+                return Ok(Value::Undefined);
+            }
+            execute::set_property_in_place(&state, "pendingScheduled", Value::Boolean(true));
+            let error = host_api::bound_capability_with_arguments(
+                crate::host::capability_ref(SPEC_STREAM_FINISHED_EVENT),
+                vec![state.clone(), callback.clone(), Value::String("error".into())],
+            );
+            crate::modules::timers::set_immediate(_state, &[error, pending_error])?;
+            return Ok(Value::Undefined);
+        }
         let stream = execute::get_property(&state, "stream");
+        execute::set_property_in_place(&state, "closeSeen", Value::Boolean(true));
+        if matches!(execute::get_property(&stream, "destroyed"), Value::Boolean(true)) {
+            execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
+        }
+        // A close after the stream recorded an error must not be treated as a
+        // clean terminal edge merely because the writable side also reports
+        // `finished`.  Node's end-of-stream logic gives the stored error
+        // precedence; boolean error markers used by legacy stream shims are
+        // normalized to the standard premature-close error.
+        let stream_error = [
+            execute::get_property(
+                &execute::get_property(&stream, "_readableState"),
+                "errored",
+            ),
+            execute::get_property(
+                &execute::get_property(&stream, "_writableState"),
+                "errored",
+            ),
+        ]
+        .into_iter()
+        .find(|value| {
+            !matches!(value, Value::Undefined | Value::Null | Value::Boolean(false))
+        });
+        if let Some(stream_error) = stream_error {
+            let error = match stream_error {
+                Value::Object(_) | Value::ObjectAlias(_) => stream_error,
+                _ => premature_close_error(),
+            };
+            execute::set_property_in_place(&state, "done", Value::Boolean(true));
+            finished_cleanup(
+                _state,
+                None,
+                &[state.clone(), execute::get_property(&state, "stream")],
+            )?;
+            execute::call(&callback, &Value::Undefined, &[error])?;
+            return Ok(Value::Undefined);
+        }
         let readable_terminal = !matches!(
             execute::get_property(&state, "readableWanted"),
             Value::Boolean(true)
@@ -1188,7 +1359,60 @@ pub fn finished_event(
             ),
             Value::Boolean(true)
         );
+        let readable_errored = match execute::get_property(
+            &execute::get_property(&stream, "_readableState"),
+            "errored",
+        ) {
+            Value::Undefined | Value::Null | Value::Boolean(false) => false,
+            _ => true,
+        };
+        let writable_errored = match execute::get_property(
+            &execute::get_property(&stream, "_writableState"),
+            "errored",
+        ) {
+            Value::Undefined | Value::Null | Value::Boolean(false) => false,
+            _ => true,
+        };
+        if readable_errored || writable_errored {
+            // An errored side is not terminal merely because its `finished`
+            // bit was set; close must report the premature-close error.
+            let error = execute::call(
+                &Value::Builtin(quench_runtime::ops::Builtin::Error),
+                &Value::Undefined,
+                &[Value::String("Premature close".into())],
+            )
+            .unwrap_or_else(|_| host_api::object(Vec::new()));
+            execute::set_property_in_place(
+                &error,
+                "code",
+                Value::String("ERR_STREAM_PREMATURE_CLOSE".into()),
+            );
+            execute::set_property_in_place(&state, "done", Value::Boolean(true));
+            finished_cleanup(
+                _state,
+                None,
+                &[state.clone(), execute::get_property(&state, "stream")],
+            )?;
+            execute::call(&callback, &Value::Undefined, &[error])?;
+            return Ok(Value::Undefined);
+        }
         if readable_terminal && writable_terminal {
+            let complete = matches!(
+                execute::get_property(&state, "readableDone"),
+                Value::Boolean(true)
+            ) && matches!(
+                execute::get_property(&state, "writableDone"),
+                Value::Boolean(true)
+            );
+            if complete {
+                execute::set_property_in_place(&state, "done", Value::Boolean(true));
+                finished_cleanup(
+                    _state,
+                    None,
+                    &[state.clone(), stream.clone()],
+                )?;
+                execute::call(&callback, &Value::Undefined, &[])?;
+            }
             return Ok(Value::Undefined);
         }
         if matches!(
@@ -1237,7 +1461,13 @@ pub fn finished_event(
     ) && matches!(
         execute::get_property(&state, "writableDone"),
         Value::Boolean(true)
-    );
+    ) && (!matches!(
+        execute::get_property(&state, "closeWanted"),
+        Value::Boolean(true)
+    ) || matches!(
+        execute::get_property(&state, "closeSeen"),
+        Value::Boolean(true)
+    ));
     if complete {
         execute::set_property_in_place(&state, "done", Value::Boolean(true));
         finished_cleanup(
@@ -1280,10 +1510,13 @@ pub fn finished_cleanup(
     let record = args.first().cloned().unwrap_or(Value::Undefined);
     let stream = args.get(1).cloned().unwrap_or(Value::Undefined);
     execute::set_property_in_place(&record, "done", Value::Boolean(true));
-    if !matches!(
-        execute::get_property(&record, "cleanup"),
-        Value::Boolean(true)
-    ) {
+    let explicit_dispose = matches!(args.get(2), Some(Value::Boolean(true)));
+    if !explicit_dispose
+        && !matches!(
+            execute::get_property(&record, "cleanup"),
+            Value::Boolean(true)
+        )
+    {
         return Ok(Value::Undefined);
     }
     let remove = execute::get_property(&stream, "removeListener");
@@ -1575,7 +1808,8 @@ pub fn writable_write_adapter(
     if byte_view && matches!(write_args.get(1), Some(Value::String(_))) {
         write_args[1] = Value::Undefined;
     }
-    execute::call(original, receiver.unwrap_or(&Value::Undefined), &write_args)
+    let receiver = receiver.unwrap_or(&Value::Undefined);
+    execute::call(original, receiver, &write_args)
 }
 
 /// Derive Node's non-enumerable `readableBuffer` inspection view from the
