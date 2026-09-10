@@ -506,16 +506,27 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
     };
     let previous_scope = state.borrow().cluster.process_scope();
     let previous_event_scope = state.borrow().event_loop.process_scope();
+    let previous_worker = state.borrow().cluster.worker_context;
     let global = quench_runtime::vm::current_global_object();
     let process = quench_runtime::execute::get_property(&global, "process");
     let previous_fork_child = quench_runtime::execute::get_property(&process, "\0forkChild");
     let previous_resource =
         quench_runtime::execute::get_property(&global, "__nodeCurrentAsyncResource");
+    let worker_id = (task.process_scope != 0)
+        .then(|| state.borrow().cluster.worker_for_event_scope(task.process_scope))
+        .flatten();
     if task.process_scope != 0 {
         state
             .borrow_mut()
             .cluster
             .set_process_scope(task.process_scope);
+        if let Some(worker_id) = worker_id {
+            let worker = { state.borrow().cluster.worker_object(worker_id) };
+            if let Some(worker) = worker {
+                crate::modules::cluster::set_worker_mode(state, worker_id, &worker, true);
+                state.borrow_mut().cluster.worker_context = Some(worker_id);
+            }
+        }
         if let Some(child) = state.borrow().cluster.fork_process(task.process_scope) {
             quench_runtime::execute::set_property_in_place(&process, "\0forkChild", child);
         }
@@ -592,12 +603,25 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
                     1
                 }
             };
-            let _ = crate::modules::cluster::fail_fork_process(state, task.process_scope, code)?;
+            if let Some(worker_id) = worker_id {
+                crate::modules::cluster::finish_worker_callback_exit(state, worker_id, code);
+            } else {
+                let _ = crate::modules::cluster::fail_fork_process(state, task.process_scope, code)?;
+            }
             Ok(())
         }
         result => result,
     };
     quench_runtime::execute::set_property_in_place(&process, "\0forkChild", previous_fork_child);
+    if let Some(worker_id) = worker_id {
+        let worker = { state.borrow().cluster.worker_object(worker_id) };
+        if let Some(worker) = worker {
+            crate::modules::cluster::set_worker_mode(state, worker_id, &worker, false);
+        }
+    }
+    if task.process_scope != 0 {
+        state.borrow_mut().cluster.worker_context = previous_worker;
+    }
     state.borrow_mut().cluster.set_process_scope(previous_scope);
     state
         .borrow()
