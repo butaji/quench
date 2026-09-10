@@ -3528,6 +3528,11 @@ pub fn build() -> Value {
     let _ = execute::set_property_in_place(&dir_constructor, "prototype", dir_prototype);
     let dirent_constructor = crate::host::capability(SPEC_FS_DIRENT);
     let dirent_prototype = host_api::object(Vec::new());
+    let _ = execute::set_property_in_place(
+        &dirent_prototype,
+        "\0prototype",
+        fs_stats::predicate_prototype_value(),
+    );
     execute::set_property_in_place(&global, DIRENT_PROTO_KEY, dirent_prototype.clone());
     let _ = execute::set_property_in_place(&dirent_constructor, "prototype", dirent_prototype);
     let realpath = crate::host::capability(SPEC_FS_REALPATH);
