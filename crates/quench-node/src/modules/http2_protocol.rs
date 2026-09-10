@@ -17,6 +17,7 @@ pub const MAX_MAX_FRAME_SIZE: u32 = 16_777_215;
 pub const CLIENT_MARKER: &str = "\0quench:http2-client";
 pub const SERVER_MARKER: &str = "\0quench:http2-server";
 pub const PROTOCOL_ERROR_MARKER: &str = "\0quench:http2-protocol-error";
+pub const SESSION_ERROR_PROP: &str = "\0quench:http2-session-error";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
@@ -36,6 +37,7 @@ pub enum FrameType {
     GoAway,
     WindowUpdate,
     Continuation,
+    AltSvc,
     Unknown(u8),
 }
 
@@ -52,6 +54,7 @@ impl From<u8> for FrameType {
             0x7 => Self::GoAway,
             0x8 => Self::WindowUpdate,
             0x9 => Self::Continuation,
+            0xA => Self::AltSvc,
             other => Self::Unknown(other),
         }
     }
@@ -70,6 +73,7 @@ impl FrameType {
             Self::GoAway => 0x7,
             Self::WindowUpdate => 0x8,
             Self::Continuation => 0x9,
+            Self::AltSvc => 0xA,
             Self::Unknown(value) => value,
         }
     }
