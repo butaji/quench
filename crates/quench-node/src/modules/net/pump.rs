@@ -1297,6 +1297,19 @@ fn dispatch_http2_frames(
                             .unwrap_or_else(|| {
                                 execute::get_property(&server, "\0quench:http2-request-listener")
                             });
+                        let request_event_listeners = crate::modules::events::method_listener_count(
+                            state,
+                            Some(&server),
+                            &[Value::String("request".into())],
+                        )
+                        .ok()
+                        .and_then(|value| match value {
+                            Value::Number(count) if count.is_finite() && count > 0.0 => {
+                                Some(count as usize)
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or(0);
                         if quench_runtime::is_callable(&request_listener) {
                             // `createServer` is the compatibility API: its
                             // callback receives request/response views, while
@@ -1308,6 +1321,17 @@ fn dispatch_http2_frames(
                                     state, &stream, &headers,
                                 )?;
                             execute::call(&request_listener, &server, &[request, response])?;
+                        } else if request_event_listeners > 0 {
+                            let (request, response) =
+                                crate::modules::http2_util::compat_server_request_response(
+                                    state, &stream, &headers,
+                                )?;
+                            emit_server_scoped(
+                                state,
+                                &server,
+                                "request",
+                                vec![request, response],
+                            )?;
                         } else {
                             emit_server_scoped(state, &server, "stream", args.clone())?;
                         }
