@@ -170,6 +170,7 @@ fn update_local_settings(socket: &Value, update: &Value) {
 /// well-known symbols as private string keys; exporting the same key from the
 /// internal util module keeps session and test-side property access identical.
 pub(crate) const HTTP2_SOCKET_SYMBOL: &str = "Symbol.nodejs.http2.kSocket\0quench";
+const COMPAT_STATUS_CODE_PROP: &str = "\0quench:http2-compat-status-code";
 
 fn http2_capability(kind: &str) -> Value {
     host_api::bound_capability_with_arguments(
@@ -718,6 +719,7 @@ pub fn dispatch(
         "streamSetEncoding" => stream_set_encoding(state, _receiver, values),
         "streamResume" | "streamPause" => Ok(_receiver.cloned().unwrap_or(Value::Undefined)),
         "compatResponseWriteHead" => compat_response_write_head(state, _receiver, values),
+        "compatResponseStatusCode" => compat_response_status_code(_receiver, values),
         "compatResponseWrite" => compat_response_write(state, _receiver, values),
         "compatResponseEnd" => compat_response_end(state, _receiver, values),
         "compatResponseDestroy" => compat_response_destroy(state, _receiver, values),
@@ -2194,7 +2196,6 @@ pub(crate) fn compat_server_request_response(
         ("socket", socket.clone()),
         ("connection", socket),
         ("req", request.clone()),
-        ("statusCode", Value::Number(200.0)),
         ("headersSent", Value::Boolean(false)),
         ("finished", Value::Boolean(false)),
         ("writableEnded", Value::Boolean(false)),
@@ -2209,6 +2210,19 @@ pub(crate) fn compat_server_request_response(
     ] {
         execute::set_property_in_place(&response, name, value);
     }
+    execute::set_property_in_place(
+        &response,
+        COMPAT_STATUS_CODE_PROP,
+        Value::Number(200.0),
+    );
+    let status_accessor = http2_capability("compatResponseStatusCode");
+    let status_descriptor = host_api::object(vec![
+        ("get".into(), status_accessor.clone()),
+        ("set".into(), status_accessor),
+        ("enumerable".into(), Value::Boolean(true)),
+        ("configurable".into(), Value::Boolean(true)),
+    ]);
+    response = execute::define_property(response, "statusCode", status_descriptor)?;
     for (name, method) in [
         ("writeHead", http2_capability("compatResponseWriteHead")),
         ("write", http2_capability("compatResponseWrite")),
@@ -2228,6 +2242,39 @@ fn compat_response_stream(receiver: Option<&Value>) -> Result<Value, VmError> {
     } else {
         Err(VmError::NotCallable)
     }
+}
+
+fn compat_response_status_code(
+    receiver: Option<&Value>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let response = receiver.ok_or(VmError::NotCallable)?;
+    if let Some(value) = values.first() {
+        let Value::Number(status) = value else {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::RangeError,
+                "ERR_HTTP2_STATUS_INVALID",
+                "Invalid status code".into(),
+            ));
+        };
+        if !status.is_finite() || status.fract() != 0.0 || *status < 100.0 || *status > 599.0 {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::RangeError,
+                "ERR_HTTP2_STATUS_INVALID",
+                "Invalid status code".into(),
+            ));
+        }
+        if *status < 200.0 {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::RangeError,
+                "ERR_HTTP2_INFO_STATUS_NOT_ALLOWED",
+                "Informational status codes are not allowed".into(),
+            ));
+        }
+        execute::set_property_in_place(response, COMPAT_STATUS_CODE_PROP, value.clone());
+        return Ok(Value::Undefined);
+    }
+    Ok(execute::get_property(response, COMPAT_STATUS_CODE_PROP))
 }
 
 fn compat_response_write_head(
@@ -2292,7 +2339,7 @@ fn compat_response_write_head(
         execute::set_property_in_place(response, "headersSent", Value::Boolean(true));
         execute::set_property_in_place(
             response,
-            "statusCode",
+            COMPAT_STATUS_CODE_PROP,
             values.first().cloned().unwrap_or(Value::Number(200.0)),
         );
     }
