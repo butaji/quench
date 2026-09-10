@@ -578,6 +578,7 @@ pub fn fork(
                 .unwrap_or_else(|| host_api::object(Vec::new())),
         ),
         ("connected".into(), Value::Boolean(true)),
+        ("\0clusterProcessSender".into(), Value::Boolean(true)),
         (
             "stdio".into(),
             host_api::array(
@@ -1755,6 +1756,27 @@ pub fn disconnect(
 ) -> Result<Value, VmError> {
     let (id, obj) = worker(state, r)?;
     let child_call = state.borrow().cluster.worker_context == Some(id);
+    let process_disconnect = r.is_some_and(|receiver| {
+        matches!(
+            execute::get_property(receiver, "\0clusterProcessSender"),
+            Value::Boolean(true)
+        )
+    });
+    // `worker.process.disconnect()` closes the control channel without
+    // delivering a child-side `process` disconnect event.  The child is then
+    // forcibly retired with status 0; only the parent-facing Worker exit
+    // transition is observable.  Keep this as a receiver fact so
+    // `cluster.worker.disconnect()` retains its distinct event semantics.
+    if process_disconnect && !child_call {
+        finish_worker_callback_exit(state, id, 0);
+        if let Some(cb) = args.first().filter(|v| quench_runtime::is_callable(v)) {
+            state
+                .borrow()
+                .event_loop
+                .queue_microtask(cb.clone(), Vec::new());
+        }
+        return Ok(obj);
+    }
     let parent_has_disconnect = child_call
         && state
             .borrow()
