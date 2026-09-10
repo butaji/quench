@@ -12,6 +12,7 @@ use crate::host::HostState;
 
 thread_local! {
     static OPTIONS_BUFFER: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static HTTP2_BINDING_SESSION_PROTOTYPE: RefCell<Option<Value>> = const { RefCell::new(None) };
 }
 use super::http2_asserts;
 use super::http2_facts::{
@@ -110,7 +111,14 @@ pub fn module() -> Value {
         ("kSocket".into(), Value::String(HTTP2_SOCKET_SYMBOL.into())),
     ]);
     let global = quench_runtime::vm::current_global_object();
-    let binding = binding();
+    // `internalBinding('http2')` is allowed to run before the public
+    // `require('http2')` path. Reuse the host-installed binding in that case;
+    // replacing it would discard prototype mutations made by internal tests
+    // before the public module is loaded.
+    let binding = match execute::get_property(&global, "__quenchHttp2Binding") {
+        value @ (Value::Object(_) | Value::ObjectAlias(_)) => value,
+        _ => binding(),
+    };
     let descriptor = host_api::object(vec![
         ("value".into(), binding),
         ("writable".into(), Value::Boolean(true)),
@@ -437,7 +445,7 @@ fn typed_array_elements(value: &Value) -> Option<Vec<u8>> {
 }
 
 pub fn binding() -> Value {
-    let session = host_api::bound_builtin(quench_runtime::ops::Builtin::Object, Value::Undefined);
+    let session = http2_binding_session_constructor();
     let error_string = host_api::bound_capability_with_arguments(
         crate::host::capability_ref(crate::registry::SPEC_INTERNAL_HTTP2_UTIL),
         vec![Value::String("errorString".into())],
@@ -448,6 +456,20 @@ pub fn binding() -> Value {
         ("Http2Session".into(), session),
         ("nghttp2ErrorString".into(), error_string),
     ])
+}
+
+fn http2_binding_session_constructor() -> Value {
+    HTTP2_BINDING_SESSION_PROTOTYPE.with(|stored| {
+        let prototype = stored
+            .borrow_mut()
+            .get_or_insert_with(|| {
+                host_api::object(vec![("\0quench:host:mutable".into(), Value::Boolean(true))])
+            })
+            .clone();
+        let session =
+            host_api::bound_builtin(quench_runtime::ops::Builtin::Object, Value::Undefined);
+        execute::set_property(session, "prototype", prototype)
+    })
 }
 
 fn header_constants() -> Value {
@@ -755,7 +777,6 @@ fn set_ping_limit(socket: &Value, options: &Value) {
         }
     }
 }
-
 
 fn remember_http2_authority(socket: &Value, target: &Value) {
     let host = execute::to_js_string(&execute::get_property(target, "host")).ok();
@@ -1171,6 +1192,112 @@ pub(crate) fn http2_diagnostic_headers(fields: &[(Vec<u8>, Vec<u8>)]) -> Value {
     headers
 }
 
+fn http2_binding_request_override() -> Option<Value> {
+    // `internalBinding('http2')` may materialize a fresh namespace object for
+    // each caller, but its Http2Session prototype is the shared native
+    // identity.  Constructing the view here therefore observes the same
+    // prototype patch without depending on a stale module-object snapshot.
+    let binding = binding();
+    let session = execute::get_property(&binding, "Http2Session");
+    let prototype = execute::canonical_value(&execute::get_property(&session, "prototype"));
+    let request = execute::get_property(&prototype, "request");
+    quench_runtime::is_callable(&request).then_some(request)
+}
+
+fn binding_request_error(code: i64) -> Value {
+    let (name, message) = match code {
+        -509 => (
+            "ERR_HTTP2_OUT_OF_STREAMS",
+            "No stream ID is available because maximum stream ID has been reached",
+        ),
+        -501 => (
+            "ERR_HTTP2_STREAM_SELF_DEPENDENCY",
+            "A stream cannot depend on itself",
+        ),
+        _ => ("ERR_HTTP2_ERROR", ""),
+    };
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String(message.into())],
+    );
+    execute::set_property(error, "code", Value::String(name.into()))
+}
+
+fn stream_cancel_error(cause: Value) -> Value {
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String("The pending stream has been canceled".into())],
+    );
+    let error = execute::set_property(
+        error,
+        "code",
+        Value::String("ERR_HTTP2_STREAM_CANCEL".into()),
+    );
+    execute::set_property(error, "cause", cause)
+}
+
+fn complete_binding_request(
+    state: &Rc<RefCell<HostState>>,
+    socket: &Value,
+    receiver: Option<&Value>,
+    stream_id: u32,
+) -> Result<Value, VmError> {
+    let Some(binding_request) = http2_binding_request_override() else {
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    };
+    let result = execute::call(&binding_request, socket, &[])?;
+    let Value::Number(code) = result else {
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    };
+    let stream = receiver.cloned().unwrap_or(Value::Undefined);
+    if !matches!(stream, Value::Object(_) | Value::ObjectAlias(_)) {
+        return Ok(Value::Undefined);
+    }
+    if let Some(socket_id) = crate::modules::net::net_id(socket) {
+        let mut host = state.borrow_mut();
+        if let Some(session) = host.net.http2_sessions.get_mut(&socket_id) {
+            session.streams.remove(&stream_id);
+        }
+        host.net.http2_streams.remove(&(socket_id, stream_id));
+    }
+    execute::set_property_in_place(&stream, "destroyed", Value::Boolean(true));
+    execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
+    execute::set_property_in_place(&stream, "writableEnded", Value::Boolean(true));
+    execute::set_property_in_place(&stream, "writableFinished", Value::Boolean(true));
+    execute::set_property_in_place(&stream, "\0quenchHttp2CloseEmitted", Value::Boolean(true));
+    let code = code as i64;
+    if code == -509 || code == -501 {
+        let error = binding_request_error(code);
+        publish_http2_stream_diagnostic(
+            state,
+            &stream,
+            false,
+            HTTP2_DIAG_ERROR,
+            None,
+            None,
+            Some(error.clone()),
+        )?;
+        state.borrow_mut().net.pending_http2_events.push((
+            stream.clone(),
+            "error".into(),
+            vec![error],
+        ));
+    } else {
+        let error = nghttp_error(&[Value::Number(code as f64)])?;
+        let cancel = stream_cancel_error(error.clone());
+        state.borrow_mut().net.pending_http2_events.extend([
+            (socket.clone(), "error".into(), vec![error]),
+            (stream.clone(), "error".into(), vec![cancel]),
+        ]);
+    }
+    state
+        .borrow_mut()
+        .net
+        .pending_http2_events
+        .push((stream, "close".into(), Vec::new()));
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
 fn session_request(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -1180,6 +1307,11 @@ fn session_request(
     let Some(socket_id) = crate::modules::net::net_id(&socket) else {
         return Err(VmError::NotCallable);
     };
+    // The native binding is an explicit seam used by Node's own
+    // requestOnConnect tests.  Detect an overridden handle method before
+    // queueing HEADERS; its result is consumed by stream.end() after the
+    // caller has set the native return code.
+    let binding_request = http2_binding_request_override();
     let headers = values.first().unwrap_or(&Value::Undefined);
     if !matches!(
         headers,
@@ -1387,6 +1519,11 @@ fn session_request(
         "\0quench:http2:end-stream",
         Value::Boolean(end_stream),
     );
+    execute::set_property_in_place(
+        &stream,
+        "\0quench:http2-binding-request",
+        Value::Boolean(binding_request.is_some()),
+    );
     decorate_http2_stream(state, &stream, false);
     // Keep the deprecated compatibility method on the request's own shape;
     // this stream is returned before the transport creates its peer view.
@@ -1576,13 +1713,16 @@ fn session_request(
     // An already-aborted signal destroys the request synchronously.  Do not
     // submit its HEADERS after the cancellation RST_STREAM: the request
     // state machine has already reached a terminal wire state.
-    if !matches!(
-        execute::get_property(&socket, "destroyed"),
-        Value::Boolean(true)
-    ) && !matches!(
-        execute::get_property(&stream, "destroyed"),
-        Value::Boolean(true)
-    ) {
+    if binding_request.is_none()
+        && !matches!(
+            execute::get_property(&socket, "destroyed"),
+            Value::Boolean(true)
+        )
+        && !matches!(
+            execute::get_property(&stream, "destroyed"),
+            Value::Boolean(true)
+        )
+    {
         // A signal can be aborted later in this same JavaScript turn. Keep
         // the initial HEADERS in the host queue until the next pump tick so
         // synchronous cancellation wins before a request becomes visible to
@@ -1745,6 +1885,12 @@ fn stream_end(
     values: &[Value],
 ) -> Result<Value, VmError> {
     let (socket, stream_id) = stream_socket(receiver)?;
+    if matches!(
+        receiver.map(|stream| execute::get_property(stream, "\0quench:http2-binding-request")),
+        Some(Value::Boolean(true))
+    ) {
+        return complete_binding_request(state, &socket, receiver, stream_id);
+    }
     let body = values.first().unwrap_or(&Value::Undefined);
     let bytes = crate::modules::crypto::bytes_from_value(body)
         .or_else(|| {
@@ -3321,10 +3467,7 @@ fn nghttp_error(values: &[Value]) -> Result<Value, VmError> {
         Some(Value::Number(value)) => *value as i64,
         _ => 0,
     };
-    let message = match errno {
-        -501 => "Invalid argument",
-        _ => "Unknown error code",
-    };
+    let message = nghttp_error_message(errno);
     let mut error = quench_runtime::builtins::error(
         quench_runtime::ops::Builtin::Error,
         &[Value::String(message.into())],
@@ -3373,7 +3516,12 @@ fn nghttp_error_string(values: &[Value]) -> Result<Value, VmError> {
         Some(Value::Number(value)) => *value as i32,
         _ => 0,
     };
-    let message = match errno {
+    let message = nghttp_error_message(i64::from(errno));
+    Ok(Value::String(message.into()))
+}
+
+fn nghttp_error_message(errno: i64) -> &'static str {
+    match errno {
         -501 => "Invalid argument",
         -508 => "Operation would block",
         -509 => "Stream ID not available",
@@ -3382,8 +3530,7 @@ fn nghttp_error_string(values: &[Value]) -> Result<Value, VmError> {
         -522 => "Frame size error",
         -901 => "Out of memory",
         _ => "Unknown error code",
-    };
-    Ok(Value::String(message.into()))
+    }
 }
 
 #[cfg(test)]
