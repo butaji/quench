@@ -1275,6 +1275,20 @@ pub(crate) fn decorate_http2_stream(state: &Rc<RefCell<HostState>>, stream: &Val
         ("finished".into(), Value::Boolean(false)),
     ]);
     let _ = execute::set_property_in_place(&stream, "_writableState", writable_state);
+    let _ = execute::set_property_in_place(
+        &stream,
+        "writableState",
+        execute::get_property(&stream, "_writableState"),
+    );
+    let readable_state = host_api::object(vec![
+        ("highWaterMark".into(), Value::Number(65_536.0)),
+        ("buffer".into(), host_api::array(Vec::new())),
+        ("length".into(), Value::Number(0.0)),
+        ("pipes".into(), host_api::array(Vec::new())),
+        ("awaitDrainWriters".into(), Value::Null),
+    ]);
+    let _ = execute::set_property_in_place(&stream, "_readableState", readable_state.clone());
+    let _ = execute::set_property_in_place(&stream, "readableState", readable_state);
     // Node keeps a stable stream state view even though priority signalling is
     // deprecated.  Build it once with the defaults shared by client and
     // server streams so callers never observe an absent/null state object.
