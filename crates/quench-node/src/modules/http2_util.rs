@@ -1295,8 +1295,13 @@ fn decorate_client_session(socket: &Value, secure: bool) -> Result<(), VmError> 
                 "effectiveLocalWindowSize".into(),
                 Value::Number(4_194_304.0),
             ),
+            ("effectiveRecvDataLength".into(), Value::Number(0.0)),
             ("localWindowSize".into(), Value::Number(33_554_432.0)),
+            ("lastProcStreamID".into(), Value::Number(0.0)),
             ("remoteWindowSize".into(), Value::Number(65_535.0)),
+            ("outboundQueueSize".into(), Value::Number(0.0)),
+            ("deflateDynamicTableSize".into(), Value::Number(0.0)),
+            ("inflateDynamicTableSize".into(), Value::Number(0.0)),
             ("nextStreamID".into(), Value::Number(1.0)),
         ]),
     );
@@ -1409,19 +1414,19 @@ pub(crate) fn decorate_http2_stream(state: &Rc<RefCell<HostState>>, stream: &Val
     // deprecated.  Build it once with the defaults shared by client and
     // server streams so callers never observe an absent/null state object.
     let stream_state = host_api::object(vec![
+        // Keep the public state view numeric, matching nghttp2's integer
+        // flags.  The protocol state itself remains Rust-owned; these values
+        // are the observable snapshot shared by client and server streams.
+        ("state".into(), Value::Number(1.0)),
         ("sumDependencyWeight".into(), Value::Number(0.0)),
         ("weight".into(), Value::Number(16.0)),
         ("localWindowSize".into(), Value::Number(65_535.0)),
-        ("remoteWindowSize".into(), Value::Number(65_535.0)),
-        ("localClose".into(), Value::Boolean(false)),
-        ("remoteClose".into(), Value::Boolean(false)),
+        ("localClose".into(), Value::Number(0.0)),
+        ("remoteClose".into(), Value::Number(0.0)),
     ]);
     let _ = execute::set_property_in_place(&stream, "state", stream_state);
-    let _ = execute::set_property_in_place(
-        &stream,
-        "priority",
-        session_capability("streamPriority"),
-    );
+    let _ =
+        execute::set_property_in_place(&stream, "priority", session_capability("streamPriority"));
     // Set the shared Duplex prototype after host-owned fields are installed.
     // Prototype assignment may publish a copy-on-write replacement; doing it
     // first would leave subsequent in-place fields on the stale stream view.
