@@ -277,9 +277,10 @@ impl NodeRunner {
         let vfs_surface = vfs_enabled
             .then(|| quench_node::polyfills::bootstrap::lookup("vfs").unwrap_or(""))
             .unwrap_or("");
-        let vfs_stream_setup = vfs_enabled
-            .then_some("Object.defineProperty(globalThis, '__nodeStream', { configurable: true, writable: true, value: require('stream') });")
-            .unwrap_or("");
+        // stream/iter conversion helpers reuse the canonical stream
+        // constructors.  This internal alias is needed for ordinary stream
+        // fixtures too; VFS must not control its availability.
+        let vfs_stream_setup = "Object.defineProperty(globalThis, '__nodeStream', { configurable: true, writable: true, value: require('stream') });";
         let web_streams_surface = ["web-streams"]
             .into_iter()
             .filter_map(|name| quench_node::polyfills::bootstrap::lookup(name))
