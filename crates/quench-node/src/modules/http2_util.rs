@@ -171,6 +171,10 @@ fn update_local_settings(socket: &Value, update: &Value) {
 /// internal util module keeps session and test-side property access identical.
 pub(crate) const HTTP2_SOCKET_SYMBOL: &str = "Symbol.nodejs.http2.kSocket\0quench";
 const COMPAT_STATUS_CODE_PROP: &str = "\0quench:http2-compat-status-code";
+const COMPAT_STATUS_MESSAGE_PROP: &str = "\0quench:http2-compat-status-message";
+const COMPAT_STATUS_MESSAGE_WARNED_PROP: &str = "\0quench:http2-compat-status-message-warned";
+const COMPAT_STATUS_MESSAGE_WARNING: &str =
+    "Status message is not supported by HTTP/2 (RFC7540 8.1.2.4)";
 
 fn http2_capability(kind: &str) -> Value {
     host_api::bound_capability_with_arguments(
@@ -720,6 +724,7 @@ pub fn dispatch(
         "streamResume" | "streamPause" => Ok(_receiver.cloned().unwrap_or(Value::Undefined)),
         "compatResponseWriteHead" => compat_response_write_head(state, _receiver, values),
         "compatResponseStatusCode" => compat_response_status_code(_receiver, values),
+        "compatResponseStatusMessage" => compat_response_status_message(state, _receiver, values),
         "compatResponseWrite" => compat_response_write(state, _receiver, values),
         "compatResponseEnd" => compat_response_end(state, _receiver, values),
         "compatResponseDestroy" => compat_response_destroy(state, _receiver, values),
@@ -2223,6 +2228,19 @@ pub(crate) fn compat_server_request_response(
         ("configurable".into(), Value::Boolean(true)),
     ]);
     response = execute::define_property(response, "statusCode", status_descriptor)?;
+    execute::set_property_in_place(
+        &response,
+        COMPAT_STATUS_MESSAGE_PROP,
+        Value::String("".into()),
+    );
+    let status_message_accessor = http2_capability("compatResponseStatusMessage");
+    let status_message_descriptor = host_api::object(vec![
+        ("get".into(), status_message_accessor.clone()),
+        ("set".into(), status_message_accessor),
+        ("enumerable".into(), Value::Boolean(true)),
+        ("configurable".into(), Value::Boolean(true)),
+    ]);
+    response = execute::define_property(response, "statusMessage", status_message_descriptor)?;
     for (name, method) in [
         ("writeHead", http2_capability("compatResponseWriteHead")),
         ("write", http2_capability("compatResponseWrite")),
@@ -2277,6 +2295,36 @@ fn compat_response_status_code(
     Ok(execute::get_property(response, COMPAT_STATUS_CODE_PROP))
 }
 
+fn compat_response_status_message(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let response = receiver.ok_or(VmError::NotCallable)?;
+    if !matches!(
+        execute::get_property(response, COMPAT_STATUS_MESSAGE_WARNED_PROP),
+        Value::Boolean(true)
+    ) {
+        execute::set_property_in_place(
+            response,
+            COMPAT_STATUS_MESSAGE_WARNED_PROP,
+            Value::Boolean(true),
+        );
+        crate::modules::process::emit_warning(
+            state,
+            "UnsupportedWarning",
+            COMPAT_STATUS_MESSAGE_WARNING,
+            None,
+            false,
+        );
+    }
+    if values.is_empty() {
+        Ok(execute::get_property(response, COMPAT_STATUS_MESSAGE_PROP))
+    } else {
+        Ok(Value::Undefined)
+    }
+}
+
 fn compat_response_write_head(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -2317,16 +2365,31 @@ fn compat_response_write_head(
         );
     }
     let status = values.first().cloned().unwrap_or(Value::Number(200.0));
-    let headers = match values.get(1) {
-        Some(Value::Object(_) | Value::ObjectAlias(_)) => {
+    if values.get(1).is_some_and(|value| {
+        matches!(value, Value::String(_) | Value::StringUnits(_))
+    }) {
+        if let Some(response) = receiver {
+            let _ = compat_response_status_message(state, Some(response), &[])?;
+        }
+    }
+    let headers_value = values
+        .get(1)
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+        .or_else(|| {
+            values
+                .get(2)
+                .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+        });
+    let headers = match headers_value {
+        Some(value) => {
             // Do not add the response pseudo-header to the request's own
             // header object when the caller passed a mutable map.
             host_api::object(
-                execute::own_enumerable_keys(&values[1])
+                execute::own_enumerable_keys(value)
                     .into_iter()
                     .map(|key| {
-                        let value = execute::get_property(&values[1], &key);
-                        (key, value)
+                        let header_value = execute::get_property(value, &key);
+                        (key, header_value)
                     })
                     .collect(),
             )
