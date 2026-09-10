@@ -21,14 +21,27 @@ use quinn_proto::{DatagramEvent, Endpoint as ProtocolEndpoint, EndpointConfig};
 /// malformed or abandoned endpoint from retaining unbounded input.
 pub const MAX_DATAGRAM_SIZE: usize = 64 * 1024;
 const MAX_PENDING_DATAGRAMS: usize = 1024;
+const MAX_PENDING_INCOMING: usize = 128;
 const RECEIVE_BUFFER_SIZE: usize = MAX_DATAGRAM_SIZE;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum TransportError {
     UnknownEndpoint(u64),
+    UnknownConnection {
+        endpoint: u64,
+        connection: u64,
+    },
+    NoPendingIncoming(u64),
+    AcceptFailed {
+        endpoint: u64,
+        cause: quinn_proto::ConnectionError,
+    },
     DatagramTooLarge(usize),
     QueueFull(u64),
-    Io { endpoint: u64, kind: io::ErrorKind },
+    Io {
+        endpoint: u64,
+        kind: io::ErrorKind,
+    },
 }
 
 /// One datagram delivered by an endpoint's non-blocking receive edge.
@@ -56,11 +69,37 @@ pub enum ProtocolEvent {
         peer: SocketAddr,
         payload_len: usize,
     },
+    Incoming {
+        endpoint: u64,
+        peer: SocketAddr,
+        pending: usize,
+    },
+    Accepted {
+        endpoint: u64,
+        connection: u64,
+        peer: SocketAddr,
+    },
+}
+
+/// An application-facing event retained from an accepted QUIC connection.
+///
+/// The event remains Rust-owned until a future QUIC adapter is ready to map
+/// stream and handshake facts to JavaScript. Keeping the protocol event intact
+/// avoids inventing a lossy second representation at this transport boundary.
+pub struct ConnectionProtocolEvent {
+    pub endpoint: u64,
+    pub connection: u64,
+    pub event: quinn_proto::Event,
 }
 
 struct PendingDatagram {
     peer: SocketAddr,
     payload: Vec<u8>,
+}
+
+struct PendingIncoming {
+    incoming: quinn_proto::Incoming,
+    peer: SocketAddr,
 }
 
 struct Endpoint {
@@ -74,6 +113,8 @@ struct Endpoint {
     /// Whether an application-installed server configuration allows Initial
     /// packets to enter quinn-proto's incoming-connection state machine.
     server_configured: bool,
+    incoming: VecDeque<PendingIncoming>,
+    connections: HashMap<quinn_proto::ConnectionHandle, quinn_proto::Connection>,
 }
 
 /// Host-owned UDP endpoints and their transport queues.
@@ -82,6 +123,7 @@ pub struct QuicTransportState {
     endpoints: HashMap<u64, Endpoint>,
     received: VecDeque<ReceivedDatagram>,
     protocol_events: VecDeque<ProtocolEvent>,
+    connection_events: VecDeque<ConnectionProtocolEvent>,
     errors: VecDeque<TransportError>,
 }
 
@@ -98,6 +140,7 @@ impl QuicTransportState {
             endpoints: HashMap::new(),
             received: VecDeque::new(),
             protocol_events: VecDeque::new(),
+            connection_events: VecDeque::new(),
             errors: VecDeque::new(),
         }
     }
@@ -120,6 +163,8 @@ impl QuicTransportState {
                     None,
                 ),
                 server_configured: false,
+                incoming: VecDeque::new(),
+                connections: HashMap::new(),
             },
         );
         Ok(id)
@@ -138,6 +183,11 @@ impl QuicTransportState {
             .endpoints
             .get_mut(&endpoint)
             .ok_or(TransportError::UnknownEndpoint(endpoint))?;
+        if config.is_none() {
+            for pending in endpoint_state.incoming.drain(..) {
+                endpoint_state.protocol.ignore(pending.incoming);
+            }
+        }
         endpoint_state.server_configured = config.is_some();
         endpoint_state.protocol.set_server_config(config);
         Ok(())
@@ -185,6 +235,8 @@ impl QuicTransportState {
         for endpoint_id in ids {
             self.flush(endpoint_id);
             self.receive(endpoint_id);
+            self.poll_connections(endpoint_id);
+            self.flush(endpoint_id);
         }
     }
 
@@ -198,6 +250,11 @@ impl QuicTransportState {
         self.protocol_events.pop_front()
     }
 
+    /// Take the next retained event emitted by an accepted connection.
+    pub fn take_connection_event(&mut self) -> Option<ConnectionProtocolEvent> {
+        self.connection_events.pop_front()
+    }
+
     pub fn take_error(&mut self) -> Option<TransportError> {
         self.errors.pop_front()
     }
@@ -206,8 +263,83 @@ impl QuicTransportState {
         self.received.len()
     }
 
+    pub fn pending_incoming(&self, endpoint: u64) -> Result<usize, TransportError> {
+        Ok(self
+            .endpoints
+            .get(&endpoint)
+            .ok_or(TransportError::UnknownEndpoint(endpoint))?
+            .incoming
+            .len())
+    }
+
+    /// Accept one queued Initial packet into quinn-proto's connection state.
+    ///
+    /// This is intentionally an internal transition: no VM-visible QUIC
+    /// object is created here. The accepted connection and all resulting
+    /// protocol events stay in the host envelope until a complete adapter can
+    /// expose them without changing their ordering or ownership semantics.
+    pub fn accept(&mut self, endpoint: u64) -> Result<u64, TransportError> {
+        let pending = {
+            let endpoint_state = self
+                .endpoints
+                .get_mut(&endpoint)
+                .ok_or(TransportError::UnknownEndpoint(endpoint))?;
+            endpoint_state
+                .incoming
+                .pop_front()
+                .ok_or(TransportError::NoPendingIncoming(endpoint))?
+        };
+
+        let mut response = Vec::new();
+        let now = Instant::now();
+        let result = {
+            let endpoint_state = self
+                .endpoints
+                .get_mut(&endpoint)
+                .expect("endpoint checked before removing incoming");
+            endpoint_state
+                .protocol
+                .accept(pending.incoming, now, &mut response, None)
+        };
+
+        match result {
+            Ok((handle, connection)) => {
+                let connection_id = handle.0 as u64;
+                let endpoint_state = self
+                    .endpoints
+                    .get_mut(&endpoint)
+                    .expect("endpoint remains while accepting connection");
+                endpoint_state.connections.insert(handle, connection);
+                self.protocol_events.push_back(ProtocolEvent::Accepted {
+                    endpoint,
+                    connection: connection_id,
+                    peer: pending.peer,
+                });
+                self.queue_transmit(endpoint, response, None);
+                Ok(connection_id)
+            }
+            Err(error) => {
+                if let Some(transmit) = error.response {
+                    self.queue_transmit(endpoint, response, Some(transmit));
+                }
+                let cause = error.cause;
+                self.errors.push_back(TransportError::AcceptFailed {
+                    endpoint,
+                    cause: cause.clone(),
+                });
+                Err(TransportError::AcceptFailed { endpoint, cause })
+            }
+        }
+    }
+
     pub fn close(&mut self, endpoint: u64) -> bool {
-        self.endpoints.remove(&endpoint).is_some()
+        let Some(mut endpoint_state) = self.endpoints.remove(&endpoint) else {
+            return false;
+        };
+        for pending in endpoint_state.incoming.drain(..) {
+            endpoint_state.protocol.ignore(pending.incoming);
+        }
+        true
     }
 
     fn flush(&mut self, endpoint_id: u64) {
@@ -341,34 +473,191 @@ impl QuicTransportState {
             BytesMut::from(payload.as_slice()),
             &mut response,
         );
-        let Some(DatagramEvent::Response(transmit)) = event else {
-            self.protocol_events.push_back(ProtocolEvent::Ignored {
+        match event {
+            Some(DatagramEvent::Response(transmit)) => {
+                let payload_len = transmit.size;
+                self.protocol_events.push_back(ProtocolEvent::Response {
+                    endpoint: endpoint_id,
+                    peer,
+                    payload_len,
+                });
+                self.queue_transmit(endpoint_id, response, Some(transmit));
+            }
+            Some(DatagramEvent::NewConnection(incoming)) => {
+                self.enqueue_incoming(endpoint_id, incoming);
+            }
+            Some(DatagramEvent::ConnectionEvent(handle, event)) => {
+                self.deliver_connection_event(endpoint_id, handle, event);
+            }
+            None => {
+                self.protocol_events.push_back(ProtocolEvent::Ignored {
+                    endpoint: endpoint_id,
+                    peer,
+                    payload_len: payload.len(),
+                });
+            }
+        }
+    }
+
+    fn enqueue_incoming(&mut self, endpoint_id: u64, incoming: quinn_proto::Incoming) {
+        let peer = incoming.remote_address();
+        let endpoint_state = self
+            .endpoints
+            .get_mut(&endpoint_id)
+            .expect("endpoint checked before protocol handling");
+        if endpoint_state.incoming.len() >= MAX_PENDING_INCOMING {
+            endpoint_state.protocol.ignore(incoming);
+            self.errors
+                .push_back(TransportError::QueueFull(endpoint_id));
+            return;
+        }
+        endpoint_state
+            .incoming
+            .push_back(PendingIncoming { incoming, peer });
+        self.protocol_events.push_back(ProtocolEvent::Incoming {
+            endpoint: endpoint_id,
+            peer,
+            pending: endpoint_state.incoming.len(),
+        });
+    }
+
+    fn deliver_connection_event(
+        &mut self,
+        endpoint_id: u64,
+        handle: quinn_proto::ConnectionHandle,
+        event: quinn_proto::ConnectionEvent,
+    ) {
+        let Some(endpoint_state) = self.endpoints.get_mut(&endpoint_id) else {
+            return;
+        };
+        let Some(connection) = endpoint_state.connections.get_mut(&handle) else {
+            self.errors.push_back(TransportError::UnknownConnection {
                 endpoint: endpoint_id,
-                peer,
-                payload_len: payload.len(),
+                connection: handle.0 as u64,
             });
             return;
         };
-        // `quinn-proto` may describe a GSO transmit.  The current UDP edge is
-        // intentionally one datagram per queue item, so do not accidentally
-        // truncate or reinterpret a segmented response.
-        if transmit.segment_size.is_some() || transmit.size > response.len() {
+        connection.handle_event(event);
+    }
+
+    fn queue_transmit(
+        &mut self,
+        endpoint_id: u64,
+        buffer: Vec<u8>,
+        transmit: Option<quinn_proto::Transmit>,
+    ) {
+        let Some(transmit) = transmit else {
+            return;
+        };
+        if transmit.size > buffer.len() {
             self.errors.push_back(TransportError::Io {
                 endpoint: endpoint_id,
                 kind: io::ErrorKind::InvalidData,
             });
             return;
         }
-        let payload = response[..transmit.size].to_vec();
-        self.protocol_events.push_back(ProtocolEvent::Response {
-            endpoint: endpoint_id,
-            peer,
-            payload_len: payload.len(),
-        });
-        if let Err(error) = self.send(endpoint_id, transmit.destination, payload) {
-            self.errors.push_back(error);
+        let bytes = &buffer[..transmit.size];
+        let chunks = match transmit.segment_size {
+            Some(segment_size) if segment_size != 0 => bytes.chunks(segment_size),
+            Some(_) => {
+                self.errors.push_back(TransportError::Io {
+                    endpoint: endpoint_id,
+                    kind: io::ErrorKind::InvalidData,
+                });
+                return;
+            }
+            None => bytes.chunks(bytes.len().max(1)),
+        };
+        for chunk in chunks {
+            if let Err(error) = self.send(endpoint_id, transmit.destination, chunk.to_vec()) {
+                self.errors.push_back(error);
+                break;
+            }
         }
     }
+
+    fn poll_connections(&mut self, endpoint_id: u64) {
+        loop {
+            let now = Instant::now();
+            let (endpoint_events, application_events, transmits) = {
+                let Some(endpoint_state) = self.endpoints.get_mut(&endpoint_id) else {
+                    return;
+                };
+                collect_connection_work(endpoint_state, now)
+            };
+
+            for (connection, event) in application_events {
+                self.connection_events.push_back(ConnectionProtocolEvent {
+                    endpoint: endpoint_id,
+                    connection: connection.0 as u64,
+                    event,
+                });
+            }
+            for (transmit, buffer) in transmits {
+                self.queue_transmit(endpoint_id, buffer, Some(transmit));
+            }
+            if endpoint_events.is_empty() {
+                return;
+            }
+
+            for (handle, event) in endpoint_events {
+                let drained = event.is_drained();
+                let response = self
+                    .endpoints
+                    .get_mut(&endpoint_id)
+                    .and_then(|endpoint| endpoint.protocol.handle_event(handle, event));
+                if let Some(response) = response {
+                    self.deliver_connection_event(endpoint_id, handle, response);
+                }
+                if drained {
+                    if let Some(endpoint) = self.endpoints.get_mut(&endpoint_id) {
+                        endpoint.connections.remove(&handle);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn collect_connection_work(
+    endpoint: &mut Endpoint,
+    now: Instant,
+) -> (
+    Vec<(quinn_proto::ConnectionHandle, quinn_proto::EndpointEvent)>,
+    Vec<(quinn_proto::ConnectionHandle, quinn_proto::Event)>,
+    Vec<(quinn_proto::Transmit, Vec<u8>)>,
+) {
+    let handles = endpoint.connections.keys().copied().collect::<Vec<_>>();
+    let mut endpoint_events = Vec::new();
+    let mut application_events = Vec::new();
+    let mut transmits = Vec::new();
+    for handle in handles {
+        let Some(connection) = endpoint.connections.get_mut(&handle) else {
+            continue;
+        };
+        if connection
+            .poll_timeout()
+            .is_some_and(|timeout| timeout <= now)
+        {
+            connection.handle_timeout(now);
+        }
+        while let Some(event) = connection.poll_endpoint_events() {
+            endpoint_events.push((handle, event));
+        }
+        while let Some(event) = connection.poll() {
+            application_events.push((handle, event));
+        }
+        let mut buffer = Vec::new();
+        while let Some(transmit) = connection.poll_transmit(now, 1, &mut buffer) {
+            let size = transmit.size;
+            if size > buffer.len() {
+                break;
+            }
+            transmits.push((transmit, buffer[..size].to_vec()));
+            buffer.clear();
+        }
+    }
+    (endpoint_events, application_events, transmits)
 }
 
 /// Recognize the QUIC long-header Initial packet type without decoding it.
@@ -515,6 +804,19 @@ mod tests {
         );
         assert!(!state.endpoints.get(&first).unwrap().server_configured);
         assert!(!state.endpoints.get(&second).unwrap().server_configured);
+    }
+
+    #[test]
+    fn accepting_without_an_incoming_connection_is_explicit() {
+        let mut state = QuicTransportState::new();
+        let endpoint = state.bind(loopback()).unwrap();
+
+        assert_eq!(state.pending_incoming(endpoint), Ok(0));
+        assert_eq!(
+            state.accept(endpoint),
+            Err(TransportError::NoPendingIncoming(endpoint))
+        );
+        assert!(state.take_connection_event().is_none());
     }
 
     #[test]
