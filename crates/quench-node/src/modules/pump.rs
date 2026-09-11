@@ -159,6 +159,7 @@ pub fn await_promise(state: &Rc<RefCell<HostState>>, promise: &Value) -> Result<
             return result;
         }
         crate::dispatch_handlers::poll_pending_shell_execs(state)?;
+        crate::modules::fs::poll_watchers(state)?;
         crate::modules::net::poll(state)?;
         quench_runtime::expire_async_waiters();
         drain_ticks(state)?;
@@ -207,6 +208,7 @@ pub fn await_promise_with_timeout(
             return Ok(false);
         }
         crate::dispatch_handlers::poll_pending_shell_execs(state)?;
+        crate::modules::fs::poll_watchers(state)?;
         crate::modules::net::poll(state)?;
         quench_runtime::expire_async_waiters();
         drain_ticks(state)?;
@@ -251,6 +253,7 @@ pub fn run_event_loop(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             return Err(VmError::Thrown(error));
         }
         crate::dispatch_handlers::poll_pending_shell_execs(state)?;
+        crate::modules::fs::poll_watchers(state)?;
         crate::modules::net::poll(state)?;
         quench_runtime::expire_async_waiters();
         drain_ticks(state)?;
@@ -292,12 +295,18 @@ fn hide_runtime_globals() {
             ("configurable".into(), Value::Boolean(true)),
             ("enumerable".into(), Value::Boolean(false)),
         ]);
-        let _ = quench_runtime::execute::define_property(global.clone(), key, descriptor);
+        if let Ok(updated) = quench_runtime::execute::define_property(global.clone(), key, descriptor)
+        {
+            quench_runtime::execute::replace_value(&global, &updated);
+        }
     }
 }
 
 /// Run `process.on('exit')` handlers once with the exit code.
 pub fn run_exit_handlers(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
+    // `process.exit()` can unwind before the ordinary event-loop drain. Keep
+    // host bookkeeping hidden on that direct exit path as well.
+    hide_runtime_globals();
     {
         let mut guard = state.borrow_mut();
         if guard.process.exit_handlers_ran {
@@ -932,6 +941,7 @@ fn has_pending(state: &Rc<RefCell<HostState>>) -> bool {
             .values()
             .any(|t| t.referenced && t.active)
         || crate::modules::net::has_work(state)
+        || crate::modules::fs::has_watch_work(state)
 }
 
 fn sleep_until_next(state: &Rc<RefCell<HostState>>) {
@@ -939,6 +949,10 @@ fn sleep_until_next(state: &Rc<RefCell<HostState>>) {
     // the pump sleep past readable/closed socket state: polling at a short
     // cadence lets FINs and close transitions settle before the next timer.
     if crate::modules::net::has_work(state) {
+        std::thread::sleep(std::time::Duration::from_millis(4));
+        return;
+    }
+    if crate::modules::fs::has_watch_work(state) {
         std::thread::sleep(std::time::Duration::from_millis(4));
         return;
     }

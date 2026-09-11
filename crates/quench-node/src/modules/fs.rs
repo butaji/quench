@@ -3,9 +3,10 @@
 //! callbacks run on the host event loop.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::rc::Rc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(unix)]
 use std::os::unix::fs::FileTypeExt;
@@ -20,12 +21,34 @@ use crate::modules::{fs_error, fs_stats};
 pub struct FsState {
     next_fd: i32,
     pub(crate) descriptors: HashMap<i32, FileDescriptor>,
+    next_watch_id: u64,
+    watchers: HashMap<u64, FsWatcher>,
 }
 
 pub(crate) struct FileDescriptor {
     pub(crate) file: std::fs::File,
     pub(crate) path: String,
 }
+
+/// Host-owned state for one `fs.watch` registration.  The VM object remains
+/// an ordinary EventEmitter; this record is the durable edge that keeps the
+/// filesystem observation and its lifecycle out of JavaScript glue.
+struct FsWatcher {
+    path: String,
+    recursive: bool,
+    encoding: Option<String>,
+    previous: BTreeMap<String, WatchStamp>,
+    emitter: Value,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct WatchStamp {
+    kind: u8,
+    size: u64,
+    modified_ns: u128,
+}
+
+const FS_WATCH_ID_PROP: &str = "\0quench:fs-watch:id";
 
 fn invalid_fd_error(syscall: &str) -> VmError {
     crate::modules::fs_error::fs_error(syscall, None, &std::io::Error::from_raw_os_error(9))
@@ -42,6 +65,8 @@ impl FsState {
         Self {
             next_fd: 3,
             descriptors: HashMap::new(),
+            next_watch_id: 1,
+            watchers: HashMap::new(),
         }
     }
 }
@@ -5531,12 +5556,34 @@ pub fn validate_watch_options(
     // `watch(path, listener)` treats the callable second argument as the
     // listener, not as `options`; validate the path first so null-byte and
     // other path errors retain Node's precedence over callback handling.
-    path_arg(args.first())?;
+    let path = path_arg(args.first())?;
     let options = args
         .get(1)
         .filter(|value| !quench_runtime::is_callable(value));
-    parse_options(options)?;
+    let parsed = parse_options(options)?;
     let watcher = crate::modules::events::new_emitter_object(state)?;
+    let watch_id = {
+        let mut host = state.borrow_mut();
+        let id = host.fs.next_watch_id;
+        host.fs.next_watch_id = host.fs.next_watch_id.saturating_add(1);
+        let previous = watch_snapshot(&path, parsed.recursive).unwrap_or_default();
+        host.fs.watchers.insert(
+            id,
+            FsWatcher {
+                path: path.clone(),
+                recursive: parsed.recursive,
+                encoding: parsed.encoding,
+                previous,
+                emitter: watcher.clone(),
+            },
+        );
+        id
+    };
+    let _ = quench_runtime::execute::set_property_in_place(
+        &watcher,
+        FS_WATCH_ID_PROP,
+        Value::Number(watch_id as f64),
+    );
     Ok(quench_runtime::execute::set_property(
         watcher,
         "close",
@@ -5549,8 +5596,131 @@ pub fn close_watch(
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    let _ = (state, receiver);
+    if let Some(receiver) = receiver {
+        if let Value::Number(id) = execute::get_property(receiver, FS_WATCH_ID_PROP) {
+            if id.is_finite() && id >= 0.0 {
+                state.borrow_mut().fs.watchers.remove(&(id as u64));
+            }
+        }
+    }
     Ok(Value::Undefined)
+}
+
+/// Return whether at least one filesystem watcher keeps the event loop alive.
+pub(crate) fn has_watch_work(state: &Rc<RefCell<HostState>>) -> bool {
+    !state.borrow().fs.watchers.is_empty()
+}
+
+/// Poll registered filesystem watches once at the host pump boundary.  A
+/// snapshot is deliberately used instead of an OS-specific backend: it is
+/// bounded, works for recursive directory watches on every host, and keeps
+/// all observable dispatch in the ordinary EventEmitter machinery.
+pub(crate) fn poll_watchers(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
+    let ids: Vec<u64> = state.borrow().fs.watchers.keys().copied().collect();
+    for id in ids {
+        let Some((emitter, encoding, event)) = ({
+            let mut host = state.borrow_mut();
+            let watcher = host.fs.watchers.get_mut(&id);
+            watcher.and_then(|watcher| {
+                let next = watch_snapshot(&watcher.path, watcher.recursive).ok()?;
+                if next == watcher.previous {
+                    return None;
+                }
+                let filename = watch_filename(&watcher.previous, &next);
+                watcher.previous = next;
+                Some((
+                    watcher.emitter.clone(),
+                    watcher.encoding.clone(),
+                    filename,
+                ))
+            })
+        }) else {
+            continue;
+        };
+        let filename = match event {
+            Some(filename) => filename,
+            None => continue,
+        };
+        let filename = if encoding.as_deref() == Some("buffer") {
+            host_api::bytes(filename.as_bytes())
+        } else {
+            Value::String(filename)
+        };
+        crate::modules::events::method_emit(
+            state,
+            Some(&emitter),
+            &[Value::String("change".into()), Value::String("change".into()), filename],
+        )?;
+    }
+    Ok(())
+}
+
+fn watch_filename(
+    previous: &BTreeMap<String, WatchStamp>,
+    next: &BTreeMap<String, WatchStamp>,
+) -> Option<String> {
+    previous
+        .iter()
+        .find(|(name, old)| next.get(*name).is_some_and(|new| *new != **old))
+        .map(|(name, _)| name.clone())
+        .or_else(|| next.keys().find(|name| !previous.contains_key(*name)).cloned())
+        .or_else(|| previous.keys().find(|name| !next.contains_key(*name)).cloned())
+}
+
+fn watch_snapshot(
+    path: &str,
+    recursive: bool,
+) -> std::io::Result<BTreeMap<String, WatchStamp>> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    let mut result = BTreeMap::new();
+    if metadata.is_dir() {
+        watch_snapshot_dir(std::path::Path::new(path), std::path::Path::new(""), recursive, &mut result)?;
+    } else {
+        let name = std::path::Path::new(path)
+            .file_name()
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        result.insert(name, watch_stamp(&metadata));
+    }
+    Ok(result)
+}
+
+fn watch_snapshot_dir(
+    root: &std::path::Path,
+    relative: &std::path::Path,
+    recursive: bool,
+    result: &mut BTreeMap<String, WatchStamp>,
+) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(root.join(relative))? {
+        let entry = entry?;
+        let metadata = std::fs::symlink_metadata(entry.path())?;
+        let child = relative.join(entry.file_name());
+        let name = child.to_string_lossy().replace('\\', "/");
+        result.insert(name, watch_stamp(&metadata));
+        if recursive && metadata.is_dir() {
+            watch_snapshot_dir(root, &child, recursive, result)?;
+        }
+    }
+    Ok(())
+}
+
+fn watch_stamp(metadata: &std::fs::Metadata) -> WatchStamp {
+    let modified_ns = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_else(|| {
+            SystemTime::UNIX_EPOCH
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        });
+    WatchStamp {
+        kind: if metadata.is_dir() { 1 } else if metadata.is_file() { 0 } else { 2 },
+        size: metadata.len(),
+        modified_ns,
+    }
 }
 
 /// File-watch registration is stateful in Node, but the compatibility host
