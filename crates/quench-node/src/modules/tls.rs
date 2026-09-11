@@ -757,6 +757,28 @@ pub fn connect(
     if let Some(options) = options_ref {
         validate_options(options)?;
     }
+    // `tls.connect({ socket })` upgrades an already-connected net.Socket in
+    // place (used by CONNECT/double-TLS clients).  Re-entering the ordinary
+    // net connector would incorrectly require a second port and either leave
+    // the supplied transport untouched or report ERR_MISSING_ARGS.  Keep the
+    // transport identity and let the normal pump publish `secureConnect`
+    // after the TLS decoration, just as it does for a fresh connection.
+    if let Some(options) = options_ref {
+        let supplied = execute::get_property(options, "socket");
+        if crate::modules::net::net_id(&supplied).is_some() {
+            let canonical = execute::canonical_value(&supplied);
+            decorate_socket(&supplied, options_ref);
+            if !execute::same_identity(&supplied, &canonical) {
+                decorate_socket(&canonical, options_ref);
+            }
+            state.borrow_mut().net.pending_events.push((
+                canonical.clone(),
+                "secureConnect".into(),
+                Vec::new(),
+            ));
+            return Ok(canonical);
+        }
+    }
     let raw_socket = crate::modules::net::connect(state, args)?;
     let socket = execute::canonical_value(&raw_socket);
     decorate_socket(&raw_socket, options_ref);
