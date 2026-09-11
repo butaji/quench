@@ -2206,6 +2206,19 @@ pub fn constructor_adapter(
     let options = constructor_args.first().unwrap_or(&Value::Undefined);
     if readable {
         apply_default_hwm(&stream, options, defaults, "readable")?;
+        // Node's ReadableState starts with no speculative read-more request;
+        // demand is raised by a data/readable listener or an explicit read.
+        // Normalize the prelude's eager bootstrap flag at this shared Rust
+        // constructor boundary so every Readable family exposes the same
+        // initial state without a second buffering representation.
+        let readable_state = execute::get_property(&stream, "_readableState");
+        if !matches!(readable_state, Value::Undefined | Value::Null) {
+            let _ = execute::set_property_in_place(
+                &readable_state,
+                "readingMore",
+                Value::Boolean(false),
+            );
+        }
     }
     if writable {
         apply_default_hwm(&stream, options, defaults, "writable")?;
