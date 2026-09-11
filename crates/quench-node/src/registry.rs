@@ -790,8 +790,7 @@ pub const SPEC_STREAM_READABLE_BUFFER: NodeSpec =
     NodeSpec::new("stream:Readable.readableBuffer", 2518);
 pub const SPEC_STREAM_WRITABLE_HAS_INSTANCE: NodeSpec =
     NodeSpec::new("stream:Writable.hasInstance", 2519);
-pub const SPEC_STREAM_READABLE_WRAP: NodeSpec =
-    NodeSpec::new("stream:Readable.wrap", 2520);
+pub const SPEC_STREAM_READABLE_WRAP: NodeSpec = NodeSpec::new("stream:Readable.wrap", 2520);
 pub const SPEC_STREAM_READABLE_WRAP_EVENT: NodeSpec =
     NodeSpec::new("stream:Readable.wrap:event", 2521);
 pub const SPEC_STREAM_READABLE_WRAP_PROXY: NodeSpec =
@@ -1094,6 +1093,8 @@ pub const SPEC_FS_HANDLE_CHMOD: NodeSpec = NodeSpec::new("fs:FileHandle:chmod", 
 pub const SPEC_FS_HANDLE_TRUNCATE: NodeSpec = NodeSpec::new("fs:FileHandle:truncate", 2528);
 pub const SPEC_FS_HANDLE_APPENDFILE: NodeSpec = NodeSpec::new("fs:FileHandle:appendFile", 2529);
 pub const SPEC_FS_HANDLE_WRITEFILE: NodeSpec = NodeSpec::new("fs:FileHandle:writeFile", 2530);
+pub const SPEC_FS_HANDLE_SYNC: NodeSpec = NodeSpec::new("fs:FileHandle:sync", 2531);
+pub const SPEC_FS_HANDLE_DATASYNC: NodeSpec = NodeSpec::new("fs:FileHandle:datasync", 2532);
 pub const SPEC_FS_READSTREAM_CLOSE: NodeSpec = NodeSpec::new("fs:ReadStream:close", 0x1170);
 pub const SPEC_FS_READSTREAM_DESTROY: NodeSpec = NodeSpec::new("fs:ReadStream:destroy", 0x1171);
 pub const SPEC_FS_UTF8STREAM: NodeSpec = NodeSpec::new("fs:Utf8Stream", 0x7EE0);
@@ -1695,6 +1696,8 @@ pub const CAP_FS_HANDLE_CHMOD: CapId = SPEC_FS_HANDLE_CHMOD.cap;
 pub const CAP_FS_HANDLE_TRUNCATE: CapId = SPEC_FS_HANDLE_TRUNCATE.cap;
 pub const CAP_FS_HANDLE_APPENDFILE: CapId = SPEC_FS_HANDLE_APPENDFILE.cap;
 pub const CAP_FS_HANDLE_WRITEFILE: CapId = SPEC_FS_HANDLE_WRITEFILE.cap;
+pub const CAP_FS_HANDLE_SYNC: CapId = SPEC_FS_HANDLE_SYNC.cap;
+pub const CAP_FS_HANDLE_DATASYNC: CapId = SPEC_FS_HANDLE_DATASYNC.cap;
 pub const CAP_FS_READSTREAM_CLOSE: CapId = SPEC_FS_READSTREAM_CLOSE.cap;
 pub const CAP_FS_READSTREAM_DESTROY: CapId = SPEC_FS_READSTREAM_DESTROY.cap;
 pub const CAP_FS_UTF8STREAM: CapId = SPEC_FS_UTF8STREAM.cap;
