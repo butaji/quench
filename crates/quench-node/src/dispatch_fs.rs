@@ -85,6 +85,8 @@ pub fn fs_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_FS_GLOB_SYNC => crate::modules::fs::glob_sync,
         CAP_FS_HANDLE_READFILE => crate::modules::fs::file_handle_read_file,
         CAP_FS_HANDLE_FD => crate::modules::fs::file_handle_fd,
+        CAP_FS_HANDLE_STAT => crate::modules::fs::file_handle_stat,
+        CAP_FS_HANDLE_CHMOD => crate::modules::fs::file_handle_chmod,
         CAP_FS_READSTREAM_CLOSE => crate::modules::fs::read_stream_close,
         CAP_FS_READSTREAM_DESTROY => crate::modules::fs::read_stream_destroy,
         CAP_FS_UTF8STREAM_WRITE => crate::modules::fs_utf8_stream::write,
