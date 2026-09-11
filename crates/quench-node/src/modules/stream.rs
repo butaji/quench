@@ -2146,11 +2146,31 @@ pub fn readable_read_adapter(
             ));
         }
     }
-    execute::call(
+    let result = execute::call(
         original,
         receiver.unwrap_or(&Value::Undefined),
         args.get(1..).unwrap_or_default(),
-    )
+    )?;
+    // When a byte-oriented read asks for more data than is buffered, Node
+    // keeps the readable side marked as needing another notification.  The
+    // grandfathered prelude's wait path returns `null` without making that
+    // state transition; derive it here at the canonical Rust adapter boundary
+    // so every Readable family observes the same fact.
+    if matches!(result, Value::Null) {
+        if let (Some(Value::Number(requested)), Value::Number(buffered)) = (
+            args.get(1),
+            execute::get_property(receiver.unwrap_or(&Value::Undefined), "readableLength"),
+        ) {
+            let stream = receiver.unwrap_or(&Value::Undefined);
+            let state = execute::get_property(stream, "_readableState");
+            let ended = matches!(execute::get_property(&state, "ended"), Value::Boolean(true));
+            let destroyed = matches!(execute::get_property(stream, "destroyed"), Value::Boolean(true));
+            if requested.is_finite() && *requested > 0.0 && *requested > buffered && !ended && !destroyed {
+                let _ = execute::set_property_in_place(&state, "needReadable", Value::Boolean(true));
+            }
+        }
+    }
+    Ok(result)
 }
 
 const DEFAULT_BYTE_HWM: f64 = 65_536.0;
