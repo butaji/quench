@@ -3294,6 +3294,11 @@ pub(crate) fn compat_server_request_response(
         ("httpVersionMinor", Value::Number(0.0)),
         ("headers", headers.clone()),
         ("rawHeaders", raw_headers.clone()),
+        // The compatibility request exposes the underlying
+        // ServerHttp2Stream directly. Keep this identity canonical so
+        // stream lifecycle operations and readable state are shared with the
+        // transport pump and the response view.
+        ("stream", stream.clone()),
         // IncomingMessage trailer maps are dictionary objects.  Keep the
         // compatibility view aligned with the canonical HTTP/2 header
         // decoder so a wire header named `constructor` cannot resolve through
