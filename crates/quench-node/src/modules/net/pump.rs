@@ -1881,10 +1881,23 @@ pub(crate) fn dispatch_http2_frames(
                     )
                 {
                     // Server-side request trailers are delivered to both the
-                    // raw stream and the compatibility request view.
+                    // raw stream and the compatibility request view.  Update
+                    // the IncomingMessage-style fields before emitting the
+                    // event so listeners see the same dictionary and wire
+                    // order through `trailers` and `rawTrailers`.
                     let trailers = http2_headers_value(&fields);
+                    let raw_trailers = http2_raw_headers_value(&fields);
+                    let request =
+                        execute::get_property(&stream, "\0quench:http2-compat-request");
+                    if matches!(request, Value::Object(_) | Value::ObjectAlias(_)) {
+                        execute::set_property_in_place(&request, "trailers", trailers.clone());
+                        execute::set_property_in_place(
+                            &request,
+                            "rawTrailers",
+                            raw_trailers.clone(),
+                        );
+                    }
                     emit_socket_scoped(state, socket, &stream, "trailers", vec![trailers.clone()])?;
-                    let request = execute::get_property(&stream, "\0quench:http2-compat-request");
                     if matches!(request, Value::Object(_) | Value::ObjectAlias(_)) {
                         emit_socket_scoped(state, socket, &request, "trailers", vec![trailers])?;
                     }
