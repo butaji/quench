@@ -1078,22 +1078,86 @@ fn method_props() -> Vec<(&'static str, Value)> {
             "getActiveResourcesInfo",
             crate::host::capability(crate::registry::SPEC_PROCESS_ACTIVE_RESOURCES),
         ),
+        (
+            "_getActiveHandles",
+            host_api::bound_capability_with_arguments(
+                crate::host::capability_ref(crate::registry::SPEC_PROCESS_ACTIVE_RESOURCES),
+                vec![Value::String("handles".into())],
+            ),
+        ),
+        (
+            "_getActiveRequests",
+            host_api::bound_capability_with_arguments(
+                crate::host::capability_ref(crate::registry::SPEC_PROCESS_ACTIVE_RESOURCES),
+                vec![Value::String("requests".into())],
+            ),
+        ),
     ]
 }
 
-pub fn active_resources_info(state: &Rc<RefCell<HostState>>) -> Value {
-    let resources = state
-        .borrow()
-        .timers
-        .timers
-        .values()
-        .filter(|timer| timer.active)
-        .map(|timer| match timer.kind {
-            crate::modules::timers::TimerKind::Timeout
-            | crate::modules::timers::TimerKind::Interval => Value::String("Timeout".into()),
-            crate::modules::timers::TimerKind::Immediate => Value::String("Immediate".into()),
-        })
-        .collect();
+pub fn active_resources_info(state: &Rc<RefCell<HostState>>, mode: Option<&str>) -> Value {
+    if mode == Some("handles") {
+        let host = state.borrow();
+        let mut handles = Vec::new();
+        handles.extend(host.net.servers.values().filter_map(|server| {
+            let server = server.borrow();
+            (server.listening && !server.closed).then(|| server.js.clone())
+        }));
+        handles.extend(host.net.sockets.values().filter_map(|socket| {
+            let socket = socket.borrow();
+            (socket.state != crate::modules::net::SocketState::Closed).then(|| socket.js.clone())
+        }));
+        return host_api::array(handles);
+    }
+    if mode == Some("requests") {
+        let host = state.borrow();
+        let requests = host
+            .event_loop
+            .immediates
+            .borrow()
+            .iter()
+            .filter_map(|immediate| immediate.resource.clone())
+            .collect();
+        return host_api::array(requests);
+    }
+    let host = state.borrow();
+    let mut resources = Vec::new();
+    resources.extend(
+        host.timers
+            .timers
+            .values()
+            .filter(|timer| timer.active)
+            .map(|timer| match timer.kind {
+                crate::modules::timers::TimerKind::Timeout
+                | crate::modules::timers::TimerKind::Interval => {
+                    Value::String("Timeout".into())
+                }
+                crate::modules::timers::TimerKind::Immediate => {
+                    Value::String("Immediate".into())
+                }
+            }),
+    );
+    resources.extend(host.net.servers.values().filter_map(|server| {
+        let server = server.borrow();
+        (server.listening && !server.closed).then(|| Value::String("TCPServerWrap".into()))
+    }));
+    resources.extend(host.net.sockets.values().filter_map(|socket| {
+        let socket = socket.borrow();
+        (socket.state != crate::modules::net::SocketState::Closed)
+            .then(|| Value::String("TCPSocketWrap".into()))
+    }));
+    // Resource-backed immediates are the host's durable representation of
+    // pending asynchronous requests.  The public resource-info API exposes
+    // their Node-style category while the request object itself remains
+    // available through _getActiveRequests().
+    resources.extend(
+        host.event_loop
+            .immediates
+            .borrow()
+            .iter()
+            .filter(|immediate| immediate.resource.is_some())
+            .map(|_| Value::String("FSREQCALLBACK".into())),
+    );
     host_api::array(resources)
 }
 

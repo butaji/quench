@@ -15105,9 +15105,13 @@ pub fn process_setegid(
 pub fn process_active_resources(
     state: &Rc<RefCell<HostState>>,
     _: Option<&Value>,
-    _: &[Value],
+    args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(crate::modules::process::active_resources_info(state))
+    let mode = args.first().and_then(|value| match value {
+        Value::String(mode) => Some(mode.as_str()),
+        _ => None,
+    });
+    Ok(crate::modules::process::active_resources_info(state, mode))
 }
 
 pub fn test_run(
