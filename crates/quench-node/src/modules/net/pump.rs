@@ -364,7 +364,8 @@ fn shared_path_target(state: &Rc<RefCell<HostState>>, source_id: u64) -> u64 {
         let Some(path) = source.borrow().path.clone() else {
             return source_id;
         };
-        host.net
+        let mut candidates = host
+            .net
             .servers
             .values()
             .filter_map(|server| {
@@ -372,7 +373,9 @@ fn shared_path_target(state: &Rc<RefCell<HostState>>, source_id: u64) -> u64 {
                 (server.path.as_ref() == Some(&path) && server.listening && !server.closed)
                     .then_some((server.id, server.js.clone()))
             })
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        candidates.sort_by_key(|(id, _)| *id);
+        candidates
     };
     if candidates.len() < 2 {
         return source_id;
