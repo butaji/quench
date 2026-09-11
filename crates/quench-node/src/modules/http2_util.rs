@@ -790,6 +790,9 @@ pub fn dispatch(
         "compatResponseFlushHeaders" => compat_response_flush_headers(state, _receiver),
         "compatResponseSetTimeout" => compat_response_set_timeout(state, _receiver, values),
         "compatResponseTimeout" => compat_response_timeout_fire(state, values),
+        "compatRequestSetTimeout" => {
+            crate::modules::http_client::res_set_timeout(state, _receiver, values)
+        }
         "compatResponseCreatePushResponse" => {
             compat_response_create_push_response(state, _receiver, values)
         }
@@ -3020,6 +3023,14 @@ pub(crate) fn compat_server_request_response(
         ("pause", execute::get_property(stream, "pause")),
         ("resume", execute::get_property(stream, "resume")),
         ("destroy", execute::get_property(stream, "destroy")),
+        // Http2ServerRequest follows IncomingMessage's timeout contract. The
+        // existing HTTP response timeout implementation already owns the
+        // socket timer and relays its event through the receiver, so keep this
+        // view on that canonical path instead of adding another timer model.
+        (
+            "setTimeout",
+            http2_capability("compatRequestSetTimeout"),
+        ),
     ] {
         execute::set_property_in_place(&request, name, method);
     }
