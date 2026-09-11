@@ -268,6 +268,17 @@ fn emit_socket_scoped(
         state.borrow_mut().cluster.worker_context = Some(*worker_id);
     }
     let result = emit(state, &receiver, event, args);
+    if event == "close" {
+        let callback = execute::get_property(&receiver, "\0quench:http2-close-callback");
+        if quench_runtime::is_callable(&callback) {
+            execute::set_property_in_place(
+                &receiver,
+                "\0quench:http2-close-callback",
+                Value::Undefined,
+            );
+            execute::call(&callback, &receiver, &[])?;
+        }
+    }
     if let Some((worker_id, worker)) = &worker {
         crate::modules::cluster::set_worker_mode(state, *worker_id, worker, false);
     }
