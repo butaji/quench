@@ -5313,9 +5313,36 @@ fn stream_send_trailers(
 fn session_close(
     _state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
-    _values: &[Value],
+    values: &[Value],
 ) -> Result<Value, VmError> {
     let socket = receiver.ok_or(VmError::NotCallable)?;
+    if let Some(callback) = values.first().filter(|value| !matches!(value, Value::Undefined)) {
+        if !quench_runtime::is_callable(callback) {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::TypeError,
+                "ERR_INVALID_ARG_TYPE",
+                format!(
+                    "The \"callback\" argument must be of type function.{}",
+                    crate::modules::util::invalid_arg_received(callback)
+                ),
+            ));
+        }
+        // The callback belongs to the session close transition rather than
+        // the GOAWAY write itself. Store it on both representatives because a
+        // connected session may be observed through a copy-on-write socket
+        // alias before the transport emits its terminal close event.
+        execute::set_property_in_place(
+            socket,
+            "\0quench:http2-close-callback",
+            callback.clone(),
+        );
+        let canonical = execute::canonical_value(socket);
+        execute::set_property_in_place(
+            &canonical,
+            "\0quench:http2-close-callback",
+            callback.clone(),
+        );
+    }
     // A graceful ClientHttp2Session#close() rejects pending streams with the
     // GOAWAY-specific error.  Preserve that intent on the transport before
     // the shared socket teardown path runs; destroy() continues to use the
