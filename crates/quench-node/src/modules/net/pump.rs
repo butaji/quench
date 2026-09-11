@@ -2098,7 +2098,18 @@ pub(crate) fn dispatch_http2_frames(
                     execute::get_property(&stream, "__quenchHttp2CloseEmitted"),
                     Value::Boolean(true)
                 );
-                if code != 8 && !locally_reset && !close_already_emitted && !reset_error_emitted {
+                // A client-side close() sends NO_ERROR to the server as a
+                // clean terminal reset.  Node does not turn that peer reset
+                // into an uncaught server-stream error; on the client side,
+                // however, a peer NO_ERROR reset before END_STREAM remains an
+                // aborted stream.  Keep the distinction at this shared
+                // direction boundary rather than making close fixture-specific.
+                if code != 8
+                    && !(is_server && code == 0)
+                    && !locally_reset
+                    && !close_already_emitted
+                    && !reset_error_emitted
+                {
                     execute::set_property_in_place(
                         &stream,
                         "\0quenchHttp2ResetErrorEmitted",
