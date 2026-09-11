@@ -3671,6 +3671,7 @@ pub fn build() -> Value {
     props.extend([
         ("createReadStream", create_read_stream),
         ("createWriteStream", write_stream.clone()),
+        ("Utf8Stream", crate::host::capability(SPEC_FS_UTF8STREAM)),
         ("ReadStream", read_stream),
         ("WriteStream", write_stream),
     ]);

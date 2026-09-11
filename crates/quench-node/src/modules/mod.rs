@@ -31,6 +31,7 @@ pub mod fs;
 pub mod fs_async;
 pub mod fs_error;
 pub mod fs_promises;
+pub mod fs_utf8_stream;
 pub mod fs_stats;
 pub mod fs_sync;
 pub mod http;
