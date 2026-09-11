@@ -554,7 +554,7 @@ fn recognize_typed_array_modulo(
         (length.opcode == crate::ir::Opcode::GetN
             && length.b == target_reg
             && test.metadata_at(2)?.name.as_deref() == Some("length"))
-            .then_some(())?;
+        .then_some(())?;
         (length.a, ModuloBound::TargetLength, 3, 4)
     };
     let (condition, comparison, lhs, rhs) = test.binary_at(binary_pc)?;
@@ -1296,9 +1296,9 @@ fn string_char_code_add_shape(
     let [load_sum, load_source, get_method, load_index, call, add, store_sum, move_result] =
         (0..8)
             .map(|pc| body.instruction(pc))
-            .collect::<Option<Vec<_>>>()?
-            .try_into()
-            .ok()?;
+        .collect::<Option<Vec<_>>>()?
+        .try_into()
+        .ok()?;
     (load_sum.opcode == crate::ir::Opcode::LoadLocal
         && load_source.opcode == crate::ir::Opcode::LoadLocalChecked
         && get_method.opcode == crate::ir::Opcode::GetN
@@ -1607,6 +1607,19 @@ fn counted_body_is_guarded(body: crate::machine::CodeView<'_>, counter: u16) -> 
                 return false;
             };
             match instruction.opcode {
+                // Calls and property/array operations can re-enter the VM or
+                // mutate loop-visible state.  They must use the ordinary loop
+                // interpreter; admitting them to the counted fast path can
+                // replay a discarded call completion and alter iteration
+                // count (observable even when the call returns undefined).
+                crate::ir::Opcode::Call
+                | crate::ir::Opcode::CallN
+                | crate::ir::Opcode::GetProperty
+                | crate::ir::Opcode::GetN
+                | crate::ir::Opcode::SetN
+                | crate::ir::Opcode::AGetI
+                | crate::ir::Opcode::ASetI
+                | crate::ir::Opcode::AGetIInc => return false,
                 crate::ir::Opcode::StoreLocal
                 | crate::ir::Opcode::StoreLocalChecked
                 | crate::ir::Opcode::InitLocal => instruction.a != counter,
