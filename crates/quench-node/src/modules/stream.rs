@@ -18,8 +18,10 @@ use crate::registry::{
     SPEC_STREAM_GET_DEFAULT_HWM, SPEC_STREAM_IS_DISTURBED, SPEC_STREAM_IS_ERRORED,
     SPEC_STREAM_IS_READABLE, SPEC_STREAM_IS_WRITABLE, SPEC_STREAM_PIPELINE,
     SPEC_STREAM_PROMISES_CALLBACK, SPEC_STREAM_PROMISES_FINISHED, SPEC_STREAM_PROMISES_PIPELINE,
-    SPEC_STREAM_READABLE, SPEC_STREAM_READABLE_BUFFER, SPEC_STREAM_SET_DEFAULT_HWM,
-    SPEC_STREAM_READABLE_WRAP, SPEC_STREAM_READABLE_WRAP_EVENT, SPEC_STREAM_READABLE_WRAP_PROXY,
+    SPEC_STREAM_READABLE, SPEC_STREAM_READABLE_BUFFER, SPEC_STREAM_READABLE_WRAP,
+    SPEC_STREAM_READABLE_PUSH_ADAPTER, SPEC_STREAM_READABLE_READ_ADAPTER,
+    SPEC_STREAM_READABLE_WRAP_EVENT,
+    SPEC_STREAM_READABLE_WRAP_PROXY, SPEC_STREAM_SET_DEFAULT_HWM,
     SPEC_STREAM_TRANSFORM, SPEC_STREAM_WEB_PIPELINE_COMPLETE, SPEC_STREAM_WEB_PIPELINE_ERROR,
     SPEC_STREAM_WRITABLE, SPEC_STREAM_WRITABLE_HAS_INSTANCE, SPEC_STREAM_WRITABLE_WRITE_ADAPTER,
 };
@@ -2094,6 +2096,63 @@ pub fn readable_buffer(
     Ok(host_api::array(values))
 }
 
+/// Forward `Readable.prototype.push` through Rust for the empty-chunk rule.
+/// Node treats `push()` and `push(undefined)` as a successful no-op, including
+/// when the readable high-water mark is zero; the grandfathered prelude cannot
+/// distinguish that case from an actual queued `undefined` value.
+pub fn readable_push_adapter(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let original = args.first().ok_or(VmError::NotCallable)?;
+    if !quench_runtime::is_callable(original) {
+        return Err(VmError::NotCallable);
+    }
+    let receiver = receiver.unwrap_or(&Value::Undefined);
+    let empty = args
+        .get(1)
+        .is_none_or(|value| matches!(value, Value::Undefined));
+    let state = execute::get_property(receiver, "_readableState");
+    let active = !matches!(
+        execute::get_property(receiver, "destroyed"),
+        Value::Boolean(true)
+    ) && !matches!(execute::get_property(&state, "ended"), Value::Boolean(true))
+        && matches!(execute::get_property(&state, "errored"), Value::Null | Value::Undefined);
+    if empty && active {
+        return Ok(Value::Boolean(true));
+    }
+    execute::call(original, receiver, args.get(1..).unwrap_or_default())
+}
+
+/// Validate the maximum byte count accepted by `Readable.read(size)` before
+/// forwarding to the canonical stream implementation.  Node caps explicit
+/// reads at 1 GiB even though high-water marks may exceed that value.
+pub fn readable_read_adapter(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let original = args.first().ok_or(VmError::NotCallable)?;
+    if !quench_runtime::is_callable(original) {
+        return Err(VmError::NotCallable);
+    }
+    if let Some(Value::Number(size)) = args.get(1) {
+        if size.is_finite() && *size > 1_073_741_824.0 {
+            return Err(crate::modules::buffer_enc::out_of_range(
+                "size",
+                "<= 1GiB",
+                &crate::modules::buffer_enc::fmt_num(*size),
+            ));
+        }
+    }
+    execute::call(
+        original,
+        receiver.unwrap_or(&Value::Undefined),
+        args.get(1..).unwrap_or_default(),
+    )
+}
+
 const DEFAULT_BYTE_HWM: f64 = 65_536.0;
 const DEFAULT_OBJECT_HWM: f64 = 16.0;
 
@@ -2110,6 +2169,15 @@ pub fn constructor_adapter(
     let readable = matches!(args.get(2), Some(Value::Boolean(true)));
     let writable = matches!(args.get(3), Some(Value::Boolean(true)));
     let constructor_args = args.get(4..).unwrap_or_default();
+    if let Some(options) = constructor_args.first() {
+        validate_high_water_mark(options, "highWaterMark")?;
+        if readable {
+            validate_high_water_mark(options, "readableHighWaterMark")?;
+        }
+        if writable {
+            validate_high_water_mark(options, "writableHighWaterMark")?;
+        }
+    }
     // The prelude's public family functions are deliberately callable
     // factories (including the Reflect.construct-backed Duplex families).
     // Calling them also avoids introducing a second nested `newTarget` edge;
@@ -2123,6 +2191,31 @@ pub fn constructor_adapter(
         apply_default_hwm(&stream, options, defaults, "writable")?;
     }
     Ok(stream)
+}
+
+/// Validate stream high-water-mark options before entering the shared stream
+/// constructor.  Keeping this at the Rust adapter boundary makes every stream
+/// family agree on Node's integer/range contract, including constructors whose
+/// grandfathered prelude otherwise leaves arbitrary values in state.
+fn validate_high_water_mark(options: &Value, field: &str) -> Result<(), VmError> {
+    let value = execute::get_property(options, field);
+    if matches!(value, Value::Undefined | Value::Null) {
+        return Ok(());
+    }
+    let valid = matches!(
+        value,
+        Value::Number(number)
+            if number.is_finite()
+                && number.fract() == 0.0
+                && (0.0..=9_007_199_254_740_991.0).contains(&number)
+    );
+    if valid {
+        return Ok(());
+    }
+    Err(crate::modules::buffer_enc::invalid_arg_value(format!(
+        "The property 'options.{field}' is invalid. Received {}",
+        crate::modules::util::inspect(&value)
+    )))
 }
 
 pub fn constructor_adapter_construct(
@@ -2399,6 +2492,22 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     }
     let readable = execute::get_property(&module, "Readable");
     let readable_prototype = execute::get_property(&readable, "prototype");
+    let original_push = execute::get_property(&readable_prototype, "push");
+    if quench_runtime::is_callable(&original_push) {
+        let push_adapter = host_api::bound_capability_with_arguments(
+            crate::host::capability_ref(SPEC_STREAM_READABLE_PUSH_ADAPTER),
+            vec![original_push],
+        );
+        let _ = execute::set_property_in_place(&readable_prototype, "push", push_adapter);
+    }
+    let original_read = execute::get_property(&readable_prototype, "read");
+    if quench_runtime::is_callable(&original_read) {
+        let read_adapter = host_api::bound_capability_with_arguments(
+            crate::host::capability_ref(SPEC_STREAM_READABLE_READ_ADAPTER),
+            vec![original_read],
+        );
+        let _ = execute::set_property_in_place(&readable_prototype, "read", read_adapter);
+    }
     let readable_buffer = host_api::object(vec![
         (
             "get".into(),
