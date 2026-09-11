@@ -150,6 +150,10 @@ const CAP_STREAM_WRITABLE_HAS_INSTANCE: u16 =
 const CAP_STREAM_READABLE_WRAP: u16 = crate::registry::SPEC_STREAM_READABLE_WRAP.cap;
 const CAP_STREAM_READABLE_WRAP_EVENT: u16 = crate::registry::SPEC_STREAM_READABLE_WRAP_EVENT.cap;
 const CAP_STREAM_READABLE_WRAP_PROXY: u16 = crate::registry::SPEC_STREAM_READABLE_WRAP_PROXY.cap;
+const CAP_STREAM_READABLE_PUSH_ADAPTER: u16 =
+    crate::registry::SPEC_STREAM_READABLE_PUSH_ADAPTER.cap;
+const CAP_STREAM_READABLE_READ_ADAPTER: u16 =
+    crate::registry::SPEC_STREAM_READABLE_READ_ADAPTER.cap;
 const CAP_STRING_DECODER: u16 = 0x0D00;
 const CAP_STRING_DECODER_WRITE: u16 = 0x0D01;
 const CAP_STRING_DECODER_END: u16 = 0x0D02;
@@ -1271,6 +1275,8 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_STREAM_READABLE_WRAP => crate::modules::stream::readable_wrap,
         CAP_STREAM_READABLE_WRAP_EVENT => crate::modules::stream::readable_wrap_event,
         CAP_STREAM_READABLE_WRAP_PROXY => crate::modules::stream::readable_wrap_proxy,
+        CAP_STREAM_READABLE_PUSH_ADAPTER => crate::modules::stream::readable_push_adapter,
+        CAP_STREAM_READABLE_READ_ADAPTER => crate::modules::stream::readable_read_adapter,
         CAP_DNS_LOOKUP => dns_lookup,
         CAP_DNS_RESOLVE4 => dns_resolve4,
         CAP_HTTP_REQUEST => http_request,
