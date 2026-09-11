@@ -745,11 +745,7 @@ fn accept_one(
                 .cluster
                 .worker_event_scope(worker_id)
                 .is_some_and(|scope| {
-                    crate::modules::process::has_listener_in_scope(
-                        state,
-                        "internalMessage",
-                        scope,
-                    )
+                    crate::modules::process::has_listener_in_scope(state, "internalMessage", scope)
                 });
             if has_internal_listener {
                 let worker = state
@@ -1081,11 +1077,7 @@ fn http2_stream(
                 && stream_id % 2 == 0
         });
     if push_response {
-        execute::set_property_in_place(
-            &stream,
-            "\0quench:http2-end-stream",
-            Value::Boolean(true),
-        );
+        execute::set_property_in_place(&stream, "\0quench:http2-end-stream", Value::Boolean(true));
         execute::set_property_in_place(&stream, "writableEnded", Value::Boolean(true));
         execute::set_property_in_place(&stream, "writableFinished", Value::Boolean(true));
     }
@@ -1147,11 +1139,7 @@ fn emit_http2_stream_close(
         execute::set_property_in_place(&stream, "__quenchHttp2CloseEmitted", Value::Boolean(true));
     }
     if defer_server_close {
-        execute::set_property_in_place(
-            &stream,
-            "\0quench:http2-remote-end",
-            Value::Boolean(true),
-        );
+        execute::set_property_in_place(&stream, "\0quench:http2-remote-end", Value::Boolean(true));
     } else {
         execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
     }
@@ -1171,6 +1159,9 @@ fn emit_http2_stream_close(
             Value::Boolean(true),
         );
         emit_socket_scoped(state, socket, &stream, "end", Vec::new())?;
+        if server {
+            crate::modules::http2_util::emit_compat_request_end(state, &stream)?;
+        }
         execute::set_property_in_place(
             &stream,
             "\0quench:http2-end-dispatch",
@@ -1316,7 +1307,8 @@ pub(crate) fn dispatch_http2_frames(
                     }
                     let remote = crate::modules::http2_util::settings_from_payload(&frame.payload);
                     let allowed = {
-                        let hidden = execute::get_property(&socket_js, "\0quench:http2-remote-custom");
+                        let hidden =
+                            execute::get_property(&socket_js, "\0quench:http2-remote-custom");
                         if matches!(hidden, Value::Array(_)) {
                             hidden
                         } else {
@@ -1327,7 +1319,14 @@ pub(crate) fn dispatch_http2_frames(
                                 .get(&socket_id)
                                 .and_then(|entry| entry.borrow().server_id);
                             server_id
-                                .and_then(|id| state.borrow().net.http2_server_remote_custom.get(&id).cloned())
+                                .and_then(|id| {
+                                    state
+                                        .borrow()
+                                        .net
+                                        .http2_server_remote_custom
+                                        .get(&id)
+                                        .cloned()
+                                })
                                 .unwrap_or(Value::Undefined)
                         }
                     };
@@ -1670,19 +1669,20 @@ pub(crate) fn dispatch_http2_frames(
                             .unwrap_or_else(|| {
                                 execute::get_property(&server, "\0quench:http2-request-listener")
                             });
-                        let request_event_listeners = crate::modules::events::method_listener_count(
-                            state,
-                            Some(&server),
-                            &[Value::String("request".into())],
-                        )
-                        .ok()
-                        .and_then(|value| match value {
-                            Value::Number(count) if count.is_finite() && count > 0.0 => {
-                                Some(count as usize)
-                            }
-                            _ => None,
-                        })
-                        .unwrap_or(0);
+                        let request_event_listeners =
+                            crate::modules::events::method_listener_count(
+                                state,
+                                Some(&server),
+                                &[Value::String("request".into())],
+                            )
+                            .ok()
+                            .and_then(|value| match value {
+                                Value::Number(count) if count.is_finite() && count > 0.0 => {
+                                    Some(count as usize)
+                                }
+                                _ => None,
+                            })
+                            .unwrap_or(0);
                         if quench_runtime::is_callable(&request_listener) {
                             // `createServer` is the compatibility API: its
                             // callback receives request/response views, while
@@ -1691,20 +1691,15 @@ pub(crate) fn dispatch_http2_frames(
                             // canonical transport socket identity.
                             let (request, response) =
                                 crate::modules::http2_util::compat_server_request_response(
-                                    state, &stream, &headers,
+                                    state, &stream, &headers, &args[3],
                                 )?;
                             execute::call(&request_listener, &server, &[request, response])?;
                         } else if request_event_listeners > 0 {
                             let (request, response) =
                                 crate::modules::http2_util::compat_server_request_response(
-                                    state, &stream, &headers,
+                                    state, &stream, &headers, &args[3],
                                 )?;
-                            emit_server_scoped(
-                                state,
-                                &server,
-                                "request",
-                                vec![request, response],
-                            )?;
+                            emit_server_scoped(state, &server, "request", vec![request, response])?;
                         } else {
                             emit_server_scoped(state, &server, "stream", args.clone())?;
                         }
@@ -1788,13 +1783,7 @@ pub(crate) fn dispatch_http2_frames(
                     // Server-side request trailers are delivered to both the
                     // raw stream and the compatibility request view.
                     let trailers = http2_headers_value(&fields);
-                    emit_socket_scoped(
-                        state,
-                        socket,
-                        &stream,
-                        "trailers",
-                        vec![trailers.clone()],
-                    )?;
+                    emit_socket_scoped(state, socket, &stream, "trailers", vec![trailers.clone()])?;
                     let request = execute::get_property(&stream, "\0quench:http2-compat-request");
                     if matches!(request, Value::Object(_) | Value::ObjectAlias(_)) {
                         emit_socket_scoped(state, socket, &request, "trailers", vec![trailers])?;
@@ -1908,7 +1897,14 @@ pub(crate) fn dispatch_http2_frames(
                     // contract (and any async-context checks after it).
                     _ => crate::modules::buffer_proto::make_buffer(&frame.payload),
                 };
-                emit_socket_scoped(state, socket, &stream, "data", vec![data])?;
+                emit_socket_scoped(state, socket, &stream, "data", vec![data.clone()])?;
+                if is_server {
+                    crate::modules::http2_util::emit_compat_request_data(
+                        state,
+                        &stream,
+                        data,
+                    )?;
+                }
                 if frame.header.flags & 1 != 0 {
                     emit_http2_stream_close(state, socket, &stream, is_server, true)?;
                 }
@@ -1978,7 +1974,10 @@ pub(crate) fn dispatch_http2_frames(
                         Value::Boolean(true),
                     );
                     let (error_code, message) = if code == 0 {
-                        ("ERR_HTTP2_STREAM_ABORTED", "The stream was aborted".to_owned())
+                        (
+                            "ERR_HTTP2_STREAM_ABORTED",
+                            "The stream was aborted".to_owned(),
+                        )
                     } else {
                         let code_name = crate::modules::http2_facts::error_name(code)
                             .map_or_else(|| code.to_string(), str::to_owned);
@@ -1991,11 +1990,8 @@ pub(crate) fn dispatch_http2_frames(
                         quench_runtime::ops::Builtin::Error,
                         &[Value::String(message)],
                     );
-                    let error = execute::set_property(
-                        error,
-                        "code",
-                        Value::String(error_code.into()),
-                    );
+                    let error =
+                        execute::set_property(error, "code", Value::String(error_code.into()));
                     emit_socket_scoped(state, socket, &stream, "error", vec![error])?;
                 }
                 emit_http2_stream_close(state, socket, &stream, is_server, false)?;
