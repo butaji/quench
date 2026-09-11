@@ -3273,6 +3273,18 @@ pub fn socket_destroy(
         return Ok(receiver);
     };
     crate::modules::http2_util::cancel_http2_pings(state, id)?;
+    // A connection-level HTTP/2 protocol failure is also the terminal cause
+    // for every pending client stream. Preserve that shared error object when
+    // tearing down the transport; reducing it to the generic cancellation
+    // error loses the protocol diagnosis on request streams (for example
+    // when an h2 client receives an HTTP/1 response from the peer).
+    let session_error = args.first().filter(|error| {
+        matches!(
+            execute::get_property(error, "code"),
+            Value::String(code)
+                if code == "ERR_HTTP2_ERROR" || code == "ERR_HTTP2_SESSION_ERROR"
+        )
+    }).cloned();
     // Session teardown is terminal for every stream owned by that transport.
     // Keep public stream representatives and the protocol ledger synchronized
     // and deliver the same cancellation lifecycle Node exposes for pending
@@ -3396,15 +3408,13 @@ pub fn socket_destroy(
                     "The pending stream has been canceled",
                 )
             };
-            let error = quench_runtime::builtins::error(
-                quench_runtime::ops::Builtin::Error,
-                &[Value::String(message.into())],
-            );
-            let error = execute::set_property(
-                error,
-                "code",
-                Value::String(code.into()),
-            );
+            let error = session_error.clone().unwrap_or_else(|| {
+                let error = quench_runtime::builtins::error(
+                    quench_runtime::ops::Builtin::Error,
+                    &[Value::String(message.into())],
+                );
+                execute::set_property(error, "code", Value::String(code.into()))
+            });
             host.net
                 .pending_http2_events
                 .push((stream.clone(), "error".into(), vec![error]));
