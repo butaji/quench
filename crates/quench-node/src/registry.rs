@@ -1091,16 +1091,19 @@ pub const SPEC_FS_HANDLE_FD: NodeSpec = NodeSpec::new("fs:FileHandle:fd", 0x1172
 // colliding with worker_threads:BroadcastChannel's internal 0x7FE7 operation.
 pub const SPEC_FS_HANDLE_STAT: NodeSpec = NodeSpec::new("fs:FileHandle:stat", 2526);
 pub const SPEC_FS_HANDLE_CHMOD: NodeSpec = NodeSpec::new("fs:FileHandle:chmod", 2527);
+pub const SPEC_FS_HANDLE_TRUNCATE: NodeSpec = NodeSpec::new("fs:FileHandle:truncate", 2528);
 pub const SPEC_FS_READSTREAM_CLOSE: NodeSpec = NodeSpec::new("fs:ReadStream:close", 0x1170);
+pub const SPEC_FS_READSTREAM_DESTROY: NodeSpec = NodeSpec::new("fs:ReadStream:destroy", 0x1171);
 pub const SPEC_FS_UTF8STREAM: NodeSpec = NodeSpec::new("fs:Utf8Stream", 0x7EE0);
 pub const SPEC_FS_UTF8STREAM_WRITE: NodeSpec = NodeSpec::new("fs:Utf8Stream:write", 0x7EE1);
-pub const SPEC_FS_UTF8STREAM_WRITE_SYNC: NodeSpec = NodeSpec::new("fs:Utf8Stream:writeSync", 0x7EE2);
+pub const SPEC_FS_UTF8STREAM_WRITE_SYNC: NodeSpec =
+    NodeSpec::new("fs:Utf8Stream:writeSync", 0x7EE2);
 pub const SPEC_FS_UTF8STREAM_FLUSH: NodeSpec = NodeSpec::new("fs:Utf8Stream:flush", 0x7EE3);
-pub const SPEC_FS_UTF8STREAM_FLUSH_SYNC: NodeSpec = NodeSpec::new("fs:Utf8Stream:flushSync", 0x7EE4);
+pub const SPEC_FS_UTF8STREAM_FLUSH_SYNC: NodeSpec =
+    NodeSpec::new("fs:Utf8Stream:flushSync", 0x7EE4);
 pub const SPEC_FS_UTF8STREAM_END: NodeSpec = NodeSpec::new("fs:Utf8Stream:end", 0x7EE5);
 pub const SPEC_FS_UTF8STREAM_DESTROY: NodeSpec = NodeSpec::new("fs:Utf8Stream:destroy", 0x7EE6);
 pub const SPEC_FS_UTF8STREAM_REOPEN: NodeSpec = NodeSpec::new("fs:Utf8Stream:reopen", 0x7EE7);
-pub const SPEC_FS_READSTREAM_DESTROY: NodeSpec = NodeSpec::new("fs:ReadStream:destroy", 0x1171);
 pub const SPEC_FSP_READFILE: NodeSpec = NodeSpec::new("fs:promises:readFile", 0x1140);
 pub const SPEC_FSP_WRITEFILE: NodeSpec = NodeSpec::new("fs:promises:writeFile", 0x1141);
 pub const SPEC_FSP_APPENDFILE: NodeSpec = NodeSpec::new("fs:promises:appendFile", 0x1142);
@@ -1687,6 +1690,7 @@ pub const CAP_FS_HANDLE_READFILE: CapId = SPEC_FS_HANDLE_READFILE.cap;
 pub const CAP_FS_HANDLE_FD: CapId = SPEC_FS_HANDLE_FD.cap;
 pub const CAP_FS_HANDLE_STAT: CapId = SPEC_FS_HANDLE_STAT.cap;
 pub const CAP_FS_HANDLE_CHMOD: CapId = SPEC_FS_HANDLE_CHMOD.cap;
+pub const CAP_FS_HANDLE_TRUNCATE: CapId = SPEC_FS_HANDLE_TRUNCATE.cap;
 pub const CAP_FS_READSTREAM_CLOSE: CapId = SPEC_FS_READSTREAM_CLOSE.cap;
 pub const CAP_FS_READSTREAM_DESTROY: CapId = SPEC_FS_READSTREAM_DESTROY.cap;
 pub const CAP_FS_UTF8STREAM: CapId = SPEC_FS_UTF8STREAM.cap;
