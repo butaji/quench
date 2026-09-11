@@ -2008,7 +2008,7 @@ fn option_enabled(options: Option<&Value>, key: &str) -> bool {
 /// state machine can then perform its ordinary normalization and lifecycle
 /// handling unchanged.
 pub fn writable_write_adapter(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
@@ -2017,6 +2017,47 @@ pub fn writable_write_adapter(
         return Err(VmError::NotCallable);
     }
     let mut write_args = args.get(1..).unwrap_or_default().to_vec();
+    // A WriteStream is auto-destroyed after its `close` edge, but Node still
+    // reports a subsequent callback-bearing write as WRITE_AFTER_END when the
+    // writable side had already been ended.  The prelude's generic check sees
+    // `destroyed` first and would otherwise report STREAM_DESTROYED.  Preserve
+    // the observable precedence at this shared Rust boundary while leaving
+    // destroyed-only streams on the ordinary prelude path.
+    let ended = receiver.is_some_and(|stream| {
+        matches!(
+            execute::get_property(&execute::get_property(stream, "_writableState"), "ended"),
+            Value::Boolean(true)
+        ) || matches!(execute::get_property(stream, "writableEnded"), Value::Boolean(true))
+    });
+    let destroyed = receiver.is_some_and(|stream| {
+        matches!(execute::get_property(stream, "destroyed"), Value::Boolean(true))
+            || matches!(
+                execute::get_property(&execute::get_property(stream, "_writableState"), "destroyed"),
+                Value::Boolean(true)
+            )
+    });
+    let callback_index = write_args
+        .iter()
+        .enumerate()
+        .rev()
+        .filter(|(index, _)| *index > 0)
+        .find_map(|(index, value)| quench_runtime::is_callable(value).then_some(index));
+    if ended && destroyed {
+        if let Some(index) = callback_index {
+            let callback = write_args.remove(index);
+            let error = quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String("write after end".into())],
+            );
+            let error = execute::set_property(
+                error,
+                "code",
+                Value::String("ERR_STREAM_WRITE_AFTER_END".into()),
+            );
+            crate::modules::fs::defer(state, &callback, vec![error]);
+            return Ok(Value::Boolean(false));
+        }
+    }
     let byte_view = write_args.first().is_some_and(|chunk| {
         matches!(
             chunk,
