@@ -31,6 +31,7 @@ const BUSY_KEY: &str = "\0quench:utf8stream:busy";
 const ENDED_KEY: &str = "\0quench:utf8stream:ended";
 const DESTROYED_KEY: &str = "\0quench:utf8stream:destroyed";
 const FINISH_CALLBACK_KEY: &str = "\0quench:utf8stream:finishCallback";
+const RETRY_KEY: &str = "\0quench:utf8stream:retryEagain";
 const DEFAULT_MAX_LENGTH: usize = 16 * 1024;
 const HWM_KEY: &str = "\0quench:utf8stream:hwm";
 
@@ -71,9 +72,7 @@ fn emit(state: &Rc<RefCell<HostState>>, stream: &Value, name: &str, args: Vec<Va
 fn option_number(options: &Value, key: &str, default: usize) -> Result<usize, VmError> {
     match execute::get_property(options, key) {
         Value::Undefined | Value::Null => Ok(default),
-        Value::Number(value)
-            if value.is_finite() && value >= 0.0 && value.fract() == 0.0 =>
-        {
+        Value::Number(value) if value.is_finite() && value >= 0.0 && value.fract() == 0.0 => {
             Ok(value as usize)
         }
         other => Err(type_error(format!(
@@ -92,7 +91,20 @@ fn option_bool(options: &Value, key: &str, default: bool) -> bool {
 fn fs_module(state: &Rc<RefCell<HostState>>, options: &Value) -> Value {
     let custom = execute::get_property(options, "fs");
     if is_object(&custom) {
-        return custom;
+        // Node constructs one filesystem view and overlays the supplied
+        // methods on it.  Keeping that view as the canonical dispatch target
+        // preserves the default open/write/close/fsync operations while
+        // allowing tests and embedders to replace only one operation.
+        let global = quench_runtime::vm::current_global_object();
+        let base = execute::get_property(&global, "__nodeFs");
+        let merged = host_api::object(Vec::new());
+        for source in [&base, &custom] {
+            for key in execute::own_enumerable_keys(source) {
+                let value = execute::get_property(source, &key);
+                let _ = execute::set_property_in_place(&merged, &key, value);
+            }
+        }
+        return merged;
     }
     let global = quench_runtime::vm::current_global_object();
     let module = execute::get_property(&global, "__nodeFs");
@@ -127,9 +139,7 @@ fn chunks(stream: &Value) -> Value {
 
 fn bytes(value: &Value) -> Result<Vec<u8>, VmError> {
     crate::modules::crypto::bytes_from_value(value).ok_or_else(|| {
-        type_error(
-            "The \"data\" argument must be a string or an instance of Buffer or Uint8Array",
-        )
+        type_error("The \"data\" argument must be a string or an instance of Buffer or Uint8Array")
     })
 }
 
@@ -149,7 +159,7 @@ fn clear_chunks(stream: &Value) {
     let _ = execute::set_property_in_place(stream, BYTES_KEY, Value::Number(0.0));
 }
 
-fn remove_first_chunk(stream: &Value) -> usize {
+fn consume_first_chunk(stream: &Value, requested: usize) -> usize {
     let list = chunks(stream);
     let Value::Array(list) = list else { return 0 };
     let first = list.get(0);
@@ -157,6 +167,25 @@ fn remove_first_chunk(stream: &Value) -> usize {
         .as_ref()
         .and_then(crate::modules::crypto::bytes_from_value)
         .map_or(0, |bytes| bytes.len());
+    let consumed = requested.min(len);
+    if consumed == 0 {
+        return 0;
+    }
+    if consumed < len {
+        if let Some(bytes) =
+            first.and_then(|value| crate::modules::crypto::bytes_from_value(&value))
+        {
+            let list_value = Value::Array(list.clone());
+            let _ = execute::set_array_element_in_place(
+                &list_value,
+                0,
+                crate::modules::buffer_proto::make_buffer(&bytes[consumed..]),
+            );
+        }
+        let pending = number_property(stream, BYTES_KEY).saturating_sub(consumed);
+        let _ = execute::set_property_in_place(stream, BYTES_KEY, Value::Number(pending as f64));
+        return consumed;
+    }
     if list.logical_len() > 1 {
         for index in 1..list.logical_len() {
             let value = list.get(index).unwrap_or(Value::Undefined);
@@ -170,14 +199,16 @@ fn remove_first_chunk(stream: &Value) -> usize {
         &(list.logical_len().saturating_sub(1)).to_string(),
     );
     let _ = execute::set_property_in_place(stream, CHUNKS_KEY, updated);
-    let pending = number_property(stream, BYTES_KEY).saturating_sub(len);
+    let pending = number_property(stream, BYTES_KEY).saturating_sub(consumed);
     let _ = execute::set_property_in_place(stream, BYTES_KEY, Value::Number(pending as f64));
-    len
+    consumed
 }
 
 fn pending_bytes(stream: &Value) -> Vec<u8> {
     let list = chunks(stream);
-    let Value::Array(list) = list else { return Vec::new() };
+    let Value::Array(list) = list else {
+        return Vec::new();
+    };
     let mut output = Vec::new();
     for index in 0..list.logical_len() {
         if let Some(value) = list.get(index) {
@@ -209,7 +240,11 @@ fn write_sync_piece(
                 Value::Number(descriptor as f64),
                 piece.clone(),
                 Value::Number(0.0),
-                Value::Number(crate::modules::crypto::bytes_from_value(piece).unwrap_or_default().len() as f64),
+                Value::Number(
+                    crate::modules::crypto::bytes_from_value(piece)
+                        .unwrap_or_default()
+                        .len() as f64,
+                ),
                 Value::Null,
             ],
         )?;
@@ -218,8 +253,7 @@ fn write_sync_piece(
             // User-provided fs.writeSync wrappers commonly delegate to the
             // native function without returning its count. Node treats that
             // successful undefined result as a full write.
-            _ => crate::modules::crypto::bytes_from_value(piece)
-                .map_or(0, |bytes| bytes.len()),
+            _ => crate::modules::crypto::bytes_from_value(piece).map_or(0, |bytes| bytes.len()),
         });
     }
     let data = crate::modules::crypto::bytes_from_value(piece).unwrap_or_default();
@@ -251,7 +285,35 @@ fn sync_flush(state: &Rc<RefCell<HostState>>, stream: &Value) -> Result<usize, V
     while offset < data.len() {
         let end = (offset + max_write).min(data.len());
         let piece = crate::modules::buffer_proto::make_buffer(&data[offset..end]);
-        let count = write_sync_piece(state, stream, &piece)?;
+        let count = loop {
+            match write_sync_piece(state, stream, &piece) {
+                Ok(count) => break count,
+                Err(error) => {
+                    let code = execute::get_property(&error_value(&error), "code");
+                    let retryable = matches!(code, Value::String(ref value) if value == "EAGAIN" || value == "EBUSY");
+                    if !retryable {
+                        return Err(error);
+                    }
+                    let retry = execute::get_property(stream, RETRY_KEY);
+                    let retry = if quench_runtime::is_callable(&retry) {
+                        execute::call(
+                            &retry,
+                            stream,
+                            &[
+                                error_value(&error),
+                                Value::Number((end - offset) as f64),
+                                Value::Number((data.len() - end) as f64),
+                            ],
+                        )?
+                    } else {
+                        Value::Boolean(true)
+                    };
+                    if !execute::is_truthy(&retry) {
+                        return Err(error);
+                    }
+                }
+            }
+        };
         if count == 0 {
             // A zero-length write is retryable in Node's native writer. Keep
             // one bounded retry so a broken custom fs cannot spin forever.
@@ -281,6 +343,18 @@ fn sync_flush(state: &Rc<RefCell<HostState>>, stream: &Value) -> Result<usize, V
     Ok(written)
 }
 
+fn error_value(error: &VmError) -> Value {
+    match error {
+        VmError::Thrown(value) => value.clone(),
+        _ => quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String(
+                "Utf8Stream filesystem operation failed".into(),
+            )],
+        ),
+    }
+}
+
 fn complete_async_flush(state: &Rc<RefCell<HostState>>, stream: &Value, callback: Option<Value>) {
     let _ = execute::set_property_in_place(stream, BUSY_KEY, Value::Boolean(false));
     if number_property(stream, BYTES_KEY) > 0 {
@@ -291,7 +365,10 @@ fn complete_async_flush(state: &Rc<RefCell<HostState>>, stream: &Value, callback
     if let Some(callback) = callback.filter(|value| quench_runtime::is_callable(value)) {
         crate::modules::fs::defer(state, &callback, vec![Value::Null]);
     }
-    if matches!(execute::get_property(stream, ENDED_KEY), Value::Boolean(true)) {
+    if matches!(
+        execute::get_property(stream, ENDED_KEY),
+        Value::Boolean(true)
+    ) {
         if number_property(stream, BYTES_KEY) == 0 {
             finish(state, stream);
         } else {
@@ -324,20 +401,28 @@ fn flush_async(
     stream: &Value,
     callback: Option<Value>,
 ) -> Result<(), VmError> {
-    if matches!(execute::get_property(stream, BUSY_KEY), Value::Boolean(true)) {
+    if matches!(
+        execute::get_property(stream, BUSY_KEY),
+        Value::Boolean(true)
+    ) {
         if let Some(callback) = callback {
             let _ = execute::set_property_in_place(stream, FINISH_CALLBACK_KEY, callback);
         }
         return Ok(());
     };
     let list = chunks(stream);
-    let Value::Array(list) = list else { return Ok(()) };
+    let Value::Array(list) = list else {
+        return Ok(());
+    };
     let piece = list.get(0).and_then(|value| {
         crate::modules::crypto::bytes_from_value(&value)
             .map(|bytes| crate::modules::buffer_proto::make_buffer(&bytes))
     });
     let Some(piece) = piece else {
-        if matches!(execute::get_property(stream, ENDED_KEY), Value::Boolean(true)) {
+        if matches!(
+            execute::get_property(stream, ENDED_KEY),
+            Value::Boolean(true)
+        ) {
             if let Some(callback) = callback.filter(|value| quench_runtime::is_callable(value)) {
                 crate::modules::fs::defer(state, &callback, vec![Value::Null]);
             }
@@ -386,7 +471,10 @@ fn flush_async(
 }
 
 fn finish(state: &Rc<RefCell<HostState>>, stream: &Value) {
-    if matches!(execute::get_property(stream, "closed"), Value::Boolean(true)) {
+    if matches!(
+        execute::get_property(stream, "closed"),
+        Value::Boolean(true)
+    ) {
         return;
     }
     emit(state, stream, "finish", Vec::new());
@@ -398,13 +486,15 @@ fn finish(state: &Rc<RefCell<HostState>>, stream: &Value) {
     let _ = utf8_destroy(state, Some(stream), &[]);
 }
 
-pub fn construct(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let options = args.first().cloned().unwrap_or_else(|| host_api::object(Vec::new()));
+pub fn construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let options = args
+        .first()
+        .cloned()
+        .unwrap_or_else(|| host_api::object(Vec::new()));
     if !is_object(&options) {
-        return Err(type_error("The \"options\" argument must be of type object"));
+        return Err(type_error(
+            "The \"options\" argument must be of type object",
+        ));
     }
     let fd_value = execute::get_property(&options, "fd");
     let min_length = option_number(&options, "minLength", 0)?;
@@ -415,7 +505,10 @@ pub fn construct(
         )));
     }
     let (fd, path) = if matches!(fd_value, Value::Number(_)) {
-        (crate::modules::fs::descriptor_arg(Some(&fd_value))?, Value::Undefined)
+        (
+            crate::modules::fs::descriptor_arg(Some(&fd_value))?,
+            Value::Undefined,
+        )
     } else {
         let dest = execute::get_property(&options, "dest");
         let path = crate::modules::fs::path_arg(Some(&dest))?;
@@ -424,13 +517,20 @@ pub fn construct(
                 let _ = std::fs::create_dir_all(parent);
             }
         }
-        let flags = if option_bool(&options, "append", true) { "a" } else { "w" };
+        let flags = if option_bool(&options, "append", true) {
+            "a"
+        } else {
+            "w"
+        };
         let fd = crate::modules::fs::open_sync(
             state,
             None,
             &[Value::String(path.clone()), Value::String(flags.into())],
         )?;
-        (crate::modules::fs::descriptor_arg(Some(&fd))?, Value::String(path))
+        (
+            crate::modules::fs::descriptor_arg(Some(&fd))?,
+            Value::String(path),
+        )
     };
     let stream = crate::modules::events::new_emitter_object(state)?;
     for (key, value) in [
@@ -453,21 +553,17 @@ pub fn construct(
     ] {
         let _ = execute::set_property_in_place(&stream, key, value);
     }
-    let _ = execute::set_property_in_place(
-        &stream,
-        FS_KEY,
-        fs_module(state, &options),
-    );
+    let _ = execute::set_property_in_place(&stream, FS_KEY, fs_module(state, &options));
     for (key, value) in [
         (MIN_KEY, execute::get_property(&stream, "minLength")),
         (MAX_KEY, execute::get_property(&stream, "maxLength")),
         (MAX_WRITE_KEY, execute::get_property(&stream, "maxWrite")),
-        (
-            HWM_KEY,
-            Value::Number(min_length.max(16_387) as f64),
-        ),
+        (HWM_KEY, Value::Number(min_length.max(16_387) as f64)),
         (SYNC_KEY, execute::get_property(&stream, "sync")),
-        (FSYNC_KEY, Value::Boolean(option_bool(&options, "fsync", false))),
+        (
+            FSYNC_KEY,
+            Value::Boolean(option_bool(&options, "fsync", false)),
+        ),
         (
             CONTENT_MODE_KEY,
             Value::String(
@@ -484,29 +580,37 @@ pub fn construct(
         (CHUNKS_KEY, host_api::array(Vec::new())),
         (BYTES_KEY, Value::Number(0.0)),
         (FINISH_CALLBACK_KEY, Value::Undefined),
+        (RETRY_KEY, execute::get_property(&options, "retryEAGAIN")),
     ] {
         let _ = execute::set_property_in_place(&stream, key, value);
     }
     for (name, capability) in [
         ("write", crate::host::capability(SPEC_FS_UTF8STREAM_WRITE)),
-        ("writeSync", crate::host::capability(SPEC_FS_UTF8STREAM_WRITE_SYNC)),
+        (
+            "writeSync",
+            crate::host::capability(SPEC_FS_UTF8STREAM_WRITE_SYNC),
+        ),
         ("flush", crate::host::capability(SPEC_FS_UTF8STREAM_FLUSH)),
         (
             "flushSync",
             crate::host::capability(SPEC_FS_UTF8STREAM_FLUSH_SYNC),
         ),
         ("end", crate::host::capability(SPEC_FS_UTF8STREAM_END)),
-        ("destroy", crate::host::capability(SPEC_FS_UTF8STREAM_DESTROY)),
+        (
+            "destroy",
+            crate::host::capability(SPEC_FS_UTF8STREAM_DESTROY),
+        ),
         ("reopen", crate::host::capability(SPEC_FS_UTF8STREAM_REOPEN)),
     ] {
         let _ = execute::set_property_in_place(&stream, name, capability);
     }
     let emitter = execute::get_property(&stream, "emit");
     if quench_runtime::is_callable(&emitter) {
-        state
-            .borrow()
-            .event_loop
-            .queue_microtask_with_receiver(emitter, vec![Value::String("ready".into())], stream.clone());
+        state.borrow().event_loop.queue_microtask_with_receiver(
+            emitter,
+            vec![Value::String("ready".into())],
+            stream.clone(),
+        );
     }
     Ok(stream)
 }
@@ -517,9 +621,13 @@ pub fn write(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let stream = receiver.ok_or(VmError::NotCallable)?;
-    if matches!(execute::get_property(stream, DESTROYED_KEY), Value::Boolean(true))
-        || matches!(execute::get_property(stream, ENDED_KEY), Value::Boolean(true))
-    {
+    if matches!(
+        execute::get_property(stream, DESTROYED_KEY),
+        Value::Boolean(true)
+    ) || matches!(
+        execute::get_property(stream, ENDED_KEY),
+        Value::Boolean(true)
+    ) {
         return Err(VmError::Thrown(quench_runtime::builtins::error(
             quench_runtime::ops::Builtin::Error,
             &[Value::String("Utf8Stream is destroyed".into())],
@@ -537,13 +645,18 @@ pub fn write(
     );
     let min = number_property(stream, MIN_KEY);
     if over_limit || min == 0 || number_property(stream, BYTES_KEY) >= min {
-        if matches!(execute::get_property(stream, SYNC_KEY), Value::Boolean(true)) {
+        if matches!(
+            execute::get_property(stream, SYNC_KEY),
+            Value::Boolean(true)
+        ) {
             let _ = sync_flush(state, stream)?;
         } else {
             flush_async(state, stream, None)?;
         }
     }
-    Ok(Value::Boolean(!over_limit && number_property(stream, BYTES_KEY) < number_property(stream, HWM_KEY)))
+    Ok(Value::Boolean(
+        !over_limit && number_property(stream, BYTES_KEY) < number_property(stream, HWM_KEY),
+    ))
 }
 
 pub fn write_sync(
@@ -581,13 +694,13 @@ pub fn flush(
                 _ => 0.0,
             };
             let old = number_property(stream, "bytesWritten");
-            let removed = remove_first_chunk(stream);
+            let removed = consume_first_chunk(stream, count as usize);
             let _ = execute::set_property_in_place(
                 stream,
                 "bytesWritten",
-                Value::Number(old as f64 + count.max(removed as f64)),
+                Value::Number(old as f64 + removed as f64),
             );
-            async_write_done(state, stream, callback, &Value::Null, count as usize);
+            async_write_done(state, stream, callback, &Value::Null, removed);
         } else {
             async_write_done(state, stream, callback, &error, 0);
         }
@@ -600,7 +713,10 @@ pub fn flush(
             return Err(type_error("The \"callback\" argument must be a function"));
         }
     }
-    if matches!(execute::get_property(stream, SYNC_KEY), Value::Boolean(true)) {
+    if matches!(
+        execute::get_property(stream, SYNC_KEY),
+        Value::Boolean(true)
+    ) {
         sync_flush(state, stream)?;
         if let Some(callback) = callback {
             crate::modules::fs::defer(state, &callback, vec![Value::Null]);
@@ -640,7 +756,10 @@ pub fn end(
         let _ = execute::set_property_in_place(stream, FINISH_CALLBACK_KEY, callback);
     }
     let _ = execute::set_property_in_place(stream, ENDED_KEY, Value::Boolean(true));
-    if matches!(execute::get_property(stream, SYNC_KEY), Value::Boolean(true)) {
+    if matches!(
+        execute::get_property(stream, SYNC_KEY),
+        Value::Boolean(true)
+    ) {
         sync_flush(state, stream)?;
         let emitter = execute::get_property(stream, "emit");
         if quench_runtime::is_callable(&emitter) {
@@ -692,27 +811,30 @@ fn utf8_destroy(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let stream = receiver.ok_or(VmError::NotCallable)?;
-    if matches!(execute::get_property(stream, DESTROYED_KEY), Value::Boolean(true)) {
+    if matches!(
+        execute::get_property(stream, DESTROYED_KEY),
+        Value::Boolean(true)
+    ) {
         return Ok(stream.clone());
     }
     let _ = execute::set_property_in_place(stream, DESTROYED_KEY, Value::Boolean(true));
-    if let Some(error) = args.first().filter(|value| !matches!(value, Value::Undefined)) {
+    if let Some(error) = args
+        .first()
+        .filter(|value| !matches!(value, Value::Undefined))
+    {
         emit(state, stream, "error", vec![error.clone()]);
     }
     if let Ok(descriptor) = fd(stream) {
-        let _ = crate::modules::fs::close_sync(
-            state,
-            None,
-            &[Value::Number(descriptor as f64)],
-        );
+        let _ = crate::modules::fs::close_sync(state, None, &[Value::Number(descriptor as f64)]);
     }
     let _ = execute::set_property_in_place(stream, "closed", Value::Boolean(true));
     let emitter = execute::get_property(stream, "emit");
     if quench_runtime::is_callable(&emitter) {
-        state
-            .borrow()
-            .event_loop
-            .queue_microtask_with_receiver(emitter, vec![Value::String("close".into())], stream.clone());
+        state.borrow().event_loop.queue_microtask_with_receiver(
+            emitter,
+            vec![Value::String("close".into())],
+            stream.clone(),
+        );
     }
     Ok(stream.clone())
 }
@@ -727,7 +849,11 @@ pub fn reopen(
     if let Ok(old) = fd(stream) {
         let _ = crate::modules::fs::close_sync(state, None, &[Value::Number(old as f64)]);
     }
-    let flags = if option_bool(stream, "append", true) { "a" } else { "w" };
+    let flags = if option_bool(stream, "append", true) {
+        "a"
+    } else {
+        "w"
+    };
     let new_fd = crate::modules::fs::open_sync(
         state,
         None,
@@ -737,10 +863,11 @@ pub fn reopen(
     let _ = execute::set_property_in_place(stream, "path", Value::String(path));
     let emitter = execute::get_property(stream, "emit");
     if quench_runtime::is_callable(&emitter) {
-        state
-            .borrow()
-            .event_loop
-            .queue_microtask_with_receiver(emitter, vec![Value::String("ready".into())], stream.clone());
+        state.borrow().event_loop.queue_microtask_with_receiver(
+            emitter,
+            vec![Value::String("ready".into())],
+            stream.clone(),
+        );
     }
     Ok(stream.clone())
 }
