@@ -3265,7 +3265,15 @@ pub(crate) fn compat_server_request_response(
         ("httpVersionMinor", Value::Number(0.0)),
         ("headers", headers.clone()),
         ("rawHeaders", raw_headers.clone()),
-        ("trailers", host_api::object(Vec::new())),
+        // IncomingMessage trailer maps are dictionary objects.  Keep the
+        // compatibility view aligned with the canonical HTTP/2 header
+        // decoder so a wire header named `constructor` cannot resolve through
+        // Object.prototype and callers observe the Node null prototype.
+        (
+            "trailers",
+            execute::set_prototype_of(&host_api::object(Vec::new()), &Value::Null)
+                .unwrap_or_else(|_| host_api::object(Vec::new())),
+        ),
         ("rawTrailers", host_api::array(Vec::new())),
         ("socket", socket.clone()),
         ("connection", socket.clone()),
