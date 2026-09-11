@@ -31,6 +31,7 @@ const BUSY_KEY: &str = "\0quench:utf8stream:busy";
 const ENDED_KEY: &str = "\0quench:utf8stream:ended";
 const DESTROYED_KEY: &str = "\0quench:utf8stream:destroyed";
 const FINISH_CALLBACK_KEY: &str = "\0quench:utf8stream:finishCallback";
+const DEFAULT_MAX_LENGTH: usize = 16 * 1024;
 const HWM_KEY: &str = "\0quench:utf8stream:hwm";
 
 fn is_object(value: &Value) -> bool {
@@ -214,7 +215,11 @@ fn write_sync_piece(
         )?;
         return Ok(match result {
             Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
-            _ => 0,
+            // User-provided fs.writeSync wrappers commonly delegate to the
+            // native function without returning its count. Node treats that
+            // successful undefined result as a full write.
+            _ => crate::modules::crypto::bytes_from_value(piece)
+                .map_or(0, |bytes| bytes.len()),
         });
     }
     let data = crate::modules::crypto::bytes_from_value(piece).unwrap_or_default();
@@ -349,7 +354,10 @@ fn flush_async(
     let fs = execute::get_property(stream, FS_KEY);
     let method = execute::get_property(&fs, "write");
     if !quench_runtime::is_callable(&method) {
-        sync_flush(state, stream)?;
+        // An async stream with only a synchronous override still buffers
+        // until the caller explicitly requests flushSync(). Falling back to
+        // sync I/O here would make write() unexpectedly throw from a custom
+        // writeSync hook (and would violate async mode's callback boundary).
         return Ok(());
     };
     let completion = host_api::bound_capability_with_arguments(
@@ -430,7 +438,10 @@ pub fn construct(
         ("ended", Value::Boolean(false)),
         ("sync", Value::Boolean(option_bool(&options, "sync", false))),
         ("minLength", Value::Number(min_length as f64)),
-        ("maxLength", Value::Number(option_number(&options, "maxLength", 0)? as f64)),
+        (
+            "maxLength",
+            Value::Number(option_number(&options, "maxLength", DEFAULT_MAX_LENGTH)? as f64),
+        ),
         ("maxWrite", Value::Number(max_write as f64)),
     ] {
         let _ = execute::set_property_in_place(&stream, key, value);
@@ -511,24 +522,21 @@ pub fn write(
     let data = bytes(&value)?;
     let max = number_property(stream, MAX_KEY);
     let current = number_property(stream, BYTES_KEY);
-    if max > 0 && current + data.len() > max {
-        emit(state, stream, "drop", vec![value]);
-        return Ok(Value::Boolean(false));
-    }
+    let over_limit = max > 0 && current + data.len() > max;
     append_chunk(
         stream,
         crate::modules::buffer_proto::make_buffer(&data),
         data.len(),
     );
     let min = number_property(stream, MIN_KEY);
-    if min == 0 || number_property(stream, BYTES_KEY) >= min {
+    if over_limit || min == 0 || number_property(stream, BYTES_KEY) >= min {
         if matches!(execute::get_property(stream, SYNC_KEY), Value::Boolean(true)) {
             let _ = sync_flush(state, stream)?;
         } else {
             flush_async(state, stream, None)?;
         }
     }
-    Ok(Value::Boolean(number_property(stream, BYTES_KEY) < number_property(stream, HWM_KEY)))
+    Ok(Value::Boolean(!over_limit && number_property(stream, BYTES_KEY) < number_property(stream, HWM_KEY)))
 }
 
 pub fn write_sync(
