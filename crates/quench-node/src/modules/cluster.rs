@@ -1431,6 +1431,12 @@ pub(crate) fn finalize_disconnected_workers(state: &Rc<RefCell<HostState>>) {
         let Some(worker) = state.borrow().cluster.worker_object(id) else {
             continue;
         };
+        // The worker's stdio slots are ordinary referenced net handles in
+        // this single-process model. Once the logical worker has no live
+        // referenced handles, close those inherited transports as part of
+        // the same terminal transition; otherwise a `stdio: "pipe"` slot
+        // can keep the primary event loop alive after `disconnect()`.
+        close_worker_net(state, id);
         let has_exit_listener = state
             .borrow()
             .cluster
