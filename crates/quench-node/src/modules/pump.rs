@@ -248,6 +248,10 @@ pub fn run_uncaught(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
 /// `beforeExit` and `exit` handlers. First callback error unwinds,
 /// mirroring Node's uncaught-exception exit.
 pub fn run_event_loop(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
+    // `beforeExit` may schedule another phase (timer, immediate, or I/O),
+    // which must re-arm the lifecycle event. A nextTick/promise alone does
+    // not keep Node alive and must not cause a second `beforeExit` emission.
+    let mut before_exit_ran = false;
     loop {
         if let Some(error) = crate::modules::async_hooks::take_fatal_error(state) {
             return Err(VmError::Thrown(error));
@@ -262,6 +266,11 @@ pub fn run_event_loop(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         if let Some(error) = crate::modules::async_hooks::take_fatal_error(state) {
             return Err(VmError::Thrown(error));
         }
+        // A nextTick drained above may enqueue a check/timer/I/O callback.
+        // Capture that phase before executing it; by the time the callback
+        // finishes the queue can be empty again even though beforeExit must
+        // be re-armed for work that just ran.
+        let phase_work_pending = has_phase_work(state);
         fire_due_timers(state)?;
         drain_immediates(state)?;
         // Work created by a timer/immediate belongs to this turn.  Drain its
@@ -270,10 +279,17 @@ pub fn run_event_loop(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         drain_ticks(state)?;
         quench_runtime::drain_promise_jobs();
         drain_unhandled_rejections(state)?;
+        if phase_work_pending || has_phase_work(state) {
+            before_exit_ran = false;
+        }
         if !has_pending(state) {
+            if before_exit_ran {
+                break;
+            }
             let handlers = state.borrow().process.before_exit_handlers.clone();
             run_lifecycle_handlers(state, &handlers, 0)?;
-            if !has_pending(state) {
+            before_exit_ran = !has_phase_work(state);
+            if !has_pending(state) && before_exit_ran {
                 break;
             }
         }
@@ -942,6 +958,26 @@ fn has_pending(state: &Rc<RefCell<HostState>>) -> bool {
             .any(|t| t.referenced && t.active)
         || crate::modules::net::has_work(state)
         || crate::modules::fs::has_watch_work(state)
+}
+
+/// Work that represents another event-loop phase. Promise jobs and nextTick
+/// callbacks are intentionally omitted: they are drained before this check
+/// and do not by themselves keep the process alive after `beforeExit`.
+fn has_phase_work(state: &Rc<RefCell<HostState>>) -> bool {
+    let immediate = !state.borrow().event_loop.immediates.borrow().is_empty();
+    let shell = !state.borrow().pending_shell_execs.is_empty();
+    let timer = state
+        .borrow()
+        .timers
+        .timers
+        .values()
+        .any(|timer| timer.referenced && timer.active);
+    immediate
+        || shell
+        || timer
+        || crate::modules::net::has_work(state)
+        || crate::modules::fs::has_watch_work(state)
+        || crate::modules::cluster::has_pending_disconnect(state)
 }
 
 fn sleep_until_next(state: &Rc<RefCell<HostState>>) {
