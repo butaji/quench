@@ -2725,6 +2725,14 @@ pub fn promises_open(
             crate::host::capability(crate::registry::SPEC_FS_HANDLE_CLOSE),
         ),
         (
+            "stat",
+            crate::host::capability(crate::registry::SPEC_FS_HANDLE_STAT),
+        ),
+        (
+            "chmod",
+            crate::host::capability(crate::registry::SPEC_FS_HANDLE_CHMOD),
+        ),
+        (
             "Symbol.asyncDispose",
             crate::host::capability(crate::registry::SPEC_FS_HANDLE_CLOSE),
         ),
@@ -2852,6 +2860,42 @@ pub fn file_handle_read_file(
         None,
         &[
             Value::String(path),
+            args.first().cloned().unwrap_or(Value::Undefined),
+        ],
+    );
+    Ok(settle(result))
+}
+
+pub fn file_handle_stat(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    let fd = descriptor_arg(execute::get_property_result(receiver, "fd").ok().as_ref())?;
+    let result = fstat_sync(
+        state,
+        None,
+        &[
+            Value::Number(fd as f64),
+            args.first().cloned().unwrap_or(Value::Undefined),
+        ],
+    );
+    Ok(settle(result))
+}
+
+pub fn file_handle_chmod(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    let fd = descriptor_arg(execute::get_property_result(receiver, "fd").ok().as_ref())?;
+    let result = fchmod_sync(
+        state,
+        None,
+        &[
+            Value::Number(fd as f64),
             args.first().cloned().unwrap_or(Value::Undefined),
         ],
     );
