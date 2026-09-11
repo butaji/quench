@@ -337,6 +337,13 @@ fn flush_async(
             .map(|bytes| crate::modules::buffer_proto::make_buffer(&bytes))
     });
     let Some(piece) = piece else {
+        if matches!(execute::get_property(stream, ENDED_KEY), Value::Boolean(true)) {
+            if let Some(callback) = callback.filter(|value| quench_runtime::is_callable(value)) {
+                crate::modules::fs::defer(state, &callback, vec![Value::Null]);
+            }
+            finish(state, stream);
+            return Ok(());
+        }
         let emitter = execute::get_property(stream, "emit");
         if quench_runtime::is_callable(&emitter) {
             state.borrow().event_loop.queue_microtask_with_receiver(
