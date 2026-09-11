@@ -64,6 +64,7 @@ pub struct AsyncHooksState {
     // keeps context propagation in the host state machine instead of relying
     // on a second JS-only context registry.
     local_stores: HashMap<(u64, u64), Value>,
+    local_handles: HashMap<u64, Value>,
     next_local_id: u64,
     pub(crate) current_local_store: Option<Value>,
     resource_stack: Vec<(u64, Option<Value>)>,
@@ -88,6 +89,7 @@ impl AsyncHooksState {
             hooks: Vec::new(),
             promise_resources: HashMap::new(),
             local_stores: HashMap::new(),
+            local_handles: HashMap::new(),
             next_local_id: 1,
             current_local_store: None,
             resource_stack: Vec::new(),
@@ -286,11 +288,37 @@ pub fn new_async_local_storage(
         "withScope",
         crate::host::capability(crate::registry::SPEC_ASYNC_LOCAL_SCOPE),
     );
-    Ok(execute::set_property(
+    let object = execute::set_property(
         object,
         "disable",
         crate::host::capability(SPEC_ASYNC_LOCAL_DISABLE),
-    ))
+    );
+    host.async_hooks.local_handles.insert(id, object.clone());
+    Ok(object)
+}
+
+/// Derive the async-context-frame map from the canonical host store table.
+/// The map keys are the actual AsyncLocalStorage objects, so JavaScript
+/// `frame.get(als)` observes identity rather than an implementation id.
+pub(crate) fn context_frame_for_current(state: &Rc<RefCell<HostState>>) -> Value {
+    let host = state.borrow();
+    let resource_id = host.async_hooks.current_id;
+    let entries = host
+        .async_hooks
+        .local_stores
+        .iter()
+        .filter_map(|((owner, local_id), value)| {
+            (*owner == resource_id)
+                .then(|| host.async_hooks.local_handles.get(local_id))
+                .flatten()
+                .map(|storage| (storage.clone(), value.clone()))
+        })
+        .collect::<Vec<_>>();
+    if entries.is_empty() {
+        Value::Undefined
+    } else {
+        host_api::map(entries)
+    }
 }
 
 pub(crate) fn legacy_store_for_resource(state: &Rc<RefCell<HostState>>, resource_id: u64) -> Value {
@@ -353,6 +381,13 @@ pub fn local_enter_with(
 ) -> Result<Value, VmError> {
     let id = local_id(receiver).unwrap_or_default();
     let resource_id = state.borrow().async_hooks.current_id;
+    if let Some(receiver) = receiver {
+        state
+            .borrow_mut()
+            .async_hooks
+            .local_handles
+            .insert(id, execute::canonical_value(receiver));
+    }
     state.borrow_mut().async_hooks.local_stores.insert(
         (resource_id, id),
         args.first().cloned().unwrap_or(Value::Undefined),
@@ -371,11 +406,11 @@ pub fn local_disable(
     _: &[Value],
 ) -> Result<Value, VmError> {
     if let Some(id) = local_id(receiver) {
-        state
-            .borrow_mut()
-            .async_hooks
+        let mut host = state.borrow_mut();
+        host.async_hooks
             .local_stores
             .retain(|(_, local_id), _| *local_id != id);
+        host.async_hooks.local_handles.remove(&id);
     }
     Ok(Value::Undefined)
 }
@@ -647,6 +682,13 @@ pub fn local_run(
     }
     let id = local_id(receiver).unwrap_or_default();
     let resource_id = state.borrow().async_hooks.current_id;
+    if let Some(receiver) = receiver {
+        state
+            .borrow_mut()
+            .async_hooks
+            .local_handles
+            .insert(id, execute::canonical_value(receiver));
+    }
     let previous = state
         .borrow()
         .async_hooks

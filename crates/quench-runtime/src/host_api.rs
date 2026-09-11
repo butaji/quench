@@ -18,6 +18,19 @@ pub fn array(values: Vec<Value>) -> Value {
     Value::array(values)
 }
 
+/// Construct a strong `Map` from already-normalized key/value facts. Host
+/// modules use this when an API exposes a map-backed context without routing
+/// through a second JavaScript construction path.
+pub fn map(entries: Vec<(Value, Value)>) -> Value {
+    Value::Map(Rc::new(crate::value::MapData {
+        weak: false,
+        keys: std::cell::RefCell::new(entries.iter().map(|(key, _)| key.clone()).collect()),
+        values: std::cell::RefCell::new(entries.into_iter().map(|(_, value)| value).collect()),
+        properties: std::cell::RefCell::new(Vec::new()),
+        prototype: std::cell::RefCell::new(None),
+    }))
+}
+
 pub fn capability_function(capability: HostCapabilityRef) -> Value {
     let token = Value::HostCapability(Rc::new(HostCapabilityValue::new(capability)));
     Value::BoundFunction(Rc::new(BoundFunctionValue::new(
