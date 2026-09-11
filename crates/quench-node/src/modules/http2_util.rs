@@ -795,6 +795,9 @@ pub fn dispatch(
         "compatResponseSetTrailer" => compat_response_set_trailer(_receiver, values),
         "compatResponseAddTrailers" => compat_response_add_trailers(_receiver, values),
         "compatResponseFlushHeaders" => compat_response_flush_headers(state, _receiver),
+        "compatResponseWriteEarlyHints" => {
+            compat_response_write_early_hints(state, _receiver, values)
+        },
         "compatResponseSetTimeout" => compat_response_set_timeout(state, _receiver, values),
         "compatResponseTimeout" => compat_response_timeout_fire(state, values),
         "compatRequestSetTimeout" => {
@@ -3418,6 +3421,10 @@ pub(crate) fn compat_server_request_response(
         ("setTrailer", http2_capability("compatResponseSetTrailer")),
         ("addTrailers", http2_capability("compatResponseAddTrailers")),
         (
+            "writeEarlyHints",
+            http2_capability("compatResponseWriteEarlyHints"),
+        ),
+        (
             "flushHeaders",
             http2_capability("compatResponseFlushHeaders"),
         ),
@@ -4073,6 +4080,62 @@ fn compat_response_write(
     // `ServerResponse.write()` returns Writable's boolean backpressure result,
     // not the response receiver (unlike `end()`).
     stream_write(state, Some(&stream), values)
+}
+
+/// Send an HTTP/2 informational response through the compatibility response.
+/// `ServerResponse.writeEarlyHints()` is the compatibility spelling of the
+/// raw stream's `additionalHeaders()` operation, but the status is fixed at
+/// 103 and an empty value array must not put an empty informational block on
+/// the wire.  Keeping this translation here gives both APIs one encoder and
+/// one stream/session lifecycle.
+fn compat_response_write_early_hints(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let response = receiver.ok_or(VmError::NotCallable)?;
+    let hints = values.first().unwrap_or(&Value::Undefined);
+    if !matches!(hints, Value::Object(_) | Value::ObjectAlias(_)) {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::TypeError,
+            "ERR_INVALID_ARG_TYPE",
+            "The \"hints\" argument must be of type object".into(),
+        ));
+    }
+    let headers = host_api::object(vec![(
+        ":status".into(),
+        Value::String("103".into()),
+    )]);
+    let mut has_fields = false;
+    for key in execute::own_enumerable_keys(hints) {
+        let name = compat_response_header_name(Some(&Value::String(key)))?;
+        let raw = execute::get_property(hints, &name);
+        let invalid_bigint = match &raw {
+            Value::BigInt(_) => true,
+            Value::Array(_) => execute::own_enumerable_keys(&raw)
+                .into_iter()
+                .any(|item| matches!(execute::get_property(&raw, &item), Value::BigInt(_))),
+            _ => false,
+        };
+        if invalid_bigint {
+            return Err(coded_error(
+                quench_runtime::ops::Builtin::TypeError,
+                "ERR_INVALID_ARG_VALUE",
+                format!("Invalid value for header \"{name}\""),
+            ));
+        }
+        let value = compat_response_header_value(&name, Some(&raw))?;
+        has_fields |= !matches!(&value, Value::Array(array) if array.logical_len() == 0);
+        execute::set_property_in_place(&headers, &name, value);
+    }
+    if has_fields {
+        let stream = compat_response_stream(Some(response))?;
+        stream_additional_headers(state, Some(&stream), &[headers])?;
+    }
+    if let Some(callback) = values.iter().skip(1).find(|value| quench_runtime::is_callable(value)) {
+        execute::call(callback, response, &[])?;
+    }
+    Ok(response.clone())
 }
 
 fn compat_response_end(
@@ -6276,6 +6339,17 @@ fn validate_header_name(name: &str) -> Result<(), VmError> {
             quench_runtime::ops::Builtin::TypeError,
             "ERR_HTTP2_INVALID_CONNECTION_HEADERS",
             format!("HTTP/1 Connection specific headers are forbidden: \"{name}\""),
+        ));
+    }
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
+    {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::TypeError,
+            "ERR_INVALID_HTTP_TOKEN",
+            format!("Header name must be a valid HTTP token [\"{name}\"]"),
         ));
     }
     Ok(())
