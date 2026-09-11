@@ -88,6 +88,10 @@ pub fn poll(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     }
     poll_accept(state)?;
     poll_sockets(state)?;
+    // A paused HTTP/2 stream may have received complete DATA frames while
+    // the transport was still readable. Deliver those frames only after the
+    // stream's shared pause fact is cleared by `resume()`.
+    flush_paused_http2_data(state)?;
     // HTTP/2 stream errors are held until after socket polling so a buffered
     // RST_STREAM is flushed (and can be read by the peer) before user error
     // handlers are allowed to close the client session.
@@ -1195,6 +1199,102 @@ fn emit_http2_stream_close(
     Ok(())
 }
 
+fn http2_data_value(stream: &Value, payload: &[u8]) -> Value {
+    match execute::get_property(stream, "encoding") {
+        Value::String(encoding) if encoding == "utf8" || encoding == "utf-8" => {
+            Value::String(String::from_utf8_lossy(payload).into_owned())
+        }
+        // Node delivers HTTP/2 DATA callbacks as Buffers unless the stream
+        // has an explicit text encoding. Preserve that one conversion rule
+        // for both immediate and paused delivery.
+        _ => crate::modules::buffer_proto::make_buffer(payload),
+    }
+}
+
+fn queue_paused_http2_data(
+    state: &Rc<RefCell<HostState>>,
+    socket_id: u64,
+    stream_id: u32,
+    data: Value,
+    end: bool,
+) {
+    state
+        .borrow_mut()
+        .net
+        .http2_paused_data
+        .entry((socket_id, stream_id))
+        .or_default()
+        .push(data);
+    if end {
+        state
+            .borrow_mut()
+            .net
+            .http2_paused_end
+            .insert((socket_id, stream_id));
+    }
+}
+
+/// Flush body frames accumulated while one or more HTTP/2 streams were
+/// paused. The queue is attached to the canonical stream, so a compatibility
+/// request and its raw `Http2Stream` view cannot observe divergent bodies.
+pub(crate) fn flush_paused_http2_data(
+    state: &Rc<RefCell<HostState>>,
+) -> Result<(), VmError> {
+    let streams = state
+        .borrow()
+        .net
+        .http2_streams
+        .iter()
+        .map(|(&(socket_id, stream_id), stream)| (socket_id, stream_id, stream.clone()))
+        .collect::<Vec<_>>();
+    for (socket_id, stream_id, stream) in streams {
+        if matches!(
+            execute::get_property(&stream, crate::modules::http2_util::HTTP2_STREAM_PAUSED_PROP),
+            Value::Boolean(true)
+        ) {
+            continue;
+        }
+        let (queue, end) = {
+            let mut host = state.borrow_mut();
+            let queue = host
+                .net
+                .http2_paused_data
+                .remove(&(socket_id, stream_id))
+                .unwrap_or_default();
+            let end = host.net.http2_paused_end.remove(&(socket_id, stream_id));
+            (queue, end)
+        };
+        if queue.is_empty() && !end {
+            continue;
+        }
+        let Some(socket) = state.borrow().net.sockets.get(&socket_id).cloned() else {
+            continue;
+        };
+        let is_server = state
+            .borrow()
+            .net
+            .http2_sessions
+            .get(&socket_id)
+            .is_some_and(|session| {
+                matches!(session.role(), crate::modules::http2_protocol::Role::Server)
+        });
+        for data in queue {
+            emit_socket_scoped(state, &socket, &stream, "data", vec![data.clone()])?;
+            if is_server {
+                crate::modules::http2_util::emit_compat_request_data(state, &stream, data)?;
+            }
+        }
+        if end {
+            emit_http2_stream_close(state, &socket, &stream, is_server, true)?;
+        }
+        // Keep the stream id read in this loop's identity check; the map key
+        // remains the authoritative association if a callback decorates a
+        // replacement stream object.
+        let _ = stream_id;
+    }
+    Ok(())
+}
+
 pub(crate) fn dispatch_http2_frames(
     state: &Rc<RefCell<HostState>>,
     socket: &Rc<RefCell<NetSocket>>,
@@ -1878,6 +1978,33 @@ pub(crate) fn dispatch_http2_frames(
                     .net
                     .http2_reset_codes
                     .contains_key(&(socket_id, stream_id));
+                let paused = matches!(
+                    execute::get_property(
+                        &stream,
+                        crate::modules::http2_util::HTTP2_STREAM_PAUSED_PROP,
+                    ),
+                    Value::Boolean(true)
+                );
+                if paused {
+                    if !frame.payload.is_empty() {
+                        queue_paused_http2_data(
+                            state,
+                            socket_id,
+                            stream_id,
+                            http2_data_value(&stream, &frame.payload),
+                            frame.header.flags & 1 != 0,
+                        );
+                    } else if frame.header.flags & 1 != 0 {
+                        queue_paused_http2_data(
+                            state,
+                            socket_id,
+                            stream_id,
+                            Value::Undefined,
+                            true,
+                        );
+                    }
+                    continue;
+                }
                 if frame.payload.is_empty() {
                     if frame.header.flags & 1 != 0 {
                         emit_http2_stream_close(state, socket, &stream, is_server, !locally_reset)?;
@@ -1887,16 +2014,7 @@ pub(crate) fn dispatch_http2_frames(
                 if locally_reset {
                     continue;
                 }
-                let data = match execute::get_property(&stream, "encoding") {
-                    Value::String(encoding) if encoding == "utf8" || encoding == "utf-8" => {
-                        Value::String(String::from_utf8_lossy(&frame.payload).into_owned())
-                    }
-                    // Node delivers HTTP/2 DATA callbacks as Buffers.  A
-                    // generic Uint8Array makes `.toString()` expose comma
-                    // separated byte values and breaks the observable stream
-                    // contract (and any async-context checks after it).
-                    _ => crate::modules::buffer_proto::make_buffer(&frame.payload),
-                };
+                let data = http2_data_value(&stream, &frame.payload);
                 emit_socket_scoped(state, socket, &stream, "data", vec![data.clone()])?;
                 if is_server {
                     crate::modules::http2_util::emit_compat_request_data(

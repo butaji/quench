@@ -179,6 +179,11 @@ pub struct NetState {
     /// properties remain a public convenience, but COW object updates must
     /// not be allowed to lose a stream between request and response events.
     pub http2_streams: HashMap<(u64, u32), Value>,
+    /// DATA frames received while an HTTP/2 stream is paused. Values are
+    /// retained as decoded stream chunks; the terminal bit is kept separate
+    /// so an empty END_STREAM frame is not exposed as a data callback.
+    pub http2_paused_data: HashMap<(u64, u32), Vec<Value>>,
+    pub http2_paused_end: HashSet<(u64, u32)>,
     /// Terminal reset facts keyed by transport/session identity. These facts
     /// survive VM aliases so a locally destroyed request cannot later emit a
     /// peer response or end event through a different stream representative.
@@ -252,6 +257,8 @@ impl NetState {
             http2_server_remote_custom: HashMap::new(),
             http2_request_listeners: HashMap::new(),
             http2_streams: HashMap::new(),
+            http2_paused_data: HashMap::new(),
+            http2_paused_end: HashSet::new(),
             http2_reset_codes: HashMap::new(),
             http2_pings: HashMap::new(),
             timeout_timers: HashMap::new(),

@@ -196,6 +196,10 @@ const HTTP2_RESPONSE_STARTED_PROP: &str = "\0quench:http2-response-started";
 const HTTP2_WAIT_FOR_TRAILERS_PROP: &str = "\0quench:http2-wait-for-trailers";
 const HTTP2_TRAILERS_READY_PROP: &str = "\0quench:http2-trailers-ready";
 const HTTP2_TRAILERS_SENT_PROP: &str = "\0quench:http2-trailers-sent";
+/// Read-side flow control for the Rust-owned HTTP/2 stream representation.
+/// Compatibility request views point at this same state rather than owning a
+/// second body queue.
+pub(crate) const HTTP2_STREAM_PAUSED_PROP: &str = "\0quench:http2-stream-paused";
 const COMPAT_STATUS_MESSAGE_WARNING: &str =
     "Status message is not supported by HTTP/2 (RFC7540 8.1.2.4)";
 
@@ -776,7 +780,8 @@ pub fn dispatch(
         "streamSendTrailers" => stream_send_trailers(state, _receiver, values),
         "streamPushStream" => stream_push_stream(state, _receiver, values),
         "streamSetEncoding" => stream_set_encoding(state, _receiver, values),
-        "streamResume" | "streamPause" => Ok(_receiver.cloned().unwrap_or(Value::Undefined)),
+        "streamResume" => stream_resume(state, _receiver),
+        "streamPause" => stream_pause(state, _receiver),
         "compatResponseWriteHead" => compat_response_write_head(state, _receiver, values),
         "compatResponseStatusCode" => compat_response_status_code(_receiver, values),
         "compatResponseStatusMessage" => compat_response_status_message(state, _receiver, values),
@@ -795,6 +800,8 @@ pub fn dispatch(
         "compatRequestSetTimeout" => {
             crate::modules::http_client::res_set_timeout(state, _receiver, values)
         }
+        "compatRequestPause" => compat_request_pause(_receiver),
+        "compatRequestResume" => compat_request_resume(state, _receiver),
         "compatRequestPipe" => crate::modules::http_client::res_pipe(state, _receiver, values),
         "compatResponseCreatePushResponse" => {
             compat_response_create_push_response(state, _receiver, values)
@@ -2329,7 +2336,38 @@ pub(crate) fn emit_compat_request_data(
 ) -> Result<(), VmError> {
     let request = execute::get_property(stream, "\0quench:http2-compat-request");
     if matches!(request, Value::Object(_) | Value::ObjectAlias(_)) {
-        crate::modules::net::emit(state, &request, "data", vec![data])?;
+        if matches!(
+            execute::get_property(&request, HTTP2_STREAM_PAUSED_PROP),
+            Value::Boolean(true)
+        ) || matches!(
+            execute::get_property(stream, HTTP2_STREAM_PAUSED_PROP),
+            Value::Boolean(true)
+        ) {
+            let queue = match execute::get_property(
+                &request,
+                "\0quench:http2-compat-request-buffer",
+            ) {
+                Value::Array(_) => execute::get_property(
+                    &request,
+                    "\0quench:http2-compat-request-buffer",
+                ),
+                _ => {
+                    let queue = host_api::array(Vec::new());
+                    execute::set_property_in_place(
+                        &request,
+                        "\0quench:http2-compat-request-buffer",
+                        queue.clone(),
+                    );
+                    queue
+                }
+            };
+            if let Value::Array(ref array) = queue {
+                let index = array.logical_len();
+                execute::set_property_in_place(&queue, &index.to_string(), data);
+            }
+        } else {
+            crate::modules::net::emit(state, &request, "data", vec![data])?;
+        }
     }
     Ok(())
 }
@@ -2357,7 +2395,72 @@ pub(crate) fn emit_compat_request_end(
     );
     execute::set_property_in_place(&request, "complete", Value::Boolean(true));
     execute::set_property_in_place(&request, "readable", Value::Boolean(false));
+    if matches!(
+        execute::get_property(&request, HTTP2_STREAM_PAUSED_PROP),
+        Value::Boolean(true)
+    ) || matches!(
+        execute::get_property(stream, HTTP2_STREAM_PAUSED_PROP),
+        Value::Boolean(true)
+    ) {
+        return Ok(());
+    }
+    execute::set_property_in_place(
+        &request,
+        "\0quench:http2-compat-request-end-emitted",
+        Value::Boolean(true),
+    );
     crate::modules::net::emit(state, &request, "end", Vec::new())
+}
+
+fn compat_request_pause(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let request = receiver.ok_or(VmError::NotCallable)?;
+    execute::set_property_in_place(
+        request,
+        "\0quench:http2-compat-request-paused",
+        Value::Boolean(true),
+    );
+    Ok(request.clone())
+}
+
+fn compat_request_resume(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+) -> Result<Value, VmError> {
+    let request = receiver.ok_or(VmError::NotCallable)?;
+    execute::set_property_in_place(
+        request,
+        "\0quench:http2-compat-request-paused",
+        Value::Boolean(false),
+    );
+    let queue = execute::get_property(request, "\0quench:http2-compat-request-buffer");
+    if let Value::Array(array) = queue {
+        let values = (0..array.logical_len())
+            .map(|index| array.index_value(index))
+            .collect::<Vec<_>>();
+        execute::set_property_in_place(
+            request,
+            "\0quench:http2-compat-request-buffer",
+            host_api::array(Vec::new()),
+        );
+        for value in values {
+            crate::modules::net::emit(state, request, "data", vec![value])?;
+        }
+    }
+    if matches!(
+        execute::get_property(request, "\0quench:http2-compat-request-ended"),
+        Value::Boolean(true)
+    ) && !matches!(
+        execute::get_property(request, "\0quench:http2-compat-request-end-emitted"),
+        Value::Boolean(true)
+    ) {
+        execute::set_property_in_place(
+            request,
+            "\0quench:http2-compat-request-end-emitted",
+            Value::Boolean(true),
+        );
+        crate::modules::net::emit(state, request, "end", Vec::new())?;
+    }
+    Ok(request.clone())
 }
 
 fn writable_after_response_close(stream: &Value, transport_closed: bool) -> bool {
@@ -2377,20 +2480,22 @@ fn stream_set_encoding(
     receiver: Option<&Value>,
     values: &[Value],
 ) -> Result<Value, VmError> {
-    let stream = receiver.ok_or(VmError::NotCallable)?;
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    let stream = stream_target(receiver);
     let encoding = values
         .first()
         .map(execute::to_js_string)
         .transpose()?
         .unwrap_or_else(|| "utf8".into())
         .to_ascii_lowercase();
-    execute::set_property_in_place(stream, "encoding", Value::String(encoding.clone()));
+    execute::set_property_in_place(&stream, "encoding", Value::String(encoding.clone()));
+    execute::set_property_in_place(receiver, "encoding", Value::String(encoding.clone()));
     // A request stream can be observed through a canonical stream object
     // created when the peer's response headers arrive. Keep the encoding on
     // that shared host record as well, so data dispatch never falls back to
     // byte-array coercion merely because the VM exposed a distinct wrapper.
-    let socket = execute::get_property(stream, "\0quench:http2-socket");
-    let stream_id = execute::get_property(stream, "\0quench:http2-stream-id");
+    let socket = execute::get_property(&stream, "\0quench:http2-socket");
+    let stream_id = execute::get_property(&stream, "\0quench:http2-stream-id");
     if let (Some(socket_id), Value::Number(id)) = (crate::modules::net::net_id(&socket), stream_id)
     {
         if let Some(canonical) = state
@@ -2403,7 +2508,97 @@ fn stream_set_encoding(
             execute::set_property_in_place(&canonical, "encoding", Value::String(encoding));
         }
     }
-    Ok(stream.clone())
+    Ok(receiver.clone())
+}
+
+fn stream_target(receiver: &Value) -> Value {
+    let compatibility_stream = execute::get_property(receiver, "\0quench:http2-compat-stream");
+    if matches!(
+        compatibility_stream,
+        Value::Object(_) | Value::ObjectAlias(_)
+    ) {
+        compatibility_stream
+    } else {
+        receiver.clone()
+    }
+}
+
+fn set_stream_paused(
+    state: &Rc<RefCell<HostState>>,
+    receiver: &Value,
+    paused: bool,
+) {
+    let target = stream_target(receiver);
+    for value in [&target, receiver] {
+        execute::set_property_in_place(
+            value,
+            HTTP2_STREAM_PAUSED_PROP,
+            Value::Boolean(paused),
+        );
+    }
+    let canonical = execute::canonical_value(&target);
+    execute::set_property_in_place(
+        &canonical,
+        HTTP2_STREAM_PAUSED_PROP,
+        Value::Boolean(paused),
+    );
+    let socket = execute::get_property(&target, "\0quench:http2-socket");
+    let stream_id = execute::get_property(&target, "\0quench:http2-stream-id");
+    let Some(socket_id) = crate::modules::net::net_id(&socket) else {
+        return;
+    };
+    let Value::Number(stream_id) = stream_id else {
+        return;
+    };
+    let mapped = state
+        .borrow()
+        .net
+        .http2_streams
+        .get(&(socket_id, stream_id as u32))
+        .cloned();
+    if let Some(mapped) = mapped {
+        execute::set_property_in_place(
+            &mapped,
+            HTTP2_STREAM_PAUSED_PROP,
+            Value::Boolean(paused),
+        );
+        let mapped_canonical = execute::canonical_value(&mapped);
+        execute::set_property_in_place(
+            &mapped_canonical,
+            HTTP2_STREAM_PAUSED_PROP,
+            Value::Boolean(paused),
+        );
+    }
+}
+
+fn stream_pause(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Err(VmError::NotCallable);
+    };
+    set_stream_paused(state, receiver, true);
+    Ok(receiver.clone())
+}
+
+fn stream_resume(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Err(VmError::NotCallable);
+    };
+    set_stream_paused(state, receiver, false);
+    // Flush a compatibility request's body queue after clearing the shared
+    // stream pause fact. Ordinary streams have no compatibility view and
+    // retain their existing resume-only behavior.
+    let target = stream_target(receiver);
+    let request = execute::get_property(&target, "\0quench:http2-compat-request");
+    if matches!(request, Value::Object(_) | Value::ObjectAlias(_)) {
+        compat_request_resume(state, Some(&request))?;
+    }
+    Ok(receiver.clone())
 }
 
 fn write_http2_frame(
@@ -3084,6 +3279,7 @@ pub(crate) fn compat_server_request_response(
     for (name, method) in [
         ("pause", execute::get_property(&stream, "pause")),
         ("resume", execute::get_property(&stream, "resume")),
+        ("setEncoding", http2_capability("streamSetEncoding")),
         ("destroy", execute::get_property(&stream, "destroy")),
         // Http2ServerRequest follows IncomingMessage's timeout contract. The
         // existing HTTP response timeout implementation already owns the
@@ -3100,7 +3296,37 @@ pub(crate) fn compat_server_request_response(
     ] {
         execute::set_property_in_place(&request, name, method);
     }
+    // Pause/resume is exposed on the compatibility request, while the
+    // transport DATA queue belongs to the canonical HTTP/2 stream. Link the
+    // two views so both APIs update one read-side state machine.
+    execute::set_property_in_place(
+        &request,
+        "\0quench:http2-compat-stream",
+        stream.clone(),
+    );
     execute::set_property_in_place(&stream, "\0quench:http2-compat-request", request.clone());
+    // The transport map may retain an earlier stream representative when the
+    // VM's copy-on-write decoration publishes a canonical successor. Attach
+    // the bridge to that map entry too, so DATA arriving on either identity
+    // reaches the same compatibility request.
+    if let (Some(socket_id), Value::Number(stream_id)) = (
+        crate::modules::net::net_id(&socket),
+        execute::get_property(&stream, "\0quench:http2-stream-id"),
+    ) {
+        let mapped = state
+            .borrow()
+            .net
+            .http2_streams
+            .get(&(socket_id, stream_id as u32))
+            .cloned();
+        if let Some(mapped) = mapped {
+            execute::set_property_in_place(
+                &mapped,
+                "\0quench:http2-compat-request",
+                request.clone(),
+            );
+        }
+    }
 
     let mut response = crate::modules::events::new_emitter_object(state)?;
     for (name, value) in [
