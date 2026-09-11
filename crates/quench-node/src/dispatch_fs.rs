@@ -87,6 +87,13 @@ pub fn fs_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_FS_HANDLE_FD => crate::modules::fs::file_handle_fd,
         CAP_FS_READSTREAM_CLOSE => crate::modules::fs::read_stream_close,
         CAP_FS_READSTREAM_DESTROY => crate::modules::fs::read_stream_destroy,
+        CAP_FS_UTF8STREAM_WRITE => crate::modules::fs_utf8_stream::write,
+        CAP_FS_UTF8STREAM_WRITE_SYNC => crate::modules::fs_utf8_stream::write_sync,
+        CAP_FS_UTF8STREAM_FLUSH => crate::modules::fs_utf8_stream::flush,
+        CAP_FS_UTF8STREAM_FLUSH_SYNC => crate::modules::fs_utf8_stream::flush_sync,
+        CAP_FS_UTF8STREAM_END => crate::modules::fs_utf8_stream::end,
+        CAP_FS_UTF8STREAM_DESTROY => crate::modules::fs_utf8_stream::destroy,
+        CAP_FS_UTF8STREAM_REOPEN => crate::modules::fs_utf8_stream::reopen,
         _ => return fs_dispatch_more(cap),
     })
 }
