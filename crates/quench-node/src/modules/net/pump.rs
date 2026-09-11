@@ -289,6 +289,26 @@ fn collect_accepts(state: &Rc<RefCell<HostState>>) -> Vec<(u64, TcpStream, Socke
         let Some(server) = net.servers.get(&id) else {
             continue;
         };
+        let canonical_id = {
+            let server = server.borrow();
+            server.path.as_ref().map_or(id, |path| {
+                net.servers
+                    .values()
+                    .filter_map(|candidate| {
+                        let candidate = candidate.borrow();
+                        (candidate.path.as_ref() == Some(path)
+                            && candidate.listening
+                            && !candidate.closed
+                            && candidate.listener.is_some())
+                            .then_some(candidate.id)
+                    })
+                    .min()
+                    .unwrap_or(id)
+            })
+        };
+        if canonical_id != id {
+            continue;
+        }
         let server_id = server.borrow().id;
         let mut guard = server.borrow_mut();
         if !guard.listening {
@@ -311,13 +331,69 @@ fn collect_accepts(state: &Rc<RefCell<HostState>>) -> Vec<(u64, TcpStream, Socke
     accepted
 }
 
+fn connection_limit(server: &Value) -> Option<usize> {
+    match execute::get_property(server, "maxConnections") {
+        Value::Number(value) if value.is_finite() && value >= 0.0 => Some(value as usize),
+        _ => None,
+    }
+}
+
+fn live_connections(state: &Rc<RefCell<HostState>>, server_id: u64) -> usize {
+    state
+        .borrow()
+        .net
+        .sockets
+        .values()
+        .filter(|socket| {
+            let socket = socket.borrow();
+            socket.server_id == Some(server_id) && socket.state != SocketState::Closed
+        })
+        .count()
+}
+
+/// Route an accepted shared-path connection to one logical worker.  The
+/// listener is a single host fact; worker capacity is derived from each
+/// server's public `maxConnections` value, with construction order providing
+/// a deterministic round-robin fallback.
+fn shared_path_target(state: &Rc<RefCell<HostState>>, source_id: u64) -> u64 {
+    let candidates = {
+        let host = state.borrow();
+        let Some(source) = host.net.servers.get(&source_id) else {
+            return source_id;
+        };
+        let Some(path) = source.borrow().path.clone() else {
+            return source_id;
+        };
+        host.net
+            .servers
+            .values()
+            .filter_map(|server| {
+                let server = server.borrow();
+                (server.path.as_ref() == Some(&path) && server.listening && !server.closed)
+                    .then_some((server.id, server.js.clone()))
+            })
+            .collect::<Vec<_>>()
+    };
+    if candidates.len() < 2 {
+        return source_id;
+    }
+    candidates
+        .iter()
+        .find(|(id, server)| {
+            connection_limit(server).is_none_or(|limit| live_connections(state, *id) < limit)
+        })
+        .map(|(id, _)| *id)
+        .unwrap_or_else(|| candidates[0].0)
+}
+
 /// Register one accepted stream as a socket and emit `'connection'`.
 fn accept_one(
     state: &Rc<RefCell<HostState>>,
-    server_id: u64,
+    source_server_id: u64,
     stream: TcpStream,
     peer: SocketAddr,
 ) -> Result<(), VmError> {
+    let server_id = shared_path_target(state, source_server_id);
     let blocked = state
         .borrow()
         .net

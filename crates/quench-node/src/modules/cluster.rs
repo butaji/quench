@@ -2263,6 +2263,7 @@ pub fn process_send(
             guard.cluster.worker_context == Some(id),
             worker.listeners.get("message").cloned().unwrap_or_default(),
             worker.object.clone(),
+            worker.scope,
         )
     };
     if !active {
@@ -2276,10 +2277,20 @@ pub fn process_send(
         worker.pending_messages.push(message.clone());
     } else {
         for callback in callbacks {
-            state.borrow().event_loop.queue_microtask_with_receiver(
+            // `worker.listeners` belong to the primary's Worker object even
+            // while the accepted connection is executing in the worker
+            // context.  Preserve that ownership explicitly; using the
+            // current worker scope would run the parent callback as a child,
+            // so follow-up Worker.send()/disconnect() calls target the wrong
+            // process and leave cluster listeners alive indefinitely.
+            state
+                .borrow()
+                .event_loop
+                .queue_microtask_with_receiver_scope(
                 callback,
                 vec![message.clone()],
                 worker_object.clone(),
+                parent_scope,
             );
         }
     }
