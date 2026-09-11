@@ -1405,31 +1405,64 @@ pub(crate) fn decorate_http2_stream(state: &Rc<RefCell<HostState>>, stream: &Val
     // keep the canonical stream identity visible through all aliases while
     // still shadowing Duplex's inherited accessors.
     for name in ["closed", "destroyed", "aborted"] {
-        let _ = execute::set_property_in_place(stream, name, Value::Boolean(false));
+        let current = matches!(execute::get_property(stream, name), Value::Boolean(true));
+        let _ = execute::set_property_in_place(stream, name, Value::Boolean(current));
     }
     // Node exposes this state on every Http2Stream.  A client request starts
     // false and the server-side frame dispatcher overwrites it from the
     // request HEADERS END_STREAM flag once those headers are decoded.
     let _ = execute::set_property_in_place(stream, "endAfterHeaders", Value::Boolean(false));
     let _ = execute::set_property_in_place(&stream, "bufferSize", Value::Number(0.0));
-    let _ = execute::set_property_in_place(&stream, "writableEnded", Value::Boolean(false));
-    let _ = execute::set_property_in_place(&stream, "writableFinished", Value::Boolean(false));
-    let _ = execute::set_property_in_place(&stream, "sentInfoHeaders", host_api::array(Vec::new()));
-    let _ = execute::set_property_in_place(&stream, "sentTrailers", host_api::object(Vec::new()));
+    let writable_ended = matches!(
+        execute::get_property(&stream, "writableEnded"),
+        Value::Boolean(true)
+    );
+    let writable_finished = matches!(
+        execute::get_property(&stream, "writableFinished"),
+        Value::Boolean(true)
+    );
+    let _ = execute::set_property_in_place(&stream, "writableEnded", Value::Boolean(writable_ended));
+    let _ = execute::set_property_in_place(
+        &stream,
+        "writableFinished",
+        Value::Boolean(writable_finished),
+    );
+    let sent_info_headers = match execute::get_property(&stream, "sentInfoHeaders") {
+        Value::Array(_) => execute::get_property(&stream, "sentInfoHeaders"),
+        _ => host_api::array(Vec::new()),
+    };
+    let _ = execute::set_property_in_place(&stream, "sentInfoHeaders", sent_info_headers);
+    let sent_trailers = match execute::get_property(&stream, "sentTrailers") {
+        Value::Object(_) | Value::ObjectAlias(_) => execute::get_property(&stream, "sentTrailers"),
+        _ => host_api::object(Vec::new()),
+    };
+    let _ = execute::set_property_in_place(&stream, "sentTrailers", sent_trailers);
+    let wait_for_trailers = matches!(
+        execute::get_property(&stream, HTTP2_WAIT_FOR_TRAILERS_PROP),
+        Value::Boolean(true)
+    );
+    let trailers_ready = matches!(
+        execute::get_property(&stream, HTTP2_TRAILERS_READY_PROP),
+        Value::Boolean(true)
+    );
+    let trailers_sent = matches!(
+        execute::get_property(&stream, HTTP2_TRAILERS_SENT_PROP),
+        Value::Boolean(true)
+    );
     let _ = execute::set_property_in_place(
         &stream,
         HTTP2_WAIT_FOR_TRAILERS_PROP,
-        Value::Boolean(false),
+        Value::Boolean(wait_for_trailers),
     );
     let _ = execute::set_property_in_place(
         &stream,
         HTTP2_TRAILERS_READY_PROP,
-        Value::Boolean(false),
+        Value::Boolean(trailers_ready),
     );
     let _ = execute::set_property_in_place(
         &stream,
         HTTP2_TRAILERS_SENT_PROP,
-        Value::Boolean(false),
+        Value::Boolean(trailers_sent),
     );
     // Compatibility callers can tune the stream's writable high-water mark
     // directly (as Node's `Http2Stream` exposes `_writableState`). Keep the
@@ -4505,6 +4538,27 @@ fn stream_respond(
             Value::Object(_) | Value::ObjectAlias(_)
         ) {
             decorate_http2_stream(state, stream, true);
+            // Decoration installs the host-owned lifecycle slots. Reapply
+            // the call's trailer option after that shared initialization so
+            // a server callback's subsequent `end()` observes the same
+            // waitForTrailers fact.
+            let wait_for_trailers = values.get(1).is_some_and(|options| {
+                matches!(
+                    execute::get_property(options, "waitForTrailers"),
+                    Value::Boolean(true)
+                )
+            });
+            execute::set_property_in_place(
+                stream,
+                HTTP2_WAIT_FOR_TRAILERS_PROP,
+                Value::Boolean(wait_for_trailers),
+            );
+            let canonical = execute::canonical_value(stream);
+            execute::set_property_in_place(
+                &canonical,
+                HTTP2_WAIT_FOR_TRAILERS_PROP,
+                Value::Boolean(wait_for_trailers),
+            );
         }
         publish_http2_stream_diagnostic(
             state,
@@ -4649,6 +4703,15 @@ fn stream_send_trailers(
     values: &[Value],
 ) -> Result<Value, VmError> {
     let stream = receiver.ok_or(VmError::NotCallable)?;
+    if matches!(execute::get_property(stream, "closed"), Value::Boolean(true))
+        || matches!(execute::get_property(stream, "destroyed"), Value::Boolean(true))
+    {
+        return Err(coded_error(
+            quench_runtime::ops::Builtin::Error,
+            "ERR_HTTP2_INVALID_STREAM",
+            "The stream is not available for sending trailers".into(),
+        ));
+    }
     if !matches!(
         execute::get_property(stream, HTTP2_TRAILERS_READY_PROP),
         Value::Boolean(true)
@@ -4699,7 +4762,14 @@ fn stream_send_trailers(
         stream_id,
         block,
     );
-    write_http2_frame(&socket, &frame)?;
+    // `stream.end()` queues its final DATA before synchronously dispatching
+    // `wantTrailers`. Keep this terminal HEADERS block in that same FIFO so
+    // a listener's `sendTrailers()` cannot overtake the body on the wire.
+    state
+        .borrow_mut()
+        .net
+        .pending_writes
+        .push((socket.clone(), frame.encode()));
     let sent_trailers = crate::modules::net::http2_headers_value(&fields);
     execute::set_property_in_place(stream, HTTP2_TRAILERS_SENT_PROP, Value::Boolean(true));
     execute::set_property_in_place(stream, "sentTrailers", sent_trailers.clone());
