@@ -257,6 +257,14 @@ pub fn connection_handler(
     let Some(socket_id) = net::net_id(&socket) else {
         return Ok(Value::Undefined);
     };
+    // A connection may arrive through a transferred handle and an explicit
+    // `server.emit('connection', socket)` rather than the normal net accept
+    // path.  Node still stamps the receiving HTTP server on the socket before
+    // invoking its parser, so manually delivered connections expose the same
+    // `socket.server` identity as accepted ones.
+    if let Some(server) = receiver {
+        execute::set_property_in_place(&socket, "server", server.clone());
+    }
     execute::set_property_in_place(&socket, HTTP_SERVER_SOCKET_PROP, Value::Boolean(true));
     let require_host_header = receiver
         .map(|server| {
