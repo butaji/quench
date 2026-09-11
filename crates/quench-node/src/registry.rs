@@ -796,6 +796,10 @@ pub const SPEC_STREAM_READABLE_WRAP_EVENT: NodeSpec =
     NodeSpec::new("stream:Readable.wrap:event", 2521);
 pub const SPEC_STREAM_READABLE_WRAP_PROXY: NodeSpec =
     NodeSpec::new("stream:Readable.wrap:proxy", 2522);
+pub const SPEC_STREAM_READABLE_PUSH_ADAPTER: NodeSpec =
+    NodeSpec::new("stream:Readable.pushAdapter", 0x0C0C);
+pub const SPEC_STREAM_READABLE_READ_ADAPTER: NodeSpec =
+    NodeSpec::new("stream:Readable.readAdapter", 0x0C0D);
 node_api! {
     (SPEC_STREAM_FINISHED_EVENT, "stream:finished:event", 0x0C06),
     (SPEC_STREAM_FINISHED_ABORT, "stream:finished:abort", 0x0C07),
