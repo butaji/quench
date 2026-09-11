@@ -1788,7 +1788,74 @@ pub(crate) fn dispatch_http2_frames(
                                 _ => None,
                             })
                             .unwrap_or(0);
-                        if quench_runtime::is_callable(&request_listener) {
+                        let check_continue_listeners =
+                            crate::modules::events::method_listener_count(
+                                state,
+                                Some(&server),
+                                &[Value::String("checkContinue".into())],
+                            )
+                            .ok()
+                            .and_then(|value| match value {
+                                Value::Number(count) if count.is_finite() && count > 0.0 => {
+                                    Some(count as usize)
+                                }
+                                _ => None,
+                            })
+                            .unwrap_or(0);
+                        let check_expectation_listeners =
+                            crate::modules::events::method_listener_count(
+                                state,
+                                Some(&server),
+                                &[Value::String("checkExpectation".into())],
+                            )
+                            .ok()
+                            .and_then(|value| match value {
+                                Value::Number(count) if count.is_finite() && count > 0.0 => {
+                                    Some(count as usize)
+                                }
+                                _ => None,
+                            })
+                            .unwrap_or(0);
+                        let expectation = execute::to_js_string(
+                            &execute::get_property(&headers, "expect"),
+                        )
+                        .unwrap_or_default();
+                        let check_event = if expectation.eq_ignore_ascii_case("100-continue")
+                            && check_continue_listeners > 0
+                        {
+                            Some("checkContinue")
+                        } else if !expectation.is_empty() && check_expectation_listeners > 0 {
+                            Some("checkExpectation")
+                        } else {
+                            None
+                        };
+                        if let Some(event) = check_event {
+                            let (request, response) =
+                                crate::modules::http2_util::compat_server_request_response(
+                                    state, &stream, &headers, &args[3],
+                                )?;
+                            emit_server_scoped(state, &server, event, vec![request, response])?;
+                        } else if !expectation.is_empty()
+                            && !expectation.eq_ignore_ascii_case("100-continue")
+                        {
+                            // Without a checkExpectation listener Node
+                            // rejects an unsupported expectation with 417
+                            // and does not invoke the ordinary request hook.
+                            let (_request, response) =
+                                crate::modules::http2_util::compat_server_request_response(
+                                    state, &stream, &headers, &args[3],
+                                )?;
+                            crate::modules::http2_util::compat_response_write_head(
+                                state,
+                                Some(&response),
+                                &[Value::Number(417.0), host_api::object(Vec::new())],
+                            )?;
+                            crate::modules::http2_util::compat_response_end(
+                                state,
+                                Some(&response),
+                                &[],
+                            )?;
+                        } else if quench_runtime::is_callable(&request_listener) {
                             // `createServer` is the compatibility API: its
                             // callback receives request/response views, while
                             // the raw stream remains available through the
@@ -1798,12 +1865,26 @@ pub(crate) fn dispatch_http2_frames(
                                 crate::modules::http2_util::compat_server_request_response(
                                     state, &stream, &headers, &args[3],
                                 )?;
+                            if expectation.eq_ignore_ascii_case("100-continue") {
+                                let _ = crate::modules::http2_util::compat_response_write_continue(
+                                    state,
+                                    Some(&response),
+                                    &[],
+                                )?;
+                            }
                             execute::call(&request_listener, &server, &[request, response])?;
                         } else if request_event_listeners > 0 {
                             let (request, response) =
                                 crate::modules::http2_util::compat_server_request_response(
                                     state, &stream, &headers, &args[3],
                                 )?;
+                            if expectation.eq_ignore_ascii_case("100-continue") {
+                                let _ = crate::modules::http2_util::compat_response_write_continue(
+                                    state,
+                                    Some(&response),
+                                    &[],
+                                )?;
+                            }
                             emit_server_scoped(state, &server, "request", vec![request, response])?;
                         } else {
                             emit_server_scoped(state, &server, "stream", args.clone())?;
@@ -1822,26 +1903,35 @@ pub(crate) fn dispatch_http2_frames(
                                 .is_ok_and(|status| (100..200).contains(&status))
                     })
                 {
-                    // Informational response HEADERS are delivered through
-                    // the client's `headers` event and do not start the
-                    // terminal response lifecycle.
-                    emit_socket_scoped(
-                        state,
-                        socket,
-                        &stream,
-                        "headers",
-                        vec![
-                            http2_headers_value(&fields),
-                            Value::Number(
-                                header_flags
-                                    .get(&stream_id)
-                                    .copied()
-                                    .unwrap_or(frame.header.flags)
-                                    as f64,
-                            ),
-                            http2_raw_headers_value(&fields),
-                        ],
-                    )?;
+                    // A 100 response is the request stream's dedicated
+                    // `continue` event. Other informational blocks retain
+                    // the generic `headers` event and never start the final
+                    // response lifecycle.
+                    let status = fields
+                        .iter()
+                        .find(|(name, _)| name.as_slice() == b":status")
+                        .and_then(|(_, value)| String::from_utf8_lossy(value).parse::<u16>().ok());
+                    if status == Some(100) {
+                        emit_socket_scoped(state, socket, &stream, "continue", Vec::new())?;
+                    } else {
+                        emit_socket_scoped(
+                            state,
+                            socket,
+                            &stream,
+                            "headers",
+                            vec![
+                                http2_headers_value(&fields),
+                                Value::Number(
+                                    header_flags
+                                        .get(&stream_id)
+                                        .copied()
+                                        .unwrap_or(frame.header.flags)
+                                        as f64,
+                                ),
+                                http2_raw_headers_value(&fields),
+                            ],
+                        )?;
+                    }
                 } else if fresh {
                     crate::modules::http2_util::publish_http2_stream_diagnostic(
                         state,

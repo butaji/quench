@@ -821,6 +821,9 @@ pub fn dispatch(
         "compatResponseWriteEarlyHints" => {
             compat_response_write_early_hints(state, _receiver, values)
         },
+        "compatResponseWriteContinue" => {
+            compat_response_write_continue(state, _receiver, values)
+        },
         "compatResponseSetTimeout" => compat_response_set_timeout(state, _receiver, values),
         "compatResponseTimeout" => compat_response_timeout_fire(state, values),
         "compatRequestSetTimeout" => {
@@ -3448,6 +3451,10 @@ pub(crate) fn compat_server_request_response(
             http2_capability("compatResponseWriteEarlyHints"),
         ),
         (
+            "writeContinue",
+            http2_capability("compatResponseWriteContinue"),
+        ),
+        (
             "flushHeaders",
             http2_capability("compatResponseFlushHeaders"),
         ),
@@ -3966,7 +3973,7 @@ fn compat_response_create_push_response(
     Ok(push_response)
 }
 
-fn compat_response_write_head(
+pub(crate) fn compat_response_write_head(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     values: &[Value],
@@ -4161,7 +4168,40 @@ fn compat_response_write_early_hints(
     Ok(response.clone())
 }
 
-fn compat_response_end(
+/// Send an HTTP/2 informational 100 response for `Expect: 100-continue`.
+/// The informational encoder is shared with `additionalHeaders`; the return
+/// value follows Node's response state (`true` before final headers, `false`
+/// afterwards).
+pub(crate) fn compat_response_write_continue(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    values: &[Value],
+) -> Result<Value, VmError> {
+    let response = receiver.ok_or(VmError::NotCallable)?;
+    let stream = compat_response_stream(Some(response))?;
+    if matches!(
+        execute::get_property(&stream, HTTP2_RESPONSE_STARTED_PROP),
+        Value::Boolean(true)
+    ) || matches!(
+        execute::get_property(response, "headersSent"),
+        Value::Boolean(true)
+    ) {
+        return Ok(Value::Boolean(false));
+    }
+    stream_additional_headers(
+        state,
+        Some(&stream),
+        &[host_api::object(vec![
+            (":status".into(), Value::String("100".into())),
+        ])],
+    )?;
+    if let Some(callback) = values.iter().find(|value| quench_runtime::is_callable(value)) {
+        execute::call(callback, response, &[])?;
+    }
+    Ok(Value::Boolean(true))
+}
+
+pub(crate) fn compat_response_end(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     values: &[Value],
