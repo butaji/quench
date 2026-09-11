@@ -6088,8 +6088,7 @@ fn create_server(
     if !matches!(
         options,
         Value::Undefined | Value::Object(_) | Value::ObjectAlias(_)
-    ) && !quench_runtime::is_callable(options)
-    {
+    ) {
         return Err(coded_error(
             quench_runtime::ops::Builtin::TypeError,
             "ERR_INVALID_ARG_TYPE",
@@ -6157,11 +6156,7 @@ fn create_server(
     // `createSecureServer()` advertises `h2` by default.  Normalize a cloned
     // options object so the server-side negotiation sees the same protocol
     // list as `http2.connect()`, without mutating the caller's object.
-    let mut transport_values = if quench_runtime::is_callable(options) {
-        Vec::new()
-    } else {
-        values.iter().take(1).cloned().collect::<Vec<_>>()
-    };
+    let mut transport_values = values.iter().take(1).cloned().collect::<Vec<_>>();
     if secure {
         if let Some(Value::Object(_) | Value::ObjectAlias(_)) = transport_values.first() {
             let options = transport_values[0].clone();
@@ -6177,14 +6172,10 @@ fn create_server(
             }
         }
     }
-    let request_listener = if quench_runtime::is_callable(options) {
-        Some(options.clone())
-    } else {
-        values
-            .get(1)
-            .filter(|value| quench_runtime::is_callable(value))
-            .cloned()
-    };
+    let request_listener = values
+        .get(1)
+        .filter(|value| quench_runtime::is_callable(value))
+        .cloned();
     let server = if secure {
         crate::modules::tls::create_server(state, None, &transport_values)?
     } else {
