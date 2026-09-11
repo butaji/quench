@@ -605,6 +605,21 @@ pub fn build(argv: &[String], exec_path: &str) -> Value {
     build_with_title(argv, exec_path, "quench-node")
 }
 
+/// Whether the current invocation requests Node's legacy async-context path.
+/// The flag is observable through `process.execArgv`, so use that canonical
+/// process fact rather than a second environment/configuration channel.
+pub fn async_context_frame_enabled() -> bool {
+    let global = quench_runtime::vm::current_global_object();
+    let process = quench_runtime::execute::get_property(&global, "process");
+    let exec_argv = quench_runtime::execute::get_property(&process, "execArgv");
+    match exec_argv {
+        Value::Array(values) => !(0..values.logical_len()).any(|index| {
+            matches!(values.get(index), Some(Value::String(flag)) if flag == "--no-async-context-frame")
+        }),
+        _ => true,
+    }
+}
+
 pub fn build_with_title(argv: &[String], exec_path: &str, title: &str) -> Value {
     let exec_argv = std::env::var("QUENCH_EXEC_ARGV")
         .ok()
