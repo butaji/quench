@@ -1816,10 +1816,10 @@ pub(crate) fn dispatch_http2_frames(
                                 _ => None,
                             })
                             .unwrap_or(0);
-                        let expectation = execute::to_js_string(
-                            &execute::get_property(&headers, "expect"),
-                        )
-                        .unwrap_or_default();
+                        let expectation = match execute::get_property(&headers, "expect") {
+                            Value::Undefined | Value::Null => String::new(),
+                            value => execute::to_js_string(&value).unwrap_or_default(),
+                        };
                         let check_event = if expectation.eq_ignore_ascii_case("100-continue")
                             && check_continue_listeners > 0
                         {
