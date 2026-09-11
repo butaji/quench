@@ -1855,6 +1855,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_INTERNAL_CRYPTO_EC_KEY_PAIR_GEN_JOB_CONSTRUCT => {
             crate::modules::webcrypto::ec_key_pair_gen_job_construct
         }
+        CAP_FS_UTF8STREAM => crate::modules::fs_utf8_stream::construct,
         CAP_INTERNAL_CRYPTO_AES_CIPHER_JOB_CONSTRUCT => {
             crate::modules::webcrypto::aes_cipher_job_construct
         }
