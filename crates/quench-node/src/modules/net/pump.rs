@@ -907,6 +907,10 @@ fn http2_capability(kind: &str) -> Value {
 
 pub(crate) fn http2_headers_value(fields: &[(Vec<u8>, Vec<u8>)]) -> Value {
     let mut headers = host_api::object(Vec::new());
+    // Header names such as `constructor` and `__proto__` are ordinary wire
+    // fields.  Remove Object.prototype before duplicate aggregation so an
+    // inherited property cannot masquerade as an already-seen header.
+    headers = execute::set_prototype_of(&headers, &Value::Null).unwrap_or(headers);
     for (name, value) in fields {
         let key = String::from_utf8_lossy(name).into_owned();
         // Empty header names are ignored by Node's HTTP/2 header decoder.
@@ -929,16 +933,25 @@ pub(crate) fn http2_headers_value(fields: &[(Vec<u8>, Vec<u8>)]) -> Value {
             Value::String(String::from_utf8_lossy(value).into_owned())
         };
         let previous = execute::get_property(&headers, &key);
-        let next = match previous {
-            Value::Undefined => value,
-            Value::Array(_) => {
-                let length = execute::get_property(&previous, "length");
+        let next = match (key.as_str(), previous) {
+            (_, Value::Undefined) => value,
+            ("set-cookie", array @ Value::Array(_)) => {
+                let length = execute::get_property(&array, "length");
                 if let Value::Number(length) = length {
-                    let _ = execute::set_property_in_place(&previous, &length.to_string(), value);
+                    let _ = execute::set_array_index_in_place(&array, length as usize, value);
                 }
-                previous
+                array
             }
-            other => host_api::array(vec![other, value]),
+            ("set-cookie", current) => host_api::array(vec![current, value]),
+            ("cookie", Value::String(current)) => {
+                let incoming = execute::to_js_string(&value).unwrap_or_default();
+                Value::String(format!("{current}; {incoming}"))
+            }
+            (_, Value::String(current)) => {
+                let incoming = execute::to_js_string(&value).unwrap_or_default();
+                Value::String(format!("{current}, {incoming}"))
+            }
+            (_, current) => current,
         };
         let _ = execute::set_property_in_place(&headers, &key, next);
     }
@@ -949,7 +962,7 @@ pub(crate) fn http2_headers_value(fields: &[(Vec<u8>, Vec<u8>)]) -> Value {
             host_api::array(Vec::new()),
         );
     }
-    execute::set_prototype_of(&headers, &Value::Null).unwrap_or(headers)
+    headers
 }
 
 fn http2_define_symbol_property(object: Value, key: &Value, value: Value) -> Value {
