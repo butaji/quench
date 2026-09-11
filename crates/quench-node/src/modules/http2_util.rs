@@ -4375,10 +4375,12 @@ fn stream_destroy_with_error_event(
     {
         8_u32 // NGHTTP2_CANCEL
     } else if error.is_none() {
-        // Http2ServerResponse.destroy() uses NO_ERROR when no cause is
-        // supplied. A raw ServerHttp2Stream.destroy() retains the usual
-        // internal-error reset used by the lower-level API.
-        prior_rst_code.unwrap_or(if !emit_error_event { 0_u32 } else { 2_u32 })
+        // A no-cause Duplex destroy is a clean HTTP/2 termination.  The
+        // peer still reports ERR_HTTP2_STREAM_ABORTED when this arrives
+        // before END_STREAM, while a supplied error takes the explicit
+        // INTERNAL_ERROR path below.  Keep the already-observed reset code
+        // when a callback repeats destroy() after a local close.
+        prior_rst_code.unwrap_or(0_u32)
     } else {
         2_u32 // NGHTTP2_INTERNAL_ERROR
     };
@@ -5992,11 +5994,31 @@ fn create_server(
     // net.Server `connection` listener.  Do not register it on the transport
     // endpoint (which would call `mustNotCall` handlers as soon as a TCP peer
     // connects); retain it for the future session layer instead.
-    let transport_values = if quench_runtime::is_callable(options) {
-        &[][..]
+    // Secure HTTP/2 has an endpoint-level ALPN fact even when the caller
+    // omits TLS `ALPNProtocols`: unlike a generic TLS server, Node's
+    // `createSecureServer()` advertises `h2` by default.  Normalize a cloned
+    // options object so the server-side negotiation sees the same protocol
+    // list as `http2.connect()`, without mutating the caller's object.
+    let mut transport_values = if quench_runtime::is_callable(options) {
+        Vec::new()
     } else {
-        &values[..values.len().min(1)]
+        values.iter().take(1).cloned().collect::<Vec<_>>()
     };
+    if secure {
+        if let Some(Value::Object(_) | Value::ObjectAlias(_)) = transport_values.first() {
+            let options = transport_values[0].clone();
+            if matches!(
+                execute::get_property(&options, "ALPNProtocols"),
+                Value::Undefined | Value::Null
+            ) {
+                transport_values[0] = execute::set_property(
+                    options,
+                    "ALPNProtocols",
+                    host_api::array(vec![Value::String("h2".into())]),
+                );
+            }
+        }
+    }
     let request_listener = if quench_runtime::is_callable(options) {
         Some(options.clone())
     } else {
@@ -6006,9 +6028,9 @@ fn create_server(
             .cloned()
     };
     let server = if secure {
-        crate::modules::tls::create_server(state, None, transport_values)?
+        crate::modules::tls::create_server(state, None, &transport_values)?
     } else {
-        crate::modules::net::create_server(state, transport_values)?
+        crate::modules::net::create_server(state, &transport_values)?
     };
     if let Some(request_listener) = request_listener {
         crate::modules::net::register_http2_request_listener(
