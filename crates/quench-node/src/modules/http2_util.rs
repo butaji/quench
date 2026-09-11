@@ -1563,7 +1563,21 @@ pub(crate) fn publish_http2_stream_diagnostic(
         // Closing is observable on the diagnostic record itself, even when
         // the transport reached this boundary through a terminal DATA frame
         // rather than the JS `close()` capability.
-        execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
+        // A server request's END_STREAM closes only the remote/readable half;
+        // `stream_end` must still be able to write the response on the local
+        // half. Do not collapse that half-close into the public `closed` fact
+        // before the response's own END_STREAM is queued.
+        let remote_half_closed = matches!(
+            execute::get_property(&stream, "\0quench:http2-remote-end"),
+            Value::Boolean(true)
+        );
+        let local_half_closed = matches!(
+            execute::get_property(&stream, "writableEnded"),
+            Value::Boolean(true)
+        );
+        if !remote_half_closed || local_half_closed {
+            execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
+        }
         if matches!(destroyed, Value::Boolean(_)) {
             execute::set_property_in_place(&stream, "destroyed", destroyed);
         }
@@ -4508,7 +4522,17 @@ fn stream_respond(
             Value::Boolean(true),
         );
     }
-    let response_flags = if head_response { 0x5 } else { 0x4 };
+    let end_stream = values.get(1).is_some_and(|options| {
+        matches!(
+            execute::get_property(options, "endStream"),
+            Value::Boolean(true)
+        )
+    });
+    let response_flags = if head_response {
+        0x5
+    } else {
+        0x4 | u8::from(end_stream)
+    };
     write_http2_frame(
         &socket,
         &crate::modules::http2_protocol::Frame::new(
@@ -4520,12 +4544,20 @@ fn stream_respond(
     )?;
     if let Some(stream) = receiver {
         execute::set_property_in_place(stream, HTTP2_RESPONSE_STARTED_PROP, Value::Boolean(true));
+        if end_stream || head_response {
+            execute::set_property_in_place(stream, "writableEnded", Value::Boolean(true));
+            execute::set_property_in_place(stream, "writableFinished", Value::Boolean(true));
+        }
         let canonical = execute::canonical_value(stream);
         execute::set_property_in_place(
             &canonical,
             HTTP2_RESPONSE_STARTED_PROP,
             Value::Boolean(true),
         );
+        if end_stream || head_response {
+            execute::set_property_in_place(&canonical, "writableEnded", Value::Boolean(true));
+            execute::set_property_in_place(&canonical, "writableFinished", Value::Boolean(true));
+        }
     }
     let is_server = matches!(
         execute::get_property(&socket, crate::modules::http2_protocol::SERVER_MARKER),
