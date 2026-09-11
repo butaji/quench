@@ -1336,6 +1336,10 @@ fn decorate_client_session(socket: &Value, secure: bool) -> Result<(), VmError> 
         ]),
     );
     execute::set_property_in_place(socket, HTTP2_SOCKET_SYMBOL, socket.clone());
+    // ClientHttp2Session.socket is the public view of its underlying
+    // transport. The session and socket remain the same emitter identity in
+    // this host, so close/error events retain ordinary socket semantics.
+    execute::set_property_in_place(socket, "socket", socket.clone());
     execute::set_property_in_place(
         socket,
         "alpnProtocol",
@@ -1981,6 +1985,27 @@ fn session_request(
     );
     attach_stream_resource(state, &stream)?;
     decorate_http2_stream(state, &stream, false);
+    // `waitForTrailers` is a request-stream fact, not merely a call-time
+    // option. Keep it on the same stream state consumed by `stream_end()` so
+    // the final DATA frame can leave the writable side open and publish
+    // `wantTrailers` before the caller sends its trailing HEADERS block.
+    let wait_for_trailers = values.get(1).is_some_and(|options| {
+        matches!(
+            execute::get_property(options, "waitForTrailers"),
+            Value::Boolean(true)
+        )
+    });
+    execute::set_property_in_place(
+        &stream,
+        HTTP2_WAIT_FOR_TRAILERS_PROP,
+        Value::Boolean(wait_for_trailers),
+    );
+    let canonical = execute::canonical_value(&stream);
+    execute::set_property_in_place(
+        &canonical,
+        HTTP2_WAIT_FOR_TRAILERS_PROP,
+        Value::Boolean(wait_for_trailers),
+    );
     // Header-only requests have already ended their writable side when the
     // HEADERS frame carries END_STREAM. Mark that half closed before any peer
     // response arrives; otherwise a response close would be deferred forever
