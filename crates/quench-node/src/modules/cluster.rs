@@ -1419,7 +1419,21 @@ pub(crate) fn finalize_disconnected_workers(state: &Rc<RefCell<HostState>>) {
                         && !server.closed
                 }) || guard.net.sockets.values().any(|socket| {
                     let socket = socket.borrow();
-                    socket.owner_worker == Some(*id)
+                    // Accepted sockets are created by the host pump while
+                    // the primary context is active, so their explicit
+                    // owner may be absent even though the server belongs to
+                    // this worker. Derive ownership from the canonical
+                    // server record before deciding that disconnect is idle.
+                    let owner = socket.owner_worker.or_else(|| {
+                        socket.server_id.and_then(|server_id| {
+                            guard
+                                .net
+                                .servers
+                                .get(&server_id)
+                                .and_then(|server| server.borrow().owner_worker)
+                        })
+                    });
+                    owner == Some(*id)
                         && socket.refed
                         && socket.state != crate::modules::net::SocketState::Closed
                 });

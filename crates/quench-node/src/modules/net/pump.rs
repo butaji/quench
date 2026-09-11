@@ -110,6 +110,11 @@ pub fn poll(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         }
     }
     finalize(state)?;
+    // A cluster worker's process `disconnect` event is ordered after its
+    // listening servers' `close` events. Emit closed servers before the
+    // cluster finalizer can retire their records, while retaining the final
+    // checkpoint below for servers that become idle later in this tick.
+    poll_server_close(state)?;
     crate::modules::cluster::finalize_disconnected_workers(state);
     let fork_scopes = state.borrow().cluster.fork_scopes();
     for scope in fork_scopes {
