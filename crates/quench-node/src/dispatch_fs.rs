@@ -90,6 +90,8 @@ pub fn fs_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_FS_HANDLE_TRUNCATE => crate::modules::fs::file_handle_truncate,
         CAP_FS_HANDLE_APPENDFILE => crate::modules::fs::file_handle_append_file,
         CAP_FS_HANDLE_WRITEFILE => crate::modules::fs::file_handle_write_file,
+        CAP_FS_HANDLE_SYNC => crate::modules::fs::file_handle_sync,
+        CAP_FS_HANDLE_DATASYNC => crate::modules::fs::file_handle_datasync,
         CAP_FS_READSTREAM_CLOSE => crate::modules::fs::read_stream_close,
         CAP_FS_READSTREAM_DESTROY => crate::modules::fs::read_stream_destroy,
         CAP_FS_UTF8STREAM_WRITE => crate::modules::fs_utf8_stream::write,

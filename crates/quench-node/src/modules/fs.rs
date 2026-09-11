@@ -2745,6 +2745,14 @@ pub fn promises_open(
             crate::host::capability(crate::registry::SPEC_FS_HANDLE_WRITEFILE),
         ),
         (
+            "sync",
+            crate::host::capability(crate::registry::SPEC_FS_HANDLE_SYNC),
+        ),
+        (
+            "datasync",
+            crate::host::capability(crate::registry::SPEC_FS_HANDLE_DATASYNC),
+        ),
+        (
             "Symbol.asyncDispose",
             crate::host::capability(crate::registry::SPEC_FS_HANDLE_CLOSE),
         ),
@@ -2961,6 +2969,30 @@ pub fn file_handle_write_file(
     let mut write_args = vec![Value::Number(fd as f64)];
     write_args.extend_from_slice(args);
     crate::modules::fs_promises::write_file(state, None, &write_args)
+}
+
+pub fn file_handle_sync(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    let fd = descriptor_arg(execute::get_property_result(receiver, "fd").ok().as_ref())?;
+    Ok(settle(fsync_sync(state, None, &[Value::Number(fd as f64)])))
+}
+
+pub fn file_handle_datasync(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    let fd = descriptor_arg(execute::get_property_result(receiver, "fd").ok().as_ref())?;
+    Ok(settle(fdatasync_sync(
+        state,
+        None,
+        &[Value::Number(fd as f64)],
+    )))
 }
 
 pub fn file_handle_write(
