@@ -3827,10 +3827,20 @@ pub fn open(
     }
     validate_open_mode(leading.get(2))?;
     match open_sync(state, None, leading) {
-        Ok(fd) => defer(state, &callback, vec![Value::Null, fd]),
+        Ok(fd) => defer_with_resource(
+            state,
+            &callback,
+            vec![Value::Null, fd],
+            "FSREQCALLBACK",
+        )?,
         Err(error) => {
             let error = err_value(&Err(error));
-            defer(state, &callback, vec![error, Value::Undefined]);
+            defer_with_resource(
+                state,
+                &callback,
+                vec![error, Value::Undefined],
+                "FSREQCALLBACK",
+            )?;
         }
     }
     Ok(Value::Undefined)
