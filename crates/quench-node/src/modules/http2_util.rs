@@ -308,7 +308,9 @@ pub fn sensitive_headers() -> Value {
                     &[Value::String("nodejs.http2.sensitiveHeaders".into())],
                     None,
                 )
-                .unwrap_or_else(|_| Value::String("Symbol.nodejs.http2.sensitiveHeaders\0quench".into()))
+                .unwrap_or_else(|_| {
+                    Value::String("Symbol.nodejs.http2.sensitiveHeaders\0quench".into())
+                })
             })
             .clone()
     })
@@ -793,6 +795,7 @@ pub fn dispatch(
         "compatRequestSetTimeout" => {
             crate::modules::http_client::res_set_timeout(state, _receiver, values)
         }
+        "compatRequestPipe" => crate::modules::http_client::res_pipe(state, _receiver, values),
         "compatResponseCreatePushResponse" => {
             compat_response_create_push_response(state, _receiver, values)
         }
@@ -1424,7 +1427,8 @@ pub(crate) fn decorate_http2_stream(state: &Rc<RefCell<HostState>>, stream: &Val
         execute::get_property(&stream, "writableFinished"),
         Value::Boolean(true)
     );
-    let _ = execute::set_property_in_place(&stream, "writableEnded", Value::Boolean(writable_ended));
+    let _ =
+        execute::set_property_in_place(&stream, "writableEnded", Value::Boolean(writable_ended));
     let _ = execute::set_property_in_place(
         &stream,
         "writableFinished",
@@ -2313,6 +2317,49 @@ fn stream_socket(receiver: Option<&Value>) -> Result<(Value, u32), VmError> {
     Ok((socket, stream_id))
 }
 
+/// Forward body events from the canonical HTTP/2 stream to the
+/// `Http2ServerRequest` compatibility view. The two objects intentionally
+/// remain distinct, but they represent one wire stream; keeping this bridge
+/// at the transport boundary lets IncomingMessage adapters such as `pipe()`
+/// reuse the ordinary event machinery.
+pub(crate) fn emit_compat_request_data(
+    state: &Rc<RefCell<HostState>>,
+    stream: &Value,
+    data: Value,
+) -> Result<(), VmError> {
+    let request = execute::get_property(stream, "\0quench:http2-compat-request");
+    if matches!(request, Value::Object(_) | Value::ObjectAlias(_)) {
+        crate::modules::net::emit(state, &request, "data", vec![data])?;
+    }
+    Ok(())
+}
+
+/// Mark and finish the compatibility request once its inbound body reaches
+/// END_STREAM. This is separate from the raw stream close transition because
+/// the compatibility response may keep the transport writable afterwards.
+pub(crate) fn emit_compat_request_end(
+    state: &Rc<RefCell<HostState>>,
+    stream: &Value,
+) -> Result<(), VmError> {
+    let request = execute::get_property(stream, "\0quench:http2-compat-request");
+    if !matches!(request, Value::Object(_) | Value::ObjectAlias(_))
+        || matches!(
+            execute::get_property(&request, "\0quench:http2-compat-request-ended"),
+            Value::Boolean(true)
+        )
+    {
+        return Ok(());
+    }
+    execute::set_property_in_place(
+        &request,
+        "\0quench:http2-compat-request-ended",
+        Value::Boolean(true),
+    );
+    execute::set_property_in_place(&request, "complete", Value::Boolean(true));
+    execute::set_property_in_place(&request, "readable", Value::Boolean(false));
+    crate::modules::net::emit(state, &request, "end", Vec::new())
+}
+
 fn writable_after_response_close(stream: &Value, transport_closed: bool) -> bool {
     !transport_closed
         && matches!(
@@ -2979,23 +3026,37 @@ pub(crate) fn compat_server_request_response(
     state: &Rc<RefCell<HostState>>,
     stream: &Value,
     headers: &Value,
+    raw_headers: &Value,
 ) -> Result<(Value, Value), VmError> {
-    let socket = execute::get_property(stream, "\0quench:http2-socket");
+    // `decorate_http2_stream` installs the Duplex prototype through the
+    // ordinary COW object path. Resolve that replacement before attaching
+    // compatibility views; otherwise the transport map and response view
+    // retain the pre-decoration object while DATA/END dispatch reads the
+    // successor, losing the request bridge entirely.
+    let stream = execute::canonical_value(stream);
+    let socket = execute::get_property(&stream, "\0quench:http2-socket");
     let request_method = execute::get_property(headers, ":method");
+    let scheme = execute::get_property(headers, ":scheme");
+    let authority = match execute::get_property(headers, ":authority") {
+        Value::Undefined => execute::get_property(headers, "host"),
+        value => value,
+    };
     execute::set_property_in_place(
-        stream,
+        &stream,
         "\0quench:http2-compat-request-method",
         request_method.clone(),
     );
     // Preserve the request pseudo-headers on the canonical stream so server
     // push can derive the peer authority/scheme without relying on a socket
     // alias that may not expose the diagnostics map.
-    execute::set_property_in_place(stream, "__quenchHttp2RequestDiagnostics", headers.clone());
+    execute::set_property_in_place(&stream, "__quenchHttp2RequestDiagnostics", headers.clone());
     let mut request = crate::modules::events::new_emitter_object(state)?;
     let method = request_method;
     let path = execute::get_property(headers, ":path");
     for (name, value) in [
         ("method", method),
+        ("scheme", scheme),
+        ("authority", authority),
         (
             "url",
             if matches!(path, Value::Undefined) {
@@ -3008,6 +3069,7 @@ pub(crate) fn compat_server_request_response(
         ("httpVersionMajor", Value::Number(2.0)),
         ("httpVersionMinor", Value::Number(0.0)),
         ("headers", headers.clone()),
+        ("rawHeaders", raw_headers.clone()),
         ("trailers", host_api::object(Vec::new())),
         ("rawTrailers", host_api::array(Vec::new())),
         ("socket", socket.clone()),
@@ -3020,9 +3082,9 @@ pub(crate) fn compat_server_request_response(
         execute::set_property_in_place(&request, name, value);
     }
     for (name, method) in [
-        ("pause", execute::get_property(stream, "pause")),
-        ("resume", execute::get_property(stream, "resume")),
-        ("destroy", execute::get_property(stream, "destroy")),
+        ("pause", execute::get_property(&stream, "pause")),
+        ("resume", execute::get_property(&stream, "resume")),
+        ("destroy", execute::get_property(&stream, "destroy")),
         // Http2ServerRequest follows IncomingMessage's timeout contract. The
         // existing HTTP response timeout implementation already owns the
         // socket timer and relays its event through the receiver, so keep this
@@ -3031,10 +3093,14 @@ pub(crate) fn compat_server_request_response(
             "setTimeout",
             http2_capability("compatRequestSetTimeout"),
         ),
+        // IncomingMessage.pipe() is the same event-driven adapter used by
+        // HTTP responses. The compatibility request receives its body events
+        // from the HTTP/2 pump, so reuse that shared pipe reducer.
+        ("pipe", http2_capability("compatRequestPipe")),
     ] {
         execute::set_property_in_place(&request, name, method);
     }
-    execute::set_property_in_place(stream, "\0quench:http2-compat-request", request.clone());
+    execute::set_property_in_place(&stream, "\0quench:http2-compat-request", request.clone());
 
     let mut response = crate::modules::events::new_emitter_object(state)?;
     for (name, value) in [
@@ -3055,7 +3121,7 @@ pub(crate) fn compat_server_request_response(
         ("\0quench:http2-compat-stream", stream.clone()),
         (
             HTTP2_ASYNC_RESOURCE_PROP,
-            execute::get_property(stream, HTTP2_ASYNC_RESOURCE_PROP),
+            execute::get_property(&stream, HTTP2_ASYNC_RESOURCE_PROP),
         ),
         (COMPAT_HEADERS_PROP, host_api::object(Vec::new())),
         (COMPAT_TRAILERS_PROP, host_api::object(Vec::new())),
@@ -3068,12 +3134,12 @@ pub(crate) fn compat_server_request_response(
     execute::set_property_in_place(
         &response,
         "\0quench:http2-socket",
-        execute::get_property(stream, "\0quench:http2-socket"),
+        execute::get_property(&stream, "\0quench:http2-socket"),
     );
     execute::set_property_in_place(
         &response,
         "\0quench:http2-stream-id",
-        execute::get_property(stream, "\0quench:http2-stream-id"),
+        execute::get_property(&stream, "\0quench:http2-stream-id"),
     );
     execute::set_property_in_place(&response, COMPAT_STATUS_CODE_PROP, Value::Number(200.0));
     let status_accessor = http2_capability("compatResponseStatusCode");
@@ -3135,8 +3201,8 @@ pub(crate) fn compat_server_request_response(
     // Keep the compatibility response linked to the canonical stream so a
     // transport close (including an explicit stream destroy) can deliver the
     // response lifecycle event on the object user code observes.
-    execute::set_property_in_place(stream, COMPAT_RESPONSE_PROP, response.clone());
-    let canonical_stream = execute::canonical_value(stream);
+    execute::set_property_in_place(&stream, COMPAT_RESPONSE_PROP, response.clone());
+    let canonical_stream = execute::canonical_value(&stream);
     execute::set_property_in_place(&canonical_stream, COMPAT_RESPONSE_PROP, response.clone());
     Ok((request, response))
 }
@@ -4472,7 +4538,8 @@ fn stream_respond(
             let length = items.logical_len();
             let mut index = 0;
             while index + 1 < length {
-                let name = execute::to_js_string(&execute::get_property(headers, &index.to_string()))?;
+                let name =
+                    execute::to_js_string(&execute::get_property(headers, &index.to_string()))?;
                 let value = execute::to_js_string(&execute::get_property(
                     headers,
                     &(index + 1).to_string(),
@@ -4495,7 +4562,9 @@ fn stream_respond(
         let status = String::from_utf8_lossy(raw_status).to_string();
         let valid = status.len() == 3
             && status.as_bytes().iter().all(|byte| byte.is_ascii_digit())
-            && status.parse::<u16>().is_ok_and(|value| (100..=599).contains(&value));
+            && status
+                .parse::<u16>()
+                .is_ok_and(|value| (100..=599).contains(&value));
         if !valid {
             return Err(coded_error(
                 quench_runtime::ops::Builtin::RangeError,
@@ -4532,11 +4601,7 @@ fn stream_respond(
         let sent_headers = sent_headers_from_input(headers);
         ensure_sent_headers_fields(&sent_headers, &fields);
         if !had_status {
-            let _ = execute::set_property_in_place(
-                &sent_headers,
-                ":status",
-                Value::Number(200.0),
-            );
+            let _ = execute::set_property_in_place(&sent_headers, ":status", Value::Number(200.0));
         }
         execute::set_property_in_place(stream, "sentHeaders", sent_headers.clone());
         let canonical = execute::canonical_value(stream);
@@ -4696,7 +4761,8 @@ fn header_fields_from_value(headers: &Value) -> Result<Vec<(Vec<u8>, Vec<u8>)>, 
         Value::Array(items) => {
             let mut index = 0;
             while index + 1 < items.logical_len() {
-                let name = execute::to_js_string(&execute::get_property(headers, &index.to_string()))?;
+                let name =
+                    execute::to_js_string(&execute::get_property(headers, &index.to_string()))?;
                 let value = execute::to_js_string(&execute::get_property(
                     headers,
                     &(index + 1).to_string(),
@@ -4802,9 +4868,13 @@ fn stream_send_trailers(
     values: &[Value],
 ) -> Result<Value, VmError> {
     let stream = receiver.ok_or(VmError::NotCallable)?;
-    if matches!(execute::get_property(stream, "closed"), Value::Boolean(true))
-        || matches!(execute::get_property(stream, "destroyed"), Value::Boolean(true))
-    {
+    if matches!(
+        execute::get_property(stream, "closed"),
+        Value::Boolean(true)
+    ) || matches!(
+        execute::get_property(stream, "destroyed"),
+        Value::Boolean(true)
+    ) {
         return Err(coded_error(
             quench_runtime::ops::Builtin::Error,
             "ERR_HTTP2_INVALID_STREAM",
@@ -5894,8 +5964,9 @@ fn sent_headers_from_input(headers: &Value) -> Value {
         Value::Array(items) => {
             let mut index = 0;
             while index + 1 < items.logical_len() {
-                let key = execute::to_js_string(&execute::get_property(headers, &index.to_string()))
-                    .unwrap_or_default();
+                let key =
+                    execute::to_js_string(&execute::get_property(headers, &index.to_string()))
+                        .unwrap_or_default();
                 let value = execute::to_js_string(&execute::get_property(
                     headers,
                     &(index + 1).to_string(),
@@ -5921,9 +5992,7 @@ fn ensure_sent_headers_fields(target: &Value, fields: &[(Vec<u8>, Vec<u8>)]) {
                 String::from_utf8_lossy(value)
                     .parse::<f64>()
                     .map(Value::Number)
-                    .unwrap_or_else(|_| {
-                        Value::String(String::from_utf8_lossy(value).into_owned())
-                    })
+                    .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(value).into_owned()))
             } else {
                 Value::String(String::from_utf8_lossy(value).into_owned())
             };
