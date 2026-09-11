@@ -266,10 +266,35 @@ pub fn local_tz_offset_minutes() -> i32 {
         .unwrap_or_else(|| chrono::Local::now().offset().local_minus_utc() / 60)
 }
 
+/// Get the local timezone offset for a particular instant.
+///
+/// A `TZ` assignment can select an IANA zone whose offset changes over time.
+/// Keeping only the offset observed when the variable was assigned makes old
+/// dates format with today's offset (and is especially visible around DST).
+/// The zone name remains the single source of truth; resolve its offset at the
+/// instant being formatted instead.
+pub fn local_tz_offset_minutes_at(ms: f64) -> i32 {
+    let Some(name) = local_tz_name() else {
+        return local_tz_offset_minutes();
+    };
+    let Some(zone) = name.parse::<chrono_tz::Tz>().ok() else {
+        return local_tz_offset_minutes();
+    };
+    let Some(value) = ms_to_datetime(ms) else {
+        return local_tz_offset_minutes();
+    };
+    let utc = Utc.from_utc_datetime(&value);
+    utc.with_timezone(&zone)
+        .offset()
+        .fix()
+        .local_minus_utc()
+        / 60
+}
+
 /// Extract date/time components from milliseconds in local time.
 pub fn local_components(ms: f64) -> Option<(i32, u32, u32, u32, u32, u32, u32)> {
     (!time_clip(ms).is_nan())
-        .then(|| fields_from_ms(ms + local_offset_ms()))
+        .then(|| fields_from_ms(ms + local_tz_offset_minutes_at(ms) as f64 * MS_PER_MINUTE))
         .flatten()
 }
 
