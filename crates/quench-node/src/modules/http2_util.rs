@@ -2372,6 +2372,72 @@ fn write_http2_frame(
     Ok(())
 }
 
+/// HTTP/2 DATA frames are bounded by the peer's advertised maximum frame
+/// size.  Keep the transport fact here so callers can hand us an arbitrary
+/// stream write without accidentally placing an oversized frame on the wire.
+/// The protocol default is 16 KiB; peers may raise this limit, but never lower
+/// it below the default, so conservative chunking is always valid.
+fn write_http2_data(
+    socket: &Value,
+    stream_id: u32,
+    bytes: &[u8],
+    end_stream: bool,
+) -> Result<(), VmError> {
+    let chunk_size = crate::modules::http2_protocol::DEFAULT_MAX_FRAME_SIZE as usize;
+    if bytes.is_empty() {
+        let frame = crate::modules::http2_protocol::Frame::new(
+            crate::modules::http2_protocol::FrameType::Data,
+            u8::from(end_stream),
+            stream_id,
+            Vec::new(),
+        );
+        return write_http2_frame(socket, &frame);
+    }
+    let chunks = bytes.chunks(chunk_size).collect::<Vec<_>>();
+    for (index, chunk) in chunks.iter().enumerate() {
+        let final_chunk = index + 1 == chunks.len();
+        let frame = crate::modules::http2_protocol::Frame::new(
+            crate::modules::http2_protocol::FrameType::Data,
+            u8::from(end_stream && final_chunk),
+            stream_id,
+            (*chunk).to_vec(),
+        );
+        write_http2_frame(socket, &frame)?;
+    }
+    Ok(())
+}
+
+fn queue_http2_data(
+    state: &Rc<RefCell<HostState>>,
+    socket: &Value,
+    stream_id: u32,
+    bytes: &[u8],
+    end_stream: bool,
+) {
+    let chunk_size = crate::modules::http2_protocol::DEFAULT_MAX_FRAME_SIZE as usize;
+    let mut pending = state.borrow_mut();
+    if bytes.is_empty() {
+        let frame = crate::modules::http2_protocol::Frame::new(
+            crate::modules::http2_protocol::FrameType::Data,
+            u8::from(end_stream),
+            stream_id,
+            Vec::new(),
+        );
+        pending.net.pending_writes.push((socket.clone(), frame.encode()));
+        return;
+    }
+    let chunks = bytes.chunks(chunk_size).collect::<Vec<_>>();
+    for (index, chunk) in chunks.iter().enumerate() {
+        let frame = crate::modules::http2_protocol::Frame::new(
+            crate::modules::http2_protocol::FrameType::Data,
+            u8::from(end_stream && index + 1 == chunks.len()),
+            stream_id,
+            chunk.to_vec(),
+        );
+        pending.net.pending_writes.push((socket.clone(), frame.encode()));
+    }
+}
+
 fn stream_write(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -2494,12 +2560,6 @@ fn stream_write(
         })
         .unwrap_or_default();
     let body_len = bytes.len();
-    let frame = crate::modules::http2_protocol::Frame::new(
-        crate::modules::http2_protocol::FrameType::Data,
-        0,
-        stream_id,
-        bytes,
-    );
     let head_response = matches!(
         receiver.map(|stream| execute::get_property(stream, "\0quench:http2-head-response")),
         Some(Value::Boolean(true))
@@ -2513,7 +2573,7 @@ fn stream_write(
             Value::Boolean(true)
         )
     {
-        write_http2_frame(&socket, &frame)?;
+        write_http2_data(&socket, stream_id, &bytes, false)?;
     }
     let mut write_result = true;
     if let Some(receiver) = receiver {
@@ -2731,12 +2791,6 @@ fn stream_end(
             Value::Boolean(true)
         )
     });
-    let frame = crate::modules::http2_protocol::Frame::new(
-        crate::modules::http2_protocol::FrameType::Data,
-        u8::from(!has_trailers && !wait_for_trailers),
-        stream_id,
-        bytes,
-    );
     if let Some(session) = state
         .borrow_mut()
         .net
@@ -2765,11 +2819,13 @@ fn stream_end(
             Value::Boolean(true)
         )
     {
-        state
-            .borrow_mut()
-            .net
-            .pending_writes
-            .push((socket.clone(), frame.encode()));
+        queue_http2_data(
+            state,
+            &socket,
+            stream_id,
+            &bytes,
+            !has_trailers && !wait_for_trailers,
+        );
         let response_started = receiver.is_some_and(|stream| {
             matches!(
                 execute::get_property(stream, HTTP2_RESPONSE_STARTED_PROP),
