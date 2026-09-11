@@ -2379,6 +2379,33 @@ pub fn server_listen(
     if let Some(path) = path_argument {
         if path.starts_with('/') || path.parse::<u16>().is_err() {
             if state.borrow().net.paths.contains_key(&path) {
+                // Cluster workers using the round-robin policy share the
+                // primary's path listener. Keep one canonical path fact and
+                // clone its descriptor for each logical worker instead of
+                // manufacturing an EADDRINUSE error in the shared VM.
+                let shared_listener = (state.borrow().cluster.worker_context.is_some()
+                    && crate::modules::cluster::shares_listening_handle(state))
+                    .then(|| {
+                        state.borrow().net.servers.values().find_map(|server| {
+                            let server = server.borrow();
+                            (server.path.as_deref() == Some(path.as_str())
+                                && server.listening
+                                && !server.closed)
+                                .then(|| server.listener.as_ref()?.try_clone().ok())
+                                .flatten()
+                        })
+                    })
+                    .flatten();
+                if let Some(listener) = shared_listener {
+                    register_server_path(state, &receiver, Some(listener), Some(path.clone()))?;
+                    add_listener_cb(state, &receiver, args.last(), "listening", true)?;
+                    configure_server_signal(
+                        state,
+                        &receiver,
+                        signal.as_ref().unwrap_or(&Value::Undefined),
+                    )?;
+                    return Ok(receiver);
+                }
                 let error = host_api::object(vec![
                     ("name".into(), Value::String("Error".into())),
                     (
@@ -2752,8 +2779,22 @@ pub fn server_close(
         .get(&id)
         .and_then(|server| server.borrow().path.clone());
     if let Some(path) = path {
-        state.borrow_mut().net.paths.remove(&path);
-        let _ = std::fs::remove_file(&path);
+        // Cluster round-robin workers share one host listener while retaining
+        // distinct logical Server objects.  Closing one worker must not tear
+        // down the path registry or placeholder while another worker still
+        // owns the shared transport; the remaining clone becomes canonical
+        // on the next accept poll.
+        let shared_owner = state.borrow().net.servers.values().any(|server| {
+            let server = server.borrow();
+            server.id != id
+                && server.path.as_deref() == Some(path.as_str())
+                && server.listening
+                && !server.closed
+        });
+        if !shared_owner {
+            state.borrow_mut().net.paths.remove(&path);
+            let _ = std::fs::remove_file(&path);
+        }
     }
     if matches!(
         execute::get_property(&receiver, PIPE_MARKER_PROP),
