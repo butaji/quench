@@ -633,17 +633,27 @@ fn typed_array_elements(value: &Value) -> Option<Vec<u8>> {
 }
 
 pub fn binding() -> Value {
+    let global = quench_runtime::vm::current_global_object();
+    if let value @ (Value::Object(_) | Value::ObjectAlias(_)) =
+        execute::get_property(&global, "__quenchHttp2Binding")
+    {
+        return value;
+    }
     let session = http2_binding_session_constructor();
+    let stream = http2_binding_stream_constructor();
     let error_string = host_api::bound_capability_with_arguments(
         crate::host::capability_ref(crate::registry::SPEC_INTERNAL_HTTP2_UTIL),
         vec![Value::String("errorString".into())],
     );
-    host_api::object(vec![
+    let binding = host_api::object(vec![
         ("constants".into(), header_constants()),
         ("optionsBuffer".into(), options_buffer()),
         ("Http2Session".into(), session),
+        ("Http2Stream".into(), stream),
         ("nghttp2ErrorString".into(), error_string),
-    ])
+    ]);
+    let _ = execute::set_property_in_place(&global, "__quenchHttp2Binding", binding.clone());
+    binding
 }
 
 fn http2_binding_session_constructor() -> Value {
@@ -658,6 +668,19 @@ fn http2_binding_session_constructor() -> Value {
             host_api::bound_builtin(quench_runtime::ops::Builtin::Object, Value::Undefined);
         execute::set_property(session, "prototype", prototype)
     })
+}
+
+fn http2_binding_stream_constructor() -> Value {
+    let constructor =
+        host_api::bound_builtin(quench_runtime::ops::Builtin::Object, Value::Undefined);
+    let prototype = host_api::object(Vec::new());
+    let _ = execute::set_property_in_place(
+        &constructor,
+        "name",
+        Value::String("Http2Stream".into()),
+    );
+    let _ = execute::set_callable_property(&constructor, "prototype", prototype);
+    constructor
 }
 
 fn header_constants() -> Value {
