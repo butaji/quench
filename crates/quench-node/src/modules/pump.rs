@@ -821,6 +821,10 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
             timer.retired = true;
             super::timers::mark_destroyed(timer);
         }
+        // Node removes the async-context-frame reference before the next
+        // check phase, while retaining the callback/arguments until retired
+        // timer cleanup. Keep the frame lifetime edge explicit and early.
+        super::timers::clear_async_context_metadata(&receiver);
         crate::modules::async_hooks::resource_destroy(state, Some(&resource), &[])?;
     }
     result

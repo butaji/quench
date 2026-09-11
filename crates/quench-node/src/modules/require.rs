@@ -2738,7 +2738,10 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             // user async hook is enabled.  AsyncLocalStorage and stream
             // completion code use this flag to distinguish a live context
             // frame from the legacy hook-only path.
-            ("enabled".into(), Value::Boolean(true)),
+            (
+                "enabled".into(),
+                Value::Boolean(crate::modules::process::async_context_frame_enabled()),
+            ),
             (
                 "current".into(),
                 crate::host::capability(crate::registry::SPEC_INTERNAL_ASYNC_CONTEXT_FRAME_CURRENT),

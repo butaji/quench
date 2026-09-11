@@ -21,6 +21,10 @@ use crate::host::HostState;
 /// Hidden own property storing the host-side timer id on the JS
 /// Timeout/Immediate object.
 const TIMER_ID_PROP: &str = "\0quench:timer:id";
+/// Canonical internal key used by Node's async-context-frame timer path.
+/// Quench encodes symbol properties as stable string keys in the host value
+/// model, so this is shared by creation and cleanup rather than duplicated.
+const ASYNC_CONTEXT_FRAME_PROP: &str = "Symbol(async_context_frame)\0quench";
 /// Node's `TIMEOUT_MAX` (2^31 - 1); larger delays clamp to 1ms.
 const TIMEOUT_MAX: f64 = 2_147_483_647.0;
 thread_local! { static MOCK_TIMER_NOW: Cell<Option<u64>> = const { Cell::new(None) }; }
@@ -155,6 +159,16 @@ fn schedule(
     };
     let async_resource =
         crate::modules::async_hooks::attach_resource(state, object.clone(), resource_type)?;
+    if crate::modules::process::async_context_frame_enabled() {
+        let context_frame = crate::modules::async_hooks::context_frame_for_current(state);
+        if !matches!(context_frame, Value::Undefined) {
+            let _ = quench_runtime::execute::set_property_in_place(
+                &object,
+                ASYNC_CONTEXT_FRAME_PROP,
+                context_frame,
+            );
+        }
+    }
     // AsyncLocalStorage state is carried by the JS resource object. Capture
     // the current resource's store map when the timer is created so the
     // callback observes the same context after resource_before switches to
@@ -184,6 +198,13 @@ fn schedule(
             "__nodeAsyncStores",
             stores,
         );
+        if crate::modules::process::async_context_frame_enabled() {
+            let _ = quench_runtime::execute::set_property_in_place(
+                &object,
+                ASYNC_CONTEXT_FRAME_PROP,
+                quench_runtime::execute::get_property(&async_resource, "__nodeAsyncStores"),
+            );
+        }
     }
     if !matches!(legacy_stores, Value::Undefined) {
         let _ = quench_runtime::execute::set_property_in_place(
@@ -319,6 +340,7 @@ fn set_destroyed(timer: &Timer, destroyed: bool) {
 }
 
 pub(crate) fn clear_timer_metadata(object: &Value) {
+    clear_async_context_metadata(object);
     for key in [
         "__nodeAsyncStoresLegacy",
         "_onTimeout",
@@ -328,6 +350,26 @@ pub(crate) fn clear_timer_metadata(object: &Value) {
     ] {
         let _ = quench_runtime::execute::set_property_in_place(object, key, Value::Undefined);
     }
+}
+
+/// Drop only the per-resource async context before the next check phase. The
+/// callback and timer arguments remain until retired cleanup so `refresh()`
+/// and object inspection retain Node's observable lifetime.
+pub(crate) fn clear_async_context_metadata(object: &Value) {
+    clear_context_frame(object);
+    let _ = quench_runtime::execute::set_property_in_place(
+        object,
+        "__nodeAsyncStoresLegacy",
+        Value::Undefined,
+    );
+}
+
+pub(crate) fn clear_context_frame(object: &Value) {
+    let _ = quench_runtime::execute::set_property_in_place(
+        object,
+        ASYNC_CONTEXT_FRAME_PROP,
+        Value::Undefined,
+    );
 }
 
 fn timer_id_of(receiver: Option<&Value>) -> Option<u64> {
