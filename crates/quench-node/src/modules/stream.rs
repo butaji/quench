@@ -2206,6 +2206,25 @@ pub fn constructor_adapter(
     let options = constructor_args.first().unwrap_or(&Value::Undefined);
     if readable {
         apply_default_hwm(&stream, options, defaults, "readable")?;
+        // The prelude initializes `readingMore` eagerly because it cannot
+        // observe whether a caller supplied a producer. Node starts an
+        // explicitly constructed producer idle; demand is raised when a
+        // listener or an explicit read arrives. Keep that fact at the
+        // shared Rust constructor boundary rather than teaching individual
+        // stream fixtures about it.
+        if matches!(
+            execute::get_property(options, "read"),
+            Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)
+        ) {
+            let readable_state = execute::get_property(&stream, "_readableState");
+            if !matches!(readable_state, Value::Undefined | Value::Null) {
+                let _ = execute::set_property_in_place(
+                    &readable_state,
+                    "readingMore",
+                    Value::Boolean(false),
+                );
+            }
+        }
     }
     if writable {
         apply_default_hwm(&stream, options, defaults, "writable")?;
