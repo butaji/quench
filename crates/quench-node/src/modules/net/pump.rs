@@ -1380,7 +1380,7 @@ pub(crate) fn dispatch_http2_frames(
                     .http2_reset_codes
                     .contains_key(&(socket_id, stream_id));
                 crate::modules::http2_util::decorate_http2_stream(state, &stream, is_server);
-                if is_server {
+                if is_server && fresh {
                     // Node reports GET request streams as ending with their
                     // initial headers, even though the wire implementation
                     // may deliver the END_STREAM bit on a separate frame.
@@ -1511,7 +1511,26 @@ pub(crate) fn dispatch_http2_frames(
                     ),
                     http2_raw_headers_value(&fields),
                 ];
-                if is_server {
+                // Mark the initial server request headers before invoking the
+                // user callback. The callback may synchronously end the
+                // request and cause a trailer HEADERS block to arrive on the
+                // next pump tick; publishing the fact up front keeps that
+                // block on the same stream state even if callback mutations
+                // publish a copy-on-write representative.
+                if is_server && fresh {
+                    execute::set_property_in_place(
+                        &stream,
+                        "__quenchHttp2RequestHeadersEmitted",
+                        Value::Boolean(true),
+                    );
+                    let canonical = execute::canonical_value(&stream);
+                    execute::set_property_in_place(
+                        &canonical,
+                        "__quenchHttp2RequestHeadersEmitted",
+                        Value::Boolean(true),
+                    );
+                }
+                if is_server && fresh {
                     if fresh {
                         crate::modules::http2_util::publish_http2_stream_diagnostic(
                             state,
