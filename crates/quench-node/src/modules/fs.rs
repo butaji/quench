@@ -2737,6 +2737,14 @@ pub fn promises_open(
             crate::host::capability(crate::registry::SPEC_FS_HANDLE_TRUNCATE),
         ),
         (
+            "appendFile",
+            crate::host::capability(crate::registry::SPEC_FS_HANDLE_APPENDFILE),
+        ),
+        (
+            "writeFile",
+            crate::host::capability(crate::registry::SPEC_FS_HANDLE_WRITEFILE),
+        ),
+        (
             "Symbol.asyncDispose",
             crate::host::capability(crate::registry::SPEC_FS_HANDLE_CLOSE),
         ),
@@ -2922,6 +2930,37 @@ pub fn file_handle_truncate(
         ],
     );
     Ok(settle(result))
+}
+
+/// Append through the same promise operation used by `fs.promises.appendFile`.
+/// Passing the tracked descriptor as the first argument keeps FileHandle's
+/// method and the top-level descriptor overload on one semantic path,
+/// including option validation, encoding, flush, and abort timing.
+pub fn file_handle_append_file(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    let fd = descriptor_arg(execute::get_property_result(receiver, "fd").ok().as_ref())?;
+    let mut append_args = vec![Value::Number(fd as f64)];
+    append_args.extend_from_slice(args);
+    crate::modules::fs_promises::append_file(state, None, &append_args)
+}
+
+/// Write through the shared `fs.promises.writeFile` descriptor overload so
+/// FileHandle preserves the descriptor's current position and common option,
+/// flush, and abort semantics.
+pub fn file_handle_write_file(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    let fd = descriptor_arg(execute::get_property_result(receiver, "fd").ok().as_ref())?;
+    let mut write_args = vec![Value::Number(fd as f64)];
+    write_args.extend_from_slice(args);
+    crate::modules::fs_promises::write_file(state, None, &write_args)
 }
 
 pub fn file_handle_write(
