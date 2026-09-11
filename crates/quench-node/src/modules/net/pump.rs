@@ -513,7 +513,7 @@ fn accept_one(
     });
     if let Some(options) = tls_options.as_ref() {
         crate::modules::tls::decorate_socket(&object, Some(options));
-        if let Some((servername, client_alpn)) = client_facts {
+        if let Some((servername, client_alpn)) = client_facts.clone() {
             if matches!(servername, Value::String(_)) {
                 execute::set_property_in_place(&object, "servername", servername.clone());
             }
