@@ -2826,6 +2826,15 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
                     cache,
                 )
             });
+            // Script code executes directly in the global environment, whose
+            // `this` binding is materialized as `globalThis`.  Keep the
+            // fallback script-scoped: function frames must retain their own
+            // `this` value (including `undefined` for strict calls).
+            let value = value.or_else(|| {
+                (unsafe { &*frame.code }.is_script)
+                    .then(|| Environment::get(&vm(frame).global, "globalThis"))
+                    .flatten()
+            });
             put(frame, dst, value.unwrap_or(Value::Undefined));
         }
         DynOp::Move { dst, src } => put(frame, dst, get(frame, src)),
@@ -2987,14 +2996,38 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             let key = get_ref(frame, *key).clone();
             unsafe { &mut *frame.vm }.set_computed_prop(&object, &key, value)?;
         }
-        DynOp::DeleteStatic { dst, object, key } => {
+        DynOp::DeleteStatic {
+            dst,
+            object,
+            key,
+            strict,
+        } => {
             let object = get(frame, object);
-            put(frame, dst, Value::Bool(delete_property(&object, &key)));
+            let deleted = delete_property(&object, &key);
+            if *strict && !deleted {
+                return Err(JsError::Throw(super::type_error(
+                    unsafe { &mut *frame.vm },
+                    "property is not configurable",
+                )));
+            }
+            put(frame, dst, Value::Bool(deleted));
         }
-        DynOp::DeleteComputed { dst, object, key } => {
+        DynOp::DeleteComputed {
+            dst,
+            object,
+            key,
+            strict,
+        } => {
             let object = get(frame, object);
             let key = get(frame, key).string();
-            put(frame, dst, Value::Bool(delete_property(&object, &key)));
+            let deleted = delete_property(&object, &key);
+            if *strict && !deleted {
+                return Err(JsError::Throw(super::type_error(
+                    unsafe { &mut *frame.vm },
+                    "property is not configurable",
+                )));
+            }
+            put(frame, dst, Value::Bool(deleted));
         }
         DynOp::Call {
             dst,
@@ -3625,6 +3658,13 @@ fn delete_property(value: &Value, key: &str) -> bool {
         object.attributes.remove(key);
         return true;
     } else if let Some(function) = value.as_function_ref() {
+        // Ordinary callable objects expose a non-configurable own
+        // `prototype` property.  It is stored out-of-line on FunctionValue,
+        // so handle the descriptor here before touching the user property
+        // map.
+        if key == "prototype" {
+            return false;
+        }
         if matches!(
             function.kind,
             super::FunctionKind::Builtin(super::BuiltinId::NumberConstructor)
