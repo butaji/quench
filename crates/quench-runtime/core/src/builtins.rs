@@ -334,6 +334,8 @@ fn builtin_length(id: BuiltinId) -> usize {
         BuiltinId::ReflectConstruct => 2,
         BuiltinId::MathAtan2 => 2,
         BuiltinId::MathSumPrecise => 1,
+        BuiltinId::NumberToLocaleString => 0,
+        BuiltinId::NumberValueOf => 0,
         BuiltinId::ParseInt
         | BuiltinId::ParseFloat
         | BuiltinId::IsNaN
@@ -422,8 +424,6 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::NumberToFixed
         | BuiltinId::NumberToPrecision
         | BuiltinId::NumberToExponential
-        | BuiltinId::NumberToLocaleString
-        | BuiltinId::NumberValueOf
         | BuiltinId::NumberToString
         | BuiltinId::RegExpTest
         | BuiltinId::RegExpExec
