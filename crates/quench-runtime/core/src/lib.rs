@@ -10539,9 +10539,16 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
             "property descriptor is not an object",
         )));
     }
-    let existing_attributes = target
-        .as_object_ref()
-        .and_then(|object| object.borrow().attributes.get(&key).copied());
+    let existing_attributes = target.as_object_ref().and_then(|object| {
+        let object = object.borrow();
+        object.attributes.get(&key).copied().or_else(|| {
+            (object.array.is_some() && key == "length").then_some(PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: false,
+            })
+        })
+    });
     let existing_property = target.as_object_ref().is_some_and(|object| {
         let object = object.borrow();
         object.props.contains_key(&key)
@@ -10715,12 +10722,64 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
         }
     }
     let value = if has_value {
-        vm.get_prop_with_accessors(&descriptor, "value")?
+        let value = vm.get_prop_with_accessors(&descriptor, "value")?;
+        if key == "length"
+            && target
+                .as_object_ref()
+                .is_some_and(|object| object.borrow().array.is_some())
+        {
+            let number = to_number_with_vm(vm, &value)?;
+            if !number.is_finite()
+                || number < 0.0
+                || number > u32::MAX as f64
+                || number.fract() != 0.0
+            {
+                return Err(JsError::Throw(range_error(vm, "invalid array length")));
+            }
+            Value::Number(number)
+        } else {
+            value
+        }
     } else {
         Value::Undefined
     };
     let has_accessor = has_get_field || has_set_field;
-    if has_value || !has_accessor {
+    if has_value || (!existing_property && !has_accessor) {
+        if key == "length"
+            && has_value
+            && let Some(object) = target.as_object_ref()
+        {
+            let old_length = array_length(&object.borrow());
+            let new_length = value.number() as usize;
+            if new_length < old_length {
+                for index in (new_length..old_length).rev() {
+                    let index_key = index.to_string();
+                    let configurable = object
+                        .borrow()
+                        .attributes
+                        .get(&index_key)
+                        .is_none_or(|attributes| attributes.configurable);
+                    if !configurable {
+                        let retained_length = index.saturating_add(1);
+                        let mut array_target = object.borrow_mut();
+                        set_array_length(&mut array_target, retained_length as f64);
+                        array_target.attributes.insert(
+                            "length".into(),
+                            PropertyAttributes {
+                                writable: true,
+                                enumerable: false,
+                                configurable: false,
+                            },
+                        );
+                        return Err(JsError::Throw(type_error(
+                            vm,
+                            "cannot delete a non-configurable array element",
+                        )));
+                    }
+                    vm.delete_prop(target, &index_key);
+                }
+            }
+        }
         vm.set_prop(target, &key, value);
     }
     let writable = vm.get_prop_with_accessors(&descriptor, "writable")?;
