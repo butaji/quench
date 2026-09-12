@@ -4366,7 +4366,7 @@ define_ops! {
 }
 
 fn to_primitive_for_binary(vm: &mut Vm, value: &Value, string_hint: bool) -> JsResult<Value> {
-    if !value.is_object() && !value.is_function() {
+    if !value.is_object() && !value.is_function() && !value.is_regexp() {
         return Ok(value.clone());
     }
     // Symbols are represented by their stable textual key in the compact
@@ -9757,7 +9757,7 @@ fn to_number_with_vm(vm: &mut Vm, value: &Value) -> JsResult<f64> {
         }
         return Ok(text.parse().unwrap_or(f64::NAN));
     }
-    if value.is_object() || value.is_function() {
+    if value.is_object() || value.is_function() || value.is_regexp() {
         if let Some(primitive) = value
             .as_object_ref()
             .and_then(|object| object.borrow().props.get("\0primitive").cloned())
@@ -13723,15 +13723,6 @@ fn to_string_with_vm(vm: &mut Vm, value: &Value) -> JsResult<String> {
         }
         return Ok(string.to_string());
     }
-    if let Some(regexp) = value.as_regexp_ref() {
-        let regexp = regexp.borrow();
-        let source = if regexp.source.is_empty() {
-            "(?:)"
-        } else {
-            regexp.source.as_str()
-        };
-        return Ok(format!("/{source}/{}", regexp.flags));
-    }
     if value
         .as_object_ref()
         .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
@@ -13743,7 +13734,7 @@ fn to_string_with_vm(vm: &mut Vm, value: &Value) -> JsResult<String> {
             .unwrap_or_default();
         return Ok(format!("Symbol({description})"));
     }
-    if value.is_object() || value.is_function() {
+    if value.is_object() || value.is_function() || value.is_regexp() {
         let primitive = to_primitive_for_binary(vm, value, true)?;
         return to_string_with_vm(vm, &primitive);
     }
