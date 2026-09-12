@@ -2890,17 +2890,17 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             right,
             kind,
         } => {
-            let left = get_ref(frame, *left);
-            let right = get_ref(frame, *right);
+            let left = get_ref(frame, *left).clone();
+            let right = get_ref(frame, *right).clone();
             let value = match (left.as_number(), right.as_number()) {
                 (Some(left), Some(right)) => exec_numeric_op(*kind, left, right),
-                _ if super::is_bigint_marker(left) && super::is_bigint_marker(right)
-                    || super::is_bigint_marker(left) && right.as_number().is_some()
-                    || left.as_number().is_some() && super::is_bigint_marker(right) =>
+                _ if super::is_bigint_marker(&left) && super::is_bigint_marker(&right)
+                    || super::is_bigint_marker(&left) && right.as_number().is_some()
+                    || left.as_number().is_some() && super::is_bigint_marker(&right) =>
                 {
                     exec_numeric_op(*kind, left.number(), right.number())
                 }
-                _ => exec_op_ref(*kind, left, right),
+                _ => super::binary_with_vm(vm(frame), *kind, &left, &right)?,
             };
             put(frame, dst, value);
         }

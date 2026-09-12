@@ -4169,6 +4169,60 @@ define_ops! {
  And => numeric |x:f64,y:f64| Value::Number((i32_js(x)&i32_js(y))as f64), generic |a:&Value,b:&Value| exec_numeric_op(Op::And,a.number(),b.number());
 }
 
+fn to_primitive_for_binary(vm: &mut Vm, value: &Value, string_hint: bool) -> JsResult<Value> {
+    if !value.is_object() && !value.is_function() {
+        return Ok(value.clone());
+    }
+    if let Some(object) = value.as_object_ref()
+        && let Some(primitive) = object.borrow().props.get("\0primitive").cloned()
+    {
+        return Ok(primitive);
+    }
+    let methods = if string_hint {
+        ["toString", "valueOf"]
+    } else {
+        ["valueOf", "toString"]
+    };
+    for method_name in methods {
+        let method = vm.get_prop(value, method_name);
+        if !method.is_function() {
+            continue;
+        }
+        let result = vm.call(method, value.clone(), Vec::new())?;
+        if !result.is_object() && !result.is_function() {
+            return Ok(result);
+        }
+    }
+    Err(JsError::Throw(type_error(
+        vm,
+        "cannot convert object to primitive value",
+    )))
+}
+
+fn binary_with_vm(vm: &mut Vm, op: Op, left: &Value, right: &Value) -> JsResult<Value> {
+    if !matches!(op, Op::Add) {
+        return Ok(exec_op_ref(op, left, right));
+    }
+    // Addition uses the ordinary/default hint; primitive result types decide
+    // whether the final operation is numeric or string concatenation.
+    let string_hint = false;
+    let left = to_primitive_for_binary(vm, left, string_hint)?;
+    let right = to_primitive_for_binary(vm, right, string_hint)?;
+    if matches!(op, Op::Add) && (left.is_string() || right.is_string()) {
+        return Ok(Value::string_value(format!(
+            "{}{}",
+            to_string_with_vm(vm, &left)?,
+            to_string_with_vm(vm, &right)?
+        )));
+    }
+    if is_bigint_marker(&left) || is_bigint_marker(&right) {
+        return Ok(exec_numeric_op(op, left.number(), right.number()));
+    }
+    let left = to_number_with_vm(vm, &left)?;
+    let right = to_number_with_vm(vm, &right)?;
+    Ok(exec_numeric_op(op, left, right))
+}
+
 #[derive(Clone, Copy)]
 struct HostRootScope {
     base: usize,
