@@ -8209,21 +8209,35 @@ fn parse_bigint_text(text: &str) -> Result<BigInt, ()> {
         .strip_prefix("0x")
         .or_else(|| digits.strip_prefix("0X"))
     {
-        Some(rest) => (16, rest),
+        Some(rest) if !negative => (16, rest),
+        Some(_) => return Err(()),
         None => match digits
             .strip_prefix("0b")
             .or_else(|| digits.strip_prefix("0B"))
         {
-            Some(rest) => (2, rest),
+            Some(rest) if !negative => (2, rest),
+            Some(_) => return Err(()),
             None => match digits
                 .strip_prefix("0o")
                 .or_else(|| digits.strip_prefix("0O"))
             {
-                Some(rest) => (8, rest),
+                Some(rest) if !negative => (8, rest),
+                Some(_) => return Err(()),
                 None => (10, digits),
             },
         },
     };
+    if digits.is_empty()
+        || !digits.chars().all(|digit| match radix {
+            2 => matches!(digit, '0' | '1'),
+            8 => ('0'..='7').contains(&digit),
+            10 => digit.is_ascii_digit(),
+            16 => digit.is_ascii_hexdigit(),
+            _ => false,
+        })
+    {
+        return Err(());
+    }
     let magnitude = BigInt::parse_bytes(digits.as_bytes(), radix).ok_or(())?;
     Ok(if negative { -magnitude } else { magnitude })
 }
