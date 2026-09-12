@@ -185,15 +185,21 @@ fn apply(
         }
         ConstOp::RefI31 => {
             let v = pop_i32(stack)?;
-            stack.push(Slot::Native(Native::Ref(RefVal::I31(v as u32 & 0x7fff_ffff))));
+            stack.push(Slot::Native(Native::Ref(RefVal::I31(
+                v as u32 & 0x7fff_ffff,
+            ))));
         }
         ConstOp::AnyConvertExtern | ConstOp::ExternConvertAny => {
             let r = match stack.pop().ok_or(InvokeError::Unimplemented)? {
                 Slot::Native(Native::Ref(RefVal::Null)) => RefVal::Null,
-                Slot::Native(Native::Ref(RefVal::Extern(id))) if matches!(op, ConstOp::AnyConvertExtern) => {
+                Slot::Native(Native::Ref(RefVal::Extern(id)))
+                    if matches!(op, ConstOp::AnyConvertExtern) =>
+                {
                     RefVal::Host(id)
                 }
-                Slot::Native(Native::Ref(RefVal::Host(id))) if matches!(op, ConstOp::ExternConvertAny) => {
+                Slot::Native(Native::Ref(RefVal::Host(id)))
+                    if matches!(op, ConstOp::ExternConvertAny) =>
+                {
                     RefVal::Extern(id)
                 }
                 Slot::Native(Native::Ref(r)) => r,

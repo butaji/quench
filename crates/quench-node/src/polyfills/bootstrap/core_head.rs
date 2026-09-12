@@ -80,6 +80,7 @@ pub const JS: &str = quench_js_check::checked_js!(r#"let __quenchAsyncHooksModul
     }
   }
   const asyncLocalStore = "__nodeAsyncStores";
+  const asyncLocalStoreLegacy = "__nodeAsyncStoresLegacy";
   class AsyncLocalStorage {
     constructor(options = {}) {
       if (options === null || typeof options !== "object") {
@@ -92,6 +93,7 @@ pub const JS: &str = quench_js_check::checked_js!(r#"let __quenchAsyncHooksModul
       }
       this._defaultValue = options.defaultValue;
       this.name = options.name === undefined ? "" : String(options.name);
+      this.kResourceStore = `__nodeAsyncStore:${globalThis.__nodeNextAsyncId++}`;
       this._disabled = false;
     }
     getStore() {
@@ -109,7 +111,10 @@ pub const JS: &str = quench_js_check::checked_js!(r#"let __quenchAsyncHooksModul
       const previous = resource?.[asyncLocalStore];
       const stores = previous ? new Map(previous) : new Map();
       stores.set(this, store);
-      if (resource) resource[asyncLocalStore] = stores;
+      if (resource) {
+        resource[asyncLocalStore] = stores;
+        resource[asyncLocalStoreLegacy] = { ...(resource[asyncLocalStoreLegacy] || {}), [this.kResourceStore]: store };
+      }
       try {
         return callback(...args);
       } finally {
@@ -119,6 +124,12 @@ pub const JS: &str = quench_js_check::checked_js!(r#"let __quenchAsyncHooksModul
           if (previous?.has(this)) restored.set(this, previous.get(this));
           else restored.delete(this);
           resource[asyncLocalStore] = restored.size ? restored : previous;
+          if (resource[asyncLocalStoreLegacy]) {
+            const legacy = { ...resource[asyncLocalStoreLegacy] };
+            if (previous?.has(this)) legacy[this.kResourceStore] = previous.get(this);
+            else delete legacy[this.kResourceStore];
+            resource[asyncLocalStoreLegacy] = Object.keys(legacy).length ? legacy : undefined;
+          }
         }
       }
     }
@@ -128,7 +139,10 @@ pub const JS: &str = quench_js_check::checked_js!(r#"let __quenchAsyncHooksModul
         ? new Map(resource[asyncLocalStore])
         : new Map();
       stores.set(this, store);
-      if (resource) resource[asyncLocalStore] = stores;
+      if (resource) {
+        resource[asyncLocalStore] = stores;
+        resource[asyncLocalStoreLegacy] = { ...(resource[asyncLocalStoreLegacy] || {}), [this.kResourceStore]: store };
+      }
     }
     withScope(store) {
       const resource = globalThis.__nodeCurrentAsyncResource;
@@ -138,7 +152,15 @@ pub const JS: &str = quench_js_check::checked_js!(r#"let __quenchAsyncHooksModul
       const dispose = () => {
         if (disposed) return;
         disposed = true;
-        if (resource) resource[asyncLocalStore] = previous;
+        if (resource) {
+          resource[asyncLocalStore] = previous;
+          if (resource[asyncLocalStoreLegacy]) {
+            const legacy = { ...resource[asyncLocalStoreLegacy] };
+            if (previous?.has(this)) legacy[this.kResourceStore] = previous.get(this);
+            else delete legacy[this.kResourceStore];
+            resource[asyncLocalStoreLegacy] = Object.keys(legacy).length ? legacy : undefined;
+          }
+        }
       };
       return {
         dispose,
@@ -155,11 +177,19 @@ pub const JS: &str = quench_js_check::checked_js!(r#"let __quenchAsyncHooksModul
         const stores = new Map(previous || []);
         stores.delete(this);
         resource[asyncLocalStore] = stores;
+        resource[asyncLocalStoreLegacy] = { ...(resource[asyncLocalStoreLegacy] || {}), [this.kResourceStore]: store };
       }
       try {
         return callback(...args);
       } finally {
-        if (resource) resource[asyncLocalStore] = previous;
+        if (resource) {
+          resource[asyncLocalStore] = previous;
+          if (resource[asyncLocalStoreLegacy]) {
+            const legacy = { ...resource[asyncLocalStoreLegacy] };
+            delete legacy[this.kResourceStore];
+            resource[asyncLocalStoreLegacy] = Object.keys(legacy).length ? legacy : undefined;
+          }
+        }
       }
     }
     disable() {
@@ -256,6 +286,9 @@ pub const JS: &str = quench_js_check::checked_js!(r#"let __quenchAsyncHooksModul
     if (resource?.[asyncLocalStore]) {
       captured[asyncLocalStore] = new Map(resource[asyncLocalStore]);
     }
+    if (resource?.[asyncLocalStoreLegacy]) {
+      captured[asyncLocalStoreLegacy] = { ...resource[asyncLocalStoreLegacy] };
+    }
     return captured;
   };
   globalThis.__nodeCreatePromiseResource = (trigger) => {
@@ -291,9 +324,17 @@ pub const JS: &str = quench_js_check::checked_js!(r#"let __quenchAsyncHooksModul
     captured[asyncLocalStore] = resource?.[asyncLocalStore]
       ? new Map(resource[asyncLocalStore])
       : undefined;
+    captured[asyncLocalStoreLegacy] = resource?.[asyncLocalStoreLegacy]
+      ? { ...resource[asyncLocalStoreLegacy] }
+      : undefined;
     return function (...args) {
       const previous = globalThis.__nodeCurrentAsyncResource;
-      globalThis.__nodeCurrentAsyncResource = Object.create(captured);
+        // The captured promise resource is already populated from the
+        // registration context by `__nodeCreatePromiseResource`. Keep it as
+        // the execution resource itself so own symbol properties (which are
+        // observable through `executionAsyncResource()`) survive engines
+        // that do not walk symbol keys through a synthetic prototype.
+        globalThis.__nodeCurrentAsyncResource = captured;
       try {
         for (const hook of globalThis.__nodeAsyncHooks) {
           if (typeof hook.callbacks.before === "function") {

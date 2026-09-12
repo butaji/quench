@@ -110,10 +110,7 @@ mod tests {
 
     #[test]
     fn native_scalar_is_arena_ref_is_gc() {
-        assert_eq!(
-            Slot::native_i32(1).storage(),
-            crate::layer::Storage::Arena
-        );
+        assert_eq!(Slot::native_i32(1).storage(), crate::layer::Storage::Arena);
         assert_eq!(
             Slot::Native(crate::native::Native::Ref(crate::native::RefVal::Null)).storage(),
             crate::layer::Storage::Gc

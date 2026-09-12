@@ -51,6 +51,39 @@ pub(crate) fn write_op(registers: &mut crate::register_file::RegisterFile, op: &
         }
         _ => {}
     }
+    if let Some(dst) = match op {
+        Op::MakeFunction { dst, .. } | Op::MakeFunctionWithKind { dst, .. } => Some(dst),
+        _ => None,
+    } {
+        attach_source_name(registers, *dst);
+    }
+}
+
+fn attach_source_name(registers: &crate::register_file::RegisterFile, dst: u16) {
+    let Ok(crate::value::Value::Function(function)) = crate::execute::read_register(registers, dst)
+    else {
+        return;
+    };
+    if !matches!(
+        crate::execute::get_property(
+            &crate::value::Value::Function(function.clone()),
+            "\0quench:source_name"
+        ),
+        crate::value::Value::Undefined
+    ) {
+        return;
+    }
+    let source = crate::vm::current_compile_source_name().or_else(|| {
+        crate::vm::current_context()
+            .source_name()
+            .map(str::to_owned)
+    });
+    if let Some(source) = source {
+        function.properties.borrow_mut().push((
+            "\0quench:source_name".into(),
+            crate::value::Value::String(source),
+        ));
+    }
 }
 
 fn write_non_ordinary(

@@ -525,7 +525,19 @@ pub(crate) fn function_prototype_to_string(
         Value::Function(function) => {
             dynamic_function_source(function).map_or_else(native_function_source, Value::String)
         }
-        Value::BoundFunction(_) | Value::Proxy(_) => native_function_source(),
+        Value::BoundFunction(bound) => bound
+            .properties
+            .borrow()
+            .iter()
+            .rev()
+            .find_map(|(key, value)| {
+                (key == "\0dynamic_source").then(|| match value {
+                    Value::String(source) => Value::String(source.clone()),
+                    _ => native_function_source(),
+                })
+            })
+            .unwrap_or_else(native_function_source),
+        Value::Proxy(_) => native_function_source(),
         _ => native_function_source(),
     })
 }

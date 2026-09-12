@@ -1,9 +1,7 @@
 //! Numeric, convert, local-free operator maps.
 
 use crate::hir::Inst;
-use crate::native::{
-    BinF32, BinF64, BinI32, BinI64, ConvOp, SimdOp, UnF32, UnF64, UnI32, UnI64,
-};
+use crate::native::{BinF32, BinF64, BinI32, BinI64, ConvOp, SimdOp, UnF32, UnF64, UnI32, UnI64};
 use wasmparser::Operator;
 
 use super::Context;

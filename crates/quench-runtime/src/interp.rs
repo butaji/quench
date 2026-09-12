@@ -1,9 +1,9 @@
 //! One interpreter loop over MIR.
 
+use crate::fast::Fast;
 use crate::hir::{HirFunc, Inst, LoadOp, StoreOp, WideOp};
 use crate::instance::{self, Func, Instance, MAX_CALL_DEPTH};
 use crate::native::{Bits, ConvOp, Native, RefVal};
-use crate::fast::Fast;
 use crate::slot::Slot;
 use crate::unwind::{Failure, Trap};
 
@@ -73,9 +73,7 @@ pub fn interpret(
                     dispatch_tail(vm, &mut frames, &mut current, inst, func, args, depth)
                 } else {
                     current.pc += 1;
-                    dispatch_call(
-                        vm, &mut frames, &mut current, inst, func, args, dsts, depth,
-                    )
+                    dispatch_call(vm, &mut frames, &mut current, inst, func, args, dsts, depth)
                 };
                 if let Err(Failure::Exception { tag, args }) = result {
                     if !take_catch(vm, &mut frames, &mut current, tag, args) {
@@ -295,17 +293,17 @@ fn step(vm: &Instance, frame: &mut Frame, inst: &Inst) -> Result<Step, Failure> 
         Inst::Throw { tag, args } => {
             return Err(Failure::Exception {
                 tag: vm.tag_id(*tag),
-                args: args.iter().map(|r| frame.regs[*r as usize].clone()).collect(),
+                args: args
+                    .iter()
+                    .map(|r| frame.regs[*r as usize].clone())
+                    .collect(),
             });
         }
         Inst::ThrowRef { src } => {
             return throw_ref(vm, &frame.regs, *src);
         }
         Inst::Rethrow { depth } => {
-            let i = frame
-                .caught
-                .len()
-                .saturating_sub(1 + *depth as usize);
+            let i = frame.caught.len().saturating_sub(1 + *depth as usize);
             return match frame.caught.get(i) {
                 Some((tag, args)) => Err(Failure::Exception {
                     tag: *tag,
@@ -428,7 +426,7 @@ fn step(vm: &Instance, frame: &mut Frame, inst: &Inst) -> Result<Step, Failure> 
                 *tail = true;
             }
             Ok(step)
-        },
+        }
         Inst::CallIndirect {
             table,
             type_idx,
@@ -489,20 +487,18 @@ fn step(vm: &Instance, frame: &mut Frame, inst: &Inst) -> Result<Step, Failure> 
                 Slot::Native(Native::Ref(RefVal::I31(v as u32 & 0x7fff_ffff))),
             )
         }
-        Inst::I31Get { dst, src, signed } => {
-            match read_ref(regs, *src)? {
-                RefVal::Null => Err(Failure::Trap(Trap::NullI31)),
-                RefVal::I31(bits) => {
-                    let v = if *signed {
-                        ((bits as i32) << 1) >> 1
-                    } else {
-                        bits as i32
-                    };
-                    write(regs, *dst, Slot::Native(Native::I32(v)))
-                }
-                _ => Err(Failure::Trap(Trap::Unimplemented)),
+        Inst::I31Get { dst, src, signed } => match read_ref(regs, *src)? {
+            RefVal::Null => Err(Failure::Trap(Trap::NullI31)),
+            RefVal::I31(bits) => {
+                let v = if *signed {
+                    ((bits as i32) << 1) >> 1
+                } else {
+                    bits as i32
+                };
+                write(regs, *dst, Slot::Native(Native::I32(v)))
             }
-        }
+            _ => Err(Failure::Trap(Trap::Unimplemented)),
+        },
         Inst::RefEq { dst, lhs, rhs } => {
             let a = read_ref(regs, *lhs)?;
             let b = read_ref(regs, *rhs)?;
@@ -621,7 +617,11 @@ fn step(vm: &Instance, frame: &mut Frame, inst: &Inst) -> Result<Step, Failure> 
         Inst::SimdShuffle { dst, a, b, lanes } => {
             let av = read_v128(regs, *a)?;
             let bv = read_v128(regs, *b)?;
-            write(regs, *dst, Slot::Native(Native::V128(shuffle(av, bv, *lanes))))
+            write(
+                regs,
+                *dst,
+                Slot::Native(Native::V128(shuffle(av, bv, *lanes))),
+            )
         }
         Inst::Simd {
             op,
@@ -727,21 +727,24 @@ fn bits_of(slot: &Slot) -> Result<Bits, Failure> {
     }
 }
 
-fn wide(
-    op: WideOp,
-    regs: &[Slot],
-    a: u16,
-    b: u16,
-    c: u16,
-    d: u16,
-) -> Result<(i64, i64), Failure> {
+fn wide(op: WideOp, regs: &[Slot], a: u16, b: u16, c: u16, d: u16) -> Result<(i64, i64), Failure> {
     match op {
         WideOp::Add128 => {
-            let (lo, hi) = add128(read_i64(regs, a)?, read_i64(regs, b)?, read_i64(regs, c)?, read_i64(regs, d)?);
+            let (lo, hi) = add128(
+                read_i64(regs, a)?,
+                read_i64(regs, b)?,
+                read_i64(regs, c)?,
+                read_i64(regs, d)?,
+            );
             Ok((lo, hi))
         }
         WideOp::Sub128 => {
-            let (lo, hi) = sub128(read_i64(regs, a)?, read_i64(regs, b)?, read_i64(regs, c)?, read_i64(regs, d)?);
+            let (lo, hi) = sub128(
+                read_i64(regs, a)?,
+                read_i64(regs, b)?,
+                read_i64(regs, c)?,
+                read_i64(regs, d)?,
+            );
             Ok((lo, hi))
         }
         WideOp::MulWideS => Ok(mul_wide_s(read_i64(regs, a)?, read_i64(regs, b)?)),
@@ -998,15 +1001,21 @@ fn decode_load(op: LoadOp, bytes: &[u8], _signed: bool) -> Slot {
         LoadOp::V128Splat8 => Slot::Native(Native::V128(u128::from_le_bytes([bytes[0]; 16]))),
         LoadOp::V128Splat16 => {
             let v = u16::from_le_bytes(bytes.try_into().unwrap());
-            Slot::Native(Native::V128(crate::native::SimdOp::I16x8Splat.apply(v as u128, 0)))
+            Slot::Native(Native::V128(
+                crate::native::SimdOp::I16x8Splat.apply(v as u128, 0),
+            ))
         }
         LoadOp::V128Splat32 => {
             let v = u32::from_le_bytes(bytes.try_into().unwrap());
-            Slot::Native(Native::V128(crate::native::SimdOp::I32x4Splat.apply(v as u128, 0)))
+            Slot::Native(Native::V128(
+                crate::native::SimdOp::I32x4Splat.apply(v as u128, 0),
+            ))
         }
         LoadOp::V128Splat64 => {
             let v = u64::from_le_bytes(bytes.try_into().unwrap());
-            Slot::Native(Native::V128(crate::native::SimdOp::I64x2Splat.apply(v as u128, 0)))
+            Slot::Native(Native::V128(
+                crate::native::SimdOp::I64x2Splat.apply(v as u128, 0),
+            ))
         }
         LoadOp::V128Zero32 => {
             let mut bits = [0u8; 16];
@@ -1030,7 +1039,11 @@ fn decode_load(op: LoadOp, bytes: &[u8], _signed: bool) -> Slot {
 fn ext8x8(bytes: &[u8], signed: bool) -> u128 {
     let mut out = [0u8; 16];
     for i in 0..8 {
-        let v = if signed { bytes[i] as i8 as i16 } else { bytes[i] as i16 };
+        let v = if signed {
+            bytes[i] as i8 as i16
+        } else {
+            bytes[i] as i16
+        };
         out[i * 2..i * 2 + 2].copy_from_slice(&(v as u16).to_le_bytes());
     }
     u128::from_le_bytes(out)
@@ -1185,7 +1198,10 @@ fn read_i32(regs: &[Slot], reg: u16) -> Result<i32, Failure> {
             if v.is_finite()
                 && v >= i32::MIN as f64
                 && v <= i32::MAX as f64
-                && (v as i32 as f64) == v => Ok(v as i32),
+                && (v as i32 as f64) == v =>
+        {
+            Ok(v as i32)
+        }
         _ => Err(Failure::Trap(Trap::Unimplemented)),
     }
 }
@@ -1253,13 +1269,18 @@ mod tests {
         let dynamic_i32 = Slot::Dynamic(crate::dynamic::Dynamic::from_number(7.0));
         let dynamic_number = Slot::Dynamic(crate::dynamic::Dynamic::from_number(1.5));
         let regs = vec![
-            dynamic_i32.guard(crate::layer::GuardKind::I32).expect("i32 guard"),
+            dynamic_i32
+                .guard(crate::layer::GuardKind::I32)
+                .expect("i32 guard"),
             dynamic_number
                 .guard(crate::layer::GuardKind::Number)
                 .expect("number guard"),
         ];
         assert!(matches!(regs[0], Slot::Fast(Fast::I32(7))));
         assert_eq!(read_i32(&regs, 0).expect("native i32 read"), 7);
-        assert_eq!(read_f64(&regs, 1).expect("native f64 read"), 1.5f64.to_bits());
+        assert_eq!(
+            read_f64(&regs, 1).expect("native f64 read"),
+            1.5f64.to_bits()
+        );
     }
 }

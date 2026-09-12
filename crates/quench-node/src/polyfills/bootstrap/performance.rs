@@ -127,7 +127,43 @@ const __nodePerformance = {
     });
     return wrapped;
   },
-  toJSON: () => ({ timeOrigin: __nodeStartedAt }),
+  // Node exposes the startup timing record alongside timeOrigin.  Keep the
+  // record stable so callers can inspect it without a host round-trip.
+  toJSON: () => ({
+    nodeTiming: {
+      name: "node",
+      entryType: "node",
+      startTime: 0,
+      duration: __nodePerformance.now(),
+      nodeStart: 0,
+      v8Start: 0,
+      bootstrapComplete: 0,
+      environment: 0,
+      loopStart: -1,
+      loopExit: -1,
+      idleTime: 0,
+    },
+    timeOrigin: __nodeStartedAt,
+  }),
+};
+// Host modules report I/O observations through this narrow bridge.  The
+// observer registry and entry queue stay centralized here, so native Rust
+// implementations do not need to recreate PerformanceObserver semantics.
+const __nodePerformanceRecord = (entryType, detail = {}, name = entryType) => {
+  const entry = {
+    name: String(name),
+    entryType: String(entryType),
+    startTime: __nodePerformance.now(),
+    duration: 0,
+    detail,
+  };
+  __nodePerformanceEntries.push(entry);
+  for (const observer of __nodePerformanceObservers) {
+    if (observer.entryTypes.includes(entry.entryType)) {
+      queueMicrotask(() => observer.callback({ getEntries: () => [entry] }));
+    }
+  }
+  return entry;
 };
 class NodePerformanceObserver {
   constructor(callback) {
@@ -135,7 +171,7 @@ class NodePerformanceObserver {
     this.entryTypes = [];
   }
   observe(options = {}) {
-    this.entryTypes = options.entryTypes || [];
+    this.entryTypes = options.entryTypes || (options.type ? [options.type] : []);
     __nodePerformanceObservers.add(this);
   }
   disconnect() {
@@ -160,6 +196,11 @@ Object.defineProperty(globalThis, "__nodePerfHooks", {
   configurable: true,
   enumerable: false,
   value: __nodePerfHooks,
+});
+Object.defineProperty(globalThis, "__nodePerformanceRecord", {
+  configurable: true,
+  enumerable: false,
+  value: __nodePerformanceRecord,
 });
 Object.defineProperty(globalThis, "performance", {
   configurable: true,

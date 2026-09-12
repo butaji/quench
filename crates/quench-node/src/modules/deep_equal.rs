@@ -322,9 +322,10 @@ fn partial_typed_array(
         return Ok(left_len >= right_len);
     }
     if left_len == right_len {
-        if let (Some((left_buffer, left_start, left_end)),
-            Some((right_buffer, right_start, right_end))) =
-            (typed_array_bytes(left), typed_array_bytes(right))
+        if let (
+            Some((left_buffer, left_start, left_end)),
+            Some((right_buffer, right_start, right_end)),
+        ) = (typed_array_bytes(left), typed_array_bytes(right))
         {
             let left_bytes = left_buffer.bytes.borrow();
             let right_bytes = right_buffer.bytes.borrow();
@@ -973,9 +974,10 @@ fn compare_typed_arrays(
         // element.  A byte mismatch falls back to element semantics below,
         // preserving SameValue/SameValueZero handling for signed zero and
         // NaN payloads.
-        if let (Some((left_buffer, left_start, left_end)),
-            Some((right_buffer, right_start, right_end))) =
-            (typed_array_bytes(left), typed_array_bytes(right))
+        if let (
+            Some((left_buffer, left_start, left_end)),
+            Some((right_buffer, right_start, right_end)),
+        ) = (typed_array_bytes(left), typed_array_bytes(right))
         {
             let left_bytes = left_buffer.bytes.borrow();
             let right_bytes = right_buffer.bytes.borrow();

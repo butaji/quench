@@ -176,8 +176,7 @@ fn utf8_units(units: &[u16]) -> Vec<u8> {
             if let Some(&next) = units.get(index + 1) {
                 if (0xDC00..=0xDFFF).contains(&next) {
                     index += 1;
-                    0x10000 + ((u32::from(unit) - 0xD800) << 10)
-                        + (u32::from(next) - 0xDC00)
+                    0x10000 + ((u32::from(unit) - 0xD800) << 10) + (u32::from(next) - 0xDC00)
                 } else {
                     0xFFFD
                 }

@@ -35,7 +35,10 @@ impl Shape {
     }
 
     pub fn slot(&self, atom: Atom) -> Option<u32> {
-        self.props.iter().position(|p| p.atom == atom).map(|i| i as u32)
+        self.props
+            .iter()
+            .position(|p| p.atom == atom)
+            .map(|i| i as u32)
     }
 }
 

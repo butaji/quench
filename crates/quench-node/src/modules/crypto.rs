@@ -322,11 +322,11 @@ pub(crate) fn x509_from_wire(
     {
         return None;
     }
-    let data = values.get("data")?.as_array()?.iter().map(|value| {
-        value
-            .as_u64()
-            .and_then(|value| u8::try_from(value).ok())
-    });
+    let data = values
+        .get("data")?
+        .as_array()?
+        .iter()
+        .map(|value| value.as_u64().and_then(|value| u8::try_from(value).ok()));
     let data = data.collect::<Option<Vec<_>>>()?;
     x509_constructor(
         state,
@@ -1470,10 +1470,7 @@ pub(crate) fn key_object_to_wire(value: &Value) -> Option<serde_json::Value> {
     };
     let data = bytes_from_value(&key_hidden(value, KEY_DATA_PROP))?;
     let mut wire = serde_json::Map::new();
-    wire.insert(
-        "__quench_key_object".into(),
-        serde_json::Value::Bool(true),
-    );
+    wire.insert("__quench_key_object".into(), serde_json::Value::Bool(true));
     wire.insert("type".into(), serde_json::Value::String(key_type));
     wire.insert(
         "data".into(),
@@ -1490,6 +1487,13 @@ pub(crate) fn key_object_to_wire(value: &Value) -> Option<serde_json::Value> {
     }
     if let Value::String(kind) = key_hidden(value, KEY_ASYM_TYPE_PROP) {
         wire.insert("asymmetricKeyType".into(), serde_json::Value::String(kind));
+    }
+    let details = key_hidden(value, KEY_DETAILS_PROP);
+    if !matches!(details, Value::Undefined) {
+        wire.insert(
+            "asymmetricKeyDetails".into(),
+            key_object_value_to_wire(&details),
+        );
     }
     Some(serde_json::Value::Object(wire))
 }
@@ -1527,13 +1531,79 @@ pub(crate) fn key_object_from_wire(
         .get("asymmetricKeyType")
         .and_then(serde_json::Value::as_str)
     {
+        define_hidden(&value, KEY_ASYM_TYPE_PROP, Value::String(kind.into()));
+    }
+    if let Some(details) = wire.get("asymmetricKeyDetails") {
         define_hidden(
             &value,
-            KEY_ASYM_TYPE_PROP,
-            Value::String(kind.into()),
+            KEY_DETAILS_PROP,
+            key_object_value_from_wire(details),
         );
     }
     clone_key_object(&value)
+}
+
+fn key_object_value_to_wire(value: &Value) -> serde_json::Value {
+    match value {
+        Value::Undefined | Value::Null => serde_json::Value::Null,
+        Value::Boolean(value) => serde_json::Value::Bool(*value),
+        Value::Number(value) => serde_json::Number::from_f64(*value)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        Value::String(value) => serde_json::Value::String(value.clone()),
+        Value::BigInt(value) => serde_json::json!({ "__quench_bigint": value }),
+        Value::Array(_) => {
+            let length = match execute::get_property(value, "length") {
+                Value::Number(length) if length.is_finite() && length >= 0.0 => length as usize,
+                _ => 0,
+            };
+            serde_json::Value::Array(
+                (0..length)
+                    .map(|index| {
+                        key_object_value_to_wire(&execute::get_property(value, &index.to_string()))
+                    })
+                    .collect(),
+            )
+        }
+        Value::Object(_) | Value::ObjectAlias(_) => serde_json::Value::Object(
+            execute::own_enumerable_keys(value)
+                .into_iter()
+                .map(|key| {
+                    (
+                        key.clone(),
+                        key_object_value_to_wire(&execute::get_property(value, &key)),
+                    )
+                })
+                .collect(),
+        ),
+        _ => serde_json::Value::Null,
+    }
+}
+
+fn key_object_value_from_wire(value: &serde_json::Value) -> Value {
+    match value {
+        serde_json::Value::Null => Value::Null,
+        serde_json::Value::Bool(value) => Value::Boolean(*value),
+        serde_json::Value::Number(value) => Value::Number(value.as_f64().unwrap_or(0.0)),
+        serde_json::Value::String(value) => Value::String(value.clone()),
+        serde_json::Value::Array(values) => {
+            host_api::array(values.iter().map(key_object_value_from_wire).collect())
+        }
+        serde_json::Value::Object(values) => {
+            if let Some(value) = values
+                .get("__quench_bigint")
+                .and_then(serde_json::Value::as_str)
+            {
+                return Value::BigInt(value.into());
+            }
+            host_api::object(
+                values
+                    .iter()
+                    .map(|(key, value)| (key.clone(), key_object_value_from_wire(value)))
+                    .collect(),
+            )
+        }
+    }
 }
 
 pub fn key_object_construct(
@@ -2549,8 +2619,9 @@ fn contains_pqc_algorithm(data: &[u8]) -> bool {
 }
 
 fn contains_rsa_pss_algorithm(data: &[u8]) -> bool {
-    const RSA_PSS_OID: &[u8] =
-        &[0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a];
+    const RSA_PSS_OID: &[u8] = &[
+        0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a,
+    ];
     let der = if data.starts_with(b"-----BEGIN") {
         let body = data
             .split(|byte| *byte == b'\n' || *byte == b'\r')
@@ -2564,7 +2635,8 @@ fn contains_rsa_pss_algorithm(data: &[u8]) -> bool {
     } else {
         data.to_vec()
     };
-    der.windows(RSA_PSS_OID.len()).any(|window| window == RSA_PSS_OID)
+    der.windows(RSA_PSS_OID.len())
+        .any(|window| window == RSA_PSS_OID)
 }
 
 fn openssl_supports_pqc() -> bool {
@@ -2649,13 +2721,12 @@ fn create_asymmetric_key(args: &[Value], key_type: &str) -> Result<Value, VmErro
                 return Err(VmError::Thrown(native_error(
                     quench_runtime::ops::Builtin::TypeError,
                     "ERR_INVALID_ARG_VALUE",
-                    &format!(
-                        "The property 'key.format' is invalid. Received '{format_name}'"
-                    ),
+                    &format!("The property 'key.format' is invalid. Received '{format_name}'"),
                 )));
             }
         }
-        if matches!(format, Value::String(ref format_name) if format_name == "pem" || format_name == "der") {
+        if matches!(format, Value::String(ref format_name) if format_name == "pem" || format_name == "der")
+        {
             let key_encoding_type = execute::get_property(descriptor, "type");
             if let Value::String(ref type_name) = key_encoding_type {
                 if !matches!(type_name.as_str(), "pkcs1" | "pkcs8" | "sec1" | "spki") {
@@ -2748,10 +2819,7 @@ fn create_asymmetric_key(args: &[Value], key_type: &str) -> Result<Value, VmErro
                             | "p-521"
                             | "secp521r1"
                     ) {
-                        return Err(crypto_error(
-                            "ERR_CRYPTO_INVALID_CURVE",
-                            "Invalid EC curve",
-                        ));
+                        return Err(crypto_error("ERR_CRYPTO_INVALID_CURVE", "Invalid EC curve"));
                     }
                 }
             }
@@ -3211,7 +3279,10 @@ fn create_asymmetric_key(args: &[Value], key_type: &str) -> Result<Value, VmErro
         let valid = PKey::private_key_from_pem(&data)
             .ok()
             .is_some_and(|pkey| match pkey.id() {
-                Id::RSA | Id::RSA_PSS => pkey.rsa().and_then(|rsa| rsa.check_key()).is_ok(),
+                Id::RSA | Id::RSA_PSS => {
+                    let ok = pkey.rsa().and_then(|rsa| rsa.check_key()).is_ok();
+                    ok
+                }
                 _ => true,
             });
         if !valid {
@@ -3312,17 +3383,19 @@ fn create_asymmetric_key(args: &[Value], key_type: &str) -> Result<Value, VmErro
     let asymmetric_type = if contains_rsa_pss_algorithm(&data) {
         "rsa-pss"
     } else {
-        key_id.map(|id| match id {
-            openssl::pkey::Id::EC => "ec",
-            openssl::pkey::Id::ED25519 => "ed25519",
-            openssl::pkey::Id::ED448 => "ed448",
-            openssl::pkey::Id::X25519 => "x25519",
-            openssl::pkey::Id::X448 => "x448",
-            openssl::pkey::Id::DSA => "dsa",
-            openssl::pkey::Id::DH => "dh",
-            openssl::pkey::Id::RSA_PSS => "rsa-pss",
-            _ => "rsa",
-        }).unwrap_or("rsa")
+        key_id
+            .map(|id| match id {
+                openssl::pkey::Id::EC => "ec",
+                openssl::pkey::Id::ED25519 => "ed25519",
+                openssl::pkey::Id::ED448 => "ed448",
+                openssl::pkey::Id::X25519 => "x25519",
+                openssl::pkey::Id::X448 => "x448",
+                openssl::pkey::Id::DSA => "dsa",
+                openssl::pkey::Id::DH => "dh",
+                openssl::pkey::Id::RSA_PSS => "rsa-pss",
+                _ => "rsa",
+            })
+            .unwrap_or("rsa")
     };
     let mut key = host_api::object(Vec::new());
     let (_, asym_proto) = key_object_prototypes();
@@ -3503,17 +3576,20 @@ fn rsa_pss_key_details<T: openssl::pkey::HasPublic>(
     } else {
         encoded.to_vec()
     };
-    const RSA_PSS_OID: &[u8] =
-        &[0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a];
-    const MGF1_OID: &[u8] =
-        &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x08];
+    const RSA_PSS_OID: &[u8] = &[
+        0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a,
+    ];
+    const MGF1_OID: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x08];
     let digest_name = |oid: &[u8]| match oid {
         [0x2b, 0x0e, 0x03, 0x02, 0x1a] => Some("sha1"),
         [0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01] => Some("sha256"),
         [0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03] => Some("sha512"),
         _ => None,
     };
-    let Some(oid_offset) = der.windows(RSA_PSS_OID.len()).position(|window| window == RSA_PSS_OID) else {
+    let Some(oid_offset) = der
+        .windows(RSA_PSS_OID.len())
+        .position(|window| window == RSA_PSS_OID)
+    else {
         return host_api::object(fields);
     };
     let mut params_reader = PssDerReader::new(&der[oid_offset + RSA_PSS_OID.len()..]);
@@ -3553,7 +3629,10 @@ fn rsa_pss_key_details<T: openssl::pkey::HasPublic>(
                             if let Some(hash) = mgf.take(0x30) {
                                 let mut hash = PssDerReader::new(hash);
                                 if let Some(oid) = hash.take(0x06).and_then(digest_name) {
-                                    fields.push(("mgf1HashAlgorithm".into(), Value::String(oid.into())));
+                                    fields.push((
+                                        "mgf1HashAlgorithm".into(),
+                                        Value::String(oid.into()),
+                                    ));
                                 }
                             }
                         }
@@ -6046,8 +6125,7 @@ pub fn set_fips(
         execute::get_property(&env, "QUENCH_WORKER"),
         Value::String(ref value) if value == "1"
     ) || std::env::var_os("QUENCH_WORKER").is_some_and(|value| value == "1");
-    if worker_env
-    {
+    if worker_env {
         return Err(VmError::Thrown(quench_runtime::builtins::error(
             quench_runtime::ops::Builtin::Error,
             &[Value::String(
@@ -6480,10 +6558,11 @@ pub fn random_bytes(
             &[Value::String("RANDOMBYTESREQUEST".into())],
         )
         .ok();
-        state
-            .borrow()
-            .event_loop
-            .queue_microtask_with_resource(callback, vec![Value::Null, output.clone()], resource);
+        state.borrow().event_loop.queue_microtask_with_resource(
+            callback,
+            vec![Value::Null, output.clone()],
+            resource,
+        );
     }
     Ok(output)
 }
@@ -7298,16 +7377,25 @@ fn algorithm_named(value: Option<&Value>, label: &str) -> Result<String, VmError
         Err(VmError::Thrown(host_api::object(vec![
             (
                 "name".into(),
-                Value::String(if label == "hmac" { "TypeError" } else { "Error" }.into()),
+                Value::String(
+                    if label == "hmac" {
+                        "TypeError"
+                    } else {
+                        "Error"
+                    }
+                    .into(),
+                ),
             ),
             (
                 "code".into(),
-                Value::String(if label == "hmac" {
-                    "ERR_CRYPTO_INVALID_DIGEST"
-                } else {
-                    "ERR_OSSL_EVP_UNSUPPORTED"
-                }
-                .into()),
+                Value::String(
+                    if label == "hmac" {
+                        "ERR_CRYPTO_INVALID_DIGEST"
+                    } else {
+                        "ERR_OSSL_EVP_UNSUPPORTED"
+                    }
+                    .into(),
+                ),
             ),
             (
                 "message".into(),

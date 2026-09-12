@@ -1,5 +1,5 @@
 // Canonical IANA identifiers exposed by Intl.supportedValuesOf("timeZone").
-// Links and legacy aliases are intentionally omitted. Test262 also requires
+// Links and legacy aliases are intentionally omitted. Consumers also require
 // the non-continental Etc/GMT primaries and UTC.
 pub(crate) const CANONICAL_TIME_ZONES: &[&str] = &[
     "Africa/Abidjan",

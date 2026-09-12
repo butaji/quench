@@ -7,14 +7,61 @@ impl QuenchNodeHost {
     ) -> Option<Result<Value, VmError>> {
         let result = (|| -> Result<Value, VmError> {
             match capability.kind {
+            HostCapabilityKind::Custom(id) if crate::modules::v8::is(id) => {
+                crate::modules::v8::call(id, receiver, arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::UtilGetCallSites) => {
                 Ok(quench_runtime::host_api::array(vec![]))
             }
             HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext) => {
                 Ok(Value::String("passed".into()))
             }
-            HostCapabilityKind::Custom(CapabilityName::Gc) => Ok(Value::Undefined),
+            HostCapabilityKind::Custom(CapabilityName::VmModuleInspect) => {
+                let Some(module) = receiver.filter(|value| {
+                    matches!(
+                        quench_runtime::execute::get_property_result(value, "\0source_text_module"),
+                        Ok(Value::Boolean(true))
+                    )
+                }) else {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_INVALID_THIS",
+                        "Invalid this value",
+                    )));
+                };
+                let depth = arguments.first().and_then(|value| match value {
+                    Value::Number(value) if value.is_finite() => Some(*value),
+                    _ => None,
+                });
+                if depth.is_some_and(|value| value < 0.0) {
+                    return Ok(Value::String("[SourceTextModule]".into()));
+                }
+                Ok(Value::String(crate::modules::util::inspect_with_depth(
+                    module,
+                    depth.map_or(3, |value| value as usize),
+                )))
+            }
+            HostCapabilityKind::Custom(CapabilityName::Gc) => {
+                crate::dispatch_handlers::gc(&self.state, receiver, arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::VmScriptRunInNewContext) => {
+                // Methods on `vm.Script` are intentionally receiver-sensitive;
+                // invoking the function with an arbitrary `this` must fail
+                // before touching the script execution state.
+                let valid_receiver = receiver
+                    .and_then(|value| {
+                        quench_runtime::execute::get_property_result(
+                            value,
+                            "\0vm_script_source",
+                        )
+                        .ok()
+                    })
+                    .is_some_and(|value| matches!(value, Value::String(_)));
+                if !valid_receiver {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_INVALID_ARG_TYPE",
+                        "this.runInContext is not a function",
+                    )));
+                }
                 vm_script_run_new_context(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::VmCompileFunction) => {
@@ -54,44 +101,40 @@ impl QuenchNodeHost {
                         }
                     }
                 }
-                let function = capability_function(HostCapabilityKind::Custom(
-                    CapabilityName::VmCompiledFunction,
-                ));
-                let function = quench_runtime::execute::set_property(
-                    function,
-                    "toString",
-                    capability_function(HostCapabilityKind::Custom(
-                        CapabilityName::VmCompiledToString,
-                    )),
-                );
+                let mut properties = vec![
+                    ("\0vm_compiled_source".into(), Value::String(source.clone())),
+                    (
+                        "toString".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::VmCompiledToString,
+                        )),
+                    ),
+                ];
                 if let Some(options) = arguments.get(2) {
                     if matches!(
                         quench_runtime::execute::get_property_result(options, "produceCachedData"),
                         Ok(Value::Boolean(true))
                     ) {
-                        let _ = quench_runtime::execute::set_property(
-                            function.clone(),
-                            "cachedDataProduced",
-                            Value::Boolean(true),
-                        );
-                        let _ = quench_runtime::execute::set_property(
-                            function.clone(),
-                            "cachedData",
-                            cached_data,
-                        );
+                        properties.push(("cachedDataProduced".into(), Value::Boolean(true)));
+                        properties.push(("cachedData".into(), cached_data));
                     }
                     if let Ok(Value::Uint8Array(data)) =
                         quench_runtime::execute::get_property_result(options, "cachedData")
                     {
                         let bytes = data.buffer.bytes.borrow();
-                        let _ = quench_runtime::execute::set_property(
-                            function.clone(),
-                            "cachedDataRejected",
+                        properties.push((
+                            "cachedDataRejected".into(),
                             Value::Boolean(bytes.as_slice() != source.as_bytes()),
-                        );
+                        ));
                     }
                 }
-                Ok(function)
+                Ok(quench_runtime::host_api::capability_function_with_properties(
+                    HostCapabilityRef {
+                        realm: capability.realm,
+                        kind: HostCapabilityKind::Custom(CapabilityName::VmCompiledFunction),
+                    },
+                    properties,
+                ))
             }
             HostCapabilityKind::Custom(CapabilityName::VmCompiledFunction) => {
                 if arguments.is_empty() {
@@ -391,9 +434,16 @@ impl QuenchNodeHost {
                     )
                 })))
             }
-            HostCapabilityKind::Custom(CapabilityName::VmCompiledToString) => Ok(Value::String(
-                "function () {\nconsole.log(\"Hello, World!\")\n}".into(),
-            )),
+            HostCapabilityKind::Custom(CapabilityName::VmCompiledToString) => {
+                let source = receiver
+                    .and_then(|value| {
+                        quench_runtime::execute::get_property_result(value, "\0vm_compiled_source")
+                            .ok()
+                    })
+                    .map(|value| safe_value_string(&value))
+                    .unwrap_or_default();
+                Ok(Value::String(format!("function () {{\n{source}\n}}")))
+            }
             HostCapabilityKind::Custom(CapabilityName::CommonInvalidArgTypeHelper) => {
                 common_invalid_arg_type_helper(arguments)
             }
@@ -449,6 +499,11 @@ impl QuenchNodeHost {
                         if name.trim_start_matches("node:") == "stream" =>
                     {
                         crate::modules::stream::build(&self.state)
+                    }
+                    Some(Value::String(name))
+                        if name.trim_start_matches("node:") == "http" =>
+                    {
+                        Ok(crate::modules::http::build(&self.state))
                     }
                     _ => require_module(arguments),
                 }

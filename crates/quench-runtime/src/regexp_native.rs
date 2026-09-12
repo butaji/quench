@@ -157,11 +157,12 @@ pub(crate) fn find_units(
             value,
             negative,
         } => find_property_repeat_units(name, value, negative, flags, input, start),
-        NativePattern::Repeat { unit, min, max } => find_repeat(tail, u16::from(unit), min, max, sticky)
-            .map(|matched| NativeMatch {
+        NativePattern::Repeat { unit, min, max } => {
+            find_repeat(tail, u16::from(unit), min, max, sticky).map(|matched| NativeMatch {
                 start: start + matched.start,
                 end: start + matched.end,
-            }),
+            })
+        }
     }
 }
 
@@ -247,7 +248,10 @@ fn surrogate_property_matches(name: &str, value: Option<&str>) -> bool {
         ("Any" | "Assigned", _)
             | ("Other", None)
             | ("C", None)
-            | ("General_Category" | "gc", Some("Other" | "C" | "Surrogate" | "Cs"))
+            | (
+                "General_Category" | "gc",
+                Some("Other" | "C" | "Surrogate" | "Cs")
+            )
             | (
                 "Script" | "sc" | "Script_Extensions" | "scx",
                 Some("Unknown" | "Zzzz")
@@ -305,7 +309,10 @@ fn find_property_repeat_char_ranges(
         previous_value = Some(value);
         count += character.len_utf8();
     }
-    (count > 0).then_some(NativeMatch { start: 0, end: count })
+    (count > 0).then_some(NativeMatch {
+        start: 0,
+        end: count,
+    })
 }
 
 fn find_property_repeat_units(
@@ -394,7 +401,9 @@ fn property_ranges(
     Some(ranges)
 }
 
-fn complement_ranges(ranges: Vec<std::ops::RangeInclusive<u32>>) -> Vec<std::ops::RangeInclusive<u32>> {
+fn complement_ranges(
+    ranges: Vec<std::ops::RangeInclusive<u32>>,
+) -> Vec<std::ops::RangeInclusive<u32>> {
     let mut result = Vec::new();
     let mut start = 0;
     for range in ranges {
@@ -440,7 +449,10 @@ fn find_property_repeat_ranges(
         previous_value = Some(value);
         index += width;
     }
-    (index > 0).then_some(NativeMatch { start: 0, end: index })
+    (index > 0).then_some(NativeMatch {
+        start: 0,
+        end: index,
+    })
 }
 
 fn range_contains(
@@ -591,7 +603,12 @@ mod tests {
         assert_eq!(test_str("abc", "u", "zabc", 1), Some(true));
         assert_eq!(test_str("abc", "v", "zabc", 1), Some(true));
         assert_eq!(
-            test_units("abc", "u", &[b'z' as u16, b'a' as u16, b'b' as u16, b'c' as u16], 1),
+            test_units(
+                "abc",
+                "u",
+                &[b'z' as u16, b'a' as u16, b'b' as u16, b'c' as u16],
+                1
+            ),
             Some(true)
         );
     }
@@ -642,7 +659,12 @@ mod tests {
             Some(super::NativeMatch { start: 0, end: 1 })
         );
         assert_eq!(
-            find_units("abc", "", &[b'z' as u16, b'a' as u16, b'b' as u16, b'c' as u16], 0),
+            find_units(
+                "abc",
+                "",
+                &[b'z' as u16, b'a' as u16, b'b' as u16, b'c' as u16],
+                0
+            ),
             Some(super::NativeMatch { start: 1, end: 4 })
         );
         assert_eq!(
@@ -671,7 +693,10 @@ mod tests {
             test_units("^\\p{Assigned}+$", "u", &[b'a' as u16, b'b' as u16], 0),
             Some(true)
         );
-        assert_eq!(test_units("^\\p{Assigned}+$", "u", &[0xD800], 0), Some(true));
+        assert_eq!(
+            test_units("^\\p{Assigned}+$", "u", &[0xD800], 0),
+            Some(true)
+        );
         assert_eq!(
             test_units("^\\p{General_Category=Surrogate}+$", "u", &[0xD800], 0),
             Some(true)
@@ -681,11 +706,17 @@ mod tests {
     #[test]
     fn property_ranges_allow_unsorted_input() {
         let text = format!("{}{}", '\u{00AD}', "\0".repeat(300));
-        assert_eq!(test_str("^\\p{General_Category=Other}+$", "u", &text, 0), Some(true));
+        assert_eq!(
+            test_str("^\\p{General_Category=Other}+$", "u", &text, 0),
+            Some(true)
+        );
 
         let mut units = vec![0x00AD];
         units.extend(std::iter::repeat_n(0, 300));
-        assert_eq!(test_units("^\\p{General_Category=Other}+$", "u", &units, 0), Some(true));
+        assert_eq!(
+            test_units("^\\p{General_Category=Other}+$", "u", &units, 0),
+            Some(true)
+        );
         assert_eq!(test_str("^\\p{Other}+$", "u", &text, 0), Some(true));
         assert_eq!(test_str("^\\p{C}+$", "u", &text, 0), Some(true));
     }

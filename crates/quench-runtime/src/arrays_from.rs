@@ -219,13 +219,26 @@ fn start_async_step(state: AsyncFromState) {
         );
     };
     match next_result {
-        Value::Promise(promise) => match promise.state.borrow().clone() {
-            crate::value::PromiseState::Pending => continuation(&promise),
-            state => process_async_continuation(
-                result, iterator, receiver, mapper, this_arg, values, index, array_like, pending,
-                target, &state,
-            ),
-        },
+        Value::Promise(promise) => {
+            // The iterator result promise is observed by this continuation.
+            promise.rejection_handled.set(true);
+            match promise.state.borrow().clone() {
+                crate::value::PromiseState::Pending => continuation(&promise),
+                state => process_async_continuation(
+                    result,
+                    iterator,
+                    receiver,
+                    mapper,
+                    this_arg,
+                    values,
+                    index,
+                    array_like,
+                    pending,
+                    target,
+                    &state,
+                ),
+            }
+        }
         value => process_async_value(
             result, iterator, receiver, mapper, this_arg, values, index, array_like, value, target,
         ),
@@ -592,7 +605,13 @@ fn continue_after_map(
 }
 
 fn await_mapped(mapped: Value) -> Result<Value, crate::execute::VmError> {
-    if matches!(mapped, Value::Promise(_)) || !crate::value::is_object(&mapped) {
+    if let Value::Promise(promise) = &mapped {
+        // Array.fromAsync immediately adopts input/mapper promises; their
+        // rejection is consumed by the continuation below.
+        promise.rejection_handled.set(true);
+        return Ok(mapped);
+    }
+    if !crate::value::is_object(&mapped) {
         return Ok(mapped);
     }
     let then = crate::execute::get_property_result(&mapped, "then")?;

@@ -199,6 +199,7 @@ mod tests {
                 "support",
                 "punycode",
                 "dns",
+                "internal-fs-binding",
                 "dgram-head",
                 "dgram",
                 "dgram-tail",

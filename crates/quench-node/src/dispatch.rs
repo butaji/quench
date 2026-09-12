@@ -247,6 +247,11 @@ const CAP_TRACE_EVENTS_CREATE_TRACING: u16 = crate::registry::SPEC_TRACE_EVENTS_
 const CAP_TRACE_EVENTS_ENABLE: u16 = crate::registry::SPEC_TRACE_EVENTS_ENABLE.cap;
 const CAP_TRACE_EVENTS_DISABLE: u16 = crate::registry::SPEC_TRACE_EVENTS_DISABLE.cap;
 const CAP_TRACE_EVENTS_GET_ENABLED: u16 = crate::registry::SPEC_TRACE_EVENTS_GET_ENABLED.cap;
+const CAP_TRACE_EVENTS_CATEGORY_ENABLED: u16 =
+    crate::registry::SPEC_TRACE_EVENTS_CATEGORY_ENABLED.cap;
+const CAP_TRACE_EVENTS_CATEGORY_BUFFER: u16 =
+    crate::registry::SPEC_TRACE_EVENTS_CATEGORY_BUFFER.cap;
+const CAP_TRACE_EVENTS_TRACE: u16 = crate::registry::SPEC_TRACE_EVENTS_TRACE.cap;
 const CAP_COMMON_SKIP_IF_PERFETTO: u16 = crate::registry::SPEC_COMMON_SKIP_IF_PERFETTO.cap;
 const CAP_HTTP_AGENT_DESTROY: u16 = crate::registry::SPEC_HTTP_AGENT_DESTROY.cap;
 const CAP_INSPECTOR_SESSION: u16 = crate::registry::SPEC_INSPECTOR_SESSION.cap;
@@ -565,6 +570,7 @@ const CAP_WORKER_CLOSE: u16 = SPEC_WORKER_CLOSE.cap;
 const CAP_WORKER_CONSTRUCT: u16 = SPEC_WORKER_CONSTRUCT.cap;
 const CAP_MESSAGE_PORT_CONSTRUCT: u16 = SPEC_MESSAGE_PORT_CONSTRUCT.cap;
 const CAP_MESSAGE_PORT_CALL: u16 = SPEC_MESSAGE_PORT_CALL.cap;
+const CAP_MESSAGE_PORT_MOVE: u16 = SPEC_MESSAGE_PORT_MOVE.cap;
 const CAP_WORKER_RECEIVE_MESSAGE: u16 = SPEC_WORKER_RECEIVE_MESSAGE.cap;
 const CAP_WORKER_SET_ENVIRONMENT: u16 = SPEC_WORKER_SET_ENVIRONMENT.cap;
 const CAP_WORKER_GET_ENVIRONMENT: u16 = SPEC_WORKER_GET_ENVIRONMENT.cap;
@@ -727,7 +733,9 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_WORKER_GET_ENVIRONMENT => crate::modules::worker_threads::get_environment_handler,
         CAP_WORKER_NOOP => crate::modules::worker_threads::worker_noop_handler,
         CAP_MESSAGE_CHANNEL => crate::modules::worker_threads::message_channel_call,
-        CAP_MESSAGE_PORT_CONSTRUCT => crate::modules::worker_threads::message_port_invalid_constructor,
+        CAP_MESSAGE_PORT_CONSTRUCT => {
+            crate::modules::worker_threads::message_port_invalid_constructor
+        }
         CAP_MESSAGE_PORT_CALL => crate::modules::worker_threads::message_port_invalid_constructor,
         CAP_REQUIRE => node_require,
         CAP_REQUIRE_RESOLVE => node_require_resolve,
@@ -877,9 +885,7 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_INTERNAL_CRYPTO_EC_KEY_PAIR_GEN_JOB_RUN => {
             crate::modules::webcrypto::ec_key_pair_gen_job_run
         }
-        CAP_INTERNAL_CRYPTO_AES_CIPHER_JOB_RUN => {
-            crate::modules::webcrypto::aes_cipher_job_run
-        }
+        CAP_INTERNAL_CRYPTO_AES_CIPHER_JOB_RUN => crate::modules::webcrypto::aes_cipher_job_run,
         CAP_INTERNAL_CRYPTO_JOB_COMPLETE => crate::modules::webcrypto::crypto_job_complete,
         CAP_INTERNAL_UTIL_WEAK_REFERENCE_GET => internal_util_weak_reference_get,
         CAP_OS_GET_PRIORITY => os_get_priority,
@@ -1732,6 +1738,9 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_TRACE_EVENTS_ENABLE => crate::modules::trace_events::enable,
         CAP_TRACE_EVENTS_DISABLE => crate::modules::trace_events::disable,
         CAP_TRACE_EVENTS_GET_ENABLED => crate::modules::trace_events::get_enabled,
+        CAP_TRACE_EVENTS_CATEGORY_ENABLED => crate::modules::trace_events::category_enabled,
+        CAP_TRACE_EVENTS_CATEGORY_BUFFER => crate::modules::trace_events::category_buffer,
+        CAP_TRACE_EVENTS_TRACE => crate::modules::trace_events::trace,
         CAP_COMMON_SKIP_IF_PERFETTO => crate::modules::process::skip_if_perfetto,
         CAP_HTTP_AGENT_DESTROY => crate::modules::http_client::agent_destroy,
         CAP_INSPECTOR_CONNECT => crate::modules::inspector::connect,
@@ -1839,6 +1848,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_NET_SOCKET_ADDRESS_CONSTRUCT => crate::modules::net::socket_address_construct,
         CAP_HTTP_SERVER => http_create_server_construct,
         CAP_HTTPS_CREATE_SERVER => https_create_server_construct,
+        // TEMP_TRACE_BUILD
         CAP_HTTP_AGENT => crate::modules::http_client::agent_construct,
         CAP_HTTPS_AGENT => crate::modules::http_client::https_agent_construct,
         CAP_TTY_READ_STREAM | CAP_TTY_WRITE_STREAM => crate::modules::tty::stream_construct,
@@ -1846,6 +1856,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_HTTP_INCOMING => crate::modules::http::incoming_construct,
         CAP_HTTP_OUTGOING => handlers::http_outgoing_construct,
         CAP_FS_CREATE_READSTREAM | CAP_FS_READSTREAM => crate::modules::fs::construct_read_stream,
+        CAP_FS_UTF8STREAM => crate::modules::fs_utf8_stream::construct,
         CAP_BUFFER_NEW => buffer_new_construct,
         CAP_WEBCRYPTO_KEY_CONSTRUCT => crate::modules::webcrypto::illegal_constructor,
         CAP_INTERNAL_CRYPTO_HASH_JOB_CONSTRUCT => crate::modules::webcrypto::hash_job_construct,
@@ -1855,7 +1866,6 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_INTERNAL_CRYPTO_EC_KEY_PAIR_GEN_JOB_CONSTRUCT => {
             crate::modules::webcrypto::ec_key_pair_gen_job_construct
         }
-        CAP_FS_UTF8STREAM => crate::modules::fs_utf8_stream::construct,
         CAP_INTERNAL_CRYPTO_AES_CIPHER_JOB_CONSTRUCT => {
             crate::modules::webcrypto::aes_cipher_job_construct
         }

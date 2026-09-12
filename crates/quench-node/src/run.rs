@@ -18,6 +18,19 @@ pub struct RunOutcome {
     pub error: Option<String>,
 }
 
+/// The Rust crypto backend has no FIPS provider.  Keep unsupported startup
+/// flags at the canonical executable boundary so both file and `-e` re-exec
+/// paths return Node's documented provider error before evaluating user code.
+fn unsupported_fips_startup(exec_argv: &[String]) -> Option<RunOutcome> {
+    let flag = exec_argv
+        .iter()
+        .find(|arg| matches!(arg.as_str(), "--enable-fips" | "--force-fips"))?;
+    Some(RunOutcome::fail(
+        1,
+        format!("{flag} requires an active OpenSSL provider named \"fips\""),
+    ))
+}
+
 impl RunOutcome {
     fn success() -> Self {
         Self {
@@ -68,6 +81,9 @@ pub fn run_script_with_exec_argv(
     source: &str,
     sink: OutputSink,
 ) -> RunOutcome {
+    if let Some(outcome) = unsupported_fips_startup(exec_argv) {
+        return outcome;
+    }
     // File-backed runs expose the same executable identity through argv[0]
     // and process.execPath.  The test launcher hosts the engine, so derive
     // the canonical sibling path instead of leaking a non-resolvable label.
@@ -138,9 +154,11 @@ pub fn run_script_with_exec_argv(
     let vfs_surface = vfs_enabled
         .then(|| crate::polyfills::bootstrap::lookup("vfs").unwrap_or(""))
         .unwrap_or("");
-    let vfs_stream_setup = vfs_enabled
-        .then_some("Object.defineProperty(globalThis, '__nodeStream', { configurable: true, writable: true, value: require('stream') });")
-        .unwrap_or("");
+    // stream/iter's Rust-owned conversion surface needs the canonical stream
+    // constructors even when VFS is not enabled.  Keep this as one internal,
+    // non-enumerable alias so all entry points observe the same constructor
+    // identity instead of making availability depend on an unrelated flag.
+    let vfs_stream_setup = "Object.defineProperty(globalThis, '__nodeStream', { configurable: true, writable: true, value: require('stream') });";
     let performance_surface = crate::polyfills::bootstrap::lookup("performance").unwrap_or("");
     let persistent_globals = crate::registry::PERSISTENT_GLOBALS
         .iter()
@@ -212,6 +230,9 @@ pub fn eval_script_with_exec_argv(
     module_mode: bool,
     exec_argv: &[String],
 ) -> RunOutcome {
+    if let Some(outcome) = unsupported_fips_startup(exec_argv) {
+        return outcome;
+    }
     let argv = vec![
         std::env::current_exe()
             .map(|p| p.to_string_lossy().into_owned())
@@ -251,84 +272,84 @@ pub fn eval_script_with_exec_argv(
     let result = quench_runtime::vm::with_current_context(&context, || {
         crate::modules::process::configure_deprecation_flags(exec_argv);
         crate::modules::require::with_static_esm_mode(module_mode, || {
-        let state = host.state();
-        let dynamic_namespace_cache =
-            std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::<
-                String,
-                Value,
-            >::new()));
-        let _dynamic_import = quench_runtime::module_bindings::install_dynamic_import({
-            let dynamic_namespace_cache = std::rc::Rc::clone(&dynamic_namespace_cache);
-            std::rc::Rc::new(move |specifier, _deferred| {
-                let trace = crate::modules::diagnostics_channel::module_import_begin(
-                    &state,
-                    crate::modules::diagnostics_channel::module_import_parent_url(&state),
-                    specifier.to_owned(),
-                )
-                .ok()
-                .flatten();
-                let mocked = crate::modules::test::module_is_mocked(specifier);
-                let cacheable = !mocked || crate::modules::test::mock_module_cache(specifier);
-                let cache_key = format!(
-                    "{}:{}",
-                    crate::modules::test::canonical_mock_specifier(specifier),
-                    if mocked { "mock" } else { "real" }
-                );
-                if cacheable {
-                    if let Some(cached) = dynamic_namespace_cache.borrow().get(&cache_key) {
-                        if let Some(event) = trace {
-                            let _ = crate::modules::diagnostics_channel::module_import_end(
-                                &state,
-                                event,
-                                Ok(cached.clone()),
-                            );
+            let state = host.state();
+            let dynamic_namespace_cache =
+                std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::<
+                    String,
+                    Value,
+                >::new()));
+            let _dynamic_import = quench_runtime::module_bindings::install_dynamic_import({
+                let dynamic_namespace_cache = std::rc::Rc::clone(&dynamic_namespace_cache);
+                std::rc::Rc::new(move |specifier, _deferred| {
+                    let trace = crate::modules::diagnostics_channel::module_import_begin(
+                        &state,
+                        crate::modules::diagnostics_channel::module_import_parent_url(&state),
+                        specifier.to_owned(),
+                    )
+                    .ok()
+                    .flatten();
+                    let mocked = crate::modules::test::module_is_mocked(specifier);
+                    let cacheable = !mocked || crate::modules::test::mock_module_cache(specifier);
+                    let cache_key = format!(
+                        "{}:{}",
+                        crate::modules::test::canonical_mock_specifier(specifier),
+                        if mocked { "mock" } else { "real" }
+                    );
+                    if cacheable {
+                        if let Some(cached) = dynamic_namespace_cache.borrow().get(&cache_key) {
+                            if let Some(event) = trace {
+                                let _ = crate::modules::diagnostics_channel::module_import_end(
+                                    &state,
+                                    event,
+                                    Ok(cached.clone()),
+                                );
+                            }
+                            return Some(cached.clone());
                         }
-                        return Some(cached.clone());
                     }
-                }
-                match crate::modules::require::require_dynamic(
-                    &state,
-                    &[Value::String(specifier.to_owned())],
-                ) {
-                    Ok(value) => {
-                        let namespace = crate::modules::require::dynamic_namespace(value);
-                        if let Some(event) = trace {
-                            let _ = crate::modules::diagnostics_channel::module_import_end(
-                                &state,
-                                event,
-                                Ok(namespace.clone()),
-                            );
+                    match crate::modules::require::require_dynamic(
+                        &state,
+                        &[Value::String(specifier.to_owned())],
+                    ) {
+                        Ok(value) => {
+                            let namespace = crate::modules::require::dynamic_namespace(value);
+                            if let Some(event) = trace {
+                                let _ = crate::modules::diagnostics_channel::module_import_end(
+                                    &state,
+                                    event,
+                                    Ok(namespace.clone()),
+                                );
+                            }
+                            if cacheable {
+                                dynamic_namespace_cache
+                                    .borrow_mut()
+                                    .insert(cache_key, namespace.clone());
+                            }
+                            Some(namespace)
                         }
-                        if cacheable {
-                            dynamic_namespace_cache
-                                .borrow_mut()
-                                .insert(cache_key, namespace.clone());
+                        Err(VmError::Thrown(reason)) => {
+                            let rejection =
+                                crate::modules::require::dynamic_import_rejection(reason.clone());
+                            if let Some(event) = trace {
+                                let _ = crate::modules::diagnostics_channel::module_import_end(
+                                    &state,
+                                    event,
+                                    Err(reason),
+                                );
+                            }
+                            Some(rejection)
                         }
-                        Some(namespace)
+                        Err(_) => None,
                     }
-                    Err(VmError::Thrown(reason)) => {
-                        let rejection =
-                            crate::modules::require::dynamic_import_rejection(reason.clone());
-                        if let Some(event) = trace {
-                            let _ = crate::modules::diagnostics_channel::module_import_end(
-                                &state,
-                                event,
-                                Err(reason),
-                            );
-                        }
-                        Some(rejection)
-                    }
-                    Err(_) => None,
-                }
-            })
-        });
-        // As with file-backed scripts, defer the first Promise checkpoint to
-        // the host event-loop pump so process.nextTick precedes Promise jobs.
-        normalize_script_completion(quench_runtime::vm::execute_code_isolated_in_context(
-            ops.code(),
-            &context,
-        ))
-        .and_then(|_| drive(&context, "__quench_run_loop__();"))
+                })
+            });
+            // As with file-backed scripts, defer the first Promise checkpoint to
+            // the host event-loop pump so process.nextTick precedes Promise jobs.
+            normalize_script_completion(quench_runtime::vm::execute_code_isolated_in_context(
+                ops.code(),
+                &context,
+            ))
+            .and_then(|_| drive(&context, "__quench_run_loop__();"))
         })
     });
     let result = route_uncaught(&host, &context, result);

@@ -1,6 +1,8 @@
 #[derive(Debug, PartialEq)]
 pub struct IteratorData {
     pub state: RefCell<IteratorState>,
+    pub(crate) properties: RefCell<Vec<(String, Value)>>,
+    pub(crate) descriptors: RefCell<Vec<(String, Value)>>,
     pub executing: RefCell<bool>,
     pub in_return: RefCell<bool>,
 }
@@ -9,9 +11,47 @@ impl IteratorData {
     pub fn new(state: IteratorState) -> Self {
         Self {
             state: RefCell::new(state),
+            properties: RefCell::new(Vec::new()),
+            descriptors: RefCell::new(Vec::new()),
             executing: RefCell::new(false),
             in_return: RefCell::new(false),
         }
+    }
+
+    pub(crate) fn property(&self, key: &str) -> Option<Value> {
+        self.properties
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.clone())
+    }
+
+    pub(crate) fn set_property(&self, key: &str, value: Value) {
+        let mut properties = self.properties.borrow_mut();
+        if let Some((_, current)) = properties.iter_mut().rev().find(|(name, _)| name == key) {
+            *current = value;
+        } else {
+            properties.push((key.to_string(), value));
+        }
+    }
+
+    pub(crate) fn set_descriptor(&self, key: &str, descriptor: Value) {
+        let mut descriptors = self.descriptors.borrow_mut();
+        if let Some((_, current)) = descriptors.iter_mut().rev().find(|(name, _)| name == key) {
+            *current = descriptor;
+        } else {
+            descriptors.push((key.to_string(), descriptor));
+        }
+    }
+
+    pub(crate) fn descriptor(&self, key: &str) -> Option<Value> {
+        self.descriptors
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(name, _)| name == key)
+            .map(|(_, descriptor)| descriptor.clone())
     }
 }
 

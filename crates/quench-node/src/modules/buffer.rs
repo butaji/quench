@@ -460,20 +460,14 @@ pub fn build_module() -> Value {
     let blob = get_property(&global, "Blob");
     if matches!(
         blob,
-        Value::Function(_)
-            | Value::BoundFunction(_)
-            | Value::HostCapability(_)
-            | Value::Builtin(_)
+        Value::Function(_) | Value::BoundFunction(_) | Value::HostCapability(_) | Value::Builtin(_)
     ) {
         module_props.push(("Blob".to_string(), blob));
     }
     let file = get_property(&global, "File");
     if matches!(
         file,
-        Value::Function(_)
-            | Value::BoundFunction(_)
-            | Value::HostCapability(_)
-            | Value::Builtin(_)
+        Value::Function(_) | Value::BoundFunction(_) | Value::HostCapability(_) | Value::Builtin(_)
     ) {
         module_props.push(("File".to_string(), file));
     }

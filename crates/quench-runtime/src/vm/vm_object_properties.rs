@@ -40,6 +40,7 @@ fn object_prototype_property(
         .physical_slot_for_name("\0prototype")
         .and_then(|slot| properties.hot_properties().slot_value(slot))
         .map_or(Value::Undefined, |prototype| {
+            let prototype = crate::locals::resolved_replacement(prototype);
             get_property_with_receiver(&prototype, key, receiver).unwrap_or(Value::Undefined)
         })
 }
@@ -116,6 +117,21 @@ fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) 
     let deleted_key = crate::builtins::deleted_key(key);
     if properties.physical_slot_for_name(&deleted_key).is_some() {
         return Some(Value::Undefined);
+    }
+    // Host-created constructor parents may carry an ordinary own
+    // `prototype` property without the hidden `\0prototype` slot used for an
+    // object's [[Prototype]]. Keep the public property distinct from the
+    // internal chain and expose its descriptor-backed value directly.
+    if key == "prototype" {
+        if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
+            return Some(property_value(&value));
+        }
+    }
+    // Host and COW paths can append an identity-sensitive property without
+    // rebuilding the shape index. The ordered property vector is canonical;
+    // consult it before falling through to prototype lookup.
+    if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
+        return Some(property_value(&value));
     }
     if let Some(value) = properties
         .physical_slot_for_name(key)

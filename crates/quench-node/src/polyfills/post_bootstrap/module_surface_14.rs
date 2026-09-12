@@ -102,7 +102,9 @@ const __quenchPrepareDhGroup = (result) => {
   if (typeof result.ECDH !== "function") {
     __quenchCryptoSimpleConstructor(result, "ECDH");
   }
-  __quenchCryptoDhConstructor(result);
+  if (typeof result.DiffieHellman !== "function") {
+    __quenchCryptoDhConstructor(result);
+  }
   Object.setPrototypeOf(
     result.DiffieHellmanGroup.prototype,
     result.DiffieHellman.prototype
@@ -310,7 +312,7 @@ const __quenchCryptoKeyExchangeFallback = (result) => {
     }
     return NodeBuffer.from(__quenchDhPaddingSecret, "hex");
   };
-  result.createDiffieHellman = (
+  result.createDiffieHellman ||= (
     sizeOrKey,
     generatorOrEncoding,
     maybeGenerator = generatorOrEncoding
@@ -318,7 +320,7 @@ const __quenchCryptoKeyExchangeFallback = (result) => {
     __quenchValidateDhNumbers(sizeOrKey, maybeGenerator);
     return Object.create(result.DiffieHellman.prototype);
   };
-  result.createDiffieHellmanGroup = () => result.DiffieHellmanGroup();
+  result.createDiffieHellmanGroup ||= () => result.DiffieHellmanGroup();
   result.getDiffieHellman ||= (name) => {
     if (!["modp1", "modp5", "modp14", "modp18"].includes(name)) {
       throw Object.assign(new Error("Unknown DH group"), {
@@ -344,43 +346,7 @@ const __quenchCryptoKeyExchangeFallback = (result) => {
 };
 const __quenchCryptoKeyObjectBrand =
   (globalThis.__quenchCryptoKeyObjectBrand ||= new WeakSet());
-const __quenchCryptoSignFallbacks = (result) => {
-  __quenchCryptoSignFallback(result);
-  result.sign = (...args) => {
-    const callback = typeof args.at(-1) === "function" ? args.pop() : undefined;
-    const [algorithm, , key] = args;
-    let error;
-    if (algorithm === "sha512" && key?.dhParams?.modulusLength === 512) {
-      error = Object.assign(new Error("digest too big for rsa key"), {
-        code: "ERR_OSSL_RSA_DIGEST_TOO_BIG_FOR_RSA_KEY"
-      });
-    }
-    if (callback) {
-      queueMicrotask(() =>
-        callback(error, error ? undefined : NodeBuffer.alloc(64))
-      );
-    } else if (error) {
-      throw error;
-    } else return NodeBuffer.alloc(64);
-  };
-  result.verify = (...args) => {
-    const callback = typeof args.at(-1) === "function" ? args.pop() : undefined;
-    const [algorithm, , , signature] = args;
-    let error;
-    if (algorithm === undefined && typeof args[2] === "string") {
-      error = Object.assign(
-        new Error("operation not supported for this keytype"),
-        { code: "ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE" }
-      );
-    }
-    const verified = signature?.length !== 0;
-    if (callback) {
-      queueMicrotask(() => callback(error, error ? undefined : verified));
-    } else if (error) throw error;
-    else return verified;
-  };
-  __quenchCryptoKeyExchangeFallback(result);
-};
+const __quenchCryptoSignFallbacks = (_) => {};
 const __quenchCryptoKeyObjectData = (globalThis.__quenchCryptoKeyObjectData ||=
   new WeakMap());
 const __quenchCryptoKeyInput = (args) =>

@@ -171,9 +171,9 @@ fn list_supported_locales_of(arguments: &[Value]) -> Result<Value, VmError> {
 
 pub(crate) fn supported_segmenter_locale(locale: &str) -> bool {
     const LANGUAGES: &[&str] = &[
-        "ar", "bg", "ca", "cs", "da", "de", "el", "en", "es", "fa", "fi", "fr",
-        "he", "hi", "hr", "hu", "id", "it", "ja", "ko", "lt", "lv", "nb", "nl",
-        "pl", "pt", "ro", "ru", "sk", "sl", "sr", "sv", "th", "tr", "uk", "vi", "zh",
+        "ar", "bg", "ca", "cs", "da", "de", "el", "en", "es", "fa", "fi", "fr", "he", "hi", "hr",
+        "hu", "id", "it", "ja", "ko", "lt", "lv", "nb", "nl", "pl", "pt", "ro", "ru", "sk", "sl",
+        "sr", "sv", "th", "tr", "uk", "vi", "zh",
     ];
     let language = locale.split('-').next().unwrap_or_default();
     LANGUAGES.contains(&language) && !locale.eq_ignore_ascii_case("zxx")

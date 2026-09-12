@@ -469,7 +469,10 @@ globalThis.__quench_require_part_01 = (name, specifier) => {
   if (name === "net") return __quenchNetModule;
   if (name === "net/promises") return globalThis.__quenchNetPromisesModule;
   if (name === "internal/net") {
-    return { normalizedArgsSymbol: __quenchNetNormalizedArgsSymbol };
+    return {
+      normalizedArgsSymbol: __quenchNetNormalizedArgsSymbol,
+      isLoopback: globalThis.__quenchNativeRequire?.("internal/net")?.isLoopback,
+    };
   }
 };
 "#);

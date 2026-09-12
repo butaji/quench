@@ -101,7 +101,10 @@ fn to_locale_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
         })
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainTime"))?
         .clone();
-    if let Some(options) = arguments.get(1).filter(|value| crate::value::is_object(value)) {
+    if let Some(options) = arguments
+        .get(1)
+        .filter(|value| crate::value::is_object(value))
+    {
         let date_style = crate::execute::get_property_result(options, "dateStyle")?;
         if !matches!(date_style, Value::Undefined) {
             return Err(crate::value::error::throw_type_error(
@@ -109,11 +112,7 @@ fn to_locale_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
             ));
         }
     }
-    crate::intl::datetime::format_temporal_value(
-        &value,
-        arguments,
-        &["hour", "minute", "second"],
-    )
+    crate::intl::datetime::format_temporal_value(&value, arguments, &["hour", "minute", "second"])
 }
 
 fn accessor(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> Result<Value, VmError> {

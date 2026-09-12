@@ -19,8 +19,11 @@ impl QuenchNodeHost {
                         crate::modules::stream::build(&self.state)
                     }
                     Some(Value::String(name))
-                        if name.trim_start_matches("node:") == "console" =>
+                        if name.trim_start_matches("node:") == "http" =>
                     {
+                        Ok(crate::modules::http::build(&self.state))
+                    }
+                    Some(Value::String(name)) if name.trim_start_matches("node:") == "console" => {
                         Ok(self
                             .state
                             .borrow()
@@ -45,7 +48,7 @@ impl QuenchNodeHost {
                     self.construct(capability, arguments)
                 }
                 HostCapabilityKind::Custom(CapabilityName::StreamFinished) => {
-                    stream_finished(arguments)
+                    crate::modules::stream::finished(&self.state, receiver, arguments)
                 }
                 HostCapabilityKind::Custom(CapabilityName::StreamIsPaused) => {
                     Ok(Value::Boolean(false))
@@ -295,6 +298,15 @@ impl QuenchNodeHost {
                 }
                 HostCapabilityKind::Custom(CapabilityName::FsFileHandleStat) => {
                     self.fs_filehandle_stat(receiver, arguments)
+                }
+                HostCapabilityKind::Custom(CapabilityName::InternalFsOpenFileHandle) => {
+                    let path = arguments
+                        .first()
+                        .map(|value| quench_runtime::execute::to_js_string(value))
+                        .transpose()?
+                        .unwrap_or_default();
+                    self.state.borrow_mut().pending_filehandle_gc.push(path);
+                    Ok(Value::Undefined)
                 }
                 HostCapabilityKind::Custom(CapabilityName::FsStatsIsDirectory) => {
                     Ok(Value::Boolean(true))

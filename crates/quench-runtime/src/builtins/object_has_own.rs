@@ -85,6 +85,7 @@ fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
             .rev()
             .any(|(name, _)| name == key),
         Value::BoundFunction(bound) => bound_function_owns_property(bound, key),
+        Value::Iterator(data) => data.property(key).is_some(),
         Value::Proxy(_) => {
             crate::proxy::proxy_get_own_property_descriptor(&receiver, key)? != Value::Undefined
         }

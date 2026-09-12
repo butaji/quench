@@ -11,7 +11,7 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
-use super::http::{chunk_bytes, Res, RES_ID_PROP, RESPONSE_CLOSE_PENDING_PROP};
+use super::http::{chunk_bytes, Res, RESPONSE_CLOSE_PENDING_PROP, RES_ID_PROP};
 use crate::modules::net;
 
 fn res_state(receiver: Option<&Value>) -> Option<u64> {
@@ -25,7 +25,8 @@ fn res_state(receiver: Option<&Value>) -> Option<u64> {
 fn body_chunk(value: Option<&Value>) -> Result<Vec<u8>, VmError> {
     if matches!(value, Some(Value::Array(_))) {
         return Err(crate::modules::buffer_enc::invalid_arg_type(
-            "The \"chunk\" argument must be of type string or an instance of Buffer or Uint8Array".into(),
+            "The \"chunk\" argument must be of type string or an instance of Buffer or Uint8Array"
+                .into(),
         ));
     }
     Ok(super::http::chunk_bytes(value))
@@ -76,7 +77,10 @@ pub fn res_set_header(
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
-fn response_headers(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) -> Vec<(String, String)> {
+fn response_headers(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+) -> Vec<(String, String)> {
     let Some(id) = res_state(receiver) else {
         return Vec::new();
     };
@@ -121,7 +125,9 @@ pub fn res_get_header_names(
             names.push(key);
         }
     }
-    Ok(host_api::array(names.into_iter().map(Value::String).collect()))
+    Ok(host_api::array(
+        names.into_iter().map(Value::String).collect(),
+    ))
 }
 
 pub fn res_get_headers(
@@ -139,12 +145,15 @@ pub fn res_get_headers(
             values.push((key, value));
         }
     }
-    Ok(execute::set_prototype_of(&host_api::object(
-        values
-            .into_iter()
-            .map(|(key, value)| (key, Value::String(value)))
-            .collect(),
-    ), &Value::Null)?)
+    Ok(execute::set_prototype_of(
+        &host_api::object(
+            values
+                .into_iter()
+                .map(|(key, value)| (key, Value::String(value)))
+                .collect(),
+        ),
+        &Value::Null,
+    )?)
 }
 
 pub fn res_set_headers(
@@ -210,7 +219,8 @@ pub fn res_add_trailers(
             .iter()
             .any(|(name, _)| name.eq_ignore_ascii_case("transfer-encoding"))
         {
-            res.headers.push(("Transfer-Encoding".into(), "chunked".into()));
+            res.headers
+                .push(("Transfer-Encoding".into(), "chunked".into()));
             res.chunked = true;
         }
     }
@@ -723,7 +733,8 @@ pub fn res_write_information(
         .get(&id)
         .map(|res| res.socket.clone());
     if let Some(socket) = socket {
-        let mut payload = format!("HTTP/1.1 {status} {}\r\n", information_reason(status)).into_bytes();
+        let mut payload =
+            format!("HTTP/1.1 {status} {}\r\n", information_reason(status)).into_bytes();
         for (name, value) in headers {
             payload.extend_from_slice(format!("{name}: {value}\r\n").as_bytes());
         }
@@ -738,7 +749,10 @@ pub fn res_write_early_hints(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let headers = args.first().cloned().unwrap_or_else(|| host_api::object(Vec::new()));
+    let headers = args
+        .first()
+        .cloned()
+        .unwrap_or_else(|| host_api::object(Vec::new()));
     res_write_information(state, receiver, &[Value::Number(103.0), headers])
 }
 
@@ -749,11 +763,7 @@ pub fn res_write_processing(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let headers = args.first().cloned().unwrap_or(Value::Undefined);
-    res_write_information(
-        state,
-        receiver,
-        &[Value::Number(102.0), headers],
-    )
+    res_write_information(state, receiver, &[Value::Number(102.0), headers])
 }
 
 fn information_reason(status: u16) -> &'static str {
@@ -773,8 +783,13 @@ pub fn res_end(
     args: &[Value],
 ) -> Result<Value, VmError> {
     if receiver.is_some_and(|response| {
-        matches!(execute::get_property(response, "closed"), Value::Boolean(true))
-            || matches!(execute::get_property(response, "destroyed"), Value::Boolean(true))
+        matches!(
+            execute::get_property(response, "closed"),
+            Value::Boolean(true)
+        ) || matches!(
+            execute::get_property(response, "destroyed"),
+            Value::Boolean(true)
+        )
     }) {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     }
@@ -877,10 +892,12 @@ pub fn res_end(
         }
     }
     let wire_text = receiver
-        .and_then(|response| match execute::get_property(response, "statusMessage") {
-            Value::String(value) => Some(value),
-            _ => None,
-        })
+        .and_then(
+            |response| match execute::get_property(response, "statusMessage") {
+                Value::String(value) => Some(value),
+                _ => None,
+            },
+        )
         .unwrap_or(text);
     if !headers_sent {
         let mut wire = compose(
@@ -920,12 +937,16 @@ pub fn res_end(
             execute::get_property(response, RESPONSE_CLOSE_PENDING_PROP),
             Value::Boolean(true)
         ) {
-            execute::set_property_in_place(response, RESPONSE_CLOSE_PENDING_PROP, Value::Boolean(true));
-            state
-                .borrow_mut()
-                .net
-                .pending_events
-                .push((response.clone(), "close".into(), Vec::new()));
+            execute::set_property_in_place(
+                response,
+                RESPONSE_CLOSE_PENDING_PROP,
+                Value::Boolean(true),
+            );
+            state.borrow_mut().net.pending_events.push((
+                response.clone(),
+                "close".into(),
+                Vec::new(),
+            ));
         }
     }
     if !keep_alive {

@@ -436,7 +436,10 @@ pub(crate) fn rewrite_host_exec_command(command: &str) -> String {
         .map(|parent| parent.join("run"))
         .filter(|candidate| candidate.is_file())
         .unwrap_or(executable);
-    command.replace(engine.to_string_lossy().as_ref(), runner.to_string_lossy().as_ref())
+    command.replace(
+        engine.to_string_lossy().as_ref(),
+        runner.to_string_lossy().as_ref(),
+    )
 }
 
 /// Same as `install`, but provides a host-side output sink that

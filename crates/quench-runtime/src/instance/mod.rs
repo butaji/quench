@@ -352,8 +352,7 @@ fn args_match(params: &[Kind], args: &[Slot]) -> bool {
                 (
                     Kind::I32,
                     Slot::Native(Native::I32(_)) | Slot::Fast(Fast::I32(_)),
-                )
-                    | (Kind::I64, Slot::Native(Native::I64(_)))
+                ) | (Kind::I64, Slot::Native(Native::I64(_)))
                     | (Kind::F32, Slot::Native(Native::F32(_)))
                     | (
                         Kind::F64,

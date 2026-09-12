@@ -476,9 +476,35 @@ pub fn error(builtin: Builtin, arguments: &[Value]) -> Value {
     let prototype = crate::vm::current_realm_intrinsic(prototype_builtin)
         .unwrap_or(Value::Builtin(prototype_builtin));
     let message = arguments.first().map_or_else(String::new, value_to_string);
-    let non_enum = |key: &str| {
-        (descriptor_key(key), shared_error_descriptor())
+    let mut stack = if message.is_empty() {
+        name.to_string()
+    } else {
+        format!("{name}: {message}")
     };
+    if let Some(filename) = crate::vm::current_context().source_name() {
+        let frames = crate::vm::vm_ops::call_stack_frames();
+        let limit = crate::execute::get_property(&crate::vm::current_global_object(), "Error");
+        let limit = crate::execute::get_property(&limit, "stackTraceLimit");
+        if !matches!(limit, Value::Number(value) if value <= 0.0) {
+            if frames.is_empty() {
+                stack.push_str(&format!("\n    at <anonymous> ({filename}:1:1)"));
+            } else {
+                for frame in &frames {
+                    stack.push_str(&format!("\n    at {frame} ({filename}:1:1)"));
+                }
+            }
+        }
+    } else if !stack.contains('\n') {
+        // A host-created context may not carry a source label yet; retain a
+        // lazy frame so reading `error.stack` before throwing still exposes
+        // a Node-shaped trace.
+        let limit = crate::execute::get_property(&crate::vm::current_global_object(), "Error");
+        let limit = crate::execute::get_property(&limit, "stackTraceLimit");
+        if !matches!(limit, Value::Number(value) if value <= 0.0) {
+            stack.push_str("\n    at <anonymous> (<anonymous>:1:1)");
+        }
+    }
+    let non_enum = |key: &str| (descriptor_key(key), shared_error_descriptor());
     let mut properties = vec![
         ("name".to_string(), Value::String(name.to_string())),
         ("message".to_string(), Value::String(message)),
@@ -488,6 +514,8 @@ pub fn error(builtin: Builtin, arguments: &[Value]) -> Value {
         non_enum("name"),
         non_enum("message"),
         non_enum("constructor"),
+        ("stack".to_string(), Value::String(stack)),
+        non_enum("stack"),
     ];
     if let Some(Value::Object(existing)) = arguments.first() {
         properties.extend(
@@ -545,6 +573,10 @@ fn set_property_tail(target: Value, key: &str, value: Value) -> Value {
         Value::Set(data) => {
             data.set_property(key, value);
             Value::Set(data)
+        }
+        Value::Iterator(data) => {
+            data.set_property(key, value);
+            Value::Iterator(data)
         }
         other => other,
     }

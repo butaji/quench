@@ -594,10 +594,7 @@ fn http2_preface_status(state: &Rc<RefCell<HostState>>, socket_id: u64) -> Prefa
     }
 }
 
-fn report_http2_preface(
-    state: &Rc<RefCell<HostState>>,
-    socket_id: u64,
-) -> Result<(), VmError> {
+fn report_http2_preface(state: &Rc<RefCell<HostState>>, socket_id: u64) -> Result<(), VmError> {
     let (server, socket) = {
         let mut host = state.borrow_mut();
         let Some(conn) = host.http.conns.get_mut(&socket_id) else {
@@ -614,11 +611,7 @@ fn report_http2_preface(
         quench_runtime::ops::Builtin::Error,
         &[Value::String("Parse Error".into())],
     );
-    let error = execute::set_property(
-        error,
-        "code",
-        Value::String("HPE_PAUSED_H2_UPGRADE".into()),
-    );
+    let error = execute::set_property(error, "code", Value::String("HPE_PAUSED_H2_UPGRADE".into()));
     let error = execute::set_property(error, "bytesParsed", Value::Number(24.0));
     net::emit(state, &server, "clientError", vec![error, socket])
 }

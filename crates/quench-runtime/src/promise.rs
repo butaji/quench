@@ -295,9 +295,9 @@ fn process_continuation(continuation: PromiseContinuation, state: &PromiseState)
             async_function,
             ..
         } => process_async_continuation(generator, result, false, async_function, state),
-        PromiseContinuation::AsyncGeneratorYield { generator, result, .. } => {
-            process_async_continuation(generator, result, true, false, state)
-        }
+        PromiseContinuation::AsyncGeneratorYield {
+            generator, result, ..
+        } => process_async_continuation(generator, result, true, false, state),
         PromiseContinuation::ArrayFromAsync {
             result,
             iterator,
@@ -330,10 +330,7 @@ fn process_async_continuation(
     if yielding {
         *generator.pending_yield.borrow_mut() = false;
         if is_yield_star_suspension(&generator) && delegated_result_done(&value) {
-            continue_after_delegation(
-                &generator,
-                &result,
-            );
+            continue_after_delegation(&generator, &result);
             return;
         }
         finish_async_yield(&generator, &result, state, value);
@@ -410,7 +407,11 @@ fn finish_async_yield(
 
 fn is_yield_star_suspension(generator: &crate::value::GeneratorData) -> bool {
     matches!(
-        generator.state.borrow().as_ref().and_then(|state| state.suspension.as_ref()),
+        generator
+            .state
+            .borrow()
+            .as_ref()
+            .and_then(|state| state.suspension.as_ref()),
         Some(crate::continuation::SuspensionPoint::YieldStar { .. })
     )
 }
@@ -515,18 +516,24 @@ pub(crate) fn register_async_generator(
     // Every suspension has a distinct reaction resource. It inherits the
     // producer's context at allocation, while the continuation itself runs
     // under this resource when the awaited promise settles.
-    let reaction =
-        with_promise_trigger(awaited, || PromiseData::allocate(PromiseState::Pending));
-    awaited.continuations.borrow_mut().push(if *generator.pending_yield.borrow() {
-        PromiseContinuation::AsyncGeneratorYield { generator, result, reaction }
-    } else {
-        PromiseContinuation::AsyncGenerator {
-            generator,
-            result,
-            async_function,
-            reaction,
-        }
-    });
+    let reaction = with_promise_trigger(awaited, || PromiseData::allocate(PromiseState::Pending));
+    awaited
+        .continuations
+        .borrow_mut()
+        .push(if *generator.pending_yield.borrow() {
+            PromiseContinuation::AsyncGeneratorYield {
+                generator,
+                result,
+                reaction,
+            }
+        } else {
+            PromiseContinuation::AsyncGenerator {
+                generator,
+                result,
+                async_function,
+                reaction,
+            }
+        });
     if !matches!(*awaited.state.borrow(), PromiseState::Pending) {
         queue_promise(awaited);
     }

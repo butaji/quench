@@ -165,7 +165,9 @@ fn prototype_for_value_tail(value: &Value) -> Value {
         Value::BoundFunction(bound) if crate::vm::is_intrinsic_bound(bound) => {
             intrinsic_bound_prototype(bound)
         }
-        Value::BoundFunction(_) => Value::Builtin(Builtin::FunctionPrototype),
+        Value::BoundFunction(bound) => {
+            crate::vm::realm_intrinsic_for(bound.realm, Builtin::FunctionPrototype)
+        }
         Value::Builtin(Builtin::Intl | Builtin::Math | Builtin::Reflect | Builtin::Json) => {
             Value::Builtin(Builtin::ObjectPrototype)
         }
