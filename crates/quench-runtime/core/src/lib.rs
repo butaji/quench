@@ -10313,14 +10313,21 @@ fn native_object_get_own_property_descriptor(
         .and_then(|object| object.borrow().attributes.get(&key).copied())
         .unwrap_or(PropertyAttributes {
             writable: !function_metadata && !prototype_metadata && !is_number_constant,
-            enumerable: !function_metadata
+            enumerable: !target
+                .as_object_ref()
+                .is_some_and(|object| object.borrow().array.is_some() && key == "length")
+                && !function_metadata
                 && !is_number_constant
                 && !prototype_metadata
                 && !builtin_function
                 && !target
                     .as_object_ref()
                     .is_some_and(|object| object.borrow().builtin_prototype),
-            configurable: !is_number_constant && !prototype_metadata,
+            configurable: !target
+                .as_object_ref()
+                .is_some_and(|object| object.borrow().array.is_some() && key == "length")
+                && !is_number_constant
+                && !prototype_metadata,
         });
     vm.set_prop(&descriptor, "writable", Value::Bool(attributes.writable));
     vm.set_prop(
@@ -10350,19 +10357,27 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
     let existing_property = target.as_object_ref().is_some_and(|object| {
         let object = object.borrow();
         object.props.contains_key(&key)
+            || object.props.contains_key(&accessor_slot("get", &key))
+            || object.props.contains_key(&accessor_slot("set", &key))
             || object.array.as_ref().is_some_and(|array| {
                 key == "length" || array_index_key(&key).is_some_and(|index| index < array.len())
             })
     });
-    let has_get_field = descriptor
-        .as_object_ref()
-        .is_some_and(|object| object.borrow().props.contains_key("get"));
-    let has_set_field = descriptor
-        .as_object_ref()
-        .is_some_and(|object| object.borrow().props.contains_key("set"));
+    // Descriptor fields are ordinary property reads: inherited fields and
+    // accessors must participate exactly like any other object lookup.
+    let has_get_field = vm.has_property(&descriptor, "get");
+    let has_set_field = vm.has_property(&descriptor, "set");
     if has_get_field || has_set_field {
-        let getter = has_get_field.then(|| vm.get_prop(&descriptor, "get"));
-        let setter = has_set_field.then(|| vm.get_prop(&descriptor, "set"));
+        let getter = if has_get_field {
+            Some(vm.get_prop_with_accessors(&descriptor, "get")?)
+        } else {
+            None
+        };
+        let setter = if has_set_field {
+            Some(vm.get_prop_with_accessors(&descriptor, "set")?)
+        } else {
+            None
+        };
         if getter
             .as_ref()
             .is_some_and(|value| !value.is_undefined() && !value.is_function())
@@ -10375,8 +10390,8 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
                 "accessor must be callable or undefined",
             )));
         }
-        let enumerable = vm.get_prop(&descriptor, "enumerable");
-        let configurable = vm.get_prop(&descriptor, "configurable");
+        let enumerable = vm.get_prop_with_accessors(&descriptor, "enumerable")?;
+        let configurable = vm.get_prop_with_accessors(&descriptor, "configurable")?;
         let attributes = existing_attributes.unwrap_or(if existing_property {
             PropertyAttributes::DEFAULT
         } else {
@@ -10413,20 +10428,19 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
             return Err(JsError::Throw(type_error(vm, "object is not extensible")));
         }
     }
-    let value = vm.get_prop(&descriptor, "value");
-    let has_value = descriptor
-        .as_object_ref()
-        .is_some_and(|object| object.borrow().props.contains_key("value"));
-    let has_accessor = descriptor.as_object_ref().is_some_and(|object| {
-        let object = object.borrow();
-        object.props.contains_key("get") || object.props.contains_key("set")
-    });
+    let has_value = vm.has_property(&descriptor, "value");
+    let value = if has_value {
+        vm.get_prop_with_accessors(&descriptor, "value")?
+    } else {
+        Value::Undefined
+    };
+    let has_accessor = has_get_field || has_set_field;
     if has_value || !has_accessor {
         vm.set_prop(target, &key, value);
     }
-    let writable = vm.get_prop(&descriptor, "writable");
-    let enumerable = vm.get_prop(&descriptor, "enumerable");
-    let configurable = vm.get_prop(&descriptor, "configurable");
+    let writable = vm.get_prop_with_accessors(&descriptor, "writable")?;
+    let enumerable = vm.get_prop_with_accessors(&descriptor, "enumerable")?;
+    let configurable = vm.get_prop_with_accessors(&descriptor, "configurable")?;
     if let Some(object) = target.as_object_ref() {
         let mut object = object.borrow_mut();
         let current = existing_attributes.unwrap_or(if existing_property {
@@ -10481,7 +10495,7 @@ fn native_object_define_properties(vm: &mut Vm, _: Value, args: &[Value]) -> JsR
         .cloned()
         .collect::<Vec<_>>();
     for key in keys {
-        let descriptor = vm.get_prop(&Value::Object(descriptors), &key);
+        let descriptor = vm.get_prop_with_accessors(&Value::Object(descriptors.clone()), &key)?;
         native_object_define_property(
             vm,
             Value::Undefined,
