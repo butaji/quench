@@ -1,7 +1,7 @@
 use super::coverage::ExecutionMode;
 use super::dynbytecode::{
-    ARGUMENTS_BINDING_NAME, CatchBinding, DynCode, DynOp, Literal, Register, THIS_BINDING_NAME,
-    UnaryKind,
+    ARGUMENTS_BINDING_NAME, AccessorKind, CatchBinding, DynCode, DynOp, Literal, Register,
+    THIS_BINDING_NAME, UnaryKind,
 };
 use super::region_plan::RegionPlan;
 use super::*;
@@ -3008,7 +3008,12 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             }
             vm.set_prop_with_accessors(&object, key, value)?;
         }
-        DynOp::SetComputed { object, key, src } => {
+        DynOp::SetComputed {
+            object,
+            key,
+            src,
+            accessor,
+        } => {
             let value = get(frame, src);
             let object = get_ref(frame, *object).clone();
             if object.is_null() || object.is_undefined() {
@@ -3018,6 +3023,17 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
                 )));
             }
             let key = get_ref(frame, *key).clone();
+            if let Some(accessor) = accessor {
+                let slot = super::accessor_slot(
+                    match accessor {
+                        AccessorKind::Getter => "get",
+                        AccessorKind::Setter => "set",
+                    },
+                    &key.string(),
+                );
+                unsafe { &*frame.vm }.install_accessor_slot(&object, &slot, value);
+                return Ok(next);
+            }
             if key.string() == "stack" && unsafe { &*frame.vm }.has_error_stack_accessor(&object) {
                 super::native_error_stack_set(unsafe { &mut *frame.vm }, object, &[value])?;
                 return Ok(next);
@@ -3845,7 +3861,9 @@ fn inline_site(pc: usize, op: &DynOp) -> InlineSite {
             site.dst = usize::from(*dst);
             site.left = usize::from(*object);
         }
-        DynOp::SetComputed { object, key, src } => {
+        DynOp::SetComputed {
+            object, key, src, ..
+        } => {
             site.dst = usize::from(*src);
             site.left = usize::from(*object);
             site.right = usize::from(*key);
