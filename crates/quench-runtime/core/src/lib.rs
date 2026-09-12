@@ -6222,13 +6222,13 @@ impl Vm {
         let mut current = value.as_object();
         while let Some(object) = current {
             let borrowed = object.borrow();
-            if borrowed.props.contains_key(key) {
-                return None;
-            }
             let getter = borrowed.props.get(&accessor_slot("get", key)).cloned();
             let setter = borrowed.props.get(&accessor_slot("set", key)).cloned();
             if getter.is_some() || setter.is_some() {
                 return Some((getter, setter));
+            }
+            if borrowed.props.contains_key(key) {
+                return None;
             }
             current = borrowed.prototype;
         }
@@ -6412,18 +6412,15 @@ impl Vm {
             return;
         };
         let mut object = object.borrow_mut();
-        object.props.shift_remove(key);
         let get_slot = accessor_slot("get", key);
         let set_slot = accessor_slot("set", key);
+        object.props.shift_remove(&get_slot);
+        object.props.shift_remove(&set_slot);
         if let Some(getter) = getter {
             object.props.insert(&get_slot, getter);
-        } else {
-            object.props.shift_remove(&get_slot);
         }
         if let Some(setter) = setter {
             object.props.insert(&set_slot, setter);
-        } else {
-            object.props.shift_remove(&set_slot);
         }
         object.attributes.insert(key.to_owned(), attributes);
     }
