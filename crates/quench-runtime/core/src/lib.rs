@@ -100,6 +100,11 @@ pub enum JsError {
     Throw(Value),
     Message(String),
 }
+
+fn is_stencil_fallback_error(error: &JsError) -> bool {
+    matches!(error, JsError::Message(message) if message.contains("unsupported"))
+}
+
 impl fmt::Display for JsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -6785,10 +6790,36 @@ impl Vm {
                 if let Some(call_ic) = call_ic {
                     call_ic.fill(c, code.clone(), env.clone());
                     if call_ic.matches(c) {
-                        return call_ic.call(self, t, a);
+                        return match call_ic.call(self, t.clone(), a) {
+                            Err(error) if is_stencil_fallback_error(&error) => match &f.kind {
+                                FunctionKind::User { node, env } => self.call_user(
+                                    node,
+                                    env.clone(),
+                                    t,
+                                    a.materialize(),
+                                    f.source_id,
+                                ),
+                                FunctionKind::Arrow { node, env } => {
+                                    self.call_arrow(node, env.clone(), a.materialize(), f.source_id)
+                                }
+                                _ => Err(error),
+                            },
+                            result => result,
+                        };
                     }
                 }
-                return code.call(self, env.clone(), t, a);
+                return match code.call(self, env.clone(), t.clone(), a) {
+                    Err(error) if is_stencil_fallback_error(&error) => match &f.kind {
+                        FunctionKind::User { node, env } => {
+                            self.call_user(node, env.clone(), t, a.materialize(), f.source_id)
+                        }
+                        FunctionKind::Arrow { node, env } => {
+                            self.call_arrow(node, env.clone(), a.materialize(), f.source_id)
+                        }
+                        _ => Err(error),
+                    },
+                    result => result,
+                };
             }
             match &f.kind {
                 FunctionKind::Builtin(id) => {
@@ -7153,7 +7184,18 @@ impl Vm {
                     .jit_stats
                     .compiled_direct_opcodes
                     .saturating_add(direct_opcodes as u64);
-                image.call_script(self, environment.clone())
+                match image.call_script(self, environment.clone()) {
+                    Err(error) if is_stencil_fallback_error(&error) => {
+                        reserve_script_bindings(&environment, statements);
+                        self.exec_stmts(statements, environment.clone()).map(
+                            |signal| match signal {
+                                Signal::Normal(value) | Signal::Return(value) => value,
+                                _ => Value::Undefined,
+                            },
+                        )
+                    }
+                    result => result,
+                }
             })()
         } else {
             self.exec_stmts(&r.program.body, environment)
