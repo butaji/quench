@@ -6032,6 +6032,12 @@ impl Vm {
             return;
         }
         if let Some(function) = o.as_function_ref() {
+            if function.props.borrow().contains_key("\0sealed")
+                && k != "prototype"
+                && !function.props.borrow().contains_key(k)
+            {
+                return;
+            }
             if k == "prototype" {
                 if let Some(source) = v.as_object() {
                     *function.prototype.borrow_mut() = source.borrow().clone();
@@ -6124,6 +6130,11 @@ impl Vm {
             // `prototype` property. Its value may be replaced when writable,
             // but the property itself must survive `delete`.
             if k == "prototype" && constructable(o) {
+                return false;
+            }
+            if function.props.borrow().contains_key("\0sealed")
+                && function.props.borrow().contains_key(k)
+            {
                 return false;
             }
             if matches!(
@@ -11279,6 +11290,12 @@ fn native_object_get_own_property_descriptor(
             FunctionKind::Builtin(_) | FunctionKind::Native(_)
         )
     });
+    let function_sealed = target
+        .as_function_ref()
+        .is_some_and(|function| function.props.borrow().contains_key("\0sealed"));
+    let function_frozen = target
+        .as_function_ref()
+        .is_some_and(|function| function.props.borrow().contains_key("\0frozen"));
     let is_number_constant = target.as_function_ref().is_some_and(|function| {
         matches!(
             function.kind,
@@ -11315,12 +11332,17 @@ fn native_object_get_own_property_descriptor(
                 && !target
                     .as_object_ref()
                     .is_some_and(|object| object.borrow().builtin_prototype),
-            configurable: !target
-                .as_object_ref()
-                .is_some_and(|object| object.borrow().array.is_some() && key == "length")
+            configurable: !function_sealed
+                && !target
+                    .as_object_ref()
+                    .is_some_and(|object| object.borrow().array.is_some() && key == "length")
                 && !is_number_constant
                 && !prototype_metadata,
         });
+    let attributes = PropertyAttributes {
+        writable: attributes.writable && !function_frozen,
+        ..attributes
+    };
     vm.set_prop(&descriptor, "writable", Value::Bool(attributes.writable));
     vm.set_prop(
         &descriptor,
@@ -11711,14 +11733,27 @@ fn native_object_prevent_extensions(vm: &mut Vm, _: Value, args: &[Value]) -> Js
     };
     if let Some(object) = target.as_object_ref() {
         object.borrow_mut().extensible = false;
+    } else if let Some(function) = target.as_function_ref() {
+        function
+            .props
+            .borrow_mut()
+            .insert("\0sealed".into(), Value::Bool(true));
     }
     Ok(target.clone())
 }
 fn native_object_is_extensible(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let extensible = args
         .first()
-        .and_then(Value::as_object_ref)
-        .is_none_or(|object| object.borrow().extensible);
+        .map(|value| {
+            if let Some(object) = value.as_object_ref() {
+                return object.borrow().extensible;
+            }
+            if let Some(function) = value.as_function_ref() {
+                return !function.props.borrow().contains_key("\0sealed");
+            }
+            true
+        })
+        .unwrap_or(true);
     Ok(Value::Bool(extensible))
 }
 fn native_object_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
@@ -12399,10 +12434,26 @@ fn native_object_set_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
     Ok(target.clone())
 }
 fn set_integrity_level(target: &Value, freeze: bool) {
+    if let Some(function) = target.as_function_ref() {
+        let mut props = function.props.borrow_mut();
+        props.insert("\0sealed".into(), Value::Bool(true));
+        if freeze {
+            props.insert("\0frozen".into(), Value::Bool(true));
+        }
+        return;
+    }
     if let Some(object) = target.as_object_ref() {
         let mut object = object.borrow_mut();
         object.extensible = false;
-        let keys = object.props.keys().cloned().collect::<Vec<_>>();
+        let keys = object
+            .props
+            .keys()
+            .filter_map(|raw_key| {
+                accessor_key(raw_key)
+                    .map(|(_, key)| key.to_owned())
+                    .or_else(|| (!raw_key.starts_with('\0')).then(|| raw_key.to_owned()))
+            })
+            .collect::<Vec<_>>();
         for key in keys {
             let current = object
                 .attributes
