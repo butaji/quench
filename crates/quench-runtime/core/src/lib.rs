@@ -10563,7 +10563,7 @@ fn string_is_regexp(vm: &mut Vm, value: &Value) -> JsResult<bool> {
 /// methods.  `String(Symbol())` is a special constructor path, but the
 /// abstract `ToString` operation used by these methods must reject Symbols.
 fn string_argument(vm: &mut Vm, value: &Value) -> JsResult<String> {
-    if symbol_primitive(value).is_some() {
+    if is_symbol_carrier(value) {
         return Err(JsError::Throw(type_error(
             vm,
             "Cannot convert a Symbol value to a string",
@@ -10574,7 +10574,7 @@ fn string_argument(vm: &mut Vm, value: &Value) -> JsResult<String> {
     } else {
         value.clone()
     };
-    if symbol_primitive(&primitive).is_some() {
+    if is_symbol_carrier(&primitive) {
         return Err(JsError::Throw(type_error(
             vm,
             "Cannot convert a Symbol value to a string",
