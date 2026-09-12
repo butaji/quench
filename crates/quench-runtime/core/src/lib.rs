@@ -13708,6 +13708,12 @@ fn native_error(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
     };
     vm.set_prop(&o, "\0error", Value::Bool(true));
     if let Some(message) = a.first() {
+        if is_symbol_carrier(message) {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "Cannot convert a Symbol value to a string",
+            )));
+        }
         let message = Value::string_value(to_string_with_vm(vm, message)?);
         vm.set_prop(&o, "message", message);
         if let Some(object) = o.as_object_ref() {
@@ -13852,12 +13858,22 @@ fn native_error_to_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Val
     let name_value = vm.get_prop_with_accessors(&this, "name")?;
     let name = if name_value.is_undefined() {
         "Error".to_owned()
+    } else if is_symbol_carrier(&name_value) {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Cannot convert a Symbol value to a string",
+        )));
     } else {
         to_string_with_vm(vm, &name_value)?
     };
     let message_value = vm.get_prop_with_accessors(&this, "message")?;
     let message = if message_value.is_undefined() {
         String::new()
+    } else if is_symbol_carrier(&message_value) {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Cannot convert a Symbol value to a string",
+        )));
     } else {
         to_string_with_vm(vm, &message_value)?
     };
