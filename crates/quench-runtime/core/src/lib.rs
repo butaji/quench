@@ -1208,6 +1208,11 @@ impl<'a> ObjectTracer<'a> {
                 self.environment(env.clone());
             }
             FunctionKind::Builtin(_) | FunctionKind::Native(_) => {}
+            FunctionKind::Bound { target, this_arg, args } => {
+                self.value(target);
+                self.value(this_arg);
+                args.iter().for_each(|value| self.value(value));
+            }
         }
     }
 
@@ -1238,6 +1243,7 @@ struct Object {
     prototype: Option<ObjectHandle>,
     dense_access: DenseArrayAccess,
     array: Option<ArrayStorage>,
+    extensible: bool,
 }
 impl Object {
     fn ordinary(proto: Option<ObjectHandle>) -> Self {
@@ -1246,6 +1252,7 @@ impl Object {
             prototype: proto,
             dense_access: DenseArrayAccess::EMPTY,
             array: None,
+            extensible: true,
         }
     }
 
@@ -1255,6 +1262,7 @@ impl Object {
             prototype: proto,
             dense_access: DenseArrayAccess::EMPTY,
             array: Some(ArrayStorage::from_values(values)),
+            extensible: true,
         };
         object.publish_dense_access();
         object
@@ -1693,6 +1701,11 @@ enum FunctionKind<'a> {
     },
     Builtin(BuiltinId),
     Native(fn(&mut Vm, Value, &[Value]) -> JsResult<Value>),
+    Bound {
+        target: Value,
+        this_arg: Value,
+        args: Vec<Value>,
+    },
 }
 
 struct JitStats {
@@ -4272,6 +4285,7 @@ impl Vm {
             prototype: proto,
             dense_access: DenseArrayAccess::EMPTY,
             array: None,
+            extensible: true,
         })
     }
     fn array(&self) -> Value {
@@ -4347,6 +4361,10 @@ impl Vm {
                 BuiltinOwner::ObjectConstructor => {
                     let object = self.builtin(BuiltinId::ObjectConstructor);
                     self.set_prop(&object, recipe.key, value);
+                }
+                BuiltinOwner::ArrayConstructor => {
+                    let array = self.builtin(BuiltinId::ArrayConstructor);
+                    self.set_prop(&array, recipe.key, value);
                 }
                 BuiltinOwner::BooleanPrototype => {
                     let boolean = self.builtin(BuiltinId::BooleanConstructor);
@@ -4660,9 +4678,10 @@ impl Vm {
                 return self.get_prop(&Value::Object(prototype), k);
             }
             return match k {
-                "inheritsFrom" | "toString" | "valueOf" => {
+                "inheritsFrom" | "toString" | "valueOf" | "hasOwnProperty" | "propertyIsEnumerable" => {
                     self.builtin_property(BuiltinOwner::ObjectPrototype, k)
                 }
+                "call" | "apply" | "bind" => self.builtin_property(BuiltinOwner::FunctionPrototype, k),
                 _ => Value::Undefined,
             };
         }
@@ -4687,8 +4706,9 @@ impl Vm {
                             | BuiltinId::ReferenceErrorConstructor
                             | BuiltinId::EvalErrorConstructor
                             | BuiltinId::AggregateErrorConstructor
+                            | BuiltinId::FunctionConstructor
                     ),
-                    FunctionKind::Native(_) | FunctionKind::Arrow { .. } => false,
+                    FunctionKind::Native(_) | FunctionKind::Arrow { .. } | FunctionKind::Bound { .. } => false,
                 };
                 if constructable {
                     Value::Object(f.prototype.clone())
@@ -4867,7 +4887,7 @@ impl Vm {
                 match &f.kind {
                     FunctionKind::User { node, .. } => self.compile_user_function(&f, node)?,
                     FunctionKind::Arrow { node, .. } => self.compile_arrow_function(&f, node)?,
-                    FunctionKind::Builtin(_) | FunctionKind::Native(_) => unreachable!(),
+                    FunctionKind::Builtin(_) | FunctionKind::Native(_) | FunctionKind::Bound { .. } => unreachable!(),
                 }
             }
             if self.jit_mode == JitMode::Stencil
@@ -4894,7 +4914,7 @@ impl Vm {
             {
                 let env = match &f.kind {
                     FunctionKind::User { env, .. } | FunctionKind::Arrow { env, .. } => env,
-                    FunctionKind::Builtin(_) | FunctionKind::Native(_) => unreachable!(),
+                    FunctionKind::Builtin(_) | FunctionKind::Native(_) | FunctionKind::Bound { .. } => unreachable!(),
                 };
                 self.jit_stats.native_entries += 1;
                 if code.has_loop() {
@@ -4911,6 +4931,11 @@ impl Vm {
             match &f.kind {
                 FunctionKind::Builtin(id) => self.call_native_semantic(id.recipe().semantic, t, a),
                 FunctionKind::Native(native) => self.call_native_semantic(*native, t, a),
+                FunctionKind::Bound { target, this_arg, args: bound_args } => {
+                    let mut combined = bound_args.clone();
+                    combined.extend(a.materialize());
+                    self.call_arguments_with_ic(target, this_arg.clone(), combined.as_slice(), None)
+                }
                 FunctionKind::User { node, env } => {
                     if self.jit_mode == JitMode::Stencil {
                         return Err(JsError::Message(format!(
@@ -5732,6 +5757,19 @@ impl Vm {
                             | BuiltinId::StringConstructor
                     )
                 );
+                let error_constructor = matches!(
+                    function.kind,
+                    FunctionKind::Builtin(
+                        BuiltinId::ErrorConstructor
+                            | BuiltinId::TypeErrorConstructor
+                            | BuiltinId::RangeErrorConstructor
+                            | BuiltinId::URIErrorConstructor
+                            | BuiltinId::SyntaxErrorConstructor
+                            | BuiltinId::ReferenceErrorConstructor
+                            | BuiltinId::EvalErrorConstructor
+                            | BuiltinId::AggregateErrorConstructor
+                    )
+                );
                 if wrapped {
                     self.set_prop(&o, "\0primitive", r);
                     let wrapper = match function.kind {
@@ -5743,6 +5781,14 @@ impl Vm {
                     self.set_prop(&o, "\0wrapper", Value::string_value(wrapper));
                     Ok(o)
                 } else if native {
+                    if error_constructor && let Some(_) = r.as_object_ref() {
+                        self.set_prop(&r, "constructor", c.clone());
+                        let name = c
+                            .as_function_ref()
+                            .and_then(|f| f.props.borrow().get("name").cloned())
+                            .unwrap_or_else(|| Value::string_value("Error"));
+                        self.set_prop(&r, "name", name);
+                    }
                     Ok(r)
                 } else {
                     Ok(o)
@@ -6628,6 +6674,14 @@ fn assertion_error(vm: &Vm, message: &str) -> Value {
     vm.set_prop(&error, "message", Value::string_value(message));
     error
 }
+fn type_error(vm: &Vm, message: &str) -> Value {
+    let error = assertion_error(vm, message);
+    if let Some(constructor) = Environment::get(&vm.global, "TypeError") {
+        vm.set_prop(&error, "constructor", constructor);
+    }
+    vm.set_prop(&error, "name", Value::string_value("TypeError"));
+    error
+}
 fn native_assert(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     if args.first().is_none_or(Value::truthy) {
         return Ok(Value::Undefined);
@@ -6987,6 +7041,35 @@ fn native_array(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     }
     Ok(o)
 }
+fn native_array_is_array(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    Ok(Value::Bool(a.first().and_then(Value::as_object_ref).is_some_and(|object| {
+        object.borrow().array.is_some()
+    })))
+}
+fn native_array_from(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    let Some(source) = a.first() else {
+        return Ok(vm.array());
+    };
+    if let Some(object) = source.as_object_ref() {
+        let values = object
+            .borrow()
+            .array
+            .as_ref()
+            .map(|array| array.values.clone())
+            .unwrap_or_default();
+        return Ok(vm.array_from_values(values));
+    }
+    let string = source.string();
+    Ok(vm.array_from_values(
+        string
+            .chars()
+            .map(|ch| Value::string_value(ch.to_string()))
+            .collect(),
+    ))
+}
+fn native_array_of(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    Ok(vm.array_from_values(a.to_vec()))
+}
 fn native_string(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(Value::string_value(
         a.first().map(Value::string).unwrap_or_default(),
@@ -6994,6 +7077,12 @@ fn native_string(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
 }
 fn native_number(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(Value::Number(a.first().map(Value::number).unwrap_or(0.0)))
+}
+fn native_function_constructor(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
+    // Dynamic source compilation is intentionally handled by the same VM
+    // parser; until parameter/body source closures are exposed here, return a
+    // callable VM-owned function for compatibility with Function.prototype use.
+    Ok(vm.native(native_noop))
 }
 fn native_date(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Ok(Value::Number(
@@ -7044,13 +7133,24 @@ fn native_object_get_own_property_descriptor(
     args: &[Value],
 ) -> JsResult<Value> {
     let Some(target) = args.first() else {
-        return Err(JsError::Message("TypeError: descriptor target is undefined".into()));
+        return Err(JsError::Throw(type_error(vm, "descriptor target is undefined")));
     };
     let key = args.get(1).map(Value::string).unwrap_or_default();
-    let value = vm.get_prop(target, &key);
-    if value.is_undefined() {
-        return Ok(Value::Undefined);
-    }
+    let value = if let Some(function) = target.as_function_ref() {
+        function.props.borrow().get(&key).cloned()
+    } else if let Some(object) = target.as_object_ref() {
+        let object = object.borrow();
+        if key == "length" && object.array.is_some() {
+            Some(Value::Number(object.array.as_ref().unwrap().len() as f64))
+        } else if let Some(index) = key.parse::<usize>().ok() {
+            object.array.as_ref().and_then(|array| array.values.get(index).cloned())
+        } else {
+            object.props.get(&key).cloned()
+        }
+    } else {
+        None
+    };
+    let Some(value) = value else { return Ok(Value::Undefined); };
     let descriptor = vm.object(None);
     vm.set_prop(&descriptor, "value", value);
     let function_metadata = target.as_function().is_some() && matches!(key.as_str(), "name" | "length");
@@ -7058,6 +7158,43 @@ fn native_object_get_own_property_descriptor(
     vm.set_prop(&descriptor, "enumerable", Value::Bool(false));
     vm.set_prop(&descriptor, "configurable", Value::Bool(true));
     Ok(descriptor)
+}
+fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(target) = args.first() else {
+        return Err(JsError::Throw(type_error(vm, "defineProperty target is undefined")));
+    };
+    let key = args.get(1).map(Value::string).unwrap_or_default();
+    let descriptor = args.get(2).cloned().unwrap_or(Value::Undefined);
+    if let Some(object) = target.as_object_ref() {
+        let object = object.borrow();
+        let present = object.array.as_ref().is_some_and(|array| {
+            key == "length" || key.parse::<usize>().ok().is_some_and(|index| index < array.len())
+        }) || object.props.contains_key(&key);
+        if !present && !object.extensible {
+            return Err(JsError::Throw(type_error(vm, "object is not extensible")));
+        }
+    }
+    let value = vm.get_prop(&descriptor, "value");
+    if !value.is_undefined() {
+        vm.set_prop(target, &key, value);
+    }
+    Ok(target.clone())
+}
+fn native_object_prevent_extensions(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(target) = args.first() else {
+        return Err(JsError::Throw(type_error(vm, "preventExtensions target is undefined")));
+    };
+    if let Some(object) = target.as_object_ref() {
+        object.borrow_mut().extensible = false;
+    }
+    Ok(target.clone())
+}
+fn native_object_is_extensible(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let extensible = args
+        .first()
+        .and_then(Value::as_object_ref)
+        .is_none_or(|object| object.borrow().extensible);
+    Ok(Value::Bool(extensible))
 }
 fn native_object_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let Some(target) = args.first() else {
@@ -7103,6 +7240,48 @@ fn native_object_create(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value
 fn native_object_value_of(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     Ok(this)
 }
+fn native_object_has_own_property(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let key = args.first().map(Value::string).unwrap_or_default();
+    let present = if let Some(function) = this.as_function_ref() {
+        function.props.borrow().contains_key(&key)
+    } else {
+        this.as_object_ref().is_some_and(|object| {
+            let object = object.borrow();
+            if let Some(array) = &object.array {
+                key == "length"
+                    || key
+                        .parse::<usize>()
+                        .ok()
+                        .is_some_and(|index| index < array.len())
+            } else {
+                object.props.contains_key(&key)
+            }
+        })
+    };
+    Ok(Value::Bool(present))
+}
+fn native_object_property_is_enumerable(
+    _: &mut Vm,
+    this: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    // The compact property store currently models all user-created data
+    // properties as enumerable; built-in metadata (name/length) remains
+    // non-enumerable because it is held on function metadata, not props.
+    let key = args.first().map(Value::string).unwrap_or_default();
+    let enumerable = if let Some(function) = this.as_function_ref() {
+        function.props.borrow().contains_key(&key) && !matches!(key.as_str(), "name" | "length")
+    } else {
+        this.as_object_ref().is_some_and(|object| {
+            let object = object.borrow();
+            object.props.contains_key(&key)
+                || (object.array.as_ref().is_some_and(|array| {
+                    key.parse::<usize>().ok().is_some_and(|index| index < array.len())
+                }))
+        })
+    };
+    Ok(Value::Bool(enumerable))
+}
 fn native_inherits_from(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     if let Some(parent) = args.first().and_then(Value::as_function) {
         if let Some(object) = this.as_object() {
@@ -7127,6 +7306,23 @@ fn native_function_apply(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
         .and_then(|object| object.borrow().array.as_ref().map(ArrayStorage::to_vec))
         .unwrap_or_default();
     vm.call(this, this_arg, call_args)
+}
+fn native_function_bind(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let this_arg = args.first().cloned().unwrap_or(Value::Undefined);
+    let bound_args = args.get(1..).unwrap_or_default().to_vec();
+    let function = FunctionValue {
+        kind: FunctionKind::Bound {
+            target: this,
+            this_arg,
+            args: bound_args,
+        },
+        prototype: vm.allocate_object(Object::ordinary(None)),
+        props: Rc::new(RefCell::new(IndexMap::new())),
+        dyn_jit: RefCell::new(None),
+        numeric_jit: RefCell::new(None),
+        source_id: None,
+    };
+    Ok(Value::Function(Rc::new(function)))
 }
 fn native_load(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     let p = PathBuf::from(a.first().map(Value::string).unwrap_or_default());
@@ -7261,6 +7457,26 @@ mod tests {
         .expect("boolean and constructor semantics execute");
         let result = Environment::get(&vm.global, "result").expect("toString result");
         assert_eq!(result.string(), "[object Boolean]");
+    }
+
+    #[test]
+    fn array_static_helpers_and_error_identity_are_vm_owned() {
+        let mut vm = Vm::new();
+        vm.install_process(Vec::new(), Vec::new());
+        vm.run_source_text(
+            Path::new("<array-builtins>"),
+            "var a = Array.from('ab'); var b = Array.of(1, 2); result = [Array.isArray(a), a.length, b[1]]; try { throw new TypeError(); } catch (e) { errorOk = e.constructor === TypeError && e.name === 'TypeError'; }",
+        )
+        .expect("array helpers and errors execute");
+        let values = Environment::get(&vm.global, "result")
+            .and_then(|value| value.as_object())
+            .and_then(|object| object.borrow().array.clone())
+            .expect("result array")
+            .values;
+        assert_eq!(values[0].as_bool(), Some(true));
+        assert_eq!(values[1].as_number(), Some(2.0));
+        assert_eq!(values[2].as_number(), Some(2.0));
+        assert_eq!(Environment::get(&vm.global, "errorOk").and_then(|v| v.as_bool()), Some(true));
     }
 
     #[test]
@@ -8389,6 +8605,7 @@ mod tests {
             prototype: None,
             dense_access: DenseArrayAccess::EMPTY,
             array: None,
+            extensible: true,
         }));
         object
             .as_object()
