@@ -9351,7 +9351,9 @@ fn native_string_char_code_at(vm: &mut Vm, this: Value, args: &[Value]) -> JsRes
         .unwrap_or(0.0);
     let unit = index
         .is_finite()
-        .then_some(index as usize)
+        .then_some(index)
+        .filter(|index| *index >= 0.0)
+        .map(|index| index as usize)
         .and_then(|index| source.encode_utf16().nth(index));
     Ok(Value::Number(unit.map_or(f64::NAN, f64::from)))
 }
@@ -9364,7 +9366,9 @@ fn native_string_char_at(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
         .unwrap_or(0.0);
     let value = index
         .is_finite()
-        .then_some(index as usize)
+        .then_some(index)
+        .filter(|index| *index >= 0.0)
+        .map(|index| index as usize)
         .and_then(|index| source.encode_utf16().nth(index))
         .map_or_else(String::new, |unit| String::from_utf16_lossy(&[unit]));
     Ok(Value::string_value(value))
