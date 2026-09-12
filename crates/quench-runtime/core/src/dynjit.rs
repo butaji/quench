@@ -1,7 +1,8 @@
 use super::coverage::ExecutionMode;
 use super::dynbytecode::{
-    ARGUMENTS_BINDING_NAME, AccessorKind, CatchBinding, DynCode, DynOp, Literal, Register,
-    THIS_BINDING_NAME, UnaryKind,
+    ARGUMENTS_BINDING_NAME, AccessorKind, CatchBinding, DynCode, DynOp, Literal,
+    NON_SIMPLE_ARGUMENTS_ENV_NAME, Register, THIS_BINDING_NAME, THROW_TYPE_ERROR_ENV_NAME,
+    THROW_TYPE_ERROR_PROP, UnaryKind,
 };
 use super::region_plan::RegionPlan;
 use super::*;
@@ -1717,7 +1718,7 @@ impl DynJitCode {
         let arguments = self
             .call_recipe
             .uses_arguments()
-            .then(|| arguments_value(vm, args, self.code.strict));
+            .then(|| arguments_value(vm, args, self.code.strict, Some(&environment)));
         {
             let mut frame = environment.borrow_mut();
             frame.declare(THIS_BINDING_NAME, this);
@@ -1745,7 +1746,7 @@ impl DynJitCode {
     ) -> JsResult<Value> {
         let layout = self.call_recipe.layout;
         let mut values = vm.acquire_registers(layout.slot_count);
-        self.initialize_bindings(vm, &mut values[..layout.local_count], this, args);
+        self.initialize_bindings(vm, &outer, &mut values[..layout.local_count], this, args);
         let local_values = values.as_mut_ptr();
         self.run_with_owned_values(
             vm,
@@ -1787,6 +1788,7 @@ impl DynJitCode {
         debug_assert_eq!(frame.code, Rc::as_ptr(&self.code));
         self.initialize_bindings(
             vm,
+            outer,
             &mut frame.owned_values[..layout.local_count],
             this,
             args,
@@ -1800,6 +1802,7 @@ impl DynJitCode {
     fn initialize_bindings<A: CallArguments + ?Sized>(
         &self,
         vm: &Vm,
+        environment: &Env,
         values: &mut [Value],
         this: Value,
         args: &A,
@@ -1808,7 +1811,7 @@ impl DynJitCode {
         if self.call_recipe.uses_arguments() {
             Value::overwrite(
                 &mut values[self.call_recipe.arguments_slot],
-                arguments_value(vm, args, self.code.strict),
+                arguments_value(vm, args, self.code.strict, Some(environment)),
             );
         }
         for (index, slot) in self
@@ -2265,6 +2268,7 @@ unsafe fn prepare_direct_child(
     debug_assert!(Rc::ptr_eq(&frame.environment, &cached.environment));
     callee.initialize_bindings(
         vm,
+        &cached.environment,
         &mut frame.owned_values[..layout.local_count],
         receiver,
         &arguments,
@@ -2335,11 +2339,23 @@ fn finish_direct_call(
     }
 }
 
-fn arguments_value<A: CallArguments + ?Sized>(vm: &Vm, args: &A, strict: bool) -> Value {
+fn arguments_value<A: CallArguments + ?Sized>(
+    vm: &Vm,
+    args: &A,
+    strict: bool,
+    environment: Option<&Env>,
+) -> Value {
     let value = vm.object_value(Object::array(None, args.materialize()));
     vm.set_prop(&value, "\0wrapper", Value::string_value("Arguments"));
-    if strict {
-        let thrower = vm.throw_type_error();
+    let restricted = strict
+        || environment.is_some_and(|environment| {
+            Environment::get(environment, NON_SIMPLE_ARGUMENTS_ENV_NAME)
+                .is_some_and(|value| value.truthy())
+        });
+    if restricted {
+        let thrower = environment
+            .and_then(|environment| Environment::get(environment, THROW_TYPE_ERROR_ENV_NAME))
+            .unwrap_or_else(|| vm.throw_type_error());
         for key in ["callee", "caller"] {
             vm.define_accessor_slot(
                 &value,
@@ -3645,7 +3661,7 @@ fn construct(
             .as_ref()
             .and_then(|code| code.constructor_shape())
     });
-    let object = if wrapper_constructor {
+    let mut object = if wrapper_constructor {
         let prototype = callee
             .as_function_ref()
             .map(|function| Some(function.prototype))
@@ -3689,6 +3705,16 @@ fn construct(
     } else {
         vm(frame).object(None)
     };
+    // A dynamic Function constructor can belong to a child realm.  Carry its
+    // realm-local restricted accessor through the synthetic construction
+    // receiver so the native constructor can bind closures to that realm.
+    let thrower = vm(frame).get_prop(&callee, THROW_TYPE_ERROR_PROP);
+    if !thrower.is_undefined() {
+        if object.is_undefined() {
+            object = vm(frame).object(None);
+        }
+        vm(frame).set_prop(&object, THROW_TYPE_ERROR_PROP, thrower);
+    }
     let register_count = unsafe { &*frame.code }.registers;
     let register_values =
         unsafe { std::slice::from_raw_parts(frame.guest.register_values, register_count) };
