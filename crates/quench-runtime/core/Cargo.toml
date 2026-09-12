@@ -18,6 +18,8 @@ oxc_span = "0.149"
 oxc_syntax = "0.149"
 regex = "1.11"
 indexmap = "2.12"
+num-bigint = "0.4"
+num-traits = "0.2"
 
 [build-dependencies]
 object = "0.37"
