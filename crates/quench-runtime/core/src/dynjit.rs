@@ -3189,14 +3189,15 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
         DynOp::RegExp {
             dst,
             global,
+            source,
+            flags,
             kernel,
         } => {
             let regex = kernel.instantiate()?;
-            put(
-                frame,
-                dst,
-                Value::RegExp(Rc::new(RefCell::new(RegExpValue::new(regex, *global)))),
-            );
+            let mut regexp = RegExpValue::new(regex, *global);
+            regexp.source = source.clone();
+            regexp.flags = flags.clone();
+            put(frame, dst, Value::RegExp(Rc::new(RefCell::new(regexp))));
         }
         DynOp::Jump { target } => return Ok(*target),
         DynOp::JumpIfFalse { test, target } if !get_ref(frame, *test).truthy() => {
@@ -9622,6 +9623,8 @@ mod tests {
             DynOp::RegExp {
                 dst: TEST_RESULT_REGISTER,
                 global: true,
+                source: TEST_PATTERN.to_owned(),
+                flags: "g".to_owned(),
                 kernel: RegExpLiteralKernel::compile(TEST_PATTERN, false),
             },
             DynOp::Return {

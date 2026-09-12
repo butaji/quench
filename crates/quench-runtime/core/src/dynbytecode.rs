@@ -371,6 +371,8 @@ pub enum DynOp {
     RegExp {
         dst: Register,
         global: bool,
+        source: String,
+        flags: String,
         kernel: RegExpLiteralKernel,
     },
     Jump {
@@ -1474,12 +1476,39 @@ impl Compiler {
             NewExpression(value) => self.new_expression(value),
             RegExpLiteral(value) => {
                 let dst = self.alloc()?;
+                let source = value
+                    .raw
+                    .as_ref()
+                    .and_then(|raw| {
+                        let raw = raw.as_str();
+                        raw.strip_prefix('/')
+                            .and_then(|body| body.rfind('/').map(|end| &body[..end]))
+                    })
+                    .unwrap_or(value.regex.pattern.text.as_str())
+                    .to_string();
+                let flags = [
+                    (RegExpFlags::D, 'd'),
+                    (RegExpFlags::G, 'g'),
+                    (RegExpFlags::I, 'i'),
+                    (RegExpFlags::M, 'm'),
+                    (RegExpFlags::S, 's'),
+                    (RegExpFlags::U, 'u'),
+                    (RegExpFlags::V, 'v'),
+                    (RegExpFlags::Y, 'y'),
+                ]
+                .into_iter()
+                .filter_map(|(flag, character)| {
+                    value.regex.flags.contains(flag).then_some(character)
+                })
+                .collect::<String>();
                 self.emit(
                     DynOp::RegExp {
                         dst,
                         global: value.regex.flags.contains(RegExpFlags::G),
+                        source: source.clone(),
+                        flags,
                         kernel: RegExpLiteralKernel::compile(
-                            value.regex.pattern.text.as_str(),
+                            &source,
                             value.regex.flags.contains(RegExpFlags::I),
                         ),
                     },
