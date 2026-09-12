@@ -15848,7 +15848,13 @@ fn native_object_assign(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value
             "Object.assign target is not an object",
         )));
     }
-    let target = if target_value.is_object() || target_value.is_function() {
+    // Symbol primitives use an object-tagged carrier in the compact value
+    // representation, but Object.assign must box them just like the other
+    // primitive targets. Keep the representation detail out of the generic
+    // object fast path.
+    let target = if (target_value.is_object() && !is_symbol_carrier(target_value))
+        || target_value.is_function()
+    {
         target_value.clone()
     } else {
         native_object(vm, Value::Undefined, std::slice::from_ref(target_value))?
