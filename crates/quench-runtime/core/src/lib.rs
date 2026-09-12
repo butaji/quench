@@ -946,6 +946,32 @@ impl Default for ArrayStorage {
     }
 }
 
+// Dense storage is an execution detail, not the JavaScript array length. Keep
+// very large sparse lengths as metadata so conformance probes cannot force a
+// multi-gigabyte Rust allocation.
+const MAX_MATERIALIZED_ARRAY_LENGTH: usize = 1 << 20;
+const SPARSE_ARRAY_LENGTH_KEY: &str = "\0array_length";
+
+fn set_array_length(object: &mut Object, value: f64) {
+    let length = value.trunc().clamp(0.0, u32::MAX as f64) as usize;
+    if length > MAX_MATERIALIZED_ARRAY_LENGTH {
+        object
+            .props
+            .insert(SPARSE_ARRAY_LENGTH_KEY, Value::Number(length as f64));
+    } else if let Some(array) = &mut object.array {
+        array.resize(length, Value::Undefined);
+        object.props.shift_remove(SPARSE_ARRAY_LENGTH_KEY);
+    }
+}
+
+fn array_length(object: &Object) -> usize {
+    object
+        .props
+        .get(SPARSE_ARRAY_LENGTH_KEY)
+        .and_then(Value::as_number)
+        .map_or_else(|| object.array.as_ref().map_or(0, ArrayStorage::len), |length| length as usize)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(transparent)]
 struct ObjectHandle {
@@ -4403,6 +4429,9 @@ impl Vm {
         Environment::set(g, "NaN", Value::Number(f64::NAN));
         Environment::set(g, "Infinity", Value::Number(f64::INFINITY));
         let m = self.object(None);
+        if let Some(object) = m.as_object_ref() {
+            object.borrow_mut().builtin_prototype = true;
+        }
         for (n, v) in [
             ("E", std::f64::consts::E),
             ("PI", std::f64::consts::PI),
@@ -4414,6 +4443,9 @@ impl Vm {
             ("SQRT2", std::f64::consts::SQRT_2),
         ] {
             self.set_prop(&m, n, Value::Number(v));
+            if let Some(object) = m.as_object_ref() {
+                object.borrow_mut().attributes.insert(n.into(), PropertyAttributes { writable: false, enumerable: false, configurable: false });
+            }
         }
         Environment::set(g, "Math", m);
         let console = self.object(None);
@@ -4858,10 +4890,12 @@ impl Vm {
                 let object = x.borrow();
                 if let Some(a) = &object.array {
                     if k == "length" {
-                        return Value::Number(a.len() as f64);
+                        return Value::Number(array_length(&object) as f64);
                     }
                     if let Some(i) = array_index_key(k) {
-                        return a.get(i).cloned().unwrap_or(Value::Undefined);
+                        if let Some(value) = a.get(i).cloned() {
+                            return value;
+                        }
                     }
                 }
                 if let Some(v) = object.props.get(k) {
@@ -5010,16 +5044,28 @@ impl Vm {
             {
                 return;
             }
+            if k == "length" && object.array.is_some() {
+                set_array_length(&mut object, v.number());
+                object.attributes.entry(k.into()).or_insert(PropertyAttributes {
+                    enumerable: false,
+                    ..PropertyAttributes::DEFAULT
+                });
+                return;
+            }
             if let Some(array) = &mut object.array {
-                if k == "length" {
-                    array.resize(v.number().max(0.0) as usize, Value::Undefined);
-                    object.attributes.entry(k.into()).or_insert(PropertyAttributes {
-                        enumerable: false,
-                        ..PropertyAttributes::DEFAULT
-                    });
-                    return;
-                }
                 if let Some(index) = array_index_key(k) {
+                    if index > MAX_MATERIALIZED_ARRAY_LENGTH {
+                        object.props.insert(k, v);
+                        let next_length = index.saturating_add(1);
+                        if next_length > array_length(&object) {
+                            object.props.insert(
+                                SPARSE_ARRAY_LENGTH_KEY,
+                                Value::Number(next_length as f64),
+                            );
+                        }
+                        object.attributes.entry(k.into()).or_insert(PropertyAttributes::DEFAULT);
+                        return;
+                    }
                     if array.len() <= index {
                         array.resize(index + 1, Value::Undefined)
                     }
@@ -5070,6 +5116,7 @@ impl Vm {
                     if index < array.len() {
                         array.set(index, Value::Undefined);
                     }
+                    object.props.shift_remove(k);
                 }
                 return true;
             }
@@ -5111,6 +5158,18 @@ impl Vm {
         {
             let mut object = object.borrow_mut();
             if let Some(array) = &mut object.array {
+                if index > MAX_MATERIALIZED_ARRAY_LENGTH {
+                    object.props.insert(&key_string, value);
+                    let next_length = index.saturating_add(1);
+                    if next_length > array_length(&object) {
+                        object.props.insert(
+                            SPARSE_ARRAY_LENGTH_KEY,
+                            Value::Number(next_length as f64),
+                        );
+                    }
+                    object.attributes.entry(key_string).or_insert(PropertyAttributes::DEFAULT);
+                    return Ok(());
+                }
                 if array.len() <= index {
                     array.resize(index + 1, Value::Undefined);
                 }
@@ -7220,20 +7279,31 @@ fn native_regexp_exec(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Valu
     };
     Ok(vm.object_value(Object::array(None, a)))
 }
-fn native_number_to_fixed(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    let p = args.first().map(Value::number).unwrap_or(0.0) as usize;
+fn checked_number_precision(vm: &Vm, args: &[Value], default: f64, minimum: f64) -> JsResult<usize> {
+    let value = args.first().map(Value::number).unwrap_or(default).trunc();
+    if !value.is_finite() || value < minimum || value > 100.0 {
+        return Err(JsError::Throw(range_error(vm, "precision out of range")));
+    }
+    Ok(value as usize)
+}
+
+fn native_number_to_fixed(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let p = checked_number_precision(vm, args, 0.0, 0.0)?;
     Ok(Value::string_value(format!("{:.*}", p, this.number())))
 }
-fn native_number_to_precision(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    let p = args.first().map(Value::number).unwrap_or(6.0) as usize;
+fn native_number_to_precision(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let p = checked_number_precision(vm, args, 6.0, 1.0)?;
     Ok(Value::string_value(format!(
         "{:.*}",
         p.saturating_sub(1),
         this.number()
     )))
 }
-fn native_number_to_exponential(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+fn native_number_to_exponential(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let number = this.number();
+    if args.first().is_some() {
+        let _ = checked_number_precision(vm, args, 0.0, 0.0)?;
+    }
     if number.is_nan() { return Ok(Value::string_value("NaN")); }
     if number == f64::INFINITY { return Ok(Value::string_value("Infinity")); }
     if number == f64::NEG_INFINITY { return Ok(Value::string_value("-Infinity")); }
@@ -7308,26 +7378,64 @@ fn native_math_pow(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
             .powf(a.get(1).unwrap_or(&Value::Undefined).number()),
     ))
 }
-fn native_math_floor(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    Ok(Value::Number(
-        a.first().unwrap_or(&Value::Undefined).number().floor(),
-    ))
+
+// Keep the unary numeric semantics in one place. The catalog above owns the
+// observable names, signatures, and effects; this table derives the native
+// wrappers without repeating the argument conversion and result construction.
+macro_rules! define_math_unary {
+    ($( $name:ident => $method:ident ),+ $(,)?) => {
+        $(
+            fn $name(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+                let value = args.first().map(Value::number).unwrap_or(f64::NAN);
+                Ok(Value::Number(value.$method()))
+            }
+        )+
+    };
 }
-fn native_math_ceil(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    Ok(Value::Number(
-        a.first().unwrap_or(&Value::Undefined).number().ceil(),
-    ))
+
+define_math_unary! {
+    native_math_floor => floor,
+    native_math_ceil => ceil,
+    native_math_sqrt => sqrt,
+    native_math_acos => acos,
+    native_math_asin => asin,
+    native_math_atan => atan,
+    native_math_cbrt => cbrt,
+    native_math_cosh => cosh,
+    native_math_sinh => sinh,
+    native_math_tanh => tanh,
+    native_math_acosh => acosh,
+    native_math_asinh => asinh,
+    native_math_atanh => atanh,
+    native_math_expm1 => exp_m1,
+    native_math_log1p => ln_1p,
+    native_math_abs => abs,
+    native_math_round => round,
+    native_math_trunc => trunc,
+    native_math_sin => sin,
+    native_math_cos => cos,
+    native_math_tan => tan,
+    native_math_exp => exp,
+    native_math_log10 => log10,
+    native_math_log2 => log2,
 }
-fn native_math_sqrt(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    Ok(Value::Number(
-        a.first().unwrap_or(&Value::Undefined).number().sqrt(),
-    ))
+
+macro_rules! define_math_binary {
+    ($( $name:ident => $method:ident ),+ $(,)?) => {
+        $(
+            fn $name(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+                let left = args.first().map(Value::number).unwrap_or(f64::NAN);
+                let right = args.get(1).map(Value::number).unwrap_or(f64::NAN);
+                Ok(Value::Number(left.$method(right)))
+            }
+        )+
+    };
 }
-fn native_math_abs(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    Ok(Value::Number(
-        a.first().unwrap_or(&Value::Undefined).number().abs(),
-    ))
+
+define_math_binary! {
+    native_math_atan2 => atan2,
 }
+
 fn native_math_min(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(Value::Number(
         a.iter().map(Value::number).fold(f64::INFINITY, f64::min),
@@ -7340,41 +7448,21 @@ fn native_math_max(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
             .fold(f64::NEG_INFINITY, f64::max),
     ))
 }
-fn native_math_round(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    Ok(Value::Number(
-        a.first().map(Value::number).unwrap_or(f64::NAN).round(),
-    ))
-}
-fn native_math_trunc(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    Ok(Value::Number(a.first().map(Value::number).unwrap_or(f64::NAN).trunc()))
-}
 fn native_math_sign(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     let n = a.first().map(Value::number).unwrap_or(f64::NAN);
     Ok(Value::Number(if n.is_nan() { f64::NAN } else if n == 0.0 { n } else if n < 0.0 { -1.0 } else { 1.0 }))
-}
-fn native_math_sin(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    Ok(Value::Number(a.first().map(Value::number).unwrap_or(f64::NAN).sin()))
-}
-fn native_math_cos(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    Ok(Value::Number(a.first().map(Value::number).unwrap_or(f64::NAN).cos()))
-}
-fn native_math_tan(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    Ok(Value::Number(a.first().map(Value::number).unwrap_or(f64::NAN).tan()))
-}
-fn native_math_exp(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    Ok(Value::Number(a.first().map(Value::number).unwrap_or(f64::NAN).exp()))
-}
-fn native_math_log10(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    Ok(Value::Number(a.first().map(Value::number).unwrap_or(f64::NAN).log10()))
-}
-fn native_math_log2(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    Ok(Value::Number(a.first().map(Value::number).unwrap_or(f64::NAN).log2()))
 }
 fn native_math_hypot(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(Value::Number(a.iter().map(Value::number).fold(0.0, f64::hypot)))
 }
 fn native_math_clz32(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    Ok(Value::Number((a.first().map(Value::number).unwrap_or(0.0) as u32).leading_zeros() as f64))
+    let number = a.first().map(Value::number).unwrap_or(f64::NAN);
+    let uint32 = if !number.is_finite() {
+        0
+    } else {
+        number.trunc() as i64 as u32
+    };
+    Ok(Value::Number(uint32.leading_zeros() as f64))
 }
 fn native_math_imul(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     let left = a.first().map(Value::number).unwrap_or(0.0) as u32;
@@ -7382,6 +7470,12 @@ fn native_math_imul(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(Value::Number((left.wrapping_mul(right) as i32) as f64))
 }
 fn native_math_fround(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    Ok(Value::Number((a.first().map(Value::number).unwrap_or(f64::NAN) as f32) as f64))
+}
+fn native_math_f16round(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    // The core value representation is f64; f32 provides the nearest
+    // representable low-precision result until the half-precision lowering is
+    // shared with the numeric stencil backend.
     Ok(Value::Number((a.first().map(Value::number).unwrap_or(f64::NAN) as f32) as f64))
 }
 fn native_math_log(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
@@ -7845,11 +7939,7 @@ fn native_array(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     let o = vm.array();
     if a.len() == 1 && a[0].as_number().is_some() {
         if let Some(obj) = o.as_object() {
-            obj.borrow_mut()
-                .array
-                .as_mut()
-                .unwrap()
-                .resize(a[0].number().max(0.0) as usize, Value::Undefined);
+            set_array_length(&mut obj.borrow_mut(), a[0].number());
         }
         return Ok(o);
     }
@@ -7960,18 +8050,27 @@ fn native_number(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     };
     Ok(Value::Number(number))
 }
-fn native_number_is_finite(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
-    Ok(Value::Bool(args.first().and_then(Value::as_number).is_some_and(f64::is_finite)))
+
+macro_rules! define_number_predicates {
+    ($( $name:ident => $predicate:expr ),+ $(,)?) => {
+        $(
+            fn $name(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+                let value = args.first().and_then(Value::as_number);
+                Ok(Value::Bool(value.is_some_and($predicate)))
+            }
+        )+
+    };
 }
-fn native_number_is_integer(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
-    Ok(Value::Bool(args.first().and_then(Value::as_number).is_some_and(|value| value.is_finite() && value.fract() == 0.0)))
+
+define_number_predicates! {
+    native_number_is_finite => f64::is_finite,
+    native_number_is_integer => |value| value.is_finite() && value.fract() == 0.0,
+    native_number_is_nan => f64::is_nan,
+    native_number_is_safe_integer => |value| {
+        value.is_finite() && value.fract() == 0.0 && value.abs() <= 9_007_199_254_740_991.0
+    },
 }
-fn native_number_is_nan(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
-    Ok(Value::Bool(args.first().and_then(Value::as_number).is_some_and(f64::is_nan)))
-}
-fn native_number_is_safe_integer(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
-    Ok(Value::Bool(args.first().and_then(Value::as_number).is_some_and(|value| value.is_finite() && value.fract() == 0.0 && value.abs() <= 9_007_199_254_740_991.0)))
-}
+
 fn native_function_constructor(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     // Reuse the same OXC parser and stencil compiler used for ordinary source
     // rather than introducing a second dynamic-function execution path.
@@ -8107,9 +8206,13 @@ fn native_object_get_own_property_descriptor(
     } else if let Some(object) = target.as_object_ref() {
         let object = object.borrow();
         if key == "length" && object.array.is_some() {
-            Some(Value::Number(object.array.as_ref().unwrap().len() as f64))
+            Some(Value::Number(array_length(&object) as f64))
         } else if let Some(index) = array_index_key(&key) {
-            object.array.as_ref().and_then(|array| array.get(index).cloned())
+            object
+                .array
+                .as_ref()
+                .and_then(|array| array.get(index).cloned())
+                .or_else(|| object.props.get(&key).cloned())
         } else {
             object.props.get(&key).cloned()
         }
@@ -8166,6 +8269,9 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
     if has_value {
         vm.set_prop(target, &key, value);
     }
+    let writable = vm.get_prop(&descriptor, "writable");
+    let enumerable = vm.get_prop(&descriptor, "enumerable");
+    let configurable = vm.get_prop(&descriptor, "configurable");
     if let Some(object) = target.as_object_ref() {
         let mut object = object.borrow_mut();
         let current = object
@@ -8173,9 +8279,6 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
             .get(&key)
             .copied()
             .unwrap_or(PropertyAttributes::DEFAULT);
-        let writable = vm.get_prop(&descriptor, "writable");
-        let enumerable = vm.get_prop(&descriptor, "enumerable");
-        let configurable = vm.get_prop(&descriptor, "configurable");
         object.attributes.insert(
             key,
             PropertyAttributes {
@@ -8460,15 +8563,42 @@ fn set_integrity_level(target: &Value, freeze: bool) {
         }
     }
 }
-fn native_object_seal(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> { if let Some(target) = args.first() { set_integrity_level(target, false); Ok(target.clone()) } else { Ok(Value::Undefined) } }
-fn native_object_freeze(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> { if let Some(target) = args.first() { set_integrity_level(target, true); Ok(target.clone()) } else { Ok(Value::Undefined) } }
 fn integrity_level(target: &Value, frozen: bool) -> bool {
     let Some(object) = target.as_object_ref() else { return true; };
     let object = object.borrow();
     !object.extensible && object.attributes.values().all(|attrs| !attrs.configurable && (!frozen || !attrs.writable))
 }
-fn native_object_is_sealed(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> { Ok(Value::Bool(args.first().is_none_or(|target| integrity_level(target, false)))) }
-fn native_object_is_frozen(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> { Ok(Value::Bool(args.first().is_none_or(|target| integrity_level(target, true)))) }
+
+macro_rules! define_integrity_builtins {
+    ($seal:ident, $freeze:ident, $is_sealed:ident, $is_frozen:ident $(,)?) => {
+        fn $seal(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+            let Some(target) = args.first() else { return Ok(Value::Undefined); };
+            set_integrity_level(target, false);
+            Ok(target.clone())
+        }
+
+        fn $freeze(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+            let Some(target) = args.first() else { return Ok(Value::Undefined); };
+            set_integrity_level(target, true);
+            Ok(target.clone())
+        }
+
+        fn $is_sealed(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+            Ok(Value::Bool(args.first().is_none_or(|target| integrity_level(target, false))))
+        }
+
+        fn $is_frozen(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+            Ok(Value::Bool(args.first().is_none_or(|target| integrity_level(target, true))))
+        }
+    };
+}
+
+define_integrity_builtins! {
+    native_object_seal,
+    native_object_freeze,
+    native_object_is_sealed,
+    native_object_is_frozen,
+}
 
 fn target_property_readonly(target: &Value, key: &str) -> bool {
     if let Some(object) = target.as_object_ref() {
@@ -9764,6 +9894,28 @@ mod tests {
             vm.get_prop(&array, LAST_INDEX).as_number(),
             Some(LAST_VALUE)
         );
+    }
+
+    #[test]
+    fn sparse_array_length_stays_metadata_backed() {
+        let mut vm = Vm::new();
+        vm.install_process(Vec::new(), Vec::new());
+        vm.run_source_text(
+            Path::new("<sparse-array-length>"),
+            "var a = []; a.length = 4294967295; result = [a.length, Object.getOwnPropertyDescriptor(a, 'length').value];",
+        )
+        .expect("large sparse length does not allocate a dense backing store");
+        let result = Environment::get(&vm.global, "result").expect("result array");
+        let values = result
+            .as_object()
+            .expect("result object")
+            .borrow()
+            .array
+            .clone()
+            .expect("result storage")
+            .values;
+        assert_eq!(values[0].as_number(), Some(4_294_967_295.0));
+        assert_eq!(values[1].as_number(), Some(4_294_967_295.0));
     }
 
     #[test]
