@@ -911,6 +911,16 @@ fn atomic_view(value: Option<&Value>) -> Option<AtomicView<'_>> {
         Value::Int16Array(v) => Some(AtomicView::Int16(v)),
         Value::Int32Array(v) => Some(AtomicView::Int32(v)),
         Value::Uint8Array(v) => Some(AtomicView::Uint8(v)),
+        // Float16Array uses the Uint16 storage representation internally but
+        // is not an integer typed array accepted by Atomics.
+        Value::Uint16Array(v)
+            if v.meta.property("\0float16_array").is_some()
+                || v.meta.prototype().is_some_and(|prototype| {
+                    matches!(
+                        crate::execute::get_property(&prototype, "\0float16_constructor"),
+                        Value::Boolean(true)
+                    )
+                }) => None,
         Value::Uint16Array(v) => Some(AtomicView::Uint16(v)),
         Value::Uint32Array(v) => Some(AtomicView::Uint32(v)),
         _ => None,
