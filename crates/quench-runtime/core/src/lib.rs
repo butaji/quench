@@ -10516,6 +10516,12 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
             "defineProperty target is undefined",
         )));
     };
+    if !target.is_object_like() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "defineProperty target is not an object",
+        )));
+    }
     let key = args.get(1).map(Value::string).unwrap_or_default();
     let descriptor = args.get(2).cloned().unwrap_or(Value::Undefined);
     if !descriptor.is_object_like() {
@@ -10662,6 +10668,12 @@ fn native_object_define_properties(vm: &mut Vm, _: Value, args: &[Value]) -> JsR
             "Object.defineProperties target is undefined",
         )));
     };
+    if !target.is_object_like() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "defineProperties target is not an object",
+        )));
+    }
     let descriptor_source = args.get(1).cloned().unwrap_or(Value::Undefined);
     if descriptor_source.is_null() || descriptor_source.is_undefined() {
         return Err(JsError::Throw(type_error(
