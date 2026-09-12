@@ -6063,6 +6063,12 @@ impl Vm {
             return true;
         }
         if let Some(function) = o.as_function_ref() {
+            // Every constructable function exposes an own, non-configurable
+            // `prototype` property. Its value may be replaced when writable,
+            // but the property itself must survive `delete`.
+            if k == "prototype" && constructable(o) {
+                return false;
+            }
             if matches!(
                 function.kind,
                 FunctionKind::Builtin(BuiltinId::NumberConstructor)
