@@ -1,0 +1,7306 @@
+{
+  "schema_version": 1,
+  "objective": "Reach a verified V8v7 score of at least 10000 with a general-purpose, stencil-only JavaScript VM and no benchmark-specific shortcuts.",
+  "status_values": [
+    "planned",
+    "in_progress",
+    "blocked",
+    "complete"
+  ],
+  "benchmark_gate": {
+    "suite": "V8 version 7 benchmark through js-engine-benchmark",
+    "minimum_score": 10000,
+    "script": "scripts/perf-cycle.sh",
+    "rules": [
+      "Use the complete supported V8v7 suite, not a benchmark-shaped subset.",
+      "Record correctness, score, binary identity, host metadata, and failures.",
+      "An implementation task is complete only after tests pass; an optimization is accepted only after an alternating A/B measurement."
+    ]
+  },
+  "items": [
+    {
+      "id": "00",
+      "file": "00-optimization-routine.md",
+      "title": "Repeatable optimization routine",
+      "status": "complete",
+      "depends_on": []
+    },
+    {
+      "id": "01",
+      "file": "01-stencil-category-core.md",
+      "title": "Composable stencil category core",
+      "status": "complete",
+      "depends_on": []
+    },
+    {
+      "id": "02",
+      "file": "02-rustc-aot-templates.md",
+      "title": "rustc/LLVM AOT stencil templates",
+      "status": "complete",
+      "depends_on": [
+        "01"
+      ]
+    },
+    {
+      "id": "03",
+      "file": "03-stencil-only-execution.md",
+      "title": "Stencil-only execution policy and coverage",
+      "status": "in_progress",
+      "depends_on": [
+        "01",
+        "02"
+      ]
+    },
+    {
+      "id": "04",
+      "file": "04-bytecode-coverage-map.md",
+      "title": "V8v7 source-to-stencil coverage map",
+      "status": "in_progress",
+      "depends_on": [
+        "03"
+      ]
+    },
+    {
+      "id": "05",
+      "file": "05-performance-harness.md",
+      "title": "Correctness and performance harness",
+      "status": "complete",
+      "depends_on": []
+    },
+    {
+      "id": "06",
+      "file": "06-word-sized-value.md",
+      "title": "Word-sized tagged Value",
+      "status": "complete",
+      "depends_on": [
+        "05"
+      ]
+    },
+    {
+      "id": "07",
+      "file": "07-hidden-classes.md",
+      "title": "Immutable hidden classes and fixed property slots",
+      "status": "in_progress",
+      "depends_on": [
+        "06"
+      ]
+    },
+    {
+      "id": "08",
+      "file": "08-property-inline-caches.md",
+      "title": "Shape-guarded property IC stencils",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "07"
+      ]
+    },
+    {
+      "id": "09",
+      "file": "09-object-memory-model.md",
+      "title": "Remove Rc/RefCell cost from object hot paths",
+      "status": "in_progress",
+      "depends_on": [
+        "06",
+        "07"
+      ]
+    },
+    {
+      "id": "10",
+      "file": "10-specialized-arithmetic.md",
+      "title": "Guarded arithmetic and comparison stencils",
+      "status": "planned",
+      "depends_on": [
+        "06",
+        "02"
+      ]
+    },
+    {
+      "id": "11",
+      "file": "11-string-representation.md",
+      "title": "Interned keys and efficient strings",
+      "status": "planned",
+      "depends_on": [
+        "06"
+      ]
+    },
+    {
+      "id": "12",
+      "file": "12-array-fast-path.md",
+      "title": "Direct dense-array paths",
+      "status": "complete",
+      "depends_on": [
+        "06",
+        "08"
+      ]
+    },
+    {
+      "id": "13",
+      "file": "13-environment-frames.md",
+      "title": "Cached lexical resolution and non-escaping frames",
+      "status": "complete",
+      "depends_on": [
+        "06"
+      ]
+    },
+    {
+      "id": "14",
+      "file": "14-code-image-reuse.md",
+      "title": "Function image and linked stencil reuse",
+      "status": "in_progress",
+      "depends_on": [
+        "02",
+        "03"
+      ]
+    },
+    {
+      "id": "15",
+      "file": "15-v8v7-10000-gate.md",
+      "title": "Full-suite 10000 acceptance gate",
+      "status": "in_progress",
+      "depends_on": [
+        "03",
+        "04",
+        "05",
+        "06",
+        "07",
+        "08",
+        "09",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "21",
+        "24",
+        "31",
+        "32",
+        "33",
+        "34",
+        "36",
+        "37",
+        "38"
+      ]
+    },
+    {
+      "id": "16",
+      "file": "16-kernel-dedup-by-identity.md",
+      "title": "Shared-kernel deduplication by structural identity",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "14"
+      ]
+    },
+    {
+      "id": "17",
+      "file": "17-seq-flatten-linear-link.md",
+      "title": "Linear-time Seq flattening at link time",
+      "status": "planned",
+      "depends_on": [
+        "01"
+      ]
+    },
+    {
+      "id": "18",
+      "file": "18-identity-erasure-peephole.md",
+      "title": "Identity-node erasure as a proven peephole pass",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "17"
+      ]
+    },
+    {
+      "id": "19",
+      "file": "19-guard-typed-connectors.md",
+      "title": "Guard-typed connectors for arithmetic chains",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "10"
+      ]
+    },
+    {
+      "id": "20",
+      "file": "20-inline-via-node-composition.md",
+      "title": "Cross-function inlining as deferred node composition",
+      "status": "in_progress",
+      "depends_on": [
+        "01",
+        "14"
+      ]
+    },
+    {
+      "id": "21",
+      "file": "21-loop-invariant-hoist-associativity.md",
+      "title": "Loop-invariant hoisting via associativity",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "13"
+      ]
+    },
+    {
+      "id": "22",
+      "file": "22-osr-tier-transition.md",
+      "title": "OSR as a natural transformation between tier functors",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "03"
+      ]
+    },
+    {
+      "id": "23",
+      "file": "23-egraph-rewriting.md",
+      "title": "Quotient-category rewriting (e-graph style)",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "17",
+        "18"
+      ]
+    },
+    {
+      "id": "24",
+      "file": "24-escape-analysis-scalar-replacement.md",
+      "title": "Escape analysis and scalar replacement",
+      "status": "planned",
+      "depends_on": [
+        "07",
+        "09",
+        "19"
+      ]
+    },
+    {
+      "id": "25",
+      "file": "25-generalized-speculative-guards.md",
+      "title": "Generalized speculative guard connectors",
+      "status": "planned",
+      "depends_on": [
+        "19",
+        "08",
+        "12"
+      ]
+    },
+    {
+      "id": "26",
+      "file": "26-pgo-morphism-selection.md",
+      "title": "Feedback-directed morphism selection",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "25"
+      ]
+    },
+    {
+      "id": "27",
+      "file": "27-callsite-devirtualization.md",
+      "title": "Call-site devirtualization via monomorphic call guards",
+      "status": "complete",
+      "depends_on": [
+        "25",
+        "08",
+        "20"
+      ]
+    },
+    {
+      "id": "28",
+      "file": "28-profile-driven-block-layout.md",
+      "title": "Profile-driven branch composition order",
+      "status": "planned",
+      "depends_on": [
+        "26"
+      ]
+    },
+    {
+      "id": "29",
+      "file": "29-induction-variable-strength-reduction.md",
+      "title": "Induction-variable strength reduction",
+      "status": "planned",
+      "depends_on": [
+        "23",
+        "21"
+      ]
+    },
+    {
+      "id": "30",
+      "file": "30-stencil-register-allocation-quality.md",
+      "title": "Register allocation quality within stencils",
+      "status": "planned",
+      "depends_on": [
+        "02",
+        "05"
+      ]
+    },
+    {
+      "id": "31",
+      "file": "31-bounded-polymorphic-guards.md",
+      "title": "Bounded-polymorphic guard caches (2-4 shapes/targets)",
+      "status": "complete",
+      "depends_on": [
+        "25",
+        "08"
+      ]
+    },
+    {
+      "id": "32",
+      "file": "32-element-kind-guarded-arrays.md",
+      "title": "Element-kind-guarded array connector",
+      "status": "complete",
+      "depends_on": [
+        "25",
+        "12",
+        "09",
+        "21"
+      ]
+    },
+    {
+      "id": "33",
+      "file": "33-allocation-site-escape-analysis.md",
+      "title": "Allocation-site escape analysis for short-lived value objects",
+      "status": "planned",
+      "depends_on": [
+        "24"
+      ]
+    },
+    {
+      "id": "34",
+      "file": "34-coproduct-tag-dispatch.md",
+      "title": "Coproduct-typed tag dispatch for interpreter-style megamorphic code",
+      "status": "planned",
+      "depends_on": [
+        "19",
+        "25"
+      ]
+    },
+    {
+      "id": "35",
+      "file": "35-closure-callback-call-caching.md",
+      "title": "Closure-callback call-target caching",
+      "status": "planned",
+      "depends_on": [
+        "27"
+      ]
+    },
+    {
+      "id": "36",
+      "file": "36-direct-opcode-stencils.md",
+      "title": "Direct rustc/LLVM opcode stencils",
+      "status": "in_progress",
+      "depends_on": [
+        "02",
+        "06",
+        "08",
+        "10"
+      ]
+    },
+    {
+      "id": "37",
+      "file": "37-aot-template-coverage-by-frequency.md",
+      "title": "Expand AOT template coverage ranked by measured frequency",
+      "status": "in_progress",
+      "depends_on": [
+        "02",
+        "05",
+        "36"
+      ]
+    },
+    {
+      "id": "38",
+      "file": "38-cycle-aware-memory-reclamation.md",
+      "title": "Cycle-aware memory reclamation",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "24",
+        "33"
+      ]
+    },
+    {
+      "id": "39",
+      "file": "39-vectorized-numeric-stencils.md",
+      "title": "Vectorized stencils for packed-numeric loops",
+      "status": "planned",
+      "depends_on": [
+        "02",
+        "32",
+        "05"
+      ]
+    },
+    {
+      "id": "40",
+      "file": "40-parallel-ahead-of-link-compilation.md",
+      "title": "Parallel, speculative ahead-of-link compilation",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "14"
+      ]
+    },
+    {
+      "id": "41",
+      "file": "41-flattened-closure-capture.md",
+      "title": "Flattened closure capture instead of Environment-chain walks",
+      "status": "planned",
+      "depends_on": [
+        "13",
+        "35",
+        "24"
+      ]
+    },
+    {
+      "id": "42",
+      "file": "42-whole-program-hash-consing.md",
+      "title": "Whole-program structural hash-consing of stencil nodes",
+      "status": "planned",
+      "depends_on": [
+        "14",
+        "20",
+        "23"
+      ]
+    },
+    {
+      "id": "43",
+      "file": "43-aot-codegen-quality-audit.md",
+      "title": "Codegen-quality audit of the rustc/LLVM extraction pipeline",
+      "status": "in_progress",
+      "depends_on": [
+        "02",
+        "30"
+      ]
+    },
+    {
+      "id": "44",
+      "file": "44-per-task-regression-gate.md",
+      "title": "Standing per-task A/B regression gate",
+      "status": "planned",
+      "depends_on": [
+        "05"
+      ]
+    },
+    {
+      "id": "45",
+      "file": "45-no-tier-first-execution.md",
+      "title": "No-tier first execution: near-optimized code on first run",
+      "status": "planned",
+      "depends_on": [
+        "03",
+        "19",
+        "25",
+        "31",
+        "04"
+      ]
+    },
+    {
+      "id": "46",
+      "file": "46-closed-world-mode.md",
+      "title": "Closed-world program mode and whole-program colimit pass",
+      "status": "planned",
+      "depends_on": [
+        "07",
+        "08",
+        "20",
+        "42"
+      ]
+    },
+    {
+      "id": "47",
+      "file": "47-compile-time-guard-elision.md",
+      "title": "Compile-time guard elision for provably stable bindings",
+      "status": "planned",
+      "depends_on": [
+        "46",
+        "19",
+        "25",
+        "31"
+      ]
+    },
+    {
+      "id": "48",
+      "file": "48-submorphism-repatch-on-guard-miss.md",
+      "title": "Sub-morphism-scoped re-specialization on guard failure",
+      "status": "planned",
+      "depends_on": [
+        "25",
+        "31",
+        "17",
+        "16"
+      ]
+    },
+    {
+      "id": "49",
+      "file": "49-law-tested-rewrite-gate.md",
+      "title": "Category-law test required for every new rewrite rule",
+      "status": "planned",
+      "depends_on": [
+        "23",
+        "01",
+        "44"
+      ]
+    },
+    {
+      "id": "50",
+      "file": "50-deployment-scaled-specialization-budget.md",
+      "title": "Deployment-mode-scaled specialization budgets",
+      "status": "planned",
+      "depends_on": [
+        "31",
+        "20",
+        "39"
+      ]
+    },
+    {
+      "id": "51",
+      "file": "51-legacy-free-value-representation-audit.md",
+      "title": "Legacy-free Value/object representation consolidation audit",
+      "status": "planned",
+      "depends_on": [
+        "06",
+        "07",
+        "09",
+        "11"
+      ]
+    },
+    {
+      "id": "52",
+      "file": "52-maximize-aot-codegen-power.md",
+      "title": "Maximize rustc/LLVM codegen power in the AOT stencil-cooking step",
+      "status": "in_progress",
+      "depends_on": [
+        "02",
+        "43",
+        "05"
+      ]
+    },
+    {
+      "id": "53",
+      "file": "53-bidirectional-stencil-cooking.md",
+      "title": "Bidirectional stencil cooking: AST demand meets LLVM capability",
+      "status": "planned",
+      "depends_on": [
+        "04",
+        "37",
+        "43",
+        "52",
+        "54"
+      ]
+    },
+    {
+      "id": "54",
+      "file": "54-llvm-capability-catalog.md",
+      "title": "LLVM capability catalog for stencil cooking",
+      "status": "planned",
+      "depends_on": [
+        "02",
+        "36"
+      ]
+    },
+    {
+      "id": "55",
+      "file": "55-architecture-target-matrix.md",
+      "title": "Architecture target matrix and stencil-ABI abstraction boundary",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "02"
+      ]
+    },
+    {
+      "id": "56",
+      "file": "56-x86-64-sysv-backend.md",
+      "title": "x86-64 System V stencil backend (Linux)",
+      "status": "planned",
+      "depends_on": [
+        "55",
+        "54"
+      ]
+    },
+    {
+      "id": "57",
+      "file": "57-jit-memory-portability.md",
+      "title": "Runtime page-size and JIT-memory-permission portability",
+      "status": "planned",
+      "depends_on": [
+        "55"
+      ]
+    },
+    {
+      "id": "58",
+      "file": "58-borrowed-native-arguments.md",
+      "title": "Borrowed native-kernel argument ABI",
+      "status": "complete",
+      "depends_on": [
+        "05",
+        "13"
+      ]
+    },
+    {
+      "id": "59",
+      "file": "59-colima-docker-linux-environment.md",
+      "title": "Colima/Docker-based Linux dev and CI environment",
+      "status": "planned",
+      "depends_on": [
+        "55",
+        "57"
+      ]
+    },
+    {
+      "id": "60",
+      "file": "60-galois-connection-guard-elision.md",
+      "title": "Formalize guard-elision analyses as a Galois connection",
+      "status": "planned",
+      "depends_on": [
+        "46",
+        "47"
+      ]
+    },
+    {
+      "id": "61",
+      "file": "61-confluence-critical-pair-check.md",
+      "title": "Confluence/critical-pair check for the rewrite-rule set",
+      "status": "planned",
+      "depends_on": [
+        "23",
+        "49",
+        "01"
+      ]
+    },
+    {
+      "id": "62",
+      "file": "62-pluggable-cost-extraction.md",
+      "title": "Pluggable cost-based extraction, separated from rewrite-rule construction",
+      "status": "planned",
+      "depends_on": [
+        "23",
+        "54",
+        "55"
+      ]
+    },
+    {
+      "id": "63",
+      "file": "63-dialect-lattice-lowering.md",
+      "title": "Explicit intermediate dialect between AST and per-architecture machine code",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "54",
+        "55",
+        "56"
+      ]
+    },
+    {
+      "id": "64",
+      "file": "64-commutative-parallel-composition.md",
+      "title": "Lock-free parallel composition for provably commutative sub-morphisms",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "17",
+        "40"
+      ]
+    },
+    {
+      "id": "65",
+      "file": "65-composed-property-lens.md",
+      "title": "Composed property-access lens for chained access",
+      "status": "planned",
+      "depends_on": [
+        "08",
+        "31"
+      ]
+    },
+    {
+      "id": "66",
+      "file": "66-normal-form-checkpoint.md",
+      "title": "Canonical normal form checkpoint for the quotient category",
+      "status": "planned",
+      "depends_on": [
+        "17",
+        "18",
+        "23",
+        "61",
+        "62",
+        "64"
+      ]
+    },
+    {
+      "id": "67",
+      "file": "67-egraph-as-primary-strategy.md",
+      "title": "Equality saturation as the primary optimization strategy",
+      "status": "planned",
+      "depends_on": [
+        "23",
+        "61",
+        "66"
+      ]
+    },
+    {
+      "id": "68",
+      "file": "68-dependence-graph-ir.md",
+      "title": "Dependence-graph IR generalizing StencilNode from a tree",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "64",
+        "29"
+      ]
+    },
+    {
+      "id": "69",
+      "file": "69-supercompilation-colimit.md",
+      "title": "Whole-program supercompilation via categorical colimit over the call graph",
+      "status": "planned",
+      "depends_on": [
+        "46",
+        "20",
+        "66"
+      ]
+    },
+    {
+      "id": "70",
+      "file": "70-polyhedral-loop-adjunction.md",
+      "title": "Polyhedral loop transformation as a categorical adjunction",
+      "status": "planned",
+      "depends_on": [
+        "21",
+        "29",
+        "60"
+      ]
+    },
+    {
+      "id": "71",
+      "file": "71-algebraic-effects-control-flow.md",
+      "title": "Algebraic-effect representation for exceptions, generators, and async",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "04"
+      ]
+    },
+    {
+      "id": "72",
+      "file": "72-staged-compilation-dialect-mirror.md",
+      "title": "Staged compilation mirroring LLVM's own IR staging",
+      "status": "planned",
+      "depends_on": [
+        "63",
+        "53",
+        "54"
+      ]
+    },
+    {
+      "id": "73",
+      "file": "73-gradual-typing-completeness-bound.md",
+      "title": "Gradual-typing completeness bound for guard elision",
+      "status": "planned",
+      "depends_on": [
+        "60",
+        "46",
+        "47"
+      ]
+    },
+    {
+      "id": "74",
+      "file": "74-var-binding-semantics.md",
+      "title": "Correct hoisted var binding and parameter redeclaration semantics",
+      "status": "complete",
+      "depends_on": [
+        "03",
+        "04"
+      ]
+    },
+    {
+      "id": "75",
+      "file": "75-instruction-budget-diagnostics.md",
+      "title": "Instruction-budget diagnostics for stencil nontermination",
+      "status": "complete",
+      "depends_on": [
+        "03",
+        "05"
+      ]
+    },
+    {
+      "id": "76",
+      "file": "76-noncapturing-stack-frames.md",
+      "title": "Non-capturing stack-frame representation",
+      "status": "planned",
+      "depends_on": [
+        "13",
+        "24",
+        "41",
+        "44"
+      ]
+    },
+    {
+      "id": "77",
+      "file": "77-nullish-property-errors.md",
+      "title": "Correct nullish property-access errors",
+      "status": "complete",
+      "depends_on": [
+        "03",
+        "08"
+      ]
+    },
+    {
+      "id": "78",
+      "file": "78-verify-explicit-tail-calls.md",
+      "title": "Verify explicit tail calls across all stencil dispatch points",
+      "status": "complete",
+      "depends_on": [
+        "36",
+        "30"
+      ]
+    },
+    {
+      "id": "79",
+      "file": "79-constant-operand-stencil-variants.md",
+      "title": "Constant-operand stencil variants for macro-generated arithmetic",
+      "status": "planned",
+      "depends_on": [
+        "10",
+        "30",
+        "52"
+      ]
+    },
+    {
+      "id": "80",
+      "file": "80-persisted-linked-image-cache.md",
+      "title": "Persisted cross-run linked-image cache",
+      "status": "planned",
+      "depends_on": [
+        "46",
+        "50",
+        "14"
+      ]
+    },
+    {
+      "id": "81",
+      "file": "81-per-opcode-profiling-symbols.md",
+      "title": "Per-opcode profiling symbols",
+      "status": "planned",
+      "depends_on": [
+        "36",
+        "05"
+      ]
+    },
+    {
+      "id": "82",
+      "file": "82-variant-and-cache-stats-counters.md",
+      "title": "Stencil-variant and image-cache counters in DEEGEN_JIT_STATS",
+      "status": "planned",
+      "depends_on": [
+        "79",
+        "80",
+        "05",
+        "44"
+      ]
+    },
+    {
+      "id": "83",
+      "file": "83-runtime-block-frequency-profile.md",
+      "title": "Runtime semantic basic-block frequency profile",
+      "status": "complete",
+      "depends_on": [
+        "05",
+        "36"
+      ]
+    },
+    {
+      "id": "84",
+      "file": "84-dead-result-condition-stencils.md",
+      "title": "Dead-result fused condition stencils",
+      "status": "complete",
+      "depends_on": [
+        "10",
+        "36",
+        "79",
+        "83"
+      ]
+    },
+    {
+      "id": "85",
+      "file": "85-direct-selection-observability.md",
+      "title": "Direct stencil selection observability",
+      "status": "complete",
+      "depends_on": [
+        "05",
+        "36",
+        "83"
+      ]
+    },
+    {
+      "id": "86",
+      "file": "86-fused-local-recurrence-stencils.md",
+      "title": "Fused local numeric recurrence stencils",
+      "status": "complete",
+      "depends_on": [
+        "10",
+        "36",
+        "83",
+        "84"
+      ]
+    },
+    {
+      "id": "87",
+      "file": "87-regexp-stencil-compilation.md",
+      "title": "RegExp pattern compiled to a native matcher stencil",
+      "status": "planned",
+      "depends_on": [
+        "02",
+        "36",
+        "16"
+      ]
+    },
+    {
+      "id": "88",
+      "file": "88-iterator-protocol-fast-path.md",
+      "title": "Iterator-protocol fast-path stencils for for-of and spread",
+      "status": "planned",
+      "depends_on": [
+        "32",
+        "27"
+      ]
+    },
+    {
+      "id": "89",
+      "file": "89-global-binding-inline-cache.md",
+      "title": "Effect-refreshed captured/global binding snapshots",
+      "status": "complete",
+      "depends_on": [
+        "13",
+        "19",
+        "36",
+        "71",
+        "83",
+        "84"
+      ]
+    },
+    {
+      "id": "90",
+      "file": "90-array-higher-order-fusion.md",
+      "title": "Array higher-order method fusion (map/filter/forEach/reduce)",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "32",
+        "35",
+        "24",
+        "33"
+      ]
+    },
+    {
+      "id": "91",
+      "file": "91-map-set-hash-table-stencils.md",
+      "title": "Map/Set open-addressing hash-table stencils",
+      "status": "planned",
+      "depends_on": [
+        "06",
+        "11"
+      ]
+    },
+    {
+      "id": "92",
+      "file": "92-destructuring-spread-direct-lowering.md",
+      "title": "Direct stencil lowering for destructuring and spread",
+      "status": "planned",
+      "depends_on": [
+        "08",
+        "32",
+        "07",
+        "88"
+      ]
+    },
+    {
+      "id": "93",
+      "file": "93-zero-overhead-diagnostic-kernels.md",
+      "title": "Zero-overhead diagnostic block kernels",
+      "status": "complete",
+      "depends_on": [
+        "05",
+        "36",
+        "83"
+      ]
+    },
+    {
+      "id": "94",
+      "file": "94-inline-semantic-executor-kernel.md",
+      "title": "Inline the semantic executor into block kernels",
+      "status": "complete",
+      "depends_on": [
+        "36",
+        "93",
+        "43"
+      ]
+    },
+    {
+      "id": "95",
+      "file": "95-inline-binary-dispatch-kernel.md",
+      "title": "Inline binary dispatch into the semantic kernel",
+      "status": "complete",
+      "depends_on": [
+        "10",
+        "43",
+        "94"
+      ]
+    },
+    {
+      "id": "96",
+      "file": "96-guarded-numeric-binary-kernel.md",
+      "title": "Guarded numeric binary fast kernel",
+      "status": "complete",
+      "depends_on": [
+        "06",
+        "10",
+        "36",
+        "94",
+        "95"
+      ]
+    },
+    {
+      "id": "97",
+      "file": "97-inline-register-write-barrier.md",
+      "title": "Inline the register write barrier",
+      "status": "complete",
+      "depends_on": [
+        "06",
+        "43",
+        "94"
+      ]
+    },
+    {
+      "id": "98",
+      "file": "98-inline-literal-construction.md",
+      "title": "Inline literal construction",
+      "status": "complete",
+      "depends_on": [
+        "06",
+        "43",
+        "94"
+      ]
+    },
+    {
+      "id": "99",
+      "file": "99-inline-dense-array-connector.md",
+      "title": "Inline the dense-array computed-access connector",
+      "status": "complete",
+      "depends_on": [
+        "12",
+        "32",
+        "43",
+        "94"
+      ]
+    },
+    {
+      "id": "100",
+      "file": "100-immediate-slot-overwrite.md",
+      "title": "Ownership-aware immediate slot overwrite",
+      "status": "complete",
+      "depends_on": [
+        "06",
+        "09",
+        "12",
+        "43",
+        "97"
+      ]
+    },
+    {
+      "id": "101",
+      "file": "101-immediate-literal-construction.md",
+      "title": "Split immediate and allocating literal construction",
+      "status": "complete",
+      "depends_on": [
+        "06",
+        "43",
+        "98",
+        "100"
+      ]
+    },
+    {
+      "id": "102",
+      "file": "102-reject-unrepresented-aot-relocations.md",
+      "title": "Reject unrepresented AOT stencil relocations",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "43",
+        "52"
+      ]
+    },
+    {
+      "id": "103",
+      "file": "103-owned-slot-overwrite.md",
+      "title": "Ownership-aware environment and property slot overwrite",
+      "status": "complete",
+      "depends_on": [
+        "07",
+        "09",
+        "13",
+        "100"
+      ]
+    },
+    {
+      "id": "104",
+      "file": "104-borrowed-code-image-dispatch.md",
+      "title": "Borrow linked code images during calls",
+      "status": "complete",
+      "depends_on": [
+        "09",
+        "14",
+        "43"
+      ]
+    },
+    {
+      "id": "105",
+      "file": "105-split-dense-read-coproduct.md",
+      "title": "Split dense computed-read fast path from generic fallback",
+      "status": "complete",
+      "depends_on": [
+        "12",
+        "32",
+        "43",
+        "99"
+      ]
+    },
+    {
+      "id": "106",
+      "file": "106-cleared-slot-pool-invariant.md",
+      "title": "Cleared slot invariant for register and environment pools",
+      "status": "complete",
+      "depends_on": [
+        "09",
+        "13",
+        "43",
+        "100",
+        "103"
+      ]
+    },
+    {
+      "id": "107",
+      "file": "107-name-snapshot-slot-pool.md",
+      "title": "Reuse name-snapshot value storage",
+      "status": "complete",
+      "depends_on": [
+        "13",
+        "89",
+        "106"
+      ]
+    },
+    {
+      "id": "108",
+      "file": "108-batched-call-binding-initialization.md",
+      "title": "Batched call-binding initialization",
+      "status": "complete",
+      "depends_on": [
+        "13",
+        "74",
+        "103",
+        "106"
+      ]
+    },
+    {
+      "id": "109",
+      "file": "109-normalized-basic-block-stencil-vocabulary.md",
+      "title": "Normalized basic-block stencil vocabulary",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "17",
+        "23",
+        "32",
+        "36",
+        "37",
+        "43",
+        "108"
+      ]
+    },
+    {
+      "id": "110",
+      "file": "110-constant-condition-control-stencils.md",
+      "title": "Constant-condition control stencils",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "17",
+        "23",
+        "36",
+        "83",
+        "109"
+      ]
+    },
+    {
+      "id": "111",
+      "file": "111-owned-register-pool-invariant.md",
+      "title": "Ownership-only clearing for pooled virtual registers",
+      "status": "complete",
+      "depends_on": [
+        "06",
+        "09",
+        "97",
+        "100",
+        "106",
+        "110"
+      ]
+    },
+    {
+      "id": "112",
+      "file": "112-sparse-owned-register-set.md",
+      "title": "Sparse owned-register set",
+      "status": "complete",
+      "depends_on": [
+        "06",
+        "09",
+        "97",
+        "100",
+        "106",
+        "111"
+      ]
+    },
+    {
+      "id": "113",
+      "file": "113-static-store-run-kernel.md",
+      "title": "Static-property store-run kernel",
+      "status": "complete",
+      "depends_on": [
+        "07",
+        "08",
+        "09",
+        "17",
+        "36",
+        "83",
+        "94",
+        "110"
+      ]
+    },
+    {
+      "id": "114",
+      "file": "114-dead-local-local-condition-stencils.md",
+      "title": "Dead local/local numeric condition stencils",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "10",
+        "17",
+        "36",
+        "37",
+        "83",
+        "84",
+        "110",
+        "113"
+      ]
+    },
+    {
+      "id": "115",
+      "file": "115-validated-local-context-stencils.md",
+      "title": "Validated-local context for AOT stencils",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "13",
+        "17",
+        "36",
+        "43",
+        "84",
+        "86",
+        "110",
+        "114"
+      ]
+    },
+    {
+      "id": "116",
+      "file": "116-compact-inline-site-layout.md",
+      "title": "Compact 32-byte inline-site layout",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "06",
+        "17",
+        "36",
+        "43",
+        "83",
+        "110",
+        "114",
+        "115"
+      ]
+    },
+    {
+      "id": "117",
+      "file": "117-composable-subblock-stencil-regions.md",
+      "title": "Composable sub-block stencil regions",
+      "status": "complete",
+      "depends_on": [
+        "01",
+        "02",
+        "17",
+        "36",
+        "37",
+        "43",
+        "83",
+        "84",
+        "86",
+        "110"
+      ]
+    },
+    {
+      "id": "118",
+      "file": "118-borrowed-numeric-stencil-arguments.md",
+      "title": "Borrowed numeric stencil arguments",
+      "status": "complete",
+      "depends_on": [
+        "03",
+        "05",
+        "06",
+        "14",
+        "58",
+        "110"
+      ]
+    },
+    {
+      "id": "119",
+      "file": "119-owned-static-property-ic-write.md",
+      "title": "Owned static-property IC write",
+      "status": "complete",
+      "depends_on": [
+        "06",
+        "07",
+        "08",
+        "09",
+        "43",
+        "94",
+        "103",
+        "110"
+      ]
+    },
+    {
+      "id": "120",
+      "file": "120-typed-numeric-dense-region-ir.md",
+      "title": "Typed numeric/dense region IR",
+      "status": "complete",
+      "depends_on": [
+        "01",
+        "17",
+        "23",
+        "32",
+        "37",
+        "68",
+        "83",
+        "117"
+      ]
+    },
+    {
+      "id": "121",
+      "file": "121-hoisted-numeric-dense-guard.md",
+      "title": "Hoisted numeric/dense guard connector",
+      "status": "complete",
+      "depends_on": [
+        "07",
+        "09",
+        "12",
+        "19",
+        "21",
+        "25",
+        "32",
+        "120"
+      ]
+    },
+    {
+      "id": "122",
+      "file": "122-rustc-aot-numeric-region-templates.md",
+      "title": "rustc/LLVM AOT numeric-region templates",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "30",
+        "43",
+        "52",
+        "54",
+        "102",
+        "120",
+        "121"
+      ]
+    },
+    {
+      "id": "123",
+      "file": "123-traced-numeric-dense-loop-stencil.md",
+      "title": "Traced numeric/dense loop stencil",
+      "status": "complete",
+      "depends_on": [
+        "01",
+        "05",
+        "14",
+        "17",
+        "21",
+        "32",
+        "120",
+        "121",
+        "122"
+      ]
+    },
+    {
+      "id": "124",
+      "file": "124-traced-pure-numeric-loop-stencils.md",
+      "title": "Traced pure-numeric loop stencils",
+      "status": "complete",
+      "depends_on": [
+        "05",
+        "10",
+        "120",
+        "121",
+        "122",
+        "123"
+      ]
+    },
+    {
+      "id": "125",
+      "file": "125-borrowed-callee-dispatch.md",
+      "title": "Borrowed callee dispatch",
+      "status": "complete",
+      "depends_on": [
+        "06",
+        "13",
+        "43",
+        "104"
+      ]
+    },
+    {
+      "id": "126",
+      "file": "126-local-catch-binding.md",
+      "title": "Local catch binding in stack frames",
+      "status": "complete",
+      "depends_on": [
+        "03",
+        "13",
+        "74"
+      ]
+    },
+    {
+      "id": "127",
+      "file": "127-static-owned-local-reset.md",
+      "title": "Static ownership set for local-frame reset",
+      "status": "complete",
+      "depends_on": [
+        "06",
+        "13",
+        "100",
+        "106",
+        "111",
+        "112",
+        "125"
+      ]
+    },
+    {
+      "id": "128",
+      "file": "128-effectful-region-vocabulary.md",
+      "title": "Effectful coarse-region stencil vocabulary",
+      "status": "in_progress",
+      "depends_on": [
+        "01",
+        "02",
+        "08",
+        "17",
+        "20",
+        "32",
+        "36",
+        "37",
+        "83",
+        "94",
+        "109",
+        "117",
+        "120",
+        "123",
+        "124"
+      ]
+    },
+    {
+      "id": "129",
+      "file": "129-guarded-property-slot-view.md",
+      "title": "Guarded numeric property-slot view",
+      "status": "complete",
+      "depends_on": [
+        "06",
+        "07",
+        "08",
+        "09",
+        "12",
+        "19",
+        "25",
+        "43",
+        "121",
+        "128"
+      ]
+    },
+    {
+      "id": "130",
+      "file": "130-static-property-region-stencils.md",
+      "title": "Static-property numeric region stencils",
+      "status": "complete",
+      "depends_on": [
+        "01",
+        "02",
+        "08",
+        "17",
+        "36",
+        "43",
+        "102",
+        "120",
+        "121",
+        "122",
+        "128",
+        "129"
+      ]
+    },
+    {
+      "id": "131",
+      "file": "131-shared-effect-reentry-kernel.md",
+      "title": "Shared one-step effect reentry kernel",
+      "status": "complete",
+      "depends_on": [
+        "01",
+        "02",
+        "03",
+        "17",
+        "20",
+        "36",
+        "43",
+        "94",
+        "102",
+        "128"
+      ]
+    },
+    {
+      "id": "132",
+      "file": "132-residual-generic-block-profiler.md",
+      "title": "Residual generic-block profiler under stencil selection",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "03",
+        "05",
+        "93",
+        "128",
+        "131"
+      ]
+    },
+    {
+      "id": "133",
+      "file": "133-owned-register-return-stencil.md",
+      "title": "Ownership-transferring register return stencil",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "03",
+        "06",
+        "09",
+        "36",
+        "43",
+        "100",
+        "106",
+        "127",
+        "132"
+      ]
+    },
+    {
+      "id": "134",
+      "file": "134-nonescaping-local-return-stencil.md",
+      "title": "Non-escaping local ownership return stencil",
+      "status": "complete",
+      "depends_on": [
+        "13",
+        "24",
+        "100",
+        "106",
+        "125",
+        "127",
+        "132",
+        "133"
+      ]
+    },
+    {
+      "id": "135",
+      "file": "135-shape-hash-consing.md",
+      "title": "Structural hash-consing of hidden-class shapes",
+      "status": "complete",
+      "depends_on": [
+        "07",
+        "08",
+        "31",
+        "42",
+        "98",
+        "101"
+      ]
+    },
+    {
+      "id": "136",
+      "file": "136-coarse-static-property-morphisms.md",
+      "title": "Coarse static-property block morphisms",
+      "status": "complete",
+      "depends_on": [
+        "01",
+        "02",
+        "07",
+        "08",
+        "09",
+        "36",
+        "43",
+        "102",
+        "103",
+        "109",
+        "113",
+        "128",
+        "132",
+        "133"
+      ]
+    },
+    {
+      "id": "137",
+      "file": "137-aot-visible-object-layout.md",
+      "title": "AOT-visible object layout and property IC descriptors",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "06",
+        "07",
+        "08",
+        "09",
+        "31",
+        "36",
+        "43",
+        "102",
+        "121",
+        "128",
+        "129",
+        "132",
+        "136"
+      ]
+    },
+    {
+      "id": "138",
+      "file": "138-own-property-numeric-condition-stencils.md",
+      "title": "Own-property numeric condition stencils",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "06",
+        "07",
+        "08",
+        "10",
+        "36",
+        "43",
+        "84",
+        "109",
+        "114",
+        "132",
+        "137"
+      ]
+    },
+    {
+      "id": "139",
+      "file": "139-ownership-transferring-call-arguments.md",
+      "title": "Ownership-transferring call arguments",
+      "status": "complete",
+      "depends_on": [
+        "03",
+        "06",
+        "09",
+        "13",
+        "100",
+        "106",
+        "110",
+        "111",
+        "125",
+        "127",
+        "132",
+        "137"
+      ]
+    },
+    {
+      "id": "140",
+      "file": "140-monomorphic-user-call-ic.md",
+      "title": "Monomorphic user-call inline cache",
+      "status": "complete",
+      "depends_on": [
+        "03",
+        "06",
+        "13",
+        "14",
+        "36",
+        "43",
+        "102",
+        "104",
+        "125",
+        "128",
+        "132",
+        "137",
+        "139"
+      ]
+    },
+    {
+      "id": "141",
+      "file": "141-call-boundary-block-composition.md",
+      "title": "Call-boundary basic-block composition",
+      "status": "complete",
+      "depends_on": [
+        "01",
+        "02",
+        "03",
+        "17",
+        "20",
+        "36",
+        "43",
+        "94",
+        "102",
+        "117",
+        "128",
+        "131",
+        "132",
+        "140"
+      ]
+    },
+    {
+      "id": "142",
+      "file": "142-shared-regexp-literal-kernels.md",
+      "title": "Shared immutable RegExp literal kernels",
+      "status": "complete",
+      "depends_on": [
+        "03",
+        "14",
+        "16",
+        "87",
+        "140"
+      ]
+    },
+    {
+      "id": "143",
+      "file": "143-primary-source-optimization-research.md",
+      "title": "Primary-source VM optimization research synthesis",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "140"
+      ]
+    },
+    {
+      "id": "144",
+      "file": "144-bounded-context-versioned-stencil-regions.md",
+      "title": "Static bounded context-versioned stencil regions",
+      "status": "planned",
+      "depends_on": [
+        "19",
+        "25",
+        "120",
+        "128",
+        "143",
+        "164"
+      ]
+    },
+    {
+      "id": "145",
+      "file": "145-inline-slab-ic-stencils.md",
+      "title": "Inline-slab property and call IC stencils",
+      "status": "in_progress",
+      "depends_on": [
+        "08",
+        "31",
+        "57",
+        "137",
+        "140",
+        "143"
+      ]
+    },
+    {
+      "id": "146",
+      "file": "146-direct-continuation-vm-call-stack.md",
+      "title": "Direct-continuation VM call stack",
+      "status": "in_progress",
+      "depends_on": [
+        "13",
+        "27",
+        "76",
+        "125",
+        "140",
+        "145"
+      ]
+    },
+    {
+      "id": "147",
+      "file": "147-shared-immutable-literal-kernel-pool.md",
+      "title": "Shared immutable literal kernel pool",
+      "status": "complete",
+      "depends_on": [
+        "11",
+        "14",
+        "16",
+        "101",
+        "142",
+        "143"
+      ]
+    },
+    {
+      "id": "148",
+      "file": "148-stable-handle-region-heap.md",
+      "title": "Stable-handle region heap",
+      "status": "in_progress",
+      "depends_on": [
+        "06",
+        "09",
+        "38",
+        "143"
+      ]
+    },
+    {
+      "id": "149",
+      "file": "149-build-time-semantic-derivatives.md",
+      "title": "Build-time semantic derivatives and type-lattice stencils",
+      "status": "planned",
+      "depends_on": [
+        "02",
+        "10",
+        "37",
+        "43",
+        "52",
+        "143",
+        "144"
+      ]
+    },
+    {
+      "id": "150",
+      "file": "150-cached-shape-transition-edges.md",
+      "title": "Cached shape-transition edges",
+      "status": "complete",
+      "depends_on": [
+        "07",
+        "08",
+        "11",
+        "135",
+        "143",
+        "147"
+      ]
+    },
+    {
+      "id": "151",
+      "file": "151-primary-source-algorithm-research-round-two.md",
+      "title": "Primary-source algorithm research, round two",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "143",
+        "150"
+      ]
+    },
+    {
+      "id": "152",
+      "file": "152-typed-shape-context-propagation.md",
+      "title": "Typed-shape context propagation",
+      "status": "planned",
+      "depends_on": [
+        "07",
+        "08",
+        "19",
+        "25",
+        "128",
+        "137",
+        "144",
+        "145",
+        "151"
+      ]
+    },
+    {
+      "id": "153",
+      "file": "153-quoted-ic-recipe-algebra.md",
+      "title": "Quoted IC recipe algebra",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "02",
+        "08",
+        "17",
+        "31",
+        "145",
+        "149",
+        "151"
+      ]
+    },
+    {
+      "id": "154",
+      "file": "154-shape-set-stub-folding.md",
+      "title": "Shape-set stub folding and minimorphic loads",
+      "status": "planned",
+      "depends_on": [
+        "07",
+        "08",
+        "31",
+        "135",
+        "145",
+        "153"
+      ]
+    },
+    {
+      "id": "155",
+      "file": "155-monotone-runtime-invariant-fuses.md",
+      "title": "Monotone runtime-invariant fuses",
+      "status": "planned",
+      "depends_on": [
+        "08",
+        "12",
+        "25",
+        "32",
+        "48",
+        "145",
+        "153"
+      ]
+    },
+    {
+      "id": "156",
+      "file": "156-allocation-site-inline-object-storage.md",
+      "title": "Allocation-site inline object storage",
+      "status": "planned",
+      "depends_on": [
+        "07",
+        "08",
+        "09",
+        "24",
+        "33",
+        "137",
+        "148",
+        "151"
+      ]
+    },
+    {
+      "id": "157",
+      "file": "157-costed-multigranularity-stencil-tiling.md",
+      "title": "Costed multi-granularity stencil tiling",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "02",
+        "17",
+        "23",
+        "37",
+        "62",
+        "109",
+        "120",
+        "128",
+        "149",
+        "151"
+      ]
+    },
+    {
+      "id": "158",
+      "file": "158-register-resident-cps-stencil-planner.md",
+      "title": "Register-resident CPS stencil planner",
+      "status": "in_progress",
+      "depends_on": [
+        "01",
+        "02",
+        "19",
+        "30",
+        "43",
+        "120",
+        "144",
+        "146",
+        "149",
+        "151",
+        "203",
+        "270"
+      ]
+    },
+    {
+      "id": "159",
+      "file": "159-shared-megamorphic-lookup-kernel.md",
+      "title": "Shared megamorphic lookup kernel",
+      "status": "planned",
+      "depends_on": [
+        "07",
+        "08",
+        "11",
+        "16",
+        "27",
+        "31",
+        "135",
+        "140",
+        "145",
+        "153",
+        "154"
+      ]
+    },
+    {
+      "id": "160",
+      "file": "160-own-property-nullish-condition-stencils.md",
+      "title": "Own-property nullish condition stencils",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "06",
+        "07",
+        "08",
+        "36",
+        "43",
+        "84",
+        "132",
+        "137",
+        "138",
+        "145",
+        "150"
+      ]
+    },
+    {
+      "id": "161",
+      "file": "161-primary-source-algorithm-research-round-three.md",
+      "title": "Primary-source algorithm research, round three",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "151",
+        "160"
+      ]
+    },
+    {
+      "id": "162",
+      "file": "162-nonmoving-generational-nursery.md",
+      "title": "Non-moving generational nursery",
+      "status": "planned",
+      "depends_on": [
+        "06",
+        "09",
+        "38",
+        "148",
+        "161"
+      ]
+    },
+    {
+      "id": "163",
+      "file": "163-caller-customized-stencil-images.md",
+      "title": "Caller-customized stencil images",
+      "status": "planned",
+      "depends_on": [
+        "14",
+        "20",
+        "27",
+        "140",
+        "144",
+        "146",
+        "158",
+        "161"
+      ]
+    },
+    {
+      "id": "164",
+      "file": "164-canonical-side-exit-frame-state.md",
+      "title": "Canonical side-exit frame state",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "03",
+        "19",
+        "25",
+        "48",
+        "128",
+        "161"
+      ]
+    },
+    {
+      "id": "165",
+      "file": "165-typed-property-field-representations.md",
+      "title": "Typed property-field representations",
+      "status": "planned",
+      "depends_on": [
+        "06",
+        "07",
+        "08",
+        "09",
+        "135",
+        "148",
+        "152",
+        "156",
+        "161",
+        "164"
+      ]
+    },
+    {
+      "id": "166",
+      "file": "166-ic-recipe-health-scoring.md",
+      "title": "IC recipe health scoring",
+      "status": "planned",
+      "depends_on": [
+        "05",
+        "08",
+        "27",
+        "31",
+        "82",
+        "132",
+        "140",
+        "145",
+        "153",
+        "161"
+      ]
+    },
+    {
+      "id": "167",
+      "file": "167-own-property-method-call-condition-stencil.md",
+      "title": "Own-property method-call condition stencil",
+      "status": "complete",
+      "depends_on": [
+        "01",
+        "02",
+        "03",
+        "06",
+        "07",
+        "08",
+        "17",
+        "27",
+        "36",
+        "43",
+        "102",
+        "109",
+        "128",
+        "131",
+        "132",
+        "137",
+        "140",
+        "141",
+        "145",
+        "160",
+        "161"
+      ]
+    },
+    {
+      "id": "168",
+      "file": "168-contiguous-noncapturing-call-frame.md",
+      "title": "Contiguous non-capturing call frame",
+      "status": "complete",
+      "depends_on": [
+        "03",
+        "06",
+        "09",
+        "13",
+        "76",
+        "106",
+        "127",
+        "139",
+        "140",
+        "146",
+        "161",
+        "167"
+      ]
+    },
+    {
+      "id": "169",
+      "file": "169-borrowed-call-context-chain.md",
+      "title": "Borrowed call context chain",
+      "status": "complete",
+      "depends_on": [
+        "03",
+        "06",
+        "09",
+        "13",
+        "76",
+        "89",
+        "107",
+        "127",
+        "140",
+        "146",
+        "168"
+      ]
+    },
+    {
+      "id": "170",
+      "file": "170-primary-source-algorithm-research-round-four.md",
+      "title": "Primary-source algorithm research, round four",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "161",
+        "168",
+        "169"
+      ]
+    },
+    {
+      "id": "171",
+      "file": "171-quoted-ssa-cfg-region-normal-form.md",
+      "title": "Quoted SSA/CFG region normal form",
+      "status": "in_progress",
+      "depends_on": [
+        "01",
+        "17",
+        "63",
+        "68",
+        "120",
+        "164",
+        "170"
+      ]
+    },
+    {
+      "id": "172",
+      "file": "172-ownership-ssa-value-flow.md",
+      "title": "Ownership SSA for Value flow",
+      "status": "in_progress",
+      "depends_on": [
+        "06",
+        "09",
+        "100",
+        "103",
+        "111",
+        "133",
+        "139",
+        "148",
+        "164",
+        "170",
+        "171"
+      ]
+    },
+    {
+      "id": "173",
+      "file": "173-effect-token-memory-ssa.md",
+      "title": "Effect-token MemorySSA and load/store elimination",
+      "status": "planned",
+      "depends_on": [
+        "07",
+        "08",
+        "12",
+        "21",
+        "65",
+        "121",
+        "145",
+        "152",
+        "155",
+        "164",
+        "170",
+        "171",
+        "177"
+      ]
+    },
+    {
+      "id": "174",
+      "file": "174-sparse-conditional-value-propagation.md",
+      "title": "Sparse conditional value propagation",
+      "status": "planned",
+      "depends_on": [
+        "10",
+        "19",
+        "23",
+        "47",
+        "60",
+        "66",
+        "149",
+        "152",
+        "164",
+        "170",
+        "171"
+      ]
+    },
+    {
+      "id": "175",
+      "file": "175-scalar-evolution-loop-predication.md",
+      "title": "Scalar evolution and loop predication",
+      "status": "planned",
+      "depends_on": [
+        "12",
+        "21",
+        "29",
+        "32",
+        "39",
+        "70",
+        "121",
+        "123",
+        "124",
+        "164",
+        "170",
+        "171",
+        "173",
+        "174"
+      ]
+    },
+    {
+      "id": "176",
+      "file": "176-partial-escape-edge-materialization.md",
+      "title": "Partial escape analysis with edge materialization",
+      "status": "planned",
+      "depends_on": [
+        "09",
+        "24",
+        "33",
+        "148",
+        "156",
+        "164",
+        "170",
+        "171",
+        "172",
+        "173",
+        "177"
+      ]
+    },
+    {
+      "id": "177",
+      "file": "177-interprocedural-semantic-summaries.md",
+      "title": "Interprocedural semantic-summary fixpoint",
+      "status": "planned",
+      "depends_on": [
+        "13",
+        "20",
+        "27",
+        "41",
+        "140",
+        "146",
+        "163",
+        "164",
+        "170",
+        "171",
+        "172"
+      ]
+    },
+    {
+      "id": "178",
+      "file": "178-contiguous-name-snapshot-frame-tail.md",
+      "title": "Contiguous name-snapshot frame tail",
+      "status": "complete",
+      "depends_on": [
+        "06",
+        "89",
+        "106",
+        "107",
+        "127",
+        "146",
+        "168",
+        "170"
+      ]
+    },
+    {
+      "id": "179",
+      "file": "179-fast-non-cryptographic-hasher.md",
+      "title": "Fast non-cryptographic hasher for compile-time tables",
+      "status": "planned",
+      "depends_on": [
+        "13",
+        "135",
+        "150"
+      ]
+    },
+    {
+      "id": "180",
+      "file": "180-huge-page-code-mapping.md",
+      "title": "Huge-page mapping for the linked executable image",
+      "status": "planned",
+      "depends_on": [
+        "14",
+        "37",
+        "42",
+        "57",
+        "80",
+        "135"
+      ]
+    },
+    {
+      "id": "181",
+      "file": "181-native-direct-user-call-regions.md",
+      "title": "Native direct user-call continuation regions",
+      "status": "in_progress",
+      "depends_on": [
+        "01",
+        "02",
+        "03",
+        "13",
+        "17",
+        "27",
+        "76",
+        "102",
+        "117",
+        "128",
+        "131",
+        "140",
+        "141",
+        "145",
+        "146",
+        "164",
+        "168",
+        "178"
+      ]
+    },
+    {
+      "id": "182",
+      "file": "182-primary-source-algorithm-research-round-five.md",
+      "title": "Primary-source algorithm research, round five",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "170",
+        "178",
+        "181"
+      ]
+    },
+    {
+      "id": "183",
+      "file": "183-canonical-builtin-kernel-recipes.md",
+      "title": "Canonical built-in kernel recipes",
+      "status": "in_progress",
+      "depends_on": [
+        "01",
+        "02",
+        "14",
+        "16",
+        "25",
+        "145",
+        "153",
+        "155",
+        "181",
+        "182"
+      ]
+    },
+    {
+      "id": "184",
+      "file": "184-vm-frame-slot-coloring.md",
+      "title": "Liveness-driven VM frame-slot coloring",
+      "status": "planned",
+      "depends_on": [
+        "13",
+        "17",
+        "76",
+        "164",
+        "168",
+        "171",
+        "172",
+        "178",
+        "182"
+      ]
+    },
+    {
+      "id": "185",
+      "file": "185-prototype-membership-condition-stencils.md",
+      "title": "Prototype-membership and `instanceof` condition stencils",
+      "status": "complete",
+      "depends_on": [
+        "01",
+        "02",
+        "07",
+        "19",
+        "25",
+        "36",
+        "83",
+        "145",
+        "155",
+        "164",
+        "182"
+      ]
+    },
+    {
+      "id": "186",
+      "file": "186-first-class-switch-dispatch-stencils.md",
+      "title": "First-class switch-dispatch stencils",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "02",
+        "11",
+        "17",
+        "23",
+        "62",
+        "102",
+        "171",
+        "182"
+      ]
+    },
+    {
+      "id": "187",
+      "file": "187-multi-entry-exact-arity-functions.md",
+      "title": "Multi-entry exact-arity function images",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "13",
+        "14",
+        "76",
+        "140",
+        "146",
+        "164",
+        "181",
+        "182"
+      ]
+    },
+    {
+      "id": "188",
+      "file": "188-borrowed-arguments-view-and-apply.md",
+      "title": "Borrowed arguments view and direct apply forwarding",
+      "status": "planned",
+      "depends_on": [
+        "13",
+        "58",
+        "139",
+        "146",
+        "164",
+        "181",
+        "183",
+        "187"
+      ]
+    },
+    {
+      "id": "189",
+      "file": "189-near-code-shared-kernel-arena.md",
+      "title": "Near-code shared-kernel arena",
+      "status": "planned",
+      "depends_on": [
+        "02",
+        "14",
+        "16",
+        "43",
+        "55",
+        "57",
+        "180",
+        "182"
+      ]
+    },
+    {
+      "id": "190",
+      "file": "190-multi-representation-js-strings.md",
+      "title": "Multi-representation UTF-16 JavaScript strings",
+      "status": "planned",
+      "depends_on": [
+        "06",
+        "11",
+        "14",
+        "16",
+        "87",
+        "142",
+        "147",
+        "182"
+      ]
+    },
+    {
+      "id": "191",
+      "file": "191-dominance-allocation-folding.md",
+      "title": "Dominance-based allocation folding",
+      "status": "in_progress",
+      "depends_on": [
+        "09",
+        "24",
+        "33",
+        "148",
+        "156",
+        "162",
+        "164",
+        "171",
+        "173",
+        "182",
+        "193"
+      ]
+    },
+    {
+      "id": "192",
+      "file": "192-allocation-site-policy-state-machines.md",
+      "title": "Allocation-site representation, capacity, and lifetime policies",
+      "status": "planned",
+      "depends_on": [
+        "12",
+        "32",
+        "148",
+        "156",
+        "162",
+        "165",
+        "182",
+        "193"
+      ]
+    },
+    {
+      "id": "193",
+      "file": "193-composable-gc-safepoint-maps.md",
+      "title": "Composable precise GC safepoint maps",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "17",
+        "38",
+        "148",
+        "162",
+        "164",
+        "171",
+        "172",
+        "177",
+        "182"
+      ]
+    },
+    {
+      "id": "194",
+      "file": "194-shape-owned-enumeration-kernels.md",
+      "title": "Shape-owned enumeration kernels",
+      "status": "planned",
+      "depends_on": [
+        "07",
+        "11",
+        "16",
+        "135",
+        "150",
+        "155",
+        "182"
+      ]
+    },
+    {
+      "id": "195",
+      "file": "195-effect-aware-gvn-and-pre.md",
+      "title": "Effect-aware GVN and partial redundancy elimination",
+      "status": "planned",
+      "depends_on": [
+        "10",
+        "21",
+        "47",
+        "60",
+        "164",
+        "171",
+        "172",
+        "173",
+        "174",
+        "177",
+        "182"
+      ]
+    },
+    {
+      "id": "196",
+      "file": "196-bounded-loop-normalization-algebra.md",
+      "title": "Bounded loop normalization algebra",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "17",
+        "21",
+        "23",
+        "28",
+        "62",
+        "123",
+        "157",
+        "164",
+        "171",
+        "173",
+        "175",
+        "177",
+        "182"
+      ]
+    },
+    {
+      "id": "197",
+      "file": "197-layered-differential-performance-tests.md",
+      "title": "Layered differential performance testing",
+      "status": "planned",
+      "depends_on": [
+        "00",
+        "05",
+        "44",
+        "49",
+        "66",
+        "82",
+        "182"
+      ]
+    },
+    {
+      "id": "198",
+      "file": "198-read-only-kernel-heap.md",
+      "title": "Read-only kernel heap and static root table",
+      "status": "planned",
+      "depends_on": [
+        "06",
+        "07",
+        "11",
+        "14",
+        "16",
+        "38",
+        "55",
+        "142",
+        "147",
+        "148",
+        "183",
+        "189",
+        "193"
+      ]
+    },
+    {
+      "id": "199",
+      "file": "199-copy-on-write-array-literal-kernels.md",
+      "title": "Copy-on-write array-literal kernels",
+      "status": "planned",
+      "depends_on": [
+        "12",
+        "14",
+        "16",
+        "32",
+        "147",
+        "156",
+        "162",
+        "165",
+        "182",
+        "198"
+      ]
+    },
+    {
+      "id": "200",
+      "file": "200-swiss-dictionary-property-fallback.md",
+      "title": "Swiss-table dictionary-property fallback",
+      "status": "planned",
+      "depends_on": [
+        "07",
+        "08",
+        "11",
+        "31",
+        "91",
+        "135",
+        "159",
+        "166",
+        "179",
+        "182"
+      ]
+    },
+    {
+      "id": "201",
+      "file": "201-primary-source-algorithm-research-round-six.md",
+      "title": "Primary-source algorithm research, round six",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "182",
+        "183"
+      ]
+    },
+    {
+      "id": "202",
+      "file": "202-constructor-allocation-inline-cache.md",
+      "title": "Constructor allocation and direct-entry inline cache",
+      "status": "in_progress",
+      "depends_on": [
+        "07",
+        "14",
+        "24",
+        "31",
+        "145",
+        "146",
+        "156",
+        "162",
+        "164",
+        "187",
+        "192",
+        "201"
+      ]
+    },
+    {
+      "id": "203",
+      "file": "203-pinned-dynamic-connector-state.md",
+      "title": "Pinned dynamic connector state and tag registers",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "02",
+        "06",
+        "43",
+        "52",
+        "55",
+        "201"
+      ]
+    },
+    {
+      "id": "204",
+      "file": "204-typed-mutable-binding-cells.md",
+      "title": "Typed mutable environment and global binding cells",
+      "status": "planned",
+      "depends_on": [
+        "13",
+        "89",
+        "144",
+        "152",
+        "164",
+        "165",
+        "171",
+        "172",
+        "201"
+      ]
+    },
+    {
+      "id": "205",
+      "file": "205-adjacent-stencil-fallthrough.md",
+      "title": "Adjacent stencil fallthrough linking",
+      "status": "complete",
+      "depends_on": [
+        "01",
+        "02",
+        "36",
+        "43",
+        "52",
+        "157",
+        "158",
+        "201"
+      ]
+    },
+    {
+      "id": "206",
+      "file": "206-aggregate-array-literal-materialization.md",
+      "title": "Aggregate array-literal materialization",
+      "status": "in_progress",
+      "depends_on": [
+        "01",
+        "12",
+        "109",
+        "148",
+        "156",
+        "191",
+        "201"
+      ]
+    },
+    {
+      "id": "207",
+      "file": "207-category-theory-literature-grounding.md",
+      "title": "Category-theory literature grounding and JS/native semantic-gap inventory",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "22",
+        "46",
+        "49",
+        "60",
+        "61",
+        "62",
+        "65",
+        "67",
+        "69",
+        "70"
+      ]
+    },
+    {
+      "id": "208",
+      "file": "208-arm64-tbi-pointer-tagging.md",
+      "title": "ARM64 Top-Byte-Ignore pointer tagging for the tagged Value",
+      "status": "planned",
+      "depends_on": [
+        "06",
+        "08",
+        "16",
+        "42",
+        "55",
+        "129",
+        "135",
+        "165"
+      ]
+    },
+    {
+      "id": "209",
+      "file": "209-static-branch-weight-aot-metadata.md",
+      "title": "Static branch-weight metadata for AOT stencil cooking",
+      "status": "planned",
+      "depends_on": [
+        "02",
+        "08",
+        "28",
+        "43",
+        "52",
+        "84",
+        "123",
+        "124",
+        "129",
+        "160",
+        "161"
+      ]
+    },
+    {
+      "id": "210",
+      "file": "210-hylomorphism-lowering-fusion.md",
+      "title": "Hylomorphism fusion for AST-to-stencil lowering",
+      "status": "planned",
+      "depends_on": [
+        "17",
+        "68",
+        "120",
+        "207"
+      ]
+    },
+    {
+      "id": "211",
+      "file": "211-coyoneda-deferred-stencil-composition.md",
+      "title": "CoYoneda-embedded deferred composition for stencil transformations",
+      "status": "planned",
+      "depends_on": [
+        "17",
+        "18",
+        "21",
+        "42",
+        "66",
+        "71",
+        "207",
+        "210"
+      ]
+    },
+    {
+      "id": "212",
+      "file": "212-guarded-dense-array-builtin-kernels.md",
+      "title": "Guarded dense-array built-in kernels",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "02",
+        "12",
+        "25",
+        "32",
+        "145",
+        "155",
+        "183"
+      ]
+    },
+    {
+      "id": "213",
+      "file": "213-effective-address-memory-stencils.md",
+      "title": "Canonical effective-address and memory-operation stencils",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "02",
+        "06",
+        "30",
+        "43",
+        "52",
+        "55",
+        "63",
+        "120",
+        "137",
+        "149",
+        "158",
+        "171"
+      ]
+    },
+    {
+      "id": "214",
+      "file": "214-range-and-late-edge-case-analysis.md",
+      "title": "Numeric range and late edge-case analysis",
+      "status": "in_progress",
+      "depends_on": [
+        "10",
+        "19",
+        "47",
+        "60",
+        "149",
+        "164",
+        "171",
+        "174"
+      ]
+    },
+    {
+      "id": "215",
+      "file": "215-primary-source-algorithm-research-round-seven.md",
+      "title": "Primary-source algorithm research, round seven",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "201",
+        "207",
+        "208",
+        "209",
+        "210",
+        "211"
+      ]
+    },
+    {
+      "id": "216",
+      "file": "216-kleisli-effect-ordering-soundness.md",
+      "title": "Kleisli-category soundness proof for effect-reordering optimizations",
+      "status": "planned",
+      "depends_on": [
+        "21",
+        "47",
+        "49",
+        "71",
+        "173"
+      ]
+    },
+    {
+      "id": "217",
+      "file": "217-normalization-by-evaluation-guards.md",
+      "title": "Normalization by evaluation for guard and expression canonical forms",
+      "status": "planned",
+      "depends_on": [
+        "18",
+        "19",
+        "23",
+        "25",
+        "61",
+        "67"
+      ]
+    },
+    {
+      "id": "218",
+      "file": "218-initial-algebra-final-coalgebra-data-codata.md",
+      "title": "Initial-algebra/final-coalgebra split for eager data vs. lazy codata",
+      "status": "planned",
+      "depends_on": [
+        "71",
+        "88",
+        "90",
+        "210"
+      ]
+    },
+    {
+      "id": "219",
+      "file": "219-js-to-native-lowering-functor.md",
+      "title": "The JS-to-native lowering functor: explicit target category and identity-component inventory",
+      "status": "planned",
+      "depends_on": [
+        "08",
+        "10",
+        "19",
+        "24",
+        "33",
+        "41",
+        "71",
+        "126",
+        "135",
+        "150",
+        "176",
+        "207"
+      ]
+    },
+    {
+      "id": "220",
+      "file": "220-closed-coproduct-tag-dispatch-earley-boyer.md",
+      "title": "Closed-coproduct tag dispatch for earley-boyer's tagged datum hierarchy",
+      "status": "planned",
+      "depends_on": [
+        "04",
+        "07",
+        "31",
+        "34",
+        "84",
+        "132",
+        "135",
+        "160"
+      ]
+    },
+    {
+      "id": "221",
+      "file": "221-list-catamorphism-traversal-loops.md",
+      "title": "List-catamorphism recognition for cdr-chasing traversal loops",
+      "status": "planned",
+      "depends_on": [
+        "75",
+        "123",
+        "124",
+        "132",
+        "210",
+        "218",
+        "220"
+      ]
+    },
+    {
+      "id": "222",
+      "file": "222-constructors-as-product-introduction.md",
+      "title": "Constructors as categorical product-introduction morphisms",
+      "status": "planned",
+      "depends_on": [
+        "07",
+        "08",
+        "130",
+        "132",
+        "135",
+        "199",
+        "206"
+      ]
+    },
+    {
+      "id": "223",
+      "file": "223-agt-derived-guard-synthesis.md",
+      "title": "Abstracting Gradual Typing as the systematic guard/coercion derivation method",
+      "status": "planned",
+      "depends_on": [
+        "06",
+        "07",
+        "10",
+        "13",
+        "19",
+        "27",
+        "32",
+        "34",
+        "35",
+        "46",
+        "47",
+        "60",
+        "73",
+        "89",
+        "188",
+        "204",
+        "207",
+        "220"
+      ]
+    },
+    {
+      "id": "224",
+      "file": "224-blame-calculus-guard-elision-soundness.md",
+      "title": "Blame-calculus soundness argument for guard elision and generic-path deletion",
+      "status": "planned",
+      "depends_on": [
+        "47",
+        "49",
+        "220",
+        "221",
+        "222"
+      ]
+    },
+    {
+      "id": "225",
+      "file": "225-amortized-array-shift-unshift.md",
+      "title": "Amortized O(1) Array.prototype.shift via front-offset deque representation",
+      "status": "planned",
+      "depends_on": [
+        "12",
+        "32",
+        "99",
+        "105",
+        "209"
+      ]
+    },
+    {
+      "id": "226",
+      "file": "226-primary-source-algorithm-research-round-eight.md",
+      "title": "Primary-source algorithm research, round eight",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "143",
+        "151",
+        "161",
+        "170",
+        "182",
+        "201",
+        "215"
+      ]
+    },
+    {
+      "id": "227",
+      "file": "227-o1-indexed-string-char-access.md",
+      "title": "O(1) indexed character access for String.charAt/charCodeAt",
+      "status": "planned",
+      "depends_on": [
+        "11",
+        "190"
+      ]
+    },
+    {
+      "id": "228",
+      "file": "228-primary-source-algorithm-research-round-nine.md",
+      "title": "Primary-source algorithm research, round nine",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "155",
+        "163",
+        "176",
+        "209",
+        "226",
+        "227"
+      ]
+    },
+    {
+      "id": "229",
+      "file": "229-protector-cell-invariant-flags.md",
+      "title": "Protector-cell invalidation flags for builtin fast-path invariants",
+      "status": "planned",
+      "depends_on": [
+        "07",
+        "08",
+        "91",
+        "212"
+      ]
+    },
+    {
+      "id": "230",
+      "file": "230-bounded-short-string-interning.md",
+      "title": "Bounded short-string interning as an O(1) equality fast path",
+      "status": "planned",
+      "depends_on": [
+        "11",
+        "190",
+        "227"
+      ]
+    },
+    {
+      "id": "231",
+      "file": "231-exact-galois-insertion-guard-erasure.md",
+      "title": "Exact-abstraction guard erasure: the precise criterion for zero-check O(1)",
+      "status": "planned",
+      "depends_on": [
+        "47",
+        "60",
+        "69",
+        "207",
+        "220",
+        "222",
+        "223",
+        "229"
+      ]
+    },
+    {
+      "id": "232",
+      "file": "232-subobject-classifier-guard-as-constant-morphism.md",
+      "title": "Subobject classifier framing: a guard as an erasable constant-true morphism",
+      "status": "planned",
+      "depends_on": [
+        "08",
+        "25",
+        "207",
+        "219",
+        "220",
+        "229",
+        "231"
+      ]
+    },
+    {
+      "id": "233",
+      "file": "233-abcd-exact-bounds-check-erasure.md",
+      "title": "ABCD-style array-bounds guard erasure as an exact-abstraction instance",
+      "status": "planned",
+      "depends_on": [
+        "123",
+        "124",
+        "175",
+        "231"
+      ]
+    },
+    {
+      "id": "234",
+      "file": "234-exactness-composition-law.md",
+      "title": "Composability law for chained exact abstractions",
+      "status": "planned",
+      "depends_on": [
+        "65",
+        "224",
+        "231",
+        "232"
+      ]
+    },
+    {
+      "id": "235",
+      "file": "235-singleton-call-target-exactness.md",
+      "title": "Singleton call-target exactness under closed-world devirtualization",
+      "status": "planned",
+      "depends_on": [
+        "27",
+        "46",
+        "69",
+        "224",
+        "231",
+        "232"
+      ]
+    },
+    {
+      "id": "236",
+      "file": "236-pure-computation-unit-insertion.md",
+      "title": "Pure sub-computation as a trivial unit insertion: zero effect-ordering barrier",
+      "status": "planned",
+      "depends_on": [
+        "21",
+        "173",
+        "216",
+        "231",
+        "233"
+      ]
+    },
+    {
+      "id": "237",
+      "file": "237-erasure-soundness-adversarial-catalog.md",
+      "title": "Adversarial negative-test catalog for exactness-based erasure",
+      "status": "planned",
+      "depends_on": [
+        "49",
+        "220",
+        "222",
+        "224",
+        "231",
+        "233",
+        "234",
+        "235",
+        "236"
+      ]
+    },
+    {
+      "id": "238",
+      "file": "238-debug-only-erasure-verification-harness.md",
+      "title": "Debug-only runtime verification harness for erased guards",
+      "status": "planned",
+      "depends_on": [
+        "00",
+        "102",
+        "231",
+        "233",
+        "235",
+        "236",
+        "237"
+      ]
+    },
+    {
+      "id": "239",
+      "file": "239-occurrence-typed-proven-pipeline.md",
+      "title": "The proven pipeline: occurrence typing as the foundation for flow-sensitive static execution",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "17",
+        "34",
+        "216",
+        "219",
+        "220",
+        "223",
+        "224",
+        "231",
+        "233",
+        "234",
+        "235",
+        "236",
+        "237",
+        "238"
+      ]
+    },
+    {
+      "id": "240",
+      "file": "240-fibered-kernel-selection-over-shape-lattice.md",
+      "title": "Fibered kernel selection: the machine-code pipeline as a Grothendieck construction over proven shapes",
+      "status": "planned",
+      "depends_on": [
+        "02",
+        "07",
+        "36",
+        "120",
+        "121",
+        "128",
+        "130",
+        "135",
+        "137",
+        "150",
+        "157",
+        "220",
+        "231",
+        "239"
+      ]
+    },
+    {
+      "id": "241",
+      "file": "241-law-licensed-composition-layout-search.md",
+      "title": "Law-licensed composition-order search for optimal machine-code layout",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "02",
+        "17",
+        "18",
+        "28",
+        "43",
+        "52",
+        "62",
+        "64",
+        "67",
+        "157",
+        "161",
+        "209",
+        "231"
+      ]
+    },
+    {
+      "id": "242",
+      "file": "242-whole-program-0cfa-precompilation-pass.md",
+      "title": "Whole-program 0-CFA as a single pre-compilation analysis pass",
+      "status": "planned",
+      "depends_on": [
+        "00",
+        "04",
+        "15",
+        "46",
+        "69",
+        "177",
+        "220",
+        "224",
+        "231",
+        "235"
+      ]
+    },
+    {
+      "id": "243",
+      "file": "243-columnar-shape-collection-storage.md",
+      "title": "Columnar (struct-of-arrays) storage for homogeneous-shape object collections",
+      "status": "planned",
+      "depends_on": [
+        "07",
+        "08",
+        "129",
+        "135",
+        "156",
+        "192"
+      ]
+    },
+    {
+      "id": "244",
+      "file": "244-loop-data-prefetch-strided-arrays.md",
+      "title": "Software prefetch instructions for proven strided numeric loops",
+      "status": "planned",
+      "depends_on": [
+        "02",
+        "32",
+        "39",
+        "120",
+        "121",
+        "122",
+        "123",
+        "124",
+        "233"
+      ]
+    },
+    {
+      "id": "245",
+      "file": "245-fancy-regex-lookaround-backreference-support.md",
+      "title": "Adopt `fancy-regex` for lookaround/backreference support instead of a custom engine",
+      "status": "planned",
+      "depends_on": [
+        "87",
+        "142"
+      ]
+    },
+    {
+      "id": "246",
+      "file": "246-carry-save-bignum-multiply-vectorization.md",
+      "title": "Carry-save vectorization for crypto.js's schoolbook bignum multiply",
+      "status": "planned",
+      "depends_on": [
+        "32",
+        "39",
+        "249"
+      ]
+    },
+    {
+      "id": "247",
+      "file": "247-fused-tree-rotation-stencil.md",
+      "title": "Fused pointer-rotation stencil for splay-tree restructuring",
+      "status": "planned",
+      "depends_on": [
+        "128",
+        "130",
+        "222",
+        "240"
+      ]
+    },
+    {
+      "id": "248",
+      "file": "248-closed-coproduct-method-dispatch-richards.md",
+      "title": "Closed-coproduct method dispatch for richards.js's fixed task-type set",
+      "status": "planned",
+      "depends_on": [
+        "07",
+        "25",
+        "135",
+        "140",
+        "220",
+        "221",
+        "231",
+        "235"
+      ]
+    },
+    {
+      "id": "249",
+      "file": "249-associative-scan-monoid-recognition.md",
+      "title": "Associative-scan monoid recognition: the general foundation behind carry/accumulator chains",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "39",
+        "49",
+        "64",
+        "237"
+      ]
+    },
+    {
+      "id": "250",
+      "file": "250-rc-cycle-leak-validation-deltablue.md",
+      "title": "Validate whether deltablue's bidirectional constraint graph leaks memory",
+      "status": "planned",
+      "depends_on": [
+        "09",
+        "38"
+      ]
+    },
+    {
+      "id": "251",
+      "file": "251-cross-stencil-register-allocation-ceiling.md",
+      "title": "Validate whether the stencil-composition boundary imposes a register-allocation ceiling",
+      "status": "planned",
+      "depends_on": [
+        "15",
+        "30",
+        "36",
+        "78",
+        "102",
+        "117",
+        "128",
+        "157",
+        "209",
+        "238",
+        "240"
+      ]
+    },
+    {
+      "id": "252",
+      "file": "252-closed-world-single-file-scope-validation.md",
+      "title": "Validate the unstated single-file scope boundary of the closed-world/whole-program thread",
+      "status": "planned",
+      "depends_on": [
+        "46",
+        "69",
+        "219",
+        "223",
+        "231",
+        "232",
+        "233",
+        "234",
+        "235",
+        "236",
+        "239",
+        "240",
+        "242"
+      ]
+    },
+    {
+      "id": "253",
+      "file": "253-dwarf-comparative-profiling-node-bun.md",
+      "title": "DWARF-based comparative native profiling: deegen vs. Node (V8) vs. Bun (JSC)",
+      "status": "complete",
+      "depends_on": [
+        "05",
+        "132",
+        "143",
+        "151",
+        "161",
+        "170",
+        "182",
+        "201",
+        "215",
+        "226",
+        "228"
+      ]
+    },
+    {
+      "id": "254",
+      "file": "254-v8-jsc-source-profile-cross-reference.md",
+      "title": "Cross-reference [[253]]'s profiles against V8/JSC source to close specific gaps",
+      "status": "in_progress",
+      "depends_on": [
+        "15",
+        "161",
+        "253"
+      ]
+    },
+    {
+      "id": "255",
+      "file": "255-primary-source-algorithm-research-round-ten.md",
+      "title": "Primary-source algorithm research, round ten",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "39",
+        "87",
+        "116",
+        "162",
+        "196",
+        "198",
+        "228"
+      ]
+    },
+    {
+      "id": "256",
+      "file": "256-guest-loop-idiom-recognition.md",
+      "title": "Guest-loop idiom recognition and whole-loop kernels",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "02",
+        "12",
+        "32",
+        "39",
+        "49",
+        "120",
+        "148",
+        "157",
+        "162",
+        "165",
+        "171",
+        "173",
+        "175",
+        "190",
+        "196",
+        "255"
+      ]
+    },
+    {
+      "id": "257",
+      "file": "257-compressed-heap-reference-fields.md",
+      "title": "Compressed heap references in representation-proved fields",
+      "status": "planned",
+      "depends_on": [
+        "06",
+        "09",
+        "148",
+        "162",
+        "165",
+        "171",
+        "173",
+        "193",
+        "203",
+        "255"
+      ]
+    },
+    {
+      "id": "258",
+      "file": "258-primary-source-algorithm-research-round-eleven.md",
+      "title": "Primary-source algorithm research, round eleven",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "09",
+        "15",
+        "143",
+        "149",
+        "152",
+        "153",
+        "156",
+        "157",
+        "158",
+        "162",
+        "171",
+        "173",
+        "176",
+        "185",
+        "193",
+        "251",
+        "253",
+        "255"
+      ]
+    },
+    {
+      "id": "259",
+      "file": "259-factorized-object-structure-kernels.md",
+      "title": "Factorized object-structure kernels (layout \u00d7 prototype)",
+      "status": "planned",
+      "depends_on": [
+        "07",
+        "08",
+        "09",
+        "135",
+        "137",
+        "150",
+        "156",
+        "185",
+        "257",
+        "258"
+      ]
+    },
+    {
+      "id": "260",
+      "file": "260-primary-source-algorithm-research-round-twelve.md",
+      "title": "Primary-source algorithm research, round twelve",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "144",
+        "149",
+        "153",
+        "158",
+        "171",
+        "174",
+        "193",
+        "251",
+        "253",
+        "258"
+      ]
+    },
+    {
+      "id": "261",
+      "file": "261-known-bits-tag-analysis.md",
+      "title": "Known-bits analysis for NaN-box tag and payload erasure",
+      "status": "planned",
+      "depends_on": [
+        "06",
+        "149",
+        "152",
+        "171",
+        "174",
+        "193",
+        "214",
+        "231",
+        "260"
+      ]
+    },
+    {
+      "id": "262",
+      "file": "262-primary-source-algorithm-research-round-thirteen.md",
+      "title": "Primary-source algorithm research, round thirteen",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "158",
+        "171",
+        "172",
+        "253",
+        "260"
+      ]
+    },
+    {
+      "id": "263",
+      "file": "263-reusable-regexp-capture-scratch.md",
+      "title": "Reusable per-instance RegExp capture scratch",
+      "status": "complete",
+      "depends_on": [
+        "87",
+        "142",
+        "190",
+        "253",
+        "262"
+      ]
+    },
+    {
+      "id": "264",
+      "file": "264-use-directed-word32-islands.md",
+      "title": "Use-directed Word32 truncation islands",
+      "status": "planned",
+      "depends_on": [
+        "10",
+        "149",
+        "158",
+        "171",
+        "174",
+        "214",
+        "261",
+        "262"
+      ]
+    },
+    {
+      "id": "265",
+      "file": "265-multirepresentation-array-backing-lattice.md",
+      "title": "Monotone multi-representation array backing lattice",
+      "status": "planned",
+      "depends_on": [
+        "06",
+        "09",
+        "12",
+        "32",
+        "121",
+        "123",
+        "162",
+        "165",
+        "192",
+        "229",
+        "262",
+        "264"
+      ]
+    },
+    {
+      "id": "266",
+      "file": "266-primary-source-algorithm-research-round-fourteen.md",
+      "title": "Primary-source algorithm research, round fourteen",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "15",
+        "28",
+        "144",
+        "152",
+        "153",
+        "154",
+        "158",
+        "165",
+        "171",
+        "176",
+        "205",
+        "262"
+      ]
+    },
+    {
+      "id": "267",
+      "file": "267-numeric-region-recurrence-supernode.md",
+      "title": "Numeric-region recurrence supernode",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "15",
+        "120",
+        "121",
+        "122",
+        "123",
+        "149",
+        "157",
+        "158",
+        "266"
+      ]
+    },
+    {
+      "id": "268",
+      "file": "268-numeric-region-condition-supernodes.md",
+      "title": "Numeric-region condition supernodes",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "15",
+        "89",
+        "120",
+        "121",
+        "122",
+        "123",
+        "149",
+        "157",
+        "158",
+        "267"
+      ]
+    },
+    {
+      "id": "269",
+      "file": "269-primary-source-algorithm-research-round-fifteen.md",
+      "title": "Primary-source algorithm research, round fifteen",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "15",
+        "43",
+        "52",
+        "149",
+        "157",
+        "158",
+        "171",
+        "172",
+        "203",
+        "266",
+        "268"
+      ]
+    },
+    {
+      "id": "270",
+      "file": "270-preserve-none-stencil-continuation-abi.md",
+      "title": "Preserve-none stencil continuation ABI",
+      "status": "complete",
+      "depends_on": [
+        "01",
+        "02",
+        "43",
+        "52",
+        "55",
+        "78",
+        "203",
+        "269"
+      ]
+    },
+    {
+      "id": "271",
+      "file": "271-first-class-predicate-continuations.md",
+      "title": "First-class predicate and flags continuations",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "19",
+        "84",
+        "114",
+        "138",
+        "149",
+        "158",
+        "160",
+        "203",
+        "268",
+        "269"
+      ]
+    },
+    {
+      "id": "272",
+      "file": "272-generated-typed-stencil-pattern-automaton.md",
+      "title": "Generated typed stencil pattern automaton",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "02",
+        "23",
+        "49",
+        "62",
+        "149",
+        "157",
+        "171",
+        "269"
+      ]
+    },
+    {
+      "id": "273",
+      "file": "273-stencil-cooker-optimization-pipeline-matrix.md",
+      "title": "Stencil-cooker optimization-pipeline matrix",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "05",
+        "43",
+        "52",
+        "269"
+      ]
+    },
+    {
+      "id": "274",
+      "file": "274-relocation-closed-local-data-stencils.md",
+      "title": "Relocation-closed local-data stencil templates",
+      "status": "planned",
+      "depends_on": [
+        "02",
+        "14",
+        "16",
+        "43",
+        "52",
+        "198",
+        "273"
+      ]
+    },
+    {
+      "id": "275",
+      "file": "275-primary-source-algorithm-research-round-sixteen.md",
+      "title": "Primary-source algorithm research, round sixteen",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "15",
+        "144",
+        "146",
+        "152",
+        "158",
+        "164",
+        "171",
+        "173",
+        "189",
+        "198",
+        "214",
+        "269",
+        "270"
+      ]
+    },
+    {
+      "id": "276",
+      "file": "276-hot-cold-stencil-segments.md",
+      "title": "Hot/cold stencil segments and shared obligation tails",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "02",
+        "14",
+        "16",
+        "164",
+        "189",
+        "198",
+        "209",
+        "274",
+        "275"
+      ]
+    },
+    {
+      "id": "277",
+      "file": "277-primary-source-algorithm-research-round-seventeen.md",
+      "title": "Primary-source algorithm research, round seventeen",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "79",
+        "158",
+        "164",
+        "171",
+        "183",
+        "190",
+        "204",
+        "214",
+        "275"
+      ]
+    },
+    {
+      "id": "278",
+      "file": "278-runtime-noalias-loop-versioning.md",
+      "title": "Runtime no-alias versioning for multi-backing loops",
+      "status": "planned",
+      "depends_on": [
+        "39",
+        "120",
+        "121",
+        "123",
+        "158",
+        "171",
+        "173",
+        "175",
+        "214",
+        "265",
+        "277"
+      ]
+    },
+    {
+      "id": "279",
+      "file": "279-dominance-safe-guard-products.md",
+      "title": "Dominance-safe guard products and implication elimination",
+      "status": "planned",
+      "depends_on": [
+        "19",
+        "25",
+        "144",
+        "164",
+        "171",
+        "173",
+        "174",
+        "214",
+        "217",
+        "271",
+        "277"
+      ]
+    },
+    {
+      "id": "280",
+      "file": "280-direct-numeric-text-kernels.md",
+      "title": "Direct numeric parse/format kernels over borrowed string views",
+      "status": "in_progress",
+      "depends_on": [
+        "11",
+        "147",
+        "183",
+        "190",
+        "198",
+        "227",
+        "230",
+        "277"
+      ]
+    },
+    {
+      "id": "281",
+      "file": "281-dead-local-numeric-expression-supernodes.md",
+      "title": "Dead local numeric-expression supernodes",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "15",
+        "120",
+        "121",
+        "122",
+        "123",
+        "149",
+        "157",
+        "158",
+        "267",
+        "270"
+      ]
+    },
+    {
+      "id": "282",
+      "file": "282-typed-fp-accumulator-connector-experiment.md",
+      "title": "Typed FP-accumulator connector experiment",
+      "status": "complete",
+      "depends_on": [
+        "01",
+        "02",
+        "05",
+        "15",
+        "120",
+        "121",
+        "122",
+        "123",
+        "149",
+        "157",
+        "158",
+        "249",
+        "270",
+        "272",
+        "281"
+      ]
+    },
+    {
+      "id": "283",
+      "file": "283-own-property-load-store-jump-stencil.md",
+      "title": "Own-property load/store/jump stencil",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "05",
+        "07",
+        "08",
+        "09",
+        "36",
+        "109",
+        "132",
+        "138",
+        "160",
+        "281"
+      ]
+    },
+    {
+      "id": "284",
+      "file": "284-compositional-property-block-tiler.md",
+      "title": "Compositional property block tiler",
+      "status": "complete",
+      "depends_on": [
+        "01",
+        "02",
+        "05",
+        "17",
+        "36",
+        "62",
+        "109",
+        "132",
+        "283"
+      ]
+    },
+    {
+      "id": "285",
+      "file": "285-complete-instanceof-membership-cache-stencil.md",
+      "title": "Complete `instanceof` membership-cache condition stencil",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "05",
+        "06",
+        "13",
+        "36",
+        "89",
+        "132",
+        "185",
+        "229",
+        "283"
+      ]
+    },
+    {
+      "id": "286",
+      "file": "286-primary-source-algorithm-research-round-eighteen.md",
+      "title": "Primary-source algorithm research, round eighteen",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "09",
+        "15",
+        "36",
+        "143",
+        "148",
+        "152",
+        "154",
+        "158",
+        "159",
+        "171",
+        "185",
+        "191",
+        "203",
+        "271",
+        "285"
+      ]
+    },
+    {
+      "id": "287",
+      "file": "287-primary-source-algorithm-research-round-nineteen.md",
+      "title": "Primary-source algorithm research, round nineteen",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "80",
+        "148",
+        "157",
+        "158",
+        "163",
+        "189",
+        "197",
+        "272",
+        "274",
+        "286"
+      ]
+    },
+    {
+      "id": "288",
+      "file": "288-inlining-not-vectorization-crypto-priority.md",
+      "title": "V8's crypto win is inlining away the call boundary, not loop vectorization",
+      "status": "planned",
+      "depends_on": [
+        "20",
+        "128",
+        "131",
+        "163",
+        "246",
+        "251",
+        "253",
+        "284"
+      ]
+    },
+    {
+      "id": "289",
+      "file": "289-tail-merge-identical-cold-continuations.md",
+      "title": "Tail-merge identical cold continuations across stencils",
+      "status": "planned",
+      "depends_on": [
+        "16",
+        "42",
+        "84",
+        "109",
+        "117",
+        "135",
+        "160",
+        "161",
+        "281"
+      ]
+    },
+    {
+      "id": "290",
+      "file": "290-partial-prefix-inlining.md",
+      "title": "Partial prefix inlining: absorb the common case, call for the rest",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "20",
+        "128",
+        "163",
+        "251"
+      ]
+    },
+    {
+      "id": "291",
+      "file": "291-icache-footprint-and-stencil-retirement.md",
+      "title": "Instruction-cache footprint as a tracked metric, with a standing stencil-retirement policy",
+      "status": "planned",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "79",
+        "163",
+        "289"
+      ]
+    },
+    {
+      "id": "292",
+      "file": "292-monoidal-register-resource-allocation.md",
+      "title": "Registers as resources in a monoidal category: composable, exposed lifetimes",
+      "status": "planned",
+      "depends_on": [
+        "30",
+        "64",
+        "128",
+        "131",
+        "172",
+        "240",
+        "251"
+      ]
+    },
+    {
+      "id": "293",
+      "file": "293-separation-logic-heap-disjointness.md",
+      "title": "Separation logic's frame rule for proving heap-region disjointness",
+      "status": "planned",
+      "depends_on": [
+        "08",
+        "32",
+        "99",
+        "129",
+        "173",
+        "207",
+        "292"
+      ]
+    },
+    {
+      "id": "294",
+      "file": "294-entropy-weighted-static-specialization-priority.md",
+      "title": "Entropy-weighted static priority for guard/stencil-family selection",
+      "status": "planned",
+      "depends_on": [
+        "45",
+        "81",
+        "82",
+        "83",
+        "132",
+        "153",
+        "157",
+        "166",
+        "231"
+      ]
+    },
+    {
+      "id": "295",
+      "file": "295-tuned-allocator-instead-of-system-malloc.md",
+      "title": "Replace the system allocator with a size-class-tuned allocator",
+      "status": "planned",
+      "depends_on": [
+        "162",
+        "253"
+      ]
+    },
+    {
+      "id": "296",
+      "file": "296-guarded-page-safepoint-polling.md",
+      "title": "Guarded-page safepoint polling instead of a per-iteration branch",
+      "status": "planned",
+      "depends_on": [
+        "38",
+        "123",
+        "124",
+        "162",
+        "193",
+        "198",
+        "233",
+        "241"
+      ]
+    },
+    {
+      "id": "297",
+      "file": "297-shape-registry-unbounded-growth-validation.md",
+      "title": "Validate whether the shape hash-cons registry grows unboundedly",
+      "status": "planned",
+      "depends_on": [
+        "38",
+        "135",
+        "148",
+        "162",
+        "198",
+        "250"
+      ]
+    },
+    {
+      "id": "298",
+      "file": "298-primary-source-algorithm-research-round-twenty.md",
+      "title": "Primary-source algorithm research, round twenty",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "148",
+        "286",
+        "287",
+        "294"
+      ]
+    },
+    {
+      "id": "299",
+      "file": "299-bump-first-object-allocation-leaf.md",
+      "title": "Bump-first object allocation leaf",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "09",
+        "148",
+        "191"
+      ]
+    },
+    {
+      "id": "300",
+      "file": "300-logical-mark-lazy-block-sweeping.md",
+      "title": "Logical mark epochs and lazy block sweeping",
+      "status": "planned",
+      "depends_on": [
+        "09",
+        "148",
+        "162",
+        "193",
+        "299"
+      ]
+    },
+    {
+      "id": "301",
+      "file": "301-strategic-priority-tiers-and-review-methodology.md",
+      "title": "Strategic priority tiers and decision methodology for the score gate",
+      "status": "in_progress",
+      "depends_on": [
+        "00",
+        "15",
+        "20",
+        "38",
+        "128",
+        "148",
+        "162",
+        "163",
+        "198",
+        "207",
+        "219",
+        "223",
+        "231",
+        "250",
+        "251",
+        "252",
+        "253",
+        "288",
+        "290",
+        "292",
+        "297"
+      ]
+    },
+    {
+      "id": "302",
+      "file": "302-legacy-tax-quantification-v8-jsc.md",
+      "title": "Quantify the legacy/generality tax in V8/JSC's own hot functions",
+      "status": "planned",
+      "depends_on": [
+        "51",
+        "252",
+        "253",
+        "254"
+      ]
+    },
+    {
+      "id": "303",
+      "file": "303-arm64-native-value-representation-unconstrained.md",
+      "title": "An AArch64-native value/object representation unconstrained by x86/32-bit heritage",
+      "status": "planned",
+      "depends_on": [
+        "55",
+        "203",
+        "208",
+        "222",
+        "243",
+        "251",
+        "292"
+      ]
+    },
+    {
+      "id": "304",
+      "file": "304-single-realm-generality-deletion.md",
+      "title": "Delete embedding-generality overhead outright instead of guarding around it",
+      "status": "planned",
+      "depends_on": [
+        "55",
+        "229",
+        "231",
+        "252",
+        "254",
+        "302"
+      ]
+    },
+    {
+      "id": "305",
+      "file": "305-explicit-host-root-scopes.md",
+      "title": "Explicit host root scopes for non-owning values",
+      "status": "complete",
+      "depends_on": [
+        "09",
+        "38",
+        "148",
+        "193"
+      ]
+    },
+    {
+      "id": "306",
+      "file": "306-bounded-inherited-property-guard-stencil.md",
+      "title": "Bounded inherited-property guard stencil",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "08",
+        "09",
+        "137",
+        "145",
+        "153",
+        "283",
+        "284"
+      ]
+    },
+    {
+      "id": "307",
+      "file": "307-aot-guest-frame-prefix.md",
+      "title": "AOT-visible guest-frame prefix as an offset-zero record",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "15",
+        "55",
+        "146",
+        "168",
+        "178",
+        "181",
+        "193",
+        "203"
+      ]
+    },
+    {
+      "id": "308",
+      "file": "308-primary-source-algorithm-research-round-twenty-one.md",
+      "title": "Primary-source algorithm research, round twenty-one",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "143",
+        "151",
+        "171",
+        "181",
+        "298",
+        "301",
+        "307"
+      ]
+    },
+    {
+      "id": "309",
+      "file": "309-semantic-micro-op-algebra.md",
+      "title": "Semantic micro-op algebra between bytecode and stencil tiling",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "02",
+        "03",
+        "36",
+        "63",
+        "128",
+        "149",
+        "153",
+        "157",
+        "164",
+        "171",
+        "172",
+        "173",
+        "214",
+        "308"
+      ]
+    },
+    {
+      "id": "310",
+      "file": "310-canonical-pod-guest-frame-abi.md",
+      "title": "Canonical POD guest-frame ABI and explicit owned result word",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "06",
+        "15",
+        "55",
+        "146",
+        "168",
+        "178",
+        "181",
+        "193",
+        "203",
+        "307"
+      ]
+    },
+    {
+      "id": "311",
+      "file": "311-primary-source-algorithm-research-round-twenty-two.md",
+      "title": "Primary-source algorithm research, round twenty-two",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "87",
+        "143",
+        "150",
+        "171",
+        "181",
+        "241",
+        "301",
+        "308",
+        "309",
+        "310"
+      ]
+    },
+    {
+      "id": "312",
+      "file": "312-single-child-shape-transition-table.md",
+      "title": "Single-child shape-transition table",
+      "status": "planned",
+      "depends_on": [
+        "07",
+        "11",
+        "135",
+        "148",
+        "150"
+      ]
+    },
+    {
+      "id": "313",
+      "file": "313-sethi-ullman-stencil-scheduling.md",
+      "title": "Sethi-Ullman register-pressure-aware stencil scheduling",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "157",
+        "158",
+        "171",
+        "173",
+        "241",
+        "292",
+        "309"
+      ]
+    },
+    {
+      "id": "314",
+      "file": "314-pure-diamond-if-conversion.md",
+      "title": "Pure-diamond if-conversion stencil tiling",
+      "status": "planned",
+      "depends_on": [
+        "54",
+        "62",
+        "128",
+        "164",
+        "171",
+        "172",
+        "173",
+        "209",
+        "271",
+        "309"
+      ]
+    },
+    {
+      "id": "315",
+      "file": "315-path-lazy-pure-computation-sinking.md",
+      "title": "Path-lazy pure-computation sinking and duplication",
+      "status": "planned",
+      "depends_on": [
+        "62",
+        "128",
+        "164",
+        "171",
+        "173",
+        "195",
+        "209",
+        "241",
+        "309"
+      ]
+    },
+    {
+      "id": "316",
+      "file": "316-typed-operand-holes-and-site-load-erasure.md",
+      "title": "Typed operand holes and `InlineSite` load erasure",
+      "status": "planned",
+      "depends_on": [
+        "02",
+        "36",
+        "43",
+        "54",
+        "55",
+        "79",
+        "102",
+        "137",
+        "149",
+        "203",
+        "274",
+        "309"
+      ]
+    },
+    {
+      "id": "317",
+      "file": "317-immutable-call-recipes-and-inline-targets.md",
+      "title": "Immutable call recipes and POD inline targets",
+      "status": "complete",
+      "depends_on": [
+        "140",
+        "146",
+        "181",
+        "307",
+        "310"
+      ]
+    },
+    {
+      "id": "318",
+      "file": "318-first-cooked-register-operand-relocations.md",
+      "title": "First cooked register-operand relocation slice",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "36",
+        "43",
+        "54",
+        "79",
+        "102",
+        "137",
+        "203",
+        "274",
+        "309",
+        "316"
+      ]
+    },
+    {
+      "id": "319",
+      "file": "319-primary-source-algorithm-research-round-twenty-three.md",
+      "title": "Primary-source algorithm research, round twenty-three",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "157",
+        "171",
+        "181",
+        "301",
+        "309",
+        "311",
+        "316",
+        "317",
+        "318"
+      ]
+    },
+    {
+      "id": "320",
+      "file": "320-sticky-mark-generational-object-collection.md",
+      "title": "Sticky-mark generational object collection",
+      "status": "planned",
+      "depends_on": [
+        "09",
+        "38",
+        "162",
+        "193",
+        "299",
+        "300",
+        "305"
+      ]
+    },
+    {
+      "id": "321",
+      "file": "321-fresh-allocation-barrier-elision-and-clustering.md",
+      "title": "Fresh-allocation write-barrier elision and clustering",
+      "status": "planned",
+      "depends_on": [
+        "97",
+        "148",
+        "172",
+        "173",
+        "191",
+        "193",
+        "299",
+        "320"
+      ]
+    },
+    {
+      "id": "322",
+      "file": "322-static-exttsp-stencil-block-layout.md",
+      "title": "Static ExtTSP stencil-block layout and bounded tail duplication",
+      "status": "planned",
+      "depends_on": [
+        "28",
+        "157",
+        "171",
+        "209",
+        "241",
+        "276",
+        "291"
+      ]
+    },
+    {
+      "id": "323",
+      "file": "323-abstract-state-convergence-loop-peeling.md",
+      "title": "Abstract-state convergence loop peeling",
+      "status": "planned",
+      "depends_on": [
+        "171",
+        "175",
+        "196",
+        "209",
+        "214",
+        "309",
+        "313"
+      ]
+    },
+    {
+      "id": "324",
+      "file": "324-primary-source-algorithm-research-round-twenty-four.md",
+      "title": "Primary-source algorithm research, round twenty-four",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "35",
+        "144",
+        "145",
+        "152",
+        "153",
+        "154",
+        "158",
+        "164",
+        "171",
+        "172",
+        "181",
+        "265",
+        "276",
+        "309",
+        "318",
+        "319"
+      ]
+    },
+    {
+      "id": "325",
+      "file": "325-function-code-keyed-closure-call-ic.md",
+      "title": "Function-code-keyed closure call IC experiment",
+      "status": "complete",
+      "depends_on": [
+        "15",
+        "35",
+        "140",
+        "181",
+        "317",
+        "324"
+      ]
+    },
+    {
+      "id": "326",
+      "file": "326-static-guarded-numeric-basic-block-regions.md",
+      "title": "Static guarded numeric basic-block regions",
+      "status": "in_progress",
+      "depends_on": [
+        "02",
+        "15",
+        "36",
+        "120",
+        "121",
+        "122",
+        "128",
+        "144",
+        "157",
+        "171",
+        "309",
+        "324"
+      ]
+    },
+    {
+      "id": "327",
+      "file": "327-primary-source-algorithm-research-round-twenty-five.md",
+      "title": "Primary-source algorithm research, round twenty-five",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "144",
+        "153",
+        "158",
+        "164",
+        "173",
+        "253",
+        "279",
+        "301",
+        "324",
+        "326"
+      ]
+    },
+    {
+      "id": "328",
+      "file": "328-aarch64-conditional-compare-guard-products.md",
+      "title": "AArch64 conditional-compare guard products",
+      "status": "planned",
+      "depends_on": [
+        "02",
+        "43",
+        "52",
+        "55",
+        "121",
+        "164",
+        "203",
+        "279",
+        "326",
+        "327"
+      ]
+    },
+    {
+      "id": "329",
+      "file": "329-block-local-value-numbering-and-effect-forwarding.md",
+      "title": "Block-local value numbering and effect forwarding",
+      "status": "in_progress",
+      "depends_on": [
+        "109",
+        "128",
+        "157",
+        "171",
+        "173",
+        "309",
+        "326",
+        "327"
+      ]
+    },
+    {
+      "id": "330",
+      "file": "330-zero-code-frame-state-hints.md",
+      "title": "Zero-code frame-state hints and lazy exit reconstruction",
+      "status": "planned",
+      "depends_on": [
+        "128",
+        "158",
+        "164",
+        "171",
+        "172",
+        "173",
+        "193",
+        "327"
+      ]
+    },
+    {
+      "id": "331",
+      "file": "331-critical-path-pmu-optimization-gate.md",
+      "title": "Critical-path PMU optimization gate",
+      "status": "planned",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "43",
+        "253",
+        "291",
+        "301",
+        "327"
+      ]
+    },
+    {
+      "id": "332",
+      "file": "332-copy-patched-inline-site-strides.md",
+      "title": "Copy-patched `InlineSite` successor strides",
+      "status": "complete",
+      "depends_on": [
+        "01",
+        "02",
+        "17",
+        "18",
+        "318",
+        "329"
+      ]
+    },
+    {
+      "id": "333",
+      "file": "333-primary-source-algorithm-research-round-twenty-six.md",
+      "title": "Primary-source algorithm research, round twenty-six",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "39",
+        "145",
+        "155",
+        "157",
+        "158",
+        "171",
+        "173",
+        "176",
+        "196",
+        "322",
+        "327",
+        "329",
+        "332"
+      ]
+    },
+    {
+      "id": "334",
+      "file": "334-effect-safe-loop-distribution.md",
+      "title": "Effect-safe loop distribution into composable stencil traces",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "39",
+        "157",
+        "158",
+        "171",
+        "173",
+        "175",
+        "196",
+        "278",
+        "331",
+        "333"
+      ]
+    },
+    {
+      "id": "335",
+      "file": "335-primary-source-algorithm-research-round-twenty-seven.md",
+      "title": "Primary-source algorithm research, round twenty-seven",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "20",
+        "43",
+        "144",
+        "145",
+        "146",
+        "153",
+        "158",
+        "163",
+        "171",
+        "176",
+        "177",
+        "181",
+        "203",
+        "270",
+        "288",
+        "301",
+        "317",
+        "330",
+        "332",
+        "333"
+      ]
+    },
+    {
+      "id": "336",
+      "file": "336-reusable-monomorphic-call-site-activations.md",
+      "title": "Reusable monomorphic call-site activations",
+      "status": "complete",
+      "depends_on": [
+        "05",
+        "13",
+        "14",
+        "15",
+        "140",
+        "146",
+        "168",
+        "178",
+        "181",
+        "305",
+        "307",
+        "310",
+        "317",
+        "335"
+      ]
+    },
+    {
+      "id": "337",
+      "file": "337-inline-direct-call-guard-experiment.md",
+      "title": "Inline monomorphic direct-call guard experiment",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "05",
+        "15",
+        "140",
+        "145",
+        "146",
+        "181",
+        "317",
+        "335",
+        "336"
+      ]
+    },
+    {
+      "id": "338",
+      "file": "338-sparse-reusable-activation-reset-experiment.md",
+      "title": "Sparse reusable-activation reset experiment",
+      "status": "complete",
+      "depends_on": [
+        "05",
+        "15",
+        "106",
+        "127",
+        "168",
+        "178",
+        "301",
+        "335",
+        "336"
+      ]
+    },
+    {
+      "id": "339",
+      "file": "339-primary-source-performance-gap-audit.md",
+      "title": "Primary-source performance-gap audit, round twenty-eight",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "20",
+        "143",
+        "273",
+        "301",
+        "335",
+        "336",
+        "337",
+        "338"
+      ]
+    },
+    {
+      "id": "340",
+      "file": "340-borrowed-reusable-call-environment.md",
+      "title": "Borrowed reusable-call environment",
+      "status": "complete",
+      "depends_on": [
+        "13",
+        "15",
+        "140",
+        "146",
+        "168",
+        "181",
+        "336",
+        "339"
+      ]
+    },
+    {
+      "id": "341",
+      "file": "341-memoized-function-loop-fact.md",
+      "title": "Memoized function loop fact",
+      "status": "complete",
+      "depends_on": [
+        "05",
+        "15",
+        "140",
+        "301",
+        "336",
+        "340"
+      ]
+    },
+    {
+      "id": "342",
+      "file": "342-identical-source-context-elision-experiment.md",
+      "title": "Identical source-context elision experiment",
+      "status": "complete",
+      "depends_on": [
+        "05",
+        "15",
+        "146",
+        "181",
+        "301",
+        "341"
+      ]
+    },
+    {
+      "id": "343",
+      "file": "343-feature-gated-inline-candidate-census.md",
+      "title": "Feature-gated initial inline-candidate census",
+      "status": "complete",
+      "depends_on": [
+        "05",
+        "15",
+        "20",
+        "146",
+        "163",
+        "177",
+        "181",
+        "301",
+        "339",
+        "341"
+      ]
+    },
+    {
+      "id": "344",
+      "file": "344-single-call-ic-entry-read-experiment.md",
+      "title": "Single call-IC entry-read experiment",
+      "status": "complete",
+      "depends_on": [
+        "05",
+        "15",
+        "140",
+        "301",
+        "341",
+        "343"
+      ]
+    },
+    {
+      "id": "345",
+      "file": "345-primary-source-algorithm-research-round-twenty-nine.md",
+      "title": "Primary-source algorithm research, round twenty-nine",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "20",
+        "87",
+        "144",
+        "145",
+        "146",
+        "148",
+        "157",
+        "158",
+        "162",
+        "181",
+        "189",
+        "190",
+        "265",
+        "272",
+        "276",
+        "301",
+        "316",
+        "322",
+        "326",
+        "339",
+        "343"
+      ]
+    },
+    {
+      "id": "346",
+      "file": "346-loop-header-native-entry-table.md",
+      "title": "Loop-header native-entry table",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "03",
+        "17",
+        "19",
+        "144",
+        "146",
+        "164",
+        "181",
+        "187",
+        "203",
+        "310",
+        "345",
+        "348"
+      ]
+    },
+    {
+      "id": "347",
+      "file": "347-rustc-llvm-cooker-configuration-matrix.md",
+      "title": "rustc/LLVM cooker configuration matrix",
+      "status": "planned",
+      "depends_on": [
+        "02",
+        "05",
+        "43",
+        "52",
+        "54",
+        "55",
+        "78",
+        "102",
+        "273",
+        "345"
+      ]
+    },
+    {
+      "id": "348",
+      "file": "348-two-pass-stencil-function-linker.md",
+      "title": "Two-pass stencil function linker",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "02",
+        "14",
+        "16",
+        "17",
+        "157",
+        "189",
+        "274",
+        "276",
+        "316",
+        "322",
+        "345"
+      ]
+    },
+    {
+      "id": "349",
+      "file": "349-static-hoisted-leaf-inlining-experiment.md",
+      "title": "Static same-owner hoisted leaf inlining experiment",
+      "status": "complete",
+      "depends_on": [
+        "05",
+        "15",
+        "20",
+        "317",
+        "343",
+        "345"
+      ]
+    },
+    {
+      "id": "350",
+      "file": "350-primary-source-algorithm-research-round-thirty.md",
+      "title": "Primary-source algorithm research, round thirty",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "20",
+        "144",
+        "145",
+        "148",
+        "149",
+        "152",
+        "153",
+        "157",
+        "158",
+        "162",
+        "165",
+        "171",
+        "176",
+        "177",
+        "189",
+        "191",
+        "193",
+        "265",
+        "291",
+        "301",
+        "309",
+        "317",
+        "320",
+        "321",
+        "331",
+        "345",
+        "347",
+        "349"
+      ]
+    },
+    {
+      "id": "351",
+      "file": "351-prelink-call-recipe-and-static-target-reach.md",
+      "title": "Pre-link call recipe and static target reach census",
+      "status": "complete",
+      "depends_on": [
+        "05",
+        "15",
+        "20",
+        "146",
+        "181",
+        "301",
+        "317",
+        "343",
+        "349",
+        "350"
+      ]
+    },
+    {
+      "id": "352",
+      "file": "352-exact-outer-binding-leaf-inlining-experiment.md",
+      "title": "Exact outer-binding leaf inlining experiment",
+      "status": "complete",
+      "depends_on": [
+        "05",
+        "15",
+        "20",
+        "146",
+        "181",
+        "301",
+        "317",
+        "337",
+        "343",
+        "349",
+        "351"
+      ]
+    },
+    {
+      "id": "353",
+      "file": "353-closed-native-leaf-call-stencils.md",
+      "title": "Closed native leaf-call stencils with burned caller operands",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "15",
+        "20",
+        "146",
+        "181",
+        "301",
+        "316",
+        "317",
+        "318",
+        "337",
+        "351",
+        "352"
+      ]
+    },
+    {
+      "id": "354",
+      "file": "354-primary-source-algorithm-research-round-thirty-one.md",
+      "title": "Primary-source algorithm research, round thirty-one",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "20",
+        "36",
+        "144",
+        "145",
+        "146",
+        "153",
+        "157",
+        "158",
+        "181",
+        "301",
+        "316",
+        "351",
+        "352",
+        "353"
+      ]
+    },
+    {
+      "id": "355",
+      "file": "355-reserved-native-call-activation-stencil.md",
+      "title": "Reserved native call-activation stencil",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "02",
+        "05",
+        "15",
+        "20",
+        "103",
+        "127",
+        "139",
+        "145",
+        "146",
+        "148",
+        "163",
+        "172",
+        "181",
+        "307",
+        "310",
+        "316",
+        "336",
+        "337",
+        "354"
+      ]
+    },
+    {
+      "id": "356",
+      "file": "356-primary-source-algorithm-research-round-thirty-two.md",
+      "title": "Primary-source algorithm research, round thirty-two",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "02",
+        "05",
+        "15",
+        "20",
+        "36",
+        "144",
+        "145",
+        "146",
+        "153",
+        "157",
+        "158",
+        "162",
+        "171",
+        "177",
+        "181",
+        "189",
+        "193",
+        "291",
+        "301",
+        "316",
+        "320",
+        "348",
+        "354",
+        "355"
+      ]
+    },
+    {
+      "id": "357",
+      "file": "357-explicit-guest-return-continuation-and-multi-entry-image.md",
+      "title": "Explicit guest return continuation and multi-entry function image",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "14",
+        "16",
+        "17",
+        "146",
+        "181",
+        "187",
+        "203",
+        "307",
+        "310",
+        "317",
+        "348",
+        "355",
+        "356"
+      ]
+    },
+    {
+      "id": "358",
+      "file": "358-traced-object-native-transfer-edges.md",
+      "title": "Traced-object native transfer edges",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "09",
+        "15",
+        "36",
+        "55",
+        "133",
+        "148",
+        "193",
+        "201",
+        "203",
+        "299",
+        "305",
+        "320",
+        "357"
+      ]
+    },
+    {
+      "id": "359",
+      "file": "359-two-own-property-stores-terminal-stencil.md",
+      "title": "Two own-property stores plus terminal return stencil",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "08",
+        "09",
+        "15",
+        "36",
+        "55",
+        "109",
+        "132",
+        "133",
+        "145",
+        "148",
+        "153",
+        "201",
+        "203",
+        "306",
+        "316",
+        "358"
+      ]
+    },
+    {
+      "id": "360",
+      "file": "360-primary-source-algorithm-research-round-thirty-three.md",
+      "title": "Primary-source algorithm research, round thirty-three",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "20",
+        "36",
+        "128",
+        "144",
+        "145",
+        "146",
+        "148",
+        "153",
+        "157",
+        "158",
+        "162",
+        "171",
+        "172",
+        "181",
+        "193",
+        "203",
+        "301",
+        "316",
+        "320",
+        "321",
+        "348",
+        "356",
+        "357",
+        "358",
+        "359"
+      ]
+    },
+    {
+      "id": "361",
+      "file": "361-terminal-constructor-shape-and-store-take.md",
+      "title": "Terminal constructor shape and ownership-taking property stores",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "07",
+        "08",
+        "09",
+        "15",
+        "36",
+        "128",
+        "145",
+        "148",
+        "153",
+        "172",
+        "193",
+        "201",
+        "203",
+        "316",
+        "358",
+        "359",
+        "360"
+      ]
+    },
+    {
+      "id": "362",
+      "file": "362-hostless-native-leaf-guest-calls.md",
+      "title": "Hostless native leaf guest calls",
+      "status": "complete",
+      "depends_on": [
+        "02",
+        "13",
+        "15",
+        "20",
+        "36",
+        "55",
+        "128",
+        "140",
+        "145",
+        "146",
+        "168",
+        "172",
+        "178",
+        "181",
+        "203",
+        "307",
+        "310",
+        "317",
+        "336",
+        "355",
+        "357",
+        "360",
+        "361"
+      ]
+    },
+    {
+      "id": "363",
+      "file": "363-primary-source-algorithm-research-round-thirty-four.md",
+      "title": "Primary-source algorithm research, round thirty-four",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "131",
+        "144",
+        "145",
+        "146",
+        "148",
+        "152",
+        "153",
+        "157",
+        "158",
+        "164",
+        "165",
+        "171",
+        "172",
+        "181",
+        "189",
+        "191",
+        "193",
+        "214",
+        "265",
+        "301",
+        "309",
+        "316",
+        "320",
+        "321",
+        "329",
+        "348",
+        "360",
+        "361",
+        "362"
+      ]
+    },
+    {
+      "id": "364",
+      "file": "364-primary-source-algorithm-and-measurement-research-round-thirty-five.md",
+      "title": "Primary-source algorithm and measurement research, round thirty-five",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "04",
+        "05",
+        "15",
+        "87",
+        "128",
+        "144",
+        "145",
+        "146",
+        "148",
+        "152",
+        "153",
+        "154",
+        "157",
+        "158",
+        "162",
+        "164",
+        "165",
+        "171",
+        "172",
+        "176",
+        "181",
+        "189",
+        "190",
+        "191",
+        "193",
+        "203",
+        "214",
+        "265",
+        "291",
+        "301",
+        "309",
+        "316",
+        "320",
+        "321",
+        "322",
+        "329",
+        "331",
+        "347",
+        "348",
+        "361",
+        "362",
+        "363"
+      ]
+    },
+    {
+      "id": "365",
+      "file": "365-upstream-equivalent-v8v7-score-and-statistical-acceptance.md",
+      "title": "Upstream-equivalent V8v7 score and statistical acceptance lane",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "253",
+        "301",
+        "331",
+        "364"
+      ]
+    },
+    {
+      "id": "366",
+      "file": "366-symbolic-pc-and-edge-only-site-materialization.md",
+      "title": "Symbolic PC and edge-only site materialization",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "02",
+        "14",
+        "16",
+        "17",
+        "54",
+        "102",
+        "157",
+        "164",
+        "203",
+        "309",
+        "316",
+        "318",
+        "332",
+        "348",
+        "364"
+      ]
+    },
+    {
+      "id": "367",
+      "file": "367-differential-rustc-llvm-stencil-cooker-audit.md",
+      "title": "Differential rustc/LLVM stencil-cooker audit",
+      "status": "in_progress",
+      "depends_on": [
+        "02",
+        "43",
+        "54",
+        "79",
+        "102",
+        "273",
+        "274",
+        "316",
+        "318",
+        "347",
+        "364"
+      ]
+    },
+    {
+      "id": "368",
+      "file": "368-prototype-and-property-watchpoint-stencils.md",
+      "title": "Prototype and property watchpoint stencils",
+      "status": "in_progress",
+      "depends_on": [
+        "07",
+        "08",
+        "31",
+        "135",
+        "137",
+        "145",
+        "150",
+        "152",
+        "153",
+        "154",
+        "185",
+        "283",
+        "285",
+        "306",
+        "361",
+        "364"
+      ]
+    },
+    {
+      "id": "369",
+      "file": "369-compact-object-header-and-split-payload-kinds.md",
+      "title": "Compact object header and split payload kinds",
+      "status": "planned",
+      "depends_on": [
+        "06",
+        "07",
+        "09",
+        "12",
+        "137",
+        "148",
+        "156",
+        "162",
+        "165",
+        "193",
+        "208",
+        "265",
+        "299",
+        "320",
+        "364"
+      ]
+    },
+    {
+      "id": "370",
+      "file": "370-primary-source-algorithm-research-round-thirty-six.md",
+      "title": "Primary-source algorithm research, round thirty-six",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "42",
+        "48",
+        "93",
+        "144",
+        "145",
+        "153",
+        "157",
+        "158",
+        "164",
+        "171",
+        "176",
+        "191",
+        "204",
+        "309",
+        "316",
+        "331",
+        "348",
+        "364",
+        "365",
+        "366",
+        "367",
+        "368",
+        "369"
+      ]
+    },
+    {
+      "id": "371",
+      "file": "371-assumption-polymorphic-native-continuations.md",
+      "title": "Assumption-polymorphic native continuation dispatch",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "03",
+        "14",
+        "16",
+        "17",
+        "48",
+        "144",
+        "149",
+        "158",
+        "164",
+        "171",
+        "203",
+        "271",
+        "309",
+        "330",
+        "346",
+        "348",
+        "370"
+      ]
+    },
+    {
+      "id": "372",
+      "file": "372-quoted-register-copy-and-dead-definition-rewrite.md",
+      "title": "Quoted register-copy and dead-definition rewrite",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "01",
+        "15",
+        "49",
+        "128",
+        "144",
+        "157",
+        "158",
+        "164",
+        "171",
+        "329",
+        "364",
+        "365"
+      ]
+    },
+    {
+      "id": "373",
+      "file": "373-maximal-closed-basic-block-stencil-composition.md",
+      "title": "Maximal closed basic-block stencil composition",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "01",
+        "02",
+        "07",
+        "08",
+        "09",
+        "15",
+        "16",
+        "17",
+        "36",
+        "49",
+        "79",
+        "109",
+        "128",
+        "132",
+        "144",
+        "145",
+        "149",
+        "157",
+        "158",
+        "164",
+        "171",
+        "203",
+        "283",
+        "284",
+        "306",
+        "316",
+        "318",
+        "332",
+        "358",
+        "364",
+        "365",
+        "367",
+        "372"
+      ]
+    },
+    {
+      "id": "374",
+      "file": "374-native-inherited-property-cache-projection-experiment.md",
+      "title": "Native inherited-property cache projection experiment",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "02",
+        "07",
+        "08",
+        "09",
+        "36",
+        "49",
+        "137",
+        "145",
+        "283",
+        "306",
+        "368",
+        "373"
+      ]
+    },
+    {
+      "id": "375",
+      "file": "375-guarded-equality-opcode-stencils.md",
+      "title": "Guarded equality opcode stencils",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "01",
+        "02",
+        "05",
+        "06",
+        "10",
+        "15",
+        "36",
+        "49",
+        "79",
+        "109",
+        "128",
+        "144",
+        "149",
+        "157",
+        "158",
+        "164",
+        "171",
+        "203",
+        "316",
+        "318",
+        "365",
+        "367",
+        "372",
+        "373"
+      ]
+    },
+    {
+      "id": "376",
+      "file": "376-primary-source-algorithm-research-round-thirty-seven.md",
+      "title": "Primary-source algorithm research, round thirty-seven",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "12",
+        "15",
+        "36",
+        "41",
+        "87",
+        "128",
+        "144",
+        "145",
+        "149",
+        "152",
+        "157",
+        "158",
+        "171",
+        "177",
+        "181",
+        "203",
+        "265",
+        "300",
+        "309",
+        "316",
+        "348",
+        "365",
+        "366",
+        "367",
+        "370",
+        "373",
+        "375"
+      ]
+    },
+    {
+      "id": "377",
+      "file": "377-weighted-residual-frontier-hypergraph.md",
+      "title": "Weighted residual-frontier hypergraph planner",
+      "status": "in_progress",
+      "depends_on": [
+        "00",
+        "04",
+        "05",
+        "15",
+        "37",
+        "82",
+        "83",
+        "128",
+        "132",
+        "157",
+        "272",
+        "301",
+        "331",
+        "365",
+        "373",
+        "375",
+        "376"
+      ]
+    },
+    {
+      "id": "378",
+      "file": "378-direct-lexical-address-stencils.md",
+      "title": "Direct lexical-address load/store stencils",
+      "status": "in_progress",
+      "depends_on": [
+        "01",
+        "02",
+        "06",
+        "13",
+        "36",
+        "41",
+        "49",
+        "89",
+        "103",
+        "137",
+        "149",
+        "168",
+        "169",
+        "178",
+        "203",
+        "204",
+        "307",
+        "310",
+        "316",
+        "318",
+        "373",
+        "376",
+        "377"
+      ]
+    },
+    {
+      "id": "379",
+      "file": "379-native-link-return-guest-call-experiment.md",
+      "title": "Native link/return guest-call experiment",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "02",
+        "05",
+        "14",
+        "15",
+        "16",
+        "17",
+        "20",
+        "55",
+        "140",
+        "145",
+        "146",
+        "157",
+        "158",
+        "164",
+        "181",
+        "187",
+        "189",
+        "193",
+        "203",
+        "307",
+        "309",
+        "310",
+        "316",
+        "317",
+        "318",
+        "331",
+        "348",
+        "357",
+        "365",
+        "376",
+        "377"
+      ]
+    },
+    {
+      "id": "380",
+      "file": "380-primary-source-optimization-research-round-thirty-eight.md",
+      "title": "Primary-source optimization research, round thirty-eight",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "04",
+        "05",
+        "12",
+        "15",
+        "36",
+        "144",
+        "145",
+        "152",
+        "153",
+        "157",
+        "165",
+        "171",
+        "191",
+        "204",
+        "301",
+        "348",
+        "365",
+        "366",
+        "367",
+        "373",
+        "375",
+        "376",
+        "377",
+        "378",
+        "379"
+      ]
+    },
+    {
+      "id": "381",
+      "file": "381-direct-dense-computed-stencil-projection.md",
+      "title": "Direct dense-computed stencil projection",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "01",
+        "02",
+        "06",
+        "09",
+        "12",
+        "15",
+        "36",
+        "55",
+        "128",
+        "144",
+        "148",
+        "157",
+        "165",
+        "193",
+        "203",
+        "301",
+        "316",
+        "348",
+        "365",
+        "367",
+        "373",
+        "377",
+        "378",
+        "380"
+      ]
+    },
+    {
+      "id": "382",
+      "file": "382-native-profile-delta-tool.md",
+      "title": "Native-profile delta tool for before/after candidate comparison",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "253",
+        "362",
+        "377",
+        "381"
+      ]
+    },
+    {
+      "id": "383",
+      "file": "383-parametrized-synthetic-load-generator.md",
+      "title": "Adopt `quench-bench/micros` instead of building a new load generator",
+      "status": "planned",
+      "depends_on": [
+        "04",
+        "05",
+        "197",
+        "225",
+        "245",
+        "250",
+        "297",
+        "377"
+      ]
+    },
+    {
+      "id": "384",
+      "file": "384-typed-property-region-admission-experiment.md",
+      "title": "Typed property-flow numeric-region admission experiment",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "128",
+        "144",
+        "152",
+        "157",
+        "171",
+        "326",
+        "329",
+        "365",
+        "381",
+        "382"
+      ]
+    },
+    {
+      "id": "385",
+      "file": "385-register-resident-i32-region-connector.md",
+      "title": "Register-resident I32 region connector and physical cover",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "01",
+        "02",
+        "36",
+        "43",
+        "55",
+        "128",
+        "144",
+        "157",
+        "158",
+        "164",
+        "171",
+        "203",
+        "309",
+        "316",
+        "326",
+        "329",
+        "330",
+        "348",
+        "365",
+        "367",
+        "381",
+        "384"
+      ]
+    },
+    {
+      "id": "386",
+      "file": "386-adjacent-tail-connector-relaxation.md",
+      "title": "Adjacent tail-connector physical relaxation",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "01",
+        "02",
+        "15",
+        "36",
+        "55",
+        "157",
+        "203",
+        "309",
+        "316",
+        "348",
+        "365",
+        "367",
+        "381",
+        "384"
+      ]
+    },
+    {
+      "id": "387",
+      "file": "387-adopt-deegen-curriculum-as-calibration-foundation.md",
+      "title": "Adopt `deegen-curriculum` as the graduated-complexity calibration foundation",
+      "status": "planned",
+      "depends_on": [
+        "22",
+        "45",
+        "331"
+      ]
+    },
+    {
+      "id": "388",
+      "file": "388-staged-headroom-curve-v8v7-methodology.md",
+      "title": "Staged headroom curve: score `deegen-curriculum` V8v7-style against Node/Bun",
+      "status": "planned",
+      "depends_on": [
+        "00",
+        "15",
+        "253",
+        "301",
+        "387"
+      ]
+    },
+    {
+      "id": "389",
+      "file": "389-primary-source-and-codebase-opportunity-audit.md",
+      "title": "Primary-source and codebase opportunity audit",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "04",
+        "05",
+        "15",
+        "37",
+        "81",
+        "145",
+        "157",
+        "158",
+        "253",
+        "292",
+        "301",
+        "309",
+        "316",
+        "331",
+        "348",
+        "366",
+        "367",
+        "377",
+        "379",
+        "381",
+        "382",
+        "385",
+        "386"
+      ]
+    },
+    {
+      "id": "390",
+      "file": "390-general-stencil-patch-algebra-and-raw-value-binding.md",
+      "title": "General stencil patch algebra and raw-value binding",
+      "status": "in_progress",
+      "depends_on": [
+        "00",
+        "02",
+        "43",
+        "79",
+        "157",
+        "158",
+        "309",
+        "316",
+        "348",
+        "367",
+        "377",
+        "381",
+        "385",
+        "389"
+      ]
+    },
+    {
+      "id": "391",
+      "file": "391-primary-source-optimization-research-round-thirty-nine.md",
+      "title": "Primary-source optimization research, round thirty-nine",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "20",
+        "93",
+        "149",
+        "157",
+        "166",
+        "171",
+        "301",
+        "309",
+        "331",
+        "348",
+        "367",
+        "377",
+        "385",
+        "389",
+        "390"
+      ]
+    },
+    {
+      "id": "392",
+      "file": "392-demand-projected-feedback-plane.md",
+      "title": "Demand-projected feedback plane",
+      "status": "planned",
+      "depends_on": [
+        "05",
+        "82",
+        "144",
+        "153",
+        "163",
+        "166",
+        "171",
+        "301",
+        "371",
+        "390",
+        "391",
+        "393"
+      ]
+    },
+    {
+      "id": "393",
+      "file": "393-composable-native-path-instrumentation-stencils.md",
+      "title": "Composable native-path instrumentation stencils",
+      "status": "in_progress",
+      "depends_on": [
+        "01",
+        "05",
+        "81",
+        "93",
+        "166",
+        "171",
+        "331",
+        "348",
+        "367",
+        "382",
+        "390",
+        "391"
+      ]
+    },
+    {
+      "id": "394",
+      "file": "394-offline-llvm-oracle-translation-rule-synthesis.md",
+      "title": "Offline rustc/LLVM-oracle translation-rule synthesis",
+      "status": "planned",
+      "depends_on": [
+        "02",
+        "43",
+        "49",
+        "53",
+        "54",
+        "149",
+        "157",
+        "272",
+        "309",
+        "331",
+        "347",
+        "367",
+        "385",
+        "390",
+        "391"
+      ]
+    },
+    {
+      "id": "395",
+      "file": "395-primary-source-optimization-research-round-forty.md",
+      "title": "Primary-source optimization research, round forty",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "20",
+        "24",
+        "87",
+        "144",
+        "146",
+        "153",
+        "157",
+        "166",
+        "171",
+        "176",
+        "230",
+        "299",
+        "320",
+        "368",
+        "369",
+        "371",
+        "377",
+        "379",
+        "385",
+        "390",
+        "393",
+        "394"
+      ]
+    },
+    {
+      "id": "396",
+      "file": "396-guard-failure-native-cover-dag.md",
+      "title": "Guard-failure native-cover DAG experiment",
+      "status": "in_progress",
+      "depends_on": [
+        "01",
+        "05",
+        "15",
+        "128",
+        "144",
+        "149",
+        "157",
+        "164",
+        "171",
+        "203",
+        "326",
+        "330",
+        "348",
+        "371",
+        "385",
+        "390",
+        "393",
+        "395"
+      ]
+    },
+    {
+      "id": "397",
+      "file": "397-adjacent-prologue-loop-context-composition.md",
+      "title": "Adjacent prologue/loop context composition",
+      "status": "complete",
+      "depends_on": [
+        "01",
+        "14",
+        "17",
+        "128",
+        "144",
+        "157",
+        "164",
+        "171",
+        "330",
+        "371",
+        "384",
+        "396"
+      ]
+    },
+    {
+      "id": "398",
+      "file": "398-bottom-up-stage-gated-optimization.md",
+      "title": "Bottom-up stage-gated optimization: master the simplest load before the next",
+      "status": "planned",
+      "depends_on": [
+        "00",
+        "15",
+        "146",
+        "301",
+        "336",
+        "338",
+        "381",
+        "387",
+        "388"
+      ]
+    },
+    {
+      "id": "399",
+      "file": "399-sparse-dense-property-context-memoization.md",
+      "title": "Sparse dense-property context memoization",
+      "status": "complete",
+      "depends_on": [
+        "05",
+        "09",
+        "12",
+        "128",
+        "144",
+        "171",
+        "384",
+        "396",
+        "397"
+      ]
+    },
+    {
+      "id": "400",
+      "file": "400-primary-source-optimization-research-round-forty-one.md",
+      "title": "Primary-source optimization research, round forty-one",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "144",
+        "152",
+        "157",
+        "171",
+        "173",
+        "264",
+        "328",
+        "368",
+        "379",
+        "385",
+        "397",
+        "399"
+      ]
+    },
+    {
+      "id": "401",
+      "file": "401-context-preserving-call-containing-regions.md",
+      "title": "Context-preserving call-containing residual regions",
+      "status": "in_progress",
+      "depends_on": [
+        "01",
+        "02",
+        "05",
+        "08",
+        "09",
+        "13",
+        "14",
+        "15",
+        "17",
+        "128",
+        "140",
+        "144",
+        "146",
+        "157",
+        "164",
+        "171",
+        "173",
+        "181",
+        "203",
+        "301",
+        "307",
+        "310",
+        "316",
+        "317",
+        "329",
+        "348",
+        "357",
+        "362",
+        "373",
+        "377",
+        "379",
+        "390",
+        "400",
+        "402"
+      ]
+    },
+    {
+      "id": "402",
+      "file": "402-bounded-intrusive-reusable-activation-pool.md",
+      "title": "Bounded intrusive reusable-activation pool",
+      "status": "complete",
+      "depends_on": [
+        "05",
+        "09",
+        "13",
+        "14",
+        "127",
+        "140",
+        "146",
+        "168",
+        "178",
+        "181",
+        "307",
+        "310",
+        "317",
+        "336",
+        "338",
+        "357",
+        "362",
+        "379",
+        "400"
+      ]
+    },
+    {
+      "id": "403",
+      "file": "403-primary-source-optimization-research-round-forty-two.md",
+      "title": "Primary-source optimization research, round forty-two",
+      "status": "complete",
+      "depends_on": [
+        "15",
+        "144",
+        "152",
+        "153",
+        "154",
+        "157",
+        "158",
+        "159",
+        "171",
+        "173",
+        "176",
+        "184",
+        "195",
+        "209",
+        "241",
+        "309",
+        "329",
+        "368",
+        "385",
+        "400",
+        "401",
+        "402"
+      ]
+    },
+    {
+      "id": "404",
+      "file": "404-guarded-direct-bitwise-and-shift-stencils.md",
+      "title": "Guarded direct bitwise and shift stencils",
+      "status": "complete",
+      "depends_on": [
+        "01",
+        "02",
+        "15",
+        "43",
+        "54",
+        "157",
+        "181",
+        "316",
+        "348",
+        "390",
+        "401"
+      ]
+    },
+    {
+      "id": "405",
+      "file": "405-primary-source-optimization-research-round-forty-three.md",
+      "title": "Primary-source optimization research, round forty-three",
+      "status": "complete",
+      "depends_on": [
+        "15",
+        "87",
+        "144",
+        "146",
+        "152",
+        "153",
+        "154",
+        "158",
+        "159",
+        "162",
+        "183",
+        "187",
+        "188",
+        "189",
+        "192",
+        "280",
+        "368",
+        "385",
+        "390",
+        "401",
+        "404",
+        "406"
+      ]
+    },
+    {
+      "id": "406",
+      "file": "406-aarch64-final-link-address-mode-relaxation.md",
+      "title": "AArch64 final-link address-mode relaxation",
+      "status": "planned",
+      "depends_on": [
+        "02",
+        "43",
+        "55",
+        "157",
+        "189",
+        "274",
+        "348",
+        "367",
+        "390",
+        "405"
+      ]
+    },
+    {
+      "id": "407",
+      "file": "407-stable-direct-call-activation-lease.md",
+      "title": "Stable direct-call activation lease and connector preflight",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "09",
+        "13",
+        "14",
+        "15",
+        "127",
+        "140",
+        "146",
+        "168",
+        "178",
+        "181",
+        "307",
+        "310",
+        "317",
+        "336",
+        "338",
+        "357",
+        "362",
+        "379",
+        "385",
+        "400",
+        "401",
+        "402",
+        "405"
+      ]
+    },
+    {
+      "id": "408",
+      "file": "408-primary-source-optimization-research-round-forty-four.md",
+      "title": "Primary-source optimization research, round forty-four",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "54",
+        "145",
+        "153",
+        "155",
+        "157",
+        "158",
+        "165",
+        "172",
+        "189",
+        "203",
+        "204",
+        "213",
+        "229",
+        "309",
+        "330",
+        "368",
+        "385",
+        "401",
+        "405",
+        "406",
+        "407"
+      ]
+    },
+    {
+      "id": "409",
+      "file": "409-primary-source-optimization-research-round-forty-five.md",
+      "title": "Primary-source optimization research, round forty-five",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "05",
+        "15",
+        "20",
+        "24",
+        "87",
+        "144",
+        "152",
+        "157",
+        "158",
+        "162",
+        "165",
+        "172",
+        "173",
+        "175",
+        "176",
+        "177",
+        "191",
+        "195",
+        "214",
+        "233",
+        "264",
+        "265",
+        "272",
+        "276",
+        "279",
+        "289",
+        "291",
+        "313",
+        "320",
+        "321",
+        "322",
+        "323",
+        "330",
+        "368",
+        "377",
+        "379",
+        "385",
+        "396",
+        "401",
+        "408"
+      ]
+    },
+    {
+      "id": "410",
+      "file": "410-four-way-inherited-property-pic.md",
+      "title": "Four-way inherited-property PIC experiment",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "02",
+        "07",
+        "08",
+        "09",
+        "36",
+        "128",
+        "137",
+        "145",
+        "150",
+        "152",
+        "153",
+        "157",
+        "203",
+        "306",
+        "316",
+        "348",
+        "367",
+        "368",
+        "374",
+        "385",
+        "409"
+      ]
+    },
+    {
+      "id": "411",
+      "file": "411-two-way-inherited-property-pic.md",
+      "title": "Two-way inherited-property PIC physical-cover experiment",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "02",
+        "07",
+        "08",
+        "09",
+        "36",
+        "128",
+        "137",
+        "145",
+        "150",
+        "152",
+        "153",
+        "157",
+        "203",
+        "306",
+        "316",
+        "348",
+        "367",
+        "368",
+        "374",
+        "385",
+        "409",
+        "410"
+      ]
+    },
+    {
+      "id": "412",
+      "file": "412-three-way-inherited-property-pic.md",
+      "title": "Three-way inherited-property PIC physical-cover experiment",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "02",
+        "07",
+        "08",
+        "09",
+        "36",
+        "128",
+        "137",
+        "145",
+        "150",
+        "152",
+        "153",
+        "157",
+        "203",
+        "306",
+        "316",
+        "348",
+        "367",
+        "368",
+        "374",
+        "385",
+        "409",
+        "410",
+        "411"
+      ]
+    },
+    {
+      "id": "413",
+      "file": "413-shared-inherited-property-overflow-kernel.md",
+      "title": "Shared inherited-property overflow kernel",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "01",
+        "02",
+        "07",
+        "08",
+        "09",
+        "14",
+        "16",
+        "17",
+        "36",
+        "128",
+        "137",
+        "145",
+        "150",
+        "152",
+        "153",
+        "157",
+        "203",
+        "306",
+        "316",
+        "348",
+        "367",
+        "368",
+        "374",
+        "385",
+        "409",
+        "410",
+        "411",
+        "412"
+      ]
+    },
+    {
+      "id": "414",
+      "file": "414-primary-source-optimization-research-round-forty-six.md",
+      "title": "Primary-source optimization research, round forty-six",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "02",
+        "05",
+        "15",
+        "24",
+        "144",
+        "149",
+        "152",
+        "157",
+        "158",
+        "159",
+        "171",
+        "176",
+        "191",
+        "291",
+        "309",
+        "322",
+        "330",
+        "385",
+        "394",
+        "401",
+        "409",
+        "413"
+      ]
+    },
+    {
+      "id": "415",
+      "file": "415-budgeted-loop-unswitching.md",
+      "title": "Budgeted loop-invariant guard unswitching",
+      "status": "planned",
+      "depends_on": [
+        "01",
+        "02",
+        "05",
+        "14",
+        "15",
+        "17",
+        "144",
+        "152",
+        "157",
+        "159",
+        "164",
+        "171",
+        "173",
+        "175",
+        "203",
+        "214",
+        "229",
+        "279",
+        "291",
+        "322",
+        "323",
+        "330",
+        "385",
+        "414"
+      ]
+    },
+    {
+      "id": "416",
+      "file": "416-alias-preserving-register-location-state.md",
+      "title": "Alias-preserving register-location state",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "01",
+        "02",
+        "07",
+        "14",
+        "15",
+        "17",
+        "149",
+        "152",
+        "157",
+        "158",
+        "203",
+        "270",
+        "330",
+        "372",
+        "385",
+        "414"
+      ]
+    },
+    {
+      "id": "417",
+      "file": "417-register-region-rejection-census.md",
+      "title": "Register-region rejection census",
+      "status": "complete",
+      "depends_on": [
+        "00",
+        "01",
+        "02",
+        "07",
+        "14",
+        "15",
+        "17",
+        "149",
+        "152",
+        "157",
+        "158",
+        "203",
+        "270",
+        "330",
+        "385",
+        "414",
+        "416"
+      ]
+    },
+    {
+      "id": "418",
+      "file": "418-straight-line-register-region-coverage.md",
+      "title": "Straight-line register-region coverage",
+      "status": "in_progress",
+      "depends_on": [
+        "00",
+        "01",
+        "02",
+        "07",
+        "14",
+        "15",
+        "17",
+        "149",
+        "152",
+        "157",
+        "158",
+        "203",
+        "270",
+        "330",
+        "385",
+        "414",
+        "416",
+        "417"
+      ]
+    },
+    {
+      "id": "419",
+      "file": "419-opaque-ic-dispatch-barrier.md",
+      "title": "Opaque inline-cache dispatch barrier for rustc-cooked stencils",
+      "status": "planned",
+      "depends_on": [
+        "145",
+        "153",
+        "166"
+      ]
+    },
+    {
+      "id": "420",
+      "file": "420-flat-slow-path-side-table.md",
+      "title": "Flat AOT slow-path side table",
+      "status": "planned",
+      "depends_on": [
+        "09",
+        "103",
+        "106",
+        "107",
+        "111",
+        "112",
+        "128"
+      ]
+    },
+    {
+      "id": "421",
+      "file": "421-intrusive-call-ic-retarget-list.md",
+      "title": "Intrusive call-IC retarget list for tier transitions",
+      "status": "planned",
+      "depends_on": [
+        "22",
+        "45",
+        "140",
+        "325",
+        "336",
+        "407"
+      ]
+    },
+    {
+      "id": "422",
+      "file": "422-runtime-constant-range-shifting.md",
+      "title": "Runtime-constant range shifting for cooked relocations",
+      "status": "planned",
+      "depends_on": [
+        "102"
+      ]
+    },
+    {
+      "id": "423",
+      "file": "423-butterfly-split-object-storage.md",
+      "title": "Butterfly-style split object storage",
+      "status": "planned",
+      "depends_on": [
+        "09",
+        "137",
+        "156",
+        "165",
+        "369"
+      ]
+    },
+    {
+      "id": "424",
+      "file": "424-declared-once-variant-expansion.md",
+      "title": "Declared-once operator variant expansion with proven-type elision",
+      "status": "planned",
+      "depends_on": [
+        "10",
+        "25",
+        "60",
+        "96",
+        "118",
+        "223"
+      ]
+    },
+    {
+      "id": "425",
+      "file": "425-dictionary-mode-shape-fallback.md",
+      "title": "Dictionary-mode fallback for unbounded shapes",
+      "status": "planned",
+      "depends_on": [
+        "150",
+        "297",
+        "312"
+      ]
+    },
+    {
+      "id": "426",
+      "file": "426-sqrt-d-anchor-property-blocks.md",
+      "title": "sqrt(D)-depth anchor blocks for shape property lookup",
+      "status": "planned",
+      "depends_on": [
+        "150",
+        "154",
+        "312"
+      ]
+    },
+    {
+      "id": "427",
+      "file": "427-precompiled-register-variant-catalog.md",
+      "title": "Precompiled register-allocation variant catalog for DFG-style nodes",
+      "status": "planned",
+      "depends_on": [
+        "30",
+        "158",
+        "251",
+        "267",
+        "268",
+        "292",
+        "313"
+      ]
+    },
+    {
+      "id": "428",
+      "file": "428-typemask-overapproximation-automaton.md",
+      "title": "Type-mask overapproximation automaton for guard generation",
+      "status": "planned",
+      "depends_on": [
+        "25",
+        "60",
+        "223",
+        "231",
+        "232",
+        "233",
+        "234",
+        "261"
+      ]
+    }
+  ]
+}
