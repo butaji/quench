@@ -6507,6 +6507,43 @@ fn native_array_find_index(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
     }
     Ok(Value::Number(-1.0))
 }
+fn native_array_splice(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(object) = this.as_object_ref() else {
+        return Ok(vm.array());
+    };
+    let mut object = object.borrow_mut();
+    let Some(array) = object.array.as_mut() else {
+        return Ok(vm.array());
+    };
+    let length = array.values.len();
+    let start_number = args.first().map(Value::number).unwrap_or(0.0);
+    let start = if start_number.is_sign_negative() {
+        length.saturating_sub((-start_number) as usize)
+    } else {
+        (start_number as usize).min(length)
+    };
+    let delete_count = args
+        .get(1)
+        .map(Value::number)
+        .unwrap_or((length - start) as f64)
+        .max(0.0) as usize;
+    let end = (start + delete_count).min(length);
+    let removed = array.values[start..end].to_vec();
+    let replacement = args.get(2..).unwrap_or_default();
+    array.values.splice(start..end, replacement.iter().cloned());
+    object.publish_dense_access();
+    Ok(vm.array_from_values(removed))
+}
+fn native_array_reverse(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if let Some(object) = this.as_object_ref() {
+        let mut object = object.borrow_mut();
+        if let Some(array) = object.array.as_mut() {
+            array.values.reverse();
+            object.publish_dense_access();
+        }
+    }
+    Ok(this)
+}
 fn string_this(this: Value) -> String {
     this.string()
 }
@@ -7675,7 +7712,7 @@ mod tests {
         vm.install_process(Vec::new(), Vec::new());
         vm.run_source_text(
             Path::new("<array-builtins>"),
-            "var a = Array.from('ab'); var b = Array.of(1, 2); var mapped = b.map(function (x) { return x + 1; }); var filtered = mapped.filter(function (x) { return x > 2; }); var reduced = b.reduce(function (x, y) { return x + y; }, 0); var bound = Function.prototype.call.bind(Array.prototype.join); result = [bound([1, 2], '-'), mapped[1], filtered.length, reduced]; try { throw new TypeError(); } catch (e) { errorOk = e.constructor === TypeError && e.name === 'TypeError'; }",
+            "var a = Array.from('ab'); var b = Array.of(1, 2); var mapped = b.map(function (x) { return x + 1; }); var filtered = mapped.filter(function (x) { return x > 2; }); var reduced = b.reduce(function (x, y) { return x + y; }, 0); var sp = b.splice(0, 1, 9); b.reverse(); var bound = Function.prototype.call.bind(Array.prototype.join); result = [bound([1, 2], '-'), mapped[1], filtered.length, reduced, sp[0], b[0]]; try { throw new TypeError(); } catch (e) { errorOk = e.constructor === TypeError && e.name === 'TypeError'; }",
         )
         .expect("array helpers and errors execute");
         let result = Environment::get(&vm.global, "result").expect("result");
@@ -7684,6 +7721,8 @@ mod tests {
         assert_eq!(values[1].as_number(), Some(3.0));
         assert_eq!(values[2].as_number(), Some(1.0));
         assert_eq!(values[3].as_number(), Some(3.0));
+        assert_eq!(values[4].as_number(), Some(1.0));
+        assert_eq!(values[5].as_number(), Some(2.0));
         assert_eq!(Environment::get(&vm.global, "errorOk").and_then(|v| v.as_bool()), Some(true));
     }
 
