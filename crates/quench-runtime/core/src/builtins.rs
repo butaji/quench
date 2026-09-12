@@ -267,6 +267,7 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::AggregateErrorConstructor => 1,
         BuiltinId::FunctionConstructor | BuiltinId::FunctionBind => 1,
         BuiltinId::ObjectCreate => 2,
+        BuiltinId::ObjectAssign => 2,
         BuiltinId::ParseInt
         | BuiltinId::ParseFloat
         | BuiltinId::IsNaN
