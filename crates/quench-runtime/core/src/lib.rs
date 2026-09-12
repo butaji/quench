@@ -7710,10 +7710,10 @@ fn uri_unescaped(byte: u8, component: bool) -> bool {
         || (!component && uri_reserved(byte))
 }
 
-fn native_encode_uri_impl(value: &Value, component: bool) -> Value {
-    let bytes = value.string().into_bytes();
+fn native_encode_uri_impl(source: &str, component: bool) -> Value {
+    let bytes = source.as_bytes();
     let mut out = String::new();
-    for byte in bytes {
+    for &byte in bytes {
         if uri_unescaped(byte, component) {
             out.push(byte as char);
         } else {
@@ -7723,18 +7723,14 @@ fn native_encode_uri_impl(value: &Value, component: bool) -> Value {
     Value::string_value(out)
 }
 
-fn native_encode_uri(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    Ok(native_encode_uri_impl(
-        a.first().unwrap_or(&Value::Undefined),
-        false,
-    ))
+fn native_encode_uri(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    let source = to_string_with_vm(vm, a.first().unwrap_or(&Value::Undefined))?;
+    Ok(native_encode_uri_impl(&source, false))
 }
 
-fn native_encode_uri_component(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    Ok(native_encode_uri_impl(
-        a.first().unwrap_or(&Value::Undefined),
-        true,
-    ))
+fn native_encode_uri_component(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    let source = to_string_with_vm(vm, a.first().unwrap_or(&Value::Undefined))?;
+    Ok(native_encode_uri_impl(&source, true))
 }
 
 fn decode_hex(byte: u8) -> Option<u8> {
@@ -7746,8 +7742,7 @@ fn decode_hex(byte: u8) -> Option<u8> {
     }
 }
 
-fn native_decode_uri_impl(value: &Value, component: bool) -> JsResult<Value> {
-    let source = value.string();
+fn native_decode_uri_impl(vm: &mut Vm, source: &str, component: bool) -> JsResult<Value> {
     let bytes = source.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut index = 0;
@@ -7758,15 +7753,15 @@ fn native_decode_uri_impl(value: &Value, component: bool) -> JsResult<Value> {
             continue;
         }
         if index + 2 >= bytes.len() {
-            return Err(JsError::Message("URIError: malformed URI".into()));
+            return Err(JsError::Throw(uri_error(vm, "malformed URI")));
         }
         let high = decode_hex(bytes[index + 1]);
         let low = decode_hex(bytes[index + 2]);
         let Some(high) = high else {
-            return Err(JsError::Message("URIError: malformed URI".into()));
+            return Err(JsError::Throw(uri_error(vm, "malformed URI")));
         };
         let Some(low) = low else {
-            return Err(JsError::Message("URIError: malformed URI".into()));
+            return Err(JsError::Throw(uri_error(vm, "malformed URI")));
         };
         let decoded = (high << 4) | low;
         if !component && uri_reserved(decoded) {
@@ -7778,15 +7773,17 @@ fn native_decode_uri_impl(value: &Value, component: bool) -> JsResult<Value> {
     }
     String::from_utf8(out)
         .map(Value::string_value)
-        .map_err(|_| JsError::Message("URIError: malformed URI".into()))
+        .map_err(|_| JsError::Throw(uri_error(vm, "malformed URI")))
 }
 
-fn native_decode_uri(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    native_decode_uri_impl(a.first().unwrap_or(&Value::Undefined), false)
+fn native_decode_uri(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    let source = to_string_with_vm(vm, a.first().unwrap_or(&Value::Undefined))?;
+    native_decode_uri_impl(vm, &source, false)
 }
 
-fn native_decode_uri_component(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    native_decode_uri_impl(a.first().unwrap_or(&Value::Undefined), true)
+fn native_decode_uri_component(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    let source = to_string_with_vm(vm, a.first().unwrap_or(&Value::Undefined))?;
+    native_decode_uri_impl(vm, &source, true)
 }
 
 fn array_method(vm: &Vm, name: &str) -> Option<Value> {
@@ -9801,6 +9798,9 @@ fn is_type_error_value(value: &Value) -> bool {
 
 fn range_error(vm: &Vm, message: &str) -> Value {
     intrinsic_error(vm, BuiltinId::RangeErrorConstructor, "RangeError", message)
+}
+fn uri_error(vm: &Vm, message: &str) -> Value {
+    intrinsic_error(vm, BuiltinId::URIErrorConstructor, "URIError", message)
 }
 fn syntax_error(vm: &Vm, message: &str) -> Value {
     intrinsic_error(
