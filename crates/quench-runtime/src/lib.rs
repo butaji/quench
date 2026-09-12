@@ -5,6 +5,11 @@
 //! holds structs/arrays/exns. QuickJS is the JS layer on top, not store GC.
 
 pub mod build_profile;
+/// The migrated native VM core. This is exposed as a runtime facility rather
+/// than a second executable; `quench-node` remains the Node compatibility host.
+pub mod vm_core {
+    pub use quench_runtime_core::run_file;
+}
 mod bulk;
 pub mod dynamic;
 pub mod fast;

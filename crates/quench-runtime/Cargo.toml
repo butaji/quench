@@ -9,6 +9,7 @@ license = "MIT"
 execution-trace = []
 
 [dependencies]
+quench-runtime-core = { path = "core" }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 libc = "0.2"
 chrono-tz = "0.10"

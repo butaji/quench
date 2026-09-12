@@ -6,6 +6,7 @@ members = [
     "crates/quench-node",
     "crates/quench-node-test",
     "crates/quench-runtime",
+    "crates/quench-runtime/core",
     "crates/quench-test262",
     "crates/quench-wasm",
     "crates/quench-wasm-test",
