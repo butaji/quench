@@ -8069,13 +8069,9 @@ pub(crate) fn dense_array_index(key: &Value) -> Option<usize> {
     (index <= MAX_JS_ARRAY_INDEX).then_some(index as usize)
 }
 
-// Keep the dense representation bounded. Larger canonical array-index names
-// remain ordinary properties, avoiding multi-gigabyte materialization for
-// sparse-array probes while preserving normal dense-array behavior.
 fn array_index_key(key: &str) -> Option<usize> {
-    const MAX_DENSE_INDEX: usize = 1 << 20;
     let index = key.parse::<usize>().ok()?;
-    (index < MAX_DENSE_INDEX && (index as u64) <= MAX_JS_ARRAY_INDEX).then_some(index)
+    (index as u64 <= MAX_JS_ARRAY_INDEX).then_some(index)
 }
 
 fn pattern_name<'a>(p: &BindingPattern<'a>) -> Option<String> {
@@ -13003,11 +12999,23 @@ fn native_array_from(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
             Environment::get(&vm.global, "globalThis").unwrap_or(Value::Undefined)
         }
     });
+    let map_value = |vm: &mut Vm, value: Value, index: usize| {
+        if map_fn.is_function() {
+            vm.call_arguments(
+                &map_fn,
+                this_arg.clone(),
+                &[value, Value::Number(index as f64)][..],
+            )
+        } else {
+            Ok(value)
+        }
+    };
     let (values, length, pass_length) = if let Some(string) = source.as_string() {
         let values = string
             .chars()
-            .map(|ch| Value::string_value(ch.to_string()))
-            .collect::<Vec<_>>();
+            .enumerate()
+            .map(|(index, ch)| map_value(vm, Value::string_value(ch.to_string()), index))
+            .collect::<JsResult<Vec<_>>>()?;
         let length = values.len();
         (values, length, false)
     } else {
@@ -13034,7 +13042,9 @@ fn native_array_from(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
                 if vm.get_prop_with_accessors(&step, "done")?.truthy() {
                     break;
                 }
-                values.push(vm.get_prop_with_accessors(&step, "value")?);
+                let value = vm.get_prop_with_accessors(&step, "value")?;
+                let index = values.len();
+                values.push(map_value(vm, value, index)?);
                 if values.len() > MAX_MATERIALIZED_ARRAY_LENGTH {
                     return Err(JsError::Throw(range_error(
                         vm,
@@ -13054,22 +13064,14 @@ fn native_array_from(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
             }
             let mut values = Vec::with_capacity(length);
             for index in 0..length {
-                values.push(vm.get_prop_with_accessors(&source, &index.to_string())?);
+                let value = vm.get_prop_with_accessors(&source, &index.to_string())?;
+                values.push(map_value(vm, value, index)?);
             }
             (values, length, true)
         }
     };
     let target = array_from_target(vm, &this, length, pass_length)?;
     for (index, value) in values.into_iter().enumerate() {
-        let value = if map_fn.is_function() {
-            vm.call_arguments(
-                &map_fn,
-                this_arg.clone(),
-                &[value, Value::Number(index as f64)][..],
-            )?
-        } else {
-            value
-        };
         vm.set_prop_with_accessors(&target, &index.to_string(), value)?;
     }
     vm.set_prop_with_accessors(&target, "length", Value::Number(length as f64))?;
