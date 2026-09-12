@@ -7141,6 +7141,15 @@ mod tests {
     }
 
     #[test]
+    fn eval_reuses_the_current_stencil_environment() {
+        let mut vm = Vm::new();
+        vm.install_process(Vec::new(), Vec::new());
+        vm.run_source_text(Path::new("<eval-test>"), "var value = 40; eval('value = value + 2');")
+            .expect("eval executes");
+        assert_eq!(Environment::get(&vm.global, "value").and_then(|v| v.as_number()), Some(42.0));
+    }
+
+    #[test]
     fn process_invocation_data_is_installed_in_the_core_vm() {
         let path = std::env::temp_dir().join(format!(
             "quench-runtime-core-process-{}-{}.js",
