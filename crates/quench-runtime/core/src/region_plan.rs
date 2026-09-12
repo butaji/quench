@@ -445,6 +445,7 @@ mod tests {
             blocks,
             bindings: Vec::new(),
             is_script: false,
+            strict: false,
         }
     }
 
@@ -473,6 +474,7 @@ mod tests {
             blocks: vec![(0, 2, false), (2, 3, true), (3, 4, true), (4, 5, false)],
             bindings: Vec::new(),
             is_script: false,
+            strict: false,
         };
         let plan = RegionPlan::quote(&code).expect("quote valid CFG");
         assert_eq!(plan.blocks().len(), 4);

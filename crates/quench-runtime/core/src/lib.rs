@@ -4516,6 +4516,7 @@ struct Vm {
     symbol_keys: HashMap<String, Value>,
     symbol_registry: HashMap<String, Value>,
     next_symbol_id: u64,
+    throw_type_error: RefCell<Option<Value>>,
 }
 impl Vm {
     fn new() -> Self {
@@ -4559,6 +4560,7 @@ impl Vm {
             symbol_keys: HashMap::new(),
             symbol_registry: HashMap::new(),
             next_symbol_id: 1,
+            throw_type_error: RefCell::new(None),
         };
         v.builtin_functions = builtins::instantiate(&v);
         v.install();
@@ -4799,6 +4801,33 @@ impl Vm {
     }
     fn mark_nonconstructable(&self, value: &Value) {
         self.set_prop(value, "\0nonconstructable", Value::Bool(true));
+    }
+    fn throw_type_error(&self) -> Value {
+        if let Some(value) = self.throw_type_error.borrow().clone() {
+            return value;
+        }
+        let value = self.native(native_throw_type_error);
+        // CreateBuiltinFunction installs `length` before `name`; preserve that
+        // observable insertion order for this intrinsic.
+        self.set_prop(&value, "length", Value::Number(0.0));
+        self.set_prop(&value, "name", Value::string_value(""));
+        self.mark_nonconstructable(&value);
+        self.set_prop(&value, "\0throw-type-error", Value::Bool(true));
+        if let Some(function) = value.as_function_ref() {
+            let mut attributes = function.attributes.borrow_mut();
+            for key in ["name", "length"] {
+                attributes.insert(
+                    key.into(),
+                    PropertyAttributes {
+                        writable: false,
+                        enumerable: false,
+                        configurable: false,
+                    },
+                );
+            }
+        }
+        *self.throw_type_error.borrow_mut() = Some(value.clone());
+        value
     }
     fn builtin(&self, id: BuiltinId) -> Value {
         self.builtin_functions[id as usize].clone()
@@ -5361,6 +5390,20 @@ impl Vm {
                 configurable: true,
             },
         );
+        let throw_type_error = self.throw_type_error();
+        for key in ["arguments", "caller"] {
+            self.define_accessor_slot(
+                &function_prototype_value,
+                key,
+                Some(throw_type_error.clone()),
+                Some(throw_type_error.clone()),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
+        }
         let object_prototype = self
             .builtin(BuiltinId::ObjectConstructor)
             .as_function_ref()
@@ -8704,6 +8747,12 @@ fn native_string_to_string(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Val
 fn native_noop(_: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Ok(Value::Undefined)
 }
+fn native_throw_type_error(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
+    Err(JsError::Throw(type_error(
+        vm,
+        "restricted function property",
+    )))
+}
 fn native_symbol(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let no_description = args.first().is_none_or(Value::is_undefined);
     let description = match args.first() {
@@ -10062,9 +10111,14 @@ fn native_reflect_has(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> 
 fn native_reflect_is_extensible(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let target = reflect_require_object(vm, args.first(), "isExtensible")?;
     Ok(Value::Bool(
-        target
-            .as_object_ref()
-            .is_none_or(|object| object.borrow().extensible),
+        if let Some(function) = target.as_function_ref() {
+            !function.props.borrow().contains_key("\0throw-type-error")
+                && !function.props.borrow().contains_key("\0sealed")
+        } else {
+            target
+                .as_object_ref()
+                .is_none_or(|object| object.borrow().extensible)
+        },
     ))
 }
 
@@ -10312,6 +10366,13 @@ fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
         }
     }
     vm.set_prop(&global, "Symbol", symbol);
+    for (name, builtin) in [
+        ("Function", BuiltinId::FunctionConstructor),
+        ("TypeError", BuiltinId::TypeErrorConstructor),
+        ("Object", BuiltinId::ObjectConstructor),
+    ] {
+        vm.set_prop(&global, name, vm.builtin(builtin));
+    }
     vm.set_prop(&global, "globalThis", global.clone());
     vm.set_prop(&realm, "global", global);
     Ok(realm)
@@ -12568,7 +12629,8 @@ fn native_object_is_extensible(_: &mut Vm, _: Value, args: &[Value]) -> JsResult
                 return object.borrow().extensible;
             }
             if let Some(function) = value.as_function_ref() {
-                return !function.props.borrow().contains_key("\0sealed");
+                return !function.props.borrow().contains_key("\0sealed")
+                    && !function.props.borrow().contains_key("\0throw-type-error");
             }
             true
         })

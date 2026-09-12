@@ -215,6 +215,7 @@ mod tests {
                 LOCAL_BINDING_NAME.into(),
             ],
             is_script: false,
+            strict: false,
         }
     }
 

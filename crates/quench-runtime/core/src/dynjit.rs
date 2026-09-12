@@ -1717,7 +1717,7 @@ impl DynJitCode {
         let arguments = self
             .call_recipe
             .uses_arguments()
-            .then(|| arguments_value(vm, args));
+            .then(|| arguments_value(vm, args, self.code.strict));
         {
             let mut frame = environment.borrow_mut();
             frame.declare(THIS_BINDING_NAME, this);
@@ -1808,7 +1808,7 @@ impl DynJitCode {
         if self.call_recipe.uses_arguments() {
             Value::overwrite(
                 &mut values[self.call_recipe.arguments_slot],
-                arguments_value(vm, args),
+                arguments_value(vm, args, self.code.strict),
             );
         }
         for (index, slot) in self
@@ -2335,9 +2335,25 @@ fn finish_direct_call(
     }
 }
 
-fn arguments_value<A: CallArguments + ?Sized>(vm: &Vm, args: &A) -> Value {
+fn arguments_value<A: CallArguments + ?Sized>(vm: &Vm, args: &A, strict: bool) -> Value {
     let value = vm.object_value(Object::array(None, args.materialize()));
     vm.set_prop(&value, "\0wrapper", Value::string_value("Arguments"));
+    if strict {
+        let thrower = vm.throw_type_error();
+        for key in ["callee", "caller"] {
+            vm.define_accessor_slot(
+                &value,
+                key,
+                Some(thrower.clone()),
+                Some(thrower.clone()),
+                super::PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: false,
+                },
+            );
+        }
+    }
     value
 }
 
@@ -8035,6 +8051,7 @@ mod tests {
             blocks: vec![(TEST_CONDITION_START_PC, TEST_CONDITION_END_PC, false)],
             bindings: Vec::new(),
             is_script: false,
+            strict: false,
         }
     }
 
@@ -8263,6 +8280,7 @@ mod tests {
             )],
             bindings: Vec::new(),
             is_script: false,
+            strict: false,
         };
         assert_eq!(
             selected_direct_name(&condition, INSTANCEOF_INSTRUCTION_COUNT),
@@ -8305,6 +8323,7 @@ mod tests {
             )],
             bindings: Vec::new(),
             is_script: false,
+            strict: false,
         };
         assert_eq!(
             selected_direct_name(&inverted, INSTANCEOF_NOT_INSTRUCTION_COUNT),
@@ -8402,6 +8421,7 @@ mod tests {
             blocks: vec![(TEST_CONDITION_START_PC, end, false)],
             bindings: Vec::new(),
             is_script: false,
+            strict: false,
         }
     }
 
@@ -8888,6 +8908,7 @@ mod tests {
             blocks: vec![(TEST_CONDITION_START_PC, TEST_RECURRENCE_END_PC, false)],
             bindings: Vec::new(),
             is_script: false,
+            strict: false,
         }
     }
 
@@ -8924,6 +8945,7 @@ mod tests {
             blocks: vec![(TEST_CONDITION_START_PC, TEST_CONDITION_END_PC, false)],
             bindings: Vec::new(),
             is_script: false,
+            strict: false,
         }
     }
 
@@ -9339,6 +9361,7 @@ mod tests {
                 .collect(),
             bindings: Vec::new(),
             is_script: false,
+            strict: false,
         }
     }
 
@@ -10302,6 +10325,7 @@ mod tests {
             blocks: Vec::new(),
             bindings: Vec::new(),
             is_script: false,
+            strict: false,
         };
         let analysis = numeric_region::analyze(&code);
         assert!(analysis.rejected.is_empty(), "{:?}", analysis.rejected);
@@ -10533,6 +10557,7 @@ mod tests {
                 blocks: Vec::new(),
                 bindings: Vec::new(),
                 is_script: false,
+                strict: false,
             }
         }
 
@@ -10840,6 +10865,7 @@ mod tests {
             blocks: vec![(TEST_CONDITION_START_PC, DIRECT_BLOCK_END_PC, false)],
             bindings: Vec::new(),
             is_script: false,
+            strict: false,
         };
         assert!(
             direct_opcode_sequence(&code, FIRST_INSTRUCTION_PC, code.ops.len(), false).is_some()
