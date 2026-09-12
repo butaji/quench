@@ -8800,17 +8800,54 @@ fn native_string_char_at(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Va
         string.chars().nth(index).unwrap_or('\0').to_string(),
     ))
 }
-fn native_string_substr(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    let s = string_this(this);
-    let start = args.first().map(Value::number).unwrap_or(0.0).max(0.0) as usize;
-    let len = args
-        .get(1)
-        .map(Value::number)
-        .unwrap_or((s.len() - start.min(s.len())) as f64)
-        .max(0.0) as usize;
-    Ok(Value::string_value(
-        s.chars().skip(start).take(len).collect::<String>(),
-    ))
+fn native_string_substr(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if this.is_null()
+        || this.is_undefined()
+        || this
+            .as_object_ref()
+            .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
+    {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "String.prototype.substr called on a non-string receiver",
+        )));
+    }
+    let source = to_string_with_vm(vm, &this)?;
+    let units = source.encode_utf16().collect::<Vec<_>>();
+    let length = units.len() as f64;
+    let start_number = args
+        .first()
+        .map(|value| to_integer_or_infinity(vm, value))
+        .transpose()?
+        .unwrap_or(0.0);
+    let start = if start_number.is_infinite() && start_number.is_sign_negative() {
+        0.0
+    } else if start_number < 0.0 {
+        (length + start_number).max(0.0)
+    } else {
+        start_number.min(length)
+    } as usize;
+    let available = units.len().saturating_sub(start);
+    let count = match args.get(1).filter(|value| !value.is_undefined()) {
+        None => available,
+        Some(value) => to_integer_or_infinity(vm, value)?
+            .max(0.0)
+            .min(available as f64) as usize,
+    };
+    Ok(Value::string_value(String::from_utf16_lossy(
+        &units[start..start + count],
+    )))
+}
+
+fn to_integer_or_infinity(vm: &mut Vm, value: &Value) -> JsResult<f64> {
+    let number = to_number_with_vm(vm, value)?;
+    if number.is_nan() || number == 0.0 {
+        Ok(0.0)
+    } else if number.is_infinite() {
+        Ok(number)
+    } else {
+        Ok(number.trunc())
+    }
 }
 
 fn escape_html_attribute(value: &str) -> String {
