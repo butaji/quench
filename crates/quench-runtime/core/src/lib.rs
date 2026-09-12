@@ -1244,6 +1244,7 @@ struct Object {
     dense_access: DenseArrayAccess,
     array: Option<ArrayStorage>,
     extensible: bool,
+    builtin_prototype: bool,
 }
 impl Object {
     fn ordinary(proto: Option<ObjectHandle>) -> Self {
@@ -1253,6 +1254,7 @@ impl Object {
             dense_access: DenseArrayAccess::EMPTY,
             array: None,
             extensible: true,
+            builtin_prototype: false,
         }
     }
 
@@ -1263,6 +1265,7 @@ impl Object {
             dense_access: DenseArrayAccess::EMPTY,
             array: Some(ArrayStorage::from_values(values)),
             extensible: true,
+            builtin_prototype: false,
         };
         object.publish_dense_access();
         object
@@ -4286,6 +4289,7 @@ impl Vm {
             dense_access: DenseArrayAccess::EMPTY,
             array: None,
             extensible: true,
+            builtin_prototype: false,
         })
     }
     fn array(&self) -> Value {
@@ -4375,6 +4379,9 @@ impl Vm {
                             .prototype
                             .clone(),
                     );
+                    if let Some(object) = prototype.as_object_ref() {
+                        object.borrow_mut().builtin_prototype = true;
+                    }
                     self.set_prop(&prototype, recipe.key, value);
                 }
                 BuiltinOwner::ArrayPrototype
@@ -4400,6 +4407,9 @@ impl Vm {
                             .prototype
                             .clone(),
                     );
+                    if let Some(object) = prototype.as_object_ref() {
+                        object.borrow_mut().builtin_prototype = true;
+                    }
                     self.set_prop(&prototype, recipe.key, value);
                 }
                 _ => {}
@@ -7180,7 +7190,10 @@ fn native_object_get_own_property_descriptor(
     vm.set_prop(&descriptor, "value", value);
     let function_metadata = target.as_function().is_some() && matches!(key.as_str(), "name" | "length");
     vm.set_prop(&descriptor, "writable", Value::Bool(!function_metadata));
-    vm.set_prop(&descriptor, "enumerable", Value::Bool(false));
+    let enumerable = target
+        .as_object_ref()
+        .is_some_and(|object| !object.borrow().builtin_prototype);
+    vm.set_prop(&descriptor, "enumerable", Value::Bool(enumerable));
     vm.set_prop(&descriptor, "configurable", Value::Bool(true));
     Ok(descriptor)
 }
@@ -8624,6 +8637,7 @@ mod tests {
             dense_access: DenseArrayAccess::EMPTY,
             array: None,
             extensible: true,
+            builtin_prototype: false,
         }));
         object
             .as_object()
