@@ -93,7 +93,7 @@ Verification completed:
   back
 - after that aggregate run, the Array stage was rerun against the extended
   callback/index/reduction/flattening methods and descriptor guards and reached
-  1,154/3,081; the
+  1,165/3,081; the
   aggregate total above is intentionally left as the last complete-corpus
   measurement
 - the Object stage was rerun after adding boxed primitive identity, prototype
@@ -104,6 +104,9 @@ Verification completed:
   array `toString`, ordinary-object prototypes, and boxed-string own properties
   and reached 287/1,223; the remaining failures include UTF-16 surrogate,
   Symbol, and unsupported-stencil cases
+- the Function stage was rerun after restoring dynamic `Function` source
+  compilation, strict early-error checks, callable metadata, and restricted
+  property guards and reached 210/509; caller-stack propagation remains open
 - historical commits advertising “100% Test262” used `test262/skip.rs` to skip
   entire built-in families (including Object, Array, String, TypedArray, and
   Promise); those results are not equivalent to executing the full corpus
