@@ -1338,7 +1338,7 @@ struct Object {
     builtin_prototype: bool,
     attributes: HashMap<String, PropertyAttributes>,
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct PropertyAttributes {
     writable: bool,
     enumerable: bool,
@@ -1379,6 +1379,11 @@ macro_rules! install_data_properties {
                 object
                     .borrow_mut()
                     .attributes
+                    .insert($key.to_string(), $attributes);
+            } else if let Some(function) = target.as_function_ref() {
+                function
+                    .attributes
+                    .borrow_mut()
                     .insert($key.to_string(), $attributes);
             }
         )+
@@ -2046,6 +2051,7 @@ struct FunctionValue<'a> {
     strict: bool,
     prototype: ObjectHandle,
     props: Rc<RefCell<IndexMap<String, Value>>>,
+    attributes: Rc<RefCell<HashMap<String, PropertyAttributes>>>,
     dyn_jit: RefCell<Option<Rc<dynjit::DynJitCode>>>,
     numeric_jit: RefCell<Option<Rc<LegoJitCode>>>,
     source_id: Option<usize>,
@@ -4211,6 +4217,17 @@ fn loose_eq(a: &Value, b: &Value) -> bool {
     if a.as_bool().is_some() || b.as_bool().is_some() {
         return a.number() == b.number();
     }
+    let is_symbol = |value: &Value| {
+        value
+            .as_object_ref()
+            .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
+    };
+    // A Symbol primitive is never loosely equal to a string or number.  The
+    // compact representation uses an object carrier, so guard this before the
+    // generic object-to-primitive fallback below.
+    if is_symbol(a) || is_symbol(b) {
+        return false;
+    }
     if a.is_object() || a.is_function() || b.is_object() || b.is_function() {
         if a.is_string() || b.is_string() {
             return a.string() == b.string();
@@ -4302,7 +4319,13 @@ fn to_primitive_for_binary(vm: &mut Vm, value: &Value, string_hint: bool) -> JsR
     // Symbols are represented by their stable textual key in the compact
     // object store. Consult @@toPrimitive at the boundary before ordinary
     // valueOf/toString dispatch, preserving the ECMAScript ordering.
-    let exotic = vm.get_prop_with_accessors(value, "Symbol(Symbol.toPrimitive)")?;
+    let exotic_key = Environment::get(&vm.global, "Symbol")
+        .map(|constructor| vm.get_prop(&constructor, "toPrimitive"))
+        .filter(|symbol| !symbol.is_undefined())
+        .map(|symbol| vm.to_property_key(symbol))
+        .transpose()?
+        .unwrap_or_else(|| "Symbol(Symbol.toPrimitive)".into());
+    let exotic = vm.get_prop_with_accessors(value, &exotic_key)?;
     if !exotic.is_undefined() && !exotic.is_null() {
         if !exotic.is_function() {
             return Err(JsError::Throw(type_error(
@@ -4316,10 +4339,9 @@ fn to_primitive_for_binary(vm: &mut Vm, value: &Value, string_hint: bool) -> JsR
             .as_object()
             .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
         {
-            return Err(JsError::Throw(type_error(
-                vm,
-                "cannot convert a Symbol value to primitive",
-            )));
+            // The compact core carries primitive Symbols in an object-shaped
+            // atom. Preserve that atom as the primitive result.
+            return Ok(result);
         }
         if !result.is_object() && !result.is_function() {
             return Ok(result);
@@ -4344,10 +4366,7 @@ fn to_primitive_for_binary(vm: &mut Vm, value: &Value, string_hint: bool) -> JsR
             .as_object_ref()
             .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
         {
-            return Err(JsError::Throw(type_error(
-                vm,
-                "cannot convert a Symbol value to primitive",
-            )));
+            return Ok(result);
         }
         if !result.is_object() && !result.is_function() {
             return Ok(result);
@@ -4495,6 +4514,7 @@ struct Vm {
     next_ticks: VecDeque<Timer>,
     next_timer_id: u64,
     symbol_keys: HashMap<String, Value>,
+    symbol_registry: HashMap<String, Value>,
     next_symbol_id: u64,
 }
 impl Vm {
@@ -4537,6 +4557,7 @@ impl Vm {
             next_ticks: VecDeque::new(),
             next_timer_id: 1,
             symbol_keys: HashMap::new(),
+            symbol_registry: HashMap::new(),
             next_symbol_id: 1,
         };
         v.builtin_functions = builtins::instantiate(&v);
@@ -4731,6 +4752,7 @@ impl Vm {
             strict: false,
             prototype: self.allocate_object(Object::ordinary(None)),
             props: Rc::new(RefCell::new(IndexMap::new())),
+            attributes: Rc::new(RefCell::new(HashMap::new())),
             dyn_jit: RefCell::new(None),
             numeric_jit: RefCell::new(None),
             source_id: None,
@@ -4752,6 +4774,18 @@ impl Vm {
             let mut object = object.borrow_mut();
             for key in ["name", "length"] {
                 object.attributes.insert(
+                    key.to_string(),
+                    PropertyAttributes {
+                        writable: false,
+                        enumerable: false,
+                        configurable: true,
+                    },
+                );
+            }
+        } else if let Some(function) = value.as_function_ref() {
+            let mut attributes = function.attributes.borrow_mut();
+            for key in ["name", "length"] {
+                attributes.insert(
                     key.to_string(),
                     PropertyAttributes {
                         writable: false,
@@ -4799,27 +4833,146 @@ impl Vm {
         // Symbols are represented as property-key atoms by the current core;
         // expose the well-known tag through the same canonical key path until
         // the tagged Symbol value lands in the stencil representation.
-        let symbol = self.native(native_symbol);
-        self.mark_nonconstructable(&symbol);
-        self.set_prop(
-            &symbol,
-            "toStringTag",
-            Value::string_value("Symbol.toStringTag"),
-        );
+        let symbol = self.native_named(native_symbol, "Symbol", 0);
+        // Symbol has a [[Construct]] internal method for `IsConstructor`, but
+        // its construct path is specified to throw (handled at the call site).
+        // Publish the constructor before creating well-known symbols so the
+        // symbol factory can attach the canonical Symbol.prototype object to
+        // every symbol value, including the intrinsic symbols below.
+        Environment::set(&g, "Symbol", symbol.clone());
         let symbol_to_primitive = native_symbol(
             self,
             Value::Undefined,
             &[Value::string_value("Symbol.toPrimitive")],
         )
         .expect("well-known Symbol.toPrimitive creation");
-        self.set_prop(&symbol, "toPrimitive", symbol_to_primitive);
         let symbol_iterator = native_symbol(
             self,
             Value::Undefined,
             &[Value::string_value("Symbol.iterator")],
         )
         .expect("well-known Symbol.iterator creation");
-        self.set_prop(&symbol, "iterator", symbol_iterator);
+        let symbol_to_string_tag = native_symbol(
+            self,
+            Value::Undefined,
+            &[Value::string_value("Symbol.toStringTag")],
+        )
+        .expect("well-known Symbol.toStringTag creation");
+        let symbol_for = self.native_named(native_symbol_for, "for", 1);
+        let symbol_key_for = self.native_named(native_symbol_key_for, "keyFor", 1);
+        self.mark_nonconstructable(&symbol_for);
+        self.mark_nonconstructable(&symbol_key_for);
+        let well_known = [
+            ("asyncDispose", "Symbol.asyncDispose"),
+            ("asyncIterator", "Symbol.asyncIterator"),
+            ("dispose", "Symbol.dispose"),
+            ("hasInstance", "Symbol.hasInstance"),
+            ("isConcatSpreadable", "Symbol.isConcatSpreadable"),
+            ("match", "Symbol.match"),
+            ("matchAll", "Symbol.matchAll"),
+            ("replace", "Symbol.replace"),
+            ("search", "Symbol.search"),
+            ("species", "Symbol.species"),
+            ("split", "Symbol.split"),
+            ("unscopables", "Symbol.unscopables"),
+        ];
+        let well_known_values = well_known
+            .iter()
+            .map(|(_, description)| {
+                native_symbol(self, Value::Undefined, &[Value::string_value(*description)])
+                    .expect("well-known Symbol creation")
+            })
+            .collect::<Vec<_>>();
+        install_data_properties!(
+            self,
+            symbol.clone(),
+            "toStringTag" => symbol_to_string_tag.clone(), PropertyAttributes::BUILTIN_CONSTANT;
+            "toPrimitive" => symbol_to_primitive.clone(), PropertyAttributes::BUILTIN_CONSTANT;
+            "iterator" => symbol_iterator.clone(), PropertyAttributes::BUILTIN_CONSTANT;
+            "for" => symbol_for, PropertyAttributes::BUILTIN_METHOD;
+            "keyFor" => symbol_key_for, PropertyAttributes::BUILTIN_METHOD
+        );
+        for ((name, _), value) in well_known.into_iter().zip(well_known_values) {
+            self.set_prop(&symbol, name, value);
+            if let Some(object) = symbol.as_object_ref() {
+                object
+                    .borrow_mut()
+                    .attributes
+                    .insert(name.into(), PropertyAttributes::BUILTIN_CONSTANT);
+            } else if let Some(function) = symbol.as_function_ref() {
+                function
+                    .attributes
+                    .borrow_mut()
+                    .insert(name.into(), PropertyAttributes::BUILTIN_CONSTANT);
+            }
+        }
+        if let Some(symbol_prototype) = symbol
+            .as_function_ref()
+            .map(|function| Value::Object(function.prototype.clone()))
+        {
+            let symbol_to_string = self.native_named(native_symbol_to_string, "toString", 0);
+            let symbol_value_of = self.native_named(native_symbol_value_of, "valueOf", 0);
+            let symbol_description =
+                self.native_named(native_symbol_description, "get description", 0);
+            self.mark_nonconstructable(&symbol_to_string);
+            self.mark_nonconstructable(&symbol_value_of);
+            self.mark_nonconstructable(&symbol_description);
+            install_data_properties!(
+                self,
+                symbol_prototype.clone(),
+                "constructor" => symbol.clone(), PropertyAttributes::BUILTIN_METHOD;
+                "toString" => symbol_to_string, PropertyAttributes::BUILTIN_METHOD;
+                "valueOf" => symbol_value_of, PropertyAttributes::BUILTIN_METHOD
+            );
+            self.define_accessor_slot(
+                &symbol_prototype,
+                "description",
+                Some(symbol_description),
+                None,
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
+            let to_primitive_method =
+                self.native_named(native_symbol_to_primitive, "[Symbol.toPrimitive]", 1);
+            self.mark_nonconstructable(&to_primitive_method);
+            if let Some(key) = symbol_to_primitive
+                .as_object_ref()
+                .and_then(|object| object.borrow().props.get("\0symbol-key").cloned())
+                .and_then(|key| key.as_string().cloned())
+            {
+                self.set_prop(&symbol_prototype, &key, to_primitive_method);
+                if let Some(object) = symbol_prototype.as_object_ref() {
+                    object.borrow_mut().attributes.insert(
+                        key,
+                        PropertyAttributes {
+                            writable: false,
+                            enumerable: false,
+                            configurable: true,
+                        },
+                    );
+                }
+            }
+            if let Some(key) = symbol_to_string_tag
+                .as_object_ref()
+                .and_then(|object| object.borrow().props.get("\0symbol-key").cloned())
+                .and_then(|key| key.as_string().cloned())
+            {
+                self.set_prop(&symbol_prototype, &key, Value::string_value("Symbol"));
+                if let Some(object) = symbol_prototype.as_object_ref() {
+                    object.borrow_mut().attributes.insert(
+                        key,
+                        PropertyAttributes {
+                            writable: false,
+                            enumerable: false,
+                            configurable: true,
+                        },
+                    );
+                }
+            }
+        }
         Environment::set(&g, "Symbol", symbol);
         let bigint = self.native_named(native_bigint, "BigInt", 1);
         let as_int_n = self.native_named(native_bigint_as_int_n, "asIntN", 2);
@@ -5678,6 +5831,11 @@ impl Vm {
                     {
                         true
                     }
+                    FunctionKind::Native(native)
+                        if *native as *const () == native_symbol as *const () =>
+                    {
+                        true
+                    }
                     FunctionKind::Native(_)
                     | FunctionKind::Arrow { .. }
                     | FunctionKind::Bound { .. } => false,
@@ -5892,6 +6050,15 @@ impl Vm {
         key: &str,
         value: Value,
     ) -> JsResult<()> {
+        // Primitive Symbols are represented by an internal object carrier.
+        // ToObject auto-boxing must not persist user properties on that
+        // carrier; an explicit Symbol wrapper (Object(Symbol())) is distinct.
+        if object.as_object_ref().is_some_and(|object| {
+            let object = object.borrow();
+            object.props.contains_key("\0symbol") && !key.starts_with('\0')
+        }) {
+            return Ok(());
+        }
         if let Some((_, setter)) = self.find_accessor(object, key) {
             let Some(setter) = setter else {
                 return Err(JsError::Throw(type_error(self, "property has no setter")));
@@ -5914,6 +6081,17 @@ impl Vm {
             if !borrowed.extensible && !borrowed.props.contains_key(key) {
                 return Err(JsError::Throw(type_error(self, "object is not extensible")));
             }
+        } else if let Some(function) = object.as_function_ref()
+            && function
+                .attributes
+                .borrow()
+                .get(key)
+                .is_some_and(|attributes| !attributes.writable)
+        {
+            return Err(JsError::Throw(type_error(
+                self,
+                "cannot assign to read-only property",
+            )));
         }
         self.set_prop(object, key, value);
         Ok(())
@@ -6029,6 +6207,9 @@ impl Vm {
         }
         if let Some(object) = o.as_object_ref() {
             let mut object = object.borrow_mut();
+            if object.props.contains_key("\0symbol") && !k.starts_with('\0') {
+                return;
+            }
             if object
                 .attributes
                 .get(k)
@@ -6184,6 +6365,14 @@ impl Vm {
             // `prototype` property. Its value may be replaced when writable,
             // but the property itself must survive `delete`.
             if k == "prototype" && constructable(o) {
+                return false;
+            }
+            if function
+                .attributes
+                .borrow()
+                .get(k)
+                .is_some_and(|attributes| !attributes.configurable)
+            {
                 return false;
             }
             if function.props.borrow().contains_key("\0sealed")
@@ -6999,6 +7188,7 @@ impl Vm {
                 ("name".into(), Value::string_value(name)),
                 ("length".into(), Value::Number(length as f64)),
             ]))),
+            attributes: Rc::new(RefCell::new(HashMap::new())),
             dyn_jit: RefCell::new(None),
             numeric_jit: RefCell::new(None),
             source_id: self.source_ids.last().copied(),
@@ -7026,6 +7216,7 @@ impl Vm {
                 ("name".into(), Value::string_value("")),
                 ("length".into(), Value::Number(length as f64)),
             ]))),
+            attributes: Rc::new(RefCell::new(HashMap::new())),
             dyn_jit: RefCell::new(None),
             numeric_jit: RefCell::new(None),
             source_id: self.source_ids.last().copied(),
@@ -8445,13 +8636,23 @@ fn native_noop(_: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Ok(Value::Undefined)
 }
 fn native_symbol(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
-    let description = args
-        .first()
-        .filter(|value| !value.is_undefined())
-        .map(Value::string)
-        .unwrap_or_default();
+    let no_description = args.first().is_none_or(Value::is_undefined);
+    let description = match args.first() {
+        None => String::new(),
+        Some(value) if value.is_undefined() => String::new(),
+        Some(value) if is_symbol_carrier(value) => {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "cannot convert a Symbol value to a string",
+            )));
+        }
+        Some(value) => to_string_with_vm(vm, value)?,
+    };
     let symbol = vm.object(None);
     vm.set_prop(&symbol, "\0symbol", Value::string_value(description));
+    if no_description {
+        vm.set_prop(&symbol, "\0symbol-no-description", Value::Bool(true));
+    }
     let symbol_key = format!("\0symbol-key:{}", vm.next_symbol_id);
     vm.next_symbol_id = vm.next_symbol_id.wrapping_add(1);
     vm.set_prop(
@@ -8460,25 +8661,153 @@ fn native_symbol(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
         Value::string_value(symbol_key.clone()),
     );
     vm.symbol_keys.insert(symbol_key, symbol.clone());
-    vm.set_prop(&symbol, "toString", vm.native(native_symbol_to_string));
-    if let Some(object) = symbol.as_object_ref() {
-        object.borrow_mut().attributes.insert(
-            "toString".into(),
-            PropertyAttributes {
-                enumerable: false,
-                ..PropertyAttributes::DEFAULT
-            },
-        );
+    if let Some(prototype) = Environment::get(&vm.global, "Symbol").and_then(|constructor| {
+        constructor
+            .as_function_ref()
+            .map(|function| function.prototype.clone())
+    }) && let Some(object) = symbol.as_object_ref()
+    {
+        object.borrow_mut().prototype = Some(prototype);
     }
     Ok(symbol)
 }
-fn native_symbol_to_string(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    let description = this
-        .as_object_ref()
-        .and_then(|object| object.borrow().props.get("\0symbol").cloned())
+fn native_symbol_to_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let Some(symbol) = symbol_primitive(&this) else {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Symbol.prototype.toString requires a Symbol",
+        )));
+    };
+    let description = Some(symbol)
+        .and_then(|value| {
+            value
+                .as_object_ref()
+                .and_then(|object| object.borrow().props.get("\0symbol").cloned())
+        })
         .map(|value| value.string())
         .unwrap_or_default();
     Ok(Value::string_value(format!("Symbol({description})")))
+}
+
+fn symbol_primitive(value: &Value) -> Option<Value> {
+    if value
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
+    {
+        return Some(value.clone());
+    }
+    value.as_object_ref().and_then(|object| {
+        let object = object.borrow();
+        (object
+            .props
+            .get("\0wrapper")
+            .and_then(Value::as_string)
+            .is_some_and(|wrapper| wrapper == "Symbol"))
+        .then(|| object.props.get("\0primitive").cloned())
+        .flatten()
+    })
+}
+
+fn is_symbol_carrier(value: &Value) -> bool {
+    value
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
+}
+
+fn native_symbol_value_of(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if let Some(symbol) = symbol_primitive(&this) {
+        return Ok(symbol);
+    }
+    Err(JsError::Throw(type_error(
+        vm,
+        "Symbol.prototype.valueOf requires a Symbol",
+    )))
+}
+
+fn native_symbol_description(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if let Some(symbol) = symbol_primitive(&this)
+        && symbol.as_object_ref().is_some_and(|object| {
+            object
+                .borrow()
+                .props
+                .contains_key("\0symbol-no-description")
+        })
+    {
+        return Ok(Value::Undefined);
+    }
+    if let Some(description) = symbol_primitive(&this).and_then(|value| {
+        value
+            .as_object_ref()
+            .and_then(|object| object.borrow().props.get("\0symbol").cloned())
+    }) {
+        return Ok(description);
+    }
+    Err(JsError::Throw(type_error(
+        vm,
+        "Symbol.prototype.description requires a Symbol",
+    )))
+}
+
+fn native_symbol_to_primitive(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(symbol) = symbol_primitive(&this) else {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Symbol.prototype[Symbol.toPrimitive] requires a Symbol",
+        )));
+    };
+    let hint = args
+        .first()
+        .filter(|value| !value.is_undefined())
+        .map(Value::string);
+    if let Some(hint) = hint
+        && !matches!(hint.as_str(), "string" | "number" | "default")
+    {
+        return Err(JsError::Throw(type_error(vm, "invalid Symbol hint")));
+    }
+    Ok(symbol)
+}
+
+fn native_symbol_for(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    if args.first().is_some_and(|value| is_symbol_carrier(value)) {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "cannot convert a Symbol value to a string",
+        )));
+    }
+    let key = to_string_with_vm(vm, args.first().unwrap_or(&Value::Undefined))?;
+    if let Some(symbol) = vm.symbol_registry.get(&key) {
+        return Ok(symbol.clone());
+    }
+    let symbol = native_symbol(vm, Value::Undefined, &[Value::string_value(key.clone())])?;
+    vm.symbol_registry.insert(key, symbol.clone());
+    Ok(symbol)
+}
+
+fn native_symbol_key_for(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(value) = args.first() else {
+        return Ok(Value::Undefined);
+    };
+    let Some(symbol_key) = value
+        .as_object_ref()
+        .and_then(|object| object.borrow().props.get("\0symbol-key").cloned())
+        .and_then(|key| key.as_string().cloned())
+    else {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Symbol.keyFor requires a symbol",
+        )));
+    };
+    vm.symbol_registry
+        .iter()
+        .find_map(|(key, symbol)| {
+            (symbol
+                .as_object_ref()
+                .and_then(|object| object.borrow().props.get("\0symbol-key").cloned())
+                .and_then(|key| key.as_string().cloned())
+                == Some(symbol_key.clone()))
+            .then(|| Value::string_value(key))
+        })
+        .map_or(Ok(Value::Undefined), Ok)
 }
 
 fn bigint_marker(value: BigInt) -> Value {
@@ -9796,6 +10125,17 @@ pub(crate) fn constructable(value: &Value) -> bool {
 
 fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
+    if target.as_function_ref().is_some_and(|function| {
+        matches!(
+            function.kind,
+            FunctionKind::Native(native) if native as *const () == native_symbol as *const ()
+        )
+    }) {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Symbol is not constructable",
+        )));
+    }
     if target
         .as_function_ref()
         .is_some_and(|function| matches!(function.kind, FunctionKind::Native(native) if native as *const () == native_bigint as *const ()))
@@ -10303,6 +10643,16 @@ fn native_object(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
             let object = vm.object(None);
             vm.set_prop(&object, "\0primitive", value.clone());
             vm.set_prop(&object, "\0wrapper", Value::string_value("Symbol"));
+            if let Some(prototype) =
+                Environment::get(&vm.global, "Symbol").and_then(|constructor| {
+                    constructor
+                        .as_function_ref()
+                        .map(|function| function.prototype.clone())
+                })
+                && let Some(handle) = object.as_object_ref()
+            {
+                handle.borrow_mut().prototype = Some(prototype);
+            }
             return Ok(object);
         }
         return Ok(value.clone());
@@ -10634,10 +10984,12 @@ fn to_string_with_vm(vm: &mut Vm, value: &Value) -> JsResult<String> {
         .as_object_ref()
         .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
     {
-        return Err(JsError::Throw(type_error(
-            vm,
-            "cannot convert a Symbol value to a string",
-        )));
+        let description = value
+            .as_object_ref()
+            .and_then(|object| object.borrow().props.get("\0symbol").cloned())
+            .map(|description| description.string())
+            .unwrap_or_default();
+        return Ok(format!("Symbol({description})"));
     }
     if value.is_object() || value.is_function() {
         let primitive = to_primitive_for_binary(vm, value, true)?;
@@ -11635,6 +11987,11 @@ fn native_object_get_own_property_descriptor(
     let attributes = target
         .as_object_ref()
         .and_then(|object| object.borrow().attributes.get(&key).copied())
+        .or_else(|| {
+            target
+                .as_function_ref()
+                .and_then(|function| function.attributes.borrow().get(&key).copied())
+        })
         .or_else(|| {
             target
                 .as_regexp_ref()
@@ -13124,22 +13481,27 @@ fn native_object_property_is_enumerable(
     let target = object_receiver(vm, &this)?;
     let key = vm.to_property_key(args.first().cloned().unwrap_or(Value::Undefined))?;
     let enumerable = if let Some(function) = target.as_function_ref() {
-        function.props.borrow().contains_key(&key)
-            && !matches!(
-                key.as_str(),
-                "name"
-                    | "length"
-                    | "NaN"
-                    | "POSITIVE_INFINITY"
-                    | "NEGATIVE_INFINITY"
-                    | "MAX_VALUE"
-                    | "MIN_VALUE"
-                    | "MAX_SAFE_INTEGER"
-                    | "MIN_SAFE_INTEGER"
-                    | "EPSILON"
-                    | "asIntN"
-                    | "asUintN"
-            )
+        function.attributes.borrow().get(&key).map_or_else(
+            || {
+                function.props.borrow().contains_key(&key)
+                    && !matches!(
+                        key.as_str(),
+                        "name"
+                            | "length"
+                            | "NaN"
+                            | "POSITIVE_INFINITY"
+                            | "NEGATIVE_INFINITY"
+                            | "MAX_VALUE"
+                            | "MIN_VALUE"
+                            | "MAX_SAFE_INTEGER"
+                            | "MIN_SAFE_INTEGER"
+                            | "EPSILON"
+                            | "asIntN"
+                            | "asUintN"
+                    )
+            },
+            |attributes| attributes.enumerable,
+        )
     } else {
         target.as_object_ref().is_some_and(|object| {
             let object = object.borrow();
@@ -13272,6 +13634,7 @@ fn native_function_bind(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Va
                 Value::Number((target_length - bound_length as f64).max(0.0)),
             ),
         ]))),
+        attributes: Rc::new(RefCell::new(HashMap::new())),
         dyn_jit: RefCell::new(None),
         numeric_jit: RefCell::new(None),
         source_id: None,
@@ -13765,6 +14128,7 @@ mod tests {
                 strict: false,
                 prototype: test_object(Object::ordinary(None)),
                 props: Rc::new(RefCell::new(IndexMap::new())),
+                attributes: Rc::new(RefCell::new(HashMap::new())),
                 dyn_jit: RefCell::new(None),
                 numeric_jit: RefCell::new(None),
                 source_id: None,
@@ -13789,6 +14153,7 @@ mod tests {
                 strict: false,
                 prototype: test_object(Object::ordinary(None)),
                 props: Rc::new(RefCell::new(IndexMap::new())),
+                attributes: Rc::new(RefCell::new(HashMap::new())),
                 dyn_jit: RefCell::new(None),
                 numeric_jit: RefCell::new(None),
                 source_id: None,

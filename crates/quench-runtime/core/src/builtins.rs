@@ -362,6 +362,7 @@ pub(crate) fn instantiate(vm: &Vm) -> Box<[Value]> {
                         Value::Number(builtin_length(id) as f64),
                     ),
                 ]))),
+                attributes: Rc::new(RefCell::new(HashMap::new())),
                 dyn_jit: RefCell::new(None),
                 numeric_jit: RefCell::new(None),
                 source_id: None,
