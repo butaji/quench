@@ -10510,6 +10510,12 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
     };
     let key = args.get(1).map(Value::string).unwrap_or_default();
     let descriptor = args.get(2).cloned().unwrap_or(Value::Undefined);
+    if !descriptor.is_object_like() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "property descriptor is not an object",
+        )));
+    }
     let existing_attributes = target
         .as_object_ref()
         .and_then(|object| object.borrow().attributes.get(&key).copied());
@@ -10526,7 +10532,15 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
     // accessors must participate exactly like any other object lookup.
     let has_get_field = vm.has_property(&descriptor, "get");
     let has_set_field = vm.has_property(&descriptor, "set");
+    let has_value = vm.has_property(&descriptor, "value");
+    let has_writable = vm.has_property(&descriptor, "writable");
     if has_get_field || has_set_field {
+        if has_value || has_writable {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "property descriptor mixes data and accessor fields",
+            )));
+        }
         let getter = if has_get_field {
             Some(vm.get_prop_with_accessors(&descriptor, "get")?)
         } else {
@@ -10587,7 +10601,6 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
             return Err(JsError::Throw(type_error(vm, "object is not extensible")));
         }
     }
-    let has_value = vm.has_property(&descriptor, "value");
     let value = if has_value {
         vm.get_prop_with_accessors(&descriptor, "value")?
     } else {
@@ -10905,6 +10918,12 @@ fn native_object_create(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value
     // ordinary objects with the default Object.prototype for language literals.
     let object = vm.object_value(Object::ordinary(prototype));
     if let Some(descriptors) = args.get(1).filter(|value| !value.is_undefined()) {
+        if descriptors.is_null() {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "Object.create properties is null",
+            )));
+        }
         let descriptors = if descriptors.is_object_like() {
             descriptors.clone()
         } else {
