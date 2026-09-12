@@ -14800,12 +14800,30 @@ fn native_regexp(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     let flags = a
         .get(1)
         .filter(|value| !value.is_undefined())
-        .map(|value| to_string_with_vm(vm, value))
+        .map(|value| {
+            if is_symbol_carrier(value) {
+                return Err(JsError::Throw(type_error(
+                    vm,
+                    "cannot convert a Symbol value to a string",
+                )));
+            }
+            to_string_with_vm(vm, value)
+        })
         .transpose()?
         .or(inherited_flags)
         .unwrap_or_default();
     validate_regexp_flags(vm, &flags)?;
-    let kernel = Rc::new(compile_regex(&p, flags.contains('i'))?);
+    let flags = canonical_regexp_flags(&flags);
+    if (flags.contains('u') || flags.contains('v')) && has_unicode_decimal_escape(&p) {
+        return Err(JsError::Throw(syntax_error(
+            vm,
+            "invalid decimal escape in Unicode regular expression",
+        )));
+    }
+    let kernel = Rc::new(
+        compile_regex(&p, flags.contains('i'))
+            .map_err(|_| JsError::Throw(syntax_error(vm, "invalid regular expression")))?,
+    );
     let mut regexp = RegExpValue::new(kernel, flags.contains('g'));
     regexp.source = p;
     regexp.flags = flags;
@@ -14833,45 +14851,66 @@ fn native_regexp_compile(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
         )));
     };
     let pattern = args.first().cloned().unwrap_or(Value::Undefined);
+    if pattern.as_regexp().is_some() && args.get(1).is_some() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "flags may not be supplied when compiling from a RegExp",
+        )));
+    }
     let flags = if let Some(flags) = args.get(1).filter(|value| !value.is_undefined()) {
+        if is_symbol_carrier(flags) {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "cannot convert a Symbol value to a string",
+            )));
+        }
         to_string_with_vm(vm, flags)?
     } else if let Some(other) = pattern.as_regexp() {
         other.borrow().flags.clone()
     } else {
         String::new()
     };
-    let flags = canonical_regexp_flags(&flags);
     validate_regexp_flags(vm, &flags)?;
+    let flags = canonical_regexp_flags(&flags);
     let source = if pattern.is_undefined() {
         String::new()
     } else if let Some(other) = pattern.as_regexp() {
-        if args.get(1).is_some() {
-            return Err(JsError::Throw(type_error(
-                vm,
-                "flags may not be supplied when compiling from a RegExp",
-            )));
-        }
         other.borrow().source.clone()
     } else {
+        if is_symbol_carrier(&pattern) {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "cannot convert a Symbol value to a string",
+            )));
+        }
         to_string_with_vm(vm, &pattern)?
     };
-    let kernel = Rc::new(compile_regex(&source, flags.contains('i'))?);
-    let mut regexp = regexp.borrow_mut();
-    if regexp
-        .attributes
-        .get("lastIndex")
-        .is_some_and(|attributes| !attributes.writable)
-    {
-        return Err(JsError::Throw(type_error(
+    if (flags.contains('u') || flags.contains('v')) && has_unicode_decimal_escape(&source) {
+        return Err(JsError::Throw(syntax_error(
             vm,
-            "cannot reset non-writable RegExp.lastIndex",
+            "invalid decimal escape in Unicode regular expression",
         )));
     }
+    let kernel = Rc::new(
+        compile_regex(&source, flags.contains('i'))
+            .map_err(|_| JsError::Throw(syntax_error(vm, "invalid regular expression")))?,
+    );
+    let mut regexp = regexp.borrow_mut();
+    let readonly_last_index = regexp
+        .attributes
+        .get("lastIndex")
+        .is_some_and(|attributes| !attributes.writable);
     regexp.regex = kernel;
     regexp.capture_locations = None;
     regexp.global = flags.contains('g');
     regexp.source = source;
     regexp.flags = flags;
+    if readonly_last_index {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "cannot reset non-writable RegExp.lastIndex",
+        )));
+    }
     regexp.last_index = 0;
     regexp.props.insert("lastIndex".into(), Value::Number(0.0));
     Ok(this)
@@ -14883,6 +14922,14 @@ fn canonical_regexp_flags(flags: &str) -> String {
         .filter(|flag| flags.contains(*flag))
         .collect()
 }
+
+fn has_unicode_decimal_escape(pattern: &str) -> bool {
+    pattern
+        .as_bytes()
+        .windows(2)
+        .any(|pair| pair[0] == b'\\' && matches!(pair[1], b'1'..=b'9'))
+}
+
 fn compile_regex(pattern: &str, insensitive: bool) -> JsResult<Regex> {
     let normalized = pattern
         .replace(r"[\s[]", r"[\s\[]")
@@ -15419,6 +15466,48 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
             vm,
             "property descriptor is not an object",
         )));
+    }
+    if let Some(regexp) = target.as_regexp()
+        && key == "lastIndex"
+    {
+        let writable = vm.get_prop_with_accessors(&descriptor, "writable")?;
+        let value = vm.get_prop_with_accessors(&descriptor, "value")?;
+        let mut regexp = regexp.borrow_mut();
+        let current = regexp
+            .attributes
+            .get("lastIndex")
+            .copied()
+            .unwrap_or(PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: false,
+            });
+        if !current.writable
+            && !value.is_undefined()
+            && !eq_strict(
+                regexp.props.get("lastIndex").unwrap_or(&Value::Undefined),
+                &value,
+            )
+        {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "cannot change value of a non-writable property",
+            )));
+        }
+        if !value.is_undefined() {
+            regexp.last_index = value.number().max(0.0) as usize;
+            regexp.props.insert("lastIndex".into(), value);
+        }
+        if !writable.is_undefined() {
+            regexp.attributes.insert(
+                "lastIndex".into(),
+                PropertyAttributes {
+                    writable: writable.truthy(),
+                    ..current
+                },
+            );
+        }
+        return Ok(target.clone());
     }
     let existing_attributes = target.as_object_ref().and_then(|object| {
         let object = object.borrow();
