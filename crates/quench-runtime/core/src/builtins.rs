@@ -176,6 +176,10 @@ builtin_catalog! {
     ArrayEvery, ArrayPrototype, "every", native_array_every, Generic, MAY_CALL_JS;
     ArrayIndexOf, ArrayPrototype, "indexOf", native_array_index_of, Generic, PURE;
     ArrayIncludes, ArrayPrototype, "includes", native_array_includes, Generic, PURE;
+    ArrayReduce, ArrayPrototype, "reduce", native_array_reduce, Generic, MAY_CALL_JS;
+    ArrayReduceRight, ArrayPrototype, "reduceRight", native_array_reduce_right, Generic, MAY_CALL_JS;
+    ArrayFind, ArrayPrototype, "find", native_array_find, Generic, MAY_CALL_JS;
+    ArrayFindIndex, ArrayPrototype, "findIndex", native_array_find_index, Generic, MAY_CALL_JS;
     StringSubstring, StringPrototype, "substring", native_string_substring, Generic, MAY_ALLOCATE;
     StringSlice, StringPrototype, "slice", native_string_slice, Generic, MAY_ALLOCATE;
     StringCharCodeAt, StringPrototype, "charCodeAt", native_string_char_code_at, Generic, PURE;
@@ -305,6 +309,10 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::ArrayEvery
         | BuiltinId::ArrayIndexOf
         | BuiltinId::ArrayIncludes
+        | BuiltinId::ArrayReduce
+        | BuiltinId::ArrayReduceRight
+        | BuiltinId::ArrayFind
+        | BuiltinId::ArrayFindIndex
         | BuiltinId::StringSubstring
         | BuiltinId::StringSlice
         | BuiltinId::StringCharCodeAt
