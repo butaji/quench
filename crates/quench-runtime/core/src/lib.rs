@@ -12186,6 +12186,18 @@ fn native_object_get_own_property_names(vm: &mut Vm, _: Value, args: &[Value]) -
             (0..string.chars().count()).map(|index| Value::string_value(index.to_string())),
         );
     }
+    // OwnPropertyKeys orders array indices numerically before ordinary
+    // strings. Keep this projection centralized with Object.keys/values so
+    // computed numeric properties cannot leak insertion order here.
+    let keys = keys
+        .into_iter()
+        .map(|key| key.string())
+        .filter(|key| !key.starts_with("Symbol("))
+        .collect::<Vec<_>>();
+    let keys = partition_symbol_keys(keys)
+        .into_iter()
+        .map(Value::string_value)
+        .collect();
     Ok(vm.array_from_values(keys))
 }
 fn native_object_get_own_property_symbols(
