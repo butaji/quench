@@ -350,6 +350,19 @@ builtin_catalog! {
     Unescape, Global, "unescape", native_unescape, Generic, MAY_ALLOCATE;
     StringIndexOf, StringPrototype, "indexOf", native_string_index_of, Generic, PURE;
     StringLastIndexOf, StringPrototype, "lastIndexOf", native_string_last_index_of, Generic, PURE;
+    StringIncludes, StringPrototype, "includes", native_string_includes, Generic, PURE;
+    StringStartsWith, StringPrototype, "startsWith", native_string_starts_with, Generic, PURE;
+    StringEndsWith, StringPrototype, "endsWith", native_string_ends_with, Generic, PURE;
+    StringRepeat, StringPrototype, "repeat", native_string_repeat, Generic, MAY_ALLOCATE;
+    StringPadStart, StringPrototype, "padStart", native_string_pad_start, Generic, MAY_ALLOCATE;
+    StringPadEnd, StringPrototype, "padEnd", native_string_pad_end, Generic, MAY_ALLOCATE;
+    StringAt, StringPrototype, "at", native_string_at, Generic, MAY_ALLOCATE;
+    StringCodePointAt, StringPrototype, "codePointAt", native_string_code_point_at, Generic, PURE;
+    StringNormalize, StringPrototype, "normalize", native_string_normalize, Generic, MAY_ALLOCATE;
+    StringToLocaleLowerCase, StringPrototype, "toLocaleLowerCase", native_string_lower, Generic, MAY_ALLOCATE;
+    StringToLocaleUpperCase, StringPrototype, "toLocaleUpperCase", native_string_upper, Generic, MAY_ALLOCATE;
+    StringIsWellFormed, StringPrototype, "isWellFormed", native_string_is_well_formed, Generic, PURE;
+    StringToWellFormed, StringPrototype, "toWellFormed", native_string_to_well_formed, Generic, MAY_ALLOCATE;
     NumberToFixed, NumberPrototype, "toFixed", native_number_to_fixed, Generic, MAY_ALLOCATE;
     NumberToPrecision, NumberPrototype, "toPrecision", native_number_to_precision, Generic, MAY_ALLOCATE;
     NumberToExponential, NumberPrototype, "toExponential", native_number_to_exponential, Generic, MAY_ALLOCATE;
@@ -573,6 +586,14 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::StringTrimRight
         | BuiltinId::StringIndexOf
         | BuiltinId::StringLastIndexOf
+        | BuiltinId::StringAt
+        | BuiltinId::StringCodePointAt
+        | BuiltinId::StringIncludes
+        | BuiltinId::StringStartsWith
+        | BuiltinId::StringEndsWith
+        | BuiltinId::StringRepeat
+        | BuiltinId::StringToLocaleLowerCase
+        | BuiltinId::StringToLocaleUpperCase
         | BuiltinId::RegExpTest
         | BuiltinId::RegExpExec
         | BuiltinId::RegExpToString
@@ -581,6 +602,7 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::ObjectValueOf => 0,
         BuiltinId::StringSubstr => 2,
         BuiltinId::StringReplaceAll => 2,
+        BuiltinId::StringPadStart | BuiltinId::StringPadEnd => 2,
         BuiltinId::StringMatchAll | BuiltinId::StringSearch => 1,
         BuiltinId::StringAnchor
         | BuiltinId::StringFontcolor

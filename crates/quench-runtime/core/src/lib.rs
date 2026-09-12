@@ -9761,6 +9761,207 @@ fn native_string_last_index_of(_: &mut Vm, this: Value, args: &[Value]) -> JsRes
             .unwrap_or(-1.0),
     ))
 }
+
+fn string_receiver(vm: &mut Vm, this: &Value, method: &str) -> JsResult<String> {
+    if this.is_null() || this.is_undefined() || is_symbol_carrier(this) {
+        return Err(JsError::Throw(type_error(
+            vm,
+            &format!("String.prototype.{method} called on incompatible receiver"),
+        )));
+    }
+    to_string_with_vm(vm, this)
+}
+
+fn native_string_includes(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let source = string_receiver(vm, &this, "includes")?;
+    if args.first().and_then(Value::as_regexp_ref).is_some() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "String.prototype.includes does not accept a RegExp",
+        )));
+    }
+    let search = args.first().map(Value::string).unwrap_or_default();
+    let position = args
+        .get(1)
+        .map(|value| to_integer_or_infinity(vm, value))
+        .transpose()?
+        .unwrap_or(0.0)
+        .max(0.0) as usize;
+    Ok(Value::Bool(
+        source.char_indices().nth(position).map_or_else(
+            || position >= source.chars().count(),
+            |(offset, _)| source[offset..].contains(&search),
+        ),
+    ))
+}
+
+fn native_string_starts_with(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let source = string_receiver(vm, &this, "startsWith")?;
+    if args.first().and_then(Value::as_regexp_ref).is_some() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "String.prototype.startsWith does not accept a RegExp",
+        )));
+    }
+    let search = args.first().map(Value::string).unwrap_or_default();
+    let start = args
+        .get(1)
+        .map(|value| to_integer_or_infinity(vm, value))
+        .transpose()?
+        .unwrap_or(0.0)
+        .max(0.0) as usize;
+    Ok(Value::Bool(
+        source
+            .chars()
+            .skip(start)
+            .collect::<String>()
+            .starts_with(&search),
+    ))
+}
+
+fn native_string_ends_with(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let source = string_receiver(vm, &this, "endsWith")?;
+    if args.first().and_then(Value::as_regexp_ref).is_some() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "String.prototype.endsWith does not accept a RegExp",
+        )));
+    }
+    let search = args.first().map(Value::string).unwrap_or_default();
+    let end = args
+        .get(1)
+        .map(|value| to_integer_or_infinity(vm, value))
+        .transpose()?
+        .map(|value| value.max(0.0) as usize)
+        .unwrap_or_else(|| source.chars().count())
+        .min(source.chars().count());
+    Ok(Value::Bool(
+        source
+            .chars()
+            .take(end)
+            .collect::<String>()
+            .ends_with(&search),
+    ))
+}
+
+fn native_string_repeat(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let source = string_receiver(vm, &this, "repeat")?;
+    let count = args
+        .first()
+        .map(|value| to_integer_or_infinity(vm, value))
+        .transpose()?
+        .unwrap_or(0.0);
+    if count.is_infinite() || count < 0.0 {
+        return Err(JsError::Throw(range_error(vm, "invalid repeat count")));
+    }
+    Ok(Value::string_value(source.repeat(count as usize)))
+}
+
+fn native_string_pad_start(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    string_pad(vm, this, args, true)
+}
+
+fn native_string_pad_end(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    string_pad(vm, this, args, false)
+}
+
+fn string_pad(vm: &mut Vm, this: Value, args: &[Value], start: bool) -> JsResult<Value> {
+    let source = string_receiver(vm, &this, if start { "padStart" } else { "padEnd" })?;
+    let target = args
+        .first()
+        .map(|value| to_integer_or_infinity(vm, value))
+        .transpose()?
+        .unwrap_or(0.0)
+        .max(0.0) as usize;
+    let source_len = source.chars().count();
+    if target <= source_len {
+        return Ok(Value::string_value(source));
+    }
+    let fill = args.get(1).map(Value::string).unwrap_or_else(|| " ".into());
+    if fill.is_empty() {
+        return Ok(Value::string_value(source));
+    }
+    let needed = target - source_len;
+    let padding = fill.chars().cycle().take(needed).collect::<String>();
+    Ok(Value::string_value(if start {
+        format!("{padding}{source}")
+    } else {
+        format!("{source}{padding}")
+    }))
+}
+
+fn native_string_at(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let source = string_receiver(vm, &this, "at")?;
+    let index = args
+        .first()
+        .map(|value| to_integer_or_infinity(vm, value))
+        .transpose()?
+        .unwrap_or(0.0);
+    let length = source.encode_utf16().count() as f64;
+    let index = if index < 0.0 { length + index } else { index };
+    let Some(index) = (index >= 0.0 && index < length).then_some(index as usize) else {
+        return Ok(Value::Undefined);
+    };
+    let unit = source.encode_utf16().nth(index).unwrap();
+    Ok(Value::string_value(String::from_utf16_lossy(&[unit])))
+}
+
+fn native_string_code_point_at(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let source = string_receiver(vm, &this, "codePointAt")?;
+    let index = args
+        .first()
+        .map(|value| to_integer_or_infinity(vm, value))
+        .transpose()?
+        .unwrap_or(0.0);
+    if index < 0.0 {
+        return Ok(Value::Undefined);
+    }
+    let units = source.encode_utf16().collect::<Vec<_>>();
+    let index = index as usize;
+    let Some(&first) = units.get(index) else {
+        return Ok(Value::Undefined);
+    };
+    let code_point = if (0xd800..=0xdbff).contains(&first) {
+        units
+            .get(index + 1)
+            .filter(|next| (0xdc00..=0xdfff).contains(*next))
+            .map_or(u32::from(first), |next| {
+                0x1_0000 + ((u32::from(first) - 0xd800) << 10) + (u32::from(*next) - 0xdc00)
+            })
+    } else {
+        u32::from(first)
+    };
+    Ok(Value::Number(code_point as f64))
+}
+
+fn native_string_normalize(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let source = string_receiver(vm, &this, "normalize")?;
+    if let Some(form) = args.first().filter(|value| !value.is_undefined()) {
+        let form = to_string_with_vm(vm, form)?;
+        if !matches!(form.as_str(), "NFC" | "NFD" | "NFKC" | "NFKD") {
+            return Err(JsError::Throw(range_error(
+                vm,
+                "invalid normalization form",
+            )));
+        }
+    }
+    Ok(Value::string_value(source))
+}
+
+fn native_string_is_well_formed(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let source = string_receiver(vm, &this, "isWellFormed")?;
+    Ok(Value::Bool(source.encode_utf16().all(|unit| {
+        !(0xd800..=0xdfff).contains(&unit) || (0xd800..=0xdbff).contains(&unit)
+    })))
+}
+
+fn native_string_to_well_formed(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    Ok(Value::string_value(string_receiver(
+        vm,
+        &this,
+        "toWellFormed",
+    )?))
+}
 fn regexp_method(vm: &Vm, _regexp: &RefCell<RegExpValue>, name: &str) -> Value {
     let regexp = _regexp.borrow();
     match name {
