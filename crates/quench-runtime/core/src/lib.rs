@@ -384,8 +384,11 @@ impl Value {
             return value.to_string();
         }
         if let Some(object) = self.as_object() {
+            let object = object.borrow();
+            if let Some(wrapper) = object.props.get("\0wrapper") {
+                return format!("[object {}]", wrapper.string());
+            }
             return object
-                .borrow()
                 .props
                 .get("message")
                 .map_or_else(|| "[object Object]".into(), |message| message.display());
@@ -418,11 +421,21 @@ impl Value {
         if self.is_null() {
             return 0.0;
         }
+        if let Some(object) = self.as_object_ref()
+            && let Some(primitive) = object.borrow().props.get("\0primitive")
+        {
+            return primitive.number();
+        }
         self.as_string()
             .and_then(|value| value.parse().ok())
             .unwrap_or(f64::NAN)
     }
     fn string(&self) -> String {
+        if let Some(object) = self.as_object_ref()
+            && let Some(primitive) = object.borrow().props.get("\0primitive")
+        {
+            return primitive.string();
+        }
         self.as_string()
             .map_or_else(|| self.display(), ToString::to_string)
     }
@@ -4335,6 +4348,17 @@ impl Vm {
                     let object = self.builtin(BuiltinId::ObjectConstructor);
                     self.set_prop(&object, recipe.key, value);
                 }
+                BuiltinOwner::BooleanPrototype => {
+                    let boolean = self.builtin(BuiltinId::BooleanConstructor);
+                    let prototype = Value::Object(
+                        boolean
+                            .as_function_ref()
+                            .expect("Boolean is a function")
+                            .prototype
+                            .clone(),
+                    );
+                    self.set_prop(&prototype, recipe.key, value);
+                }
                 _ => {}
             }
         }
@@ -5661,7 +5685,29 @@ impl Vm {
                         FunctionKind::Builtin(_) | FunctionKind::Native(_)
                     )
                 });
-                Ok(if native { r } else { o })
+                let wrapped = matches!(
+                    function.kind,
+                    FunctionKind::Builtin(
+                        BuiltinId::BooleanConstructor
+                            | BuiltinId::NumberConstructor
+                            | BuiltinId::StringConstructor
+                    )
+                );
+                if wrapped {
+                    self.set_prop(&o, "\0primitive", r);
+                    let wrapper = match function.kind {
+                        FunctionKind::Builtin(BuiltinId::BooleanConstructor) => "Boolean",
+                        FunctionKind::Builtin(BuiltinId::NumberConstructor) => "Number",
+                        FunctionKind::Builtin(BuiltinId::StringConstructor) => "String",
+                        _ => "Object",
+                    };
+                    self.set_prop(&o, "\0wrapper", Value::string_value(wrapper));
+                    Ok(o)
+                } else if native {
+                    Ok(r)
+                } else {
+                    Ok(o)
+                }
             }
             RegExpLiteral(v) => {
                 let kernel = Rc::new(compile_regex(
@@ -6405,6 +6451,20 @@ fn native_number_to_string(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<
 }
 fn native_boolean(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(Value::Bool(a.first().is_some_and(Value::truthy)))
+}
+fn native_boolean_value_of(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if let Some(object) = this.as_object_ref()
+        && let Some(value) = object.borrow().props.get("\0primitive")
+    {
+        return Ok(Value::Bool(value.truthy()));
+    }
+    this.as_bool()
+        .map(Value::Bool)
+        .ok_or_else(|| JsError::Message("TypeError: Boolean.prototype.valueOf called on incompatible receiver".into()))
+}
+fn native_boolean_to_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let value = native_boolean_value_of(vm, this, &[])?;
+    Ok(Value::string_value(if value.truthy() { "true" } else { "false" }))
 }
 fn native_is_nan(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(Value::Bool(
@@ -7157,7 +7217,7 @@ mod tests {
         vm.install_process(Vec::new(), Vec::new());
         vm.run_source_text(
             Path::new("<boolean-test>"),
-            "var boxed = new Boolean(1); if (boxed !== true) throw new Error('boolean');",
+            "var boxed = new Boolean(1); if (typeof boxed !== 'object') throw new Error('boolean');",
         )
         .expect("boolean and constructor semantics execute");
     }
