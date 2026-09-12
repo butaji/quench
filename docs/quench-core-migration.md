@@ -136,6 +136,9 @@ Verification completed:
   conversion path, native metadata, computed Symbol keys, wrapper prototypes,
   and radix formatting; remaining failures are numeric edge errors and
   prototype/accessor details
+- the stencil Error stage now reaches 47/93 after adding shared `Error.isError`
+  detection and preserving constructor-call prototypes; stack accessors and
+  remaining descriptor semantics are still open
 - historical commits advertising “100% Test262” used `test262/skip.rs` to skip
   entire built-in families (including Object, Array, String, TypedArray, and
   Promise); those results are not equivalent to executing the full corpus
