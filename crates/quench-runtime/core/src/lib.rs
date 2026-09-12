@@ -7530,14 +7530,27 @@ fn prop_key<'a>(k: &PropertyKey<'a>) -> String {
         _ => String::new(),
     }
 }
-fn native_parse_int(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    let mut s = a
-        .first()
-        .map(|v| v.string())
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-    let mut radix = a.get(1).map(Value::number).unwrap_or(0.0) as u32;
+fn native_parse_int(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    let mut s = match a.first() {
+        Some(value) => to_string_with_vm(vm, value)?,
+        None => String::from("undefined"),
+    }
+    .trim()
+    .to_string();
+    let radix_number = match a.get(1) {
+        Some(value) => to_number_with_vm(vm, value)?,
+        None => 0.0,
+    };
+    let mut radix = if !radix_number.is_finite() || radix_number == 0.0 {
+        0
+    } else {
+        let modulo = radix_number.trunc() % 4_294_967_296.0;
+        (if modulo < 0.0 {
+            modulo + 4_294_967_296.0
+        } else {
+            modulo
+        }) as u32
+    };
     let neg = s.starts_with('-');
     if s.starts_with(['+', '-']) {
         s.remove(0);
@@ -7568,8 +7581,11 @@ fn native_parse_int(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(Value::Number(if neg { -n } else { n }))
 }
 
-fn native_parse_float(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    let source = a.first().map(Value::string).unwrap_or_default();
+fn native_parse_float(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    let source = match a.first() {
+        Some(value) => to_string_with_vm(vm, value)?,
+        None => String::from("undefined"),
+    };
     let source = source.trim_start();
     let sign = usize::from(source.starts_with(['+', '-']));
     if source[sign..].starts_with("Infinity") {
@@ -7642,11 +7658,11 @@ fn native_eval(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     }
 }
 
-fn native_is_finite(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+fn native_is_finite(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     let Some(value) = a.first() else {
         return Ok(Value::Bool(false));
     };
-    let number = value.number();
+    let number = to_number_with_vm(vm, value)?;
     Ok(Value::Bool(number.is_finite()))
 }
 
@@ -9067,10 +9083,12 @@ fn native_boolean_to_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<V
         "false"
     }))
 }
-fn native_is_nan(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    Ok(Value::Bool(
-        a.first().map(|v| v.number().is_nan()).unwrap_or(true),
-    ))
+fn native_is_nan(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    let number = match a.first() {
+        Some(value) => to_number_with_vm(vm, value)?,
+        None => f64::NAN,
+    };
+    Ok(Value::Bool(number.is_nan()))
 }
 fn native_math_pow(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     let left = math_argument(vm, a, 0)?;
@@ -12732,7 +12750,7 @@ fn native_object_has_own_property(vm: &mut Vm, this: Value, args: &[Value]) -> J
             || regexp.props.contains_key(&accessor_slot("get", &key))
             || regexp.props.contains_key(&accessor_slot("set", &key))
     } else if let Some(function) = target.as_function_ref() {
-        function.props.borrow().contains_key(&key) || key == "prototype"
+        function.props.borrow().contains_key(&key) || (key == "prototype" && constructable(&target))
     } else {
         target.as_object_ref().is_some_and(|object| {
             let object = object.borrow();
