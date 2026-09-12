@@ -546,7 +546,6 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::StringSlice
         | BuiltinId::StringCharCodeAt
         | BuiltinId::StringCharAt
-        | BuiltinId::StringSubstr
         | BuiltinId::StringToLowerCase
         | BuiltinId::StringToUpperCase
         | BuiltinId::StringToString
@@ -575,6 +574,7 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::ObjectToString
         | BuiltinId::ObjectToLocaleString
         | BuiltinId::ObjectValueOf => 0,
+        BuiltinId::StringSubstr => 2,
         BuiltinId::StringAnchor
         | BuiltinId::StringFontcolor
         | BuiltinId::StringFontsize
