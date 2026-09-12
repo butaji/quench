@@ -107,7 +107,7 @@ Verification completed:
   native wrappers, exact `sumPrecise` accumulation, binary16 rounding, and the
   complete intrinsic projection; the two remaining cases require generator /
   iterator lowering in the stencil compiler
-- the stencil Date stage now reaches 406/594 after deriving constructor
+- the stencil Date stage now reaches 407/594 after deriving constructor
   time-clipping, ISO/RFC date parsing, normalized UTC/local component getters
   and setters, string serialization, generic `toJSON` coercion, Temporal
   Instant conversion, and static `now`/`parse`/`UTC` helpers from one date
