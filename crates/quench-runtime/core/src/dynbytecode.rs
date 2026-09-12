@@ -1214,8 +1214,7 @@ impl Compiler {
                         reason: "unsupported for-in target",
                     })?;
                 let lvalue = self.lvalue(target)?;
-                self.store(lvalue, src, span);
-                Ok(())
+                self.store(lvalue, src, span)
             }
         }
     }
@@ -2015,7 +2014,7 @@ impl Compiler {
             );
             dst
         };
-        self.store(lvalue, result, value.span);
+        self.store(lvalue, result, value.span)?;
         Ok(result)
     }
 
@@ -2034,7 +2033,7 @@ impl Compiler {
             },
             value.span,
         );
-        self.store(target, updated, value.span);
+        self.store(target, updated, value.span)?;
         Ok(if value.prefix { updated } else { old })
     }
 
@@ -2185,9 +2184,34 @@ impl Compiler {
         Ok(dst)
     }
 
-    fn store(&mut self, target: Lvalue, src: Register, span: Span) {
+    fn store(&mut self, target: Lvalue, src: Register, span: Span) -> Result<(), CompileGap> {
         match target {
             Lvalue::Name(name) => {
+                if self.strict && matches!(name.as_str(), "undefined" | "NaN" | "Infinity") {
+                    let constructor = self.alloc()?;
+                    self.emit(
+                        DynOp::LoadName {
+                            dst: constructor,
+                            name: "TypeError".into(),
+                        },
+                        span,
+                    );
+                    let message = self.literal(
+                        Literal::String("Assignment to read-only global binding".into()),
+                        span,
+                    )?;
+                    let error = self.alloc()?;
+                    self.emit(
+                        DynOp::Construct {
+                            dst: error,
+                            callee: constructor,
+                            args: vec![message],
+                        },
+                        span,
+                    );
+                    self.emit(DynOp::Throw { src: error }, span);
+                    return Ok(());
+                }
                 self.emit(DynOp::StoreName { name, src }, span);
             }
             Lvalue::Static { object, key } => {
@@ -2205,6 +2229,7 @@ impl Compiler {
                 );
             }
         }
+        Ok(())
     }
 }
 
