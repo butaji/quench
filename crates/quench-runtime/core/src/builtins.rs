@@ -182,6 +182,9 @@ builtin_catalog! {
     ArrayFindIndex, ArrayPrototype, "findIndex", native_array_find_index, Generic, MAY_CALL_JS;
     ArraySplice, ArrayPrototype, "splice", native_array_splice, Generic, MAY_MUTATE;
     ArrayReverse, ArrayPrototype, "reverse", native_array_reverse, Generic, MAY_MUTATE;
+    ArraySort, ArrayPrototype, "sort", native_array_sort, Generic, MAY_MUTATE;
+    ArrayFlat, ArrayPrototype, "flat", native_array_flat, Generic, MAY_ALLOCATE;
+    ArrayFlatMap, ArrayPrototype, "flatMap", native_array_flat_map, Generic, MAY_ALLOCATE;
     StringSubstring, StringPrototype, "substring", native_string_substring, Generic, MAY_ALLOCATE;
     StringSlice, StringPrototype, "slice", native_string_slice, Generic, MAY_ALLOCATE;
     StringCharCodeAt, StringPrototype, "charCodeAt", native_string_char_code_at, Generic, PURE;
@@ -279,6 +282,7 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::SetTimeout
         | BuiltinId::SetImmediate => 2,
         BuiltinId::ArraySplice => 2,
+        BuiltinId::ArrayFlatMap => 1,
         BuiltinId::MathFloor
         | BuiltinId::MathCeil
         | BuiltinId::MathSqrt
