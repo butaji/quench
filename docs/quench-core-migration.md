@@ -129,11 +129,11 @@ Verification completed:
 - the stencil String stage now reaches 424/1,223 after routing constructor
   coercion and global binding projection through the shared stencil VM; the
   remaining failures are unsupported syntax, accessors, and Unicode details
-- the stencil Object stage now reaches 1,759/3,411 after enforcing
+- the stencil Object stage now reaches 2,170/3,411 after enforcing
   `Object.create` prototype validation, applying its property descriptors with
-  correct defaults, and preserving array own-property enumeration; the
-  remaining failures are mostly accessors, proxies, and unsupported stencil
-  features
+  correct defaults, and routing descriptor/accessor fields through the shared
+  property model; the remaining failures are mostly arrays, proxies, and
+  unsupported stencil features
 - the stencil BigInt stage now reaches 71/77 after deriving one marker-based
   conversion path, native metadata, computed Symbol keys, wrapper prototypes,
   and radix formatting; remaining failures are numeric edge errors and
@@ -141,7 +141,7 @@ Verification completed:
 - the stencil Boolean stage now reaches 51/51 after projecting the constructor
   onto `globalThis` and carrying strict-mode deletion through generated
   bytecode; this stage is fully green
-- the stencil Error stage now reaches 76/93 after adding shared `Error.isError`
+- the stencil Error stage now reaches 79/93 after adding shared `Error.isError`
   detection, preserving constructor-call prototypes, and modeling the shared
   `Error.prototype.stack` accessor contract; proxy/realm and accessor-descriptor
   edge cases remain open
