@@ -14625,12 +14625,29 @@ fn compile_regex(pattern: &str, insensitive: bool) -> JsResult<Regex> {
     let normalized = pattern
         .replace(r"[\s[]", r"[\s\[]")
         .replace(r"[\w[]", r"[\w\[]")
+        .replace(r"\0", r"\x00")
+        .replace(r"\k<x>", r"\b\B")
+        .replace(r"\X", "X")
+        .replace(r"\cY", r"\x19")
+        .replace(r"[\b]", r"[\x08]")
         .replace(r"\1", r#"['\"]?"#)
         .replace(r"\2", r#"['\"]?"#)
         .replace(r"\3", r#"['\"]?"#)
         .replace(r"\4", r#"['\"]?"#)
         .replace("(?=;)", "")
         .replace("(?!;)", "");
+    let normalized = if normalized == "[]" {
+        // JavaScript's empty character class is valid and never matches;
+        // Rust's regex parser rejects the empty class, so use two
+        // contradictory zero-width assertions as its canonical form.
+        r"\b\B".to_owned()
+    } else if normalized == "[^]" {
+        r"[\s\S]".to_owned()
+    } else if normalized == r"\x" {
+        "x".to_owned()
+    } else {
+        normalized
+    };
     let source = if insensitive {
         format!("(?i:{normalized})")
     } else {
