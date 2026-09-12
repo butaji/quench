@@ -5524,6 +5524,7 @@ impl Vm {
             .expect("Object constructor")
             .prototype
             .clone();
+        object_prototype.borrow_mut().builtin_prototype = true;
         for constructor in [
             BuiltinId::ArrayConstructor,
             BuiltinId::StringConstructor,
@@ -5947,7 +5948,7 @@ impl Vm {
     }
     fn get_prop(&self, o: &Value, k: &str) -> Value {
         if let Some(x) = o.as_object_ref() {
-            let prototype = {
+            let (prototype, builtin_prototype) = {
                 let object = x.borrow();
                 if let Some(a) = &object.array {
                     if k == "length" {
@@ -5998,28 +5999,30 @@ impl Vm {
                         return Value::string_value("Error");
                     }
                 }
-                object.prototype.clone()
+                (object.prototype.clone(), object.builtin_prototype)
             };
             if let Some(prototype) = prototype {
                 return self.get_prop(&Value::Object(prototype), k);
             }
-            return match k {
-                "inheritsFrom"
-                | "toString"
-                | "toLocaleString"
-                | "valueOf"
-                | "hasOwnProperty"
-                | "propertyIsEnumerable"
-                | "isPrototypeOf"
-                | "__defineGetter__"
-                | "__defineSetter__"
-                | "__lookupGetter__"
-                | "__lookupSetter__" => self.builtin_property(BuiltinOwner::ObjectPrototype, k),
-                "call" | "apply" | "bind" => {
-                    self.builtin_property(BuiltinOwner::FunctionPrototype, k)
-                }
-                _ => Value::Undefined,
-            };
+            if builtin_prototype {
+                return match k {
+                    "inheritsFrom"
+                    | "toString"
+                    | "toLocaleString"
+                    | "valueOf"
+                    | "hasOwnProperty"
+                    | "propertyIsEnumerable"
+                    | "isPrototypeOf"
+                    | "__defineGetter__"
+                    | "__defineSetter__"
+                    | "__lookupGetter__"
+                    | "__lookupSetter__" => self.builtin_property(BuiltinOwner::ObjectPrototype, k),
+                    _ => Value::Undefined,
+                };
+            }
+            // An explicit null prototype (Object.create(null)) has no
+            // inherited Object/Function methods.
+            return Value::Undefined;
         }
         if let Some(f) = o.as_function_ref() {
             return if k == "prototype" {
@@ -7088,7 +7091,7 @@ impl Vm {
             this
         };
         e.borrow_mut().declare("this", this);
-        let av = self.object_value(Object::array(None, args.clone()));
+        let av = self.object_value(Object::array(self.default_object_prototype(), args.clone()));
         self.set_prop(&av, "\0wrapper", Value::string_value("Arguments"));
         e.borrow_mut().declare("arguments", av);
         for (i, p) in n.params.items.iter().enumerate() {
@@ -7546,7 +7549,7 @@ impl Vm {
         } else {
             e
         };
-        let p = self.allocate_object(Object::ordinary(None));
+        let p = self.allocate_object(Object::ordinary(self.default_object_prototype()));
         let length = n
             .params
             .items
@@ -7580,7 +7583,7 @@ impl Vm {
         v
     }
     fn make_arrow<'a>(&self, n: &'a ArrowFunctionExpression<'a>, e: Env) -> Value {
-        let p = self.allocate_object(Object::ordinary(None));
+        let p = self.allocate_object(Object::ordinary(self.default_object_prototype()));
         let length = n
             .params
             .items
@@ -10757,8 +10760,8 @@ fn native_string_split(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
         protocol_args.extend(args.iter().skip(1).cloned());
         return vm.call_arguments(&method, separator.clone(), protocol_args.as_slice());
     }
-    let split_limit = string_split_limit(vm, args)?;
     let s = string_receiver(vm, &this, "split")?;
+    let split_limit = string_split_limit(vm, args)?;
     if let Some(r) = args.first().and_then(Value::as_regexp) {
         return regexp_split_values(vm, &r, &s, split_limit);
     }
