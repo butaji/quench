@@ -5171,6 +5171,22 @@ impl Vm {
             "\0primitive",
             Value::string_value(""),
         );
+        let object_prototype_value = Value::Object(object_prototype);
+        let proto_getter = self.native_named(native_object_proto_get, "get __proto__", 0);
+        let proto_setter = self.native_named(native_object_proto_set, "set __proto__", 1);
+        self.mark_nonconstructable(&proto_getter);
+        self.mark_nonconstructable(&proto_setter);
+        self.define_accessor_slot(
+            &object_prototype_value,
+            "__proto__",
+            Some(proto_getter),
+            Some(proto_setter),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
         self.install_global_aliases();
         let test262 = self.object(None);
         self.set_prop(&test262, "createRealm", self.native(native_create_realm));
@@ -9821,6 +9837,18 @@ fn native_object(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
         )));
     }
     if value.is_object_like() {
+        // The compact core represents a Symbol primitive with a symbol-key
+        // object. `Object(symbol)` must still allocate the distinct boxed
+        // wrapper mandated by ECMAScript rather than returning that atom.
+        if value
+            .as_object_ref()
+            .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
+        {
+            let object = vm.object(None);
+            vm.set_prop(&object, "\0primitive", value.clone());
+            vm.set_prop(&object, "\0wrapper", Value::string_value("Symbol"));
+            return Ok(object);
+        }
         return Ok(value.clone());
     }
     let is_bigint = is_bigint_marker(value);
@@ -10400,6 +10428,34 @@ fn native_object_to_string(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Val
     };
     Ok(Value::string_value(format!("[object {tag}]")))
 }
+
+fn native_object_proto_get(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if let Some(object) = this.as_object_ref() {
+        return Ok(object
+            .borrow()
+            .prototype
+            .clone()
+            .map(Value::Object)
+            .unwrap_or(Value::Null));
+    }
+    let _ = vm;
+    Ok(Value::Undefined)
+}
+
+fn native_object_proto_set(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if !this.is_object_like() {
+        return Ok(Value::Undefined);
+    }
+    let prototype = args.first().cloned().unwrap_or(Value::Undefined);
+    let symbol_primitive = prototype
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.contains_key("\0symbol"));
+    if (prototype.is_null() || prototype.is_object_like()) && !symbol_primitive {
+        native_object_set_prototype_of(vm, Value::Undefined, &[this, prototype])?;
+    }
+    Ok(Value::Undefined)
+}
+
 fn native_object_get_own_property_descriptor(
     vm: &mut Vm,
     _: Value,
@@ -11592,6 +11648,9 @@ fn native_object_set_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
         )));
     }
     let Some(object) = target.as_object_ref() else {
+        if !target.is_null() && !target.is_undefined() {
+            return Ok(target.clone());
+        }
         return Err(JsError::Throw(type_error(
             vm,
             "setPrototypeOf target is not an object",
