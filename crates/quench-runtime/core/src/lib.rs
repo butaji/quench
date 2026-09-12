@@ -4494,6 +4494,8 @@ struct Vm {
     timers: VecDeque<Timer>,
     next_ticks: VecDeque<Timer>,
     next_timer_id: u64,
+    symbol_keys: HashMap<String, Value>,
+    next_symbol_id: u64,
 }
 impl Vm {
     fn new() -> Self {
@@ -4534,6 +4536,8 @@ impl Vm {
             timers: VecDeque::new(),
             next_ticks: VecDeque::new(),
             next_timer_id: 1,
+            symbol_keys: HashMap::new(),
+            next_symbol_id: 1,
         };
         v.builtin_functions = builtins::instantiate(&v);
         v.install();
@@ -7471,6 +7475,13 @@ impl Vm {
 
 impl Vm {
     fn to_property_key(&mut self, value: Value) -> JsResult<String> {
+        if let Some(symbol_key) = value
+            .as_object_ref()
+            .and_then(|object| object.borrow().props.get("\0symbol-key").cloned())
+            .and_then(|key| key.as_string().cloned())
+        {
+            return Ok(symbol_key);
+        }
         if !value.is_object_like() {
             return to_string_with_vm(self, &value);
         }
@@ -8441,6 +8452,14 @@ fn native_symbol(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
         .unwrap_or_default();
     let symbol = vm.object(None);
     vm.set_prop(&symbol, "\0symbol", Value::string_value(description));
+    let symbol_key = format!("\0symbol-key:{}", vm.next_symbol_id);
+    vm.next_symbol_id = vm.next_symbol_id.wrapping_add(1);
+    vm.set_prop(
+        &symbol,
+        "\0symbol-key",
+        Value::string_value(symbol_key.clone()),
+    );
+    vm.symbol_keys.insert(symbol_key, symbol.clone());
     vm.set_prop(&symbol, "toString", vm.native(native_symbol_to_string));
     if let Some(object) = symbol.as_object_ref() {
         object.borrow_mut().attributes.insert(
@@ -12192,7 +12211,7 @@ fn native_object_get_own_property_names(vm: &mut Vm, _: Value, args: &[Value]) -
     let keys = keys
         .into_iter()
         .map(|key| key.string())
-        .filter(|key| !key.starts_with("Symbol("))
+        .filter(|key| !is_symbol_key(key))
         .collect::<Vec<_>>();
     let keys = partition_symbol_keys(keys)
         .into_iter()
@@ -12218,8 +12237,10 @@ fn native_object_get_own_property_symbols(
                 .borrow()
                 .props
                 .keys()
-                .filter(|key| key.contains('\0'))
-                .map(Value::string_value)
+                .filter_map(|key| {
+                    key.strip_prefix("\0symbol-key:")
+                        .and_then(|_| vm.symbol_keys.get(key).cloned())
+                })
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
@@ -12244,7 +12265,7 @@ fn native_object_get_own_property_descriptors(
         .and_then(|object| object.borrow().array.clone())
     {
         for key in array.to_vec() {
-            let key_text = key.string();
+            let key_text = vm.to_property_key(key.clone())?;
             let descriptor = native_object_get_own_property_descriptor(
                 vm,
                 Value::Undefined,
@@ -12262,7 +12283,7 @@ fn native_object_get_own_property_descriptors(
         .and_then(|object| object.borrow().array.clone())
     {
         for key in array.to_vec() {
-            let key_text = key.string();
+            let key_text = vm.to_property_key(key.clone())?;
             let descriptor = native_object_get_own_property_descriptor(
                 vm,
                 Value::Undefined,
@@ -12389,10 +12410,13 @@ fn object_own_enumerable_keys(target: &Value) -> Vec<String> {
             let key = accessor_key(raw_key)
                 .map(|(_, key)| key)
                 .unwrap_or(raw_key.as_str());
-            if raw_key.starts_with('\0') && accessor_key(raw_key).is_none() {
+            if raw_key.starts_with('\0')
+                && accessor_key(raw_key).is_none()
+                && !is_symbol_key(raw_key)
+            {
                 continue;
             }
-            if key.starts_with("Symbol(") {
+            if is_symbol_key(key) {
                 continue;
             }
             if !seen.insert(key.to_owned()) {
@@ -12411,8 +12435,8 @@ fn object_own_enumerable_keys(target: &Value) -> Vec<String> {
                 .attributes
                 .keys()
                 .filter(|key| {
-                    !key.starts_with('\0')
-                        && !key.starts_with("Symbol(")
+                    (!key.starts_with('\0') || is_symbol_key(key))
+                        && !is_symbol_key(key)
                         && !object.props.contains_key(*key)
                         && !has_accessor_slots(&object.props, key)
                 })
@@ -12432,8 +12456,8 @@ fn object_own_enumerable_keys(target: &Value) -> Vec<String> {
             .props
             .keys()
             .filter(|key| {
-                !key.starts_with('\0')
-                    && !key.starts_with("Symbol(")
+                (!key.starts_with('\0') || is_symbol_key(key))
+                    && !is_symbol_key(key)
                     && regexp
                         .attributes
                         .get(*key)
@@ -12481,6 +12505,10 @@ fn object_own_enumerable_keys(target: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn is_symbol_key(key: &str) -> bool {
+    key.starts_with("Symbol(") || key.starts_with("\0symbol-key:")
+}
+
 fn partition_symbol_keys(keys: Vec<String>) -> Vec<String> {
     // ECMAScript own-key order is numeric indices first (ascending), then
     // ordinary strings in insertion order, then symbols.  Keep this as one
@@ -12490,7 +12518,7 @@ fn partition_symbol_keys(keys: Vec<String>) -> Vec<String> {
     let mut strings = Vec::with_capacity(keys.len());
     let mut symbols = Vec::new();
     for key in keys {
-        if key.starts_with("Symbol(") {
+        if is_symbol_key(&key) {
             symbols.push(key);
         } else if let Some(index) = key
             .parse::<u64>()
@@ -12532,7 +12560,10 @@ fn object_own_property_keys(target: &Value) -> Vec<String> {
         let ordinary = object
             .props
             .keys()
-            .filter(|key| !key.starts_with('\0') && !keys.iter().any(|item| item == *key))
+            .filter(|key| {
+                (!key.starts_with('\0') || is_symbol_key(key))
+                    && !keys.iter().any(|item| item == *key)
+            })
             .cloned()
             .collect::<Vec<_>>();
         keys.extend(ordinary);
@@ -12548,7 +12579,10 @@ fn object_own_property_keys(target: &Value) -> Vec<String> {
             object
                 .attributes
                 .keys()
-                .filter(|key| !key.starts_with('\0') && !existing.iter().any(|item| item == *key))
+                .filter(|key| {
+                    (!key.starts_with('\0') || is_symbol_key(key))
+                        && !existing.iter().any(|item| item == *key)
+                })
                 .cloned(),
         );
         return partition_symbol_keys(keys);
@@ -12558,7 +12592,7 @@ fn object_own_property_keys(target: &Value) -> Vec<String> {
         let mut keys = regexp
             .props
             .keys()
-            .filter(|key| !key.starts_with('\0'))
+            .filter(|key| !key.starts_with('\0') || is_symbol_key(key))
             .cloned()
             .collect::<Vec<_>>();
         let existing = keys.clone();
