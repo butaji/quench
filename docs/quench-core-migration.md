@@ -112,6 +112,9 @@ Verification completed:
 - the Function stage was rerun after restoring dynamic `Function` source
   compilation, strict early-error checks, callable metadata, and restricted
   property guards and reached 210/509; caller-stack propagation remains open
+- the Number stage was rerun after restoring numeric constructor constants,
+  static predicates/parsers, prototype metadata, and numeric string coercion
+  and reached 199/340; BigInt, Realm, and constructor-reflection cases remain
 - historical commits advertising “100% Test262” used `test262/skip.rs` to skip
   entire built-in families (including Object, Array, String, TypedArray, and
   Promise); those results are not equivalent to executing the full corpus

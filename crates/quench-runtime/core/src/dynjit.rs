@@ -3571,6 +3571,11 @@ fn delete_property(value: &Value, key: &str) -> bool {
         object.attributes.remove(key);
         return true;
     } else if let Some(function) = value.as_function_ref() {
+        if matches!(function.kind, super::FunctionKind::Builtin(super::BuiltinId::NumberConstructor))
+            && matches!(key, "NaN" | "POSITIVE_INFINITY" | "NEGATIVE_INFINITY" | "MAX_VALUE" | "MIN_VALUE" | "MAX_SAFE_INTEGER" | "MIN_SAFE_INTEGER" | "EPSILON")
+        {
+            return false;
+        }
         function.props.borrow_mut().shift_remove(key);
         return true;
     }
