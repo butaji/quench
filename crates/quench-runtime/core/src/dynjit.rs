@@ -2909,6 +2909,38 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             };
             put(frame, dst, value);
         }
+        DynOp::Update {
+            dst,
+            src,
+            increment,
+        } => {
+            let old = get_ref(frame, *src).clone();
+            let primitive = if old.is_object() || old.is_function() {
+                super::to_primitive_for_binary(vm(frame), &old, false)?
+            } else {
+                old
+            };
+            let value = if is_bigint_marker(&primitive) {
+                let bigint = parse_bigint_text(primitive.as_string().map_or("", String::as_str))
+                    .map_err(|_| {
+                        JsError::Throw(super::type_error(vm(frame), "invalid BigInt value"))
+                    })?;
+                let next = if *increment {
+                    bigint_marker(bigint + num_bigint::BigInt::from(1u8))
+                } else {
+                    bigint_marker(bigint - num_bigint::BigInt::from(1u8))
+                };
+                next
+            } else {
+                let number = primitive.number();
+                Value::Number(if *increment {
+                    number + 1.0
+                } else {
+                    number - 1.0
+                })
+            };
+            put(frame, dst, value);
+        }
         DynOp::InstanceOf { dst, left, right } => {
             let value = if let Some(cache) = instanceof_ic() {
                 Value::Bool(instance_of_cached(
@@ -2962,7 +2994,8 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
                     )));
                 }
                 let key = get_ref(frame, *key).clone();
-                let key_string = key.string();
+                let vm = unsafe { &mut *frame.vm };
+                let key_string = vm.to_property_key(key)?;
                 if unsafe { &*frame.vm }.restricted_function_property(&object, &key_string) {
                     return Err(JsError::Throw(super::type_error(
                         unsafe { &mut *frame.vm },
@@ -2970,7 +3003,6 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
                     )));
                 }
                 let cache = property_ic();
-                let vm = unsafe { &mut *frame.vm };
                 let cached = vm
                     .find_accessor(&object, &key_string)
                     .is_none()
@@ -3023,22 +3055,24 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
                 )));
             }
             let key = get_ref(frame, *key).clone();
+            let vm = unsafe { &mut *frame.vm };
+            let key_string = vm.to_property_key(key)?;
             if let Some(accessor) = accessor {
                 let slot = super::accessor_slot(
                     match accessor {
                         AccessorKind::Getter => "get",
                         AccessorKind::Setter => "set",
                     },
-                    &key.string(),
+                    &key_string,
                 );
                 unsafe { &*frame.vm }.install_accessor_slot(&object, &slot, value);
                 return Ok(next);
             }
-            if key.string() == "stack" && unsafe { &*frame.vm }.has_error_stack_accessor(&object) {
+            if key_string == "stack" && unsafe { &*frame.vm }.has_error_stack_accessor(&object) {
                 super::native_error_stack_set(unsafe { &mut *frame.vm }, object, &[value])?;
                 return Ok(next);
             }
-            unsafe { &mut *frame.vm }.set_prop_with_accessors(&object, &key.string(), value)?;
+            vm.set_prop_with_accessors(&object, &key_string, value)?;
         }
         DynOp::DeleteStatic {
             dst,
@@ -3742,6 +3776,9 @@ fn block_profile_op_name(op: &DynOp) -> String {
         }
         DynOp::Unary { kind, .. } => format!("Unary:{}", kind.profile_name()),
         DynOp::Binary { kind, .. } => format!("Binary:{}", kind.profile_name()),
+        DynOp::Update { increment, .. } => {
+            format!("Update:{}", if *increment { "++" } else { "--" })
+        }
         _ => op.name().to_owned(),
     }
 }
