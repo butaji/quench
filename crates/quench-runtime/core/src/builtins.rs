@@ -456,10 +456,8 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::DecodeURI
         | BuiltinId::DecodeURIComponent
         | BuiltinId::EncodeURI
-        | BuiltinId::EncodeURIComponent => 1,
-        BuiltinId::ArraySplice => 2,
-        BuiltinId::ArrayFlatMap => 1,
-        BuiltinId::MathFloor
+        | BuiltinId::EncodeURIComponent
+        | BuiltinId::MathFloor
         | BuiltinId::MathCeil
         | BuiltinId::MathSqrt
         | BuiltinId::MathAbs
@@ -487,8 +485,10 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::MathAsinh
         | BuiltinId::MathAtanh
         | BuiltinId::MathExpm1
-        | BuiltinId::MathLog1p
-        | BuiltinId::ClearTimeout
+        | BuiltinId::MathLog1p => 1,
+        BuiltinId::ArraySplice => 2,
+        BuiltinId::ArrayFlatMap => 1,
+        BuiltinId::ClearTimeout
         | BuiltinId::ProcessNextTick
         | BuiltinId::StringFromCharCode
         | BuiltinId::StringFromCodePoint

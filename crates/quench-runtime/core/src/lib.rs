@@ -9344,34 +9344,76 @@ fn round_ties_even(value: f64) -> f64 {
 }
 
 fn native_math_sum_precise(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
-    let Some(source) = args.first().and_then(Value::as_object_ref) else {
+    let Some(source) = args.first().cloned() else {
         return Err(JsError::Throw(type_error(vm, "value is not iterable")));
     };
-    let values = source
-        .borrow()
-        .array
-        .as_ref()
-        .map(ArrayStorage::to_vec)
-        .ok_or_else(|| JsError::Throw(type_error(vm, "value is not iterable")))?;
+    let iterator_method = vm.get_prop_with_accessors(&source, "Symbol(Symbol.iterator)")?;
+    let iterator = if iterator_method.is_function() {
+        let iterator = vm.call_arguments(&iterator_method, source, &[] as &[Value])?;
+        Some(iterator)
+    } else {
+        None
+    };
     let mut numbers = Vec::new();
     let mut positive_infinity = false;
     let mut negative_infinity = false;
-    for value in values {
+    let mut saw_nan = false;
+    let mut process = |value: Value| -> Result<(), ()> {
         let Some(number) = value.as_number() else {
-            return Err(JsError::Throw(type_error(vm, "sum value is not a number")));
+            return Err(());
         };
         if number == f64::INFINITY {
             positive_infinity = true;
-            continue;
-        }
-        if number == f64::NEG_INFINITY {
+        } else if number == f64::NEG_INFINITY {
             negative_infinity = true;
-            continue;
+        } else if number.is_nan() {
+            saw_nan = true;
+        } else {
+            numbers.push(number);
         }
-        if number.is_nan() {
-            return Ok(Value::Number(f64::NAN));
+        Ok(())
+    };
+    if let Some(iterator) = &iterator {
+        let mut steps = 0usize;
+        loop {
+            let next = vm.get_prop_with_accessors(iterator, "next")?;
+            let step = vm.call_arguments(&next, iterator.clone(), &[] as &[Value])?;
+            if vm.get_prop_with_accessors(&step, "done")?.truthy() {
+                break;
+            }
+            let value = vm.get_prop_with_accessors(&step, "value")?;
+            steps = steps.saturating_add(1);
+            if steps > MAX_MATERIALIZED_ARRAY_LENGTH {
+                return Err(JsError::Throw(range_error(
+                    vm,
+                    "Math.sumPrecise iterable exceeds the materialized array limit",
+                )));
+            }
+            if process(value).is_err() {
+                let return_method = vm.get_prop_with_accessors(iterator, "return")?;
+                if return_method.is_function() {
+                    vm.call_arguments(&return_method, iterator.clone(), &[] as &[Value])?;
+                }
+                return Err(JsError::Throw(type_error(vm, "sum value is not a number")));
+            }
         }
-        numbers.push(number);
+    } else if let Some(source) = args.first().and_then(Value::as_object_ref) {
+        let values = source
+            .borrow()
+            .array
+            .as_ref()
+            .map(ArrayStorage::to_vec)
+            .ok_or_else(|| JsError::Throw(type_error(vm, "value is not iterable")))?;
+        for value in values {
+            if process(value).is_err() {
+                return Err(JsError::Throw(type_error(vm, "sum value is not a number")));
+            }
+        }
+    } else {
+        return Err(JsError::Throw(type_error(vm, "value is not iterable")));
+    }
+    if saw_nan {
+        return Ok(Value::Number(f64::NAN));
     }
     if positive_infinity && negative_infinity {
         return Ok(Value::Number(f64::NAN));
