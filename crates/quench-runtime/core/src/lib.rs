@@ -5067,6 +5067,17 @@ impl Vm {
             }
         }
         Environment::set(&g, "Symbol", symbol);
+        let math_to_string_tag = self.well_known_symbol_key("toStringTag");
+        self.set_prop(&m, &math_to_string_tag, Value::string_value("Math"));
+        set_property_attributes(
+            &m,
+            &math_to_string_tag,
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
         let species = Environment::get(&g, "Symbol")
             .map(|constructor| self.get_prop(&constructor, "species"))
             .filter(|value| !value.is_undefined());
