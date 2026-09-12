@@ -2791,10 +2791,9 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             put(frame, dst, value);
         }
         DynOp::DeclareName { name, src } => {
-            frame
-                .environment
-                .borrow_mut()
-                .declare(&name, get(frame, src));
+            let value = get(frame, src);
+            frame.environment.borrow_mut().declare(&name, value.clone());
+            unsafe { &*frame.vm }.sync_global_binding(&frame.environment, &name, value);
         }
         DynOp::DeclareLocal { slot, src } => {
             let value = get(frame, src);
