@@ -115,7 +115,7 @@ Verification completed:
 - the Number stage was rerun after restoring numeric constructor constants,
   static predicates/parsers, prototype metadata, and numeric string coercion
   and reached 199/340; BigInt, Realm, and constructor-reflection cases remain
-- the stencil Number stage now reaches 338/340 after deriving numeric
+- the stencil Number stage now reaches 339/340 after deriving numeric
   predicates from one Rust macro, sharing exact number formatting helpers,
   preserving error prototypes, and validating constructor/radix behavior; the
   two remaining cases require Realm lowering and a BigInt type guard in
