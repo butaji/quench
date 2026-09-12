@@ -10642,10 +10642,23 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
             if has_value {
                 let old_value = target
                     .as_object_ref()
-                    .and_then(|object| object.borrow().props.get(&key).cloned())
+                    .and_then(|object| {
+                        let object = object.borrow();
+                        if key == "length" && object.array.is_some() {
+                            Some(Value::Number(array_length(&object) as f64))
+                        } else if let Some(index) = array_index_key(&key) {
+                            object
+                                .array
+                                .as_ref()
+                                .and_then(|array| array.get(index).cloned())
+                                .or_else(|| object.props.get(&key).cloned())
+                        } else {
+                            object.props.get(&key).cloned()
+                        }
+                    })
                     .unwrap_or(Value::Undefined);
                 let new_value = vm.get_prop_with_accessors(&descriptor, "value")?;
-                if !old_value.same_bits(&new_value) {
+                if !eq_strict(&old_value, &new_value) {
                     return Err(JsError::Throw(type_error(
                         vm,
                         "cannot change value of a non-writable property",
@@ -10744,7 +10757,25 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
         Value::Undefined
     };
     let has_accessor = has_get_field || has_set_field;
-    if has_value || (!existing_property && !has_accessor) {
+    let replacing_accessor = !has_accessor
+        && (has_value || has_writable)
+        && target.as_object_ref().is_some_and(|object| {
+            let object = object.borrow();
+            object.props.contains_key(&accessor_slot("get", &key))
+                || object.props.contains_key(&accessor_slot("set", &key))
+                || (object.array.is_none()
+                    && object.attributes.contains_key(&key)
+                    && !object.props.contains_key(&key))
+        });
+    if replacing_accessor {
+        if let Some(object) = target.as_object_ref() {
+            let mut object = object.borrow_mut();
+            object.props.shift_remove(&accessor_slot("get", &key));
+            object.props.shift_remove(&accessor_slot("set", &key));
+            object.attributes.remove(&key);
+        }
+    }
+    if has_value || (!existing_property && !has_accessor) || replacing_accessor {
         if key == "length"
             && has_value
             && let Some(object) = target.as_object_ref()
