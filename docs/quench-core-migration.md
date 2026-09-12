@@ -119,10 +119,9 @@ Verification completed:
   predicates from one Rust macro, sharing exact number formatting helpers,
   preserving error prototypes, validating constructor/radix behavior, and
   retaining primitive `prototype` overrides for cross-realm construction
-- the stencil NativeErrors stage now reaches 92/94 after deriving shared
+- the stencil NativeErrors stage now reaches 94/94 after deriving shared
   error prototypes, constructor identity, and non-enumerable message/cause
-  properties, plus constructor-realm fallback; the two remaining cases are
-  native property-helper compatibility gaps
+  properties, plus constructor-realm fallback; this stage is now fully green
 - the stencil Math stage now reaches 325/327 after deriving unary and binary
   native wrappers, exact `sumPrecise` accumulation, binary16 rounding, and the
   complete intrinsic projection; the two remaining cases require generator /
