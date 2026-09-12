@@ -10383,10 +10383,10 @@ fn native_object_to_string(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Val
         "Boolean"
     } else if this.as_number().is_some() {
         "Number"
-    } else if this.as_string().is_some() {
-        "String"
     } else if is_bigint_marker(&this) {
         "BigInt"
+    } else if this.as_string().is_some() {
+        "String"
     } else if this
         .as_object_ref()
         .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
