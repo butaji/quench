@@ -110,7 +110,7 @@ Verification completed:
 - the stencil String stage now reaches 424/1,223 after routing constructor
   coercion and global binding projection through the shared stencil VM; the
   remaining failures are unsupported syntax, accessors, and Unicode details
-- the stencil Object stage now reaches 2,600/3,411 after enforcing
+- the stencil Object stage now reaches 2,634/3,411 after enforcing
   `Object.create` prototype validation, applying its property descriptors with
   correct defaults, honoring enumerable descriptor selection, routing
   descriptor/accessor fields through the shared property model, preserving
