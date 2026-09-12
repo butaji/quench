@@ -3014,13 +3014,24 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             };
             put(frame, dst, value);
         }
-        DynOp::SetStatic { object, key, src } => {
+        DynOp::SetStatic {
+            object,
+            key,
+            src,
+            strict,
+        } => {
             let value = get(frame, src);
             let object = get_ref(frame, *object).clone();
             if object.is_null() || object.is_undefined() {
                 return Err(JsError::Message(format!(
                     "cannot write property {key} of {}",
                     object.display()
+                )));
+            }
+            if *strict && super::is_symbol_carrier(&object) {
+                return Err(JsError::Throw(super::type_error(
+                    unsafe { &mut *frame.vm },
+                    "cannot assign a property to a Symbol primitive",
                 )));
             }
             if super::accessor_key(key).is_some() {
@@ -3047,6 +3058,7 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             key,
             src,
             accessor,
+            strict,
         } => {
             let value = get(frame, src);
             let object = get_ref(frame, *object).clone();
@@ -3054,6 +3066,12 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
                 return Err(JsError::Message(format!(
                     "cannot write computed property of {}",
                     object.display()
+                )));
+            }
+            if *strict && super::is_symbol_carrier(&object) {
+                return Err(JsError::Throw(super::type_error(
+                    unsafe { &mut *frame.vm },
+                    "cannot assign a property to a Symbol primitive",
                 )));
             }
             let key = get_ref(frame, *key).clone();
@@ -4819,7 +4837,9 @@ fn allocation_site_shapes(code: &DynCode, plan: &RegionPlan) -> Vec<Option<Shape
             let dst = *dst;
             let mut keys = Vec::<String>::new();
             for instruction in &code.ops[pc + NEXT_INSTRUCTION_DISTANCE..block.end] {
-                if let DynOp::SetStatic { object, key, src } = &instruction.op
+                if let DynOp::SetStatic {
+                    object, key, src, ..
+                } = &instruction.op
                     && *object == dst
                     && *src != dst
                 {
@@ -4873,6 +4893,7 @@ fn terminal_constructor_shape(code: &DynCode, this_slot: usize) -> Option<ShapeR
         object: first_object,
         key: ref first_key,
         src: first_source,
+        ..
     } = first_set.op
     else {
         return None;
@@ -4894,6 +4915,7 @@ fn terminal_constructor_shape(code: &DynCode, this_slot: usize) -> Option<ShapeR
         object: second_object,
         key: ref second_key,
         src: second_source,
+        ..
     } = second_set.op
     else {
         return None;
@@ -8603,6 +8625,7 @@ mod tests {
                     object: FIRST_RECEIVER_REGISTER,
                     key: FIRST_PROPERTY_NAME.to_owned(),
                     src: FIRST_VALUE_REGISTER,
+                    strict: false,
                 },
                 DynOp::LoadLocal {
                     dst: SECOND_RECEIVER_REGISTER,
@@ -8616,6 +8639,7 @@ mod tests {
                     object: SECOND_RECEIVER_REGISTER,
                     key: SECOND_PROPERTY_NAME.to_owned(),
                     src: SECOND_VALUE_REGISTER,
+                    strict: false,
                 },
                 DynOp::Return { src: None },
             ])
@@ -9393,11 +9417,13 @@ mod tests {
                 object: TEST_RESULT_REGISTER,
                 key: FIRST_KEY.to_owned(),
                 src: TEST_LITERAL_REGISTER,
+                strict: false,
             },
             DynOp::SetStatic {
                 object: TEST_RESULT_REGISTER,
                 key: SECOND_KEY.to_owned(),
                 src: TEST_LITERAL_REGISTER,
+                strict: false,
             },
             DynOp::Return {
                 src: Some(TEST_RESULT_REGISTER),
@@ -9421,6 +9447,7 @@ mod tests {
                 object: TEST_RESULT_REGISTER,
                 key: FIRST_KEY.to_owned(),
                 src: TEST_LITERAL_REGISTER,
+                strict: false,
             },
             DynOp::Return {
                 src: Some(TEST_RESULT_REGISTER),
@@ -9439,6 +9466,7 @@ mod tests {
                 object: TEST_RESULT_REGISTER,
                 key: FIRST_KEY.to_owned(),
                 src: TEST_RESULT_REGISTER,
+                strict: false,
             },
             DynOp::Return {
                 src: Some(TEST_RESULT_REGISTER),
@@ -10778,6 +10806,7 @@ mod tests {
                     object: RECEIVER_REGISTER,
                     key: PROPERTY_KEY.to_owned(),
                     src: VALUE_REGISTER,
+                    strict: false,
                 },
                 DynOp::GetStatic {
                     dst: RESULT_REGISTER,

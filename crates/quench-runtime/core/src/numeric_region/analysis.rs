@@ -290,7 +290,9 @@ fn quote_op(pc: usize, op: &DynOp) -> Result<RegionOp, RejectReason> {
             object: *object,
             key: key.clone(),
         },
-        DynOp::SetStatic { object, key, src } => RegionOp::WriteStatic {
+        DynOp::SetStatic {
+            object, key, src, ..
+        } => RegionOp::WriteStatic {
             pc,
             object: *object,
             key: key.clone(),
