@@ -72,7 +72,7 @@ interpreter would be a compatibility regression, not a migration.
 Verification completed:
 
 - `cargo check -p quench-runtime`
-- `cargo test -p quench-runtime-core --lib` (174 tests)
+- `cargo test -p quench-runtime-core --lib` (175 tests)
 - `cargo test -p quench-node --lib` (18 tests)
 - `cargo test -p quench-wasm --lib` (16 tests)
 - production `quench-node` build and a core-backed Node smoke test
