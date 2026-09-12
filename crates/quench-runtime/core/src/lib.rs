@@ -9947,25 +9947,28 @@ fn make_regexp_string_iterator(
 }
 
 fn native_regexp_string_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    let Some(regexp) = vm.get_prop(&this, REGEXP_ITERATOR_REGEXP).as_regexp() else {
+    let own_prop = |key: &str| {
+        this.as_object_ref()
+            .and_then(|object| object.borrow().props.get(key).cloned())
+    };
+    let Some(regexp) = own_prop(REGEXP_ITERATOR_REGEXP).and_then(|value| value.as_regexp()) else {
         return Err(JsError::Throw(type_error(
             vm,
             "RegExp String Iterator.prototype.next called on incompatible receiver",
         )));
     };
-    let source = vm.get_prop(&this, REGEXP_ITERATOR_SOURCE).string();
-    let index = vm
-        .get_prop(&this, REGEXP_ITERATOR_INDEX)
-        .as_number()
+    let source = own_prop(REGEXP_ITERATOR_SOURCE)
+        .map(|value| value.string())
+        .unwrap_or_default();
+    let index = own_prop(REGEXP_ITERATOR_INDEX)
+        .and_then(|value| value.as_number())
         .unwrap_or(0.0) as usize;
     let result = vm.object(None);
-    let global = vm
-        .get_prop(&this, REGEXP_ITERATOR_GLOBAL)
-        .as_bool()
+    let global = own_prop(REGEXP_ITERATOR_GLOBAL)
+        .and_then(|value| value.as_bool())
         .unwrap_or(true);
-    if vm
-        .get_prop(&this, REGEXP_ITERATOR_DONE)
-        .as_bool()
+    if own_prop(REGEXP_ITERATOR_DONE)
+        .and_then(|value| value.as_bool())
         .unwrap_or(false)
     {
         vm.set_prop(&result, "value", Value::Undefined);
