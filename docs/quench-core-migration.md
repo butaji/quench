@@ -129,7 +129,7 @@ Verification completed:
 - the stencil String stage now reaches 424/1,223 after routing constructor
   coercion and global binding projection through the shared stencil VM; the
   remaining failures are unsupported syntax, accessors, and Unicode details
-- the stencil Object stage reached 1,131/3,411 after deriving integrity helpers,
+- the stencil Object stage reached 1,135/3,411 after deriving integrity helpers,
   fixing descriptor borrow ordering, and keeping huge array lengths metadata
   backed; the remaining failures are unsupported stencil features
 - historical commits advertising “100% Test262” used `test262/skip.rs` to skip
