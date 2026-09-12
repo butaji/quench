@@ -52,6 +52,7 @@ use std::ptr;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
+use unicode_normalization::UnicodeNormalization;
 
 type JsResult<T> = Result<T, JsError>;
 
@@ -10069,16 +10070,47 @@ fn native_string_code_point_at(vm: &mut Vm, this: Value, args: &[Value]) -> JsRe
 
 fn native_string_normalize(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let source = string_receiver(vm, &this, "normalize")?;
-    if let Some(form) = args.first().filter(|value| !value.is_undefined()) {
-        let form = to_string_with_vm(vm, form)?;
-        if !matches!(form.as_str(), "NFC" | "NFD" | "NFKC" | "NFKD") {
+    let form = args
+        .first()
+        .filter(|value| !value.is_undefined())
+        .map(|value| {
+            if is_symbol_carrier(value) {
+                Err(JsError::Throw(type_error(
+                    vm,
+                    "normalization form cannot be a Symbol",
+                )))
+            } else {
+                to_string_with_vm(vm, value)
+            }
+        })
+        .transpose()?
+        .unwrap_or_else(|| "NFC".into());
+    let normalized: String = match form.as_str() {
+        "NFC" => source.nfc().collect(),
+        "NFD" => source.nfd().collect(),
+        "NFKC" => source.nfkc().collect(),
+        "NFKD" => source.nfkd().collect(),
+        _ => {
             return Err(JsError::Throw(range_error(
                 vm,
                 "invalid normalization form",
             )));
         }
-    }
-    Ok(Value::string_value(source))
+    };
+    Ok(Value::string_value(normalized))
+}
+
+fn native_string_locale_compare(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let source = string_receiver(vm, &this, "localeCompare")?;
+    let undefined = Value::Undefined;
+    let other = to_string_with_vm(vm, args.first().unwrap_or(&undefined))?;
+    let source = source.nfc().collect::<String>();
+    let other = other.nfc().collect::<String>();
+    Ok(Value::Number(match source.cmp(&other) {
+        std::cmp::Ordering::Less => -1.0,
+        std::cmp::Ordering::Equal => 0.0,
+        std::cmp::Ordering::Greater => 1.0,
+    }))
 }
 
 fn native_string_is_well_formed(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {

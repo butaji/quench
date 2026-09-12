@@ -21,6 +21,7 @@ indexmap = "2.12"
 num-bigint = "0.4"
 num-traits = "0.2"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
+unicode-normalization = "0.1"
 
 [build-dependencies]
 object = "0.37"
