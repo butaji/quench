@@ -4173,6 +4173,27 @@ fn to_primitive_for_binary(vm: &mut Vm, value: &Value, string_hint: bool) -> JsR
     if !value.is_object() && !value.is_function() {
         return Ok(value.clone());
     }
+    // Symbols are represented by their stable textual key in the compact
+    // object store. Consult @@toPrimitive at the boundary before ordinary
+    // valueOf/toString dispatch, preserving the ECMAScript ordering.
+    let exotic = vm.get_prop(value, "Symbol(Symbol.toPrimitive)");
+    if !exotic.is_undefined() {
+        if !exotic.is_function() {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "@@toPrimitive is not callable",
+            )));
+        }
+        let hint = Value::string_value(if string_hint { "string" } else { "number" });
+        let result = vm.call(exotic, value.clone(), vec![hint])?;
+        if !result.is_object() && !result.is_function() {
+            return Ok(result);
+        }
+        return Err(JsError::Throw(type_error(
+            vm,
+            "@@toPrimitive must return a primitive value",
+        )));
+    }
     let methods = if string_hint {
         ["toString", "valueOf"]
     } else {
@@ -4210,15 +4231,52 @@ fn binary_with_vm(vm: &mut Vm, op: Op, left: &Value, right: &Value) -> JsResult<
             to_string_with_vm(vm, &right)?
         )));
     }
-    if matches!(op, Op::Eq | Op::Ne) {
+    if matches!(op, Op::Eq | Op::Ne) && !is_bigint_marker(&left) && !is_bigint_marker(&right) {
         return Ok(exec_op_ref(op, &left, &right));
     }
     if is_bigint_marker(&left) || is_bigint_marker(&right) {
+        if is_bigint_marker(&left) && is_bigint_marker(&right) {
+            let left = parse_bigint_text(left.as_string().map_or("", String::as_str)).unwrap_or(0);
+            let right =
+                parse_bigint_text(right.as_string().map_or("", String::as_str)).unwrap_or(0);
+            return Ok(bigint_binary(op, left, right));
+        }
+        if matches!(op, Op::Eq | Op::Ne) {
+            let equal = left.number() == right.number();
+            return Ok(Value::Bool(if matches!(op, Op::Eq) {
+                equal
+            } else {
+                !equal
+            }));
+        }
         return Ok(exec_numeric_op(op, left.number(), right.number()));
     }
     let left = to_number_with_vm(vm, &left)?;
     let right = to_number_with_vm(vm, &right)?;
     Ok(exec_numeric_op(op, left, right))
+}
+
+fn bigint_binary(op: Op, left: i128, right: i128) -> Value {
+    match op {
+        Op::Add => bigint_marker(left + right),
+        Op::Sub => bigint_marker(left - right),
+        Op::Mul => bigint_marker(left * right),
+        Op::Div => bigint_marker(if right == 0 { 0 } else { left / right }),
+        Op::Rem => bigint_marker(if right == 0 { 0 } else { left % right }),
+        Op::Pow => bigint_marker(left.pow(right.max(0) as u32)),
+        Op::Eq => Value::Bool(left == right),
+        Op::Ne => Value::Bool(left != right),
+        Op::StrictEq => Value::Bool(left == right),
+        Op::StrictNe => Value::Bool(left != right),
+        Op::Lt => Value::Bool(left < right),
+        Op::Le => Value::Bool(left <= right),
+        Op::Gt => Value::Bool(left > right),
+        Op::Ge => Value::Bool(left >= right),
+        Op::Or => bigint_marker(left | right),
+        Op::Xor => bigint_marker(left ^ right),
+        Op::And => bigint_marker(left & right),
+        _ => Value::Number(0.0),
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -4500,6 +4558,36 @@ impl Vm {
             source_id: None,
         }))
     }
+    /// Create a host function with its standard own `name`/`length` metadata.
+    /// Keeping this declaration at the construction boundary means callers
+    /// cannot accidentally expose enumerable or writable metadata.
+    fn native_named(
+        &self,
+        f: fn(&mut Vm, Value, &[Value]) -> JsResult<Value>,
+        name: &'static str,
+        length: usize,
+    ) -> Value {
+        let value = self.native(f);
+        self.set_prop(&value, "name", Value::string_value(name));
+        self.set_prop(&value, "length", Value::Number(length as f64));
+        if let Some(object) = value.as_object_ref() {
+            let mut object = object.borrow_mut();
+            for key in ["name", "length"] {
+                object.attributes.insert(
+                    key.to_string(),
+                    PropertyAttributes {
+                        writable: false,
+                        enumerable: false,
+                        configurable: true,
+                    },
+                );
+            }
+        }
+        value
+    }
+    fn mark_nonconstructable(&self, value: &Value) {
+        self.set_prop(value, "\0nonconstructable", Value::Bool(true));
+    }
     fn builtin(&self, id: BuiltinId) -> Value {
         self.builtin_functions[id as usize].clone()
     }
@@ -4509,10 +4597,10 @@ impl Vm {
             .unwrap_or(Value::Undefined)
     }
     fn install(&mut self) {
-        let g = &self.global;
-        Environment::set(g, "undefined", Value::Undefined);
-        Environment::set(g, "NaN", Value::Number(f64::NAN));
-        Environment::set(g, "Infinity", Value::Number(f64::INFINITY));
+        let g = self.global.clone();
+        Environment::set(&g, "undefined", Value::Undefined);
+        Environment::set(&g, "NaN", Value::Number(f64::NAN));
+        Environment::set(&g, "Infinity", Value::Number(f64::INFINITY));
         let m = self.object(None);
         if let Some(object) = m.as_object_ref() {
             object.borrow_mut().builtin_prototype = true;
@@ -4539,17 +4627,108 @@ impl Vm {
                 );
             }
         }
-        Environment::set(g, "Math", m.clone());
+        Environment::set(&g, "Math", m.clone());
         // Symbols are represented as property-key atoms by the current core;
         // expose the well-known tag through the same canonical key path until
         // the tagged Symbol value lands in the stencil representation.
         let symbol = self.native(native_symbol);
+        self.mark_nonconstructable(&symbol);
         self.set_prop(
             &symbol,
             "toStringTag",
             Value::string_value("Symbol.toStringTag"),
         );
-        Environment::set(g, "Symbol", symbol);
+        let symbol_to_primitive = native_symbol(
+            self,
+            Value::Undefined,
+            &[Value::string_value("Symbol.toPrimitive")],
+        )
+        .expect("well-known Symbol.toPrimitive creation");
+        self.set_prop(&symbol, "toPrimitive", symbol_to_primitive);
+        Environment::set(&g, "Symbol", symbol);
+        let bigint = self.native_named(native_bigint, "BigInt", 1);
+        let as_int_n = self.native_named(native_bigint_as_int_n, "asIntN", 2);
+        let as_uint_n = self.native_named(native_bigint_as_uint_n, "asUintN", 2);
+        self.mark_nonconstructable(&as_int_n);
+        self.mark_nonconstructable(&as_uint_n);
+        self.set_prop(&bigint, "asIntN", as_int_n);
+        self.set_prop(&bigint, "asUintN", as_uint_n);
+        let bigint_prototype = bigint
+            .as_function_ref()
+            .expect("BigInt function")
+            .prototype
+            .clone();
+        bigint_prototype.borrow_mut().prototype = self
+            .builtin(BuiltinId::ObjectConstructor)
+            .as_function_ref()
+            .map(|function| function.prototype.clone());
+        let bigint_prototype_value = Value::Object(bigint_prototype);
+        self.set_prop(&bigint_prototype_value, "constructor", bigint.clone());
+        let bigint_to_string = self.native_named(native_bigint_to_string, "toString", 0);
+        let bigint_to_locale_string =
+            self.native_named(native_bigint_to_string, "toLocaleString", 0);
+        let bigint_value_of = self.native_named(native_bigint_value_of, "valueOf", 0);
+        for method in [
+            &bigint_to_string,
+            &bigint_to_locale_string,
+            &bigint_value_of,
+        ] {
+            self.mark_nonconstructable(method);
+        }
+        self.set_prop(&bigint_prototype_value, "toString", bigint_to_string);
+        self.set_prop(
+            &bigint_prototype_value,
+            "toLocaleString",
+            bigint_to_locale_string,
+        );
+        self.set_prop(&bigint_prototype_value, "valueOf", bigint_value_of);
+        self.set_prop(
+            &bigint_prototype_value,
+            "Symbol(Symbol.toStringTag)",
+            Value::string_value("BigInt"),
+        );
+        self.set_prop(
+            &bigint_prototype_value,
+            "Symbol.toStringTag",
+            Value::string_value("BigInt"),
+        );
+        if let Some(object) = bigint_prototype_value.as_object_ref() {
+            let mut object = object.borrow_mut();
+            for key in ["constructor", "toString", "toLocaleString", "valueOf"] {
+                object.attributes.insert(
+                    key.to_string(),
+                    PropertyAttributes {
+                        writable: true,
+                        enumerable: false,
+                        configurable: true,
+                    },
+                );
+            }
+            for key in ["Symbol(Symbol.toStringTag)", "Symbol.toStringTag"] {
+                object.attributes.insert(
+                    key.to_string(),
+                    PropertyAttributes {
+                        writable: false,
+                        enumerable: false,
+                        configurable: true,
+                    },
+                );
+            }
+        }
+        if let Some(object) = bigint.as_object_ref() {
+            let mut object = object.borrow_mut();
+            for key in ["asIntN", "asUintN"] {
+                object.attributes.insert(
+                    key.to_string(),
+                    PropertyAttributes {
+                        writable: true,
+                        enumerable: false,
+                        configurable: true,
+                    },
+                );
+            }
+        }
+        Environment::set(&g, "BigInt", bigint);
         self.set_prop(&m, "Symbol.toStringTag", Value::string_value("Math"));
         if let Some(object) = m.as_object_ref() {
             object.borrow_mut().attributes.insert(
@@ -4562,33 +4741,33 @@ impl Vm {
             );
         }
         let reflect = self.object(None);
-        Environment::set(g, "Reflect", reflect);
+        Environment::set(&g, "Reflect", reflect);
         let console = self.object(None);
-        Environment::set(g, "console", console);
+        Environment::set(&g, "console", console);
         let json = self.object(None);
         self.set_prop(&json, "stringify", self.native(native_json_stringify));
-        Environment::set(g, "JSON", json);
+        Environment::set(&g, "JSON", json);
         for recipe in builtins::BUILTIN_RECIPES {
             let value = self.builtin(recipe.id);
             match recipe.owner {
-                BuiltinOwner::Global => Environment::set(g, recipe.key, value),
+                BuiltinOwner::Global => Environment::set(&g, recipe.key, value),
                 BuiltinOwner::Math => {
-                    let math = Environment::get(g, "Math").expect("Math namespace is installed");
+                    let math = Environment::get(&g, "Math").expect("Math namespace is installed");
                     self.set_prop(&math, recipe.key, value);
                 }
                 BuiltinOwner::Reflect => {
                     let reflect =
-                        Environment::get(g, "Reflect").expect("Reflect namespace is installed");
+                        Environment::get(&g, "Reflect").expect("Reflect namespace is installed");
                     self.set_prop(&reflect, recipe.key, value);
                 }
                 BuiltinOwner::Console => {
                     let console =
-                        Environment::get(g, "console").expect("console namespace is installed");
+                        Environment::get(&g, "console").expect("console namespace is installed");
                     self.set_prop(&console, recipe.key, value);
                 }
                 BuiltinOwner::Assert => {
                     let assert =
-                        Environment::get(g, "assert").expect("assert function is installed");
+                        Environment::get(&g, "assert").expect("assert function is installed");
                     self.set_prop(&assert, recipe.key, value);
                 }
                 BuiltinOwner::StringConstructor => {
@@ -4599,10 +4778,10 @@ impl Vm {
                     let number = self.builtin(BuiltinId::NumberConstructor);
                     let value = match recipe.id {
                         BuiltinId::NumberParseFloat => {
-                            Environment::get(g, "parseFloat").unwrap_or(value)
+                            Environment::get(&g, "parseFloat").unwrap_or(value)
                         }
                         BuiltinId::NumberParseInt => {
-                            Environment::get(g, "parseInt").unwrap_or(value)
+                            Environment::get(&g, "parseInt").unwrap_or(value)
                         }
                         _ => value,
                     };
@@ -4677,7 +4856,7 @@ impl Vm {
         ] {
             self.set_prop(&number, name, value);
         }
-        if let Some(array_value) = Environment::get(g, "Array")
+        if let Some(array_value) = Environment::get(&g, "Array")
             && let Some(array) = array_value.as_function()
         {
             self.array_proto = Some(array.prototype.clone());
@@ -4888,10 +5067,10 @@ impl Vm {
         self.install_global_aliases();
         let test262 = self.object(None);
         self.set_prop(&test262, "createRealm", self.native(native_create_realm));
-        Environment::set(g, "$262", test262);
+        Environment::set(&g, "$262", test262);
         if let (Some(global_this), Some(test262)) = (
-            Environment::get(g, "globalThis"),
-            Environment::get(g, "$262"),
+            Environment::get(&g, "globalThis"),
+            Environment::get(&g, "$262"),
         ) {
             self.set_prop(&global_this, "$262", test262);
             if let Some(object) = global_this.as_object_ref() {
@@ -4997,6 +5176,7 @@ impl Vm {
             "console",
             "Math",
             "Symbol",
+            "BigInt",
             "Object",
             "Array",
             "String",
@@ -5256,6 +5436,11 @@ impl Vm {
                             | BuiltinId::AggregateErrorConstructor
                             | BuiltinId::FunctionConstructor
                     ),
+                    FunctionKind::Native(native)
+                        if *native as *const () == native_bigint as *const () =>
+                    {
+                        true
+                    }
                     FunctionKind::Native(_)
                     | FunctionKind::Arrow { .. }
                     | FunctionKind::Bound { .. } => false,
@@ -5292,6 +5477,9 @@ impl Vm {
             } else {
                 self.function_prop(f, k)
             };
+        }
+        if is_bigint_marker(&o) {
+            return bigint_method(self, k);
         }
         if let Some(string) = o.as_string() {
             return if k == "length" {
@@ -6509,6 +6697,13 @@ impl Vm {
                 let Some(function) = c.as_function() else {
                     return Err(JsError::Message("TypeError: not a constructor".into()));
                 };
+                if matches!(function.kind, FunctionKind::Native(native) if native as *const () == native_bigint as *const ())
+                {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "BigInt is not a constructor",
+                    )));
+                }
                 let o = self.object(Some(function.prototype.clone()));
                 let args = self.eval_args(&v.arguments, e)?;
                 let r = self.call(c.clone(), o.clone(), args)?;
@@ -7668,6 +7863,200 @@ fn native_symbol_to_string(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Val
         .unwrap_or_default();
     Ok(Value::string_value(format!("Symbol({description})")))
 }
+
+fn bigint_marker(value: i128) -> Value {
+    Value::string_value(format!("\0bigint:{value}"))
+}
+
+fn bigint_value(vm: &mut Vm, value: &Value) -> JsResult<i128> {
+    if let Some(primitive) = value
+        .as_object_ref()
+        .and_then(|object| object.borrow().props.get("\0primitive").cloned())
+    {
+        return bigint_value(vm, &primitive);
+    }
+    let primitive = to_primitive_for_binary(vm, value, false)?;
+    if let Some(text) = primitive.as_string() {
+        return parse_bigint_text(text)
+            .map_err(|_| JsError::Throw(range_error(vm, "cannot convert value to BigInt")));
+    }
+    if let Some(number) = primitive.as_number() {
+        if number.is_finite() && number.fract() == 0.0 {
+            return Ok(number as i128);
+        }
+    }
+    if let Some(boolean) = primitive.as_bool() {
+        return Ok(i128::from(boolean));
+    }
+    Err(JsError::Throw(type_error(
+        vm,
+        "cannot convert value to BigInt",
+    )))
+}
+
+fn parse_bigint_text(text: &str) -> Result<i128, ()> {
+    let text = text.trim();
+    let text = text.strip_prefix("\0bigint:").unwrap_or(text);
+    if text.is_empty() {
+        return Ok(0);
+    }
+    let (negative, digits) = if let Some(rest) = text.strip_prefix('+') {
+        (false, rest)
+    } else if let Some(rest) = text.strip_prefix('-') {
+        (true, rest)
+    } else {
+        (false, text)
+    };
+    let (radix, digits) = match digits
+        .strip_prefix("0x")
+        .or_else(|| digits.strip_prefix("0X"))
+    {
+        Some(rest) => (16, rest),
+        None => match digits
+            .strip_prefix("0b")
+            .or_else(|| digits.strip_prefix("0B"))
+        {
+            Some(rest) => (2, rest),
+            None => match digits
+                .strip_prefix("0o")
+                .or_else(|| digits.strip_prefix("0O"))
+            {
+                Some(rest) => (8, rest),
+                None => (10, digits),
+            },
+        },
+    };
+    let magnitude = i128::from_str_radix(digits, radix).map_err(|_| ())?;
+    Ok(if negative { -magnitude } else { magnitude })
+}
+
+fn native_bigint(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    if value.is_undefined() || value.is_null() || value.as_bool().is_some() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "cannot convert value to BigInt",
+        )));
+    }
+    Ok(bigint_marker(bigint_value(vm, &value)?))
+}
+
+fn bigint_bits(vm: &mut Vm, value: &Value) -> JsResult<u32> {
+    let number = to_number_with_vm(vm, value)?;
+    if !number.is_finite() || number < 0.0 || number.fract() != 0.0 {
+        return Err(JsError::Throw(range_error(vm, "invalid BigInt width")));
+    }
+    Ok((number as u64).min(u32::MAX as u64) as u32)
+}
+
+fn native_bigint_as_uint_n(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let bits = bigint_bits(vm, args.first().unwrap_or(&Value::Undefined))?;
+    let value = bigint_value(vm, args.get(1).unwrap_or(&Value::Undefined))?;
+    if bits == 0 {
+        return Ok(bigint_marker(0));
+    }
+    let modulus = if bits >= 127 {
+        i128::MAX
+    } else {
+        1i128 << bits
+    };
+    Ok(bigint_marker(value.rem_euclid(modulus)))
+}
+
+fn native_bigint_as_int_n(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let bits = bigint_bits(vm, args.first().unwrap_or(&Value::Undefined))?;
+    let value = bigint_value(vm, args.get(1).unwrap_or(&Value::Undefined))?;
+    if bits == 0 {
+        return Ok(bigint_marker(0));
+    }
+    let modulus = if bits >= 127 {
+        i128::MAX
+    } else {
+        1i128 << bits
+    };
+    let unsigned = value.rem_euclid(modulus);
+    let signed = if bits < 127 && unsigned >= (1i128 << (bits - 1)) {
+        unsigned - modulus
+    } else {
+        unsigned
+    };
+    Ok(bigint_marker(signed))
+}
+
+fn bigint_method(vm: &Vm, key: &str) -> Value {
+    let bigint = Environment::get(&vm.global, "BigInt");
+    let Some(bigint) = bigint else {
+        return Value::Undefined;
+    };
+    let Some(function) = bigint.as_function_ref() else {
+        return Value::Undefined;
+    };
+    function
+        .prototype
+        .borrow()
+        .props
+        .get(key)
+        .cloned()
+        .unwrap_or(Value::Undefined)
+}
+
+fn native_bigint_value_of(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if is_bigint_marker(&this) {
+        return Ok(this);
+    }
+    if let Some(primitive) = this
+        .as_object_ref()
+        .and_then(|object| object.borrow().props.get("\0primitive").cloned())
+        && is_bigint_marker(&primitive)
+    {
+        return Ok(primitive);
+    }
+    Err(JsError::Throw(type_error(
+        vm,
+        "BigInt.prototype.valueOf called on incompatible receiver",
+    )))
+}
+
+fn native_bigint_to_string(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let value = native_bigint_value_of(vm, this, &[])?;
+    let number = bigint_value(vm, &value)?;
+    let radix = match args.first() {
+        None => 10.0,
+        Some(value) if value.is_undefined() => 10.0,
+        Some(value) => to_number_with_vm(vm, value)?,
+    };
+    if !radix.is_finite() || radix.fract() != 0.0 || !(2.0..=36.0).contains(&radix) {
+        return Err(JsError::Throw(range_error(
+            vm,
+            "radix must be between 2 and 36",
+        )));
+    }
+    Ok(Value::string_value(format_bigint_radix(
+        number,
+        radix as u32,
+    )))
+}
+
+fn format_bigint_radix(mut value: i128, radix: u32) -> String {
+    if value == 0 {
+        return "0".into();
+    }
+    let negative = value < 0;
+    if negative {
+        value = -value;
+    }
+    let digits = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut output = Vec::new();
+    while value > 0 {
+        output.push(digits[(value % i128::from(radix)) as usize] as char);
+        value /= i128::from(radix);
+    }
+    if negative {
+        output.push('-');
+    }
+    output.iter().rev().collect()
+}
+
 fn native_string_replace(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let s = string_this(this);
     if let Some(r) = args.first().and_then(Value::as_regexp) {
@@ -8407,13 +8796,19 @@ pub(crate) fn constructable(value: &Value) -> bool {
             | BuiltinId::AggregateErrorConstructor
             | BuiltinId::FunctionConstructor,
         ) => true,
-        FunctionKind::Native(_) => true,
+        FunctionKind::Native(_) => !function.props.borrow().contains_key("\0nonconstructable"),
         FunctionKind::Arrow { .. } | FunctionKind::Bound { .. } | FunctionKind::Builtin(_) => false,
     }
 }
 
 fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
+    if target
+        .as_function_ref()
+        .is_some_and(|function| matches!(function.kind, FunctionKind::Native(native) if native as *const () == native_bigint as *const ()))
+    {
+        return Err(JsError::Throw(type_error(vm, "BigInt is not a constructor")));
+    }
     if !constructable(&target) {
         return Err(JsError::Throw(type_error(
             vm,
@@ -8907,7 +9302,10 @@ fn native_object(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     if value.is_object() || value.is_function() {
         return Ok(value.clone());
     }
-    let (constructor, wrapper) = if value.as_bool().is_some() {
+    let is_bigint = is_bigint_marker(value);
+    let (constructor, wrapper) = if is_bigint_marker(value) {
+        (BuiltinId::ObjectConstructor, "BigInt")
+    } else if value.as_bool().is_some() {
         (BuiltinId::BooleanConstructor, "Boolean")
     } else if value.as_number().is_some() {
         (BuiltinId::NumberConstructor, "Number")
@@ -8922,6 +9320,19 @@ fn native_object(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
             .prototype
             .clone(),
     ));
+    if is_bigint {
+        if let Some(bigint) = Environment::get(&vm.global, "BigInt").and_then(|value| {
+            value
+                .as_function_ref()
+                .map(|function| function.prototype.clone())
+        }) {
+            object
+                .as_object_ref()
+                .expect("wrapper object")
+                .borrow_mut()
+                .prototype = Some(bigint);
+        }
+    }
     vm.set_prop(&object, "\0primitive", value.clone());
     vm.set_prop(&object, "\0wrapper", Value::string_value(wrapper));
     if wrapper == "String" {
@@ -9048,6 +9459,9 @@ fn to_string_with_vm(vm: &mut Vm, value: &Value) -> JsResult<String> {
         return Ok(if boolean { "true" } else { "false" }.into());
     }
     if let Some(string) = value.as_string() {
+        if let Some(digits) = string.strip_prefix("\0bigint:") {
+            return Ok(digits.to_string());
+        }
         return Ok(string.to_string());
     }
     if let Some(object) = value.as_object_ref()
@@ -9282,6 +9696,13 @@ fn native_error_to_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Val
 fn native_object_to_string(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     let tag = if this.as_function_ref().is_some() {
         "Function"
+    } else if is_bigint_marker(&this)
+        || this
+            .as_object_ref()
+            .and_then(|object| object.borrow().props.get("\0wrapper").cloned())
+            .is_some_and(|value| value.as_string().is_some_and(|name| name == "BigInt"))
+    {
+        "BigInt"
     } else if this
         .as_object_ref()
         .is_some_and(|object| object.borrow().props.contains_key("\0error"))
@@ -9347,9 +9768,12 @@ fn native_object_get_own_property_descriptor(
     let function_metadata =
         target.as_function().is_some() && matches!(key.as_str(), "name" | "length");
     let prototype_metadata = target.as_function().is_some() && key == "prototype";
-    let builtin_function = target
-        .as_function_ref()
-        .is_some_and(|function| matches!(function.kind, FunctionKind::Builtin(_)));
+    let builtin_function = target.as_function_ref().is_some_and(|function| {
+        matches!(
+            function.kind,
+            FunctionKind::Builtin(_) | FunctionKind::Native(_)
+        )
+    });
     let is_number_constant = target.as_function_ref().is_some_and(|function| {
         matches!(
             function.kind,
