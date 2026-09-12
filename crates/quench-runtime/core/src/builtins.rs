@@ -118,6 +118,10 @@ builtin_catalog! {
     MathRandom, Math, "random", native_random, Generic, PURE;
     ObjectConstructor, Global, "Object", native_object, Generic, MAY_ALLOCATE;
     ObjectGetOwnPropertyDescriptor, ObjectConstructor, "getOwnPropertyDescriptor", native_object_get_own_property_descriptor, Generic, MAY_ALLOCATE;
+    ObjectGetPrototypeOf, ObjectConstructor, "getPrototypeOf", native_object_get_prototype_of, Generic, PURE;
+    ObjectKeys, ObjectConstructor, "keys", native_object_keys, Generic, MAY_ALLOCATE;
+    ObjectGetOwnPropertyNames, ObjectConstructor, "getOwnPropertyNames", native_object_get_own_property_names, Generic, MAY_ALLOCATE;
+    ObjectCreate, ObjectConstructor, "create", native_object_create, Generic, MAY_ALLOCATE;
     ArrayConstructor, Global, "Array", native_array, Generic, MAY_ALLOCATE;
     StringConstructor, Global, "String", native_string, Generic, MAY_ALLOCATE;
     NumberConstructor, Global, "Number", native_number, Generic, PURE;
@@ -131,6 +135,7 @@ builtin_catalog! {
     ReferenceErrorConstructor, Global, "ReferenceError", native_error, Generic, MAY_ALLOCATE;
     EvalErrorConstructor, Global, "EvalError", native_error, Generic, MAY_ALLOCATE;
     AggregateErrorConstructor, Global, "AggregateError", native_error, Generic, MAY_ALLOCATE;
+    Eval, Global, "eval", native_eval, Generic, EFFECTFUL;
     Alert, Global, "alert", native_noop, Generic, EFFECTFUL;
     Print, Global, "print", native_print, Generic, EFFECTFUL;
     Load, Global, "load", native_load, Generic, EFFECTFUL;
