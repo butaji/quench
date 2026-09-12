@@ -246,6 +246,7 @@ builtin_catalog! {
     DateToString, DatePrototype, "toString", native_date_to_string, Generic, MAY_ALLOCATE;
     DateToDateString, DatePrototype, "toDateString", native_date_to_date_string, Generic, MAY_ALLOCATE;
     DateToUTCString, DatePrototype, "toUTCString", native_date_to_utc_string, Generic, MAY_ALLOCATE;
+    DateToGMTString, DatePrototype, "toGMTString", native_date_to_utc_string, Generic, MAY_ALLOCATE;
     DateToTimeString, DatePrototype, "toTimeString", native_date_to_time_string, Generic, MAY_ALLOCATE;
     DateToLocaleString, DatePrototype, "toLocaleString", native_date_to_string, Generic, MAY_ALLOCATE;
     DateToLocaleDateString, DatePrototype, "toLocaleDateString", native_date_to_date_string, Generic, MAY_ALLOCATE;

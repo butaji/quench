@@ -5263,6 +5263,14 @@ impl Vm {
             );
             self.set_prop(&proto, "constructor", self.builtin(constructor));
         }
+        let date_prototype = self
+            .builtin(BuiltinId::DateConstructor)
+            .as_function_ref()
+            .map(|function| Value::Object(function.prototype.clone()));
+        if let Some(date_prototype) = date_prototype {
+            let utc_string = self.get_prop(&date_prototype, "toUTCString");
+            self.set_prop(&date_prototype, "toGMTString", utc_string);
+        }
         let object_prototype_for_errors = self
             .builtin(BuiltinId::ObjectConstructor)
             .as_function_ref()
@@ -11500,7 +11508,10 @@ fn native_date_get_timezone_offset(_: &mut Vm, this: Value, _: &[Value]) -> JsRe
     Ok(Value::Number(date_utc(&this).map_or(f64::NAN, |_| 0.0)))
 }
 
-fn native_date_get_year(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+fn native_date_get_year(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let Some(_millis) = date_millis(&this) else {
+        return Err(JsError::Throw(type_error(vm, "Date receiver required")));
+    };
     Ok(Value::Number(
         date_utc(&this).map_or(f64::NAN, |date| date.year() as f64 - 1900.0),
     ))
@@ -11589,14 +11600,23 @@ fn native_date_set_time(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Va
 }
 
 fn native_date_set_year(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(t) = date_millis(&this) else {
+        return Err(JsError::Throw(type_error(vm, "Date receiver required")));
+    };
     let year = date_component_number(vm, args, 0, f64::NAN)?;
+    if year.is_nan() {
+        return date_set_millis(vm, &this, f64::NAN);
+    }
+    let year = year.trunc();
     let year = if (0.0..=99.0).contains(&year) {
         year + 1900.0
     } else {
         year
     };
-    let Some(current) = date_utc(&this) else {
-        return date_set_millis(vm, &this, f64::NAN);
+    let current = if t.is_finite() {
+        date_utc(&this).unwrap_or_else(|| chrono::DateTime::from_timestamp_millis(0).unwrap())
+    } else {
+        chrono::DateTime::from_timestamp_millis(0).unwrap()
     };
     let month = date_component_number(vm, args, 1, current.month0() as f64)?;
     let day = date_component_number(vm, args, 2, current.day() as f64)?;
@@ -11608,9 +11628,12 @@ fn native_date_set_year(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Va
         current.minute() as i64,
         current.second() as i64,
         current.timestamp_subsec_millis() as i64,
+    );
+    date_set_millis(
+        vm,
+        &this,
+        date.map_or(f64::NAN, |date| date.timestamp_millis() as f64),
     )
-    .ok_or_else(|| JsError::Throw(range_error(vm, "Invalid time value")))?;
-    date_set_millis(vm, &this, date.timestamp_millis() as f64)
 }
 
 fn date_component_number(vm: &mut Vm, args: &[Value], index: usize, default: f64) -> JsResult<f64> {
