@@ -206,6 +206,7 @@ builtin_catalog! {
     RegExpExec, RegExpPrototype, "exec", native_regexp_exec, Generic, MAY_ALLOCATE;
     ObjectInheritsFrom, ObjectPrototype, "inheritsFrom", native_inherits_from, Generic, MAY_MUTATE;
     ObjectToString, ObjectPrototype, "toString", native_object_to_string, Generic, MAY_ALLOCATE;
+    ObjectToLocaleString, ObjectPrototype, "toLocaleString", native_object_to_string, Generic, MAY_ALLOCATE;
     ObjectValueOf, ObjectPrototype, "valueOf", native_object_value_of, Generic, PURE;
     ObjectHasOwnProperty, ObjectPrototype, "hasOwnProperty", native_object_has_own_property, Generic, PURE;
     ObjectPropertyIsEnumerable, ObjectPrototype, "propertyIsEnumerable", native_object_property_is_enumerable, Generic, PURE;
@@ -340,6 +341,7 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::RegExpTest
         | BuiltinId::RegExpExec
         | BuiltinId::ObjectToString
+        | BuiltinId::ObjectToLocaleString
         | BuiltinId::ObjectValueOf
         | BuiltinId::FunctionCall
         | BuiltinId::FunctionApply => 1,

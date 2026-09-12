@@ -4464,6 +4464,19 @@ impl Vm {
                 object.publish_dense_access();
             }
         }
+        for (constructor, prototype) in [
+            (BuiltinId::ObjectConstructor, BuiltinId::ObjectConstructor),
+            (BuiltinId::ArrayConstructor, BuiltinId::ArrayConstructor),
+            (BuiltinId::StringConstructor, BuiltinId::StringConstructor),
+            (BuiltinId::NumberConstructor, BuiltinId::NumberConstructor),
+            (BuiltinId::BooleanConstructor, BuiltinId::BooleanConstructor),
+            (BuiltinId::FunctionConstructor, BuiltinId::FunctionConstructor),
+            (BuiltinId::RegExpConstructor, BuiltinId::RegExpConstructor),
+        ] {
+            let function = self.builtin(prototype);
+            let proto = Value::Object(function.as_function_ref().expect("constructor function").prototype.clone());
+            self.set_prop(&proto, "constructor", self.builtin(constructor));
+        }
     }
 
     /// Install the small, host-provided part of Node's process object.
@@ -4742,7 +4755,7 @@ impl Vm {
                 return self.get_prop(&Value::Object(prototype), k);
             }
             return match k {
-                "inheritsFrom" | "toString" | "valueOf" | "hasOwnProperty" | "propertyIsEnumerable" => {
+                "inheritsFrom" | "toString" | "toLocaleString" | "valueOf" | "hasOwnProperty" | "propertyIsEnumerable" => {
                     self.builtin_property(BuiltinOwner::ObjectPrototype, k)
                 }
                 "call" | "apply" | "bind" => self.builtin_property(BuiltinOwner::FunctionPrototype, k),
@@ -4786,7 +4799,7 @@ impl Vm {
                 } else {
                     value
                 }
-            } else if matches!(k, "toString" | "valueOf" | "hasOwnProperty" | "propertyIsEnumerable") {
+            } else if matches!(k, "toString" | "toLocaleString" | "valueOf" | "hasOwnProperty" | "propertyIsEnumerable") {
                 let value = self.function_prop(f, k);
                 if value.is_undefined() {
                     self.builtin_property(BuiltinOwner::ObjectPrototype, k)
@@ -4829,18 +4842,18 @@ impl Vm {
         if let Some(v) = f.props.borrow().get(k) {
             return v.clone();
         }
+        if let Some(function_value) = Environment::get(&self.global, "Function")
+            && let Some(function) = function_value.as_function()
+            && let Some(v) = function.prototype.borrow().props.get(k)
+        {
+            return v.clone();
+        }
         if let Some(object_value) = Environment::get(&self.global, "Object")
             && let Some(object) = object_value.as_function()
         {
             if let Some(v) = object.prototype.borrow().props.get(k) {
                 return v.clone();
             }
-        }
-        if let Some(function_value) = Environment::get(&self.global, "Function")
-            && let Some(function) = function_value.as_function()
-            && let Some(v) = function.prototype.borrow().props.get(k)
-        {
-            return v.clone();
         }
         Value::Undefined
     }
@@ -7420,8 +7433,28 @@ fn native_buffer_to_string(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
         };
     Ok(Value::string_value(output))
 }
-fn native_object(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
-    Ok(vm.object(None))
+fn native_object(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(value) = args.first() else {
+        return Ok(vm.object(None));
+    };
+    if value.is_null() || value.is_undefined() {
+        return Ok(vm.object(None));
+    }
+    if value.is_object() || value.is_function() {
+        return Ok(value.clone());
+    }
+    let (constructor, wrapper) = if value.as_bool().is_some() {
+        (BuiltinId::BooleanConstructor, "Boolean")
+    } else if value.as_number().is_some() {
+        (BuiltinId::NumberConstructor, "Number")
+    } else {
+        (BuiltinId::StringConstructor, "String")
+    };
+    let function = vm.builtin(constructor);
+    let object = vm.object(Some(function.as_function_ref().expect("wrapper constructor").prototype.clone()));
+    vm.set_prop(&object, "\0primitive", value.clone());
+    vm.set_prop(&object, "\0wrapper", Value::string_value(wrapper));
+    Ok(object)
 }
 fn native_array(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     let o = vm.array();
@@ -7917,6 +7950,29 @@ mod tests {
         assert_eq!(values[6].as_number(), Some(2.0));
         assert_eq!(values[7].string(), "y");
         assert_eq!(Environment::get(&vm.global, "errorOk").and_then(|v| v.as_bool()), Some(true));
+    }
+
+    #[test]
+    fn object_constructor_boxes_primitives_and_preserves_objects() {
+        let mut vm = Vm::new();
+        vm.install_process(Vec::new(), Vec::new());
+        vm.run_source_text(
+            Path::new("<object-constructor>"),
+            "var n = Object(3); var s = Object('x'); var b = Object(true); var o = {}; var f = function () {}; result = [typeof n, n.constructor === Number, typeof s, s.constructor === String, b.constructor === Boolean, Object(o) === o, Object(f) === f];",
+        )
+        .expect("Object boxing executes");
+        let values = Environment::get(&vm.global, "result")
+            .and_then(|value| value.as_object())
+            .and_then(|object| object.borrow().array.clone())
+            .expect("result array")
+            .values;
+        assert_eq!(values[0].string(), "object");
+        assert_eq!(values[1].as_bool(), Some(true));
+        assert_eq!(values[2].string(), "object");
+        assert_eq!(values[3].as_bool(), Some(true));
+        assert_eq!(values[4].as_bool(), Some(true));
+        assert_eq!(values[5].as_bool(), Some(true));
+        assert_eq!(values[6].as_bool(), Some(true));
     }
 
     #[test]
