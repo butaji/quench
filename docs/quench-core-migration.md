@@ -103,7 +103,7 @@ Verification completed:
 - the stencil NativeErrors stage now reaches 94/94 after deriving shared
   error prototypes, constructor identity, and non-enumerable message/cause
   properties, plus constructor-realm fallback; this stage is now fully green
-- the stencil Math stage now reaches 325/327 after deriving unary and binary
+- the stencil Math stage now reaches 326/327 after deriving unary and binary
   native wrappers, exact `sumPrecise` accumulation, binary16 rounding, and the
   complete intrinsic projection; the two remaining cases require generator /
   iterator lowering in the stencil compiler
@@ -131,6 +131,12 @@ Verification completed:
   conversion path, preserving BigInt update/operator semantics, routing
   computed keys through `ToPropertyKey`, and honoring wrapper/string coercion;
   this stage is fully green
+- the stencil global, Infinity, undefined, Number, and Boolean stages are now
+  fully green; immutable global writes/deletes and builtin arities are lowered
+  through the shared environment and catalog metadata
+- URI decoding now reports real `URIError` objects and all four URI globals
+  share the VM's `ToString` path; decodeURI is 53/55, decodeURIComponent is
+  55/56, encodeURI is 22/31, and encodeURIComponent is 22/31
 - the stencil Boolean stage now reaches 51/51 after projecting the constructor
   onto `globalThis` and carrying strict-mode deletion through generated
   bytecode; this stage is fully green
