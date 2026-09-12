@@ -4893,6 +4893,12 @@ impl Vm {
         if let Some(string) = o.as_string() {
             return if k == "length" {
                 Value::Number(string.len() as f64)
+            } else if let Some(index) = array_index_key(k) {
+                string
+                    .chars()
+                    .nth(index)
+                    .map(|character| Value::string_value(character.to_string()))
+                    .unwrap_or(Value::Undefined)
             } else {
                 string_method(self, k)
             };
@@ -7999,6 +8005,20 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
     }
     Ok(target.clone())
 }
+fn native_object_define_properties(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(target) = args.first() else {
+        return Err(JsError::Throw(type_error(vm, "Object.defineProperties target is undefined")));
+    };
+    let Some(descriptors) = args.get(1).and_then(Value::as_object) else {
+        return Err(JsError::Throw(type_error(vm, "Object.defineProperties descriptors is not an object")));
+    };
+    let keys = descriptors.borrow().props.keys().cloned().collect::<Vec<_>>();
+    for key in keys {
+        let descriptor = vm.get_prop(&Value::Object(descriptors), &key);
+        native_object_define_property(vm, Value::Undefined, &[target.clone(), Value::string_value(key), descriptor])?;
+    }
+    Ok(target.clone())
+}
 fn native_object_prevent_extensions(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let Some(target) = args.first() else {
         return Err(JsError::Throw(type_error(vm, "preventExtensions target is undefined")));
@@ -8037,23 +8057,46 @@ fn native_object_keys(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> 
     let Some(target) = args.first() else {
         return Err(JsError::Message("TypeError: keys target is undefined".into()));
     };
-    let keys = target
-        .as_object_ref()
-        .map(|object| {
-            let object = object.borrow();
-            if let Some(array) = &object.array {
-                return (0..array.len())
-                    .filter(|index| !array.holes[*index])
-                    .map(|index| Value::string_value(index.to_string()))
-                    .collect();
-            }
-            object.props.keys().map(Value::string_value).collect()
-        })
-        .unwrap_or_default();
+    let keys = object_own_enumerable_keys(target)
+        .into_iter()
+        .map(Value::string_value)
+        .collect();
     Ok(vm.object_value(Object::array(None, keys)))
 }
 fn native_object_get_own_property_names(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     native_object_keys(vm, Value::Undefined, args)
+}
+fn native_object_get_own_property_symbols(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(target) = args.first() else {
+        return Err(JsError::Throw(type_error(vm, "Object.getOwnPropertySymbols target is undefined")));
+    };
+    let keys = target.as_object_ref().map(|object| {
+        object.borrow().props.keys().filter(|key| key.contains('\0')).map(Value::string_value).collect::<Vec<_>>()
+    }).unwrap_or_default();
+    Ok(vm.object_value(Object::array(None, keys)))
+}
+fn native_object_get_own_property_descriptors(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(target) = args.first() else {
+        return Err(JsError::Throw(type_error(vm, "Object.getOwnPropertyDescriptors target is undefined")));
+    };
+    let result = vm.object(None);
+    let names = native_object_get_own_property_names(vm, Value::Undefined, std::slice::from_ref(target))?;
+    if let Some(array) = names.as_object_ref().and_then(|object| object.borrow().array.clone()) {
+        for key in array.to_vec() {
+            let key_text = key.string();
+            let descriptor = native_object_get_own_property_descriptor(vm, Value::Undefined, &[target.clone(), key.clone()])?;
+            if !descriptor.is_undefined() { vm.set_prop(&result, &key_text, descriptor); }
+        }
+    }
+    let symbols = native_object_get_own_property_symbols(vm, Value::Undefined, std::slice::from_ref(target))?;
+    if let Some(array) = symbols.as_object_ref().and_then(|object| object.borrow().array.clone()) {
+        for key in array.to_vec() {
+            let key_text = key.string();
+            let descriptor = native_object_get_own_property_descriptor(vm, Value::Undefined, &[target.clone(), key.clone()])?;
+            if !descriptor.is_undefined() { vm.set_prop(&result, &key_text, descriptor); }
+        }
+    }
+    Ok(result)
 }
 fn native_object_create(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let prototype = args.first().and_then(Value::as_object);
@@ -8124,6 +8167,99 @@ fn native_object_assign(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value
     }
     Ok(target)
 }
+
+fn object_own_enumerable_keys(target: &Value) -> Vec<String> {
+    if let Some(object) = target.as_object_ref() {
+        let object = object.borrow();
+        let mut keys = object.array.as_ref().map(|array| {
+            (0..array.len()).filter(|index| !array.holes[*index]).map(|index| index.to_string()).collect::<Vec<_>>()
+        }).unwrap_or_default();
+        keys.extend(object.props.keys().filter(|key| {
+            !key.starts_with('\0') && object.attributes.get(*key).is_none_or(|attrs| attrs.enumerable)
+        }).cloned());
+        return keys;
+    }
+    target.as_string().map(|string| (0..string.chars().count()).map(|index| index.to_string()).collect()).unwrap_or_default()
+}
+fn native_object_values(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let target = args.first().ok_or_else(|| JsError::Throw(type_error(vm, "Object.values target is undefined")))?;
+    if target.is_null() || target.is_undefined() { return Err(JsError::Throw(type_error(vm, "Object.values target is nullish"))); }
+    let values = object_own_enumerable_keys(target).into_iter().map(|key| vm.get_prop(target, &key)).collect();
+    Ok(vm.object_value(Object::array(None, values)))
+}
+fn native_object_entries(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let target = args.first().ok_or_else(|| JsError::Throw(type_error(vm, "Object.entries target is undefined")))?;
+    if target.is_null() || target.is_undefined() { return Err(JsError::Throw(type_error(vm, "Object.entries target is nullish"))); }
+    let entries = object_own_enumerable_keys(target).into_iter().map(|key| {
+        let value = vm.get_prop(target, &key);
+        vm.array_from_values(vec![Value::string_value(key), value])
+    }).collect();
+    Ok(vm.object_value(Object::array(None, entries)))
+}
+fn native_object_from_entries(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let result = vm.object(None);
+    let Some(source) = args.first().and_then(Value::as_object_ref) else { return Ok(result); };
+    let values = source.borrow().array.as_ref().map(ArrayStorage::to_vec).unwrap_or_default();
+    for entry in values {
+        let Some(entry_object) = entry.as_object_ref() else { return Err(JsError::Throw(type_error(vm, "Iterator value is not an entry object"))); };
+        let pair = entry_object.borrow().array.as_ref().map(ArrayStorage::to_vec).unwrap_or_default();
+        if pair.len() < 2 { return Err(JsError::Throw(type_error(vm, "Iterator value is not an entry object"))); }
+        vm.set_prop(&result, &pair[0].string(), pair[1].clone());
+    }
+    Ok(result)
+}
+fn native_object_has_own(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let target = args.first().ok_or_else(|| JsError::Throw(type_error(vm, "Object.hasOwn target is undefined")))?;
+    if target.is_null() || target.is_undefined() { return Err(JsError::Throw(type_error(vm, "Object.hasOwn target is nullish"))); }
+    native_object_has_own_property(vm, target.clone(), &args[1..])
+}
+fn native_object_is(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let left = args.first().cloned().unwrap_or(Value::Undefined);
+    let right = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let equal = match (left.as_number(), right.as_number()) {
+        (Some(a), Some(b)) => (a.is_nan() && b.is_nan()) || (a == b && a.is_sign_positive() == b.is_sign_positive()),
+        _ => left.same_bits(&right),
+    };
+    Ok(Value::Bool(equal))
+}
+fn native_object_set_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(target) = args.first() else { return Err(JsError::Throw(type_error(vm, "setPrototypeOf target is undefined"))); };
+    let prototype = args.get(1).cloned().unwrap_or(Value::Null);
+    let handle = if prototype.is_null() { None } else { prototype.as_object() };
+    if handle.is_none() && !prototype.is_null() { return Err(JsError::Throw(type_error(vm, "prototype must be an object or null"))); }
+    let Some(object) = target.as_object_ref() else { return Err(JsError::Throw(type_error(vm, "setPrototypeOf target is not an object"))); };
+    object.borrow_mut().prototype = handle;
+    vm.invalidate_prototype_membership();
+    Ok(target.clone())
+}
+fn set_integrity_level(target: &Value, freeze: bool) {
+    if let Some(object) = target.as_object_ref() {
+        let mut object = object.borrow_mut();
+        object.extensible = false;
+        let keys = object.props.keys().cloned().collect::<Vec<_>>();
+        for key in keys {
+            let current = object.attributes.get(&key).copied().unwrap_or(PropertyAttributes::DEFAULT);
+            object.attributes.insert(key, PropertyAttributes { writable: if freeze { false } else { current.writable }, enumerable: current.enumerable, configurable: false });
+        }
+        if let Some(array) = &object.array {
+            for index in 0..array.len() {
+                let key = index.to_string();
+                let current = object.attributes.get(&key).copied().unwrap_or(PropertyAttributes::DEFAULT);
+                object.attributes.insert(key, PropertyAttributes { writable: if freeze { false } else { current.writable }, enumerable: current.enumerable, configurable: false });
+            }
+            object.attributes.insert("length".into(), PropertyAttributes { writable: !freeze, enumerable: false, configurable: false });
+        }
+    }
+}
+fn native_object_seal(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> { if let Some(target) = args.first() { set_integrity_level(target, false); Ok(target.clone()) } else { Ok(Value::Undefined) } }
+fn native_object_freeze(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> { if let Some(target) = args.first() { set_integrity_level(target, true); Ok(target.clone()) } else { Ok(Value::Undefined) } }
+fn integrity_level(target: &Value, frozen: bool) -> bool {
+    let Some(object) = target.as_object_ref() else { return true; };
+    let object = object.borrow();
+    !object.extensible && object.attributes.values().all(|attrs| !attrs.configurable && (!frozen || !attrs.writable))
+}
+fn native_object_is_sealed(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> { Ok(Value::Bool(args.first().is_none_or(|target| integrity_level(target, false)))) }
+fn native_object_is_frozen(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> { Ok(Value::Bool(args.first().is_none_or(|target| integrity_level(target, true)))) }
 
 fn target_property_readonly(target: &Value, key: &str) -> bool {
     if let Some(object) = target.as_object_ref() {

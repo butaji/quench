@@ -124,11 +124,24 @@ builtin_catalog! {
     ObjectGetPrototypeOf, ObjectConstructor, "getPrototypeOf", native_object_get_prototype_of, Generic, PURE;
     ObjectKeys, ObjectConstructor, "keys", native_object_keys, Generic, MAY_ALLOCATE;
     ObjectGetOwnPropertyNames, ObjectConstructor, "getOwnPropertyNames", native_object_get_own_property_names, Generic, MAY_ALLOCATE;
+    ObjectGetOwnPropertySymbols, ObjectConstructor, "getOwnPropertySymbols", native_object_get_own_property_symbols, Generic, MAY_ALLOCATE;
+    ObjectGetOwnPropertyDescriptors, ObjectConstructor, "getOwnPropertyDescriptors", native_object_get_own_property_descriptors, Generic, MAY_ALLOCATE;
     ObjectCreate, ObjectConstructor, "create", native_object_create, Generic, MAY_ALLOCATE;
+    ObjectDefineProperties, ObjectConstructor, "defineProperties", native_object_define_properties, Generic, MAY_MUTATE;
     ObjectDefineProperty, ObjectConstructor, "defineProperty", native_object_define_property, Generic, MAY_MUTATE;
     ObjectPreventExtensions, ObjectConstructor, "preventExtensions", native_object_prevent_extensions, Generic, MAY_MUTATE;
     ObjectIsExtensible, ObjectConstructor, "isExtensible", native_object_is_extensible, Generic, PURE;
     ObjectAssign, ObjectConstructor, "assign", native_object_assign, Generic, MAY_MUTATE;
+    ObjectValues, ObjectConstructor, "values", native_object_values, Generic, MAY_ALLOCATE;
+    ObjectEntries, ObjectConstructor, "entries", native_object_entries, Generic, MAY_ALLOCATE;
+    ObjectFromEntries, ObjectConstructor, "fromEntries", native_object_from_entries, Generic, MAY_ALLOCATE;
+    ObjectHasOwn, ObjectConstructor, "hasOwn", native_object_has_own, Generic, PURE;
+    ObjectIs, ObjectConstructor, "is", native_object_is, Generic, PURE;
+    ObjectSetPrototypeOf, ObjectConstructor, "setPrototypeOf", native_object_set_prototype_of, Generic, MAY_MUTATE;
+    ObjectSeal, ObjectConstructor, "seal", native_object_seal, Generic, MAY_MUTATE;
+    ObjectFreeze, ObjectConstructor, "freeze", native_object_freeze, Generic, MAY_MUTATE;
+    ObjectIsSealed, ObjectConstructor, "isSealed", native_object_is_sealed, Generic, PURE;
+    ObjectIsFrozen, ObjectConstructor, "isFrozen", native_object_is_frozen, Generic, PURE;
     ArrayConstructor, Global, "Array", native_array, Generic, MAY_ALLOCATE;
     ArrayIsArray, ArrayConstructor, "isArray", native_array_is_array, Generic, PURE;
     ArrayFrom, ArrayConstructor, "from", native_array_from, Generic, MAY_ALLOCATE;
@@ -247,11 +260,21 @@ fn builtin_length(id: BuiltinId) -> usize {
     match id {
         BuiltinId::ObjectDefineProperty => 3,
         BuiltinId::ObjectGetOwnPropertyDescriptor
+        | BuiltinId::ObjectGetOwnPropertySymbols
+        | BuiltinId::ObjectGetOwnPropertyDescriptors
         | BuiltinId::ObjectGetPrototypeOf
         | BuiltinId::ObjectKeys
         | BuiltinId::ObjectGetOwnPropertyNames
         | BuiltinId::ObjectPreventExtensions
         | BuiltinId::ObjectIsExtensible
+        | BuiltinId::ObjectValues
+        | BuiltinId::ObjectEntries
+        | BuiltinId::ObjectIsSealed
+        | BuiltinId::ObjectIsFrozen
+        | BuiltinId::ObjectHasOwn
+        | BuiltinId::ObjectIs
+        | BuiltinId::ObjectSeal
+        | BuiltinId::ObjectFreeze
         | BuiltinId::ObjectConstructor
         | BuiltinId::ArrayIsArray
         | BuiltinId::ArrayFrom
@@ -271,6 +294,9 @@ fn builtin_length(id: BuiltinId) -> usize {
         BuiltinId::FunctionApply => 2,
         BuiltinId::ObjectCreate => 2,
         BuiltinId::ObjectAssign => 2,
+        BuiltinId::ObjectDefineProperties => 2,
+        BuiltinId::ObjectFromEntries => 1,
+        BuiltinId::ObjectSetPrototypeOf => 2,
         BuiltinId::ParseInt
         | BuiltinId::ParseFloat
         | BuiltinId::IsNaN
