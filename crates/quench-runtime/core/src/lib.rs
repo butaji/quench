@@ -6046,6 +6046,8 @@ impl Vm {
                 return true;
             }
             object.props.shift_remove(k);
+            object.props.shift_remove(&accessor_slot("get", k));
+            object.props.shift_remove(&accessor_slot("set", k));
             object.attributes.remove(k);
             return true;
         }
