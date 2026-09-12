@@ -2124,6 +2124,10 @@ impl RegExpValue {
     }
 
     fn capture_values(&mut self, subject: &str) -> Option<Vec<Value>> {
+        self.capture_values_at(subject, 0)
+    }
+
+    fn capture_values_at(&mut self, subject: &str, start: usize) -> Option<Vec<Value>> {
         if self.capture_locations.is_none() {
             self.capture_locations = Some(self.regex.capture_locations());
         }
@@ -2131,7 +2135,7 @@ impl RegExpValue {
             .capture_locations
             .as_mut()
             .expect("capture locations initialized above");
-        self.regex.captures_read(locations, subject)?;
+        self.regex.captures_read_at(locations, subject, start)?;
         Some(
             (0..locations.len())
                 .map(|index| {
@@ -4521,6 +4525,7 @@ struct Vm {
     coverage_output: Option<PathBuf>,
     jit_mode: JitMode,
     array_proto: Option<ObjectHandle>,
+    regexp_iterator_proto: Option<ObjectHandle>,
     prototype_epoch: Cell<u64>,
     object_heap: ObjectHeap,
     host_roots: Vec<Value>,
@@ -4563,6 +4568,7 @@ impl Vm {
             coverage_output: env::var_os("QUENCH_STENCIL_COVERAGE").map(PathBuf::from),
             jit_mode: JitMode::from_environment(),
             array_proto: None,
+            regexp_iterator_proto: None,
             prototype_epoch: Cell::new(INITIAL_PROTOTYPE_EPOCH),
             object_heap: ObjectHeap::new(),
             host_roots: Vec::new(),
@@ -4634,6 +4640,9 @@ impl Vm {
         let mut tracer = ObjectTracer::new(&self.object_heap);
         tracer.environment(self.global.clone());
         if let Some(prototype) = self.array_proto {
+            tracer.object(prototype);
+        }
+        if let Some(prototype) = self.regexp_iterator_proto {
             tracer.object(prototype);
         }
         self.builtin_functions
@@ -6158,6 +6167,19 @@ impl Vm {
             let setter = borrowed.props.get(&accessor_slot("set", key)).cloned();
             if getter.is_some() || setter.is_some() {
                 return Some((getter, setter));
+            }
+            drop(borrowed);
+            if let Some(prototype) = self
+                .builtin(BuiltinId::RegExpConstructor)
+                .as_function_ref()
+                .map(|function| function.prototype.clone())
+            {
+                let prototype = prototype.borrow();
+                let getter = prototype.props.get(&accessor_slot("get", key)).cloned();
+                let setter = prototype.props.get(&accessor_slot("set", key)).cloned();
+                if getter.is_some() || setter.is_some() {
+                    return Some((getter, setter));
+                }
             }
         }
         None
@@ -9827,18 +9849,199 @@ fn native_string_match_all(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
     if let Some(regexp) = args.first()
         && let Some(method) = string_symbol_method(vm, regexp, "matchAll")?
     {
+        if let Some(regexp_value) = regexp.as_regexp()
+            && !regexp_value.borrow().flags.contains('g')
+        {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "String.prototype.matchAll requires a global RegExp",
+            )));
+        }
         return vm.call_arguments(&method, regexp.clone(), &[Value::string_value(s)][..]);
     }
     if let Some(r) = args.first().and_then(Value::as_regexp) {
-        let values = r
-            .borrow()
-            .regex
-            .find_iter(&s)
-            .map(|m| Value::string_value(m.as_str()))
-            .collect();
-        return Ok(vm.array_from_values(values));
+        if !r.borrow().flags.contains('g') {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "String.prototype.matchAll requires a global RegExp",
+            )));
+        }
+        return Ok(make_regexp_string_iterator(vm, r, s));
     }
-    Ok(vm.array_from_values(Vec::new()))
+    let pattern = args.first().map(Value::string).unwrap_or_default();
+    let source = regex::escape(&pattern);
+    let kernel = Rc::new(compile_regex(&source, false)?);
+    let regexp = Rc::new(RefCell::new(RegExpValue::new(kernel, true)));
+    regexp.borrow_mut().source = source;
+    regexp.borrow_mut().flags = "g".into();
+    Ok(make_regexp_string_iterator(vm, regexp, s))
+}
+
+fn make_regexp_string_iterator(
+    vm: &mut Vm,
+    regexp: Rc<RefCell<RegExpValue>>,
+    source: String,
+) -> Value {
+    let prototype = if let Some(prototype) = vm.regexp_iterator_proto.clone() {
+        Value::Object(prototype)
+    } else {
+        let prototype = vm.object_value(Object::ordinary(None));
+        vm.set_prop(
+            &prototype,
+            "next",
+            vm.native_named(native_regexp_string_iterator_next, "next", 0),
+        );
+        set_property_attributes(
+            &prototype,
+            "next",
+            PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+        let iterator_key = vm.well_known_symbol_key("iterator");
+        vm.set_prop(&prototype, &iterator_key, vm.native(native_iterator_self));
+        let tag_key = vm.well_known_symbol_key("toStringTag");
+        vm.set_prop(
+            &prototype,
+            &tag_key,
+            Value::string_value("RegExp String Iterator"),
+        );
+        set_property_attributes(
+            &prototype,
+            &tag_key,
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+        if let Some(handle) = prototype.as_object() {
+            vm.regexp_iterator_proto = Some(handle);
+        }
+        prototype
+    };
+    let iterator = vm.object(None);
+    vm.set_prop(
+        &iterator,
+        REGEXP_ITERATOR_REGEXP,
+        Value::RegExp(regexp.clone()),
+    );
+    vm.set_prop(
+        &iterator,
+        REGEXP_ITERATOR_SOURCE,
+        Value::string_value(source),
+    );
+    vm.set_prop(&iterator, REGEXP_ITERATOR_INDEX, Value::Number(0.0));
+    vm.set_prop(
+        &iterator,
+        REGEXP_ITERATOR_GLOBAL,
+        Value::Bool(regexp.borrow().flags.contains('g')),
+    );
+    vm.set_prop(&iterator, REGEXP_ITERATOR_DONE, Value::Bool(false));
+    if let Some(object) = iterator.as_object_ref() {
+        object.borrow_mut().prototype = prototype.as_object();
+    }
+    iterator
+}
+
+fn native_regexp_string_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let Some(regexp) = vm.get_prop(&this, REGEXP_ITERATOR_REGEXP).as_regexp() else {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "RegExp String Iterator.prototype.next called on incompatible receiver",
+        )));
+    };
+    let source = vm.get_prop(&this, REGEXP_ITERATOR_SOURCE).string();
+    let index = vm
+        .get_prop(&this, REGEXP_ITERATOR_INDEX)
+        .as_number()
+        .unwrap_or(0.0) as usize;
+    let result = vm.object(None);
+    let global = vm
+        .get_prop(&this, REGEXP_ITERATOR_GLOBAL)
+        .as_bool()
+        .unwrap_or(true);
+    if vm
+        .get_prop(&this, REGEXP_ITERATOR_DONE)
+        .as_bool()
+        .unwrap_or(false)
+    {
+        vm.set_prop(&result, "value", Value::Undefined);
+        vm.set_prop(&result, "done", Value::Bool(true));
+        return Ok(result);
+    }
+    if !global && index > 0 {
+        vm.set_prop(&this, REGEXP_ITERATOR_DONE, Value::Bool(true));
+        vm.set_prop(&result, "value", Value::Undefined);
+        vm.set_prop(&result, "done", Value::Bool(true));
+        return Ok(result);
+    }
+    let regexp_value = Value::RegExp(regexp.clone());
+    let exec = vm.get_prop_with_accessors(&regexp_value, "exec")?;
+    if exec.is_function() {
+        let match_value = vm.call_arguments(
+            &exec,
+            regexp_value,
+            &[Value::string_value(source.clone())][..],
+        )?;
+        if match_value.is_null() {
+            vm.set_prop(&this, REGEXP_ITERATOR_DONE, Value::Bool(true));
+            vm.set_prop(&result, "value", Value::Undefined);
+            vm.set_prop(&result, "done", Value::Bool(true));
+            return Ok(result);
+        }
+        if !match_value.is_object_like() {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "RegExp exec must return an object or null",
+            )));
+        }
+        let match_index = vm
+            .get_prop(&match_value, "index")
+            .as_number()
+            .unwrap_or(index as f64) as usize;
+        let match_len = vm
+            .get_prop(&match_value, "0")
+            .as_string()
+            .map_or(0, |value| value.encode_utf16().count());
+        let next_index = match_index.saturating_add(match_len.max(1));
+        vm.set_prop(
+            &this,
+            REGEXP_ITERATOR_INDEX,
+            Value::Number(next_index as f64),
+        );
+        vm.set_prop(&result, "value", match_value);
+        vm.set_prop(&result, "done", Value::Bool(false));
+        return Ok(result);
+    }
+    let Some(found) = regexp.borrow().regex.find_at(&source, index) else {
+        vm.set_prop(&this, REGEXP_ITERATOR_DONE, Value::Bool(true));
+        vm.set_prop(&result, "value", Value::Undefined);
+        vm.set_prop(&result, "done", Value::Bool(true));
+        return Ok(result);
+    };
+    let mut regexp = regexp.borrow_mut();
+    let values = regexp
+        .capture_values_at(&source, found.start())
+        .unwrap_or_else(|| vec![Value::string_value(found.as_str())]);
+    let match_result = vm.array_from_values(values);
+    vm.set_prop(&match_result, "index", Value::Number(found.start() as f64));
+    vm.set_prop(&match_result, "input", Value::string_value(source.clone()));
+    let next_index = if found.end() == found.start() {
+        found.end().saturating_add(1)
+    } else {
+        found.end()
+    };
+    vm.set_prop(
+        &this,
+        REGEXP_ITERATOR_INDEX,
+        Value::Number(next_index as f64),
+    );
+    vm.set_prop(&result, "value", match_result);
+    vm.set_prop(&result, "done", Value::Bool(false));
+    Ok(result)
 }
 fn native_string_search(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let s = string_this(this);
@@ -10156,6 +10359,22 @@ fn native_string_to_well_formed(vm: &mut Vm, this: Value, _: &[Value]) -> JsResu
 }
 fn regexp_method(vm: &Vm, _regexp: &RefCell<RegExpValue>, name: &str) -> Value {
     let regexp = _regexp.borrow();
+    // Symbol property keys are canonical VM atoms rather than their source
+    // spelling. Resolve the well-known matchAll key before consulting the
+    // declarative builtin catalog.
+    if name == vm.well_known_symbol_key("matchAll") || name == "Symbol.matchAll" {
+        return vm.builtin(BuiltinId::RegExpMatchAll);
+    }
+    if name == "exec" {
+        if let Some(prototype) = vm
+            .builtin(BuiltinId::RegExpConstructor)
+            .as_function_ref()
+            .map(|function| function.prototype.clone())
+            && let Some(value) = prototype.borrow().props.get("exec")
+        {
+            return value.clone();
+        }
+    }
     match name {
         "source" => Value::string_value(if regexp.source.is_empty() {
             "(?:)".into()
@@ -10198,13 +10417,37 @@ fn native_regexp_to_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Va
     Ok(Value::string_value(format!("/{source}/{}", regexp.flags)))
 }
 
+fn native_regexp_match_all(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(regexp) = this.as_regexp() else {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "RegExp.prototype[@@matchAll] called on non-RegExp",
+        )));
+    };
+    let source = args.first().map(Value::string).unwrap_or_default();
+    Ok(make_regexp_string_iterator(vm, regexp, source))
+}
+
 fn native_regexp_exec(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let Some(r) = this.as_regexp() else {
         return Ok(Value::Null);
     };
     let s = args.first().map(Value::string).unwrap_or_default();
     let mut b = r.borrow_mut();
-    let Some(a) = b.capture_values(&s) else {
+    let start = if b.global {
+        b.props
+            .get("lastIndex")
+            .and_then(Value::as_number)
+            .unwrap_or(b.last_index as f64)
+            .max(0.0) as usize
+    } else {
+        0
+    };
+    let Some(a) = b.capture_values_at(&s, start) else {
+        if b.global {
+            b.last_index = 0;
+            b.props.insert("lastIndex".into(), Value::Number(0.0));
+        }
         return Ok(Value::Null);
     };
     let index = b
@@ -10215,6 +10458,21 @@ fn native_regexp_exec(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Valu
     let result = vm.array_from_values(a);
     vm.set_prop(&result, "index", Value::Number(index as f64));
     vm.set_prop(&result, "input", Value::string_value(s));
+    if b.global {
+        let end = b
+            .capture_locations
+            .as_ref()
+            .and_then(|locations| locations.get(0))
+            .map_or(index, |(_, end)| end);
+        b.last_index = if end == index {
+            end.saturating_add(1)
+        } else {
+            end
+        };
+        let last_index = b.last_index;
+        b.props
+            .insert("lastIndex".into(), Value::Number(last_index as f64));
+    }
     Ok(result)
 }
 fn checked_number_precision(
@@ -11820,6 +12078,11 @@ const ARRAY_ITERATOR_SOURCE: &str = "\0array_iterator_source";
 const ARRAY_ITERATOR_INDEX: &str = "\0array_iterator_index";
 const STRING_ITERATOR_SOURCE: &str = "\0string_iterator_source";
 const STRING_ITERATOR_INDEX: &str = "\0string_iterator_index";
+const REGEXP_ITERATOR_REGEXP: &str = "\0regexp_iterator_regexp";
+const REGEXP_ITERATOR_SOURCE: &str = "\0regexp_iterator_source";
+const REGEXP_ITERATOR_INDEX: &str = "\0regexp_iterator_index";
+const REGEXP_ITERATOR_GLOBAL: &str = "\0regexp_iterator_global";
+const REGEXP_ITERATOR_DONE: &str = "\0regexp_iterator_done";
 
 fn native_array_iterator(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     if !this.is_object_like() {

@@ -260,6 +260,7 @@ builtin_catalog! {
     RegExpConstructor, Global, "RegExp", native_regexp, Generic, MAY_ALLOCATE;
     RegExpCompile, RegExpPrototype, "compile", native_regexp_compile, Generic, MAY_MUTATE;
     RegExpToString, RegExpPrototype, "toString", native_regexp_to_string, Generic, MAY_ALLOCATE;
+    RegExpMatchAll, RegExpPrototype, "Symbol(Symbol.matchAll)", native_regexp_match_all, Generic, MAY_ALLOCATE;
     ErrorConstructor, Global, "Error", native_error, Generic, MAY_ALLOCATE;
     TypeErrorConstructor, Global, "TypeError", native_error, Generic, MAY_ALLOCATE;
     RangeErrorConstructor, Global, "RangeError", native_error, Generic, MAY_ALLOCATE;
@@ -612,7 +613,7 @@ fn builtin_length(id: BuiltinId) -> usize {
         BuiltinId::StringConcat => 1,
         BuiltinId::StringReplaceAll => 2,
         BuiltinId::StringPadStart | BuiltinId::StringPadEnd => 2,
-        BuiltinId::StringMatchAll | BuiltinId::StringSearch => 1,
+        BuiltinId::StringMatchAll | BuiltinId::StringSearch | BuiltinId::RegExpMatchAll => 1,
         BuiltinId::StringLocaleCompare => 1,
         BuiltinId::StringAnchor
         | BuiltinId::StringFontcolor
