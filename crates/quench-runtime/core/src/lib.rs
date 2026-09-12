@@ -239,6 +239,13 @@ impl Value {
         self.0.tag() == raw_value::FUNCTION_TAG
     }
 
+    /// JavaScript object-like values accepted by generic Object operations.
+    /// RegExp has a dedicated payload, but it still participates in the same
+    /// property protocols as ordinary objects.
+    fn is_object_like(&self) -> bool {
+        self.is_object() || self.is_function() || self.is_regexp()
+    }
+
     fn is_regexp(&self) -> bool {
         self.0.tag() == raw_value::REGEXP_TAG
     }
@@ -4150,6 +4157,14 @@ fn loose_eq(a: &Value, b: &Value) -> bool {
     false
 }
 fn instance_of(value: &Value, ctor: &Value) -> bool {
+    if value.as_regexp_ref().is_some() {
+        return ctor.as_function_ref().is_some_and(|function| {
+            matches!(
+                function.kind,
+                FunctionKind::Builtin(BuiltinId::RegExpConstructor)
+            )
+        });
+    }
     let Some(obj) = value.as_object_ref() else {
         return false;
     };
@@ -5699,6 +5714,14 @@ impl Vm {
             }
             current = borrowed.prototype;
         }
+        if let Some(regexp) = value.as_regexp_ref() {
+            let borrowed = regexp.borrow();
+            let getter = borrowed.props.get(&accessor_slot("get", key)).cloned();
+            let setter = borrowed.props.get(&accessor_slot("set", key)).cloned();
+            if getter.is_some() || setter.is_some() {
+                return Some((getter, setter));
+            }
+        }
         None
     }
 
@@ -5717,7 +5740,10 @@ impl Vm {
                 .unwrap_or(false);
         }
         if let Some(regexp) = value.as_regexp_ref() {
-            return regexp.borrow().props.contains_key(key);
+            let borrowed = regexp.borrow();
+            return borrowed.props.contains_key(key)
+                || borrowed.props.contains_key(&accessor_slot("get", key))
+                || borrowed.props.contains_key(&accessor_slot("set", key));
         }
         value
             .as_function_ref()
@@ -5775,6 +5801,22 @@ impl Vm {
         setter: Option<Value>,
         attributes: PropertyAttributes,
     ) {
+        if let Some(regexp) = object.as_regexp_ref() {
+            let mut regexp = regexp.borrow_mut();
+            let get_slot = accessor_slot("get", key);
+            let set_slot = accessor_slot("set", key);
+            regexp.props.shift_remove(key);
+            regexp.props.shift_remove(&get_slot);
+            regexp.props.shift_remove(&set_slot);
+            if let Some(getter) = getter {
+                regexp.props.insert(get_slot, getter);
+            }
+            if let Some(setter) = setter {
+                regexp.props.insert(set_slot, setter);
+            }
+            regexp.attributes.insert(key.to_owned(), attributes);
+            return;
+        }
         let Some(object) = object.as_object_ref() else {
             return;
         };
@@ -5965,6 +6007,8 @@ impl Vm {
                 return false;
             }
             regexp.props.shift_remove(k);
+            regexp.props.shift_remove(&accessor_slot("get", k));
+            regexp.props.shift_remove(&accessor_slot("set", k));
             regexp.attributes.remove(k);
             return true;
         }
@@ -6405,6 +6449,7 @@ impl Vm {
         let e = Environment::new(Some(outer));
         e.borrow_mut().declare("this", this);
         let av = self.object_value(Object::array(None, args.clone()));
+        self.set_prop(&av, "\0wrapper", Value::string_value("Arguments"));
         e.borrow_mut().declare("arguments", av);
         for (i, p) in n.params.items.iter().enumerate() {
             if let Some(name) = pattern_name(&p.pattern) {
@@ -9732,7 +9777,7 @@ fn native_object(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
                 .clone(),
         )));
     }
-    if value.is_object() || value.is_function() {
+    if value.is_object_like() {
         return Ok(value.clone());
     }
     let is_bigint = is_bigint_marker(value);
@@ -10332,7 +10377,12 @@ fn native_object_get_own_property_descriptor(
         let object = object.borrow();
         let getter = object.props.get(&accessor_slot("get", &key)).cloned();
         let setter = object.props.get(&accessor_slot("set", &key)).cloned();
-        if getter.is_some() || setter.is_some() {
+        if getter.is_some()
+            || setter.is_some()
+            || (object.array.is_none()
+                && object.attributes.contains_key(&key)
+                && !object.props.contains_key(&key))
+        {
             let descriptor = vm.object(None);
             vm.set_prop(&descriptor, "get", getter.unwrap_or(Value::Undefined));
             vm.set_prop(&descriptor, "set", setter.unwrap_or(Value::Undefined));
@@ -10598,7 +10648,7 @@ fn native_object_define_properties(vm: &mut Vm, _: Value, args: &[Value]) -> JsR
             "Object.defineProperties descriptors is not an object",
         )));
     }
-    let descriptor_source = if descriptor_source.is_object() || descriptor_source.is_function() {
+    let descriptor_source = if descriptor_source.is_object_like() {
         descriptor_source
     } else {
         native_object(vm, Value::Undefined, &[descriptor_source])?
@@ -10745,6 +10795,17 @@ fn native_object_get_own_property_names(vm: &mut Vm, _: Value, args: &[Value]) -
             .map(Value::string_value)
             .collect::<Vec<_>>();
         keys.extend(accessor_keys);
+    } else if let Some(regexp) = target.as_regexp_ref() {
+        let regexp = regexp.borrow();
+        let existing = keys.clone();
+        let accessor_keys = regexp
+            .props
+            .keys()
+            .filter_map(|key| accessor_key(key).map(|(_, key)| key.to_owned()))
+            .filter(|key| !existing.iter().any(|item| item.string() == *key))
+            .map(Value::string_value)
+            .collect::<Vec<_>>();
+        keys.extend(accessor_keys);
     } else if let Some(string) = target.as_string() {
         keys.push(Value::string_value("length"));
         keys.extend(
@@ -10844,7 +10905,7 @@ fn native_object_create(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value
     // ordinary objects with the default Object.prototype for language literals.
     let object = vm.object_value(Object::ordinary(prototype));
     if let Some(descriptors) = args.get(1).filter(|value| !value.is_undefined()) {
-        let descriptors = if descriptors.is_object() || descriptors.is_function() {
+        let descriptors = if descriptors.is_object_like() {
             descriptors.clone()
         } else {
             native_object(vm, Value::Undefined, std::slice::from_ref(descriptors))?
@@ -10955,6 +11016,49 @@ fn object_own_enumerable_keys(target: &Value) -> Vec<String> {
                 })
                 .collect::<Vec<_>>(),
         );
+        keys.extend(
+            object
+                .attributes
+                .keys()
+                .filter(|key| !key.starts_with('\0') && !object.props.contains_key(*key))
+                .filter(|key| {
+                    object
+                        .attributes
+                        .get(*key)
+                        .is_none_or(|attrs| attrs.enumerable)
+                })
+                .cloned(),
+        );
+        return partition_symbol_keys(keys);
+    }
+    if let Some(regexp) = target.as_regexp_ref() {
+        let regexp = regexp.borrow();
+        let mut keys = regexp
+            .props
+            .keys()
+            .filter(|key| {
+                !key.starts_with('\0')
+                    && regexp
+                        .attributes
+                        .get(*key)
+                        .is_none_or(|attrs| attrs.enumerable)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let existing = keys.clone();
+        let accessor_keys = regexp
+            .props
+            .keys()
+            .filter_map(|key| accessor_key(key).map(|(_, key)| key.to_owned()))
+            .filter(|key| {
+                !existing.iter().any(|item| item == key)
+                    && regexp
+                        .attributes
+                        .get(key)
+                        .is_none_or(|attrs| attrs.enumerable)
+            })
+            .collect::<Vec<_>>();
+        keys.extend(accessor_keys);
         return partition_symbol_keys(keys);
     }
     if let Some(function) = target.as_function_ref() {
@@ -11028,6 +11132,32 @@ fn object_own_property_keys(target: &Value) -> Vec<String> {
             .filter(|key| !keys.iter().any(|item| item == key))
             .collect::<Vec<_>>();
         keys.extend(accessors);
+        let existing = keys.clone();
+        keys.extend(
+            object
+                .attributes
+                .keys()
+                .filter(|key| !key.starts_with('\0') && !existing.iter().any(|item| item == *key))
+                .cloned(),
+        );
+        return partition_symbol_keys(keys);
+    }
+    if let Some(regexp) = target.as_regexp_ref() {
+        let regexp = regexp.borrow();
+        let mut keys = regexp
+            .props
+            .keys()
+            .filter(|key| !key.starts_with('\0'))
+            .cloned()
+            .collect::<Vec<_>>();
+        let existing = keys.clone();
+        let accessor_keys = regexp
+            .props
+            .keys()
+            .filter_map(|key| accessor_key(key).map(|(_, key)| key.to_owned()))
+            .filter(|key| !existing.iter().any(|item| item == key))
+            .collect::<Vec<_>>();
+        keys.extend(accessor_keys);
         return partition_symbol_keys(keys);
     }
     if let Some(function) = target.as_function_ref() {
@@ -11299,7 +11429,12 @@ fn native_object_has_own_property(vm: &mut Vm, this: Value, args: &[Value]) -> J
                     .map(|function| function.prototype),
             )
             .is_some_and(|(target, prototype)| target.as_ptr() == prototype.as_ptr());
-    let present = if let Some(function) = this.as_function_ref() {
+    let present = if let Some(regexp) = this.as_regexp_ref() {
+        let regexp = regexp.borrow();
+        regexp.props.contains_key(&key)
+            || regexp.props.contains_key(&accessor_slot("get", &key))
+            || regexp.props.contains_key(&accessor_slot("set", &key))
+    } else if let Some(function) = this.as_function_ref() {
         function.props.borrow().contains_key(&key) || key == "prototype"
     } else {
         this.as_object_ref().is_some_and(|object| {
@@ -11314,6 +11449,7 @@ fn native_object_has_own_property(vm: &mut Vm, this: Value, args: &[Value]) -> J
                 object.props.contains_key(&key)
                     || object.props.contains_key(&accessor_slot("get", &key))
                     || object.props.contains_key(&accessor_slot("set", &key))
+                    || object.attributes.contains_key(&key)
                     || error_stack
             }
         })
