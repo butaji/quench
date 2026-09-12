@@ -10926,24 +10926,41 @@ fn native_string_match_all(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
     if let Some(regexp) = args.first()
         && let Some(method) = string_symbol_method(vm, regexp, "matchAll")?
     {
-        if let Some(regexp_value) = regexp.as_regexp()
-            && !regexp_value.borrow().flags.contains('g')
-        {
-            return Err(JsError::Throw(type_error(
-                vm,
-                "String.prototype.matchAll requires a global RegExp",
-            )));
+        if string_is_regexp(vm, regexp)? {
+            let flags = vm.get_prop_with_accessors(regexp, "flags")?;
+            if flags.is_null() || flags.is_undefined() {
+                return Err(JsError::Throw(type_error(
+                    vm,
+                    "String.prototype.matchAll requires coercible RegExp flags",
+                )));
+            }
+            if !string_argument(vm, &flags)?.contains('g') {
+                return Err(JsError::Throw(type_error(
+                    vm,
+                    "String.prototype.matchAll requires a global RegExp",
+                )));
+            }
         }
         return vm.call_arguments(&method, regexp.clone(), &[Value::string_value(s)][..]);
     }
     if let Some(r) = args.first().and_then(Value::as_regexp) {
-        if !r.borrow().flags.contains('g') {
+        let flags = vm.get_prop_with_accessors(&Value::RegExp(r.clone()), "flags")?;
+        if flags.is_null() || flags.is_undefined() || !string_argument(vm, &flags)?.contains('g') {
             return Err(JsError::Throw(type_error(
                 vm,
                 "String.prototype.matchAll requires a global RegExp",
             )));
         }
-        return Ok(make_regexp_string_iterator(vm, r, s));
+        let source = r.borrow().source.clone();
+        let regexp = Value::RegExp(Rc::new(RefCell::new(RegExpValue::new(
+            Rc::new(compile_regex(&source, false)?),
+            true,
+        ))));
+        if let Some(value) = regexp.as_regexp() {
+            value.borrow_mut().source = source;
+        }
+        let method = vm.get_prop_with_accessors(&regexp, &vm.well_known_symbol_key("matchAll"))?;
+        return vm.call_arguments(&method, regexp, &[Value::string_value(s)][..]);
     }
     let pattern = args
         .first()
@@ -11530,13 +11547,25 @@ fn native_string_to_well_formed(vm: &mut Vm, this: Value, _: &[Value]) -> JsResu
 }
 fn regexp_method(vm: &Vm, _regexp: &RefCell<RegExpValue>, name: &str) -> Value {
     let regexp = _regexp.borrow();
-    if let Some(prototype) = vm
+    let prototype = vm
         .builtin(BuiltinId::RegExpConstructor)
         .as_function_ref()
-        .map(|function| function.prototype.clone())
-        && let Some(value) = prototype.borrow().props.get(name).cloned()
-    {
-        return value;
+        .map(|function| function.prototype.clone());
+    if let Some(prototype) = prototype.as_ref() {
+        let prototype = prototype.borrow();
+        if let Some(value) = prototype.props.get(name).cloned() {
+            return value;
+        }
+        for symbol_name in ["match", "search", "replace", "split", "matchAll"] {
+            if name == vm.well_known_symbol_key(symbol_name)
+                && let Some(value) = prototype
+                    .props
+                    .get(&format!("Symbol(Symbol.{symbol_name})"))
+                    .cloned()
+            {
+                return value;
+            }
+        }
     }
     // Symbol property keys are canonical VM atoms rather than their source
     // spelling. Resolve the well-known matchAll key before consulting the
@@ -11550,7 +11579,11 @@ fn regexp_method(vm: &Vm, _regexp: &RefCell<RegExpValue>, name: &str) -> Value {
     ] {
         if name == vm.well_known_symbol_key(symbol_name) || name == format!("Symbol.{symbol_name}")
         {
-            return vm.builtin(builtin);
+            return if prototype.is_some() {
+                Value::Undefined
+            } else {
+                vm.builtin(builtin)
+            };
         }
     }
     if name == "exec" {
