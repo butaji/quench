@@ -5358,6 +5358,7 @@ impl Vm {
             "isNaN",
             "parseFloat",
             "parseInt",
+            "eval",
             "Buffer",
             "Blob",
             "JSON",
