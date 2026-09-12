@@ -9638,7 +9638,8 @@ fn native_string_replace(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
         );
     }
     if let Some(r) = args.first().and_then(Value::as_regexp) {
-        let to = args.get(1).map(Value::string).unwrap_or_default();
+        let undefined = Value::Undefined;
+        let to = to_string_with_vm(vm, args.get(1).unwrap_or(&undefined))?;
         let b = r.borrow();
         let out = if b.global {
             b.regex.replace_all(&s, to.as_str()).to_string()
@@ -9647,8 +9648,9 @@ fn native_string_replace(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
         };
         return Ok(Value::string_value(out));
     }
-    let from = args.first().map(Value::string).unwrap_or_default();
-    let to = args.get(1).map(Value::string).unwrap_or_default();
+    let undefined = Value::Undefined;
+    let from = to_string_with_vm(vm, args.first().unwrap_or(&undefined))?;
+    let to = to_string_with_vm(vm, args.get(1).unwrap_or(&undefined))?;
     Ok(Value::string_value(s.replacen(&from, &to, 1)))
 }
 fn native_string_replace_all(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
@@ -9696,18 +9698,46 @@ fn native_string_split(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
     }
     if let Some(r) = args.first().and_then(Value::as_regexp) {
         let b = r.borrow();
-        let parts = b.regex.split(&s).map(Value::string_value).collect();
+        let mut parts = b
+            .regex
+            .split(&s)
+            .map(Value::string_value)
+            .collect::<Vec<_>>();
+        if let Some(limit) = string_split_limit(vm, args)? {
+            parts.truncate(limit);
+        }
         return Ok(vm.array_from_values(parts));
     }
-    let sep = args.first().map(Value::string).unwrap_or_default();
-    let parts = if sep.is_empty() {
-        s.chars()
-            .map(|c| Value::string_value(c.to_string()))
-            .collect()
+    let mut parts = if args.first().is_none_or(Value::is_undefined) {
+        vec![Value::string_value(s)]
     } else {
-        s.split(&sep).map(Value::string_value).collect()
+        let sep = to_string_with_vm(vm, args.first().expect("checked separator"))?;
+        if sep.is_empty() {
+            s.chars()
+                .map(|c| Value::string_value(c.to_string()))
+                .collect()
+        } else {
+            s.split(&sep).map(Value::string_value).collect()
+        }
     };
+    if let Some(limit) = string_split_limit(vm, args)? {
+        parts.truncate(limit);
+    }
     Ok(vm.array_from_values(parts))
+}
+
+fn string_split_limit(vm: &mut Vm, args: &[Value]) -> JsResult<Option<usize>> {
+    let Some(limit) = args.get(1).filter(|value| !value.is_undefined()) else {
+        return Ok(None);
+    };
+    let number = to_number_with_vm(vm, limit)?;
+    if number.is_nan() || number <= 0.0 {
+        return Ok(Some(0));
+    }
+    if number.is_infinite() {
+        return Ok(None);
+    }
+    Ok(Some((number.trunc() as u64).min(usize::MAX as u64) as usize))
 }
 fn native_string_match(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let s = string_this(this);
