@@ -363,6 +363,7 @@ builtin_catalog! {
     StringToLocaleUpperCase, StringPrototype, "toLocaleUpperCase", native_string_upper, Generic, MAY_ALLOCATE;
     StringIsWellFormed, StringPrototype, "isWellFormed", native_string_is_well_formed, Generic, PURE;
     StringToWellFormed, StringPrototype, "toWellFormed", native_string_to_well_formed, Generic, MAY_ALLOCATE;
+    StringLocaleCompare, StringPrototype, "localeCompare", native_string_locale_compare, Generic, MAY_ALLOCATE;
     NumberToFixed, NumberPrototype, "toFixed", native_number_to_fixed, Generic, MAY_ALLOCATE;
     NumberToPrecision, NumberPrototype, "toPrecision", native_number_to_precision, Generic, MAY_ALLOCATE;
     NumberToExponential, NumberPrototype, "toExponential", native_number_to_exponential, Generic, MAY_ALLOCATE;
@@ -601,6 +602,7 @@ fn builtin_length(id: BuiltinId) -> usize {
         BuiltinId::StringReplaceAll => 2,
         BuiltinId::StringPadStart | BuiltinId::StringPadEnd => 2,
         BuiltinId::StringMatchAll | BuiltinId::StringSearch => 1,
+        BuiltinId::StringLocaleCompare => 1,
         BuiltinId::StringAnchor
         | BuiltinId::StringFontcolor
         | BuiltinId::StringFontsize
