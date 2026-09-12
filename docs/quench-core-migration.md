@@ -146,6 +146,11 @@ Verification completed:
   detection, preserving constructor-call prototypes, and modeling the shared
   `Error.prototype.stack` accessor contract; proxy/realm and accessor-descriptor
   edge cases remain open
+- the stencil Symbol stage now reaches 92/98 after introducing stable symbol
+  key atoms, shared global-symbol registry state, distinct realm constructors,
+  well-known symbol descriptors, and constructor-boundary `IsConstructor`
+  semantics; strict primitive assignment, species accessors, and a few
+  coercion/subclassing cases remain open
 - intrinsic data-property installation now uses the declarative
   `install_data_properties!` Rust macro for Math and BigInt tables, keeping
   values and descriptors in one source-of-truth declaration
