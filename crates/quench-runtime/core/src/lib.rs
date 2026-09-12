@@ -7772,7 +7772,21 @@ impl Vm {
                 let z = self.eval_expr(&v.argument, e)?;
                 use oxc_syntax::operator::UnaryOperator::*;
                 Ok(match v.operator {
+                    UnaryPlus if is_bigint_marker(&z) => {
+                        return Err(JsError::Throw(type_error(
+                            self,
+                            "cannot apply unary plus to a BigInt value",
+                        )));
+                    }
                     UnaryPlus => Value::Number(z.number()),
+                    UnaryNegation if is_bigint_marker(&z) => {
+                        let value =
+                            parse_bigint_text(z.as_string().map_or("", |value| value.as_str()))
+                                .map_err(|_| {
+                                    JsError::Throw(type_error(self, "invalid BigInt value"))
+                                })?;
+                        bigint_marker(-value)
+                    }
                     UnaryNegation => Value::Number(-z.number()),
                     LogicalNot => Value::Bool(!z.truthy()),
                     BitwiseNot => Value::Number(!i32_js(z.number()) as f64),
