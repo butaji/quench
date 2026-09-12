@@ -12789,6 +12789,18 @@ fn native_object_value_of(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Val
         )));
     }
     if this.is_object_like() {
+        if let Some(object) = this.as_object_ref() {
+            let object = object.borrow();
+            if let (Some(primitive), Some(wrapper)) = (
+                object.props.get("\0primitive"),
+                object.props.get("\0wrapper"),
+            ) && wrapper
+                .as_string()
+                .is_some_and(|wrapper| matches!(wrapper.as_str(), "String" | "Number" | "Boolean"))
+            {
+                return Ok(primitive.clone());
+            }
+        }
         return Ok(this);
     }
     // ToObject is observable here: valueOf called with a primitive returns a
