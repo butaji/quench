@@ -8698,42 +8698,62 @@ fn native_array_every(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Valu
     }
     Ok(Value::Bool(true))
 }
-fn native_array_index_of(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+fn native_array_index_of(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let needle = args.first().cloned().unwrap_or(Value::Undefined);
-    let start = args.get(1).map(Value::number).unwrap_or(0.0).max(0.0) as usize;
-    for (index, value) in array_values(&this).into_iter().enumerate().skip(start) {
-        if eq_strict(&value, &needle) {
+    let length = array_like_length(vm, &this)?;
+    let start = args.get(1).map(Value::number).unwrap_or(0.0).trunc() as isize;
+    let start = if start < 0 {
+        (length as isize + start).max(0) as usize
+    } else {
+        start as usize
+    };
+    for index in start..length {
+        if let Some(value) = array_like_value(vm, &this, index)?
+            && eq_strict(&value, &needle)
+        {
             return Ok(Value::Number(index as f64));
         }
     }
     Ok(Value::Number(-1.0))
 }
-fn native_array_includes(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+fn native_array_includes(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let needle = args.first().cloned().unwrap_or(Value::Undefined);
-    let start = args.get(1).map(Value::number).unwrap_or(0.0).max(0.0) as usize;
-    Ok(Value::Bool(
-        array_values(&this)
-            .into_iter()
-            .skip(start)
-            .any(|value| eq_same_value_zero(&value, &needle)),
-    ))
+    let length = array_like_length(vm, &this)?;
+    let start = args.get(1).map(Value::number).unwrap_or(0.0).trunc() as isize;
+    let start = if start < 0 {
+        (length as isize + start).max(0) as usize
+    } else {
+        start as usize
+    };
+    for index in start..length {
+        let value = array_like_value(vm, &this, index)?.unwrap_or(Value::Undefined);
+        if eq_same_value_zero(&value, &needle) {
+            return Ok(Value::Bool(true));
+        }
+    }
+    Ok(Value::Bool(false))
 }
 
-fn native_array_last_index_of(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+fn native_array_last_index_of(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let needle = args.first().cloned().unwrap_or(Value::Undefined);
-    let values = array_values(&this);
+    let length = array_like_length(vm, &this)?;
     let start = args
         .get(1)
         .map(Value::number)
-        .map(|value| value.max(0.0) as usize)
-        .unwrap_or(values.len().saturating_sub(1));
-    for (index, value) in values
-        .into_iter()
-        .enumerate()
-        .rev()
-        .filter(|(index, _)| *index <= start)
-    {
-        if eq_strict(&value, &needle) {
+        .unwrap_or((length.saturating_sub(1)) as f64)
+        .trunc() as isize;
+    let start = if start < 0 {
+        length as isize + start
+    } else {
+        start.min(length as isize - 1)
+    };
+    if start < 0 {
+        return Ok(Value::Number(-1.0));
+    }
+    for index in (0..=start as usize).rev() {
+        if let Some(value) = array_like_value(vm, &this, index)?
+            && eq_strict(&value, &needle)
+        {
             return Ok(Value::Number(index as f64));
         }
     }
