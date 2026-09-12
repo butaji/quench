@@ -4242,7 +4242,10 @@ fn binary_with_vm(vm: &mut Vm, op: Op, left: &Value, right: &Value) -> JsResult<
     let string_hint = false;
     let left = to_primitive_for_binary(vm, left, string_hint)?;
     let right = to_primitive_for_binary(vm, right, string_hint)?;
-    if matches!(op, Op::Add) && (left.is_string() || right.is_string()) {
+    if matches!(op, Op::Add)
+        && ((left.is_string() && !is_bigint_marker(&left))
+            || (right.is_string() && !is_bigint_marker(&right)))
+    {
         return Ok(Value::string_value(format!(
             "{}{}",
             to_string_with_vm(vm, &left)?,
