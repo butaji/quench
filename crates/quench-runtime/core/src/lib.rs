@@ -4396,7 +4396,7 @@ fn to_primitive_for_binary(vm: &mut Vm, value: &Value, string_hint: bool) -> JsR
             // atom. Preserve that atom as the primitive result.
             return Ok(result);
         }
-        if !result.is_object() && !result.is_function() {
+        if !result.is_object() && !result.is_function() && !result.is_regexp() {
             return Ok(result);
         }
         return Err(JsError::Throw(type_error(
@@ -4421,7 +4421,7 @@ fn to_primitive_for_binary(vm: &mut Vm, value: &Value, string_hint: bool) -> JsR
         {
             return Ok(result);
         }
-        if !result.is_object() && !result.is_function() {
+        if !result.is_object() && !result.is_function() && !result.is_regexp() {
             return Ok(result);
         }
     }
