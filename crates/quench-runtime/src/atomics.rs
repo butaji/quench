@@ -965,7 +965,10 @@ fn atomic_view(value: Option<&Value>) -> Option<AtomicView<'_>> {
                         crate::execute::get_property(&prototype, "\0float16_constructor"),
                         Value::Boolean(true)
                     )
-                }) => None,
+                }) =>
+        {
+            None
+        }
         Value::Uint16Array(v) => Some(AtomicView::Uint16(v)),
         Value::Uint32Array(v) => Some(AtomicView::Uint32(v)),
         _ => None,
