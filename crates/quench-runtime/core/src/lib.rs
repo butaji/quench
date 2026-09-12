@@ -4974,6 +4974,44 @@ impl Vm {
             }
         }
         Environment::set(&g, "Symbol", symbol);
+        let species = Environment::get(&g, "Symbol")
+            .map(|constructor| self.get_prop(&constructor, "species"))
+            .filter(|value| !value.is_undefined());
+        if let Some(species) = species
+            && let Ok(key) = self.to_property_key(species)
+        {
+            let getter = self.native_named(native_species_getter, "get [Symbol.species]", 0);
+            self.mark_nonconstructable(&getter);
+            let mut constructors = vec![
+                self.builtin(BuiltinId::ArrayConstructor),
+                self.builtin(BuiltinId::RegExpConstructor),
+            ];
+            for (name, native) in [
+                (
+                    "Map",
+                    native_noop as fn(&mut Vm, Value, &[Value]) -> JsResult<Value>,
+                ),
+                ("Promise", native_noop as _),
+                ("Set", native_noop as _),
+            ] {
+                let constructor = self.native_named(native, name, 0);
+                Environment::set(&g, name, constructor.clone());
+                constructors.push(constructor);
+            }
+            for constructor in constructors {
+                self.define_accessor_slot(
+                    &constructor,
+                    &key,
+                    Some(getter.clone()),
+                    None,
+                    PropertyAttributes {
+                        writable: false,
+                        enumerable: false,
+                        configurable: true,
+                    },
+                );
+            }
+        }
         let bigint = self.native_named(native_bigint, "BigInt", 1);
         let as_int_n = self.native_named(native_bigint_as_int_n, "asIntN", 2);
         let as_uint_n = self.native_named(native_bigint_as_uint_n, "asUintN", 2);
@@ -5985,6 +6023,14 @@ impl Vm {
         value: &Value,
         key: &str,
     ) -> Option<(Option<Value>, Option<Value>)> {
+        if let Some(function) = value.as_function_ref() {
+            let props = function.props.borrow();
+            let getter = props.get(&accessor_slot("get", key)).cloned();
+            let setter = props.get(&accessor_slot("set", key)).cloned();
+            if getter.is_some() || setter.is_some() {
+                return Some((getter, setter));
+            }
+        }
         let mut current = value.as_object();
         while let Some(object) = current {
             let borrowed = object.borrow();
@@ -6105,6 +6151,27 @@ impl Vm {
         setter: Option<Value>,
         attributes: PropertyAttributes,
     ) {
+        if let Some(function) = object.as_function_ref() {
+            let mut props = function.props.borrow_mut();
+            props.shift_remove(key);
+            let get_slot = accessor_slot("get", key);
+            let set_slot = accessor_slot("set", key);
+            if let Some(getter) = getter {
+                props.insert(get_slot, getter);
+            } else {
+                props.shift_remove(&get_slot);
+            }
+            if let Some(setter) = setter {
+                props.insert(set_slot, setter);
+            } else {
+                props.shift_remove(&set_slot);
+            }
+            function
+                .attributes
+                .borrow_mut()
+                .insert(key.to_owned(), attributes);
+            return;
+        }
         if let Some(regexp) = object.as_regexp_ref() {
             let mut regexp = regexp.borrow_mut();
             let get_slot = accessor_slot("get", key);
@@ -8810,6 +8877,10 @@ fn native_symbol_key_for(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Valu
             .then(|| Value::string_value(key))
         })
         .map_or(Ok(Value::Undefined), Ok)
+}
+
+fn native_species_getter(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    Ok(this)
 }
 
 fn bigint_marker(value: BigInt) -> Value {
@@ -11927,6 +11998,38 @@ fn native_object_get_own_property_descriptor(
         vm.set_prop(&descriptor, "enumerable", Value::Bool(false));
         vm.set_prop(&descriptor, "configurable", Value::Bool(true));
         return Ok(descriptor);
+    }
+    if let Some(function) = target.as_function_ref() {
+        let props = function.props.borrow();
+        let getter = props.get(&accessor_slot("get", &key)).cloned();
+        let setter = props.get(&accessor_slot("set", &key)).cloned();
+        if getter.is_some() || setter.is_some() {
+            let descriptor = vm.object(None);
+            vm.set_prop(&descriptor, "get", getter.unwrap_or(Value::Undefined));
+            vm.set_prop(&descriptor, "set", setter.unwrap_or(Value::Undefined));
+            let attributes =
+                function
+                    .attributes
+                    .borrow()
+                    .get(&key)
+                    .copied()
+                    .unwrap_or(PropertyAttributes {
+                        writable: false,
+                        enumerable: false,
+                        configurable: false,
+                    });
+            vm.set_prop(
+                &descriptor,
+                "enumerable",
+                Value::Bool(attributes.enumerable),
+            );
+            vm.set_prop(
+                &descriptor,
+                "configurable",
+                Value::Bool(attributes.configurable),
+            );
+            return Ok(descriptor);
+        }
     }
     if let Some(object) = target.as_object_ref() {
         let object = object.borrow();
