@@ -11,19 +11,18 @@ use quench_runtime::value::Value;
 use crate::host::HostState;
 use crate::registry::{
     SPEC_FS_WRITE_STREAM_AUTO_CLOSE_GET, SPEC_FS_WRITE_STREAM_AUTO_CLOSE_SET,
-    SPEC_STREAM_ADD_ABORT_SIGNAL, SPEC_STREAM_COMPOSE, SPEC_STREAM_DESTROY, SPEC_STREAM_DUPLEX,
-    SPEC_STREAM_CONSTRUCTOR_ADAPTER, SPEC_STREAM_DUPLEX_PAIR, SPEC_STREAM_DUPLEX_PAIR_FINAL,
-    SPEC_STREAM_DUPLEX_PAIR_UNCORK, SPEC_STREAM_DUPLEX_PAIR_WRITE, SPEC_STREAM_FINISHED,
-    SPEC_STREAM_FINISHED_ABORT, SPEC_STREAM_FINISHED_CLEANUP, SPEC_STREAM_FINISHED_EVENT,
-    SPEC_STREAM_GET_DEFAULT_HWM, SPEC_STREAM_IS_DISTURBED, SPEC_STREAM_IS_ERRORED,
-    SPEC_STREAM_IS_READABLE, SPEC_STREAM_IS_WRITABLE, SPEC_STREAM_PIPELINE,
+    SPEC_STREAM_ADD_ABORT_SIGNAL, SPEC_STREAM_COMPOSE, SPEC_STREAM_CONSTRUCTOR_ADAPTER,
+    SPEC_STREAM_DESTROY, SPEC_STREAM_DUPLEX, SPEC_STREAM_DUPLEX_PAIR,
+    SPEC_STREAM_DUPLEX_PAIR_FINAL, SPEC_STREAM_DUPLEX_PAIR_UNCORK, SPEC_STREAM_DUPLEX_PAIR_WRITE,
+    SPEC_STREAM_FINISHED, SPEC_STREAM_FINISHED_ABORT, SPEC_STREAM_FINISHED_CLEANUP,
+    SPEC_STREAM_FINISHED_EVENT, SPEC_STREAM_GET_DEFAULT_HWM, SPEC_STREAM_IS_DISTURBED,
+    SPEC_STREAM_IS_ERRORED, SPEC_STREAM_IS_READABLE, SPEC_STREAM_IS_WRITABLE, SPEC_STREAM_PIPELINE,
     SPEC_STREAM_PROMISES_CALLBACK, SPEC_STREAM_PROMISES_FINISHED, SPEC_STREAM_PROMISES_PIPELINE,
-    SPEC_STREAM_READABLE, SPEC_STREAM_READABLE_BUFFER, SPEC_STREAM_READABLE_WRAP,
-    SPEC_STREAM_READABLE_PUSH_ADAPTER, SPEC_STREAM_READABLE_READ_ADAPTER,
-    SPEC_STREAM_READABLE_WRAP_EVENT,
-    SPEC_STREAM_READABLE_WRAP_PROXY, SPEC_STREAM_SET_DEFAULT_HWM,
-    SPEC_STREAM_TRANSFORM, SPEC_STREAM_WEB_PIPELINE_COMPLETE, SPEC_STREAM_WEB_PIPELINE_ERROR,
-    SPEC_STREAM_WRITABLE, SPEC_STREAM_WRITABLE_HAS_INSTANCE, SPEC_STREAM_WRITABLE_WRITE_ADAPTER,
+    SPEC_STREAM_READABLE, SPEC_STREAM_READABLE_BUFFER, SPEC_STREAM_READABLE_PUSH_ADAPTER,
+    SPEC_STREAM_READABLE_READ_ADAPTER, SPEC_STREAM_READABLE_WRAP, SPEC_STREAM_READABLE_WRAP_EVENT,
+    SPEC_STREAM_READABLE_WRAP_PROXY, SPEC_STREAM_SET_DEFAULT_HWM, SPEC_STREAM_TRANSFORM,
+    SPEC_STREAM_WEB_PIPELINE_COMPLETE, SPEC_STREAM_WEB_PIPELINE_ERROR, SPEC_STREAM_WRITABLE,
+    SPEC_STREAM_WRITABLE_HAS_INSTANCE, SPEC_STREAM_WRITABLE_WRITE_ADAPTER,
 };
 
 const PRELUDE: &str = include_str!("stream_prelude.js");
@@ -74,7 +73,11 @@ pub fn pipeline(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
             code,
         ));
     }
-    validate_pipeline(&stages)?;
+    if terminal.is_some() {
+        validate_terminal_pipeline(&stages)?;
+    } else {
+        validate_pipeline(&stages)?;
+    }
     if callback.is_none() {
         let code = if stages.len() > 2 {
             "ERR_INVALID_ARG_TYPE"
@@ -86,7 +89,6 @@ pub fn pipeline(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
         return Err(pipeline_error("The pipeline requires a callback", code));
     }
     if let Some(terminal) = terminal {
-        validate_terminal_pipeline(&stages)?;
         return run_terminal_pipeline(state, &stages, terminal, callback.expect("validated"));
     }
     for pair in stages.windows(2) {
@@ -99,7 +101,7 @@ pub fn pipeline(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
         }
     }
     if let Some(callback) = callback {
-        attach_pipeline_callback(&stages, callback)?;
+        attach_pipeline_callback(state, &stages, callback)?;
     }
     Ok(stages.last().cloned().unwrap_or(Value::Undefined))
 }
@@ -336,8 +338,15 @@ pub fn web_pipeline_complete(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if let Some(context) = args.first().filter(|value| is_pipeline_callback_context(value)) {
-        settle_pipeline_callback(context, None)?;
+    if let Some(context) = args
+        .first()
+        .filter(|value| is_pipeline_callback_context(value))
+    {
+        let error = match args.get(1) {
+            Some(Value::Boolean(true)) | None => None,
+            Some(error) => Some(error.clone()),
+        };
+        settle_pipeline_callback(context, error)?;
         return Ok(Value::Undefined);
     }
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
@@ -360,7 +369,10 @@ pub fn web_pipeline_error(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if let Some(context) = args.first().filter(|value| is_pipeline_callback_context(value)) {
+    if let Some(context) = args
+        .first()
+        .filter(|value| is_pipeline_callback_context(value))
+    {
         settle_pipeline_callback(context, args.get(1).cloned())?;
         return Ok(Value::Undefined);
     }
@@ -446,9 +458,7 @@ fn pipeline_function_kind(stage: &Value) -> Option<&str> {
     let constructor = execute::get_property(stage, "constructor");
     match execute::get_property(&constructor, "name") {
         Value::String(name) if name == "GeneratorFunction" => Some("GeneratorFunction"),
-        Value::String(name) if name == "AsyncGeneratorFunction" => {
-            Some("AsyncGeneratorFunction")
-        }
+        Value::String(name) if name == "AsyncGeneratorFunction" => Some("AsyncGeneratorFunction"),
         _ => None,
     }
 }
@@ -530,39 +540,52 @@ fn has_callable(target: &Value, key: &str) -> bool {
 }
 
 fn pipe(source: &Value, destination: &Value) -> Result<(), VmError> {
+    if matches!(
+        execute::get_property(destination, "closed"),
+        Value::Boolean(true)
+    ) {
+        return Err(pipeline_error(
+            "Cannot pipe to a closed stream",
+            "ERR_STREAM_UNABLE_TO_PIPE",
+        ));
+    }
     let method = execute::get_property(source, "pipe");
     execute::call(&method, source, std::slice::from_ref(destination)).map(|_| ())
 }
 
-fn attach_pipeline_callback(stages: &[Value], callback: Value) -> Result<(), VmError> {
+fn attach_pipeline_callback(
+    state: &Rc<RefCell<HostState>>,
+    stages: &[Value],
+    callback: Value,
+) -> Result<(), VmError> {
     let last = stages.last().expect("validated length");
     let once = execute::get_property(last, "once");
+    let context = host_api::object(vec![
+        ("\0pipelineCallbackContext".into(), Value::Boolean(true)),
+        ("callback".into(), callback.clone()),
+        ("stream".into(), last.clone()),
+        ("settled".into(), Value::Boolean(false)),
+        ("ignoreSuccess".into(), Value::Boolean(true)),
+        (
+            "cleanupError".into(),
+            Value::Boolean(has_callable(last, "read")),
+        ),
+    ]);
     if quench_runtime::is_callable(&once) {
         // `pipeline` owns a writable terminal even when it is also
         // readable (for example PassThrough). Node completes the callback on
         // that terminal's `finish`; waiting for `end` would require a reader
         // to consume the destination and leaves empty pipelines pending.
-        let context = host_api::object(vec![
-            ("\0pipelineCallbackContext".into(), Value::Boolean(true)),
-            ("callback".into(), callback.clone()),
-            ("stream".into(), last.clone()),
-            ("settled".into(), Value::Boolean(false)),
-            ("cleanupError".into(), Value::Boolean(has_callable(last, "read"))),
-        ]);
         let complete = host_api::bound_capability_with_arguments(
             crate::host::capability_ref(SPEC_STREAM_WEB_PIPELINE_COMPLETE),
-            vec![context.clone()],
+            vec![context.clone(), Value::Boolean(true)],
         );
         let failed = host_api::bound_capability_with_arguments(
             crate::host::capability_ref(SPEC_STREAM_WEB_PIPELINE_ERROR),
             vec![context.clone()],
         );
         execute::set_property_in_place(&context, "errorHandler", failed.clone());
-        execute::call(
-            &once,
-            last,
-            &[Value::String("finish".into()), complete],
-        )?;
+        execute::call(&once, last, &[Value::String("finish".into()), complete])?;
         execute::call(&once, last, &[Value::String("error".into()), failed])?;
     }
     for pair in stages.windows(2) {
@@ -579,8 +602,36 @@ fn attach_pipeline_callback(stages: &[Value], callback: Value) -> Result<(), VmE
         execute::call(
             &source_error,
             &pair[0],
-            &[Value::String("error".into()), bound],
+            &[Value::String("error".into()), bound.clone()],
         )?;
+        // `Readable.pipe()` may remove its close edge when the readable emits
+        // `end`; pipeline still has to tear down downstream stages on the
+        // subsequent close edge.  Keep this ownership in the pipeline
+        // lifecycle so a clean-looking cycle cannot report false success.
+        execute::call(
+            &source_error,
+            &pair[0],
+            &[Value::String("close".into()), bound],
+        )?;
+    }
+    // `finished` is the canonical premature-close detector.  Its successful
+    // side notifications are ignored here; the terminal finish observer
+    // above remains the pipeline's success edge, while any stream closing
+    // before its required side completes reports the shared error.
+    execute::set_property_in_place(&context, "ignoreSuccess", Value::Boolean(true));
+    for (index, stream) in stages.iter().enumerate() {
+        let options = host_api::object(vec![
+            (
+                "readable".into(),
+                Value::Boolean(index < stages.len().saturating_sub(1)),
+            ),
+            ("writable".into(), Value::Boolean(index > 0)),
+        ]);
+        let complete = host_api::bound_capability_with_arguments(
+            crate::host::capability_ref(SPEC_STREAM_WEB_PIPELINE_COMPLETE),
+            vec![context.clone()],
+        );
+        finished(state, None, &[stream.clone(), options, complete])?;
     }
     Ok(())
 }
@@ -594,6 +645,9 @@ fn is_pipeline_callback_context(value: &Value) -> bool {
 
 fn settle_pipeline_callback(context: &Value, error: Option<Value>) -> Result<(), VmError> {
     if execute::is_truthy(&execute::get_property(context, "settled")) {
+        return Ok(());
+    }
+    if error.is_none() && execute::is_truthy(&execute::get_property(context, "ignoreSuccess")) {
         return Ok(());
     }
     execute::set_property_in_place(context, "settled", Value::Boolean(true));
@@ -692,11 +746,7 @@ pub fn readable_wrap(
             crate::host::capability_ref(SPEC_STREAM_READABLE_WRAP_EVENT),
             vec![target.clone(), Value::String(event.into())],
         );
-        execute::call(
-            &on,
-            &source,
-            &[Value::String(event.into()), listener],
-        )?;
+        execute::call(&on, &source, &[Value::String(event.into()), listener])?;
     }
     Ok(target)
 }
@@ -736,7 +786,10 @@ pub fn readable_wrap_event(
             let error = args.get(2).cloned().unwrap_or(Value::Undefined);
             let state = execute::get_property(&target, "_readableState");
             execute::set_property_in_place(&state, "errored", error.clone());
-            let auto_destroy = !matches!(execute::get_property(&state, "autoDestroy"), Value::Boolean(false));
+            let auto_destroy = !matches!(
+                execute::get_property(&state, "autoDestroy"),
+                Value::Boolean(false)
+            );
             if auto_destroy {
                 let destroy = execute::get_property(&target, "destroy");
                 if quench_runtime::is_callable(&destroy) {
@@ -1458,9 +1511,13 @@ pub fn finished_event(
     }
     if side == Some("error") {
         let stream = execute::get_property(&state, "stream");
-        if matches!(execute::get_property(&stream, "destroyed"), Value::Boolean(true))
-            && !matches!(execute::get_property(&stream, "closed"), Value::Boolean(true))
-        {
+        if matches!(
+            execute::get_property(&stream, "destroyed"),
+            Value::Boolean(true)
+        ) && !matches!(
+            execute::get_property(&stream, "closed"),
+            Value::Boolean(true)
+        ) {
             if let Some(error) = args.get(3).cloned() {
                 execute::set_property_in_place(&state, "pendingError", error);
             }
@@ -1480,11 +1537,7 @@ pub fn finished_event(
             None,
             &[state.clone(), execute::get_property(&state, "stream")],
         )?;
-        execute::call(
-            &callback,
-            &Value::Undefined,
-            &[error],
-        )?;
+        execute::call(&callback, &Value::Undefined, &[error])?;
         return Ok(Value::Undefined);
     }
     if side == Some("close") {
@@ -1497,7 +1550,10 @@ pub fn finished_event(
             Value::Boolean(true)
         ) {
             let stream = execute::get_property(&state, "stream");
-            if matches!(execute::get_property(&stream, "destroyed"), Value::Boolean(true)) {
+            if matches!(
+                execute::get_property(&stream, "destroyed"),
+                Value::Boolean(true)
+            ) {
                 execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
             }
             let pending_error = execute::get_property(&state, "pendingError");
@@ -1510,14 +1566,21 @@ pub fn finished_event(
             execute::set_property_in_place(&state, "pendingScheduled", Value::Boolean(true));
             let error = host_api::bound_capability_with_arguments(
                 crate::host::capability_ref(SPEC_STREAM_FINISHED_EVENT),
-                vec![state.clone(), callback.clone(), Value::String("error".into())],
+                vec![
+                    state.clone(),
+                    callback.clone(),
+                    Value::String("error".into()),
+                ],
             );
             crate::modules::timers::set_immediate(_state, &[error, pending_error])?;
             return Ok(Value::Undefined);
         }
         let stream = execute::get_property(&state, "stream");
         execute::set_property_in_place(&state, "closeSeen", Value::Boolean(true));
-        if matches!(execute::get_property(&stream, "destroyed"), Value::Boolean(true)) {
+        if matches!(
+            execute::get_property(&stream, "destroyed"),
+            Value::Boolean(true)
+        ) {
             execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
         }
         // A close after the stream recorded an error must not be treated as a
@@ -1526,18 +1589,15 @@ pub fn finished_event(
         // precedence; boolean error markers used by legacy stream shims are
         // normalized to the standard premature-close error.
         let stream_error = [
-            execute::get_property(
-                &execute::get_property(&stream, "_readableState"),
-                "errored",
-            ),
-            execute::get_property(
-                &execute::get_property(&stream, "_writableState"),
-                "errored",
-            ),
+            execute::get_property(&execute::get_property(&stream, "_readableState"), "errored"),
+            execute::get_property(&execute::get_property(&stream, "_writableState"), "errored"),
         ]
         .into_iter()
         .find(|value| {
-            !matches!(value, Value::Undefined | Value::Null | Value::Boolean(false))
+            !matches!(
+                value,
+                Value::Undefined | Value::Null | Value::Boolean(false)
+            )
         });
         if let Some(stream_error) = stream_error {
             let error = match stream_error {
@@ -1626,11 +1686,7 @@ pub fn finished_event(
             );
             if complete {
                 execute::set_property_in_place(&state, "done", Value::Boolean(true));
-                finished_cleanup(
-                    _state,
-                    None,
-                    &[state.clone(), stream.clone()],
-                )?;
+                finished_cleanup(_state, None, &[state.clone(), stream.clone()])?;
                 execute::call(&callback, &Value::Undefined, &[])?;
             }
             return Ok(Value::Undefined);
@@ -2029,14 +2085,22 @@ pub fn writable_write_adapter(
         matches!(
             execute::get_property(&execute::get_property(stream, "_writableState"), "ended"),
             Value::Boolean(true)
-        ) || matches!(execute::get_property(stream, "writableEnded"), Value::Boolean(true))
+        ) || matches!(
+            execute::get_property(stream, "writableEnded"),
+            Value::Boolean(true)
+        )
     });
     let destroyed = receiver.is_some_and(|stream| {
-        matches!(execute::get_property(stream, "destroyed"), Value::Boolean(true))
-            || matches!(
-                execute::get_property(&execute::get_property(stream, "_writableState"), "destroyed"),
-                Value::Boolean(true)
-            )
+        matches!(
+            execute::get_property(stream, "destroyed"),
+            Value::Boolean(true)
+        ) || matches!(
+            execute::get_property(
+                &execute::get_property(stream, "_writableState"),
+                "destroyed"
+            ),
+            Value::Boolean(true)
+        )
     });
     let callback_index = write_args
         .iter()
@@ -2118,7 +2182,10 @@ pub fn readable_push_adapter(
         execute::get_property(receiver, "destroyed"),
         Value::Boolean(true)
     ) && !matches!(execute::get_property(&state, "ended"), Value::Boolean(true))
-        && matches!(execute::get_property(&state, "errored"), Value::Null | Value::Undefined);
+        && matches!(
+            execute::get_property(&state, "errored"),
+            Value::Null | Value::Undefined
+        );
     if empty && active {
         return Ok(Value::Boolean(true));
     }
@@ -2314,8 +2381,13 @@ pub fn set_default_high_water_mark(
     let defaults = args.first().ok_or(VmError::NotCallable)?;
     let object_mode = args.get(1).is_some_and(execute::is_truthy);
     let value = match args.get(2) {
-        Some(Value::Number(value)) if value.is_finite() && value.fract() == 0.0
-            && (0.0..=9_007_199_254_740_991.0).contains(value) => *value,
+        Some(Value::Number(value))
+            if value.is_finite()
+                && value.fract() == 0.0
+                && (0.0..=9_007_199_254_740_991.0).contains(value) =>
+        {
+            *value
+        }
         Some(Value::Number(value)) => {
             return Err(crate::modules::buffer_enc::out_of_range(
                 "value",
@@ -2555,9 +2627,11 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
         ("enumerable".into(), Value::Boolean(false)),
         ("configurable".into(), Value::Boolean(false)),
     ]);
-    if let Ok(updated_prototype) =
-        execute::define_property(readable_prototype.clone(), "readableBuffer", readable_buffer)
-    {
+    if let Ok(updated_prototype) = execute::define_property(
+        readable_prototype.clone(),
+        "readableBuffer",
+        readable_buffer,
+    ) {
         let _ = execute::set_property_in_place(&readable, "prototype", updated_prototype);
     }
     let readable_prototype = execute::get_property(&readable, "prototype");

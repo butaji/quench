@@ -182,6 +182,40 @@ pub(crate) fn execute_set_property(
         crate::execute::write_value(registers, object, target.clone());
     }
     reject_nullish_property_write(&target)?;
+    if let crate::value::Value::Object(object) = &target {
+        if object.iter().any(|(name, value)| {
+            name == "\0readonly_namespace" && matches!(value, crate::value::Value::Boolean(true))
+        }) {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot assign to read only property",
+            ));
+        }
+        let immutable_request = object.iter().any(|(name, value)| {
+            matches!(
+                (name.as_str(), value),
+                ("\0vm_module_request", crate::value::Value::Boolean(true))
+                    | (
+                        "\0vm_module_request_attributes",
+                        crate::value::Value::Boolean(true)
+                    )
+            )
+        });
+        let immutable_attributes = object.iter().any(|(name, value)| {
+            name == "\0vm_module_request_attributes"
+                && matches!(value, crate::value::Value::Boolean(true))
+        });
+        if immutable_request
+            && (immutable_attributes
+                || crate::builtins::object::has_own_property(
+                    Some(&target),
+                    Some(&crate::value::Value::String(key.clone())),
+                ) == crate::value::Value::Boolean(true))
+        {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot assign to read only module request property",
+            ));
+        }
+    }
     if crate::module_bindings::is_namespace(&target) {
         return write_failure(strict);
     }
@@ -282,17 +316,27 @@ fn try_plain_index_dynamic_write(
         return Ok(false);
     };
     let key_value = crate::execute::read_register(registers, *key)?;
-    let crate::value::Value::Number(number) = key_value else {
-        return Ok(false);
+    let index = match &key_value {
+        crate::value::Value::Number(number)
+            if number.is_finite() && *number >= 0.0 && number.fract() == 0.0 =>
+        {
+            *number as u64
+        }
+        crate::value::Value::String(key) => crate::typed_array_ops::typed_array_index(key)
+            .map(|index| index as u64)
+            .unwrap_or(u64::MAX),
+        _ => return Ok(false),
     };
-    if !number.is_finite() || number < 0.0 || number.fract() != 0.0 {
-        return Ok(false);
-    }
-    let index = number as u64;
     if index >= u64::from(u32::MAX) {
         return Ok(false);
     }
     let target = crate::execute::read_register(registers, *object)?;
+    let value = unwrap_assignment_value(&crate::execute::read_register(registers, *src)?);
+    if let crate::value::Value::Number(number) = &value {
+        if crate::typed_array_ops::set_numeric_index(&target, index as usize, *number).is_some() {
+            return Ok(true);
+        }
+    }
     let crate::value::Value::Object(object_data) = &target else {
         return Ok(false);
     };
@@ -302,7 +346,6 @@ fn try_plain_index_dynamic_write(
     {
         return Ok(false);
     }
-    let value = unwrap_assignment_value(&crate::execute::read_register(registers, *src)?);
     let updated = crate::builtins::object_alias::set(std::rc::Rc::clone(object_data), &key, value);
     crate::execute::write_value(registers, *object, updated);
     Ok(true)
@@ -461,6 +504,17 @@ fn finish_set_property(
     } else {
         value
     };
+    // `process.env.TZ = ...` has one host-visible consequence beyond storing
+    // the string: ECMAScript Date's default timezone changes for subsequent
+    // conversions. Keep that consequence attached to the process-env shape,
+    // so every ordinary assignment path (including host-side writes) shares
+    // the same semantic hook instead of relying on a JS proxy.
+    if process_env && key == "TZ" {
+        let setter = crate::execute::get_property(target, "\0quench:process_env_tz_setter");
+        if crate::is_callable(&setter) {
+            crate::functions::execute_target(&setter, target, std::slice::from_ref(&value))?;
+        }
+    }
     let setter = {
         let _scope = crate::execution_trace::attribution_scope("SetN:accessor");
         if own_data_property(target, key) {
@@ -516,6 +570,19 @@ fn finish_set_property(
     }
     let _scope = crate::execution_trace::attribution_scope("SetN:ordinary");
     ordinary_set(registers, object, target, key, value, strict)
+}
+
+/// Host-facing receiver-aware assignment. Native modules use this when
+/// materializing an observable error/object property so inherited accessors
+/// and their side effects remain visible to JavaScript.
+pub(crate) fn set_property_from_host(
+    target: crate::value::Value,
+    key: &str,
+    value: crate::value::Value,
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let mut registers = crate::register_file::RegisterFile::from_values(vec![target.clone()]);
+    finish_set_property(&mut registers, 0, &target, key, value, true)?;
+    Ok(registers.read(0).unwrap_or(target))
 }
 
 fn own_data_property(target: &crate::value::Value, key: &str) -> bool {

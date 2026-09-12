@@ -369,7 +369,7 @@ fn set_receiver_data(
             // rather than publishing a COW replacement unreachable by the
             // host resource table.
             unsafe {
-                (&mut *(std::rc::Rc::as_ptr(&properties) as *mut crate::value::ObjectData))
+            (&mut *(std::rc::Rc::as_ptr(&properties) as *mut crate::value::ObjectData))
                     .set_property_in_place(key, value.clone());
             }
             return Ok(true);

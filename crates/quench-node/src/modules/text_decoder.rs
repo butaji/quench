@@ -27,6 +27,14 @@ pub fn new_text_decoder(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resu
             ),
         ]))
     })?;
+    let fatal = matches!(
+        args.get(1).and_then(|options| match options {
+            Value::Object(_) | Value::ObjectAlias(_) =>
+                Some(execute::get_property(options, "fatal")),
+            _ => None,
+        }),
+        Some(Value::Boolean(true))
+    );
     let decode = crate::host::capability(crate::registry::SPEC_TEXT_DECODER_DECODE);
     Ok(host_api::object(vec![
         (
@@ -34,6 +42,7 @@ pub fn new_text_decoder(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resu
             Value::String(encoding.to_string()),
         ),
         ("encoding".to_string(), Value::String(encoding.to_string())),
+        ("\0fatal".to_string(), Value::Boolean(fatal)),
         ("decode".to_string(), decode),
         (
             "\u{0}quench:descriptor:\u{0}decode".to_string(),
@@ -77,9 +86,23 @@ pub fn decode(
             )))
         }
     };
+    let fatal = matches!(
+        receiver.map(|value| execute::get_property(value, "\0fatal")),
+        Some(Value::Boolean(true))
+    );
     let text = if encoding == "windows-1252" {
         // WHATWG-canonical windows-1252 decoder (encoding_rs).
         encoding_rs::WINDOWS_1252.decode(&bytes).0.into_owned()
+    } else if fatal {
+        String::from_utf8(bytes).map_err(|_| {
+            VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                (
+                    "message".into(),
+                    Value::String("The encoded data was not valid UTF-8".into()),
+                ),
+            ]))
+        })?
     } else {
         String::from_utf8_lossy(&bytes).into_owned()
     };

@@ -50,7 +50,9 @@ impl AtomTable {
         if atom.as_u32().is_some() {
             return None;
         }
-        self.by_id.get(atom.0.wrapping_sub(1) as usize).map(|s| &**s)
+        self.by_id
+            .get(atom.0.wrapping_sub(1) as usize)
+            .map(|s| &**s)
     }
 }
 

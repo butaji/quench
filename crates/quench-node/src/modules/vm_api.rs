@@ -262,20 +262,22 @@ pub fn run_in_context(
 }
 
 fn mark_foreign_result(result: Result<Value, VmError>) -> Result<Value, VmError> {
-    result.map(|value| {
-        if matches!(value, Value::Object(_) | Value::ObjectAlias(_)) {
-            execute::set_property(value, "\0vm:foreign_context", Value::Boolean(true))
-        } else {
-            value
-        }
-    }).map_err(|error| match error {
-        VmError::Thrown(value) => VmError::Thrown(execute::set_property(
-            value,
-            "\0vm:foreign_context",
-            Value::Boolean(true),
-        )),
-        error => error,
-    })
+    result
+        .map(|value| {
+            if matches!(value, Value::Object(_) | Value::ObjectAlias(_)) {
+                execute::set_property(value, "\0vm:foreign_context", Value::Boolean(true))
+            } else {
+                value
+            }
+        })
+        .map_err(|error| match error {
+            VmError::Thrown(value) => VmError::Thrown(execute::set_property(
+                value,
+                "\0vm:foreign_context",
+                Value::Boolean(true),
+            )),
+            error => error,
+        })
 }
 
 pub fn run_in_this_context(

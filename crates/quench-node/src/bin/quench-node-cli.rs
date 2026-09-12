@@ -19,7 +19,9 @@ fn main() -> ExitCode {
         print_usage();
         return ExitCode::SUCCESS;
     }
-    if args.first().is_some_and(|arg| arg == "-e" || arg == "--eval") {
+    if args.first().is_some_and(|arg| {
+        matches!(arg.as_str(), "-e" | "--eval" | "-p" | "--print" | "-pe" | "-ep")
+    }) {
         let source = args.get(1).cloned().unwrap_or_default();
         let outcome =
             quench_node::run::eval_script(&source, std::sync::Arc::new(|line| println!("{line}")));

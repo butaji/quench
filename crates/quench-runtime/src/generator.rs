@@ -516,10 +516,7 @@ fn update_machine_frame(
     push_delegate_frame_with_values(generator, iterator, *dst)
 }
 
-fn push_delegate_frame(
-    generator: &GeneratorData,
-    state: &GeneratorState,
-) -> Result<(), VmError> {
+fn push_delegate_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(), VmError> {
     let Some(crate::continuation::SuspensionPoint::YieldStar { dst, iterator, .. }) =
         state.suspension.as_ref()
     else {
@@ -594,10 +591,18 @@ fn push_dispose_frame(generator: &GeneratorData, state: &GeneratorState) -> Resu
     let Some(body_code) = body.code() else {
         return Err(VmError::MissingReturn);
     };
-    let Some((yield_index, Op::Yield { src })) =
-        body_code.find_cold(|op| matches!(op, Op::Yield { .. }))
-    else {
+    // An async using initializer commonly contains `await` (for example,
+    // `await using handle = await fs.open(...)`).  `WithDispose` must retain
+    // its scope across either kind of suspension; treating only generator
+    // `yield` as resumable drops the remainder of the block after the await.
+    let Some((yield_index, op)) = body_code.find_cold(|op| {
+        matches!(op, Op::Yield { .. } | Op::Await { .. })
+    }) else {
         return Ok(false);
+    };
+    let yield_dst = match op {
+        Op::Yield { src } | Op::Await { dst: src, .. } => *src,
+        _ => return Ok(false),
     };
     let body_resume = crate::machine::CodeRange {
         code: body.range.code,
@@ -612,7 +617,7 @@ fn push_dispose_frame(generator: &GeneratorData, state: &GeneratorState) -> Resu
             resume,
             stack: *stack,
             await_using: *await_using,
-            yield_dst: *src,
+            yield_dst,
         },
     )?;
     Ok(true)

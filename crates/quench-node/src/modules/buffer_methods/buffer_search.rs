@@ -304,15 +304,14 @@ fn rolling_search(
         high = high.wrapping_mul(base);
     }
     let hash = |bytes: &[u8]| {
-        bytes
-            .iter()
-            .fold(0u64, |hash, byte| hash.wrapping_mul(base).wrapping_add(*byte as u64))
+        bytes.iter().fold(0u64, |hash, byte| {
+            hash.wrapping_mul(base).wrapping_add(*byte as u64)
+        })
     };
     let reverse_hash = |bytes: &[u8]| {
-        bytes
-            .iter()
-            .rev()
-            .fold(0u64, |hash, byte| hash.wrapping_mul(base).wrapping_add(*byte as u64))
+        bytes.iter().rev().fold(0u64, |hash, byte| {
+            hash.wrapping_mul(base).wrapping_add(*byte as u64)
+        })
     };
     let needle_hash = hash(needle);
     if reverse {

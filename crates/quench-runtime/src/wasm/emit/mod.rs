@@ -3,9 +3,7 @@
 mod atomic;
 mod ops;
 
-use crate::hir::{
-    CatchClause, FuncSig, GcOp, GcType, Inst, Kind, LoadOp, Reg, StoreOp, Ty,
-};
+use crate::hir::{CatchClause, FuncSig, GcOp, GcType, Inst, Kind, LoadOp, Reg, StoreOp, Ty};
 use crate::native::SimdOp;
 use wasmparser::{BlockType, FunctionBody, MemArg, Operator};
 
@@ -898,12 +896,7 @@ fn emit_shuffle(ctx: &mut Context<'_>, lanes: [u8; 16]) -> Result<(), LowerError
     let b = ctx.pop()?;
     let a = ctx.pop()?;
     let dst = ctx.alloc()?;
-    ctx.emit(Inst::SimdShuffle {
-        dst,
-        a,
-        b,
-        lanes,
-    });
+    ctx.emit(Inst::SimdShuffle { dst, a, b, lanes });
     ctx.push(dst);
     Ok(())
 }
@@ -1279,33 +1272,50 @@ fn emit_gc(ctx: &mut Context<'_>, op: GcOp, nargs: usize, has_dst: bool) -> Resu
 
 fn emit_gc_op(ctx: &mut Context<'_>, op: Operator<'_>) -> Result<(), LowerError> {
     match op {
-        Operator::StructNewDefault { struct_type_index } => {
-            emit_gc(ctx, GcOp::StructNewDefault { type_idx: struct_type_index }, 0, true)
-        }
+        Operator::StructNewDefault { struct_type_index } => emit_gc(
+            ctx,
+            GcOp::StructNewDefault {
+                type_idx: struct_type_index,
+            },
+            0,
+            true,
+        ),
         Operator::StructNew { struct_type_index } => {
             let n = match ctx.gc_types.get(struct_type_index as usize) {
                 Some(GcType::Struct { fields, .. }) => fields.len(),
                 _ => 0,
             };
-            emit_gc(ctx, GcOp::StructNew { type_idx: struct_type_index }, n, true)
+            emit_gc(
+                ctx,
+                GcOp::StructNew {
+                    type_idx: struct_type_index,
+                },
+                n,
+                true,
+            )
         }
         Operator::StructNewDesc { struct_type_index } => {
             let n = match ctx.gc_types.get(struct_type_index as usize) {
                 Some(GcType::Struct { fields, .. }) => fields.len(),
                 _ => 0,
             };
-            emit_gc(ctx, GcOp::StructNewDesc { type_idx: struct_type_index }, n + 1, true)
-        }
-        Operator::StructNewDefaultDesc { struct_type_index } => {
             emit_gc(
                 ctx,
-                GcOp::StructNewDefaultDesc {
+                GcOp::StructNewDesc {
                     type_idx: struct_type_index,
                 },
-                1,
+                n + 1,
                 true,
             )
         }
+        Operator::StructNewDefaultDesc { struct_type_index } => emit_gc(
+            ctx,
+            GcOp::StructNewDefaultDesc {
+                type_idx: struct_type_index,
+            },
+            1,
+            true,
+        ),
         Operator::RefGetDesc { type_index: _ } => emit_gc(ctx, GcOp::RefGetDesc, 1, true),
         Operator::RefCastDescEqNonNull { hty } => emit_cast_desc(ctx, false, hty),
         Operator::RefCastDescEqNullable { hty } => emit_cast_desc(ctx, true, hty),
@@ -1352,12 +1362,22 @@ fn emit_gc_op(ctx: &mut Context<'_>, op: Operator<'_>) -> Result<(), LowerError>
             struct_type_index: _,
             field_index,
         } => emit_gc(ctx, GcOp::StructSet { field: field_index }, 2, false),
-        Operator::ArrayNew { array_type_index } => {
-            emit_gc(ctx, GcOp::ArrayNew { type_idx: array_type_index }, 2, true)
-        }
-        Operator::ArrayNewDefault { array_type_index } => {
-            emit_gc(ctx, GcOp::ArrayNewDefault { type_idx: array_type_index }, 1, true)
-        }
+        Operator::ArrayNew { array_type_index } => emit_gc(
+            ctx,
+            GcOp::ArrayNew {
+                type_idx: array_type_index,
+            },
+            2,
+            true,
+        ),
+        Operator::ArrayNewDefault { array_type_index } => emit_gc(
+            ctx,
+            GcOp::ArrayNewDefault {
+                type_idx: array_type_index,
+            },
+            1,
+            true,
+        ),
         Operator::ArrayNewFixed {
             array_type_index,
             array_size,
@@ -1370,18 +1390,40 @@ fn emit_gc_op(ctx: &mut Context<'_>, op: Operator<'_>) -> Result<(), LowerError>
             array_size as usize,
             true,
         ),
-        Operator::ArrayGet { array_type_index } => {
-            emit_gc(ctx, GcOp::ArrayGet { signed: None, pack: array_pack(ctx, array_type_index) }, 2, true)
-        }
-        Operator::ArrayGetS { array_type_index } => {
-            emit_gc(ctx, GcOp::ArrayGet { signed: Some(true), pack: array_pack(ctx, array_type_index) }, 2, true)
-        }
-        Operator::ArrayGetU { array_type_index } => {
-            emit_gc(ctx, GcOp::ArrayGet { signed: Some(false), pack: array_pack(ctx, array_type_index) }, 2, true)
-        }
-        Operator::ArraySet { array_type_index: _ } => emit_gc(ctx, GcOp::ArraySet, 3, false),
+        Operator::ArrayGet { array_type_index } => emit_gc(
+            ctx,
+            GcOp::ArrayGet {
+                signed: None,
+                pack: array_pack(ctx, array_type_index),
+            },
+            2,
+            true,
+        ),
+        Operator::ArrayGetS { array_type_index } => emit_gc(
+            ctx,
+            GcOp::ArrayGet {
+                signed: Some(true),
+                pack: array_pack(ctx, array_type_index),
+            },
+            2,
+            true,
+        ),
+        Operator::ArrayGetU { array_type_index } => emit_gc(
+            ctx,
+            GcOp::ArrayGet {
+                signed: Some(false),
+                pack: array_pack(ctx, array_type_index),
+            },
+            2,
+            true,
+        ),
+        Operator::ArraySet {
+            array_type_index: _,
+        } => emit_gc(ctx, GcOp::ArraySet, 3, false),
         Operator::ArrayLen => emit_gc(ctx, GcOp::ArrayLen, 1, true),
-        Operator::ArrayFill { array_type_index: _ } => emit_gc(ctx, GcOp::ArrayFill, 4, false),
+        Operator::ArrayFill {
+            array_type_index: _,
+        } => emit_gc(ctx, GcOp::ArrayFill, 4, false),
         Operator::ArrayCopy { .. } => emit_gc(ctx, GcOp::ArrayCopy, 5, false),
         Operator::ArrayNewData {
             array_type_index,
@@ -1410,11 +1452,25 @@ fn emit_gc_op(ctx: &mut Context<'_>, op: Operator<'_>) -> Result<(), LowerError>
         Operator::ArrayInitData {
             array_type_index: _,
             array_data_index,
-        } => emit_gc(ctx, GcOp::ArrayInitData { data: array_data_index }, 4, false),
+        } => emit_gc(
+            ctx,
+            GcOp::ArrayInitData {
+                data: array_data_index,
+            },
+            4,
+            false,
+        ),
         Operator::ArrayInitElem {
             array_type_index: _,
             array_elem_index,
-        } => emit_gc(ctx, GcOp::ArrayInitElem { elem: array_elem_index }, 4, false),
+        } => emit_gc(
+            ctx,
+            GcOp::ArrayInitElem {
+                elem: array_elem_index,
+            },
+            4,
+            false,
+        ),
         Operator::RefCastNonNull { hty } => emit_cast(ctx, false, hty),
         Operator::RefCastNullable { hty } => emit_cast(ctx, true, hty),
         Operator::RefTestNonNull { hty } => emit_test(ctx, false, hty),
@@ -1425,14 +1481,42 @@ fn emit_gc_op(ctx: &mut Context<'_>, op: Operator<'_>) -> Result<(), LowerError>
     }
 }
 
-fn emit_cast(ctx: &mut Context<'_>, nullable: bool, hty: wasmparser::HeapType) -> Result<(), LowerError> {
+fn emit_cast(
+    ctx: &mut Context<'_>,
+    nullable: bool,
+    hty: wasmparser::HeapType,
+) -> Result<(), LowerError> {
     let (heap, type_idx, exact) = heap_cast(hty);
-    emit_gc(ctx, GcOp::RefCast { nullable, exact, heap, type_idx }, 1, true)
+    emit_gc(
+        ctx,
+        GcOp::RefCast {
+            nullable,
+            exact,
+            heap,
+            type_idx,
+        },
+        1,
+        true,
+    )
 }
 
-fn emit_test(ctx: &mut Context<'_>, nullable: bool, hty: wasmparser::HeapType) -> Result<(), LowerError> {
+fn emit_test(
+    ctx: &mut Context<'_>,
+    nullable: bool,
+    hty: wasmparser::HeapType,
+) -> Result<(), LowerError> {
     let (heap, type_idx, exact) = heap_cast(hty);
-    emit_gc(ctx, GcOp::RefTest { nullable, exact, heap, type_idx }, 1, true)
+    emit_gc(
+        ctx,
+        GcOp::RefTest {
+            nullable,
+            exact,
+            heap,
+            type_idx,
+        },
+        1,
+        true,
+    )
 }
 
 fn emit_cast_desc(
@@ -1466,8 +1550,14 @@ fn pack_of(ctx: &Context<'_>, type_idx: u32, field: u32) -> u8 {
 
 fn array_pack(ctx: &Context<'_>, type_idx: u32) -> u8 {
     match ctx.gc_types.get(type_idx as usize) {
-        Some(GcType::Array { elem: crate::hir::GcStorage::I8, .. }) => 8,
-        Some(GcType::Array { elem: crate::hir::GcStorage::I16, .. }) => 16,
+        Some(GcType::Array {
+            elem: crate::hir::GcStorage::I8,
+            ..
+        }) => 8,
+        Some(GcType::Array {
+            elem: crate::hir::GcStorage::I16,
+            ..
+        }) => 16,
         _ => 0,
     }
 }

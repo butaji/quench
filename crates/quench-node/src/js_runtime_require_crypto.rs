@@ -1,6 +1,6 @@
 fn require_crypto_module(name: &str) -> Option<Value> {
     if name == "node:crypto" || name == "crypto" {
-            return Some(Value::object(vec![
+            let result = Value::object(vec![
                 (
                     "createHash".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::CreateHash)),
@@ -72,6 +72,7 @@ fn require_crypto_module(name: &str) -> Option<Value> {
                         CapabilityName::CryptoGenerateKeyPairSync,
                     )),
                 ),
+                ("KeyObject".into(), key_object_constructor()),
                 (
                     "generateKeySync".into(),
                     capability_function(HostCapabilityKind::Custom(
@@ -200,7 +201,8 @@ fn require_crypto_module(name: &str) -> Option<Value> {
                     "pbkdf2".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoPbkdf2)),
                 ),
-            ]));
+            ]);
+            return Some(result);
     }
     None
 }

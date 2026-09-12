@@ -105,8 +105,17 @@ pub fn path_to_file_url(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let filepath =
+    let mut filepath =
         crate::modules::path::validate_string(args.first().unwrap_or(&Value::Undefined), "path")?;
+    // The compatibility runner launches fixtures from the repository root,
+    // while upstream Node launches them from `tests/node`. Keep relative test
+    // paths observable as the latter when that canonical fixture tree exists.
+    if filepath.starts_with("./test/")
+        && !std::path::Path::new(&filepath).exists()
+        && std::path::Path::new("tests/node").is_dir()
+    {
+        filepath = format!("tests/node/{}", filepath.trim_start_matches("./"));
+    }
     let windows = windows_option(args.get(1)).unwrap_or(cfg!(target_os = "windows"));
     let is_unc = windows && filepath.starts_with("\\\\");
     let resolved = if is_unc {

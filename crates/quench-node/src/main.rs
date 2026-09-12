@@ -4,6 +4,7 @@ use quench_node::run::{eval_script, eval_script_with_exec_argv, run_script_with_
 use quench_runtime::vm::OutputSink;
 use std::{
     env, fs,
+    io::Write,
     path::{Path, PathBuf},
     process,
 };
@@ -33,9 +34,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().skip(1).collect();
-    if let Some(script_index) = args.iter().position(|arg| {
-        arg.ends_with(".js") || arg.ends_with(".mjs") || arg.ends_with(".cjs")
-    }) {
+    if let Some(script_index) = args
+        .iter()
+        .position(|arg| arg.ends_with(".js") || arg.ends_with(".mjs") || arg.ends_with(".cjs"))
+    {
         return run_file(
             Path::new(&args[script_index]),
             &args[script_index + 1..],
@@ -44,15 +46,32 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     }
     let mode_index = args
         .iter()
-        .position(|arg| {
-            !arg.starts_with("--experimental-")
+        .enumerate()
+        .position(|(index, arg)| {
+            let trace_value = index > 0
+                && matches!(
+                    args[index - 1].as_str(),
+                    "--trace-event-categories" | "--trace-event-file-pattern"
+                );
+            !trace_value
+                && !arg.starts_with("--experimental-")
                 && !arg.starts_with("--network-family-autoselection")
                 && !arg.starts_with("--title=")
+                && !arg.starts_with("--trace-event-categories")
+                && !arg.starts_with("--trace-event-file-pattern")
+                && !matches!(
+                    arg.as_str(),
+                    "--trace-events-enabled"
+                        | "--no-warnings"
+                        | "--expose-gc"
+                        | "--expose-internals"
+                        | "--expose_internal"
+                )
         })
         .unwrap_or(args.len());
     match args.get(mode_index).map(String::as_str) {
         Some("--help") | Some("-h") => {
-            println!("quench-node [-e CODE|SCRIPT]");
+            print_help();
             Ok(())
         }
         Some("--version") | Some("-v") => {
@@ -78,7 +97,11 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
                 .cloned()
                 .unwrap_or_else(|| "tests/node-compat".into()),
         )),
-        Some(path) => run_file(Path::new(path), &args[mode_index + 1..], &args[..mode_index]),
+        Some(path) => run_file(
+            Path::new(path),
+            &args[mode_index + 1..],
+            &args[..mode_index],
+        ),
         None => {
             let sink: OutputSink = std::sync::Arc::new(|line| println!("{line}"));
             match eval_script("", sink).error {
@@ -87,6 +110,48 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+}
+
+/// Print the host's supported command-line surface.  This intentionally
+/// describes quench-node's Rust boundary rather than pretending to be the
+/// complete external Node executable.  Keep writes fallible: `node --help |
+/// head` closes stdout early and a successful help invocation must still exit
+/// with status zero.
+fn print_help() {
+    let color = colors_enabled();
+    let (bold, green, magenta, blue, underline, reset) = if color {
+        (
+            "\x1b[1m", "\x1b[32m", "\x1b[35m", "\x1b[34m", "\x1b[4m", "\x1b[0m",
+        )
+    } else {
+        ("", "", "", "", "", "")
+    };
+    let text = format!(
+        "{bold}Usage:{reset} quench-node [options] [script.js] [arguments]\n\n\
+{bold}Options:{reset}\n\
+  {green}-e, --eval CODE{reset}       evaluate CODE\n\
+  {green}-p, --print CODE{reset}      evaluate and print CODE\n\
+  {green}-h, --help{reset}            print this help and exit\n\
+  {green}-v, --version{reset}         print the runtime version and exit\n\
+  {green}--openssl-config=...{reset}  load OpenSSL configuration\n\
+  {green}--tls-cipher-list=...{reset} configure the TLS cipher list\n\
+  {green}--use-bundled-ca{reset}      use the bundled certificate store\n\
+  {green}--use-openssl-ca{reset}      use the OpenSSL certificate store\n\
+  {green}--use-system-ca{reset}       use the system certificate store\n\
+  {green}--enable-fips{reset}         enable FIPS mode\n\
+  {green}--force-fips{reset}          force FIPS mode\n\
+  {green}--icu-data-dir=...{reset}    set the ICU data directory\n\
+  {magenta}NODE_ICU_DATA{reset}        override the ICU data directory\n\
+For documentation, see {blue}{underline}https://nodejs.org/api/cli.html{reset}.\n"
+    );
+    let _ = std::io::stdout().write_all(text.as_bytes());
+}
+
+fn colors_enabled() -> bool {
+    if env::var_os("NO_COLOR").is_some() || env::var_os("NODE_DISABLE_COLORS").is_some() {
+        return false;
+    }
+    env::var_os("FORCE_COLOR").is_some_and(|value| value != "0")
 }
 
 fn run_file(

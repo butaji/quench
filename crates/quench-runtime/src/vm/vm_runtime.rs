@@ -466,11 +466,11 @@ fn run_instruction(
                 if let Some(reason) = reason {
                     crate::execution_trace::packed_miss(reason);
                 }
-            }
-            let object = read_register(registers, instruction.b)?;
-            let key = read_register(registers, instruction.c)?;
-            let key = crate::properties::dynamic_property_key(&key)?;
-            let value = get_property_result(&object, &key)?;
+                }
+                let object = read_register(registers, instruction.b)?;
+                let key = read_register(registers, instruction.c)?;
+                let key = crate::properties::dynamic_property_key(&key)?;
+                let value = get_property_result(&object, &key)?;
             write_value(registers, instruction.a, value);
             Ok(None)
         }

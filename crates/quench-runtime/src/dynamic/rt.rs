@@ -68,7 +68,12 @@ impl Runtime {
         // QuickJS: 8-bit if every code point fits in Latin-1, else UTF-16.
         let latin1 = s.chars().all(|c| (c as u32) <= 0xff);
         let body = if latin1 {
-            JsString::Bytes(s.chars().map(|c| c as u8).collect::<Vec<_>>().into_boxed_slice())
+            JsString::Bytes(
+                s.chars()
+                    .map(|c| c as u8)
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+            )
         } else {
             JsString::Units(s.encode_utf16().collect::<Vec<_>>().into_boxed_slice())
         };

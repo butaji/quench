@@ -1,6 +1,32 @@
 //! Polyfill: `support`
 
-pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.gc ||= (typeof gc === "function" ? gc : function () { return undefined; });
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeCommonMutationProxies = new WeakMap();
+const __nodeCommonMustNotMutateObjectDeep = (original) => {
+  if (original === null || typeof original !== "object") return original;
+  const cached = __nodeCommonMutationProxies.get(original);
+  if (cached) return cached;
+  const fail = (operation) => {
+    const error = new Error(`Expected no side effects (${operation})`);
+    error.name = "AssertionError";
+    error.code = "ERR_ASSERTION";
+    throw error;
+  };
+  const handler = {
+    __proto__: null,
+    defineProperty() { fail("defineProperty"); },
+    deleteProperty() { fail("deleteProperty"); },
+    get(target, property, receiver) {
+      return __nodeCommonMustNotMutateObjectDeep(Reflect.get(target, property, receiver));
+    },
+    preventExtensions() { fail("preventExtensions"); },
+    set() { fail("set"); },
+    setPrototypeOf() { fail("setPrototypeOf"); },
+  };
+  const proxy = new Proxy(original, handler);
+  __nodeCommonMutationProxies.set(original, proxy);
+  return proxy;
+};
+globalThis.gc ||= (typeof gc === "function" ? gc : function () { return undefined; });
 Object.defineProperty(globalThis, "__nodeCallChecks", {
   value: [],
   writable: true,
@@ -44,6 +70,10 @@ Object.defineProperty(globalThis, "__nodeCommon", { value: {
   mustNotCall: (message = "Unexpected call") => () => {
     throw new Error(message);
   },
+  // Keep the invalid-descriptor probe deterministic for the Rust fs host.
+  // The high descriptor is accepted by Node's range validator but is not
+  // tracked by Quench, yielding the observable EBADF path.
+  runWithInvalidFD: (fn) => fn(1 << 30),
   noop: () => {},
   spawnPromisified: (...args) => {
     const child = globalThis.require("child_process").spawn(...args);
@@ -102,6 +132,9 @@ Object.defineProperty(globalThis, "__nodeCommon", { value: {
     globalThis.__quench_node_pids = alive;
     return alive.has(pid);
   },
+  nodeProcessAborted: (exitCode, signal) =>
+    ['SIGILL', 'SIGTRAP', 'SIGABRT'].includes(signal) ||
+    [2, 132, 133, 134].includes(exitCode),
   printSkipMessage: (message) => console.log(`# SKIP: ${message}`),
   skipIfInspectorDisabled: () =>
     globalThis.__nodeCommon.skip("inspector disabled"),
@@ -109,6 +142,20 @@ Object.defineProperty(globalThis, "__nodeCommon", { value: {
     if (process.arch === "ia32" || process.arch === "arm") {
       globalThis.__nodeCommon.skip("32-bit platform");
     }
+  },
+  skipIfEslintMissing: () => {
+    const fs = globalThis.require("fs");
+    const path = globalThis.require("path");
+    const eslint = path.join(
+      process.cwd(),
+      "tests",
+      "node",
+      "tools",
+      "eslint",
+      "node_modules",
+      "eslint",
+    );
+    if (!fs.existsSync(eslint)) globalThis.__nodeCommon.skip("missing ESLint");
   },
   skip: (message = "") => {
     console.log(`1..0 # Skipped: ${message}`);
@@ -176,7 +223,7 @@ Object.defineProperty(globalThis, "__nodeCommon", { value: {
     return ` Received type ${typeof input} (${rendered})`;
   },
   expectWarning: (_type, _message) => {},
-  mustNotMutateObjectDeep: (value) => value,
+  mustNotMutateObjectDeep: __nodeCommonMustNotMutateObjectDeep,
   isLinux: process.platform === "linux",
   hasIntl: typeof Intl !== "undefined",
   isDebug: false,
@@ -239,15 +286,12 @@ Object.defineProperty(globalThis, "__nodeTmpdir", { value: {
       globalThis.__quench_fs_mkdir(globalThis.__nodeTmpdir.path);
     } catch (_) {}
   },
-  resolve: (name = "") =>
-    globalThis.__nodePath.join(globalThis.__nodeTmpdir.path, String(name)),
-  fileURL: (name = "") =>
+  resolve: (...names) =>
+    globalThis.__nodePath.resolve(globalThis.__nodeTmpdir.path, ...names),
+  fileURL: (...names) =>
     new globalThis.__nodeURL(
       `file://${
-        globalThis.__nodePath.join(
-          globalThis.__nodeTmpdir.path,
-          String(name),
-        )
+        globalThis.__nodePath.resolve(globalThis.__nodeTmpdir.path, ...names)
       }`,
     ),
 }, configurable: true });

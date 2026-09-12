@@ -212,9 +212,7 @@ impl IncrementalDecompressor {
             if output_full {
                 output.reserve(64 * 1024);
             }
-            if !output_full
-                && (consumed == input.len() || !matches!(status, Status::BufError))
-            {
+            if !output_full && (consumed == input.len() || !matches!(status, Status::BufError)) {
                 break;
             }
             if used == 0 && !output_full {
@@ -256,8 +254,8 @@ impl IncrementalCompressor {
             ),
             _ => unreachable!(),
         };
-        let dictionary = bytes_of(&execute::get_property(options, "dictionary"))
-            .unwrap_or_default();
+        let dictionary =
+            bytes_of(&execute::get_property(options, "dictionary")).unwrap_or_default();
         if !dictionary.is_empty() {
             if let Err(error) = compressor.set_dictionary(&dictionary) {
                 return Some(Err(error.to_string()));
@@ -568,7 +566,10 @@ fn stream_value(
     }
     if let Some(codec) = IncrementalDecompressor::new(mode, options) {
         if let Some(identity) = value.object_identity() {
-            state.borrow_mut().zlib_decompressors.insert(identity, codec);
+            state
+                .borrow_mut()
+                .zlib_decompressors
+                .insert(identity, codec);
         }
     }
     for (key, item) in [
@@ -797,8 +798,7 @@ fn append_output(stream: &Value, bytes: &[u8]) {
     if bytes.is_empty() {
         return;
     }
-    let mut output = bytes_of(&execute::get_property(stream, "\0zlib:output"))
-        .unwrap_or_default();
+    let mut output = bytes_of(&execute::get_property(stream, "\0zlib:output")).unwrap_or_default();
     output.extend_from_slice(bytes);
     execute::set_property_in_place(
         stream,
@@ -833,8 +833,7 @@ fn write_to_pipe(stream: &Value) -> Result<(), VmError> {
     if !matches!(destination, Value::Object(_) | Value::ObjectAlias(_)) {
         return Ok(());
     }
-    let bytes = bytes_of(&execute::get_property(stream, "\0zlib:output"))
-        .unwrap_or_default();
+    let bytes = bytes_of(&execute::get_property(stream, "\0zlib:output")).unwrap_or_default();
     if bytes.is_empty() {
         return Ok(());
     }
@@ -1044,9 +1043,9 @@ fn stream_write(
     let value = args.first().unwrap_or(&Value::Undefined);
     let value_bytes = bytes_of(value)?;
     append_input(stream, value)?;
-    let incremental = stream.object_identity().is_some_and(|identity| {
-        state.borrow().zlib_compressors.contains_key(&identity)
-    });
+    let incremental = stream
+        .object_identity()
+        .is_some_and(|identity| state.borrow().zlib_compressors.contains_key(&identity));
     if incremental {
         let _ = incremental_process(state, stream, &value_bytes, FlushCompress::None)?;
     }
@@ -1066,9 +1065,9 @@ fn stream_write(
     execute::set_property_in_place(&writable_state, "length", Value::Number(writable_length));
     execute::set_property_in_place(&writable_state, "needDrain", Value::Boolean(need_drain));
     let mode = stream_mode(&execute::get_property(stream, "\0zlib:mode"))?;
-    let incremental_decompression = stream.object_identity().is_some_and(|identity| {
-        state.borrow().zlib_decompressors.contains_key(&identity)
-    });
+    let incremental_decompression = stream
+        .object_identity()
+        .is_some_and(|identity| state.borrow().zlib_decompressors.contains_key(&identity));
     if incremental_decompression {
         // A compressor flush establishes a deflate block boundary. Ask the
         // decoder to expose that complete block immediately so a piped
@@ -1119,38 +1118,33 @@ fn stream_end(
     stream: &Value,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let end_input = args.first().filter(|value| {
-        !matches!(value, Value::Undefined) && !quench_runtime::is_callable(value)
-    });
+    let end_input = args
+        .first()
+        .filter(|value| !matches!(value, Value::Undefined) && !quench_runtime::is_callable(value));
     if let Some(value) = end_input {
         append_input(stream, value)?;
     }
     let mode = stream_mode(&execute::get_property(stream, "\0zlib:mode"))?;
-    let incremental = stream.object_identity().is_some_and(|identity| {
-        state.borrow().zlib_compressors.contains_key(&identity)
-    });
-    let incremental_decompression = stream.object_identity().is_some_and(|identity| {
-        state.borrow().zlib_decompressors.contains_key(&identity)
-    });
+    let incremental = stream
+        .object_identity()
+        .is_some_and(|identity| state.borrow().zlib_compressors.contains_key(&identity));
+    let incremental_decompression = stream
+        .object_identity()
+        .is_some_and(|identity| state.borrow().zlib_decompressors.contains_key(&identity));
     let bytes = if incremental {
-        let input = end_input
-            .map(bytes_of)
-            .transpose()?
-            .unwrap_or_default();
+        let input = end_input.map(bytes_of).transpose()?.unwrap_or_default();
         incremental_process(state, stream, &input, FlushCompress::Finish)?;
         Ok(bytes_of(&execute::get_property(stream, "\0zlib:output"))?)
     } else if incremental_decompression {
-        let input = end_input
-            .map(bytes_of)
-            .transpose()?
-            .unwrap_or_default();
+        let input = end_input.map(bytes_of).transpose()?.unwrap_or_default();
         incremental_decompress(state, stream, &input, FlushDecompress::Finish)?;
         Ok(bytes_of(&execute::get_property(stream, "\0zlib:output"))?)
     } else if matches!(mode, StreamMode::Deflate)
         && matches!(
             execute::get_property(stream, "\0zlib:paramsZero"),
             Value::Boolean(true)
-        ) {
+        )
+    {
         stored_params_block(
             &bytes_of(&execute::get_property(stream, "\0zlib:prefix")).unwrap_or_default(),
             &input_bytes(stream),
@@ -1271,9 +1265,9 @@ fn stream_flush(
 ) -> Result<Value, VmError> {
     let mode = stream_mode(&execute::get_property(stream, "\0zlib:mode"))?;
     let requested_kind = flush_kind(mode, args)?;
-    let incremental = stream.object_identity().is_some_and(|identity| {
-        state.borrow().zlib_compressors.contains_key(&identity)
-    });
+    let incremental = stream
+        .object_identity()
+        .is_some_and(|identity| state.borrow().zlib_compressors.contains_key(&identity));
     if incremental {
         let flush = match requested_kind.unwrap_or(3.0) as u8 {
             0 => FlushCompress::None,
@@ -1313,7 +1307,10 @@ fn stream_flush(
             }
         }
     }
-    if matches!(execute::get_property(stream, "writableNeedDrain"), Value::Boolean(true)) {
+    if matches!(
+        execute::get_property(stream, "writableNeedDrain"),
+        Value::Boolean(true)
+    ) {
         execute::set_property_in_place(stream, "writableLength", Value::Number(0.0));
         execute::set_property_in_place(stream, "writableNeedDrain", Value::Boolean(false));
         let writable_state = execute::get_property(stream, "_writableState");

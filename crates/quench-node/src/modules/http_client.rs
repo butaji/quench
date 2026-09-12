@@ -26,7 +26,6 @@ const RESPONSE_READ_BUFFER_PROP: &str = "\0quench:http:res:read-buffer";
 const CLIENT_SOCKET_SUBSCRIBED_PROP: &str = "\0quench:http:req:socket-subscribed";
 const CLIENT_SOCKET_EVENT_QUEUED_PROP: &str = "\0quench:http:req:socket-event-queued";
 const CLIENT_PATH_PROP: &str = "\0quench:http:req:path";
-
 /// `(host, port, method, path, headers)` for one outbound request.
 #[derive(Clone)]
 pub(crate) enum RequestTarget {
@@ -760,25 +759,34 @@ fn request_inner(
     let opts = request_options(args.first())?;
     let secure = secure_hint || opts.secure;
     let tls_options = if secure {
-        option_source_object(args).or_else(|| opts.tls_options.clone()).map(|options| {
-            // https.Agent carries TLS defaults in its own `options` object.
-            // Requests inherit those defaults even when the per-request
-            // options omit `rejectUnauthorized`.
-            if matches!(execute::get_property(&options, "rejectUnauthorized"), Value::Undefined)
-                && matches!(execute::get_property(&options, "agent"), Value::Object(_) | Value::ObjectAlias(_))
-            {
-                let agent = execute::get_property(&options, "agent");
-                let agent_options = execute::get_property(&agent, "options");
-                if !matches!(execute::get_property(&agent_options, "rejectUnauthorized"), Value::Undefined) {
-                    return execute::set_property(
-                        options,
-                        "rejectUnauthorized",
+        option_source_object(args)
+            .or_else(|| opts.tls_options.clone())
+            .map(|options| {
+                // https.Agent carries TLS defaults in its own `options` object.
+                // Requests inherit those defaults even when the per-request
+                // options omit `rejectUnauthorized`.
+                if matches!(
+                    execute::get_property(&options, "rejectUnauthorized"),
+                    Value::Undefined
+                ) && matches!(
+                    execute::get_property(&options, "agent"),
+                    Value::Object(_) | Value::ObjectAlias(_)
+                ) {
+                    let agent = execute::get_property(&options, "agent");
+                    let agent_options = execute::get_property(&agent, "options");
+                    if !matches!(
                         execute::get_property(&agent_options, "rejectUnauthorized"),
-                    );
+                        Value::Undefined
+                    ) {
+                        return execute::set_property(
+                            options,
+                            "rejectUnauthorized",
+                            execute::get_property(&agent_options, "rejectUnauthorized"),
+                        );
+                    }
                 }
-            }
-            options
-        })
+                options
+            })
     } else {
         None
     };
@@ -857,11 +865,7 @@ fn request_inner(
     let (req, id) = build_req_object(state)?;
     req_path_set(state, Some(&req), &[Value::String(opts.path.clone())])?;
     set_request_property(Some(&req), "method", Value::String(opts.method.clone()));
-    set_request_property(
-        Some(&req),
-        "host",
-        Value::String(target_host(&opts.target)),
-    );
+    set_request_property(Some(&req), "host", Value::String(target_host(&opts.target)));
     set_request_property(
         Some(&req),
         "port",
@@ -1017,6 +1021,18 @@ fn start_request_socket(state: &Rc<RefCell<HostState>>, request: &Value) -> Resu
             .as_ref()
             .is_some_and(|agent| !agent_socket_capacity_available(agent, &target));
     if blocked {
+        // Node exposes a request queued behind an Agent's socket limit as
+        // soon as http.request() returns, before the caller invokes end().
+        // Keep the public requests pool and the host pending queue in sync at
+        // this reservation boundary; req.end() only completes the message.
+        if let Some(agent) = agent.as_ref() {
+            let name = agent_name(&target, agent);
+            let mut guard = state.borrow_mut();
+            if !guard.http.agent_pending.contains(&id) {
+                guard.http.agent_pending.push(id);
+                add_agent_request(agent, &name, request);
+            }
+        }
         return Ok(());
     }
     let socket = if let Some(socket) = pooled {
@@ -1499,6 +1515,87 @@ fn request_chunk_bytes(args: &[Value]) -> Result<Vec<u8>, VmError> {
     Ok(chunk_bytes(Some(value)))
 }
 
+/// Start a request from an early `write()` without completing its JavaScript
+/// stream. Node permits a peer to answer before `end()`; fixed-length bodies
+/// are written raw and unknown-length bodies are framed one chunk at a time.
+/// The head/body cursors are explicit facts so repeated writes cannot
+/// duplicate either portion of the message.
+fn dispatch_partial_body(
+    state: &Rc<RefCell<HostState>>,
+    request: &Value,
+    socket: &Value,
+) -> Result<(), VmError> {
+    let Some(id) = client_id(Some(request)) else {
+        return Ok(());
+    };
+    let (
+        target,
+        method,
+        path,
+        headers,
+        body,
+        body_chunks,
+        body_sent,
+        body_chunks_sent,
+        head_sent,
+        omit_host,
+    ) = {
+        let guard = state.borrow();
+        let Some(req) = guard.http.clientreqs.get(&id) else {
+            return Ok(());
+        };
+        (
+            req.target.clone(),
+            req.method.clone(),
+            req.path.clone(),
+            req.headers.clone(),
+            req.body.clone(),
+            req.body_chunks.clone(),
+            req.body_sent,
+            req.body_chunks_sent,
+            req.head_sent,
+            req.omit_host,
+        )
+    };
+    if !head_sent {
+        let head = request_head_with_chunking(
+            &request_host(&target),
+            &method,
+            &path,
+            &headers,
+            body.len(),
+            omit_host,
+            true,
+        );
+        set_request_property(Some(request), "_header", Value::String(head.clone()));
+        net::socket_write(state, Some(socket), &[host_api::bytes(head.as_bytes())])?;
+        if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&id) {
+            req.head_sent = true;
+        }
+    }
+    let has_content_length = headers
+        .iter()
+        .any(|(key, _)| key.eq_ignore_ascii_case("content-length"));
+    if has_content_length {
+        if body_sent < body.len() {
+            net::socket_write(state, Some(socket), &[host_api::bytes(&body[body_sent..])])?;
+        }
+    } else {
+        for chunk in body_chunks.iter().skip(body_chunks_sent) {
+            let mut frame = format!("{:x}\r\n", chunk.len()).into_bytes();
+            frame.extend_from_slice(chunk);
+            frame.extend_from_slice(b"\r\n");
+            net::socket_write(state, Some(socket), &[host_api::bytes(&frame)])?;
+        }
+    }
+    if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&id) {
+        req.body_sent = body.len();
+        req.body_chunks_sent = body_chunks.len();
+        req.dispatched = true;
+    }
+    Ok(())
+}
+
 fn invoke_write_callback(receiver: Option<&Value>, args: &[Value]) -> Result<(), VmError> {
     let callback = args
         .get(1)
@@ -1556,12 +1653,17 @@ fn req_header_name(args: &[Value]) -> Result<String, VmError> {
         .map(execute::to_js_string)
         .transpose()?
         .map(|name| name.to_ascii_lowercase())
-        .ok_or_else(|| crate::modules::buffer_enc::invalid_arg_type(
-            "The \"name\" argument must be of type string".into(),
-        ))
+        .ok_or_else(|| {
+            crate::modules::buffer_enc::invalid_arg_type(
+                "The \"name\" argument must be of type string".into(),
+            )
+        })
 }
 
-fn req_header_values(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) -> Vec<(String, String)> {
+fn req_header_values(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+) -> Vec<(String, String)> {
     let Some(id) = client_id(receiver) else {
         return Vec::new();
     };
@@ -1620,7 +1722,9 @@ pub fn req_get_header_names(
     if !names.iter().any(|name| name == "connection") {
         names.push("connection".into());
     }
-    Ok(host_api::array(names.into_iter().map(Value::String).collect()))
+    Ok(host_api::array(
+        names.into_iter().map(Value::String).collect(),
+    ))
 }
 
 pub fn req_get_headers(
@@ -2029,66 +2133,69 @@ pub fn req_end(
         false
     } else {
         {
-        let mut guard = state.borrow_mut();
-        let Some(current) = guard.http.clientreqs.get(&id) else {
-            return Ok(receiver.cloned().unwrap_or(Value::Undefined));
-        };
-        let current_agent = current.agent.clone();
-        let current_target = current.target.clone();
-        let current_req = current.req.clone();
-        match current_agent.as_ref() {
-            None => false,
-            Some(agent) => {
-                let max = match execute::get_property(agent, "maxSockets") {
-                    Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
-                    _ => usize::MAX,
-                };
-                let max_total = match execute::get_property(agent, "maxTotalSockets") {
-                    Value::Number(value) if value.is_finite() && value > 0.0 => value as usize,
-                    _ => usize::MAX,
-                };
-                if max == usize::MAX && max_total == usize::MAX {
-                    false
-                } else {
-                    let active_for_name = guard
-                        .http
-                        .clientreqs
-                        .values()
-                        .filter(|request| {
-                            request.dispatched
-                                && !request.response_closed
-                                && request.agent.as_ref().is_some_and(|candidate| {
-                                    execute::same_identity(candidate, agent)
-                                        && agent_name(&request.target, agent)
-                                            == agent_name(&current_target, agent)
-                                })
-                        })
-                        .count();
-                    let active_total = guard
-                        .http
-                        .clientreqs
-                        .values()
-                        .filter(|request| {
-                            request.dispatched
-                                && !request.response_closed
-                                && request.agent.as_ref().is_some_and(|candidate| {
-                                    execute::same_identity(candidate, agent)
-                                })
-                        })
-                        .count();
-                    if active_for_name >= max || active_total >= max_total {
-                        if !guard.http.agent_pending.contains(&id) {
-                            guard.http.agent_pending.push(id);
-                        }
-                        let name = agent_name(&current_target, agent);
-                        add_agent_request(agent, &name, &current_req);
-                        true
-                    } else {
+            let mut guard = state.borrow_mut();
+            let Some(current) = guard.http.clientreqs.get(&id) else {
+                return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+            };
+            let current_agent = current.agent.clone();
+            let current_target = current.target.clone();
+            let current_req = current.req.clone();
+            match current_agent.as_ref() {
+                None => false,
+                Some(agent) => {
+                    let max = match execute::get_property(agent, "maxSockets") {
+                        Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+                        _ => usize::MAX,
+                    };
+                    let max_total = match execute::get_property(agent, "maxTotalSockets") {
+                        Value::Number(value) if value.is_finite() && value > 0.0 => value as usize,
+                        _ => usize::MAX,
+                    };
+                    if max == usize::MAX && max_total == usize::MAX {
                         false
+                    } else {
+                        let active_for_name = guard
+                            .http
+                            .clientreqs
+                            .values()
+                            .filter(|request| {
+                                request.dispatched
+                                    && !request.response_closed
+                                    && request.agent.as_ref().is_some_and(|candidate| {
+                                        execute::same_identity(candidate, agent)
+                                            && agent_name(&request.target, agent)
+                                                == agent_name(&current_target, agent)
+                                    })
+                            })
+                            .count();
+                        let active_total = guard
+                            .http
+                            .clientreqs
+                            .values()
+                            .filter(|request| {
+                                request.dispatched
+                                    && !request.response_closed
+                                    && request.agent.as_ref().is_some_and(|candidate| {
+                                        execute::same_identity(candidate, agent)
+                                    })
+                            })
+                            .count();
+                        if active_for_name >= max || active_total >= max_total {
+                            let newly_queued = !guard.http.agent_pending.contains(&id);
+                            if newly_queued {
+                                guard.http.agent_pending.push(id);
+                            }
+                            let name = agent_name(&current_target, agent);
+                            if newly_queued {
+                                add_agent_request(agent, &name, &current_req);
+                            }
+                            true
+                        } else {
+                            false
+                        }
                     }
                 }
             }
-        }
         }
     };
     if queued {
@@ -2136,7 +2243,14 @@ pub fn req_end(
                         current.req.clone(),
                     )
                 })
-                .unwrap_or((None, RequestTarget::Tcp { host: String::new(), port: 0 }, Value::Undefined))
+                .unwrap_or((
+                    None,
+                    RequestTarget::Tcp {
+                        host: String::new(),
+                        port: 0,
+                    },
+                    Value::Undefined,
+                ))
         };
         if let Some(agent) = agent {
             let name = agent_name(&target, &agent);
@@ -2275,7 +2389,10 @@ pub fn req_end(
         );
     set_request_property(receiver, "reusedSocket", Value::Boolean(reused));
     let pooled_transport = pooled.filter(|socket| net::net_id(socket).is_some());
-    let socket = match (existing.or(pooled_transport), custom.or(custom_socket.clone())) {
+    let socket = match (
+        existing.or(pooled_transport),
+        custom.or(custom_socket.clone()),
+    ) {
         (Some(socket), _) => {
             net::socket_ref(state, Some(&socket), &[])?;
             if !head_sent {
@@ -3183,7 +3300,10 @@ fn drain_agent_pending(state: &Rc<RefCell<HostState>>, agent: &Value, name: &str
                     Value::Boolean(true)
                 )
             {
-                return false;
+                return request.agent.as_ref().is_some_and(|candidate| {
+                    execute::same_identity(candidate, agent)
+                        && agent_name(&request.target, agent) == name
+                });
             }
             let same_agent = request
                 .agent
@@ -3241,6 +3361,23 @@ fn drain_agent_pending(state: &Rc<RefCell<HostState>>, agent: &Value, name: &str
         remove_agent_request(&agent, &name, &request);
     }
     if matches!(request, Value::Undefined) {
+        return;
+    }
+    let stale = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&id)
+        .is_some_and(|request| {
+            request.aborted
+                || matches!(
+                    execute::get_property(&request.req, "destroyed"),
+                    Value::Boolean(true)
+                )
+        });
+    if stale {
+        // An aborted queued request remains visible in Agent.requests until
+        // the active socket releases; discard it at that release boundary.
         return;
     }
     set_request_property(Some(&request), "finished", Value::Boolean(false));
@@ -3546,7 +3683,9 @@ pub fn data_handler(
                 net::socket_destroy(state, Some(socket), &[])?;
                 return Ok(Value::Undefined);
             }
-            if let Some(status) = response_status(&head).filter(|status| (100..200).contains(status)) {
+            if let Some(status) =
+                response_status(&head).filter(|status| (100..200).contains(status))
+            {
                 if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
                     req.head_parsed = false;
                 }
@@ -3570,11 +3709,7 @@ pub fn data_handler(
                             .unwrap_or_default()
                     };
                     if !remainder.is_empty() {
-                        return data_handler(
-                            state,
-                            Some(socket),
-                            &[host_api::bytes(&remainder)],
-                        );
+                        return data_handler(state, Some(socket), &[host_api::bytes(&remainder)]);
                     }
                 }
                 return Ok(Value::Undefined);
@@ -3658,12 +3793,7 @@ pub fn data_handler(
                         req.buffer.clear();
                     }
                     let request = client_value(state, client_id, true).unwrap_or(Value::Undefined);
-                    net::emit(
-                        state,
-                        &request,
-                        "error",
-                        vec![invalid_chunked_response()],
-                    )?;
+                    net::emit(state, &request, "error", vec![invalid_chunked_response()])?;
                     net::socket_destroy(state, Some(socket), &[])?;
                     return Ok(Value::Undefined);
                 }
@@ -3759,8 +3889,8 @@ fn flush_body(state: &Rc<RefCell<HostState>>, client_id: u64) -> Result<(), VmEr
                         .min(req.buffer.len())
                 })
                 .unwrap_or(req.buffer.len());
-                (req.buffer[..consumed].to_vec(), consumed, false)
-            };
+            (req.buffer[..consumed].to_vec(), consumed, false)
+        };
         let invalid = chunked && !done && invalid_chunked_prefix(&req.buffer[consumed..]);
         req.response_received = req.response_received.saturating_add(body.len());
         if done {
@@ -3775,12 +3905,7 @@ fn flush_body(state: &Rc<RefCell<HostState>>, client_id: u64) -> Result<(), VmEr
             req.buffer.clear();
         }
         let request = client_value(state, client_id, true).unwrap_or(Value::Undefined);
-        net::emit(
-            state,
-            &request,
-            "error",
-            vec![invalid_chunked_response()],
-        )?;
+        net::emit(state, &request, "error", vec![invalid_chunked_response()])?;
         if let Some(socket) = socket {
             net::socket_destroy(state, Some(&socket), &[])?;
         }
@@ -4009,10 +4134,16 @@ fn duplicate_content_length(head: &[u8]) -> Option<Value> {
 fn invalid_chunked_response() -> Value {
     let error = quench_runtime::builtins::error(
         quench_runtime::ops::Builtin::Error,
-        &[Value::String("Parse Error: Invalid character in chunk size".into())],
+        &[Value::String(
+            "Parse Error: Invalid character in chunk size".into(),
+        )],
     );
     execute::set_property(
-        execute::set_property(error, "code", Value::String("HPE_INVALID_CHUNK_SIZE".into())),
+        execute::set_property(
+            error,
+            "code",
+            Value::String("HPE_INVALID_CHUNK_SIZE".into()),
+        ),
         "reason",
         Value::String("Invalid character in chunk size".into()),
     )

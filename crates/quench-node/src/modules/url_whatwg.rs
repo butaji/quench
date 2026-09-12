@@ -147,6 +147,15 @@ pub fn is_url_instance(value: &Value) -> bool {
     !matches!(execute::get_property(value, "\0url"), Value::Undefined)
 }
 
+/// Rust host entry point for `internal/url`'s brand predicate.
+pub fn is_url(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Boolean(args.first().is_some_and(is_url_instance)))
+}
+
 /// The shared (constructor, prototype) pair, built once per realm.
 pub fn url_class(state: &Rc<RefCell<HostState>>) -> (Value, Value) {
     if let Some(pair) = &state.borrow().url_class {

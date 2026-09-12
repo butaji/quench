@@ -105,11 +105,7 @@ pub fn dirent(name: &str, mode: u32) -> Value {
         // and legacy callers.  Dirent instances additionally inherit the
         // public constructor prototype so `instanceof fs.Dirent` observes the
         // same identity as Node.
-        let _ = quench_runtime::execute::set_property_in_place(
-            &value,
-            "\0prototype",
-            prototype,
-        );
+        let _ = quench_runtime::execute::set_property_in_place(&value, "\0prototype", prototype);
     }
     value
 }

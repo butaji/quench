@@ -5,7 +5,11 @@ use crate::value::{ObjectAliasValue, ObjectData, PrivateSlot, PrivateSlots, Valu
 pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value {
     let self_reference = value_targets(&value, &properties);
     if self_reference {
-        let parent_alias = alias(&properties);
+        // Keep a direct self edge. A weak alias would be collected as soon as
+        // the COW representative is replaced, turning `obj.self = obj` into
+        // an observable `undefined` read. The cycle is owned by the JS heap
+        // and is therefore reclaimed by the runtime's cycle collector.
+        let parent_alias = Value::Object(Rc::clone(&properties));
         let parent = unsafe { &mut *(Rc::as_ptr(&properties) as *mut ObjectData) };
         let index = { parent.properties.iter().rposition(|(name, _)| name == key) };
         if let Some(index) = index {

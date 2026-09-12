@@ -4243,6 +4243,22 @@ pub fn internal_binding(
     if name == "http2" {
         return Ok(crate::modules::http2_util::binding());
     }
+    if name == "trace_events" {
+        return Ok(crate::host::namespace_object_from_pairs(vec![
+            (
+                "isTraceCategoryEnabled".into(),
+                crate::host::capability(crate::registry::SPEC_TRACE_EVENTS_CATEGORY_ENABLED),
+            ),
+            (
+                "getCategoryEnabledBuffer".into(),
+                crate::host::capability(crate::registry::SPEC_TRACE_EVENTS_CATEGORY_BUFFER),
+            ),
+            (
+                "trace".into(),
+                crate::host::capability(crate::registry::SPEC_TRACE_EVENTS_TRACE),
+            ),
+        ]));
+    }
     // Advanced child-process IPC uses the same Rust-owned codec as the public
     // v8.deserialize surface. Keep one serializer fact and one dispatch path.
     if name == "ipc_serdes" {
@@ -4604,7 +4620,7 @@ pub fn internal_binding(
             | "tcp_wrap"
             | "tls_wrap"
             | "udp_wrap"
-        | "zlib"
+            | "zlib"
     ) {
         if name == "udp_wrap" {
             // Reuse the dgram handle installed by the shared bootstrap so
@@ -4792,10 +4808,7 @@ pub fn internal_js_stream_construct(
         .cloned()
         .unwrap_or_else(|| crate::host::namespace_object_from_pairs(Vec::new()));
     let handle = crate::host::namespace_object_from_pairs(vec![
-        (
-            "\0quench:js-stream-handle".into(),
-            Value::Boolean(true),
-        ),
+        ("\0quench:js-stream-handle".into(), Value::Boolean(true)),
         (
             "asyncReset".into(),
             crate::host::capability(crate::registry::SPEC_INTERNAL_JS_STREAM),
@@ -4833,11 +4846,7 @@ pub fn internal_js_stream_call(
         if let Some(request) = args.first() {
             let callback = execute::get_property(request, "oncomplete");
             if quench_runtime::is_callable(&callback) {
-                execute::call(
-                    &callback,
-                    request,
-                    &[Value::Number(-1.0)],
-                )?;
+                execute::call(&callback, request, &[Value::Number(-1.0)])?;
                 return Ok(Value::Undefined);
             }
         }
@@ -8528,11 +8537,7 @@ pub fn cp_spawn(
             .collect::<Vec<_>>();
         hook_options.push(("file".into(), Value::String(command.clone())));
         hook_options.push(("args".into(), spawnargs.clone()));
-        execute::set_property_in_place(
-            &child,
-            "\0childSpawnHookInvoked",
-            Value::Boolean(true),
-        );
+        execute::set_property_in_place(&child, "\0childSpawnHookInvoked", Value::Boolean(true));
         execute::call(&hook, &child, &[host_api::object(hook_options)])?;
     }
     state.borrow_mut().identity_roots.push(child.clone());
@@ -8590,10 +8595,8 @@ pub fn cp_spawn(
                 crate::registry::SPEC_CP_TIMEOUT.cap,
                 vec![child.clone(), signal],
             );
-            let timer = crate::modules::timers::set_timeout(
-                state,
-                &[callback, Value::Number(timeout)],
-            )?;
+            let timer =
+                crate::modules::timers::set_timeout(state, &[callback, Value::Number(timeout)])?;
             execute::set_property_in_place(&child, "\0childTimeoutTimer", timer);
         }
     }
@@ -9144,10 +9147,17 @@ pub fn cp_spawn_output_emit(
         // buffered on the logical streams. Publish those bytes at the
         // ordinary spawn checkpoint, but leave end/close/exit ownership with
         // the fork IPC lifecycle below.
-        for (stream, key) in [(&stdout, "\0childPendingOutput"), (&stderr, "\0childPendingOutput")] {
+        for (stream, key) in [
+            (&stdout, "\0childPendingOutput"),
+            (&stderr, "\0childPendingOutput"),
+        ] {
             if let Value::String(output) = execute::get_property(stream, key) {
                 if !output.is_empty() {
-                    emit(stream, "data", vec![cp_stream_output_value(stream, &output)?])?;
+                    emit(
+                        stream,
+                        "data",
+                        vec![cp_stream_output_value(stream, &output)?],
+                    )?;
                     execute::set_property_in_place(stream, key, Value::Undefined);
                 }
             }
@@ -9225,11 +9235,7 @@ pub fn cp_spawn_output_emit(
             || cp_spawn_script_requires_in_process(&child_args)
             || cp_spawn_script_uses_stdin(&child_args)
             || cp_spawn_eval_requires_in_process(&child_args));
-    let real_child = if let (
-        Value::String(stdout),
-        Value::String(stderr),
-        Value::Number(status),
-    ) = (
+    let real_child = if let (Value::String(stdout), Value::String(stderr), Value::Number(status)) = (
         execute::get_property(child, "\0childAsyncRealStdout"),
         execute::get_property(child, "\0childAsyncRealStderr"),
         execute::get_property(child, "\0childShellStatus"),
@@ -9696,8 +9702,7 @@ pub fn cp_spawn_output_emit(
             // decide whether the channel may be retired.
             || crate::modules::process::has_listener_in_scope(state, "message", scope)
     });
-    if fork_ipc_live || spawn_ipc_live
-    {
+    if fork_ipc_live || spawn_ipc_live {
         // An IPC child remains alive after startup; its exit/close pair is
         // tied to the channel disconnect or the last referenced child handle
         // rather than the bootstrap callback.
@@ -9739,16 +9744,12 @@ pub fn cp_spawn_output_emit(
     ) {
         None
     } else {
-        match (
-            &command,
-            execute::get_property(&child_options, "shell"),
-        ) {
-            (Value::String(command), Value::Boolean(true)) => crate::modules::child_process::shell_output(
-                command,
-                Some(&child_options),
-            )
-            .ok()
-            .map(|output| child_status_code(&output.status)),
+        match (&command, execute::get_property(&child_options, "shell")) {
+            (Value::String(command), Value::Boolean(true)) => {
+                crate::modules::child_process::shell_output(command, Some(&child_options))
+                    .ok()
+                    .map(|output| child_status_code(&output.status))
+            }
             _ => None,
         }
     };
@@ -9790,7 +9791,10 @@ pub fn cp_spawn_output_emit(
             crate::registry::SPEC_CP_EXEC_COMPLETE.cap,
             vec![callback, child.clone(), error, stdout, stderr, use_buffer],
         );
-        state.borrow().event_loop.queue_microtask(completion, vec![]);
+        state
+            .borrow()
+            .event_loop
+            .queue_microtask(completion, vec![]);
         for key in [
             "\0childAsyncExecCallback",
             "\0childAsyncExecError",
@@ -9949,9 +9953,15 @@ pub fn cp_timeout(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let Some(child) = args.first() else {
+    let Some(child_arg) = args.first() else {
         return Ok(Value::Undefined);
     };
+    // The spawn checkpoint may retain an older object representative while
+    // stream decoration publishes a COW successor. Resolve it before reading
+    // lifecycle markers so an async shell cannot fall back to a blocking
+    // synchronous wait through a stale alias.
+    let child = execute::canonical_value(child_arg);
+    let child = &child;
     if matches!(
         execute::get_property(child, "\0childTerminated"),
         Value::Boolean(true)
@@ -10860,20 +10870,19 @@ fn fork_child_start(
         .iter()
         .filter_map(|value| execute::to_js_string(value).ok())
         .collect::<Vec<_>>();
-    let (secure_heap_total, secure_heap_min) = match crate::modules::process::secure_heap_config(
-        &child_exec_argv_strings,
-    ) {
-        Ok(config) => config,
-        Err(stderr) => {
-            execute::set_property_in_place(child, "\0forkStderr", Value::String(stderr));
-            // Startup validation belongs to the child lifecycle, so leave
-            // terminal event delivery queued until fork() returns and the
-            // caller can install its exit/stderr listeners.
-            execute::set_property_in_place(child, "\0forkStartupFailed", Value::Boolean(true));
-            execute::set_property_in_place(child, "connected", Value::Boolean(false));
-            return Ok(());
-        }
-    };
+    let (secure_heap_total, secure_heap_min) =
+        match crate::modules::process::secure_heap_config(&child_exec_argv_strings) {
+            Ok(config) => config,
+            Err(stderr) => {
+                execute::set_property_in_place(child, "\0forkStderr", Value::String(stderr));
+                // Startup validation belongs to the child lifecycle, so leave
+                // terminal event delivery queued until fork() returns and the
+                // caller can install its exit/stderr listeners.
+                execute::set_property_in_place(child, "\0forkStartupFailed", Value::Boolean(true));
+                execute::set_property_in_place(child, "connected", Value::Boolean(false));
+                return Ok(());
+            }
+        };
     execute::set_property_in_place(&process, "execArgv", host_api::array(exec_argv_values));
     crate::modules::process::set_secure_heap_config(state, secure_heap_total, secure_heap_min);
     execute::set_property_in_place(&process, "connected", Value::Boolean(true));
@@ -11464,7 +11473,10 @@ pub fn cp_send(
                         crate::registry::SPEC_CP_SEND_ACK.cap,
                     ),
                 },
-                vec![receiver.clone(), callback.clone().unwrap_or(Value::Undefined)],
+                vec![
+                    receiver.clone(),
+                    callback.clone().unwrap_or(Value::Undefined),
+                ],
             );
             state.borrow().event_loop.queue_immediate(ack, vec![]);
         } else {
@@ -11921,7 +11933,7 @@ pub fn cp_exec_sync(
         };
         let result = crate::modules::child_process::spawn_sync(
             state,
-                &[Value::String(shell.into()), shell_args, options],
+            &[Value::String(shell.into()), shell_args, options],
         )?;
         if let Some(error) = match execute::get_property(&result, "error") {
             Value::Undefined => None,
@@ -12242,8 +12254,7 @@ pub fn cp_async(
     let env = execute::get_property(&options, "env");
     for index in 0..8 {
         let key = format!("ESCAPED_{index}");
-        let value =
-            execute::to_js_string(&execute::get_property(&env, &key)).unwrap_or_default();
+        let value = execute::to_js_string(&execute::get_property(&env, &key)).unwrap_or_default();
         command_text = command_text.replace(&format!("${{{key}}}"), &value);
     }
     let eval_script = command_text.contains(" -e ");
@@ -12268,15 +12279,16 @@ pub fn cp_async(
                 "\0childAsyncShellPending",
                 Value::Boolean(true),
             );
-            state.borrow_mut().pending_shell_execs.push(
-                crate::host::PendingShellExec {
+            state
+                .borrow_mut()
+                .pending_shell_execs
+                .push(crate::host::PendingShellExec {
                     child: child.clone(),
                     callback: callback.clone(),
                     command: command_text.clone(),
                     use_buffer,
                     process,
-                },
-            );
+                });
             return Ok(child);
         }
     }
@@ -12577,7 +12589,10 @@ pub fn poll_pending_shell_execs(state: &Rc<RefCell<HostState>>) -> Result<(), Vm
         } else {
             let error = quench_runtime::builtins::error(
                 quench_runtime::ops::Builtin::Error,
-                &[Value::String(format!("Command failed: {}", pending.command))],
+                &[Value::String(format!(
+                    "Command failed: {}",
+                    pending.command
+                ))],
             );
             execute::set_property(
                 execute::set_property(error, "code", Value::Number(status as f64)),
@@ -12602,11 +12617,7 @@ pub fn poll_pending_shell_execs(state: &Rc<RefCell<HostState>>) -> Result<(), Vm
         );
         execute::set_property_in_place(&pending.child, "\0childAsyncExecError", error);
         if let Some(callback) = pending.callback {
-            execute::set_property_in_place(
-                &pending.child,
-                "\0childAsyncExecCallback",
-                callback,
-            );
+            execute::set_property_in_place(&pending.child, "\0childAsyncExecCallback", callback);
         }
         execute::set_property_in_place(
             &pending.child,
@@ -12794,14 +12805,19 @@ pub fn cp_exec_file(
     // process boundary. Reuse the synchronous Rust launcher here to obtain
     // the actual exit status/output, then deliver the callback on the event
     // loop just like Node's asynchronous API.
+    let has_nonempty_args = args
+        .iter()
+        .any(|value| matches!(value, Value::Array(values) if values.logical_len() > 0));
+    let has_options = args
+        .iter()
+        .any(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)));
     if command.as_deref() == Some(state.borrow().process.exec_path.as_str())
-        // An argument-less execFile(process.execPath, callback) is the
-        // interactive child form. It remains live until the caller kills
-        // it, so it must use the ordinary ChildProcess lifecycle below
-        // rather than eagerly waiting on the script runner's CLI.
-        && args.iter().any(|value| {
-            matches!(value, Value::Array(values) if values.logical_len() > 0)
-        })
+        // A no-argument execFile(process.execPath, callback) is the
+        // interactive child form and remains live until the caller kills it.
+        // Once an options object is supplied, however, Node has crossed the
+        // executable boundary: startup facts such as NODE_OPTIONS must be
+        // validated by the actual child before the callback runs.
+        && (has_nonempty_args || has_options)
     {
         let result = crate::modules::child_process::spawn_sync(state, &spawn_args)?;
         let status = execute::get_property(&result, "status");
@@ -12946,9 +12962,9 @@ pub fn cp_exec_file(
         );
         return Ok(child);
     }
-    let has_nonempty_args = args.iter().any(|value| {
-        matches!(value, Value::Array(values) if values.logical_len() > 0)
-    });
+    let has_nonempty_args = args
+        .iter()
+        .any(|value| matches!(value, Value::Array(values) if values.logical_len() > 0));
     if !has_nonempty_args {
         if command.as_deref() == Some("does-not-exist") {
             let mut error = quench_runtime::builtins::error(
@@ -15733,7 +15749,14 @@ pub fn test_mock_method(
             ));
         }
         if getter || setter {
-            let descriptor = quench_runtime::execute::get_own_property_descriptor(object, key)?;
+            // Accessors are commonly inherited from a built-in prototype (for
+            // example `Writable.prototype.destroyed`).  `mock.getter()`
+            // replaces the property on the receiver, but it must use the
+            // inherited accessor descriptor as the source of its getter and
+            // descriptor flags.  Looking only at own properties turns a valid
+            // inherited accessor into `undefined` and then attempts to read
+            // `descriptor.get` from it.
+            let descriptor = property_descriptor_in_chain(object, key)?;
             let accessor = if getter { "get" } else { "set" };
             let original = quench_runtime::execute::get_property_result(&descriptor, accessor)?;
             let mock_args = if options_index == 3 {
@@ -15840,6 +15863,20 @@ pub fn test_mock_method(
             .insert("__quench_fs_mocked".into(), object.clone());
     }
     Ok(wrapper)
+}
+
+fn property_descriptor_in_chain(object: &Value, key: &str) -> Result<Value, VmError> {
+    let mut current = object.clone();
+    loop {
+        let descriptor = quench_runtime::execute::get_own_property_descriptor(&current, key)?;
+        if !matches!(descriptor, Value::Undefined) {
+            return Ok(descriptor);
+        }
+        current = quench_runtime::execute::get_prototype_of(&current)?;
+        if matches!(current, Value::Null) {
+            return Ok(Value::Undefined);
+        }
+    }
 }
 
 pub fn test_mock_getter(

@@ -188,6 +188,14 @@ pub(crate) fn set_resolved(
     if key == "length" && is_boxed_string_target(&target) {
         return Ok(());
     }
+    if crate::builtins::descriptor_flag(&target, key, "writable") == Some(false) {
+        if strict {
+            return Err(crate::value::error::throw_type_error(&format!(
+                "Cannot assign to read only property '{key}'"
+            )));
+        }
+        return Ok(());
+    }
     publish_set(&target, key, &value)?;
     // Dynamic local assignments use a captured `with` target directly. Keep
     // the active object stack on the copy-on-write replacement so later
@@ -222,12 +230,60 @@ fn set_name_value(key: &str, value: Value, strict: bool) -> Result<(), VmError> 
             "Cannot assign to immutable binding",
         ));
     }
+    // A global accessor is resolved by the object environment, not by the
+    // ordinary binding-cell fast path. Route the write through [[Set]] so its
+    // user setter is called and preserve the realm's replacement identity.
+    let global = crate::vm::current_global_object();
+    if crate::execute::has_own_property(&global, key) {
+        let descriptor = crate::execute::get_own_property_descriptor(&global, key)?;
+        let accessor = !matches!(
+            crate::execute::get_property(&descriptor, "set"),
+            Value::Undefined
+        ) || !matches!(
+            crate::execute::get_property(&descriptor, "get"),
+            Value::Undefined
+        );
+        if accessor {
+            publish_set(&global, key, &value)?;
+            let updated = live_object(&global);
+            crate::vm::synchronize_global_object(
+                &mut crate::register_file::RegisterFile::new(),
+                &global,
+                &updated,
+            );
+            return Ok(());
+        }
+        if crate::builtins::descriptor_flag(&global, key, "writable") == Some(false) {
+            if strict {
+                return Err(crate::value::error::throw_type_error(&format!(
+                    "Cannot assign to read only property '{key}'"
+                )));
+            }
+            return Ok(());
+        }
+    }
     if set_if_bound(key, &value)? {
         return Ok(());
     }
-    if crate::locals::set_eval_named(key, value.clone())
-        || crate::locals::set_named(key, value.clone())
-    {
+    let eval_written = crate::locals::set_eval_named(key, value.clone());
+    if eval_written {
+        // Unresolved assignments in a vm global are represented by an eval
+        // binding for fast identifier lookup.  They are still ordinary
+        // global-object properties and must be projected back to the caller's
+        // sandbox (including their enumerable shape).
+        if crate::vm::is_child_global_object(&global)
+            && !crate::execute::has_own_property(&global, key)
+        {
+            let updated = crate::builtins::set_property(global.clone(), key, value.clone());
+            crate::vm::synchronize_global_object(
+                &mut crate::register_file::RegisterFile::new(),
+                &global,
+                &updated,
+            );
+        }
+        return Ok(());
+    }
+    if crate::locals::set_named(key, value.clone()) {
         return Ok(());
     }
     let captured_global = crate::locals::current().get(0);
@@ -310,6 +366,10 @@ pub(crate) fn resolve_name(
     dst: u16,
     key: &str,
 ) -> Result<(), VmError> {
+    if key == "global" {
+        crate::execute::write_value(registers, dst, crate::vm::current_global_object());
+        return Ok(());
+    }
     if crate::locals::is_initializing_class_name(key) {
         return Err(crate::value::error::throw_reference_error(&format!(
             "Cannot access '{key}' before initialization"
@@ -413,6 +473,17 @@ fn set_name(
         return Err(crate::value::error::throw_reference_error(&format!(
             "{key} is not defined"
         )));
+    }
+    // Identifier writes to a global data property must obey its descriptor;
+    // the low-level global setter intentionally returns the unchanged object
+    // for read-only slots, so enforce the strict-mode throw at this boundary.
+    if crate::builtins::descriptor_flag(&global, key, "writable") == Some(false) {
+        if strict {
+            return Err(crate::value::error::throw_type_error(&format!(
+                "Cannot assign to read only property '{key}'"
+            )));
+        }
+        return Ok(());
     }
     let updated = crate::builtins::set_property(global.clone(), key, value);
     crate::vm::synchronize_global_object(registers, &global, &updated);

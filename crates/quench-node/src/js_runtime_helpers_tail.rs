@@ -390,6 +390,26 @@ fn ecdh_constructor() -> Value {
     constructor
 }
 
+fn key_object_constructor() -> Value {
+    let (key_proto, _) = crate::modules::crypto::key_object_prototypes();
+    let constructor = quench_runtime::host_api::capability_function_with_properties(
+        quench_runtime::ops::HostCapabilityRef {
+            realm: RealmId::ROOT,
+            kind: HostCapabilityKind::Custom(CapabilityName::CryptoKeyObjectConstructor),
+        },
+        vec![("prototype".into(), key_proto)],
+    );
+    quench_runtime::execute::set_callable_property(
+        &constructor,
+        "from",
+        capability_function(HostCapabilityKind::Custom(
+            CapabilityName::CryptoKeyObjectFrom,
+        )),
+    )
+    .expect("callable KeyObject.from");
+    constructor
+}
+
 fn certificate_constructor() -> Value {
     let constructor = capability_function(HostCapabilityKind::Custom(
         CapabilityName::CryptoCertificateConstructor,

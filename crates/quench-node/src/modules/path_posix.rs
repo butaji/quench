@@ -76,7 +76,9 @@ fn resolve_tail(args: &[Value], cwd: impl Fn() -> String) -> String {
     let mut resolved = String::new();
     let mut absolute = false;
     for arg in args.iter().rev() {
-        let Value::String(s) = arg else { continue };
+        let Ok(s) = shared::validate_string(arg, "path") else {
+            continue;
+        };
         if s.is_empty() {
             continue;
         }

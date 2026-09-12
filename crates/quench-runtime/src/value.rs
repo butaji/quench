@@ -378,6 +378,10 @@ impl PromiseData {
     pub fn rejection_handled(&self) -> bool {
         self.rejection_handled.get()
     }
+
+    pub fn mark_rejection_handled(&self) {
+        self.rejection_handled.set(true);
+    }
 }
 
 impl Default for PromiseData {
@@ -2053,6 +2057,52 @@ impl Value {
         }
     }
 
+    /// Return an array's explicitly stored prototype for host-side formatting
+    /// and diagnostics. Ordinary lookup may intentionally fall back to the
+    /// intrinsic Array prototype, so inspection needs the canonical slot.
+    pub fn array_prototype(&self) -> Option<Value> {
+        match self {
+            Self::Array(array) => array.prototype().or_else(|| array.property("\0prototype")),
+            _ => None,
+        }
+    }
+
+    /// Return the strong owner count for heap values. Weak-reference
+    /// collection uses this fact at the runtime edge instead of retaining a
+    /// second object model or pretending an `Rc` is weak.
+    pub(crate) fn strong_count(&self) -> Option<usize> {
+        match self {
+            Self::StringUnits(value) => Some(Rc::strong_count(value)),
+            Self::Array(value) => Some(Rc::strong_count(value)),
+            Self::Object(value) => Some(Rc::strong_count(value)),
+            Self::ObjectAlias(value) => Some(Rc::strong_count(&value.0)),
+            Self::BindingCell(value) => Some(Rc::strong_count(value)),
+            Self::ArrayBuffer(value) => Some(Rc::strong_count(value)),
+            Self::Float64Array(value) => Some(Rc::strong_count(value)),
+            Self::Float32Array(value) => Some(Rc::strong_count(value)),
+            Self::Int8Array(value) => Some(Rc::strong_count(value)),
+            Self::Int16Array(value) => Some(Rc::strong_count(value)),
+            Self::Int32Array(value) => Some(Rc::strong_count(value)),
+            Self::BigInt64Array(value) => Some(Rc::strong_count(value)),
+            Self::BigUint64Array(value) => Some(Rc::strong_count(value)),
+            Self::Uint32Array(value) => Some(Rc::strong_count(value)),
+            Self::Uint8Array(value) => Some(Rc::strong_count(value)),
+            Self::Uint8ClampedArray(value) => Some(Rc::strong_count(value)),
+            Self::Uint16Array(value) => Some(Rc::strong_count(value)),
+            Self::DataView(value) => Some(Rc::strong_count(value)),
+            Self::Function(value) => Some(Rc::strong_count(value)),
+            Self::BoundFunction(value) => Some(Rc::strong_count(value)),
+            Self::Proxy(value) => Some(Rc::strong_count(value)),
+            Self::Promise(value) => Some(Rc::strong_count(value)),
+            Self::HostCapability(value) => Some(Rc::strong_count(value)),
+            Self::Map(value) => Some(Rc::strong_count(value)),
+            Self::Set(value) => Some(Rc::strong_count(value)),
+            Self::Iterator(value) => Some(Rc::strong_count(value)),
+            Self::Generator(value) => Some(Rc::strong_count(value)),
+            _ => None,
+        }
+    }
+
     /// Whether this Array value is the engine's canonical arguments object.
     pub fn is_arguments_object(&self) -> bool {
         matches!(self, Self::Array(values) if values.is_arguments())
@@ -2074,6 +2124,7 @@ impl Value {
         match self {
             Self::Object(object) => Some(object.identity()),
             Self::ObjectAlias(alias) => alias.target().map(|object| object.identity()),
+            Self::Array(array) => Some(array.identity()),
             _ => None,
         }
     }

@@ -436,9 +436,18 @@ fn evaluate(
     ];
     let program = crate::reduce::reduce_eval_source(&source, strict, true, false, &bindings, &[])
         .map_err(|errors| syntax_error(errors, error_realm))?;
+    let context = crate::vm::current_context()
+        .as_ref()
+        .clone()
+        .with_compiled_source_text(source.clone());
+    let context = std::rc::Rc::new(context);
     match realm {
-        Some(realm) => crate::vm::execute_indirect_eval_in_realm(realm, program.code()),
-        None => crate::vm::execute_indirect_eval(program.code()),
+        Some(realm) => crate::vm::with_current_context(&context, || {
+            crate::vm::execute_indirect_eval_in_realm(realm, program.code())
+        }),
+        None => crate::vm::with_current_context(&context, || {
+            crate::vm::execute_indirect_eval(program.code())
+        }),
     }
 }
 
@@ -494,11 +503,18 @@ fn evaluate_direct(
         .map(|(_, slot)| slot.saturating_add(1))
         .max()
         .unwrap_or(0);
-    execute_direct_eval(
-        program.code(),
-        program.facts.strict,
-        local_slot.max(eval_slot),
-    )
+    let context = crate::vm::current_context()
+        .as_ref()
+        .clone()
+        .with_compiled_source_text(source.clone());
+    let context = std::rc::Rc::new(context);
+    crate::vm::with_current_context(&context, || {
+        execute_direct_eval(
+            program.code(),
+            program.facts.strict,
+            local_slot.max(eval_slot),
+        )
+    })
 }
 
 fn execute_direct_eval(

@@ -348,9 +348,7 @@ pub(crate) fn from_units(units: Vec<u16>) -> Value {
     // `charCodeAt` call. This is a generic representation choice for large
     // indexed values; observable string semantics remain unchanged.
     if units.len() > 1024 {
-        return Value::StringUnits(std::rc::Rc::new(
-            crate::value::StringUnitsData::new(units),
-        ));
+        return Value::StringUnits(std::rc::Rc::new(crate::value::StringUnitsData::new(units)));
     }
     match String::from_utf16(&units) {
         Ok(value) => Value::String(value),

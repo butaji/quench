@@ -57,6 +57,11 @@ pub struct ProcessState {
     /// Trace-event output is owned by the process host so static flags and
     /// dynamic `trace_events` calls share one writer and one event list.
     pub trace_categories: HashSet<String>,
+    /// One-byte shared flags returned by the trace_events internal binding.
+    /// The backing view is retained here so enable/disable updates the same
+    /// object that native consumers hold, matching Node's category buffer
+    /// contract without inventing a second category registry.
+    pub trace_category_buffers: HashMap<String, Value>,
     pub trace_events: Vec<String>,
     pub trace_event_file: Option<std::path::PathBuf>,
     pub trace_timestamp: u64,
@@ -128,6 +133,7 @@ impl ProcessState {
             title: "quench-node".into(),
             alive_pids: HashSet::from([std::process::id() as i64]),
             trace_categories: HashSet::new(),
+            trace_category_buffers: HashMap::new(),
             trace_events: Vec::new(),
             trace_event_file: None,
             trace_timestamp: 0,
@@ -158,7 +164,10 @@ pub fn secure_heap_config(exec_argv: &[String]) -> Result<(u64, u64), String> {
             ("--secure-heap-min", Some(value))
         } else if flag == "--secure-heap-min" {
             index += 1;
-            ("--secure-heap-min", exec_argv.get(index).map(String::as_str))
+            (
+                "--secure-heap-min",
+                exec_argv.get(index).map(String::as_str),
+            )
         } else if let Some(value) = flag.strip_prefix("--secure-heap=") {
             ("--secure-heap", Some(value))
         } else if flag == "--secure-heap" {
@@ -223,19 +232,46 @@ pub fn configure_trace(state: &Rc<RefCell<HostState>>, exec_argv: &[String]) {
                     .map(str::to_owned)
             })
         });
-    let Some(categories) = categories else { return };
+    let enabled = exec_argv
+        .iter()
+        .any(|flag| flag == "--trace-events-enabled");
+    let file_pattern = exec_argv
+        .iter()
+        .enumerate()
+        .find_map(|(index, flag)| {
+            (flag == "--trace-event-file-pattern")
+                .then(|| exec_argv.get(index + 1).cloned())
+                .flatten()
+        })
+        .or_else(|| {
+            exec_argv.iter().find_map(|flag| {
+                flag.strip_prefix("--trace-event-file-pattern=")
+                    .map(str::to_owned)
+            })
+        });
+    if categories.is_none() && !enabled {
+        return;
+    }
     let mut host = state.borrow_mut();
     host.process.trace_categories = categories
+        .as_deref()
+        .unwrap_or("node.async_hooks")
         .split(',')
         .filter(|category| !category.is_empty())
         .map(str::to_string)
         .collect();
-    host.process.trace_event_file = Some(host.process.cwd.join("node_trace.1.log"));
+    let filename = file_pattern
+        .map(|pattern| {
+            pattern
+                .replace("${pid}", &std::process::id().to_string())
+                .replace("${rotation}", "1")
+        })
+        .unwrap_or_else(|| "node_trace.1.log".into());
+    host.process.trace_event_file = Some(host.process.cwd.join(filename));
 }
 
 fn trace_enabled(process: &ProcessState) -> bool {
-    process.trace_categories.contains("node.async_hooks")
-        || process.trace_categories.contains("*")
+    process.trace_categories.contains("node.async_hooks") || process.trace_categories.contains("*")
 }
 
 pub(crate) fn trace_enable(state: &Rc<RefCell<HostState>>, categories: &[String]) {
@@ -243,6 +279,7 @@ pub(crate) fn trace_enable(state: &Rc<RefCell<HostState>>, categories: &[String]
     host.process
         .trace_categories
         .extend(categories.iter().cloned());
+    refresh_trace_category_buffers(&mut host.process);
     host.process.trace_event_file = Some(host.process.cwd.join("node_trace.1.log"));
 }
 
@@ -250,6 +287,97 @@ pub(crate) fn trace_disable(state: &Rc<RefCell<HostState>>, categories: &[String
     let mut host = state.borrow_mut();
     for category in categories {
         host.process.trace_categories.remove(category);
+    }
+    refresh_trace_category_buffers(&mut host.process);
+}
+
+pub(crate) fn trace_category_enabled(state: &Rc<RefCell<HostState>>, category: &str) -> bool {
+    let host = state.borrow();
+    host.process.trace_categories.contains(category) || host.process.trace_categories.contains("*")
+}
+
+/// Record an event from the internal trace_events binding.  The binding is
+/// intentionally routed through the same category set and writer used by
+/// `Tracing`, so dynamic and native producers cannot disagree about whether a
+/// category is enabled or where an event is flushed.
+pub(crate) fn trace_binding_event(
+    state: &Rc<RefCell<HostState>>,
+    phase: u8,
+    category: &str,
+    name: &str,
+    id: Option<u64>,
+    data: Option<&Value>,
+) {
+    let data_json = data
+        .filter(|value| !matches!(value, Value::Undefined))
+        .and_then(|value| {
+            quench_runtime::execute::json_stringify(value)
+                .ok()
+                .and_then(|json| quench_runtime::execute::to_js_string(&json).ok())
+        });
+    let mut host = state.borrow_mut();
+    if !host.process.trace_categories.contains(category)
+        && !host.process.trace_categories.contains("*")
+    {
+        return;
+    }
+    let phase = match phase {
+        b'b' => "b",
+        b'e' => "e",
+        b'n' => "n",
+        b'c' => "C",
+        b'X' => "X",
+        _ => "i",
+    };
+    let args = data_json
+        .map(|json| format!("\"data\":{json}"))
+        .unwrap_or_default();
+    let id = id
+        .map(|value| format!(",\"id\":\"0x{value:x}\""))
+        .unwrap_or_default();
+    let timestamp = host.process.trace_timestamp;
+    host.process.trace_timestamp = timestamp.saturating_add(1);
+    host.process.trace_events.push(format!(
+        "{{\"pid\":{},\"tid\":{},\"cat\":\"{}\",\"ph\":\"{}\",\"name\":\"{}\"{} ,\"ts\":{},\"args\":{{{}}}}}",
+        std::process::id(),
+        std::process::id(),
+        json_escape(category),
+        phase,
+        json_escape(name),
+        id,
+        timestamp,
+        args
+    ));
+}
+
+pub(crate) fn trace_category_buffer(state: &Rc<RefCell<HostState>>, category: &str) -> Value {
+    let mut host = state.borrow_mut();
+    if let Some(buffer) = host.process.trace_category_buffers.get(category) {
+        return buffer.clone();
+    }
+    let byte = u8::from(
+        host.process.trace_categories.contains(category)
+            || host.process.trace_categories.contains("*"),
+    );
+    let buffer = crate::modules::buffer_proto::make_buffer(&[byte]);
+    host.process
+        .trace_category_buffers
+        .insert(category.to_owned(), buffer.clone());
+    buffer
+}
+
+fn refresh_trace_category_buffers(process: &mut ProcessState) {
+    let wildcard = process.trace_categories.contains("*");
+    for (category, buffer) in &process.trace_category_buffers {
+        let enabled = process.trace_categories.contains(category) || wildcard;
+        if let Value::Uint8Array(view) = buffer {
+            let offset = view.byte_offset;
+            let length = view.length;
+            let mut bytes = view.buffer.bytes.borrow_mut();
+            if length > 0 && offset < bytes.len() {
+                bytes[offset] = u8::from(enabled);
+            }
+        }
     }
 }
 
@@ -308,13 +436,19 @@ pub(crate) fn trace_worker_started(state: &Rc<RefCell<HostState>>, tid: u64) {
 pub fn flush_trace_events(state: &Rc<RefCell<HostState>>) {
     let (path, events) = {
         let host = state.borrow();
-        if !trace_enabled(&host.process) || host.process.trace_events.is_empty() {
+        if host.process.trace_event_file.is_none() {
             return;
         }
-        (
-            host.process.trace_event_file.clone(),
-            host.process.trace_events.clone(),
-        )
+        let events = if host.process.trace_events.is_empty() {
+            vec![format!(
+                "{{\"pid\":{},\"tid\":{},\"cat\":\"__metadata\",\"ph\":\"M\",\"name\":\"process_name\",\"args\":{{\"name\":\"quench-node\"}}}}",
+                std::process::id(),
+                std::process::id()
+            )]
+        } else {
+            host.process.trace_events.clone()
+        };
+        (host.process.trace_event_file.clone(), events)
     };
     let Some(path) = path else { return };
     let payload = format!("{{\"traceEvents\":[{}]}}", events.join(","));
@@ -342,6 +476,52 @@ pub fn set_abort_on_uncaught_exception(state: &Rc<RefCell<HostState>>, exec_argv
     state.borrow_mut().process.abort_on_uncaught_exception = enabled;
 }
 
+/// Apply warning-policy invocation flags to the canonical process object.
+/// These are process facts, so every entry mode (file, eval, and a child
+/// re-exec) uses the same configuration before user code runs.
+pub fn configure_deprecation_flags(exec_argv: &[String]) {
+    let global = quench_runtime::vm::current_global_object();
+    let process = quench_runtime::execute::get_property(&global, "process");
+    let no_deprecation = exec_argv
+        .iter()
+        .any(|flag| matches!(flag.as_str(), "--no-deprecation" | "--no_deprecation"));
+    let trace_deprecation = exec_argv
+        .iter()
+        .any(|flag| matches!(flag.as_str(), "--trace-deprecation" | "--trace_deprecation"));
+    let throw_deprecation = exec_argv.iter().any(|flag| flag == "--throw-deprecation");
+    let _ = quench_runtime::execute::set_property_in_place(
+        &process,
+        "noDeprecation",
+        Value::Boolean(no_deprecation),
+    );
+    let _ = quench_runtime::execute::set_property_in_place(
+        &process,
+        "traceDeprecation",
+        Value::Boolean(trace_deprecation),
+    );
+    let _ = quench_runtime::execute::set_property_in_place(
+        &process,
+        "throwDeprecation",
+        Value::Boolean(throw_deprecation),
+    );
+}
+
+/// Generate the small entry-bootstrap fragment that materializes warning
+/// policy in the active VM realm.  Keeping the values derived from argv in
+/// one helper makes file and eval entry points observe the same flags.
+pub fn deprecation_policy_source(exec_argv: &[String]) -> String {
+    let no_deprecation = exec_argv
+        .iter()
+        .any(|flag| matches!(flag.as_str(), "--no-deprecation" | "--no_deprecation"));
+    let trace_deprecation = exec_argv
+        .iter()
+        .any(|flag| matches!(flag.as_str(), "--trace-deprecation" | "--trace_deprecation"));
+    let throw_deprecation = exec_argv.iter().any(|flag| flag == "--throw-deprecation");
+    format!(
+        "globalThis.process.noDeprecation = {no_deprecation}; globalThis.process.traceDeprecation = {trace_deprecation}; globalThis.process.throwDeprecation = {throw_deprecation};\n"
+    )
+}
+
 /// Parse Node permission flags into one process-owned policy.  Flags are
 /// facts supplied by the invocation (or NODE_OPTIONS), never fixture/source
 /// hints.  An explicit `--permission`/`--permission-audit` list wins over
@@ -350,7 +530,12 @@ pub fn set_abort_on_uncaught_exception(state: &Rc<RefCell<HostState>>, exec_argv
 pub fn configure_permissions(state: &Rc<RefCell<HostState>>, exec_argv: &[String]) {
     let env_flags = std::env::var("NODE_OPTIONS")
         .ok()
-        .map(|options| options.split_whitespace().map(str::to_owned).collect::<Vec<_>>())
+        .map(|options| {
+            options
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
         .unwrap_or_default();
     let explicit_model = exec_argv
         .iter()
@@ -387,9 +572,10 @@ pub fn configure_permissions(state: &Rc<RefCell<HostState>>, exec_argv: &[String
             "--allow-addons" => (Some("addon"), None),
             "--allow-ffi" => (Some("ffi"), None),
             "--allow-openssl-store" => (Some("openssl.store"), None),
-            value if value.starts_with("--allow-fs-read=") => {
-                (Some("fs.read"), Some(value["--allow-fs-read=".len()..].to_string()))
-            }
+            value if value.starts_with("--allow-fs-read=") => (
+                Some("fs.read"),
+                Some(value["--allow-fs-read=".len()..].to_string()),
+            ),
             value if value.starts_with("--allow-fs-write=") => (
                 Some("fs.write"),
                 Some(value["--allow-fs-write=".len()..].to_string()),
@@ -563,7 +749,9 @@ pub fn permission_exec_argv(
         ("ffi", "--allow-ffi"),
         ("openssl.store", "--allow-openssl-store"),
     ] {
-        if permissions.contains(scope) && !state.borrow().process.dropped_permissions.contains(scope) {
+        if permissions.contains(scope)
+            && !state.borrow().process.dropped_permissions.contains(scope)
+        {
             inherited.push(flag.to_string());
         }
     }
@@ -1011,6 +1199,10 @@ fn method_props() -> Vec<(&'static str, Value)> {
             crate::host::capability(crate::registry::SPEC_PROCESS_ON),
         ),
         (
+            "prependListener",
+            crate::host::capability(crate::registry::SPEC_PROCESS_PREPEND),
+        ),
+        (
             "once",
             crate::host::capability(crate::registry::SPEC_PROCESS_ONCE),
         ),
@@ -1196,9 +1388,7 @@ fn env_object() -> Value {
         // QUENCH_* variables are private host transport facts used to
         // re-enter the runner and must not become observable process.env
         // entries in the child (Node exposes only the user environment).
-        .filter(|(key, _)| {
-            !key.starts_with("QUENCH_") && key != "__CF_USER_TEXT_ENCODING"
-        })
+        .filter(|(key, _)| !key.starts_with("QUENCH_") && key != "__CF_USER_TEXT_ENCODING")
         .map(|(key, value)| (key, Value::String(value)))
         .collect();
     pairs.push(("\0quench:process_env".into(), Value::Boolean(true)));
@@ -1558,6 +1748,30 @@ pub fn once(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
     Ok(Value::Undefined)
 }
 
+/// `process.prependListener(event, handler)` — register an ordinary process
+/// event ahead of listeners already attached for the same event.
+pub fn prepend(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    if let (Some(Value::String(event)), Some(handler)) = (args.first(), args.get(1)) {
+        match event.as_str() {
+            "exit" => state
+                .borrow_mut()
+                .process
+                .exit_handlers
+                .insert(0, (handler.clone(), false)),
+            "beforeExit" => state
+                .borrow_mut()
+                .process
+                .before_exit_handlers
+                .insert(0, (handler.clone(), false)),
+            "uncaughtException" | "warning" | "unhandledRejection" => {
+                prepend_handler(state, handler, event.as_str(), false)
+            }
+            _ => prepend_other_handler(state, event, handler, false),
+        }
+    }
+    Ok(Value::Undefined)
+}
+
 fn push_handler(state: &Rc<RefCell<HostState>>, handler: &Value, event: &str, once: bool) {
     let mut guard = state.borrow_mut();
     let process = &mut guard.process;
@@ -1569,6 +1783,21 @@ fn push_handler(state: &Rc<RefCell<HostState>>, handler: &Value, event: &str, on
         "unhandledRejection" => process
             .unhandled_rejection_handlers
             .push((handler.clone(), once)),
+        _ => {}
+    }
+}
+
+fn prepend_handler(state: &Rc<RefCell<HostState>>, handler: &Value, event: &str, once: bool) {
+    let mut guard = state.borrow_mut();
+    let process = &mut guard.process;
+    match event {
+        "uncaughtException" => process
+            .uncaught_exception_handlers
+            .insert(0, (handler.clone(), once)),
+        "warning" => process.warning_handlers.insert(0, (handler.clone(), once)),
+        "unhandledRejection" => process
+            .unhandled_rejection_handlers
+            .insert(0, (handler.clone(), once)),
         _ => {}
     }
 }
@@ -1592,6 +1821,28 @@ fn push_other_handler(state: &Rc<RefCell<HostState>>, event: &str, handler: &Val
             .entry(scope)
             .or_default()
             .push((event.to_string(), handler.clone(), once));
+    }
+}
+
+fn prepend_other_handler(state: &Rc<RefCell<HostState>>, event: &str, handler: &Value, once: bool) {
+    let scope = state
+        .borrow()
+        .cluster
+        .active_worker_event_scope()
+        .unwrap_or_else(|| state.borrow().cluster.process_scope());
+    let mut guard = state.borrow_mut();
+    if scope == 0 {
+        guard
+            .process
+            .other_handlers
+            .insert(0, (event.to_string(), handler.clone(), once));
+    } else {
+        guard
+            .process
+            .scoped_handlers
+            .entry(scope)
+            .or_default()
+            .insert(0, (event.to_string(), handler.clone(), once));
     }
 }
 
@@ -1654,7 +1905,10 @@ pub fn stream_end(
     args: &[Value],
     is_error: bool,
 ) -> Result<Value, VmError> {
-    if let Some(chunk) = args.first().filter(|value| !quench_runtime::is_callable(value)) {
+    if let Some(chunk) = args
+        .first()
+        .filter(|value| !quench_runtime::is_callable(value))
+    {
         stream_write(state, std::slice::from_ref(chunk), is_error)?;
     }
     if let Some(stream) = receiver {
@@ -1807,6 +2061,24 @@ pub fn emit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
         return Ok(Value::Boolean(false));
     };
     let values = args.get(1..).unwrap_or(&[]).to_vec();
+    if event == "warning"
+        && values.first().is_some_and(|warning| {
+            let global = quench_runtime::vm::current_global_object();
+            let process = quench_runtime::execute::get_property(&global, "process");
+            matches!(
+                quench_runtime::execute::get_property(&process, "throwDeprecation"),
+                Value::Boolean(true)
+            ) && matches!(
+                quench_runtime::execute::get_property(warning, "name"),
+                Value::String(name) if name == "DeprecationWarning"
+            )
+        })
+    {
+        // `--throw-deprecation` turns the warning event into the original
+        // exception. Returning it through the ordinary VM error channel lets
+        // the caller's uncaught-exception policy decide the final status.
+        return Err(VmError::Thrown(values[0].clone()));
+    }
     let (normal, once, worker) = {
         let guard = state.borrow();
         match event.as_str() {

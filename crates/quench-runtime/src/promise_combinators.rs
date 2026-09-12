@@ -172,6 +172,12 @@ fn register_aggregate_value(
     index: usize,
     value: Value,
 ) -> Result<(), VmError> {
+    // Every aggregate variant installs a rejection reaction on each promise
+    // it observes. Record that fact at registration time, before a settled
+    // rejection can reach the host's unhandled-rejection checkpoint.
+    if let Value::Promise(promise) = &value {
+        promise.rejection_handled.set(true);
+    }
     if aggregate.kind == PromiseAggregateKind::Race {
         if crate::value::is_object(&value) {
             match crate::execute::get_property_result(&value, "then") {
@@ -259,6 +265,9 @@ fn register_aggregate_value(
     // settle the aggregate synchronously, while native Promise reactions
     // remain queued as microtasks.
     let promise = PromiseData::allocate(PromiseState::Pending);
+    // The aggregate hook consumes this per-element rejection; it is not an
+    // independently observable unhandled promise.
+    promise.rejection_handled.set(true);
     let resolve = bound_settler(Builtin::PromiseResolve, &promise, 1.0);
     let reject = bound_settler(Builtin::PromiseReject, &promise, 1.0);
     if crate::value::is_object(&value) {

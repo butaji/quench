@@ -34,10 +34,12 @@ fn run_batch(paths: &[PathBuf]) -> ExitCode {
     let mut harness = HarnessCache::new(root.join("harness"));
     let outcomes = paths
         .iter()
-        .map(|path| match runner.run_file_with_cache(path, &mut harness) {
-            Ok(TestOutcome::Pass) => None,
-            Ok(TestOutcome::Fail { reason }) | Err(reason) => Some(reason),
-        })
+        .map(
+            |path| match runner.run_file_with_cache(path, &mut harness) {
+                Ok(TestOutcome::Pass) => None,
+                Ok(TestOutcome::Fail { reason }) | Err(reason) => Some(reason),
+            },
+        )
         .collect::<Vec<_>>();
     match serde_json::to_string(&outcomes) {
         Ok(encoded) => {

@@ -169,6 +169,7 @@ fn descriptor_default(current: &Value, name: &str) -> Value {
 }
 
 fn validate_redefinition(
+    key: &str,
     current: &Value,
     requested: &[(String, Value)],
 ) -> Result<(), crate::execute::VmError> {
@@ -178,7 +179,7 @@ fn validate_redefinition(
     if descriptor_value_in(requested, "configurable") == Some(Value::Boolean(true))
         || changes_descriptor_kind(current, requested)
     {
-        return Err(cannot_redefine());
+        return Err(cannot_redefine(key));
     }
     if descriptor_value(current, "get").is_some()
         && descriptor_value_in(requested, "get").is_some_and(|requested_get| {
@@ -188,7 +189,7 @@ fn validate_redefinition(
             )
         })
     {
-        return Err(cannot_redefine());
+        return Err(cannot_redefine(key));
     }
     if descriptor_value(current, "set").is_some()
         && descriptor_value_in(requested, "set").is_some_and(|requested_set| {
@@ -198,17 +199,17 @@ fn validate_redefinition(
             )
         })
     {
-        return Err(cannot_redefine());
+        return Err(cannot_redefine(key));
     }
     if descriptor_value(current, "enumerable") != descriptor_value_in(requested, "enumerable")
         && descriptor_value_in(requested, "enumerable").is_some()
     {
-        return Err(cannot_redefine());
+        return Err(cannot_redefine(key));
     }
     if descriptor_value(current, "writable") == Some(Value::Boolean(false))
         && descriptor_value_in(requested, "writable") == Some(Value::Boolean(true))
     {
-        return Err(cannot_redefine());
+        return Err(cannot_redefine(key));
     }
     if descriptor_value(current, "writable") == Some(Value::Boolean(false))
         && descriptor_value_in(requested, "value").is_some_and(|requested_value| {
@@ -219,7 +220,7 @@ fn validate_redefinition(
             !same
         })
     {
-        return Err(cannot_redefine());
+        return Err(cannot_redefine(key));
     }
     Ok(())
 }
@@ -251,6 +252,6 @@ fn descriptor_value_in<P: crate::value::PropertyEntries + ?Sized>(
         .find_map(|(name, value)| (name == field).then_some(value))
 }
 
-fn cannot_redefine() -> crate::execute::VmError {
-    crate::value::error::throw_type_error("Cannot redefine non-configurable property")
+fn cannot_redefine(key: &str) -> crate::execute::VmError {
+    crate::value::error::throw_type_error(&format!("Cannot redefine property: {key}"))
 }

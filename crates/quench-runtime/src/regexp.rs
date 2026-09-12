@@ -170,10 +170,7 @@ fn normalize_legacy_identity_escapes<'a>(pattern: &'a str, flags: &str) -> Cow<'
                 continue;
             }
         }
-        if next >= '4'
-            && next < '8'
-            && (next as usize - '0' as usize) > capture_count
-        {
+        if next >= '4' && next < '8' && (next as usize - '0' as usize) > capture_count {
             let mut end = index + 2;
             if end < chars.len() && chars[end] >= '0' && chars[end] < '8' {
                 end += 1;
@@ -227,7 +224,27 @@ fn pattern_capture_count(chars: &[char]) -> usize {
 
 fn legacy_identity_target(ch: char) -> bool {
     ch.is_ascii_alphabetic()
-        && !matches!(ch, 'b' | 'B' | 'c' | 'd' | 'D' | 'f' | 'k' | 'n' | 'p' | 'P' | 'r' | 's' | 'S' | 't' | 'u' | 'v' | 'w' | 'W' | 'x')
+        && !matches!(
+            ch,
+            'b' | 'B'
+                | 'c'
+                | 'd'
+                | 'D'
+                | 'f'
+                | 'k'
+                | 'n'
+                | 'p'
+                | 'P'
+                | 'r'
+                | 's'
+                | 'S'
+                | 't'
+                | 'u'
+                | 'v'
+                | 'w'
+                | 'W'
+                | 'x'
+        )
 }
 
 fn append_decoded_group_name(output: &mut String, name: &[char]) {
@@ -665,9 +682,7 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     let Value::String(s) = input else {
         unreachable!("string_value_argument returns String or StringUnits");
     };
-    if !flags.contains(['u', 'v'])
-        && contains_astral(&s)
-    {
+    if !flags.contains(['u', 'v']) && contains_astral(&s) {
         let units = s.encode_utf16().collect::<Vec<_>>();
         return test(
             Some(receiver),
@@ -694,13 +709,7 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         return Ok(Value::Boolean(true));
     }
     let pattern = if source.is_empty() { "(?:)" } else { &source };
-    let found = compile_and_find(
-        pattern,
-        &flags,
-        &s,
-        search_start,
-        flags.contains('y'),
-    )?;
+    let found = compile_and_find(pattern, &flags, &s, search_start, flags.contains('y'))?;
     let matched = found.is_some();
     if flags.contains('g') || flags.contains('y') {
         // `compile_and_find` returns ranges in absolute input coordinates;
@@ -813,13 +822,7 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         return build_native_match_result(receiver, &s, matched, &flags);
     }
     let pattern = if source.is_empty() { "(?:)" } else { &source };
-    if let Some(m) = compile_and_find(
-        pattern,
-        &flags,
-        &s,
-        search_start,
-        flags.contains('y'),
-    )? {
+    if let Some(m) = compile_and_find(pattern, &flags, &s, search_start, flags.contains('y'))? {
         build_match_result(receiver, &s, m, &flags)
     } else {
         if flags.contains('g') || flags.contains('y') {
@@ -875,12 +878,7 @@ pub(crate) fn is_current_realm(value: &Value) -> bool {
         })
         .is_some_and(|realm| realm == current)
 }
-fn build_match_result(
-    receiver: &Value,
-    s: &str,
-    m: Match,
-    flags: &str,
-) -> Result<Value, VmError> {
+fn build_match_result(receiver: &Value, s: &str, m: Match, flags: &str) -> Result<Value, VmError> {
     let new_index = crate::strings::byte_to_utf16(s, m.end());
     if flags.contains('g') || flags.contains('y') {
         set_last_index(receiver, new_index as f64)?;
@@ -891,11 +889,7 @@ fn build_match_result(
     let groups = named_groups(s, &m, unicode);
     let mut result = match_result(values, index, s, groups);
     if flags.contains('d') {
-        result = crate::builtins::set_property(
-            result,
-            "indices",
-            match_indices(s, &m, unicode),
-        );
+        result = crate::builtins::set_property(result, "indices", match_indices(s, &m, unicode));
     }
     Ok(result)
 }
@@ -1012,12 +1006,7 @@ fn match_indices(text: &str, m: &Match, unicode: bool) -> Value {
         group.as_ref().map_or(Value::Undefined, |range| {
             Value::array(vec![
                 Value::Number(match_start_index(text, range.start) as f64),
-                Value::Number(match_end_index(
-                    text,
-                    range.start,
-                    range.end,
-                    unicode,
-                ) as f64),
+                Value::Number(match_end_index(text, range.start, range.end, unicode) as f64),
             ])
         })
     }));
@@ -1050,12 +1039,7 @@ fn named_index_groups(text: &str, m: &Match, unicode: bool) -> Value {
             let value = range.map_or(Value::Undefined, |range| {
                 Value::array(vec![
                     Value::Number(match_start_index(text, range.start) as f64),
-                    Value::Number(match_end_index(
-                        text,
-                        range.start,
-                        range.end,
-                        unicode,
-                    ) as f64),
+                    Value::Number(match_end_index(text, range.start, range.end, unicode) as f64),
                 ])
             });
             (name, value)
@@ -1130,12 +1114,7 @@ fn match_values(text: &str, m: &Match, unicode: bool) -> Vec<Value> {
         })
         .collect::<Vec<_>>();
     if values.is_empty() {
-        values.push(match_value(
-            text,
-            m.start(),
-            m.end(),
-            unicode,
-        ));
+        values.push(match_value(text, m.start(), m.end(), unicode));
     }
     values
 }
@@ -1636,11 +1615,8 @@ mod tests {
             .into(),
         );
         let input = crate::strings::from_units(vec![0xD800, b'a' as u16, 0xDC00]);
-        let result = super::symbol_replace(
-            Some(&regexp),
-            &[input, Value::String("x".to_string())],
-        )
-        .expect("replace");
+        let result = super::symbol_replace(Some(&regexp), &[input, Value::String("x".to_string())])
+            .expect("replace");
         assert_eq!(
             result,
             crate::strings::from_units(vec![0xD800, b'x' as u16, 0xDC00])
@@ -1686,7 +1662,10 @@ mod tests {
         let matcher = Value::Object(
             ObjectData::new(vec![
                 ("\0regexp".to_string(), Value::Boolean(true)),
-                ("\0regexp_source".to_string(), Value::String("a".to_string())),
+                (
+                    "\0regexp_source".to_string(),
+                    Value::String("a".to_string()),
+                ),
                 ("\0regexp_flags".to_string(), Value::String("y".to_string())),
                 ("flags".to_string(), Value::String("y".to_string())),
                 ("source".to_string(), Value::String("a".to_string())),
@@ -1705,14 +1684,9 @@ mod tests {
         let Value::StringUnits(units) = input.clone() else {
             panic!("input must retain lone surrogates");
         };
-        let Value::Array(parts) = super::split_with_exec_units(
-            matcher,
-            input,
-            &units,
-            usize::MAX,
-            false,
-        )
-        .expect("split") else {
+        let Value::Array(parts) =
+            super::split_with_exec_units(matcher, input, &units, usize::MAX, false).expect("split")
+        else {
             panic!("split must return an array");
         };
         assert_eq!(
@@ -1728,17 +1702,14 @@ mod tests {
     #[test]
     fn match_all_start_keeps_utf16_last_index_coordinates() {
         let regexp = Value::Object(
-            ObjectData::new(vec![
-                (
-                    "lastIndex".to_string(),
-                    Value::BindingCell(crate::value::BindingCell::new(Value::Number(1.0))),
-                ),
-            ])
+            ObjectData::new(vec![(
+                "lastIndex".to_string(),
+                Value::BindingCell(crate::value::BindingCell::new(Value::Number(1.0))),
+            )])
             .into(),
         );
         assert_eq!(
-            super::match_all_start(&regexp, &Value::String("😀x".to_string()))
-                .expect("lastIndex"),
+            super::match_all_start(&regexp, &Value::String("😀x".to_string())).expect("lastIndex"),
             1
         );
     }
@@ -1752,10 +1723,7 @@ mod tests {
                     "\0regexp_source".to_string(),
                     Value::String(".".to_string()),
                 ),
-                (
-                    "\0regexp_flags".to_string(),
-                    Value::String("g".to_string()),
-                ),
+                ("\0regexp_flags".to_string(), Value::String("g".to_string())),
                 (
                     "lastIndex".to_string(),
                     Value::BindingCell(crate::value::BindingCell::new(Value::Number(0.0))),
@@ -1798,23 +1766,14 @@ mod tests {
                         Value::BindingCell(crate::value::BindingCell::new(Value::Number(0.0))),
                     ),
                 ])
-                .into()
+                .into(),
             )
         };
         let input = || crate::strings::from_units(vec![0xD800, b'a' as u16, 0xDC00]);
         for (template, expected) in [
-            (
-                "$&",
-                vec![0xD800, b'a' as u16, 0xDC00],
-            ),
-            (
-                "$1",
-                vec![0xD800, b'a' as u16, 0xDC00],
-            ),
-            (
-                "$<x>",
-                vec![0xD800, b'a' as u16, 0xDC00],
-            ),
+            ("$&", vec![0xD800, b'a' as u16, 0xDC00]),
+            ("$1", vec![0xD800, b'a' as u16, 0xDC00]),
+            ("$<x>", vec![0xD800, b'a' as u16, 0xDC00]),
             ("$$", vec![0xD800, b'$' as u16, 0xDC00]),
             ("$`", vec![0xD800, 0xD800, 0xDC00]),
             ("$'", vec![0xD800, 0xDC00, 0xDC00]),
@@ -1833,7 +1792,10 @@ mod tests {
         let receiver = Value::Object(
             ObjectData::new(vec![
                 ("\0regexp".to_string(), Value::Boolean(true)),
-                ("\0regexp_source".to_string(), Value::String("a".to_string())),
+                (
+                    "\0regexp_source".to_string(),
+                    Value::String("a".to_string()),
+                ),
                 ("\0regexp_flags".to_string(), Value::String(String::new())),
                 ("flags".to_string(), Value::String(String::new())),
                 (
@@ -1851,15 +1813,9 @@ mod tests {
         let Value::StringUnits(units) = input.clone() else {
             panic!("input must retain lone surrogates");
         };
-        let result = super::replace_with_exec_units(
-            &receiver,
-            input,
-            &units,
-            &['x' as u16],
-            false,
-            false,
-        )
-        .expect("replace");
+        let result =
+            super::replace_with_exec_units(&receiver, input, &units, &['x' as u16], false, false)
+                .expect("replace");
         assert_eq!(
             result,
             crate::strings::from_units(vec![0xD800, b'x' as u16, 0xDC00])
@@ -1871,7 +1827,10 @@ mod tests {
         let regexp = Value::Object(
             ObjectData::new(vec![
                 ("\0regexp".to_string(), Value::Boolean(true)),
-                ("\0regexp_source".to_string(), Value::String("^a".to_string())),
+                (
+                    "\0regexp_source".to_string(),
+                    Value::String("^a".to_string()),
+                ),
                 (
                     "\0regexp_flags".to_string(),
                     Value::String("gm".to_string()),
@@ -1883,11 +1842,8 @@ mod tests {
             ])
             .into(),
         );
-        let result = super::test(
-            Some(&regexp),
-            &[Value::String("😀\na".to_string())],
-        )
-        .expect("test");
+        let result =
+            super::test(Some(&regexp), &[Value::String("😀\na".to_string())]).expect("test");
         assert_eq!(result, Value::Boolean(true));
         assert_eq!(
             crate::execute::get_property_result(&regexp, "lastIndex").expect("lastIndex"),
@@ -1900,7 +1856,10 @@ mod tests {
         let regexp = Value::Object(
             ObjectData::new(vec![
                 ("\0regexp".to_string(), Value::Boolean(true)),
-                ("\0regexp_source".to_string(), Value::String("a.".to_string())),
+                (
+                    "\0regexp_source".to_string(),
+                    Value::String("a.".to_string()),
+                ),
                 ("\0regexp_flags".to_string(), Value::String("g".to_string())),
                 (
                     "lastIndex".to_string(),
@@ -1909,11 +1868,8 @@ mod tests {
             ])
             .into(),
         );
-        let result = super::exec(
-            Some(&regexp),
-            &[Value::String("xxab".to_string())],
-        )
-        .expect("exec");
+        let result =
+            super::exec(Some(&regexp), &[Value::String("xxab".to_string())]).expect("exec");
         if !crate::value::is_object(&result) {
             panic!("exec must return a result object");
         }
@@ -1936,7 +1892,10 @@ mod tests {
         let regexp = Value::Object(
             ObjectData::new(vec![
                 ("\0regexp".to_string(), Value::Boolean(true)),
-                ("\0regexp_source".to_string(), Value::String(".".to_string())),
+                (
+                    "\0regexp_source".to_string(),
+                    Value::String(".".to_string()),
+                ),
                 ("\0regexp_flags".to_string(), Value::String("g".to_string())),
                 (
                     "exec".to_string(),
@@ -1984,7 +1943,10 @@ mod tests {
         let regexp = Value::Object(
             ObjectData::new(vec![
                 ("\0regexp".to_string(), Value::Boolean(true)),
-                ("\0regexp_source".to_string(), Value::String(".".to_string())),
+                (
+                    "\0regexp_source".to_string(),
+                    Value::String(".".to_string()),
+                ),
                 ("\0regexp_flags".to_string(), Value::String("g".to_string())),
                 ("flags".to_string(), Value::String("g".to_string())),
                 ("global".to_string(), Value::Boolean(true)),
@@ -2017,7 +1979,10 @@ mod tests {
         let regexp = Value::Object(
             ObjectData::new(vec![
                 ("\0regexp".to_string(), Value::Boolean(true)),
-                ("\0regexp_source".to_string(), Value::String(".".to_string())),
+                (
+                    "\0regexp_source".to_string(),
+                    Value::String(".".to_string()),
+                ),
                 ("\0regexp_flags".to_string(), Value::String("g".to_string())),
                 ("flags".to_string(), Value::String("g".to_string())),
                 ("source".to_string(), Value::String(".".to_string())),
@@ -2028,11 +1993,9 @@ mod tests {
             ])
             .into(),
         );
-        let Value::Array(parts) = super::symbol_split(
-            Some(&regexp),
-            &[Value::String("😀".to_string())],
-        )
-        .expect("split") else {
+        let Value::Array(parts) =
+            super::symbol_split(Some(&regexp), &[Value::String("😀".to_string())]).expect("split")
+        else {
             panic!("split must return an array");
         };
         assert_eq!(parts.len(), 3);
@@ -2046,13 +2009,15 @@ mod tests {
         let regexp = Value::Object(
             ObjectData::new(vec![
                 ("\0regexp".to_string(), Value::Boolean(true)),
-                ("\0regexp_source".to_string(), Value::String("😀".to_string())),
+                (
+                    "\0regexp_source".to_string(),
+                    Value::String("😀".to_string()),
+                ),
                 ("\0regexp_flags".to_string(), Value::String(String::new())),
             ])
             .into(),
         );
-        let result = super::exec(Some(&regexp), &[Value::String("😀".to_string())])
-            .expect("exec");
+        let result = super::exec(Some(&regexp), &[Value::String("😀".to_string())]).expect("exec");
         assert!(!matches!(result, Value::Null));
     }
 
@@ -2061,7 +2026,10 @@ mod tests {
         let regexp = Value::Object(
             ObjectData::new(vec![
                 ("\0regexp".to_string(), Value::Boolean(true)),
-                ("\0regexp_source".to_string(), Value::String("[^]".to_string())),
+                (
+                    "\0regexp_source".to_string(),
+                    Value::String("[^]".to_string()),
+                ),
                 ("\0regexp_flags".to_string(), Value::String("g".to_string())),
                 (
                     "lastIndex".to_string(),
@@ -2087,13 +2055,15 @@ mod tests {
         let regexp = Value::Object(
             ObjectData::new(vec![
                 ("\0regexp".to_string(), Value::Boolean(true)),
-                ("\0regexp_source".to_string(), Value::String("\\udc00".to_string())),
+                (
+                    "\0regexp_source".to_string(),
+                    Value::String("\\udc00".to_string()),
+                ),
                 ("\0regexp_flags".to_string(), Value::String(String::new())),
             ])
             .into(),
         );
-        let result = super::exec(Some(&regexp), &[Value::String("😀".to_string())])
-            .expect("exec");
+        let result = super::exec(Some(&regexp), &[Value::String("😀".to_string())]).expect("exec");
         assert!(matches!(result, Value::Null));
     }
 
@@ -2102,7 +2072,10 @@ mod tests {
         let regexp = Value::Object(
             ObjectData::new(vec![
                 ("\0regexp".to_string(), Value::Boolean(true)),
-                ("\0regexp_source".to_string(), Value::String("a".to_string())),
+                (
+                    "\0regexp_source".to_string(),
+                    Value::String("a".to_string()),
+                ),
                 ("\0regexp_flags".to_string(), Value::String(String::new())),
                 (
                     "exec".to_string(),
@@ -2112,8 +2085,7 @@ mod tests {
             .into(),
         );
         assert_eq!(
-            super::test(Some(&regexp), &[Value::String("no match".to_string())])
-                .expect("test"),
+            super::test(Some(&regexp), &[Value::String("no match".to_string())]).expect("test"),
             Value::Boolean(true)
         );
     }

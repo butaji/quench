@@ -171,21 +171,20 @@ const __quenchCryptoSecretKeyFallback = (result) => {
     }
     return length;
   };
-  result.generateKeySync = (type, options) => {
-    const length = validate(type, options);
-    return { type: "secret", export: () => NodeBuffer.alloc(length / 8) };
-  };
-  result.generateKey = (type, options, callback) => {
-    validate(type, options);
-    try {
+  if (typeof result.generateKeySync !== "function") {
+    result.generateKeySync = (type, options) => {
+      const length = validate(type, options);
+      return { type: "secret", export: () => NodeBuffer.alloc(length / 8) };
+    };
+  }
+  if (typeof result.generateKey !== "function") {
+    result.generateKey = (type, options, callback) => {
+      validate(type, options);
       const key = result.generateKeySync(type, options);
       if (typeof callback === "function") callback(null, key);
       return key;
-    } catch (error) {
-      if (typeof callback === "function") callback(error);
-      else throw error;
-    }
-  };
+    };
+  }
 };
 const __quenchCryptoRandomUuidFallback = (result) => {
   result.randomUUID = (options) => {

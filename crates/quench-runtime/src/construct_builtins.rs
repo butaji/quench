@@ -13,6 +13,15 @@ pub fn collect_weak_refs() {
         for weak in refs.borrow().iter() {
             let crate::value::Value::Object(object) = weak else { continue };
             let Some(target) = object.iter().rev().find(|(key, _)| key == "\0weakref").map(|(_, value)| value.clone()) else { continue };
+            // The hidden slot and this local clone account for two strong
+            // owners. A third owner means user code still retains the target.
+            if target
+                .strong_count()
+                .is_some_and(|count| count <= 2)
+            {
+                unsafe { (&mut *(Rc::as_ptr(object) as *mut crate::value::ObjectData)).set_property_in_place("\0weakref", crate::value::Value::Undefined); }
+                continue;
+            }
             if matches!(crate::execute::get_property(&target, "\0quench:weak-listener"), crate::value::Value::Boolean(true)) {
                 continue;
             }
@@ -233,19 +242,59 @@ pub(crate) fn construct_float16_array(
     let Some(source) = arguments.first() else {
         return Ok(value);
     };
-    let Value::Array(source) = source else {
-        return Ok(value);
+    let source_length = match source {
+        Value::Array(source) => source.logical_len(),
+        value if value.is_typed_array() => match crate::execute::get_property(value, "length") {
+                Value::Number(length) if length.is_finite() && length >= 0.0 => {
+                    Some(length as usize)
+                }
+                _ => None,
+            }
+            .unwrap_or(0),
+        _ => return Ok(value),
     };
     let Value::Uint16Array(target) = &value else {
         return Ok(value);
     };
-    for index in 0..source.logical_len() {
-        let item = crate::execute::get_property(&Value::Array(source.clone()), &index.to_string());
-        if matches!(item, Value::Number(number) if number == 0.0 && number.is_sign_negative()) {
-            target.set(index, 0x8000);
+    for index in 0..source_length {
+        let item = crate::execute::get_property(source, &index.to_string());
+        if let Value::Number(number) = item {
+            target.set(index, f64_to_float16(number));
         }
     }
     Ok(value)
+}
+
+fn f64_to_float16(value: f64) -> u16 {
+    let sign = if value.is_sign_negative() { 0x8000 } else { 0 };
+    let value = value.abs();
+    if value.is_nan() {
+        return sign | 0x7e00;
+    }
+    if value.is_infinite() {
+        return sign | 0x7c00;
+    }
+    if value == 0.0 {
+        return sign;
+    }
+    if value < 2f64.powi(-14) {
+        return sign | (value * 2f64.powi(24)).round().min(1023.0) as u16;
+    }
+    let exponent = value.log2().floor() as i32;
+    if exponent > 15 {
+        return sign | 0x7c00;
+    }
+    let mut fraction = ((value / 2f64.powi(exponent) - 1.0) * 1024.0).round() as u16;
+    let mut exponent = exponent + 15;
+    if fraction == 1024 {
+        fraction = 0;
+        exponent += 1;
+    }
+    if exponent >= 31 {
+        sign | 0x7c00
+    } else {
+        sign | ((exponent as u16) << 10) | (fraction & 0x03ff)
+    }
 }
 
 fn is_intl_constructor(builtin: crate::ops::Builtin) -> bool {
@@ -591,9 +640,29 @@ fn error_properties(
         ),
         ("\0prototype".to_string(), prototype),
     ];
-    if let Some(message) = message {
-        push_error_property(&mut properties, "message", Value::String(message));
+    if let Some(message) = message.as_ref() {
+        push_error_property(&mut properties, "message", Value::String(message.clone()));
     }
+    let name = match builtin {
+        crate::ops::Builtin::RangeError => "RangeError",
+        crate::ops::Builtin::ReferenceError => "ReferenceError",
+        crate::ops::Builtin::SyntaxError => "SyntaxError",
+        crate::ops::Builtin::EvalError => "EvalError",
+        crate::ops::Builtin::URIError => "URIError",
+        crate::ops::Builtin::TypeError => "TypeError",
+        _ => "Error",
+    };
+    let mut stack = match message.as_ref() {
+        Some(message) if !message.is_empty() => format!("{name}: {message}"),
+        _ => name.to_string(),
+    };
+    if let Some(filename) = crate::vm::current_context().source_name() {
+        let frames = crate::vm::current_call_stack_frames();
+        for frame in &frames {
+            stack.push_str(&format!("\n    at {frame} ({filename}:1:1)"));
+        }
+    }
+    push_error_property(&mut properties, "stack", Value::String(stack));
     properties
 }
 

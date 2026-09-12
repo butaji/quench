@@ -1,8 +1,8 @@
 //! Collect module sections into one data record.
 
 use crate::hir::{
-    ConstExpr, ConstOp, Export, GcStorage, GcType, HeapKind, HirData, HirElem, HirGlobal, HirImport, HirMemory,
-    HirTable, ImportKind, RefType as HirRef,
+    ConstExpr, ConstOp, Export, GcStorage, GcType, HeapKind, HirData, HirElem, HirGlobal,
+    HirImport, HirMemory, HirTable, ImportKind, RefType as HirRef,
 };
 use wasmparser::{
     AbstractHeapType, CompositeInnerType, DataKind, ElementItems, ElementKind, ExternalKind,
@@ -80,7 +80,11 @@ fn take<'a>(raw: &mut RawModule<'a>, payload: Payload<'a>) -> Result<(), LowerEr
                         CompositeInnerType::Struct(st) => {
                             raw.types.push(wasmparser::FuncType::new([], []));
                             raw.gc_types.push(GcType::Struct {
-                                fields: st.fields.iter().map(|f| gc_storage(f, rec_start)).collect(),
+                                fields: st
+                                    .fields
+                                    .iter()
+                                    .map(|f| gc_storage(f, rec_start))
+                                    .collect(),
                                 super_idx,
                                 descriptor_idx,
                                 describes_idx,
@@ -270,10 +274,9 @@ fn gc_storage(field: &wasmparser::FieldType, rec_start: u32) -> GcStorage {
         wasmparser::StorageType::I16 => GcStorage::I16,
         wasmparser::StorageType::Val(wasmparser::ValType::Ref(rt)) => {
             let type_idx = match rt.heap_type() {
-                wasmparser::HeapType::Concrete(idx) | wasmparser::HeapType::Exact(idx) => {
-                    idx.as_module_index()
-                        .or_else(|| idx.as_rec_group_index().map(|j| rec_start + j))
-                }
+                wasmparser::HeapType::Concrete(idx) | wasmparser::HeapType::Exact(idx) => idx
+                    .as_module_index()
+                    .or_else(|| idx.as_rec_group_index().map(|j| rec_start + j)),
                 _ => None,
             };
             GcStorage::Ref { type_idx }

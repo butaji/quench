@@ -2266,9 +2266,7 @@ mod stubs {
             crate::ops::Builtin::TemporalZonedDateTimeEpochMillisecondsGetter => {
                 let epoch = property("epochNanoseconds")?;
                 let value = match epoch {
-                    Value::BigInt(value) => {
-                        super::parse_epoch_text(&value)?.div_euclid(1_000_000)
-                    }
+                    Value::BigInt(value) => super::parse_epoch_text(&value)?.div_euclid(1_000_000),
                     _ => 0,
                 };
                 return Ok(Value::Number(value as f64));
@@ -5555,7 +5553,8 @@ mod stubs {
                     local.div_euclid(1_000_000_000) as i64,
                     local.rem_euclid(1_000_000_000) as u32,
                 )
-                .map(|date| date.naive_utc()) {
+                .map(|date| date.naive_utc())
+                {
                     year = date.year();
                     month = date.month();
                     day = date.day();
@@ -5617,12 +5616,12 @@ mod stubs {
                 ));
             }
             (
-                parts[parts.len() - 2]
-                    .parse::<f64>()
-                    .map_err(|_| crate::value::error::throw_range_error("Invalid PlainYearMonth"))?,
-                parts[parts.len() - 1]
-                    .parse::<f64>()
-                    .map_err(|_| crate::value::error::throw_range_error("Invalid PlainYearMonth"))?,
+                parts[parts.len() - 2].parse::<f64>().map_err(|_| {
+                    crate::value::error::throw_range_error("Invalid PlainYearMonth")
+                })?,
+                parts[parts.len() - 1].parse::<f64>().map_err(|_| {
+                    crate::value::error::throw_range_error("Invalid PlainYearMonth")
+                })?,
             )
         } else {
             (

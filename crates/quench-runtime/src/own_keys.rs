@@ -204,9 +204,9 @@ fn own_enumerable_string_keys(target: &Value) -> Vec<String> {
             .iter()
             .filter(|(key, _)| !key.starts_with('\0'))
             .filter(|(key, _)| {
-                data.descriptor(key)
-                    .as_ref()
-                    .map_or(true, |descriptor| descriptor_enumerable_value(Some(descriptor)))
+                data.descriptor(key).as_ref().map_or(true, |descriptor| {
+                    descriptor_enumerable_value(Some(descriptor))
+                })
             })
             .map(|(key, _)| key.clone())
             .collect(),
@@ -347,9 +347,7 @@ fn array_extra_keys(values: &crate::value::ArrayData) -> Vec<String> {
     // Array integrity metadata is host state, never a JavaScript property.
     // Keep it out of enumeration just like object private slots.
     extra.retain(|key| {
-        key != "length"
-            && !key.starts_with('\0')
-            && !crate::builtins::is_descriptor_key(key)
+        key != "length" && !key.starts_with('\0') && !crate::builtins::is_descriptor_key(key)
     });
     extra.dedup();
     extra

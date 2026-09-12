@@ -376,4 +376,5 @@ mod counted_method_loop_fact_tests {
                 , Some(crate::facts::CountedMethodLoopFact::BitCount)
         );
     }
+
 }

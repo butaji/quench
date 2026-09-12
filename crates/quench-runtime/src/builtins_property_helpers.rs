@@ -241,7 +241,7 @@ pub(crate) fn define_own_property(
             "Cannot define a property on a non-extensible object",
         ));
     }
-    validate_redefinition(&current, descriptor)?;
+    validate_redefinition(key, &current, descriptor)?;
     let preserved_temporal_slot = temporal_slot_value(&target, key, &current);
     let descriptor = complete_descriptor(descriptor, &current);
     let value = descriptor
@@ -249,6 +249,14 @@ pub(crate) fn define_own_property(
         .rev()
         .find(|(name, _)| name == "value")
         .map_or(Value::Undefined, |(_, value)| value.clone());
+    if let Value::Iterator(data) = &target {
+        data.set_property(key, value);
+        data.set_descriptor(
+            key,
+            Value::Object(Rc::new(ObjectData::new(descriptor.to_vec()))),
+        );
+        return Ok(target);
+    }
     let accessor = descriptor
         .iter()
         .any(|(name, _)| matches!(name.as_str(), "get" | "set"));
@@ -397,6 +405,9 @@ fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(Strin
             let properties = Rc::make_mut(properties);
             properties.retain_names(|name| name != &descriptor_key);
             properties.push((descriptor_key.into(), metadata));
+            if !properties.created.iter().any(|name| name == key) {
+                properties.created.push(key.into());
+            }
         }
         Value::Function(function) => {
             let mut properties = function.properties.borrow_mut();

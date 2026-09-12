@@ -1891,9 +1891,7 @@ fn deep_diff_for_mode(actual: &Value, expected: &Value, full: bool) -> String {
 
 fn rendered_deep_for_mode(value: &Value, full: bool) -> String {
     if full {
-        if matches!(value, Value::String(_) | Value::StringUnits(_))
-            && !execute::is_symbol(value)
-        {
+        if matches!(value, Value::String(_) | Value::StringUnits(_)) && !execute::is_symbol(value) {
             let value = execute::to_js_string(value).unwrap_or_default();
             return format!("'{}'", value.trim_end_matches('\n'));
         }

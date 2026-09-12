@@ -26,6 +26,101 @@ pub struct NodeFixture {
     pub exec_argv: Vec<String>,
 }
 
+/// Parse the shell-like token grammar accepted by NODE_OPTIONS.  Node accepts
+/// quoted and escaped module paths (notably paths containing spaces), so a
+/// plain whitespace split would change the child process contract.
+pub fn parse_node_options(raw: &str) -> Result<Vec<String>, String> {
+    let mut tokens = Vec::new();
+    let mut token = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut started = false;
+    for character in raw.chars() {
+        if escaped {
+            token.push(character);
+            escaped = false;
+            started = true;
+            continue;
+        }
+        if character == '\\' && quote != Some('\'') {
+            escaped = true;
+            started = true;
+            continue;
+        }
+        if let Some(active) = quote {
+            if character == active {
+                quote = None;
+            } else {
+                token.push(character);
+            }
+            started = true;
+            continue;
+        }
+        match character {
+            '\'' | '"' => {
+                quote = Some(character);
+                started = true;
+            }
+            c if c.is_whitespace() => {
+                if started {
+                    tokens.push(std::mem::take(&mut token));
+                    started = false;
+                }
+            }
+            c => {
+                token.push(c);
+                started = true;
+            }
+        }
+    }
+    if escaped || quote.is_some() {
+        return Err(raw.to_string());
+    }
+    if started {
+        tokens.push(token);
+    }
+    Ok(tokens)
+}
+
+/// Return the source prefix for Node's `-r`/`--require` invocation options.
+/// Preloads are ordinary CommonJS modules and therefore run after the host
+/// bootstrap but before the entry program.
+pub fn node_preload_program(args: &[String]) -> String {
+    let mut program = String::new();
+    let mut index = 0;
+    while index < args.len() {
+        let value = &args[index];
+        let module = if value == "-r" || value == "--require" {
+            index += 1;
+            args.get(index).map(String::as_str)
+        } else {
+            value
+                .strip_prefix("--require=")
+                .or_else(|| value.strip_prefix("-r"))
+        };
+        if let Some(module) = module.filter(|module| !module.is_empty()) {
+            program.push_str("require(\"");
+            for character in module.chars() {
+                match character {
+                    '\\' => program.push_str("\\\\"),
+                    '"' => program.push_str("\\\""),
+                    '\n' => program.push_str("\\n"),
+                    '\r' => program.push_str("\\r"),
+                    '\t' => program.push_str("\\t"),
+                    c if c.is_control() => {
+                        use std::fmt::Write;
+                        let _ = write!(program, "\\u{{{:04x}}}", c as u32);
+                    }
+                    c => program.push(c),
+                }
+            }
+            program.push_str("\");\n");
+        }
+        index += 1;
+    }
+    program
+}
+
 impl NodeFixture {
     pub fn from_path(path: PathBuf) -> Result<Self, String> {
         let source =
@@ -162,7 +257,9 @@ impl NodeRunner {
             &self.host.state(),
             &fixture.exec_argv,
         );
-        if let Ok((total, min)) = quench_node::modules::process::secure_heap_config(&fixture.exec_argv)
+        quench_node::modules::process::configure_deprecation_flags(&fixture.exec_argv);
+        if let Ok((total, min)) =
+            quench_node::modules::process::secure_heap_config(&fixture.exec_argv)
         {
             quench_node::modules::process::set_secure_heap_config(&self.host.state(), total, min);
         }
@@ -215,11 +312,17 @@ impl NodeRunner {
             fixture_program
         };
         let dgram_surface = if fixture_source.contains("dgram") {
-            ["dgram-head", "dgram", "dgram-tail", "membership"]
-                .into_iter()
-                .filter_map(|name| quench_node::polyfills::bootstrap::lookup(name))
-                .collect::<Vec<_>>()
-                .join("\n")
+            [
+                "internal-fs-binding",
+                "dgram-head",
+                "dgram",
+                "dgram-tail",
+                "membership",
+            ]
+            .into_iter()
+            .filter_map(|name| quench_node::polyfills::bootstrap::lookup(name))
+            .collect::<Vec<_>>()
+            .join("\n")
         } else {
             String::new()
         };
@@ -266,6 +369,8 @@ impl NodeRunner {
         let report_surface = quench_node::polyfills::bootstrap::lookup("report").unwrap_or("");
         let punycode_surface = quench_node::polyfills::bootstrap::lookup("punycode").unwrap_or("");
         let support_surface = quench_node::polyfills::bootstrap::lookup("support").unwrap_or("");
+        let target_surface = quench_node::polyfills::bootstrap::lookup("target").unwrap_or("");
+        let stream_classes_surface = "";
         let async_resource_surface =
             quench_node::polyfills::bootstrap::lookup("async-resource").unwrap_or("");
         let webcrypto_surface =
@@ -295,8 +400,10 @@ impl NodeRunner {
         };
         let url_pattern_surface =
             quench_node::polyfills::post_bootstrap::lookup("module-surface-06").unwrap_or("");
+        let deprecation_surface =
+            quench_node::modules::process::deprecation_policy_source(&fixture.exec_argv);
         let mut bootstrap = format!(
-            "globalThis.__nodePath = __nodePath; globalThis.__quench_fs_mkdir = __quench_fs_mkdir; Object.defineProperty(globalThis, '__filename', {{ value: __quench_script_filename, configurable: true }}); Object.defineProperty(globalThis, 'import_meta', {{ configurable: true, value: {{ url: __quench_module_url, dirname: __filename.replace(/[^/\\\\]*$/, ''), filename: __filename, resolve(specifier, parent) {{ return new URL(specifier, parent || __quench_module_url).href; }} }} }}); globalThis.URL = URL; Object.defineProperty(globalThis, '__nodeURL', {{ value: globalThis.URL, configurable: true }}); Object.defineProperty(globalThis, '__nodeURLSearchParams', {{ value: globalThis.URLSearchParams, configurable: true }});\n{support_surface}\n{async_resource_surface}\n{url_pattern_surface}\ndelete globalThis.__quenchURLPatternFactory; delete globalThis.__quenchURLInstallCanParse; delete globalThis.__quenchURLInstallToString; delete globalThis.__nodeThrowReadonlyURLSetter; delete globalThis.__quenchURLPattern;\nif (globalThis.process && !(globalThis.__quench_allowed_node_environment_flags instanceof Set)) {{ const flags = new Set(['--perf_basic_prof', '--perf-basic-prof', '--perf_basic-prof', '-r', '--stack-trace-limit', '--inspect-brk']); const has = flags.has; flags.has = (flag) => flag === 'perf-basic-prof' || flag === 'perf_basic-prof' || flag === 'perf_basic_prof' || flag === 'r' || flag === 'inspect-brk' || flag === '--inspect_brk' || (typeof flag === 'string' && flag.startsWith('--stack-trace-limit=')) || has.call(flags, flag); process.allowedNodeEnvironmentFlags = Object.freeze(flags); }}\nif (globalThis.process && globalThis.__quench_allowed_node_environment_flags instanceof Set) process.allowedNodeEnvironmentFlags = globalThis.__quench_allowed_node_environment_flags;"
+            "globalThis.__nodePath = __nodePath; globalThis.__quench_fs_mkdir = __quench_fs_mkdir; Object.defineProperty(globalThis, '__filename', {{ value: __quench_script_filename, configurable: true }}); Object.defineProperty(globalThis, 'import_meta', {{ configurable: true, value: {{ url: __quench_module_url, dirname: __filename.replace(/[^/\\\\]*$/, ''), filename: __filename, resolve(specifier, parent) {{ return new URL(specifier, parent || __quench_module_url).href; }} }} }}); globalThis.URL = URL; Object.defineProperty(globalThis, '__nodeURL', {{ value: globalThis.URL, configurable: true }}); Object.defineProperty(globalThis, '__nodeURLSearchParams', {{ value: globalThis.URLSearchParams, configurable: true }});\n{support_surface}\n{stream_classes_surface}\n{async_resource_surface}\n{url_pattern_surface}\ndelete globalThis.__quenchURLPatternFactory; delete globalThis.__quenchURLInstallCanParse; delete globalThis.__quenchURLInstallToString; delete globalThis.__nodeThrowReadonlyURLSetter; delete globalThis.__quenchURLPattern;\nif (globalThis.process && !(globalThis.__quench_allowed_node_environment_flags instanceof Set)) {{ const flags = new Set(['--perf_basic_prof', '--perf-basic-prof', '--perf_basic-prof', '-r', '--stack-trace-limit', '--inspect-brk']); const has = flags.has; flags.has = (flag) => flag === 'perf-basic-prof' || flag === 'perf_basic-prof' || flag === 'perf_basic_prof' || flag === 'r' || flag === 'inspect-brk' || flag === '--inspect_brk' || (typeof flag === 'string' && flag.startsWith('--stack-trace-limit=')) || has.call(flags, flag); flags.has = has; process.allowedNodeEnvironmentFlags = Object.freeze(flags); }}\nif (globalThis.process && globalThis.__quench_allowed_node_environment_flags instanceof Set) process.allowedNodeEnvironmentFlags = globalThis.__quench_allowed_node_environment_flags;"
         );
         let source = bootstrap.clone();
         bootstrap = format!(
@@ -333,9 +440,18 @@ impl NodeRunner {
                 .replace('\u{2029}', "\\u2029")
         );
         let source = if is_module {
-            format!("Function({bootstrap_literal})();\n{fixture_program}")
+            format!(
+                "Function({bootstrap_literal})();\n{}{}{}",
+                deprecation_surface,
+                node_preload_program(&fixture.exec_argv),
+                fixture_program
+            )
         } else {
-            format!("{bootstrap}\n{fixture_program}")
+            format!(
+                "{bootstrap}\n{deprecation_surface}{}{}",
+                node_preload_program(&fixture.exec_argv),
+                fixture_program
+            )
         };
         context = context.with_compiled_source_text(source.clone());
         self.context = context;
@@ -391,11 +507,12 @@ impl NodeRunner {
                     if cacheable {
                         if let Some(cached) = dynamic_namespace_cache.borrow().get(&cache_key) {
                             if let Some(event) = trace {
-                                let _ = quench_node::modules::diagnostics_channel::module_import_end(
-                                    &state,
-                                    event,
-                                    Ok(cached.clone()),
-                                );
+                                let _ =
+                                    quench_node::modules::diagnostics_channel::module_import_end(
+                                        &state,
+                                        event,
+                                        Ok(cached.clone()),
+                                    );
                             }
                             return Some(cached.clone());
                         }
@@ -407,11 +524,12 @@ impl NodeRunner {
                         Ok(value) => {
                             let namespace = quench_node::modules::require::dynamic_namespace(value);
                             if let Some(event) = trace {
-                                let _ = quench_node::modules::diagnostics_channel::module_import_end(
-                                    &state,
-                                    event,
-                                    Ok(namespace.clone()),
-                                );
+                                let _ =
+                                    quench_node::modules::diagnostics_channel::module_import_end(
+                                        &state,
+                                        event,
+                                        Ok(namespace.clone()),
+                                    );
                             }
                             if cacheable {
                                 dynamic_namespace_cache
@@ -425,11 +543,12 @@ impl NodeRunner {
                                 reason.clone(),
                             );
                             if let Some(event) = trace {
-                                let _ = quench_node::modules::diagnostics_channel::module_import_end(
-                                    &state,
-                                    event,
-                                    Err(reason),
-                                );
+                                let _ =
+                                    quench_node::modules::diagnostics_channel::module_import_end(
+                                        &state,
+                                        event,
+                                        Err(reason),
+                                    );
                             }
                             Some(rejection)
                         }
@@ -483,8 +602,7 @@ impl NodeRunner {
             .unwrap_or_default();
         if let Some(reason) = tap_skip_reason(&captured_output) {
             let has_tests = captured_output.lines().any(|line| {
-                line.trim_start().starts_with("ok ")
-                    || line.trim_start().starts_with("not ok ")
+                line.trim_start().starts_with("ok ") || line.trim_start().starts_with("not ok ")
             });
             if !has_tests {
                 return NodeOutcome::Skip { reason };
@@ -522,9 +640,10 @@ impl NodeRunner {
                             Err(error)
                                 if quench_node::modules::process::abort_on_uncaught_exception(
                                     &self.host.state(),
-                                ) => {
-                                    std::process::abort();
-                                }
+                                ) =>
+                            {
+                                std::process::abort();
+                            }
                             Err(error) => Err(error),
                         }
                     }

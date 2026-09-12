@@ -538,7 +538,12 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
     let previous_resource =
         quench_runtime::execute::get_property(&global, "__nodeCurrentAsyncResource");
     let worker_id = (task.process_scope != 0)
-        .then(|| state.borrow().cluster.worker_for_event_scope(task.process_scope))
+        .then(|| {
+            state
+                .borrow()
+                .cluster
+                .worker_for_event_scope(task.process_scope)
+        })
         .flatten();
     if task.process_scope != 0 {
         state
@@ -631,7 +636,8 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
             if let Some(worker_id) = worker_id {
                 crate::modules::cluster::finish_worker_callback_exit(state, worker_id, code);
             } else {
-                let _ = crate::modules::cluster::fail_fork_process(state, task.process_scope, code)?;
+                let _ =
+                    crate::modules::cluster::fail_fork_process(state, task.process_scope, code)?;
             }
             Ok(())
         }
@@ -736,10 +742,7 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
             }
         }
     };
-    let worker_id = state
-        .borrow()
-        .cluster
-        .worker_for_event_scope(process_scope);
+    let worker_id = state.borrow().cluster.worker_for_event_scope(process_scope);
     let previous_scope = state.borrow().cluster.process_scope();
     let previous_event_scope = state.borrow().event_loop.process_scope();
     let previous_worker = state.borrow().cluster.worker_context;
@@ -770,20 +773,20 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
                 crate::modules::cluster::finish_worker_callback_exit(state, worker_id, code);
                 Ok(())
             } else {
-            let handled = crate::modules::pump::handle_uncaught(state, error)
-                .and_then(|_| crate::modules::pump::run_uncaught(state));
-            let code = if let Err(error) = &handled {
-                quench_runtime::execute::set_property_in_place(
-                    &process,
-                    "\0forkStderr",
-                    Value::String(format!("{}\n", error.render())),
-                );
-                7
-            } else {
-                1
-            };
-            let _ = crate::modules::cluster::fail_fork_process(state, process_scope, code)?;
-            Ok(())
+                let handled = crate::modules::pump::handle_uncaught(state, error)
+                    .and_then(|_| crate::modules::pump::run_uncaught(state));
+                let code = if let Err(error) = &handled {
+                    quench_runtime::execute::set_property_in_place(
+                        &process,
+                        "\0forkStderr",
+                        Value::String(format!("{}\n", error.render())),
+                    );
+                    7
+                } else {
+                    1
+                };
+                let _ = crate::modules::cluster::fail_fork_process(state, process_scope, code)?;
+                Ok(())
             }
         }
         result => result,

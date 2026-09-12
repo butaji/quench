@@ -270,8 +270,8 @@ pub fn is_prototype(builtin: Builtin) -> bool {
                 | Builtin::SyntaxErrorPrototype
                 | Builtin::URIErrorPrototype
                 | Builtin::AggregateErrorPrototype
-            | Builtin::SuppressedErrorPrototype
-            | Builtin::DOMExceptionPrototype
+                | Builtin::SuppressedErrorPrototype
+                | Builtin::DOMExceptionPrototype
                 | Builtin::PromisePrototype
         )
 }

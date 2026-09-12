@@ -197,11 +197,33 @@ const __nodeWindows1252 = {
   158: "ž",
   159: "Ÿ"
 };
+const __nodeUtf8Valid = (bytes) => {
+  for (let i = 0; i < bytes.length; i++) {
+    const first = bytes[i];
+    if (first < 0x80) continue;
+    const width = first < 0xe0 ? 2 : first < 0xf0 ? 3 : 4;
+    if (width === 2 && first < 0xc2) return false;
+    if (width === 3 && (first === 0xe0 || first === 0xed) && i + 1 < bytes.length) {
+      const second = bytes[i + 1];
+      if (first === 0xe0 && second < 0xa0) return false;
+      if (first === 0xed && second >= 0xa0) return false;
+    }
+    if (width === 4 && (first > 0xf4 || (first === 0xf0 && i + 1 < bytes.length && bytes[i + 1] < 0x90) || (first === 0xf4 && i + 1 < bytes.length && bytes[i + 1] >= 0x90))) return false;
+    if (i + width > bytes.length) return false;
+    for (let j = 1; j < width; j++) if ((bytes[i + j] & 0xc0) !== 0x80) return false;
+    i += width - 1;
+  }
+  return true;
+};
 class NodeTextDecoder {
-  constructor(encoding = "utf-8") {
+  constructor(encoding = "utf-8", options = {}) {
     this.encoding = String(encoding).toLowerCase();
+    this.fatal = Boolean(options?.fatal);
   }
   decode(bytes) {
+    if (this.fatal && this.encoding !== "windows-1252" && !__nodeUtf8Valid(bytes)) {
+      throw Object.assign(new TypeError("The encoded data was not valid UTF-8"), { code: "ERR_ENCODING_INVALID" });
+    }
     let result = "";
     for (let i = 0; i < bytes.length;) {
       const first = bytes[i++];

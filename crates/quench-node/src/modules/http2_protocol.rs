@@ -181,6 +181,11 @@ pub struct Session {
     role: Role,
     input: Vec<u8>,
     preface_offset: usize,
+    /// Frames completed before a later frame made this feed fail.  The
+    /// transport must still dispatch those earlier frames (for example the
+    /// request HEADERS before an over-window DATA frame) before publishing
+    /// the connection error.
+    partial_frames: Vec<Frame>,
     decoder: hpack::Decoder<'static>,
     encoder: hpack::Encoder<'static>,
     pending_headers: HashMap<u32, Vec<u8>>,
@@ -197,6 +202,8 @@ pub struct Session {
     /// Connection-level receive window, kept as a signed fact so overflow
     /// validation cannot wrap before it reaches the protocol boundary.
     connection_recv_window: i64,
+    local_initial_window_size: i64,
+    remote_initial_window_size: i64,
     /// Decoded header fields, keyed by stream ID.
     pub headers: HashMap<u32, Vec<(Vec<u8>, Vec<u8>)>>,
 }
@@ -211,6 +218,7 @@ impl Session {
             } else {
                 0
             },
+            partial_frames: Vec::new(),
             decoder: hpack::Decoder::new(),
             encoder: hpack::Encoder::new(),
             pending_headers: HashMap::new(),
@@ -220,6 +228,8 @@ impl Session {
             goaway: false,
             streams: HashMap::new(),
             connection_recv_window: 65_535,
+            local_initial_window_size: 65_535,
+            remote_initial_window_size: 65_535,
             headers: HashMap::new(),
         }
     }
@@ -228,13 +238,22 @@ impl Session {
     /// prefaces/headers/payloads remain buffered until the next call.
     pub fn feed(&mut self, bytes: &[u8]) -> Result<Vec<Frame>, ProtocolError> {
         self.input.extend_from_slice(bytes);
-        self.consume_preface()?;
+        if let Err(error) = self.consume_preface() {
+            self.partial_frames.clear();
+            return Err(error);
+        }
         let mut frames = Vec::new();
         while self.input.len() >= FrameHeader::SIZE {
-            let Some(header) = FrameHeader::decode(&self.input)? else {
-                break;
+            let header = match FrameHeader::decode(&self.input) {
+                Ok(Some(header)) => header,
+                Ok(None) => break,
+                Err(error) => {
+                    self.partial_frames = frames;
+                    return Err(error);
+                }
             };
             if header.length > self.max_frame_size {
+                self.partial_frames = frames;
                 return Err(ProtocolError::FrameTooLarge(header.length));
             }
             let total = FrameHeader::SIZE + header.length as usize;
@@ -243,11 +262,36 @@ impl Session {
             }
             let payload = self.input[FrameHeader::SIZE..total].to_vec();
             let frame = Frame { header, payload };
-            self.validate_and_apply(&frame)?;
+            if let Err(error) = self.validate_and_apply(&frame) {
+                self.partial_frames = frames;
+                return Err(error);
+            }
             self.input.drain(..total);
             frames.push(frame);
         }
+        self.partial_frames.clear();
         Ok(frames)
+    }
+
+    /// Take frames accepted before the current feed encountered a protocol
+    /// error.  This is intentionally separate from `feed`'s `Result`: the
+    /// caller must dispatch the accepted prefix before tearing down the
+    /// connection, preserving stream/error ordering.
+    pub fn take_partial_frames(&mut self) -> Vec<Frame> {
+        std::mem::take(&mut self.partial_frames)
+    }
+
+    /// Apply the local SETTINGS_INITIAL_WINDOW_SIZE fact to receive windows
+    /// for streams opened on this session.  A signed delta is required by the
+    /// wire contract because increasing the setting can exceed the default
+    /// while decreasing it may make an existing window negative.
+    pub fn set_local_initial_window_size(&mut self, value: u32) {
+        let next = value as i64;
+        let delta = next - self.local_initial_window_size;
+        self.local_initial_window_size = next;
+        for stream in self.streams.values_mut() {
+            stream.recv_window = stream.recv_window.saturating_add(delta);
+        }
     }
 
     fn consume_preface(&mut self) -> Result<(), ProtocolError> {
@@ -338,6 +382,13 @@ impl Session {
                 1 => self.decoder.set_max_table_size(value as usize),
                 2 if value > 1 => return Err(ProtocolError::InvalidSettings),
                 4 if value > 0x7fff_ffff => return Err(ProtocolError::InvalidSettings),
+                4 => {
+                    let delta = value as i64 - self.remote_initial_window_size;
+                    self.remote_initial_window_size = value as i64;
+                    for stream in self.streams.values_mut() {
+                        stream.send_window = stream.send_window.saturating_add(delta);
+                    }
+                }
                 5 if !(16_384..=MAX_MAX_FRAME_SIZE).contains(&value) => {
                     return Err(ProtocolError::InvalidSettings)
                 }
@@ -349,8 +400,8 @@ impl Session {
     }
 
     fn apply_window_update(&mut self, frame: &Frame) -> Result<(), ProtocolError> {
-        let increment = (u32::from_be_bytes(frame.payload[..4].try_into().unwrap())
-            & 0x7fff_ffff) as i64;
+        let increment =
+            (u32::from_be_bytes(frame.payload[..4].try_into().unwrap()) & 0x7fff_ffff) as i64;
         if self.connection_recv_window.saturating_add(increment) > 0x7fff_ffff {
             return Err(ProtocolError::FlowControlError);
         }
@@ -362,8 +413,8 @@ impl Session {
         let id = frame.header.stream_id;
         let stream = self.streams.entry(id).or_insert(Stream {
             state: StreamState::Open,
-            recv_window: 65_535,
-            send_window: 65_535,
+            recv_window: self.local_initial_window_size,
+            send_window: self.remote_initial_window_size,
         });
         if stream.state == StreamState::Closed {
             return Err(ProtocolError::InvalidStream(frame.header.kind));
@@ -375,6 +426,14 @@ impl Session {
             };
         }
         match frame.header.kind {
+            FrameType::Data => {
+                let amount = frame.payload.len() as i64;
+                if amount > stream.recv_window || amount > self.connection_recv_window {
+                    return Err(ProtocolError::FlowControlError);
+                }
+                stream.recv_window -= amount;
+                self.connection_recv_window -= amount;
+            }
             FrameType::Headers => self.apply_headers(id, frame)?,
             FrameType::Continuation => self.apply_continuation(id, frame)?,
             FrameType::PushPromise => {
@@ -431,6 +490,20 @@ impl Session {
             .decoder
             .decode(block)
             .map_err(|_| ProtocolError::InvalidHeaderBlock)?;
+        // Pseudo-headers describe the direction of a header block.  A
+        // response-only `:status` field on a server-side request is a
+        // connection/protocol violation, not an ordinary request that can be
+        // handed to the JavaScript stream layer.  Reject it at the shared
+        // HPACK boundary so malformed peers enter the same protocol-error
+        // teardown as malformed frames (and, importantly, cannot keep a
+        // max-invalid-frames server alive forever).
+        if self.role == Role::Server
+            && decoded
+                .iter()
+                .any(|(name, _)| name.as_slice() == b":status")
+        {
+            return Err(ProtocolError::InvalidHeaderBlock);
+        }
         self.headers.insert(id, decoded);
         Ok(())
     }

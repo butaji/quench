@@ -1486,7 +1486,11 @@ fn connect_with_receiver(
                     ("address".into(), Value::String(target_host.to_string())),
                     ("port".into(), Value::Number(port as f64)),
                 ]);
-                state.borrow_mut().net.pending_errors.push((socket.clone(), error));
+                state
+                    .borrow_mut()
+                    .net
+                    .pending_errors
+                    .push((socket.clone(), error));
                 return Ok(socket);
             }
         }
@@ -2385,17 +2389,17 @@ pub fn server_listen(
                 // manufacturing an EADDRINUSE error in the shared VM.
                 let shared_listener = (state.borrow().cluster.worker_context.is_some()
                     && crate::modules::cluster::shares_listening_handle(state))
-                    .then(|| {
-                        state.borrow().net.servers.values().find_map(|server| {
-                            let server = server.borrow();
-                            (server.path.as_deref() == Some(path.as_str())
-                                && server.listening
-                                && !server.closed)
-                                .then(|| server.listener.as_ref()?.try_clone().ok())
-                                .flatten()
-                        })
+                .then(|| {
+                    state.borrow().net.servers.values().find_map(|server| {
+                        let server = server.borrow();
+                        (server.path.as_deref() == Some(path.as_str())
+                            && server.listening
+                            && !server.closed)
+                            .then(|| server.listener.as_ref()?.try_clone().ok())
+                            .flatten()
                     })
-                    .flatten();
+                })
+                .flatten();
                 if let Some(listener) = shared_listener {
                     register_server_path(state, &receiver, Some(listener), Some(path.clone()))?;
                     add_listener_cb(state, &receiver, args.last(), "listening", true)?;
@@ -2861,20 +2865,20 @@ pub fn server_close_idle(
                     .iter()
                     .filter(|((socket_id, _), _)| *socket_id == socket.id)
                     .all(|((_, stream_id), stream)| {
-                        matches!(execute::get_property(stream, "closed"), Value::Boolean(true))
-                            || matches!(
-                                execute::get_property(stream, "destroyed"),
-                                Value::Boolean(true)
-                            )
-                            || host
-                                .net
-                                .http2_sessions
-                                .get(&socket.id)
-                                .and_then(|session| session.streams.get(stream_id))
-                                .is_some_and(|stream| {
-                                    stream.state
-                                        == crate::modules::http2_protocol::StreamState::Closed
-                                })
+                        matches!(
+                            execute::get_property(stream, "closed"),
+                            Value::Boolean(true)
+                        ) || matches!(
+                            execute::get_property(stream, "destroyed"),
+                            Value::Boolean(true)
+                        ) || host
+                            .net
+                            .http2_sessions
+                            .get(&socket.id)
+                            .and_then(|session| session.streams.get(stream_id))
+                            .is_some_and(|stream| {
+                                stream.state == crate::modules::http2_protocol::StreamState::Closed
+                            })
                     });
             let is_idle = socket.server_id == Some(id)
                 && socket.state != SocketState::Closed
@@ -3278,13 +3282,16 @@ pub fn socket_destroy(
     // tearing down the transport; reducing it to the generic cancellation
     // error loses the protocol diagnosis on request streams (for example
     // when an h2 client receives an HTTP/1 response from the peer).
-    let session_error = args.first().filter(|error| {
-        matches!(
-            execute::get_property(error, "code"),
-            Value::String(code)
-                if code == "ERR_HTTP2_ERROR" || code == "ERR_HTTP2_SESSION_ERROR"
-        )
-    }).cloned();
+    let session_error = args
+        .first()
+        .filter(|error| {
+            matches!(
+                execute::get_property(error, "code"),
+                Value::String(code)
+                    if code == "ERR_HTTP2_ERROR" || code == "ERR_HTTP2_SESSION_ERROR"
+            )
+        })
+        .cloned();
     // Session teardown is terminal for every stream owned by that transport.
     // Keep public stream representatives and the protocol ledger synchronized
     // and deliver the same cancellation lifecycle Node exposes for pending
@@ -3327,14 +3334,19 @@ pub fn socket_destroy(
             )
             .ok()
             .is_some_and(|value| matches!(value, Value::Number(count) if count > 0.0));
-            if matches!(http2_role, Some(crate::modules::http2_protocol::Role::Client))
-                && !has_error_listener
+            if matches!(
+                http2_role,
+                Some(crate::modules::http2_protocol::Role::Client)
+            ) && !has_error_listener
             {
                 continue;
             }
             execute::set_property_in_place(stream, "closed", Value::Boolean(true));
             execute::set_property_in_place(stream, "destroyed", Value::Boolean(true));
-            if matches!(http2_role, Some(crate::modules::http2_protocol::Role::Client)) {
+            if matches!(
+                http2_role,
+                Some(crate::modules::http2_protocol::Role::Client)
+            ) {
                 execute::set_property_in_place(stream, "rstCode", Value::Number(8.0));
             }
         }
@@ -3369,11 +3381,7 @@ pub fn socket_destroy(
         }
         // Mark the close as scheduled so a peer RST or EOF cannot emit a
         // second close event for the same representative.
-        execute::set_property_in_place(
-            &stream,
-            "__quenchHttp2CloseEmitted",
-            Value::Boolean(true),
-        );
+        execute::set_property_in_place(&stream, "__quenchHttp2CloseEmitted", Value::Boolean(true));
         execute::set_property_in_place(
             &stream,
             "__quenchHttp2TeardownQueued",

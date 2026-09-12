@@ -262,7 +262,11 @@ fn extend16(a: u128, high: bool, signed: bool) -> u128 {
     for i in 0..4 {
         let s = (start + i) * 2;
         let v = u16::from_le_bytes([b[s], b[s + 1]]);
-        let w = if signed { v as i16 as i32 as u32 } else { v as u32 };
+        let w = if signed {
+            v as i16 as i32 as u32
+        } else {
+            v as u32
+        };
         o[i * 4..i * 4 + 4].copy_from_slice(&w.to_le_bytes());
     }
     u128::from_le_bytes(o)
@@ -286,9 +290,11 @@ fn extend32(a: u128, high: bool, signed: bool) -> u128 {
 }
 
 fn extmul8(a: u128, b: u128, high: bool, signed: bool) -> u128 {
-    zip16b(extend8(a, high, signed), extend8(b, high, signed), |x, y| {
-        x.wrapping_mul(y)
-    })
+    zip16b(
+        extend8(a, high, signed),
+        extend8(b, high, signed),
+        |x, y| x.wrapping_mul(y),
+    )
 }
 
 fn extmul16(a: u128, b: u128, high: bool, signed: bool) -> u128 {
@@ -304,9 +310,11 @@ fn extmul16(a: u128, b: u128, high: bool, signed: bool) -> u128 {
 }
 
 fn extmul32(a: u128, b: u128, high: bool, signed: bool) -> u128 {
-    zip64b(extend32(a, high, signed), extend32(b, high, signed), |x, y| {
-        x.wrapping_mul(y)
-    })
+    zip64b(
+        extend32(a, high, signed),
+        extend32(b, high, signed),
+        |x, y| x.wrapping_mul(y),
+    )
 }
 
 fn zip64b(a: u128, b: u128, f: impl Fn(u64, u64) -> u64) -> u128 {

@@ -217,7 +217,19 @@ pub(crate) fn execute_constructor(
 fn super_is_constructor(value: &Value) -> bool {
     match value {
         Value::Function(function) => crate::functions::is_constructible(function),
-        Value::BoundFunction(bound) => super_is_constructor(&bound.target),
+        Value::BoundFunction(bound) => {
+            if matches!(
+                (&bound.target, &bound.receiver),
+                (
+                    Value::Builtin(crate::ops::Builtin::HostCapability(_)),
+                    Value::HostCapability(_)
+                )
+            ) {
+                true
+            } else {
+                super_is_constructor(&bound.target)
+            }
+        }
         Value::Builtin(builtin) => crate::builtin_meta::constructor_name(*builtin).is_some(),
         Value::Proxy(proxy) => super_is_constructor(&proxy.target),
         _ => false,

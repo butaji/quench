@@ -662,6 +662,23 @@ fn accept_one(
                     .as_ref()
                     .map(|server| execute::get_property(server, "\0quench:http2-settings"))
             });
+        if let Some(settings) = server_settings
+            .as_ref()
+            .filter(|settings| matches!(settings, Value::Object(_) | Value::ObjectAlias(_)))
+        {
+            if let Value::Number(window) = execute::get_property(settings, "initialWindowSize") {
+                if window.is_finite() && (0.0..=0x7fff_ffff as f64).contains(&window) {
+                    if let Some(session) = state
+                        .borrow_mut()
+                        .net
+                        .http2_sessions
+                        .get_mut(&id)
+                    {
+                        session.set_local_initial_window_size(window as u32);
+                    }
+                }
+            }
+        }
         crate::modules::http2_util::configure_session_settings(
             &object,
             server_settings
@@ -2475,10 +2492,26 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
                 .map(|session| session.feed(&bytes));
             match result {
                 Some(Ok(frames)) => (None, frames),
-                Some(Err(error)) => (Some(error), Vec::new()),
+                Some(Err(error)) => {
+                    // `feed` retains the valid prefix when a later frame
+                    // violates the protocol. Dispatch that prefix first so
+                    // stream callbacks observe the same request/error order
+                    // as a native HTTP/2 peer before session teardown.
+                    let frames = state
+                        .borrow_mut()
+                        .net
+                        .http2_sessions
+                        .get_mut(&sock.borrow().id)
+                        .map(|session| session.take_partial_frames())
+                        .unwrap_or_default();
+                    (Some(error), frames)
+                }
                 None => (None, Vec::new()),
             }
         };
+        if protocol_error.is_some() && !protocol_frames.is_empty() {
+            dispatch_http2_frames(state, &sock, &protocol_frames)?;
+        }
         if protocol_error.is_some() {
             // Preserve ordinary net data delivery while retaining a
             // host-owned diagnostic fact.  The eventual HTTP/2 session layer
@@ -2538,7 +2571,7 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
                 execute::get_property(&js, crate::modules::http2_protocol::SERVER_MARKER),
                 Value::Boolean(true)
             );
-        if is_http2 && !protocol_frames.is_empty() {
+        if is_http2 && protocol_error.is_none() && !protocol_frames.is_empty() {
             dispatch_http2_frames(state, &sock, &protocol_frames)?;
         }
         let visible_read = match execute::get_property(&js, "bytesRead") {

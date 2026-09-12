@@ -4030,11 +4030,13 @@ pub fn export_key(
                     Value::String(match name.to_ascii_uppercase().as_str() {
                         "RSA-PSS" => format!("PS{hash}"),
                         "RSASSA-PKCS1-V1_5" => format!("RS{hash}"),
-                        "RSA-OAEP" => if hash == "1" {
-                            "RSA-OAEP".into()
-                        } else {
-                            format!("RSA-OAEP-{hash}")
-                        },
+                        "RSA-OAEP" => {
+                            if hash == "1" {
+                                "RSA-OAEP".into()
+                            } else {
+                                format!("RSA-OAEP-{hash}")
+                            }
+                        }
                         _ => String::new(),
                     })
                 };
@@ -6296,15 +6298,11 @@ fn supports_import_key_shape(algorithm: &Value) -> bool {
             }
             match execute::get_property(algorithm, "length") {
                 Value::Undefined => true,
-                Value::Number(value) => {
-                    value.is_finite() && value.fract() == 0.0 && value > 0.0
-                }
+                Value::Number(value) => value.is_finite() && value.fract() == 0.0 && value > 0.0,
                 _ => false,
             }
         }
-        "RSA-OAEP" | "RSA-PSS" | "RSASSA-PKCS1-V1_5" => {
-            supports_rsa_keygen_shape(algorithm)
-        }
+        "RSA-OAEP" | "RSA-PSS" | "RSASSA-PKCS1-V1_5" => supports_rsa_keygen_shape(algorithm),
         _ => true,
     }
 }
@@ -6673,18 +6671,14 @@ pub fn supports(
         _ => false,
     };
     let companion_supported = match operation.as_str() {
-        "wrapKey" => args
-            .get(2)
-            .is_some_and(|value| {
-                supports_export_key_algorithm(value)
-                    && provider_algorithm_supported(&algorithm_name(value).to_ascii_uppercase())
-            }),
-        "unwrapKey" => args
-            .get(2)
-            .is_some_and(|value| {
-                supports_import_key_algorithm(value)
-                    && provider_algorithm_supported(&algorithm_name(value).to_ascii_uppercase())
-            }),
+        "wrapKey" => args.get(2).is_some_and(|value| {
+            supports_export_key_algorithm(value)
+                && provider_algorithm_supported(&algorithm_name(value).to_ascii_uppercase())
+        }),
+        "unwrapKey" => args.get(2).is_some_and(|value| {
+            supports_import_key_algorithm(value)
+                && provider_algorithm_supported(&algorithm_name(value).to_ascii_uppercase())
+        }),
         _ => true,
     };
     Ok(Value::Boolean(

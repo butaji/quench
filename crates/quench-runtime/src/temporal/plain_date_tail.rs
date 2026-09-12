@@ -14,12 +14,7 @@ pub(super) fn date_object(year: f64, month: f64, day: f64) -> Value {
     date_object_with_calendar(year, month, day, "iso8601")
 }
 
-pub(super) fn date_object_with_calendar(
-    year: f64,
-    month: f64,
-    day: f64,
-    calendar: &str,
-) -> Value {
+pub(super) fn date_object_with_calendar(year: f64, month: f64, day: f64, calendar: &str) -> Value {
     let month_code = format!("M{month:02.0}");
     Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
         ("year".into(), Value::Number(year)),

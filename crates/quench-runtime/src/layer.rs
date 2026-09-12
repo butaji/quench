@@ -51,7 +51,6 @@ impl Layer {
             _ => Self::Native,
         }
     }
-
 }
 
 #[cfg(test)]

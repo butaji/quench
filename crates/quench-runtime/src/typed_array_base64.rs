@@ -124,11 +124,9 @@ fn uint8_array_from_bytes(bytes: &[u8]) -> Result<Value, VmError> {
         .map(Rc::new)
         .ok_or_else(|| crate::value::error::throw_range_error("ArrayBuffer allocation failed"))?;
     buffer.bytes.borrow_mut().copy_from_slice(bytes);
-    Ok(Value::Uint8Array(Rc::new(crate::value::Uint8ArrayData::new(
-        buffer,
-        0,
-        bytes.len(),
-    ))))
+    Ok(Value::Uint8Array(Rc::new(
+        crate::value::Uint8ArrayData::new(buffer, 0, bytes.len()),
+    )))
 }
 
 fn from_base64(arguments: &[Value]) -> Result<Value, VmError> {

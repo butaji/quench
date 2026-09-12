@@ -127,6 +127,26 @@ pub(crate) fn set_property(
     set_bigint_property(target, key, value)
 }
 
+pub(crate) fn set_numeric_index(target: &Value, index: usize, number: f64) -> Option<bool> {
+    macro_rules! set {
+        ($variant:ident, $convert:expr) => {
+            if let Value::$variant(view) = target {
+                return Some(view.set(index, $convert(number)));
+            }
+        };
+    }
+    set!(Uint8Array, crate::construct::to_uint8);
+    set!(Float64Array, |value| value);
+    set!(Float32Array, |value| value as f32);
+    set!(Int8Array, crate::construct::to_int8);
+    set!(Int16Array, crate::construct::to_int16);
+    set!(Int32Array, crate::construct::to_int32);
+    set!(Uint16Array, crate::construct::to_uint16);
+    set!(Uint32Array, crate::construct::to_uint32);
+    set!(Uint8ClampedArray, |value| value);
+    None
+}
+
 fn set_named_property(target: &Value, key: &str, value: Value) -> Option<Value> {
     macro_rules! store {
         ($($variant:ident),+) => {
