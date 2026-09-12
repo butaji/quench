@@ -8519,16 +8519,23 @@ fn native_number_to_string(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
 fn native_boolean(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(Value::Bool(a.first().is_some_and(Value::truthy)))
 }
-fn native_boolean_value_of(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+fn native_boolean_value_of(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     if let Some(object) = this.as_object_ref()
         && let Some(value) = object.borrow().props.get("\0primitive")
+        && object
+            .borrow()
+            .props
+            .get("\0wrapper")
+            .and_then(Value::as_string)
+            .is_some_and(|wrapper| wrapper == "Boolean")
     {
         return Ok(Value::Bool(value.truthy()));
     }
     this.as_bool().map(Value::Bool).ok_or_else(|| {
-        JsError::Message(
-            "TypeError: Boolean.prototype.valueOf called on incompatible receiver".into(),
-        )
+        JsError::Throw(type_error(
+            vm,
+            "Boolean.prototype.valueOf called on incompatible receiver",
+        ))
     })
 }
 fn native_boolean_to_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
