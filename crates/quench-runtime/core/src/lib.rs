@@ -6109,12 +6109,12 @@ impl Vm {
         }
         if let Some(string) = o.as_string() {
             return if k == "length" {
-                Value::Number(string.len() as f64)
+                Value::Number(string.encode_utf16().count() as f64)
             } else if let Some(index) = array_index_key(k) {
                 string
-                    .chars()
+                    .encode_utf16()
                     .nth(index)
-                    .map(|character| Value::string_value(character.to_string()))
+                    .map(|unit| Value::string_value(String::from_utf16_lossy(&[unit])))
                     .unwrap_or(Value::Undefined)
             } else {
                 if let Some(value) = self.prototype_property(BuiltinOwner::StringPrototype, k) {
@@ -9652,7 +9652,7 @@ define_string_html_methods! {
 }
 
 fn native_string_trim_left(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    if this.is_null() || this.is_undefined() || is_symbol_carrier(&this) {
+    if this.is_null() || this.is_undefined() || symbol_primitive(&this).is_some() {
         return Err(JsError::Throw(type_error(
             vm,
             "String.prototype.trimLeft called on null or undefined",
@@ -9664,7 +9664,7 @@ fn native_string_trim_left(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Va
 }
 
 fn native_string_trim(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    if this.is_null() || this.is_undefined() || is_symbol_carrier(&this) {
+    if this.is_null() || this.is_undefined() || symbol_primitive(&this).is_some() {
         return Err(JsError::Throw(type_error(
             vm,
             "String.prototype.trim called on null or undefined",
@@ -9676,7 +9676,7 @@ fn native_string_trim(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> 
 }
 
 fn native_string_trim_right(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    if this.is_null() || this.is_undefined() || is_symbol_carrier(&this) {
+    if this.is_null() || this.is_undefined() || symbol_primitive(&this).is_some() {
         return Err(JsError::Throw(type_error(
             vm,
             "String.prototype.trimRight called on null or undefined",
@@ -10515,7 +10515,7 @@ fn replacement_text(
                 })
             }));
         }
-        arguments.push(Value::Number(start as f64));
+        arguments.push(Value::Number(utf16_index(source, start) as f64));
         arguments.push(Value::string_value(source));
         let result = vm.call(replacement.clone(), Value::Undefined, arguments)?;
         return string_argument(vm, &result);
@@ -10700,16 +10700,8 @@ fn native_string_split(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
         return vm.call_arguments(&method, separator.clone(), protocol_args.as_slice());
     }
     if let Some(r) = args.first().and_then(Value::as_regexp) {
-        let b = r.borrow();
-        let mut parts = b
-            .regex
-            .split(&s)
-            .map(Value::string_value)
-            .collect::<Vec<_>>();
-        if let Some(limit) = string_split_limit(vm, args)? {
-            parts.truncate(limit);
-        }
-        return Ok(vm.array_from_values(parts));
+        let limit = string_split_limit(vm, args)?;
+        return regexp_split_values(vm, &r, &s, limit);
     }
     let mut parts = if args.first().is_none_or(Value::is_undefined) {
         vec![Value::string_value(s)]
@@ -10729,6 +10721,56 @@ fn native_string_split(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
     Ok(vm.array_from_values(parts))
 }
 
+fn regexp_split_values(
+    vm: &mut Vm,
+    regexp: &Rc<RefCell<RegExpValue>>,
+    source: &str,
+    limit: Option<usize>,
+) -> JsResult<Value> {
+    let limit = limit.unwrap_or(usize::MAX);
+    if limit == 0 {
+        return Ok(vm.array_from_values(Vec::new()));
+    }
+    let regex = regexp.borrow();
+    let mut parts = Vec::new();
+    let mut last_end = 0usize;
+    for captures in regex.regex.captures_iter(source) {
+        let Some(found) = captures.get(0) else {
+            continue;
+        };
+        // A zero-width match at the start does not split the string (for
+        // example, "x".split(/^/) is ["x"]).
+        if found.start() == 0 && found.end() == 0 && last_end == 0 {
+            continue;
+        }
+        if found.start() == source.len() && found.end() == source.len() {
+            continue;
+        }
+        parts.push(Value::string_value(
+            source[last_end..found.start()].to_string(),
+        ));
+        if parts.len() >= limit {
+            break;
+        }
+        for capture in captures.iter().skip(1) {
+            parts.push(capture.map_or(Value::Undefined, |value| {
+                Value::string_value(value.as_str().to_string())
+            }));
+            if parts.len() >= limit {
+                break;
+            }
+        }
+        last_end = found.end();
+        if parts.len() >= limit {
+            break;
+        }
+    }
+    if parts.len() < limit {
+        parts.push(Value::string_value(source[last_end..].to_string()));
+    }
+    Ok(vm.array_from_values(parts))
+}
+
 fn string_split_limit(vm: &mut Vm, args: &[Value]) -> JsResult<Option<usize>> {
     let Some(limit) = args.get(1).filter(|value| !value.is_undefined()) else {
         return Ok(None);
@@ -10740,7 +10782,26 @@ fn string_split_limit(vm: &mut Vm, args: &[Value]) -> JsResult<Option<usize>> {
     if number.is_infinite() {
         return Ok(None);
     }
-    Ok(Some((number.trunc() as u64).min(usize::MAX as u64) as usize))
+    Ok(Some((number.trunc() as u64 & u32::MAX as u64) as usize))
+}
+
+#[inline]
+fn utf16_index(source: &str, byte_index: usize) -> usize {
+    let byte_index = byte_index.min(source.len());
+    let mut units = 0;
+    for (start, character) in source.char_indices() {
+        if start >= byte_index {
+            break;
+        }
+        let end = start + character.len_utf8();
+        if byte_index < end {
+            // Internal regex cursors can advance through the middle of a
+            // UTF-8 scalar when emulating non-unicode UTF-16 matching.
+            return units + 1;
+        }
+        units += character.len_utf16();
+    }
+    units
 }
 fn native_string_match(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let s = string_receiver(vm, &this, "match")?;
@@ -10791,7 +10852,11 @@ fn native_string_match(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
                 .as_ref()
                 .and_then(|locations| locations.get(0))
                 .map_or(0, |(start, _)| start);
-            vm.set_prop(&result, "index", Value::Number(index as f64));
+            vm.set_prop(
+                &result,
+                "index",
+                Value::Number(utf16_index(&s, index) as f64),
+            );
             vm.set_prop(&result, "input", Value::string_value(s));
         }
         Ok(result)
@@ -10960,7 +11025,11 @@ fn native_regexp_string_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> 
             .capture_values_at(&source, index)
             .unwrap_or_else(|| vec![Value::string_value("")]);
         let match_result = vm.array_from_values(values);
-        vm.set_prop(&match_result, "index", Value::Number(index as f64));
+        vm.set_prop(
+            &match_result,
+            "index",
+            Value::Number(utf16_index(&source, index) as f64),
+        );
         vm.set_prop(&match_result, "input", Value::string_value(source.clone()));
         vm.set_prop(
             &this,
@@ -11035,7 +11104,11 @@ fn native_regexp_string_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> 
         .capture_values_at(&source, found.start())
         .unwrap_or_else(|| vec![Value::string_value(found.as_str())]);
     let match_result = vm.array_from_values(values);
-    vm.set_prop(&match_result, "index", Value::Number(found.start() as f64));
+    vm.set_prop(
+        &match_result,
+        "index",
+        Value::Number(utf16_index(&source, found.start()) as f64),
+    );
     vm.set_prop(&match_result, "input", Value::string_value(source.clone()));
     let next_index = if found.end() == found.start() {
         found.end().saturating_add(1)
@@ -11058,22 +11131,21 @@ fn native_string_search(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Va
     {
         return vm.call_arguments(&method, regexp.clone(), &[Value::string_value(s)][..]);
     }
-    let index = if let Some(r) = args.first().and_then(Value::as_regexp) {
-        r.borrow()
-            .regex
-            .find(&s)
-            .map(|m| m.start() as f64)
-            .unwrap_or(-1.0)
-    } else {
-        let pattern = args
-            .first()
-            .filter(|value| !value.is_undefined())
-            .map(|value| string_argument(vm, value))
-            .transpose()?
-            .unwrap_or_default();
-        s.find(&pattern).map(|index| index as f64).unwrap_or(-1.0)
-    };
-    Ok(Value::Number(index))
+    let pattern = args
+        .first()
+        .filter(|value| !value.is_undefined())
+        .map(|value| string_argument(vm, value))
+        .transpose()?
+        .unwrap_or_default();
+    let regexp = Value::RegExp(Rc::new(RefCell::new(RegExpValue::new(
+        Rc::new(compile_regex(&pattern, false)?),
+        false,
+    ))));
+    if let Some(value) = regexp.as_regexp() {
+        value.borrow_mut().source = pattern;
+    }
+    let method = vm.get_prop_with_accessors(&regexp, &vm.well_known_symbol_key("search"))?;
+    vm.call_arguments(&method, regexp, &[Value::string_value(s)][..])
 }
 fn native_string_index_of(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     string_index_search(vm, this, args, false)
@@ -11165,15 +11237,18 @@ fn native_string_includes(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<
         .transpose()?
         .unwrap_or(0.0)
         .max(0.0) as usize;
-    let length = source.chars().count();
+    let source_units = source.encode_utf16().collect::<Vec<_>>();
+    let search_units = search.encode_utf16().collect::<Vec<_>>();
+    let length = source_units.len();
     Ok(Value::Bool(if position > length {
-        search.is_empty()
+        search_units.is_empty()
+    } else if search_units.is_empty() {
+        true
     } else {
-        source
-            .chars()
-            .skip(position)
-            .collect::<String>()
-            .contains(&search)
+        source_units.get(position..).is_some_and(|tail| {
+            tail.windows(search_units.len())
+                .any(|window| window == search_units)
+        })
     }))
 }
 
@@ -11195,14 +11270,14 @@ fn native_string_starts_with(vm: &mut Vm, this: Value, args: &[Value]) -> JsResu
         .get(1)
         .map(|value| to_integer_or_infinity(vm, value))
         .transpose()?
-        .unwrap_or(0.0)
-        .max(0.0) as usize;
+        .unwrap_or(0.0);
+    let source_units = source.encode_utf16().collect::<Vec<_>>();
+    let search_units = search.encode_utf16().collect::<Vec<_>>();
+    let start = start.max(0.0).min(source_units.len() as f64) as usize;
     Ok(Value::Bool(
-        source
-            .chars()
-            .skip(start)
-            .collect::<String>()
-            .starts_with(&search),
+        source_units
+            .get(start..)
+            .is_some_and(|tail| tail.starts_with(&search_units)),
     ))
 }
 
@@ -11225,15 +11300,11 @@ fn native_string_ends_with(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
         .map(|value| to_integer_or_infinity(vm, value))
         .transpose()?
         .map(|value| value.max(0.0) as usize)
-        .unwrap_or_else(|| source.chars().count())
-        .min(source.chars().count());
-    Ok(Value::Bool(
-        source
-            .chars()
-            .take(end)
-            .collect::<String>()
-            .ends_with(&search),
-    ))
+        .unwrap_or_else(|| source.encode_utf16().count())
+        .min(source.encode_utf16().count());
+    let source_units = source.encode_utf16().collect::<Vec<_>>();
+    let search_units = search.encode_utf16().collect::<Vec<_>>();
+    Ok(Value::Bool(source_units[..end].ends_with(&search_units)))
 }
 
 fn native_string_repeat(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
@@ -11450,13 +11521,12 @@ fn regexp_method(vm: &Vm, _regexp: &RefCell<RegExpValue>, name: &str) -> Value {
         _ => vm.builtin_property(BuiltinOwner::RegExpPrototype, name),
     }
 }
-fn native_regexp_test(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+fn native_regexp_test(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let Some(r) = this.as_regexp() else {
         return Ok(Value::Bool(false));
     };
-    Ok(Value::Bool(r.borrow().regex.is_match(
-        &args.first().map(Value::string).unwrap_or_default(),
-    )))
+    let source = string_argument(vm, args.first().unwrap_or(&Value::Undefined))?;
+    Ok(Value::Bool(r.borrow().regex.is_match(&source)))
 }
 
 fn native_regexp_to_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
@@ -11513,7 +11583,11 @@ fn native_regexp_symbol_match(vm: &mut Vm, this: Value, args: &[Value]) -> JsRes
         .as_ref()
         .and_then(|locations| locations.get(0))
         .map_or(0, |(start, _)| start);
-    vm.set_prop(&result, "index", Value::Number(index as f64));
+    vm.set_prop(
+        &result,
+        "index",
+        Value::Number(utf16_index(&source, index) as f64),
+    );
     vm.set_prop(&result, "input", Value::string_value(source));
     Ok(result)
 }
@@ -11531,7 +11605,7 @@ fn native_regexp_symbol_search(vm: &mut Vm, this: Value, args: &[Value]) -> JsRe
             .borrow()
             .regex
             .find(&source)
-            .map_or(-1.0, |m| m.start() as f64),
+            .map_or(-1.0, |m| utf16_index(&source, m.start()) as f64),
     ))
 }
 
@@ -11601,23 +11675,28 @@ fn native_regexp_symbol_split(vm: &mut Vm, this: Value, args: &[Value]) -> JsRes
         )));
     };
     let source = string_argument(vm, args.first().unwrap_or(&Value::Undefined))?;
-    let mut parts = regexp
-        .borrow()
-        .regex
-        .split(&source)
-        .map(Value::string_value)
-        .collect::<Vec<_>>();
-    if let Some(limit) = args.get(1).map(Value::number) {
-        parts.truncate(limit.max(0.0) as usize);
-    }
-    Ok(vm.array_from_values(parts))
+    let limit = args
+        .get(1)
+        .filter(|value| !value.is_undefined())
+        .map(|value| to_number_with_vm(vm, value))
+        .transpose()?
+        .map(|value| {
+            if value.is_nan() || value <= 0.0 {
+                0
+            } else if value.is_infinite() {
+                usize::MAX
+            } else {
+                value.trunc().min(usize::MAX as f64) as usize
+            }
+        });
+    regexp_split_values(vm, &regexp, &source, limit)
 }
 
 fn native_regexp_exec(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let Some(r) = this.as_regexp() else {
         return Ok(Value::Null);
     };
-    let s = args.first().map(Value::string).unwrap_or_default();
+    let s = string_argument(vm, args.first().unwrap_or(&Value::Undefined))?;
     let mut b = r.borrow_mut();
     let start = if b.global {
         b.props
@@ -11641,7 +11720,11 @@ fn native_regexp_exec(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Valu
         .and_then(|locations| locations.get(0))
         .map_or(0, |(start, _)| start);
     let result = vm.array_from_values(a);
-    vm.set_prop(&result, "index", Value::Number(index as f64));
+    vm.set_prop(
+        &result,
+        "index",
+        Value::Number(utf16_index(&s, index) as f64),
+    );
     vm.set_prop(&result, "input", Value::string_value(s));
     if b.global {
         let end = b
@@ -13234,7 +13317,11 @@ fn native_object(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
 
 fn initialize_string_wrapper(vm: &mut Vm, object: &Value, value: &Value) {
     let text = value.string();
-    vm.set_prop(object, "length", Value::Number(text.chars().count() as f64));
+    vm.set_prop(
+        object,
+        "length",
+        Value::Number(text.encode_utf16().count() as f64),
+    );
     if let Some(handle) = object.as_object_ref() {
         let mut object = handle.borrow_mut();
         object.attributes.insert(
