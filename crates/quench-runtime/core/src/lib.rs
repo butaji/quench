@@ -5959,6 +5959,18 @@ fn native_parse_float(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(Value::Number(source[..cursor].parse::<f64>().unwrap_or(f64::NAN)))
 }
 
+fn native_eval(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    let Some(source) = a.first().filter(|value| value.is_string()).map(Value::string) else {
+        return Ok(a.first().cloned().unwrap_or(Value::Undefined));
+    };
+    let path = vm
+        .source_stack
+        .last()
+        .cloned()
+        .unwrap_or_else(|| PathBuf::from("<eval>"));
+    vm.run_source_text_in_environment(&path, &source, vm.global.clone())
+}
+
 fn native_is_finite(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     let Some(value) = a.first() else {
         return Ok(Value::Bool(false));
@@ -6945,6 +6957,47 @@ fn native_object_get_own_property_descriptor(
     vm.set_prop(&descriptor, "enumerable", Value::Bool(false));
     vm.set_prop(&descriptor, "configurable", Value::Bool(true));
     Ok(descriptor)
+}
+fn native_object_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(target) = args.first() else {
+        return Err(JsError::Message("TypeError: prototype target is undefined".into()));
+    };
+    if let Some(object) = target.as_object() {
+        return Ok(object
+            .borrow()
+            .prototype
+            .clone()
+            .map(Value::Object)
+            .unwrap_or(Value::Null));
+    }
+    if let Some(function) = target.as_function() {
+        return Ok(Value::Object(function.prototype.clone()));
+    }
+    let _ = vm;
+    Ok(Value::Null)
+}
+fn native_object_keys(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(target) = args.first() else {
+        return Err(JsError::Message("TypeError: keys target is undefined".into()));
+    };
+    let keys = target
+        .as_object_ref()
+        .map(|object| {
+            let object = object.borrow();
+            if let Some(array) = &object.array {
+                return (0..array.len()).map(|index| Value::string_value(index.to_string())).collect();
+            }
+            object.props.keys().map(Value::string_value).collect()
+        })
+        .unwrap_or_default();
+    Ok(vm.object_value(Object::array(None, keys)))
+}
+fn native_object_get_own_property_names(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    native_object_keys(vm, Value::Undefined, args)
+}
+fn native_object_create(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let prototype = args.first().and_then(Value::as_object);
+    Ok(vm.object(prototype))
 }
 fn native_object_value_of(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     Ok(this)
