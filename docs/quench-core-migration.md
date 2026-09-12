@@ -72,7 +72,7 @@ interpreter would be a compatibility regression, not a migration.
 Verification completed:
 
 - `cargo check -p quench-runtime`
-- `cargo test -p quench-runtime-core --lib` (173 tests)
+- `cargo test -p quench-runtime-core --lib` (174 tests)
 - `cargo test -p quench-node --lib` (18 tests)
 - `cargo test -p quench-wasm --lib` (16 tests)
 - production `quench-node` build and a core-backed Node smoke test
@@ -91,6 +91,10 @@ Verification completed:
   49,154 failures are explicit missing-stencil or missing-built-in diagnostics,
   proving the corpus reaches the new VM without silently falling back
 - canonical V8V7 exact driver, all eight fixtures valid
+- focused stencil probes now cover `Array.from`/`Array.of`/`Array.isArray`,
+  `Object.preventExtensions` + `defineProperty`, bound function calls, and
+  native error-constructor identity; the full stencil sweep remains the
+  authoritative migration gate and is still not green
 
 The matched one-second/32-run V8V7 measurements (both thin-LTO builds) were
 source VM geomean 2,512.49 and runtime-owned migrated-core geomean 2,524.36. Raw output is

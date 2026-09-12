@@ -3462,6 +3462,31 @@ fn construct(
         &arguments,
         call_ic,
     )?;
+    // Error constructors return ordinary objects, but those objects must retain
+    // identity with the constructor used (`thrown.constructor === TypeError`).
+    // Stamp the constructor metadata at the construction boundary so all error
+    // kinds share the same native allocation path.
+    let error_constructor = callee.as_function_ref().and_then(|function| match function.kind {
+        FunctionKind::Builtin(
+            BuiltinId::ErrorConstructor
+            | BuiltinId::TypeErrorConstructor
+            | BuiltinId::RangeErrorConstructor
+            | BuiltinId::URIErrorConstructor
+            | BuiltinId::SyntaxErrorConstructor
+            | BuiltinId::ReferenceErrorConstructor
+            | BuiltinId::EvalErrorConstructor
+            | BuiltinId::AggregateErrorConstructor,
+        ) => Some(()),
+        _ => None,
+    });
+    if error_constructor.is_some() && result.as_object_ref().is_some() {
+        vm(frame).set_prop(&result, "constructor", callee.clone());
+        let name = callee
+            .as_function_ref()
+            .and_then(|function| function.props.borrow().get("name").cloned())
+            .unwrap_or_else(|| Value::string_value("Error"));
+        vm(frame).set_prop(&result, "name", name);
+    }
     if wrapper_constructor {
         vm(frame).set_prop(&object, "\0primitive", result.clone());
         let wrapper = match callee.as_function_ref().map(|function| &function.kind) {
@@ -11096,6 +11121,7 @@ mod tests {
             prototype: None,
             dense_access: DenseArrayAccess::EMPTY,
             array: None,
+            extensible: true,
         });
         let receiver_shape = object.borrow().props.shape.0;
         let property_ic = PropertyIc {
@@ -11177,6 +11203,7 @@ mod tests {
             prototype: None,
             dense_access: DenseArrayAccess::EMPTY,
             array: None,
+            extensible: true,
         });
         let first_ic = PropertyIc {
             receiver_shape: first_object.borrow().props.shape.0,
@@ -11193,6 +11220,7 @@ mod tests {
             prototype: None,
             dense_access: DenseArrayAccess::EMPTY,
             array: None,
+            extensible: true,
         });
         let second_ic = PropertyIc {
             receiver_shape: second_object.borrow().props.shape.0,
