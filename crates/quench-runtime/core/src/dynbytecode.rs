@@ -1476,12 +1476,33 @@ impl Compiler {
         let mut result = self.literal(Literal::String(first), value.span)?;
         for (index, expression) in value.expressions.iter().enumerate() {
             let value_register = self.expression(expression)?;
+            // Template interpolation performs ToString (string hint), which
+            // is distinct from the default-hint coercion used by `+`.
+            let string_constructor = self.alloc()?;
+            self.emit(
+                DynOp::LoadName {
+                    dst: string_constructor,
+                    name: "String".into(),
+                },
+                expression.span(),
+            );
+            let receiver = self.literal(Literal::Undefined, expression.span())?;
+            let string_value = self.alloc()?;
+            self.emit(
+                DynOp::Call {
+                    dst: string_value,
+                    callee: string_constructor,
+                    receiver,
+                    args: vec![value_register],
+                },
+                expression.span(),
+            );
             let dst = self.alloc()?;
             self.emit(
                 DynOp::Binary {
                     dst,
                     left: result,
-                    right: value_register,
+                    right: string_value,
                     kind: Op::Add,
                 },
                 expression.span(),

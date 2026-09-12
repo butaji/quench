@@ -2880,7 +2880,8 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             put(frame, dst, closure);
         }
         DynOp::Unary { dst, src, kind } => {
-            let value = unary(*kind, get_ref(frame, *src));
+            let operand = get_ref(frame, *src).clone();
+            let value = unary(vm(frame), *kind, &operand)?;
             put(frame, dst, value);
         }
         DynOp::Binary {
@@ -3372,20 +3373,38 @@ fn set_static_cached(
     Err(new_value)
 }
 
-fn unary(kind: UnaryKind, value: &Value) -> Value {
-    if super::is_bigint_marker(value) {
-        let bigint = super::parse_bigint_text(value.as_string().map_or("", String::as_str))
-            .unwrap_or_else(|_| num_bigint::BigInt::from(0));
-        return match kind {
+fn unary(vm: &mut super::Vm, kind: UnaryKind, value: &Value) -> JsResult<Value> {
+    let marker = if super::is_bigint_marker(value) {
+        value.as_string().cloned()
+    } else {
+        value.as_object_ref().and_then(|object| {
+            object
+                .borrow()
+                .props
+                .get("\0primitive")
+                .filter(|primitive| super::is_bigint_marker(primitive))
+                .and_then(Value::as_string)
+                .cloned()
+        })
+    };
+    if let Some(marker) = marker {
+        let bigint =
+            super::parse_bigint_text(&marker).unwrap_or_else(|_| num_bigint::BigInt::from(0));
+        return Ok(match kind {
             UnaryKind::Negate => super::bigint_marker(-bigint),
             UnaryKind::BitNot => super::bigint_marker(!bigint),
             UnaryKind::Typeof => Value::string_value("bigint"),
-            UnaryKind::Plus => Value::Number(bigint.to_f64().unwrap_or(f64::NAN)),
+            UnaryKind::Plus => {
+                return Err(JsError::Throw(super::type_error(
+                    vm,
+                    "cannot convert a BigInt value to a number",
+                )));
+            }
             UnaryKind::Not => Value::Bool(false),
             UnaryKind::Void => Value::Undefined,
-        };
+        });
     }
-    match kind {
+    Ok(match kind {
         UnaryKind::Plus => Value::Number(value.number()),
         UnaryKind::Negate => Value::Number(-value.number()),
         UnaryKind::Not => Value::Bool(!value.truthy()),
@@ -3407,7 +3426,7 @@ fn unary(kind: UnaryKind, value: &Value) -> Value {
             .into(),
         )),
         UnaryKind::Void => Value::Undefined,
-    }
+    })
 }
 
 fn construct(
