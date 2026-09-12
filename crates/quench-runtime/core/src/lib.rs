@@ -34,7 +34,7 @@ use oxc_parser::{ParseOptions, Parser};
 use oxc_span::{GetSpan, SourceType, Span};
 use regex::{CaptureLocations, Regex};
 use std::cell::{Cell, OnceCell, RefCell, UnsafeCell};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::env;
 use std::fmt;
 use std::fs;
@@ -1190,8 +1190,11 @@ impl<'a> ObjectTracer<'a> {
             .borrow()
             .values()
             .for_each(|value| self.value(value));
-        if let FunctionKind::User { env, .. } = &function.kind {
-            self.environment(env.clone());
+        match &function.kind {
+            FunctionKind::User { env, .. } | FunctionKind::Arrow { env, .. } => {
+                self.environment(env.clone());
+            }
+            FunctionKind::Builtin(_) | FunctionKind::Native(_) => {}
         }
     }
 
@@ -1667,7 +1670,14 @@ fn inline_environment_chain(root: &Env) -> InlineEnvironmentChain {
 }
 
 enum FunctionKind<'a> {
-    User { node: &'a Function<'a>, env: Env },
+    User {
+        node: &'a Function<'a>,
+        env: Env,
+    },
+    Arrow {
+        node: &'a ArrowFunctionExpression<'a>,
+        env: Env,
+    },
     Builtin(BuiltinId),
     Native(fn(&mut Vm, Value, &[Value]) -> JsResult<Value>),
 }
@@ -4019,11 +4029,18 @@ struct HostRootScope {
     base: usize,
 }
 
+struct Timer {
+    id: u64,
+    callback: Value,
+    args: Vec<Value>,
+}
+
 struct Vm {
     global: Env,
     cwd: PathBuf,
     source_stack: Vec<PathBuf>,
     source_ids: Vec<usize>,
+    module_cache: HashMap<PathBuf, Value>,
     started_at: Instant,
     coverage: Coverage,
     coverage_output: Option<PathBuf>,
@@ -4043,6 +4060,10 @@ struct Vm {
     jit_stats_enabled: bool,
     block_stats_enabled: bool,
     instruction_budget: Option<u64>,
+    output: Option<Box<dyn FnMut(&str)>>,
+    timers: VecDeque<Timer>,
+    next_ticks: VecDeque<Timer>,
+    next_timer_id: u64,
 }
 impl Vm {
     fn new() -> Self {
@@ -4052,6 +4073,7 @@ impl Vm {
             cwd: env::current_dir().unwrap(),
             source_stack: Vec::new(),
             source_ids: Vec::new(),
+            module_cache: HashMap::new(),
             started_at: Instant::now(),
             coverage: if env::var_os("QUENCH_STENCIL_COVERAGE").is_some() {
                 Coverage::enabled()
@@ -4077,6 +4099,10 @@ impl Vm {
             instruction_budget: env::var(INSTRUCTION_BUDGET_ENV)
                 .ok()
                 .and_then(|value| value.parse().ok()),
+            output: None,
+            timers: VecDeque::new(),
+            next_ticks: VecDeque::new(),
+            next_timer_id: 1,
         };
         v.builtin_functions = builtins::instantiate(&v);
         v.install();
@@ -4128,6 +4154,17 @@ impl Vm {
         self.builtin_functions
             .iter()
             .for_each(|value| tracer.value(value));
+        self.module_cache
+            .values()
+            .for_each(|value| tracer.value(value));
+        self.timers.iter().for_each(|timer| {
+            tracer.value(&timer.callback);
+            timer.args.iter().for_each(|value| tracer.value(value));
+        });
+        self.next_ticks.iter().for_each(|timer| {
+            tracer.value(&timer.callback);
+            timer.args.iter().for_each(|value| tracer.value(value));
+        });
         self.host_roots.iter().for_each(|value| tracer.value(value));
         self.jit_cache
             .values()
@@ -4260,6 +4297,9 @@ impl Vm {
         Environment::set(g, "Math", m);
         let console = self.object(None);
         Environment::set(g, "console", console);
+        let json = self.object(None);
+        self.set_prop(&json, "stringify", self.native(native_json_stringify));
+        Environment::set(g, "JSON", json);
         for recipe in builtins::BUILTIN_RECIPES {
             let value = self.builtin(recipe.id);
             match recipe.owner {
@@ -4273,6 +4313,11 @@ impl Vm {
                         Environment::get(g, "console").expect("console namespace is installed");
                     self.set_prop(&console, recipe.key, value);
                 }
+                BuiltinOwner::Assert => {
+                    let assert =
+                        Environment::get(g, "assert").expect("assert function is installed");
+                    self.set_prop(&assert, recipe.key, value);
+                }
                 BuiltinOwner::StringConstructor => {
                     let string = self.builtin(BuiltinId::StringConstructor);
                     self.set_prop(&string, recipe.key, value);
@@ -4285,6 +4330,259 @@ impl Vm {
         {
             self.array_proto = Some(array.prototype.clone());
         }
+    }
+
+    /// Install the small, host-provided part of Node's process object.
+    ///
+    /// The VM owns the object and its JavaScript-visible array semantics; the
+    /// host supplies only invocation data.  Keeping this boundary explicit
+    /// prevents the Node crate from creating a second execution context.
+    fn install_process(&mut self, argv: Vec<String>, exec_argv: Vec<String>) {
+        let process = self.object(None);
+        self.install_process_fields(&process, argv, exec_argv);
+        Environment::set(&self.global, "process", process);
+        self.install_node_builtins();
+        self.install_global_aliases();
+    }
+
+    fn install_node_builtins(&mut self) {
+        let module = self.buffer_module();
+        let buffer = self.get_prop(&module, "Buffer");
+        Environment::set(&self.global, "Buffer", buffer);
+        let blob = self.get_prop(&module, "Blob");
+        Environment::set(&self.global, "Blob", blob);
+    }
+
+    fn install_main_module(&mut self, path: &Path) {
+        let exports = self.object(None);
+        let module = self.object(None);
+        self.set_prop(&module, "exports", exports.clone());
+        Environment::set(&self.global, "module", module);
+        Environment::set(&self.global, "exports", exports);
+        Environment::set(&self.global, "__filename", Value::string_value(path.to_string_lossy()));
+        Environment::set(
+            &self.global,
+            "__dirname",
+            Value::string_value(
+                path.parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .to_string_lossy(),
+            ),
+        );
+        Environment::set(&self.global, "require", self.builtin(BuiltinId::Require));
+    }
+
+    fn install_process_fields(&self, process: &Value, argv: Vec<String>, exec_argv: Vec<String>) {
+        let to_array = |values: Vec<String>| {
+            self.array_from_values(values.into_iter().map(Value::string_value).collect())
+        };
+        self.set_prop(process, "argv", to_array(argv));
+        self.set_prop(
+            process,
+            "execPath",
+            self.get_prop(process, "argv")
+                .as_object()
+                .and_then(|object| object.borrow().array.as_ref()?.get(0).cloned())
+                .unwrap_or_else(|| Value::string_value("quench-node")),
+        );
+        self.set_prop(process, "argv0", Value::string_value("node"));
+        self.set_prop(process, "execArgv", to_array(exec_argv));
+        let environment = self.object(None);
+        for (key, value) in env::vars() {
+            self.set_prop(&environment, &key, Value::string_value(value));
+        }
+        self.set_prop(process, "env", environment);
+        self.set_prop(
+            process,
+            "platform",
+            Value::string_value(std::env::consts::OS),
+        );
+        self.set_prop(process, "version", Value::string_value("v22.0.0"));
+        self.set_prop(process, "pid", Value::Number(std::process::id() as f64));
+        self.set_prop(process, "exitCode", Value::Number(0.0));
+        self.set_prop(process, "cwd", self.native(native_process_cwd));
+        self.set_prop(
+            process,
+            "nextTick",
+            self.builtin_property(BuiltinOwner::Process, "nextTick"),
+        );
+    }
+
+    fn install_global_aliases(&self) {
+        // Keep the host-facing global aliases on the same VM-owned object.
+        // The core environment remains the binding authority; this object is
+        // the observable `global`/`globalThis` projection used by Node code.
+        let global_this = self.object(None);
+        for name in [
+            "process", "console", "Math", "Object", "Array", "String", "Number", "Date", "RegExp",
+            "Error", "assert", "Buffer", "Blob", "JSON", "setTimeout", "clearTimeout",
+        ] {
+            if let Some(value) = Environment::get(&self.global, name) {
+                self.set_prop(&global_this, name, value);
+            }
+        }
+        self.set_prop(&global_this, "global", global_this.clone());
+        self.set_prop(&global_this, "globalThis", global_this.clone());
+        Environment::set(&self.global, "global", global_this.clone());
+        Environment::set(&self.global, "globalThis", global_this);
+    }
+
+    fn process_exit_code(&self) -> i32 {
+        Environment::get(&self.global, "process")
+            .map(|process| self.get_prop(&process, "exitCode").number())
+            .filter(|code| code.is_finite())
+            .map(|code| code as i32)
+            .unwrap_or(0)
+    }
+
+    fn schedule_timer(&mut self, callback: Value, args: Vec<Value>) -> u64 {
+        let id = self.next_timer_id;
+        self.next_timer_id = self.next_timer_id.wrapping_add(1).max(1);
+        self.timers.push_back(Timer { id, callback, args });
+        id
+    }
+
+    fn schedule_next_tick(&mut self, callback: Value, args: Vec<Value>) -> u64 {
+        let id = self.next_timer_id;
+        self.next_timer_id = self.next_timer_id.wrapping_add(1).max(1);
+        self.next_ticks.push_back(Timer { id, callback, args });
+        id
+    }
+
+    fn cancel_timer(&mut self, id: u64) {
+        self.timers.retain(|timer| timer.id != id);
+        self.next_ticks.retain(|timer| timer.id != id);
+    }
+
+    fn run_timers(&mut self) -> JsResult<()> {
+        while let Some(timer) = self
+            .next_ticks
+            .pop_front()
+            .or_else(|| self.timers.pop_front())
+        {
+            self.call(timer.callback, Value::Undefined, timer.args)?;
+        }
+        Ok(())
+    }
+
+    fn resolve_module_path(&self, specifier: &str) -> PathBuf {
+        let requested = PathBuf::from(specifier);
+        let base = self
+            .source_stack
+            .last()
+            .and_then(|path| path.parent())
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| self.cwd.clone());
+        let mut path = if requested.is_absolute() {
+            requested
+        } else {
+            base.join(requested)
+        };
+        if path.extension().is_none() {
+            path.set_extension("js");
+        }
+        fs::canonicalize(&path).unwrap_or(path)
+    }
+
+    fn require_module(&mut self, specifier: &str) -> JsResult<Value> {
+        if specifier == "assert" || specifier == "node:assert" {
+            return Ok(Environment::get(&self.global, "assert").unwrap_or(Value::Undefined));
+        }
+        if specifier == "buffer" || specifier == "node:buffer" {
+            return Ok(self.buffer_module());
+        }
+        if specifier == "util" || specifier == "node:util" {
+            return Ok(self.util_module());
+        }
+        if specifier == "path" || specifier == "node:path" {
+            return Ok(self.path_module());
+        }
+        let path = self.resolve_module_path(specifier);
+        if let Some(exports) = self.module_cache.get(&path) {
+            return Ok(exports.clone());
+        }
+        let source = fs::read_to_string(&path)
+            .map_err(|error| JsError::Message(format!("cannot require {specifier:?}: {error}")))?;
+        let exports = self.object(None);
+        self.module_cache.insert(path.clone(), exports.clone());
+        let module = self.object(None);
+        self.set_prop(&module, "exports", exports.clone());
+        let environment = Environment::new(Some(self.global.clone()));
+        {
+            let mut bindings = environment.borrow_mut();
+            bindings.declare("module", module.clone());
+            bindings.declare("exports", exports.clone());
+            bindings.declare("__filename", Value::string_value(path.to_string_lossy()));
+            bindings.declare(
+                "__dirname",
+                Value::string_value(
+                    path.parent()
+                        .unwrap_or_else(|| Path::new("."))
+                        .to_string_lossy(),
+                ),
+            );
+            bindings.declare("require", self.builtin(BuiltinId::Require));
+            bindings.declare("this", exports);
+        }
+        if let Err(error) = self.run_source_text_in_environment(&path, &source, environment) {
+            self.module_cache.remove(&path);
+            return Err(error);
+        }
+        let result = self.get_prop(&module, "exports");
+        self.module_cache.insert(path, result.clone());
+        Ok(result)
+    }
+
+    fn buffer_module(&mut self) -> Value {
+        let key = PathBuf::from("<builtin:buffer>");
+        if let Some(module) = self.module_cache.get(&key) {
+            return module.clone();
+        }
+        let module = self.object(None);
+        let buffer = self.native(native_buffer_constructor);
+        self.set_prop(&buffer, "from", self.native(native_buffer_from));
+        self.set_prop(&buffer, "alloc", self.native(native_buffer_alloc));
+        self.set_prop(&buffer, "allocUnsafe", self.native(native_buffer_alloc));
+        self.set_prop(&module, "Buffer", buffer);
+        self.set_prop(&module, "Blob", self.native(native_blob_constructor));
+        self.set_prop(&module, "INSPECT_MAX_BYTES", Value::Number(50.0));
+        self.module_cache.insert(key, module.clone());
+        module
+    }
+
+    fn util_module(&mut self) -> Value {
+        let key = PathBuf::from("<builtin:util>");
+        if let Some(module) = self.module_cache.get(&key) {
+            return module.clone();
+        }
+        let module = self.object(None);
+        self.set_prop(
+            &module,
+            "convertProcessSignalToExitCode",
+            self.native(native_convert_process_signal_to_exit_code),
+        );
+        self.module_cache.insert(key, module.clone());
+        module
+    }
+
+    fn path_module(&mut self) -> Value {
+        let key = PathBuf::from("<builtin:path>");
+        if let Some(module) = self.module_cache.get(&key) {
+            return module.clone();
+        }
+        let module = self.object(None);
+        for (name, function) in [
+            ("join", native_path_join as _),
+            ("resolve", native_path_resolve as _),
+            ("basename", native_path_basename as _),
+            ("dirname", native_path_dirname as _),
+            ("extname", native_path_extname as _),
+            ("isAbsolute", native_path_is_absolute as _),
+        ] {
+            self.set_prop(&module, name, self.native(function));
+        }
+        self.module_cache.insert(key, module.clone());
+        module
     }
     fn get_prop(&self, o: &Value, k: &str) -> Value {
         if let Some(x) = o.as_object_ref() {
@@ -4447,13 +4745,17 @@ impl Vm {
         }
         if let Some(f) = c.as_function_ref() {
             if self.jit_mode == JitMode::Stencil
-                && matches!(f.kind, FunctionKind::User { .. })
+                && matches!(
+                    f.kind,
+                    FunctionKind::User { .. } | FunctionKind::Arrow { .. }
+                )
                 && f.dyn_jit.borrow().is_none()
             {
-                let FunctionKind::User { node, .. } = &f.kind else {
-                    unreachable!()
-                };
-                self.compile_user_function(&f, node)?;
+                match &f.kind {
+                    FunctionKind::User { node, .. } => self.compile_user_function(&f, node)?,
+                    FunctionKind::Arrow { node, .. } => self.compile_arrow_function(&f, node)?,
+                    FunctionKind::Builtin(_) | FunctionKind::Native(_) => unreachable!(),
+                }
             }
             if self.jit_mode == JitMode::Stencil
                 && let Some(code) = f.numeric_jit.borrow().clone()
@@ -4477,8 +4779,9 @@ impl Vm {
             if self.jit_mode == JitMode::Stencil
                 && let Some(code) = f.dyn_jit.borrow().clone()
             {
-                let FunctionKind::User { env, .. } = &f.kind else {
-                    unreachable!()
+                let env = match &f.kind {
+                    FunctionKind::User { env, .. } | FunctionKind::Arrow { env, .. } => env,
+                    FunctionKind::Builtin(_) | FunctionKind::Native(_) => unreachable!(),
                 };
                 self.jit_stats.native_entries += 1;
                 if code.has_loop() {
@@ -4507,6 +4810,10 @@ impl Vm {
                     }
                     self.call_user(node, env.clone(), t, a.materialize(), f.source_id)
                 }
+                FunctionKind::Arrow { node, .. } => Err(JsError::Message(format!(
+                    "stencil argument guard failed for arrow function at {:?}",
+                    node.span
+                ))),
             }
         } else {
             Err(JsError::Message(format!("not a function: {}", c.display())))
@@ -4636,6 +4943,67 @@ impl Vm {
         )))
     }
 
+    fn compile_arrow_function(
+        &mut self,
+        function: &FunctionValue<'static>,
+        node: &ArrowFunctionExpression<'static>,
+    ) -> JsResult<()> {
+        let cache_key = node as *const ArrowFunctionExpression<'static> as usize;
+        if let Some(code) = self.jit_cache.get(&cache_key) {
+            *function.dyn_jit.borrow_mut() = Some(code.clone());
+            self.jit_stats.cache_hits = self.jit_stats.cache_hits.saturating_add(1);
+            return Ok(());
+        }
+        self.jit_stats.compile_attempts += 1;
+        let bytecode = dynbytecode::Compiler::compile_arrow(node, function.source_id).map_err(
+            |gap| {
+                self.jit_stats.compile_rejections += 1;
+                let location = function
+                    .source_id
+                    .and_then(|source_id| self.coverage.location(source_id, gap.span.start))
+                    .map_or_else(
+                        || format!("{:?}", gap.span),
+                        |(path, line)| format!("{}:{}", path.display(), line),
+                    );
+                JsError::Message(format!(
+                    "missing stencil at {location}: {}. Options: add a general bytecode/stencil; lower to existing primitive composition; or reject this program",
+                    gap.reason
+                ))
+            },
+        )?;
+        let instrumented_kernels = self.instrumented_kernels();
+        let code = {
+            let mut arena = self.code_arena.borrow_mut();
+            dynjit::DynJitCode::build(bytecode, &mut arena, instrumented_kernels)
+        };
+        let Some(code) = code else {
+            self.jit_stats.compile_rejections += 1;
+            return Err(JsError::Message(format!(
+                "unable to link stencil image for arrow function at {:?}",
+                node.span
+            )));
+        };
+        let (direct_blocks, direct_opcodes) = code.direct_selection();
+        let code = Rc::new(code);
+        let code_bytes = code.code_bytes() as u64;
+        self.jit_cache.insert(cache_key, code.clone());
+        *function.dyn_jit.borrow_mut() = Some(code);
+        self.jit_stats.compiled_images += 1;
+        self.jit_stats.compiled_direct_blocks = self
+            .jit_stats
+            .compiled_direct_blocks
+            .saturating_add(direct_blocks as u64);
+        self.jit_stats.compiled_direct_opcodes = self
+            .jit_stats
+            .compiled_direct_opcodes
+            .saturating_add(direct_opcodes as u64);
+        self.jit_stats.compiled_code_bytes = self
+            .jit_stats
+            .compiled_code_bytes
+            .saturating_add(code_bytes);
+        Ok(())
+    }
+
     fn call_user(
         &mut self,
         n: &Function<'static>,
@@ -4679,10 +5047,23 @@ impl Vm {
     }
     fn run_source(&mut self, p: &Path) -> JsResult<Value> {
         let source = fs::read_to_string(p).map_err(|e| JsError::Message(e.to_string()))?;
-        let source_id = self.coverage.register_source(p, &source);
+        self.run_source_text(p, &source)
+    }
+
+    fn run_source_text(&mut self, p: &Path, source: &str) -> JsResult<Value> {
+        self.run_source_text_in_environment(p, source, self.global.clone())
+    }
+
+    fn run_source_text_in_environment(
+        &mut self,
+        p: &Path,
+        source: &str,
+        environment: Env,
+    ) -> JsResult<Value> {
+        let source_id = self.coverage.register_source(p, source);
         // OXC nodes and their interned strings are retained by closures after
         // `run_source`; keep the backing source alive for the same VM lifetime.
-        let src: &'static str = Box::leak(source.into_boxed_str());
+        let src: &'static str = Box::leak(source.to_owned().into_boxed_str());
         let a: &'static Allocator = Box::leak(Box::new(Allocator::default()));
         let st = SourceType::from_path(p).unwrap_or_default();
         let r = Parser::new(&a, src, st)
@@ -4731,10 +5112,10 @@ impl Vm {
                     .jit_stats
                     .compiled_direct_opcodes
                     .saturating_add(direct_opcodes as u64);
-                image.call_script(self, self.global.clone())
+                image.call_script(self, environment.clone())
             })()
         } else {
-            self.exec_stmts(&r.program.body, self.global.clone())
+            self.exec_stmts(&r.program.body, environment)
                 .map(|signal| match signal {
                     Signal::Normal(value) | Signal::Return(value) => value,
                     _ => Value::Undefined,
@@ -4987,6 +5368,23 @@ impl Vm {
         let p = self.allocate_object(Object::ordinary(None));
         let f = FunctionValue {
             kind: FunctionKind::User {
+                node: unsafe { std::mem::transmute(n) },
+                env: e,
+            },
+            prototype: p,
+            props: Rc::new(RefCell::new(IndexMap::new())),
+            dyn_jit: RefCell::new(None),
+            numeric_jit: RefCell::new(None),
+            source_id: self.source_ids.last().copied(),
+        };
+        let v = Value::Function(Rc::new(f));
+        p.borrow_mut().props.insert("constructor", v.clone());
+        v
+    }
+    fn make_arrow<'a>(&self, n: &'a ArrowFunctionExpression<'a>, e: Env) -> Value {
+        let p = self.allocate_object(Object::ordinary(None));
+        let f = FunctionValue {
+            kind: FunctionKind::Arrow {
                 node: unsafe { std::mem::transmute(n) },
                 env: e,
             },
@@ -5860,12 +6258,365 @@ fn native_math_log(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
 fn native_random(_: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Ok(Value::Number(0.5))
 }
-fn native_print(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    println!(
-        "{}",
+fn native_print(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    let line = format!(
+        "{}\n",
         a.iter().map(Value::display).collect::<Vec<_>>().join(" ")
     );
+    if let Some(output) = vm.output.as_mut() {
+        output(&line);
+    } else {
+        print!("{line}");
+    }
     Ok(Value::Undefined)
+}
+
+fn native_process_cwd(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
+    Ok(Value::string_value(vm.cwd.to_string_lossy()))
+}
+fn assertion_error(vm: &Vm, message: &str) -> Value {
+    let error = vm.object(None);
+    vm.set_prop(&error, "message", Value::string_value(message));
+    error
+}
+fn native_assert(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    if args.first().is_none_or(Value::truthy) {
+        return Ok(Value::Undefined);
+    }
+    let message = args
+        .get(1)
+        .map(Value::string)
+        .unwrap_or_else(|| "The expression evaluated to a falsy value".to_owned());
+    Err(JsError::Throw(assertion_error(vm, &message)))
+}
+fn native_assert_strict_equal(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let left = args.first().cloned().unwrap_or(Value::Undefined);
+    let right = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if eq_strict(&left, &right) {
+        return Ok(Value::Undefined);
+    }
+    let message = args.get(2).map(Value::string).unwrap_or_else(|| {
+        format!(
+            "Expected values to be strictly equal: {} !== {}",
+            left.display(),
+            right.display()
+        )
+    });
+    Err(JsError::Throw(assertion_error(vm, &message)))
+}
+fn native_assert_throws(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !callback.is_function() {
+        return Err(JsError::Throw(assertion_error(
+            vm,
+            "The value must be a function",
+        )));
+    }
+    match vm.call(callback, Value::Undefined, Vec::new()) {
+        Err(JsError::Throw(_)) => Ok(Value::Undefined),
+        Err(JsError::Message(message)) if message.contains("uncaught") => Ok(Value::Undefined),
+        Err(error) => Err(error),
+        Ok(_) => Err(JsError::Throw(assertion_error(
+            vm,
+            "Missing expected exception",
+        ))),
+    }
+}
+fn native_set_timeout(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !callback.is_function() {
+        return Err(JsError::Message("setTimeout callback is not callable".into()));
+    }
+    let timer_args = args.get(2..).map_or_else(Vec::new, <[Value]>::to_vec);
+    Ok(Value::Number(
+        vm.schedule_timer(callback, timer_args) as f64,
+    ))
+}
+fn native_set_immediate(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !callback.is_function() {
+        return Err(JsError::Message("setImmediate callback is not callable".into()));
+    }
+    let callback_args = args.get(1..).map_or_else(Vec::new, <[Value]>::to_vec);
+    Ok(Value::Number(
+        vm.schedule_timer(callback, callback_args) as f64,
+    ))
+}
+fn native_clear_timeout(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let id = args.first().map(Value::number).unwrap_or(0.0);
+    if id.is_finite() && id >= 0.0 {
+        vm.cancel_timer(id as u64);
+    }
+    Ok(Value::Undefined)
+}
+fn native_process_next_tick(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !callback.is_function() {
+        return Err(JsError::Message("process.nextTick callback is not callable".into()));
+    }
+    let callback_args = args.get(1..).map_or_else(Vec::new, <[Value]>::to_vec);
+    Ok(Value::Number(
+        vm.schedule_next_tick(callback, callback_args) as f64,
+    ))
+}
+fn native_json_stringify(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    Ok(Value::string_value(
+        args.first()
+            .map(Value::display)
+            .unwrap_or_else(|| "undefined".to_owned()),
+    ))
+}
+fn native_buffer_constructor(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    native_buffer_from(vm, Value::Undefined, args)
+}
+fn native_blob_constructor(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    if let Some(value) = args.first()
+        && !value
+            .as_object()
+            .and_then(|object| object.borrow().array.as_ref().map(|_| ()))
+            .is_some()
+    {
+        let error = vm.object(None);
+        vm.set_prop(
+            &error,
+            "code",
+            Value::string_value("ERR_INVALID_ARG_TYPE"),
+        );
+        vm.set_prop(
+            &error,
+            "message",
+            Value::string_value("The first argument must be an iterable of Blob parts"),
+        );
+        return Err(JsError::Throw(error));
+    }
+    let blob = vm.object(None);
+    let parts = args
+        .first()
+        .and_then(Value::as_object)
+        .and_then(|object| object.borrow().array.as_ref().map(|array| array.to_vec()))
+        .unwrap_or_default();
+    let size = parts
+        .iter()
+        .map(|part| {
+            part.as_string()
+                .map_or_else(|| part.as_object().map_or(0, |object| object.borrow().array.as_ref().map_or(0, |array| array.len())), |value| value.len())
+        })
+        .sum::<usize>();
+    let type_value = args
+        .get(1)
+        .and_then(Value::as_object)
+        .map(|options| vm.get_prop(&Value::Object(options), "type").string().to_ascii_lowercase())
+        .unwrap_or_default();
+    vm.set_prop(&blob, "size", Value::Number(size as f64));
+    vm.set_prop(&blob, "type", Value::string_value(type_value));
+    Ok(blob)
+}
+fn native_buffer_from(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let values = if let Some(string) = args.first().and_then(Value::as_string) {
+        string
+            .as_bytes()
+            .iter()
+            .map(|byte| Value::Number(*byte as f64))
+            .collect()
+    } else if let Some(object) = args.first().and_then(Value::as_object) {
+        object
+            .borrow()
+            .array
+            .as_ref()
+            .map(|array| array.to_vec())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let buffer = vm.array_from_values(values);
+    vm.set_prop(&buffer, "toString", vm.native(native_buffer_to_string));
+    Ok(buffer)
+}
+fn native_buffer_alloc(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let size = args.first().map(Value::number).unwrap_or(0.0);
+    if !size.is_finite() || size < 0.0 || size.fract() != 0.0 {
+        return Err(JsError::Message("Buffer.alloc size is invalid".into()));
+    }
+    let buffer = vm.array_from_values(
+        std::iter::repeat_n(Value::Number(0.0), size as usize).collect(),
+    );
+    vm.set_prop(&buffer, "toString", vm.native(native_buffer_to_string));
+    Ok(buffer)
+}
+fn native_convert_process_signal_to_exit_code(
+    vm: &mut Vm,
+    _: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    let signal = args.first().map(Value::string).unwrap_or_default();
+    let code = match signal.as_str() {
+        "SIGTERM" => 143,
+        "SIGINT" => 130,
+        _ => {
+            let error = vm.object(None);
+            vm.set_prop(
+                &error,
+                "code",
+                Value::string_value("ERR_INVALID_ARG_VALUE"),
+            );
+            vm.set_prop(
+                &error,
+                "message",
+                Value::string_value("Unknown process signal"),
+            );
+            return Err(JsError::Throw(error));
+        }
+    };
+    Ok(Value::Number(code as f64))
+}
+fn path_arg(args: &[Value], index: usize) -> String {
+    args.get(index).map(Value::string).unwrap_or_default()
+}
+fn normalize_posix_path(path: &str) -> String {
+    let absolute = path.starts_with('/');
+    let mut parts = Vec::new();
+    for part in path.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                if parts.last().is_some_and(|part| *part != "..") {
+                    parts.pop();
+                } else if !absolute {
+                    parts.push("..".to_owned());
+                }
+            }
+            part => parts.push(part.to_owned()),
+        }
+    }
+    let mut normalized = parts.join("/");
+    if absolute {
+        normalized.insert(0, '/');
+    }
+    if normalized.is_empty() {
+        if absolute {
+            "/".to_owned()
+        } else {
+            ".".to_owned()
+        }
+    } else {
+        normalized
+    }
+}
+fn native_path_join(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let joined = args
+        .iter()
+        .map(Value::string)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("/");
+    Ok(Value::string_value(normalize_posix_path(&joined)))
+}
+fn native_path_resolve(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let mut resolved = String::new();
+    for part in args.iter().rev().map(Value::string) {
+        if part.is_empty() {
+            continue;
+        }
+        if resolved.is_empty() {
+            resolved = part;
+        } else {
+            resolved = format!("{part}/{resolved}");
+        }
+        if resolved.starts_with('/') {
+            break;
+        }
+    }
+    if !resolved.starts_with('/') {
+        let cwd = vm.cwd.to_string_lossy();
+        resolved = if resolved.is_empty() {
+            cwd.into_owned()
+        } else {
+            format!("{cwd}/{resolved}")
+        };
+    }
+    Ok(Value::string_value(normalize_posix_path(&resolved)))
+}
+fn native_path_basename(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let path = path_arg(args, 0);
+    Ok(Value::string_value(
+        path.trim_end_matches('/').rsplit('/').next().unwrap_or(""),
+    ))
+}
+fn native_path_dirname(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let path = path_arg(args, 0).trim_end_matches('/').to_owned();
+    let Some(index) = path.rfind('/') else {
+        return Ok(Value::string_value("."));
+    };
+    if index == 0 {
+        Ok(Value::string_value("/"))
+    } else {
+        Ok(Value::string_value(&path[..index]))
+    }
+}
+fn native_path_extname(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let path = path_arg(args, 0);
+    let base = path
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or("");
+    let ext = base
+        .rfind('.')
+        .filter(|index| *index > 0)
+        .map(|index| &base[index..])
+        .unwrap_or("");
+    Ok(Value::string_value(ext))
+}
+fn native_path_is_absolute(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    Ok(Value::Bool(path_arg(args, 0).starts_with('/')))
+}
+fn native_buffer_to_string(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(object) = this.as_object() else {
+        return Ok(Value::string_value(String::new()));
+    };
+    let bytes = object
+        .borrow()
+        .array
+        .as_ref()
+        .map(|array| array.to_vec())
+        .unwrap_or_default();
+    let start = args.get(1).map(Value::number).unwrap_or(0.0).max(0.0) as usize;
+    let end = args
+        .get(2)
+        .map(Value::number)
+        .unwrap_or(bytes.len() as f64)
+        .max(0.0) as usize;
+    let bytes = bytes
+        .iter()
+        .skip(start.min(bytes.len()))
+        .take(end.saturating_sub(start))
+        .map(|value| value.number().clamp(0.0, 255.0) as u8)
+        .collect::<Vec<_>>();
+    let encoding = match args.first().cloned() {
+        Some(value) if value.is_object() => {
+            let method = vm.get_prop(&value, "toString");
+            vm.call(method, value, Vec::new())
+                .map(|value| value.string())
+                .unwrap_or_default()
+        }
+        Some(value) => value.string(),
+        None => String::new(),
+    };
+    if !encoding.is_empty()
+        && !matches!(
+            encoding.to_ascii_lowercase().as_str(),
+            "utf8" | "utf-8" | "ascii" | "latin1" | "binary"
+        )
+    {
+        return Err(JsError::Throw(assertion_error(vm, "Unknown encoding")));
+    }
+    let output =
+        if encoding.eq_ignore_ascii_case("ascii") || encoding.eq_ignore_ascii_case("latin1") {
+            bytes.iter().map(|byte| *byte as char).collect()
+        } else {
+            String::from_utf8_lossy(&bytes).into_owned()
+        };
+    Ok(Value::string_value(output))
 }
 fn native_object(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Ok(vm.object(None))
@@ -5979,15 +6730,309 @@ fn native_load(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     vm.run_source(&p)
 }
 
+fn native_require(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let specifier = args
+        .first()
+        .map(Value::string)
+        .unwrap_or_else(|| "undefined".into());
+    vm.require_module(&specifier)
+}
+
 /// Execute one source file using the migrated Quench VM core.
 pub fn run_file(path: &Path) -> Result<(), String> {
+    run_file_with_argv(path, Vec::new(), Vec::new())
+}
+
+/// Execute one source file in a fresh stencil VM with host invocation data.
+///
+/// `argv` is the complete Node-style argument vector (`execPath`, script,
+/// then user arguments); `exec_argv` contains only runtime flags.  Both are
+/// copied into the VM-owned `process` object before user code runs.
+pub fn run_file_with_argv(
+    path: &Path,
+    argv: Vec<String>,
+    exec_argv: Vec<String>,
+) -> Result<(), String> {
+    run_file_with_argv_and_output(path, argv, exec_argv, |chunk| print!("{chunk}"))
+}
+
+/// Execute a source file while routing VM-owned console output to `output`.
+/// The callback is an output edge only; JavaScript evaluation remains wholly
+/// inside this VM.
+pub fn run_file_with_argv_and_output(
+    path: &Path,
+    argv: Vec<String>,
+    exec_argv: Vec<String>,
+    output: impl FnMut(&str) + 'static,
+) -> Result<(), String> {
+    run_file_with_argv_and_output_status(path, argv, exec_argv, output).map(|_| ())
+}
+
+/// Execute a source file and return the final VM-owned `process.exitCode`.
+pub fn run_file_with_argv_and_output_status(
+    path: &Path,
+    argv: Vec<String>,
+    exec_argv: Vec<String>,
+    output: impl FnMut(&str) + 'static,
+) -> Result<i32, String> {
+    let source = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    run_source_with_argv_and_output_status(path, &source, argv, exec_argv, output)
+}
+
+/// Execute caller-supplied source using `path` only for diagnostics and
+/// relative loads.  Hosts can therefore preserve their source preprocessing
+/// and still use the same core VM and output edge as file execution.
+pub fn run_source_with_argv_and_output(
+    path: &Path,
+    source: &str,
+    argv: Vec<String>,
+    exec_argv: Vec<String>,
+    output: impl FnMut(&str) + 'static,
+) -> Result<(), String> {
+    run_source_with_argv_and_output_status(path, source, argv, exec_argv, output).map(|_| ())
+}
+
+/// Execute caller-supplied source and return its final VM-owned exit code.
+pub fn run_source_with_argv_and_output_status(
+    path: &Path,
+    source: &str,
+    argv: Vec<String>,
+    exec_argv: Vec<String>,
+    output: impl FnMut(&str) + 'static,
+) -> Result<i32, String> {
     let mut vm = Vm::new();
-    vm.run_source(path).map(|_| ()).map_err(|error| error.to_string())
+    vm.output = Some(Box::new(output));
+    vm.install_process(argv, exec_argv);
+    vm.install_main_module(path);
+    vm.run_source_text(path, source)
+        .and_then(|_| vm.run_timers())
+        .map(|_| vm.process_exit_code())
+        .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn process_invocation_data_is_installed_in_the_core_vm() {
+        let path = std::env::temp_dir().join(format!(
+            "quench-runtime-core-process-{}-{}.js",
+            std::process::id(),
+            NEXT_OBJECT_HEAP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(
+            &path,
+            "var result = process.argv.length; var envType = typeof process.env; var platform = process.platform; var globalProcess = globalThis.process === process;",
+        )
+        .unwrap();
+        let mut vm = Vm::new();
+        vm.install_process(
+            vec!["node".into(), "script.js".into(), "arg".into()],
+            vec!["--jitless".into()],
+        );
+        vm.run_source(&path).expect("process object should execute");
+        let value = Environment::get(&vm.global, "result").expect("result binding");
+        assert_eq!(value.as_number(), Some(3.0));
+        assert_eq!(
+            Environment::get(&vm.global, "envType")
+                .expect("envType binding")
+                .string(),
+            "object"
+        );
+        assert_eq!(
+            Environment::get(&vm.global, "platform")
+                .expect("platform binding")
+                .string(),
+            std::env::consts::OS
+        );
+        assert_eq!(
+            Environment::get(&vm.global, "globalProcess")
+                .expect("globalProcess binding")
+                .string(),
+            "true"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn console_output_stays_on_the_host_output_edge() {
+        let path = std::env::temp_dir().join(format!(
+            "quench-runtime-core-output-{}-{}.js",
+            std::process::id(),
+            NEXT_OBJECT_HEAP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(&path, "console.log('core-output');").unwrap();
+        let output = Rc::new(RefCell::new(String::new()));
+        let captured = Rc::clone(&output);
+        run_file_with_argv_and_output(&path, Vec::new(), Vec::new(), move |chunk| {
+            captured.borrow_mut().push_str(chunk);
+        })
+        .expect("console output should execute");
+        assert_eq!(&*output.borrow(), "core-output\n");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn local_cjs_modules_execute_and_cache_in_the_same_core_vm() {
+        let root = std::env::temp_dir().join(format!(
+            "quench-runtime-core-cjs-{}-{}",
+            std::process::id(),
+            NEXT_OBJECT_HEAP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let dep = root.join("dep.js");
+        let entry = root.join("entry.js");
+        std::fs::write(&dep, "module.exports = { answer: 42 };\n").unwrap();
+        std::fs::write(
+            &entry,
+            "var first = require('./dep'); var second = require('./dep'); var assert = require('assert'); assert.strictEqual(typeof module, 'object'); assert.strictEqual(exports, module.exports); assert.strictEqual(first, second); console.log(first === second, first.answer);\n",
+        )
+        .unwrap();
+        let output = Rc::new(RefCell::new(String::new()));
+        let captured = Rc::clone(&output);
+        run_file_with_argv_and_output(&entry, Vec::new(), Vec::new(), move |chunk| {
+            captured.borrow_mut().push_str(chunk);
+        })
+        .expect("local CJS module should execute");
+        assert_eq!(&*output.borrow(), "true 42\n");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn destructuring_and_array_for_of_lower_into_the_same_core_vm() {
+        let path = std::env::temp_dir().join(format!(
+            "quench-runtime-core-patterns-{}-{}.js",
+            std::process::id(),
+            NEXT_OBJECT_HEAP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(
+            &path,
+            "var source = { answer: 40 }; var { answer } = source; var [one, two] = [1, 1]; var total = 0; for (const value of [answer, one, two]) total += value; function sum(a, b) { return a + b; } console.log(total, sum(...[20, 22]));\n",
+        )
+        .unwrap();
+        let output = Rc::new(RefCell::new(String::new()));
+        let captured = Rc::clone(&output);
+        run_file_with_argv_and_output(&path, Vec::new(), Vec::new(), move |chunk| {
+            captured.borrow_mut().push_str(chunk);
+        })
+        .expect("destructuring and array for-of should execute");
+        assert_eq!(&*output.borrow(), "42 42\n");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn core_node_assert_and_buffer_modules_stay_in_one_vm() {
+        let path = std::env::temp_dir().join(format!(
+            "quench-runtime-core-node-modules-{}-{}.js",
+            std::process::id(),
+            NEXT_OBJECT_HEAP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(
+            &path,
+            "var assert = require('assert'); var { Buffer } = require('buffer'); var { convertProcessSignalToExitCode } = require('util'); var bytes = Buffer.from('abc'); var zeros = Buffer.alloc(2); assert.strictEqual(bytes.toString('ascii', 1, 2), 'b'); assert.throws(() => bytes.toString(0, 1, 2)); assert.strictEqual(zeros.length, 2); assert.strictEqual(zeros[0], 0); assert.strictEqual(convertProcessSignalToExitCode('SIGTERM'), 143); assert.strictEqual(new Blob(['x']).size, 1); console.log(bytes.toString());\n",
+        )
+        .unwrap();
+        let output = Rc::new(RefCell::new(String::new()));
+        let captured = Rc::clone(&output);
+        run_file_with_argv_and_output(&path, Vec::new(), Vec::new(), move |chunk| {
+            captured.borrow_mut().push_str(chunk);
+        })
+        .expect("core Node builtins should execute");
+        assert_eq!(&*output.borrow(), "abc\n");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn core_buffer_module_exports_one_blob_constructor_identity() {
+        let path = std::env::temp_dir().join(format!(
+            "quench-runtime-core-blob-{}-{}.js",
+            std::process::id(),
+            NEXT_OBJECT_HEAP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(
+            &path,
+            "var assert = require('assert'); var { Blob } = require('buffer'); var LocalBlob = require('./blob-local'); assert.strictEqual(Blob, LocalBlob); assert.strictEqual(new Blob([], { type: false }).type, 'false'); assert.strictEqual(new Blob([], { type: {} }).type, '[object object]'); console.log('blob-ok');\n",
+        )
+        .unwrap();
+        let local = path.with_file_name("blob-local.js");
+        std::fs::write(&local, "module.exports = require('buffer').Blob;\n").unwrap();
+        let output = Rc::new(RefCell::new(String::new()));
+        let captured = Rc::clone(&output);
+        run_file_with_argv_and_output(&path, Vec::new(), Vec::new(), move |chunk| {
+            captured.borrow_mut().push_str(chunk);
+        })
+        .expect("core Blob module should execute");
+        assert_eq!(&*output.borrow(), "blob-ok\n");
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(local);
+    }
+
+    #[test]
+    fn core_path_module_and_template_literals_share_one_vm() {
+        let path = std::env::temp_dir().join(format!(
+            "quench-runtime-core-path-{}-{}.js",
+            std::process::id(),
+            NEXT_OBJECT_HEAP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(
+            &path,
+            "var assert = require('assert'); var path = require('path'); var segment = '\\ud83d\\udc04'; assert.strictEqual(path.join('/tmp', segment), '/tmp/🐄'); assert.strictEqual(path.resolve('/tmp', 'weird ' + segment), '/tmp/weird 🐄'); console.log('path-ok');\n",
+        )
+        .unwrap();
+        let output = Rc::new(RefCell::new(String::new()));
+        let captured = Rc::clone(&output);
+        run_file_with_argv_and_output(&path, Vec::new(), Vec::new(), move |chunk| {
+            captured.borrow_mut().push_str(chunk);
+        })
+        .expect("core path module should execute");
+        assert_eq!(&*output.borrow(), "path-ok\n");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn core_timer_queue_runs_callbacks_after_script_in_same_vm() {
+        let path = std::env::temp_dir().join(format!(
+            "quench-runtime-core-timers-{}-{}.js",
+            std::process::id(),
+            NEXT_OBJECT_HEAP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(
+            &path,
+            "setTimeout(() => console.log('timer'), 0); var cancelled = setTimeout(() => console.log('bad'), 0); clearTimeout(cancelled); console.log('sync');\n",
+        )
+        .unwrap();
+        let output = Rc::new(RefCell::new(String::new()));
+        let captured = Rc::clone(&output);
+        run_file_with_argv_and_output(&path, Vec::new(), Vec::new(), move |chunk| {
+            captured.borrow_mut().push_str(chunk);
+        })
+        .expect("core timers should execute");
+        assert_eq!(&*output.borrow(), "sync\ntimer\n");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn core_next_tick_queue_precedes_timers_in_same_vm() {
+        let path = std::env::temp_dir().join(format!(
+            "quench-runtime-core-next-tick-{}-{}.js",
+            std::process::id(),
+            NEXT_OBJECT_HEAP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(
+            &path,
+            "console.log('sync'); setTimeout(() => console.log('timer'), 0); process.nextTick(() => console.log('tick'));\n",
+        )
+        .unwrap();
+        let output = Rc::new(RefCell::new(String::new()));
+        let captured = Rc::clone(&output);
+        run_file_with_argv_and_output(&path, Vec::new(), Vec::new(), move |chunk| {
+            captured.borrow_mut().push_str(chunk);
+        })
+        .expect("core nextTick should execute");
+        assert_eq!(&*output.borrow(), "sync\ntick\ntimer\n");
+        let _ = std::fs::remove_file(path);
+    }
 
     fn collect_test_objects(vm: &mut Vm) -> usize {
         let before = vm.object_heap.live_cells.get();

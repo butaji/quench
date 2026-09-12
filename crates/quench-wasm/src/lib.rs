@@ -1,7 +1,9 @@
-//! WebAssembly format: parse, validate, and wast scoring.
+//! WebAssembly loading: parse, validate, and wast scoring.
 //!
-//! This crate owns the binary/text format and the spec-suite harness.
-//! `quench-runtime` is the VM: load, instantiate, interpret.
+//! This crate owns the binary/text format and the spec-suite harness. It does
+//! not define a VM. `quench-runtime` owns the single stencil-backed VM and
+//! receives Wasm lowering from this loading boundary; `quench-node` owns Node
+//! compatibility APIs.
 
 use std::fmt;
 
@@ -68,7 +70,8 @@ impl Engine {
     }
 }
 
-/// A parsed and validated module. Instantiation is not implemented in this phase.
+/// A parsed and validated module. Runtime instantiation is owned by the
+/// stencil-backed runtime core; this frontend stores the validated bytes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Module {
     bytes: Vec<u8>,

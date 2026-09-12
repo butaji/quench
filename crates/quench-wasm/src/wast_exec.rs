@@ -1,4 +1,8 @@
-//! Execute-class wast directives against a Native instance.
+//! Execute-class wast directives against the compatibility Wasm instance.
+//!
+//! This is a temporary spec-harness adapter: `quench-wasm` owns loading and
+//! directive decoding, while production Wasm execution is being lowered into
+//! the stencil VM exposed by `quench-runtime`.
 
 use std::collections::HashMap;
 
