@@ -9003,14 +9003,18 @@ fn native_string_trim_right(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<V
 fn js_whitespace(character: char) -> bool {
     character.is_whitespace() || character == '\u{FEFF}'
 }
-fn native_string_lower(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    Ok(Value::string_value(string_this(this).to_lowercase()))
+fn native_string_lower(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    Ok(Value::string_value(
+        string_receiver(vm, &this, "toLowerCase")?.to_lowercase(),
+    ))
 }
-fn native_string_upper(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    Ok(Value::string_value(string_this(this).to_uppercase()))
+fn native_string_upper(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    Ok(Value::string_value(
+        string_receiver(vm, &this, "toUpperCase")?.to_uppercase(),
+    ))
 }
 fn native_string_concat(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    let mut result = string_this(this);
+    let mut result = string_receiver(vm, &this, "concat")?;
     for value in args {
         result.push_str(&to_string_with_vm(vm, value)?);
     }
@@ -9117,7 +9121,21 @@ fn native_string_from_code_point(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
     }
     Ok(Value::string_value(output))
 }
-fn native_string_to_string(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+fn native_string_to_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if !this.is_string()
+        && !this.as_object_ref().is_some_and(|object| {
+            object
+                .borrow()
+                .props
+                .get("\0primitive")
+                .is_some_and(Value::is_string)
+        })
+    {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "String.prototype.toString called on incompatible receiver",
+        )));
+    }
     Ok(Value::string_value(this.string()))
 }
 fn native_noop(_: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
