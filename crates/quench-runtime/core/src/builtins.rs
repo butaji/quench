@@ -17,6 +17,7 @@ pub(crate) enum BuiltinOwner {
     Assert,
     Process,
     StringConstructor,
+    NumberConstructor,
     ObjectConstructor,
     ArrayConstructor,
     FunctionConstructor,
@@ -177,6 +178,12 @@ builtin_catalog! {
     ConsoleLog, Console, "log", native_print, Generic, EFFECTFUL;
     StringFromCharCode, StringConstructor, "fromCharCode", native_string_from_char_code, Generic, MAY_ALLOCATE;
     StringFromCodePoint, StringConstructor, "fromCodePoint", native_string_from_code_point, Generic, MAY_ALLOCATE;
+    NumberIsFinite, NumberConstructor, "isFinite", native_number_is_finite, Generic, PURE;
+    NumberIsInteger, NumberConstructor, "isInteger", native_number_is_integer, Generic, PURE;
+    NumberIsNaN, NumberConstructor, "isNaN", native_number_is_nan, Generic, PURE;
+    NumberIsSafeInteger, NumberConstructor, "isSafeInteger", native_number_is_safe_integer, Generic, PURE;
+    NumberParseFloat, NumberConstructor, "parseFloat", native_parse_float, Generic, PURE;
+    NumberParseInt, NumberConstructor, "parseInt", native_parse_int, Generic, EFFECTFUL;
     ArrayPush, ArrayPrototype, "push", native_array_push, Generic, MAY_MUTATE;
     ArrayPop, ArrayPrototype, "pop", native_array_pop, Generic, MAY_MUTATE;
     ArrayShift, ArrayPrototype, "shift", native_array_shift, Generic, MAY_MUTATE;
@@ -217,6 +224,9 @@ builtin_catalog! {
     StringLastIndexOf, StringPrototype, "lastIndexOf", native_string_last_index_of, Generic, PURE;
     NumberToFixed, NumberPrototype, "toFixed", native_number_to_fixed, Generic, MAY_ALLOCATE;
     NumberToPrecision, NumberPrototype, "toPrecision", native_number_to_precision, Generic, MAY_ALLOCATE;
+    NumberToExponential, NumberPrototype, "toExponential", native_number_to_exponential, Generic, MAY_ALLOCATE;
+    NumberToLocaleString, NumberPrototype, "toLocaleString", native_number_to_string, Generic, MAY_ALLOCATE;
+    NumberValueOf, NumberPrototype, "valueOf", native_number_value_of, Generic, PURE;
     NumberToString, NumberPrototype, "toString", native_number_to_string, Generic, MAY_ALLOCATE;
     RegExpTest, RegExpPrototype, "test", native_regexp_test, Generic, PURE;
     RegExpExec, RegExpPrototype, "exec", native_regexp_exec, Generic, MAY_ALLOCATE;
@@ -276,6 +286,12 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::ObjectIs
         | BuiltinId::ObjectSeal
         | BuiltinId::ObjectFreeze
+        | BuiltinId::NumberIsFinite
+        | BuiltinId::NumberIsInteger
+        | BuiltinId::NumberIsNaN
+        | BuiltinId::NumberIsSafeInteger
+        | BuiltinId::NumberParseFloat
+        | BuiltinId::NumberParseInt
         | BuiltinId::ObjectConstructor
         | BuiltinId::ArrayIsArray
         | BuiltinId::ArrayFrom
@@ -372,6 +388,9 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::StringLastIndexOf
         | BuiltinId::NumberToFixed
         | BuiltinId::NumberToPrecision
+        | BuiltinId::NumberToExponential
+        | BuiltinId::NumberToLocaleString
+        | BuiltinId::NumberValueOf
         | BuiltinId::NumberToString
         | BuiltinId::RegExpTest
         | BuiltinId::RegExpExec

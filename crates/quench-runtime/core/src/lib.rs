@@ -426,9 +426,25 @@ impl Value {
         {
             return primitive.number();
         }
-        self.as_string()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(f64::NAN)
+        self.as_string().map_or(f64::NAN, |value| {
+            let text = value.trim();
+            if matches!(text, "Infinity" | "+Infinity") {
+                return f64::INFINITY;
+            }
+            if text == "-Infinity" {
+                return f64::NEG_INFINITY;
+            }
+            if let Some(digits) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+                return u64::from_str_radix(digits, 16).map_or(f64::NAN, |value| value as f64);
+            }
+            if let Some(digits) = text.strip_prefix("0b").or_else(|| text.strip_prefix("0B")) {
+                return u64::from_str_radix(digits, 2).map_or(f64::NAN, |value| value as f64);
+            }
+            if let Some(digits) = text.strip_prefix("0o").or_else(|| text.strip_prefix("0O")) {
+                return u64::from_str_radix(digits, 8).map_or(f64::NAN, |value| value as f64);
+            }
+            text.parse().unwrap_or(f64::NAN)
+        })
     }
     fn string(&self) -> String {
         if let Some(object) = self.as_object_ref()
@@ -4427,6 +4443,15 @@ impl Vm {
                     let string = self.builtin(BuiltinId::StringConstructor);
                     self.set_prop(&string, recipe.key, value);
                 }
+                BuiltinOwner::NumberConstructor => {
+                    let number = self.builtin(BuiltinId::NumberConstructor);
+                    let value = match recipe.id {
+                        BuiltinId::NumberParseFloat => Environment::get(g, "parseFloat").unwrap_or(value),
+                        BuiltinId::NumberParseInt => Environment::get(g, "parseInt").unwrap_or(value),
+                        _ => value,
+                    };
+                    self.set_prop(&number, recipe.key, value);
+                }
                 BuiltinOwner::ObjectConstructor => {
                     let object = self.builtin(BuiltinId::ObjectConstructor);
                     self.set_prop(&object, recipe.key, value);
@@ -4489,7 +4514,8 @@ impl Vm {
             ("POSITIVE_INFINITY", Value::Number(f64::INFINITY)),
             ("NEGATIVE_INFINITY", Value::Number(f64::NEG_INFINITY)),
             ("MAX_VALUE", Value::Number(f64::MAX)),
-            ("MIN_VALUE", Value::Number(f64::MIN_POSITIVE)),
+            ("MIN_VALUE", Value::Number(f64::from_bits(1))),
+            ("EPSILON", Value::Number(f64::EPSILON)),
             ("MAX_SAFE_INTEGER", Value::Number(9_007_199_254_740_991.0)),
             ("MIN_SAFE_INTEGER", Value::Number(-9_007_199_254_740_991.0)),
         ] {
@@ -4558,6 +4584,20 @@ impl Vm {
                 .clone();
             prototype.borrow_mut().prototype = Some(object_prototype);
         }
+        for (constructor, tag) in [
+            (BuiltinId::NumberConstructor, "Number"),
+            (BuiltinId::StringConstructor, "String"),
+            (BuiltinId::BooleanConstructor, "Boolean"),
+        ] {
+            let prototype = self.builtin(constructor).as_function_ref().expect("constructor").prototype.clone();
+            self.set_prop(&Value::Object(prototype), "\0wrapper", Value::string_value(tag));
+        }
+        let number_prototype = self.builtin(BuiltinId::NumberConstructor).as_function_ref().expect("Number").prototype.clone();
+        self.set_prop(&Value::Object(number_prototype), "\0primitive", Value::Number(0.0));
+        let boolean_prototype = self.builtin(BuiltinId::BooleanConstructor).as_function_ref().expect("Boolean").prototype.clone();
+        self.set_prop(&Value::Object(boolean_prototype), "\0primitive", Value::Bool(false));
+        let string_prototype = self.builtin(BuiltinId::StringConstructor).as_function_ref().expect("String").prototype.clone();
+        self.set_prop(&Value::Object(string_prototype), "\0primitive", Value::string_value(""));
     }
 
     /// Install the small, host-provided part of Node's process object.
@@ -4989,7 +5029,11 @@ impl Vm {
                 }
             }
             object.props.insert(k, v);
-            object.attributes.entry(k.into()).or_insert(PropertyAttributes::DEFAULT);
+            let builtin_prototype = object.builtin_prototype;
+            object.attributes.entry(k.into()).or_insert(PropertyAttributes {
+                enumerable: !builtin_prototype,
+                ..PropertyAttributes::DEFAULT
+            });
             return;
         }
         if let Some(function) = o.as_function_ref() {
@@ -5001,7 +5045,10 @@ impl Vm {
                     self.invalidate_prototype_membership();
                 }
             } else {
-                if matches!(k, "name" | "length") && function.props.borrow().contains_key(k) {
+                let immutable_number_constant = matches!(function.kind, FunctionKind::Builtin(BuiltinId::NumberConstructor))
+                    && matches!(k, "NaN" | "POSITIVE_INFINITY" | "NEGATIVE_INFINITY" | "MAX_VALUE" | "MIN_VALUE" | "MAX_SAFE_INTEGER" | "MIN_SAFE_INTEGER" | "EPSILON");
+                if (immutable_number_constant && function.props.borrow().contains_key(k))
+                    || (matches!(k, "name" | "length") && function.props.borrow().contains_key(k)) {
                     return;
                 }
                 function.props.borrow_mut().insert(k.into(), v);
@@ -5031,6 +5078,11 @@ impl Vm {
             return true;
         }
         if let Some(function) = o.as_function_ref() {
+            if matches!(function.kind, FunctionKind::Builtin(BuiltinId::NumberConstructor))
+                && matches!(k, "NaN" | "POSITIVE_INFINITY" | "NEGATIVE_INFINITY" | "MAX_VALUE" | "MIN_VALUE" | "MAX_SAFE_INTEGER" | "MIN_SAFE_INTEGER" | "EPSILON")
+            {
+                return false;
+            }
             if k != "prototype" {
                 function.props.borrow_mut().shift_remove(k);
             }
@@ -7005,7 +7057,28 @@ fn to_number_with_vm(vm: &mut Vm, value: &Value) -> JsResult<f64> {
     }
     if let Some(string) = value.as_string() {
         let text = string.trim();
-        return Ok(if text.is_empty() { 0.0 } else { text.parse().unwrap_or(f64::NAN) });
+        if text.is_empty() {
+            return Ok(0.0);
+        }
+        if matches!(text, "Infinity" | "+Infinity" | "-Infinity") {
+            return Ok(match text {
+                "-Infinity" => f64::NEG_INFINITY,
+                _ => f64::INFINITY,
+            });
+        }
+        if text.eq_ignore_ascii_case("infinity") {
+            return Ok(f64::NAN);
+        }
+        if let Some(digits) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+            return Ok(u64::from_str_radix(digits, 16).map_or(f64::NAN, |value| value as f64));
+        }
+        if let Some(digits) = text.strip_prefix("0b").or_else(|| text.strip_prefix("0B")) {
+            return Ok(u64::from_str_radix(digits, 2).map_or(f64::NAN, |value| value as f64));
+        }
+        if let Some(digits) = text.strip_prefix("0o").or_else(|| text.strip_prefix("0O")) {
+            return Ok(u64::from_str_radix(digits, 8).map_or(f64::NAN, |value| value as f64));
+        }
+        return Ok(text.parse().unwrap_or(f64::NAN));
     }
     if value.is_object() || value.is_function() {
         for method_name in ["valueOf", "toString"] {
@@ -7158,6 +7231,30 @@ fn native_number_to_precision(_: &mut Vm, this: Value, args: &[Value]) -> JsResu
         p.saturating_sub(1),
         this.number()
     )))
+}
+fn native_number_to_exponential(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let number = this.number();
+    if number.is_nan() { return Ok(Value::string_value("NaN")); }
+    if number == f64::INFINITY { return Ok(Value::string_value("Infinity")); }
+    if number == f64::NEG_INFINITY { return Ok(Value::string_value("-Infinity")); }
+    let precision = args.first().map(Value::number);
+    let text = match precision {
+        Some(value) => format!("{number:.prec$e}", prec = value.max(0.0) as usize),
+        None => format!("{number:e}"),
+    };
+    let text = if let Some((mantissa, exponent)) = text.split_once('e') {
+        if exponent.starts_with('-') || exponent.starts_with('+') {
+            text
+        } else {
+            format!("{mantissa}e+{exponent}")
+        }
+    } else {
+        text
+    };
+    Ok(Value::string_value(text))
+}
+fn native_number_value_of(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    Ok(Value::Number(this.number()))
 }
 fn native_number_to_string(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let n = this.number();
@@ -7856,8 +7953,24 @@ fn to_string_with_vm(vm: &mut Vm, value: &Value) -> JsResult<String> {
     }
     Ok(value.string())
 }
-fn native_number(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    Ok(Value::Number(a.first().map(Value::number).unwrap_or(0.0)))
+fn native_number(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    let number = match a.first() {
+        None => 0.0,
+        Some(value) => to_number_with_vm(vm, value)?,
+    };
+    Ok(Value::Number(number))
+}
+fn native_number_is_finite(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    Ok(Value::Bool(args.first().and_then(Value::as_number).is_some_and(f64::is_finite)))
+}
+fn native_number_is_integer(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    Ok(Value::Bool(args.first().and_then(Value::as_number).is_some_and(|value| value.is_finite() && value.fract() == 0.0)))
+}
+fn native_number_is_nan(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    Ok(Value::Bool(args.first().and_then(Value::as_number).is_some_and(f64::is_nan)))
+}
+fn native_number_is_safe_integer(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    Ok(Value::Bool(args.first().and_then(Value::as_number).is_some_and(|value| value.is_finite() && value.fract() == 0.0 && value.abs() <= 9_007_199_254_740_991.0)))
 }
 fn native_function_constructor(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     // Reuse the same OXC parser and stencil compiler used for ordinary source
@@ -7962,6 +8075,12 @@ fn native_error(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
 fn native_object_to_string(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     let tag = if this.as_function_ref().is_some() {
         "Function"
+    } else if let Some(wrapper) = this
+        .as_object_ref()
+        .and_then(|object| object.borrow().props.get("\0wrapper").cloned())
+        .and_then(|value| value.as_string().map(ToOwned::to_owned))
+    {
+        return Ok(Value::string_value(format!("[object {wrapper}]")));
     } else if this
         .as_object_ref()
         .is_some_and(|object| object.borrow().array.is_some())
@@ -8004,17 +8123,21 @@ fn native_object_get_own_property_descriptor(
     let builtin_function = target
         .as_function_ref()
         .is_some_and(|function| matches!(function.kind, FunctionKind::Builtin(_)));
+    let is_number_constant = target
+        .as_function_ref()
+        .is_some_and(|function| matches!(function.kind, FunctionKind::Builtin(BuiltinId::NumberConstructor)))
+        && matches!(key.as_str(), "NaN" | "POSITIVE_INFINITY" | "NEGATIVE_INFINITY" | "MAX_VALUE" | "MIN_VALUE" | "MAX_SAFE_INTEGER" | "MIN_SAFE_INTEGER" | "EPSILON");
     let attributes = target
         .as_object_ref()
         .and_then(|object| object.borrow().attributes.get(&key).copied())
         .unwrap_or(PropertyAttributes {
-            writable: !function_metadata,
-            enumerable: !function_metadata
+            writable: !function_metadata && !is_number_constant,
+            enumerable: !function_metadata && !is_number_constant
                 && !builtin_function
                 && !target
                     .as_object_ref()
                     .is_some_and(|object| object.borrow().builtin_prototype),
-            configurable: true,
+            configurable: !is_number_constant,
         });
     vm.set_prop(&descriptor, "writable", Value::Bool(attributes.writable));
     vm.set_prop(&descriptor, "enumerable", Value::Bool(attributes.enumerable));
@@ -8106,8 +8229,12 @@ fn native_object_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
             .map(Value::Object)
             .unwrap_or(Value::Null));
     }
-    if let Some(function) = target.as_function() {
-        return Ok(Value::Object(function.prototype.clone()));
+    if target.as_function().is_some() {
+        let function_prototype = vm
+            .builtin(BuiltinId::FunctionConstructor)
+            .as_function_ref()
+            .map(|constructor| constructor.prototype.clone());
+        return Ok(function_prototype.map(Value::Object).unwrap_or(Value::Null));
     }
     let _ = vm;
     Ok(Value::Null)
@@ -8123,7 +8250,25 @@ fn native_object_keys(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> 
     Ok(vm.object_value(Object::array(None, keys)))
 }
 fn native_object_get_own_property_names(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
-    native_object_keys(vm, Value::Undefined, args)
+    let Some(target) = args.first() else { return Err(JsError::Throw(type_error(vm, "Object.getOwnPropertyNames target is undefined"))); };
+    let mut keys = Vec::new();
+    if let Some(function) = target.as_function_ref() {
+        keys.extend(function.props.borrow().keys().cloned().map(Value::string_value));
+        if !matches!(function.kind, FunctionKind::Native(_) | FunctionKind::Arrow { .. } | FunctionKind::Bound { .. }) {
+            keys.push(Value::string_value("prototype"));
+        }
+    } else if let Some(object) = target.as_object_ref() {
+        let object = object.borrow();
+        if let Some(array) = &object.array {
+            keys.push(Value::string_value("length"));
+            keys.extend((0..array.len()).filter(|index| !array.holes[*index]).map(|index| Value::string_value(index.to_string())));
+        }
+        keys.extend(object.props.keys().filter(|key| !key.contains('\0')).cloned().map(Value::string_value));
+    } else if let Some(string) = target.as_string() {
+        keys.push(Value::string_value("length"));
+        keys.extend((0..string.chars().count()).map(|index| Value::string_value(index.to_string())));
+    }
+    Ok(vm.object_value(Object::array(None, keys)))
 }
 fn native_object_get_own_property_symbols(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let Some(target) = args.first() else {
@@ -8237,6 +8382,11 @@ fn object_own_enumerable_keys(target: &Value) -> Vec<String> {
             !key.starts_with('\0') && object.attributes.get(*key).is_none_or(|attrs| attrs.enumerable)
         }).cloned());
         return keys;
+    }
+    if let Some(function) = target.as_function_ref() {
+        return function.props.borrow().keys().filter(|key| {
+            !matches!(key.as_str(), "name" | "length") && !matches!(function.kind, FunctionKind::Builtin(_))
+        }).cloned().collect();
     }
     target.as_string().map(|string| (0..string.chars().count()).map(|index| index.to_string()).collect()).unwrap_or_default()
 }
@@ -8372,7 +8522,8 @@ fn native_object_property_is_enumerable(
     // non-enumerable because it is held on function metadata, not props.
     let key = args.first().map(Value::string).unwrap_or_default();
     let enumerable = if let Some(function) = this.as_function_ref() {
-        function.props.borrow().contains_key(&key) && !matches!(key.as_str(), "name" | "length")
+        function.props.borrow().contains_key(&key)
+            && !matches!(key.as_str(), "name" | "length" | "NaN" | "POSITIVE_INFINITY" | "NEGATIVE_INFINITY" | "MAX_VALUE" | "MIN_VALUE" | "MAX_SAFE_INTEGER" | "MIN_SAFE_INTEGER" | "EPSILON")
     } else {
         this.as_object_ref().is_some_and(|object| {
             let object = object.borrow();
