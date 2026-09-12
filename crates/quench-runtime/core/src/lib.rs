@@ -11579,7 +11579,7 @@ fn native_object_set_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
             "setPrototypeOf target is undefined",
         )));
     };
-    let prototype = args.get(1).cloned().unwrap_or(Value::Null);
+    let prototype = args.get(1).cloned().unwrap_or(Value::Undefined);
     let handle = if prototype.is_null() {
         None
     } else {
@@ -11875,10 +11875,24 @@ fn native_object_lookup_setter(vm: &mut Vm, this: Value, args: &[Value]) -> JsRe
     native_object_lookup_legacy_accessor(vm, this, args, "set")
 }
 
+fn object_receiver(vm: &mut Vm, value: &Value) -> JsResult<Value> {
+    if value.is_null() || value.is_undefined() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Object operation called on null or undefined",
+        )));
+    }
+    if value.is_object_like() {
+        return Ok(value.clone());
+    }
+    native_object(vm, Value::Undefined, std::slice::from_ref(value))
+}
+
 fn native_object_has_own_property(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    let key = args.first().map(Value::string).unwrap_or_default();
+    let target = object_receiver(vm, &this)?;
+    let key = vm.to_property_key(args.first().cloned().unwrap_or(Value::Undefined))?;
     let error_stack = key == "stack"
-        && this
+        && target
             .as_object()
             .zip(
                 vm.builtin(BuiltinId::ErrorConstructor)
@@ -11886,15 +11900,15 @@ fn native_object_has_own_property(vm: &mut Vm, this: Value, args: &[Value]) -> J
                     .map(|function| function.prototype),
             )
             .is_some_and(|(target, prototype)| target.as_ptr() == prototype.as_ptr());
-    let present = if let Some(regexp) = this.as_regexp_ref() {
+    let present = if let Some(regexp) = target.as_regexp_ref() {
         let regexp = regexp.borrow();
         regexp.props.contains_key(&key)
             || regexp.props.contains_key(&accessor_slot("get", &key))
             || regexp.props.contains_key(&accessor_slot("set", &key))
-    } else if let Some(function) = this.as_function_ref() {
+    } else if let Some(function) = target.as_function_ref() {
         function.props.borrow().contains_key(&key) || key == "prototype"
     } else {
-        this.as_object_ref().is_some_and(|object| {
+        target.as_object_ref().is_some_and(|object| {
             let object = object.borrow();
             if let Some(array) = &object.array {
                 key == "length"
@@ -11915,15 +11929,16 @@ fn native_object_has_own_property(vm: &mut Vm, this: Value, args: &[Value]) -> J
     Ok(Value::Bool(present))
 }
 fn native_object_property_is_enumerable(
-    _: &mut Vm,
+    vm: &mut Vm,
     this: Value,
     args: &[Value],
 ) -> JsResult<Value> {
     // The compact property store currently models all user-created data
     // properties as enumerable; built-in metadata (name/length) remains
     // non-enumerable because it is held on function metadata, not props.
-    let key = args.first().map(Value::string).unwrap_or_default();
-    let enumerable = if let Some(function) = this.as_function_ref() {
+    let target = object_receiver(vm, &this)?;
+    let key = vm.to_property_key(args.first().cloned().unwrap_or(Value::Undefined))?;
+    let enumerable = if let Some(function) = target.as_function_ref() {
         function.props.borrow().contains_key(&key)
             && !matches!(
                 key.as_str(),
@@ -11939,7 +11954,7 @@ fn native_object_property_is_enumerable(
                     | "EPSILON"
             )
     } else {
-        this.as_object_ref().is_some_and(|object| {
+        target.as_object_ref().is_some_and(|object| {
             let object = object.borrow();
             object.attributes.get(&key).map_or_else(
                 || {
