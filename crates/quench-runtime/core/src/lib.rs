@@ -7756,7 +7756,13 @@ impl Vm {
                 } else {
                     (Value::Undefined, self.eval_expr(&v.callee, e.clone())?)
                 };
-                let args = self.eval_args(&v.arguments, e)?;
+                let args = self.eval_args(&v.arguments, e.clone())?;
+                if matches!(
+                    c.as_function_ref().map(|function| &function.kind),
+                    Some(FunctionKind::Builtin(BuiltinId::Eval))
+                ) {
+                    return native_eval_in_environment(self, &args, e);
+                }
                 let result = self
                     .call(c, t, args)
                     .map_err(|err| JsError::Message(format!("{err} at {:?}", v.span)))?;
@@ -8262,7 +8268,7 @@ fn native_parse_float(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     ))
 }
 
-fn native_eval(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+fn native_eval_in_environment(vm: &mut Vm, a: &[Value], environment: Env) -> JsResult<Value> {
     let Some(source) = a
         .first()
         .filter(|value| value.is_string())
@@ -8284,12 +8290,16 @@ fn native_eval(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
         .last()
         .cloned()
         .unwrap_or_else(|| PathBuf::from("<eval>"));
-    match vm.run_source_text_in_environment(&path, &source, vm.global.clone()) {
+    match vm.run_source_text_in_environment(&path, &source, environment) {
         Err(JsError::Message(message)) if message.starts_with("parse error:") => {
             Err(JsError::Throw(syntax_error(vm, &message)))
         }
         result => result,
     }
+}
+
+fn native_eval(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    native_eval_in_environment(vm, a, vm.global.clone())
 }
 
 fn native_is_finite(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
