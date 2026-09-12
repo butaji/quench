@@ -3456,7 +3456,23 @@ fn construct(
             .unwrap_or(None);
         vm(frame).object(prototype)
     } else if native {
-        Value::Undefined
+        let error_prototype = callee.as_function_ref().and_then(|function| {
+            matches!(
+                function.kind,
+                FunctionKind::Builtin(
+                    BuiltinId::ErrorConstructor
+                        | BuiltinId::TypeErrorConstructor
+                        | BuiltinId::RangeErrorConstructor
+                        | BuiltinId::URIErrorConstructor
+                        | BuiltinId::SyntaxErrorConstructor
+                        | BuiltinId::ReferenceErrorConstructor
+                        | BuiltinId::EvalErrorConstructor
+                        | BuiltinId::AggregateErrorConstructor
+                )
+            )
+            .then(|| function.prototype.clone())
+        });
+        error_prototype.map_or(Value::Undefined, |prototype| vm(frame).object(Some(prototype)))
     } else if let Some(function) = callee.as_function_ref() {
         let prototype = Some(function.prototype);
         match constructor_shape {
