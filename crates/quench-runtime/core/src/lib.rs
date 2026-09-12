@@ -10009,6 +10009,104 @@ fn string_symbol_method(vm: &mut Vm, value: &Value, name: &str) -> JsResult<Opti
     Ok(Some(method))
 }
 
+fn expand_js_replacement(
+    template: &str,
+    source: &str,
+    captures: &regex::Captures<'_>,
+    start: usize,
+    end: usize,
+) -> String {
+    let mut output = String::new();
+    let chars = template.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] != '$' || index + 1 >= chars.len() {
+            output.push(chars[index]);
+            index += 1;
+            continue;
+        }
+        match chars[index + 1] {
+            '$' => {
+                output.push('$');
+                index += 2;
+            }
+            '&' => {
+                output.push_str(&source[start..end]);
+                index += 2;
+            }
+            '`' => {
+                output.push_str(&source[..start]);
+                index += 2;
+            }
+            '\'' => {
+                output.push_str(&source[end..]);
+                index += 2;
+            }
+            '1'..='9' => {
+                let first = chars[index + 1].to_digit(10).unwrap_or(0) as usize;
+                let mut capture_index = first;
+                let mut consumed = 2;
+                if index + 2 < chars.len() && chars[index + 2].is_ascii_digit() {
+                    let candidate =
+                        first * 10 + chars[index + 2].to_digit(10).unwrap_or(0) as usize;
+                    if candidate < captures.len() {
+                        capture_index = candidate;
+                        consumed = 3;
+                    }
+                }
+                if let Some(capture) = captures.get(capture_index) {
+                    output.push_str(capture.as_str());
+                    index += consumed;
+                } else {
+                    output.push('$');
+                    index += 1;
+                }
+            }
+            _ => {
+                output.push('$');
+                index += 1;
+            }
+        }
+    }
+    output
+}
+
+fn expand_string_replacement(template: &str, source: &str, start: usize, end: usize) -> String {
+    let mut output = String::new();
+    let chars = template.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] != '$' || index + 1 >= chars.len() {
+            output.push(chars[index]);
+            index += 1;
+            continue;
+        }
+        match chars[index + 1] {
+            '$' => {
+                output.push('$');
+                index += 2;
+            }
+            '&' => {
+                output.push_str(&source[start..end]);
+                index += 2;
+            }
+            '`' => {
+                output.push_str(&source[..start]);
+                index += 2;
+            }
+            '\'' => {
+                output.push_str(&source[end..]);
+                index += 2;
+            }
+            _ => {
+                output.push('$');
+                index += 1;
+            }
+        }
+    }
+    output
+}
+
 fn native_string_replace(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let s = string_this(this);
     if let Some(search) = args.first()
@@ -10025,17 +10123,42 @@ fn native_string_replace(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
         let undefined = Value::Undefined;
         let to = to_string_with_vm(vm, args.get(1).unwrap_or(&undefined))?;
         let b = r.borrow();
-        let out = if b.global {
-            b.regex.replace_all(&s, to.as_str()).to_string()
-        } else {
-            b.regex.replace(&s, to.as_str()).to_string()
-        };
+        let mut out = String::new();
+        let mut last = 0;
+        for captures in b.regex.captures_iter(&s) {
+            let Some(found) = captures.get(0) else {
+                continue;
+            };
+            out.push_str(&s[last..found.start()]);
+            out.push_str(&expand_js_replacement(
+                &to,
+                &s,
+                &captures,
+                found.start(),
+                found.end(),
+            ));
+            last = found.end();
+            if !b.global {
+                break;
+            }
+        }
+        out.push_str(&s[last..]);
         return Ok(Value::string_value(out));
     }
     let undefined = Value::Undefined;
     let from = to_string_with_vm(vm, args.first().unwrap_or(&undefined))?;
     let to = to_string_with_vm(vm, args.get(1).unwrap_or(&undefined))?;
-    Ok(Value::string_value(s.replacen(&from, &to, 1)))
+    if let Some(start) = s.find(&from) {
+        let end = start + from.len();
+        let replacement = expand_string_replacement(&to, &s, start, end);
+        return Ok(Value::string_value(format!(
+            "{}{}{}",
+            &s[..start],
+            replacement,
+            &s[end..]
+        )));
+    }
+    Ok(Value::string_value(s))
 }
 fn native_string_replace_all(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let s = string_this(this);
@@ -10050,16 +10173,35 @@ fn native_string_replace_all(vm: &mut Vm, this: Value, args: &[Value]) -> JsResu
         );
     }
     if let Some(r) = args.first().and_then(Value::as_regexp) {
-        let replacement = args.get(1).map(Value::string).unwrap_or_default();
-        return Ok(Value::string_value(
-            r.borrow()
-                .regex
-                .replace_all(&s, replacement.as_str())
-                .to_string(),
-        ));
+        let replacement = to_string_with_vm(vm, args.get(1).unwrap_or(&Value::Undefined))?;
+        let b = r.borrow();
+        if !b.global {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "String.prototype.replaceAll requires a global RegExp",
+            )));
+        }
+        let mut out = String::new();
+        let mut last = 0;
+        for captures in b.regex.captures_iter(&s) {
+            let Some(found) = captures.get(0) else {
+                continue;
+            };
+            out.push_str(&s[last..found.start()]);
+            out.push_str(&expand_js_replacement(
+                &replacement,
+                &s,
+                &captures,
+                found.start(),
+                found.end(),
+            ));
+            last = found.end();
+        }
+        out.push_str(&s[last..]);
+        return Ok(Value::string_value(out));
     }
-    let from = args.first().map(Value::string).unwrap_or_default();
-    let replacement = args.get(1).map(Value::string).unwrap_or_default();
+    let from = to_string_with_vm(vm, args.first().unwrap_or(&Value::Undefined))?;
+    let replacement = to_string_with_vm(vm, args.get(1).unwrap_or(&Value::Undefined))?;
     if from.is_empty() {
         return Ok(Value::string_value(format!(
             "{}{}",
@@ -10069,7 +10211,17 @@ fn native_string_replace_all(vm: &mut Vm, this: Value, args: &[Value]) -> JsResu
                 .collect::<String>()
         )));
     }
-    Ok(Value::string_value(s.replace(&from, &replacement)))
+    let mut out = String::new();
+    let mut cursor = 0;
+    while let Some(relative) = s[cursor..].find(&from) {
+        let start = cursor + relative;
+        let end = start + from.len();
+        out.push_str(&s[cursor..start]);
+        out.push_str(&expand_string_replacement(&replacement, &s, start, end));
+        cursor = end;
+    }
+    out.push_str(&s[cursor..]);
+    Ok(Value::string_value(out))
 }
 fn native_string_split(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let s = string_this(this);
@@ -10850,12 +11002,27 @@ fn native_regexp_symbol_replace(vm: &mut Vm, this: Value, args: &[Value]) -> JsR
         return Ok(Value::string_value(out));
     }
     let replacement = to_string_with_vm(vm, &replacement)?;
-    let replaced = if regexp.global {
-        regexp.regex.replace_all(&source, replacement.as_str())
-    } else {
-        regexp.regex.replace(&source, replacement.as_str())
-    };
-    Ok(Value::string_value(replaced.to_string()))
+    let mut out = String::new();
+    let mut last = 0;
+    for captures in regexp.regex.captures_iter(&source) {
+        let Some(found) = captures.get(0) else {
+            continue;
+        };
+        out.push_str(&source[last..found.start()]);
+        out.push_str(&expand_js_replacement(
+            &replacement,
+            &source,
+            &captures,
+            found.start(),
+            found.end(),
+        ));
+        last = found.end();
+        if !regexp.global {
+            break;
+        }
+    }
+    out.push_str(&source[last..]);
+    Ok(Value::string_value(out))
 }
 
 fn native_regexp_symbol_split(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
