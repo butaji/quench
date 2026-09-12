@@ -1731,10 +1731,26 @@ impl Environment {
     }
     fn set(e: &Env, k: &str, v: Value) {
         if let Some(location) = Self::resolve(e, k) {
+            if matches!(k, "NaN" | "Infinity") && Self::is_root_binding(e, k) {
+                return;
+            }
             Self::set_at(e, location, v);
             return;
         }
         e.borrow_mut().declare(k, v);
+    }
+
+    fn is_root_binding(e: &Env, k: &str) -> bool {
+        let mut current = Some(e.clone());
+        while let Some(environment) = current {
+            let borrowed = environment.borrow();
+            if !borrowed.names.contains_key(k) {
+                current = borrowed.parent.clone();
+                continue;
+            }
+            return borrowed.parent.is_none();
+        }
+        false
     }
     fn set_cached(
         e: &Env,
@@ -1743,6 +1759,9 @@ impl Environment {
         v: Value,
         cache: &NameIcSite,
     ) {
+        if matches!(k, "NaN" | "Infinity") && Self::is_root_binding(e, k) {
+            return;
+        }
         if let Some(location) = cache.get()
             && Self::set_at_chain(chain, location, v.clone())
         {
@@ -5293,6 +5312,8 @@ impl Vm {
         for name in [
             "process",
             "console",
+            "NaN",
+            "Infinity",
             "Math",
             "Symbol",
             "BigInt",
@@ -5332,10 +5353,18 @@ impl Vm {
                 if let Some(object) = global_this.as_object_ref() {
                     object.borrow_mut().attributes.insert(
                         name.into(),
-                        PropertyAttributes {
-                            writable: true,
-                            enumerable: false,
-                            configurable: true,
+                        if matches!(name, "NaN" | "Infinity") {
+                            PropertyAttributes {
+                                writable: false,
+                                enumerable: false,
+                                configurable: false,
+                            }
+                        } else {
+                            PropertyAttributes {
+                                writable: true,
+                                enumerable: false,
+                                configurable: true,
+                            }
                         },
                     );
                 }
@@ -6133,6 +6162,9 @@ impl Vm {
                 let key = self.to_property_key(key_value)?;
                 Ok(Value::Bool(self.delete_prop(&object, &key)))
             }
+            Expression::Identifier(identifier) => Ok(Value::Bool(
+                !self.readonly_global_binding(&e, identifier.name.as_str()),
+            )),
             _ => Ok(Value::Bool(true)),
         }
     }
@@ -7296,9 +7328,24 @@ impl Vm {
     }
     fn write_lvalue(&self, target: LValue, v: Value) {
         match target {
+            LValue::Var(e, name) if self.readonly_global_binding(&e, &name) => {}
             LValue::Var(e, name) => Environment::set(&e, &name, v),
             LValue::Prop(o, k) => self.set_prop(&o, &k, v),
         }
+    }
+
+    fn readonly_global_binding(&self, environment: &Env, name: &str) -> bool {
+        if !matches!(name, "NaN" | "Infinity") {
+            return false;
+        }
+        let mut current = Some(environment.clone());
+        while let Some(candidate) = current {
+            if Rc::ptr_eq(&candidate, &self.global) {
+                return true;
+            }
+            current = candidate.borrow().parent.clone();
+        }
+        false
     }
     fn eval_simple_target<'a>(
         &mut self,
@@ -7338,7 +7385,9 @@ impl Vm {
     ) -> JsResult<()> {
         match t {
             SimpleAssignmentTarget::AssignmentTargetIdentifier(i) => {
-                Environment::set(&e, i.name.as_str(), v);
+                if !self.readonly_global_binding(&e, i.name.as_str()) {
+                    Environment::set(&e, i.name.as_str(), v);
+                }
                 Ok(())
             }
             SimpleAssignmentTarget::StaticMemberExpression(m) => {
