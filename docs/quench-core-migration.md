@@ -146,11 +146,11 @@ Verification completed:
   detection, preserving constructor-call prototypes, and modeling the shared
   `Error.prototype.stack` accessor contract; proxy/realm and accessor-descriptor
   edge cases remain open
-- the stencil Symbol stage now reaches 92/98 after introducing stable symbol
+- the stencil Symbol stage now reaches 97/98 after introducing stable symbol
   key atoms, shared global-symbol registry state, distinct realm constructors,
-  well-known symbol descriptors, and constructor-boundary `IsConstructor`
-  semantics; strict primitive assignment, species accessors, and a few
-  coercion/subclassing cases remain open
+  well-known symbol descriptors, species accessors, and constructor-boundary
+  `IsConstructor` semantics; the remaining failure is class-based subclassing
+  syntax in the stencil frontend
 - intrinsic data-property installation now uses the declarative
   `install_data_properties!` Rust macro for Math and BigInt tables, keeping
   values and descriptors in one source-of-truth declaration
@@ -161,6 +161,9 @@ Verification completed:
   lowered through one installer path; Node host bootstrap values likewise use
   the `with_host_values!` declaration macro so ordered host wiring has one
   representation
+- descriptor attachment now has one shared lowering helper for object and
+  function storage, keeping that representation detail at the edge instead of
+  repeating it at each intrinsic declaration site
 - historical commits advertising “100% Test262” used `test262/skip.rs` to skip
   entire built-in families (including Object, Array, String, TypedArray, and
   Promise); those results are not equivalent to executing the full corpus
