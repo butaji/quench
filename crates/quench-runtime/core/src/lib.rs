@@ -4786,6 +4786,13 @@ impl Vm {
                 } else {
                     value
                 }
+            } else if matches!(k, "toString" | "valueOf" | "hasOwnProperty" | "propertyIsEnumerable") {
+                let value = self.function_prop(f, k);
+                if value.is_undefined() {
+                    self.builtin_property(BuiltinOwner::ObjectPrototype, k)
+                } else {
+                    value
+                }
             } else if matches!(k, "call" | "apply" | "bind") {
                 self.builtin_property(BuiltinOwner::FunctionPrototype, k)
             } else {
@@ -4828,6 +4835,12 @@ impl Vm {
             if let Some(v) = object.prototype.borrow().props.get(k) {
                 return v.clone();
             }
+        }
+        if let Some(function_value) = Environment::get(&self.global, "Function")
+            && let Some(function) = function_value.as_function()
+            && let Some(v) = function.prototype.borrow().props.get(k)
+        {
+            return v.clone();
         }
         Value::Undefined
     }
