@@ -7634,7 +7634,23 @@ impl Vm {
                     if let ObjectPropertyKind::ObjectProperty(p) = p {
                         let k = self.eval_property_key(&p.key, e.clone())?;
                         let z = self.eval_expr(&p.value, e.clone())?;
-                        self.set_prop(&o, &k, z)
+                        match p.kind {
+                            PropertyKind::Get => self.define_accessor_slot(
+                                &o,
+                                &k,
+                                Some(z),
+                                None,
+                                PropertyAttributes::DEFAULT,
+                            ),
+                            PropertyKind::Set => self.define_accessor_slot(
+                                &o,
+                                &k,
+                                None,
+                                Some(z),
+                                PropertyAttributes::DEFAULT,
+                            ),
+                            _ => self.set_prop(&o, &k, z),
+                        }
                     }
                 }
                 Ok(o)
@@ -10543,7 +10559,7 @@ fn replacement_text(
 }
 
 fn native_string_replace(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    if let Some(search) = args.first()
+    if let Some(search) = args.first().filter(|value| value.as_regexp().is_none())
         && let Some(method) = string_symbol_method(vm, search, "replace")?
     {
         let s = string_receiver(vm, &this, "replace")?;
@@ -10624,24 +10640,39 @@ fn native_string_replace(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
     Ok(Value::string_value(s))
 }
 fn native_string_replace_all(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    if let Some(search) = args.first()
-        && let Some(method) = string_symbol_method(vm, search, "replace")?
+    if let Some(search) = args
+        .first()
+        .filter(|value| !value.is_null() && !value.is_undefined())
     {
-        let s = string_receiver(vm, &this, "replaceAll")?;
-        let replacement = args.get(1).cloned().unwrap_or(Value::Undefined);
-        return vm.call_arguments(
-            &method,
-            search.clone(),
-            &[Value::string_value(s), replacement][..],
-        );
+        if string_is_regexp(vm, search)? {
+            let flags = vm.get_prop_with_accessors(search, "flags")?;
+            if flags.is_null() || flags.is_undefined() {
+                return Err(JsError::Throw(type_error(
+                    vm,
+                    "String.prototype.replaceAll requires coercible RegExp flags",
+                )));
+            }
+            let flags = string_argument(vm, &flags)?;
+            if !flags.contains('g') {
+                return Err(JsError::Throw(type_error(
+                    vm,
+                    "String.prototype.replaceAll requires a global RegExp",
+                )));
+            }
+        }
+        if let Some(method) = string_symbol_method(vm, search, "replace")? {
+            let s = string_receiver(vm, &this, "replaceAll")?;
+            let replacement = args.get(1).cloned().unwrap_or(Value::Undefined);
+            return vm.call_arguments(
+                &method,
+                search.clone(),
+                &[Value::string_value(s), replacement][..],
+            );
+        }
     }
-    let s = string_receiver(vm, &this, "replaceAll")?;
     if let Some(r) = args.first().and_then(Value::as_regexp) {
         let undefined = Value::Undefined;
         let replacement = args.get(1).unwrap_or(&undefined);
-        let replacement_string = (!replacement.is_function())
-            .then(|| string_argument(vm, replacement))
-            .transpose()?;
         let b = r.borrow();
         if !b.global {
             return Err(JsError::Throw(type_error(
@@ -10649,6 +10680,10 @@ fn native_string_replace_all(vm: &mut Vm, this: Value, args: &[Value]) -> JsResu
                 "String.prototype.replaceAll requires a global RegExp",
             )));
         }
+        let replacement_string = (!replacement.is_function())
+            .then(|| string_argument(vm, replacement))
+            .transpose()?;
+        let s = string_receiver(vm, &this, "replaceAll")?;
         let mut out = String::new();
         let mut last = 0;
         for captures in b.regex.captures_iter(&s) {
@@ -10680,6 +10715,7 @@ fn native_string_replace_all(vm: &mut Vm, this: Value, args: &[Value]) -> JsResu
         out.push_str(&s[last..]);
         return Ok(Value::string_value(out));
     }
+    let s = string_receiver(vm, &this, "replaceAll")?;
     let from = string_argument(vm, args.first().unwrap_or(&Value::Undefined))?;
     let undefined = Value::Undefined;
     let replacement_value = args.get(1).unwrap_or(&undefined);
