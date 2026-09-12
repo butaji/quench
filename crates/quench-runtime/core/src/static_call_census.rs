@@ -154,6 +154,18 @@ fn record_call(origin: Option<&RegisterOrigin>, outer: &Env) -> StaticCallResolu
                 },
             )
         }
+        FunctionKind::Arrow {
+            env: target_outer, ..
+        } => {
+            let environment_compatible = std::rc::Rc::ptr_eq(outer, target_outer);
+            (
+                &STATIC_CALL_CENSUS.user_function_targets,
+                StaticCallResolution::UserFunction {
+                    identity_bits: value.as_borrowed_raw().bits(),
+                    environment_compatible,
+                },
+            )
+        }
         FunctionKind::Builtin(_) => (
             &STATIC_CALL_CENSUS.builtin_targets,
             StaticCallResolution::Builtin,

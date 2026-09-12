@@ -53,9 +53,13 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
         Some("-e") | Some("--eval") => {
             let source = args.get(mode_index + 1).map_or("", String::as_str);
             let sink: OutputSink = std::sync::Arc::new(|chunk| print!("{chunk}"));
-            match eval_script(source, sink).error {
+            let outcome = eval_script(source, sink);
+            match outcome.error {
                 Some(error) => Err(error.into()),
-                None => Ok(()),
+                None if outcome.exit_code == 0 => Ok(()),
+                None => {
+                    process::exit(outcome.exit_code.clamp(0, 255));
+                }
             }
         }
         Some("--stage") => run_directory(&PathBuf::from(format!(
@@ -85,7 +89,9 @@ fn run_file(path: &Path, script_args: &[String]) -> Result<(), Box<dyn std::erro
     match outcome.error {
         Some(error) => Err(error.into()),
         None if outcome.exit_code == 0 => Ok(()),
-        None => Err(format!("script exited with status {}", outcome.exit_code).into()),
+        None => {
+            process::exit(outcome.exit_code.clamp(0, 255));
+        }
     }
 }
 

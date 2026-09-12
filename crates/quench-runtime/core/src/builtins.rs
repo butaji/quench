@@ -13,6 +13,8 @@ pub(crate) enum BuiltinOwner {
     RegExpPrototype,
     ObjectPrototype,
     FunctionPrototype,
+    Assert,
+    Process,
     StringConstructor,
 }
 
@@ -105,6 +107,14 @@ builtin_catalog! {
     Alert, Global, "alert", native_noop, Generic, EFFECTFUL;
     Print, Global, "print", native_print, Generic, EFFECTFUL;
     Load, Global, "load", native_load, Generic, EFFECTFUL;
+    Require, Global, "require", native_require, Generic, EFFECTFUL;
+    Assert, Global, "assert", native_assert, Generic, EFFECTFUL;
+    AssertStrictEqual, Assert, "strictEqual", native_assert_strict_equal, Generic, EFFECTFUL;
+    AssertThrows, Assert, "throws", native_assert_throws, Generic, MAY_CALL_JS;
+    SetTimeout, Global, "setTimeout", native_set_timeout, Generic, EFFECTFUL;
+    ClearTimeout, Global, "clearTimeout", native_clear_timeout, Generic, EFFECTFUL;
+    SetImmediate, Global, "setImmediate", native_set_immediate, Generic, EFFECTFUL;
+    ProcessNextTick, Process, "nextTick", native_process_next_tick, Generic, EFFECTFUL;
     ConsoleLog, Console, "log", native_print, Generic, EFFECTFUL;
     StringFromCharCode, StringConstructor, "fromCharCode", native_string_from_char_code, Generic, MAY_ALLOCATE;
     ArrayPush, ArrayPrototype, "push", native_array_push, Generic, MAY_MUTATE;

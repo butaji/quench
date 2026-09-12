@@ -68,14 +68,26 @@ pub fn run_script_with_exec_argv(
     source: &str,
     sink: OutputSink,
 ) -> RunOutcome {
-    // V8V7 can measure the runtime-owned VM core directly. The compatibility
-    // host remains the default for Node surface tests and normal invocations.
-    if std::env::var_os("QUENCH_USE_NATIVE_CORE").is_some()
-        && exec_argv.is_empty()
-        && script.exists()
-    {
-        return match quench_runtime::vm_core::run_file(script) {
-            Ok(()) => RunOutcome::success(),
+    // All file-backed JavaScript now enters the runtime-owned stencil VM.
+    // The legacy host dispatcher below is retained only while its Node host
+    // surfaces are being lowered into the new VM; it is unreachable for file
+    // execution and must not be reinstated as a fallback.
+    if script.exists() {
+        let mut argv = vec![
+            "quench-node".to_string(),
+            script.to_string_lossy().into_owned(),
+        ];
+        argv.extend(script_args.iter().cloned());
+        let vm_sink = Arc::clone(&sink);
+        return match quench_runtime::vm_core::run_source_with_argv_and_output_status(
+            script,
+            source,
+            argv,
+            exec_argv.to_vec(),
+            move |chunk| vm_sink(chunk),
+        ) {
+            Ok(exit_code) if exit_code == 0 => RunOutcome::success(),
+            Ok(exit_code) => RunOutcome::ok(exit_code),
             Err(error) => RunOutcome::fail(1, error),
         };
     }
@@ -555,6 +567,42 @@ mod tests {
         );
         assert!(outcome.error.is_none(), "timer failed: {:?}", outcome.error);
         assert_eq!(output.lock().unwrap().as_str(), "sync\ntimer\n");
+    }
+
+    #[test]
+    fn existing_file_runs_in_core_and_keeps_output_sink() {
+        let path =
+            std::env::temp_dir().join(format!("quench-node-core-run-{}.js", std::process::id()));
+        std::fs::write(&path, "console.log('core-file');").unwrap();
+        let output = Arc::new(Mutex::new(String::new()));
+        let captured = Arc::clone(&output);
+        let sink: OutputSink = Arc::new(move |chunk| {
+            captured.lock().unwrap().push_str(chunk);
+        });
+        let outcome = run_script_with_sink(&path, &[], "console.log('core-file');", sink);
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            outcome.error.is_none(),
+            "core run failed: {:?}",
+            outcome.error
+        );
+        assert_eq!(&*output.lock().unwrap(), "core-file\n");
+    }
+
+    #[test]
+    fn core_file_runner_returns_process_exit_code() {
+        let path =
+            std::env::temp_dir().join(format!("quench-node-core-exit-{}.js", std::process::id()));
+        std::fs::write(&path, "process.exitCode = 7;").unwrap();
+        let sink: OutputSink = Arc::new(|_| {});
+        let outcome = run_script_with_sink(&path, &[], "process.exitCode = 7;", sink);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(outcome.exit_code, 7);
+        assert!(
+            outcome.error.is_none(),
+            "core run failed: {:?}",
+            outcome.error
+        );
     }
 
     #[test]

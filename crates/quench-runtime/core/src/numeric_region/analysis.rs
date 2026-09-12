@@ -782,6 +782,7 @@ fn op_reads_register(op: &DynOp, register: Register) -> bool {
         | DynOp::NewArray { .. }
         | DynOp::NewObject { .. }
         | DynOp::MakeClosure { .. }
+        | DynOp::MakeArrow { .. }
         | DynOp::RegExp { .. }
         | DynOp::Jump { .. }
         | DynOp::PushHandler { .. }

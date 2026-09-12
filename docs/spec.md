@@ -1,7 +1,9 @@
 # WebAssembly boundary
 
 `quench-wasm` owns decoding, validation and spec-script adaptation;
-`quench-runtime` owns execution, memory, tables, exceptions and host calls.
+`quench-runtime-core` owns execution through the single stencil VM. Wasm
+memory, tables, exceptions, and host calls must enter that VM; the legacy
+`quench-runtime/src/vm` path is not a production execution target.
 Third-party decoding/validation is allowed; a separate guest executor is not.
 
 Use the shared typed register machinery and preserve distinct Wasm traps,
