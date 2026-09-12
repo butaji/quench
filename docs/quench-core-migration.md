@@ -136,6 +136,9 @@ Verification completed:
   conversion path, native metadata, computed Symbol keys, wrapper prototypes,
   and radix formatting; remaining failures are numeric edge errors and
   prototype/accessor details
+- the stencil Boolean stage now reaches 51/51 after projecting the constructor
+  onto `globalThis` and carrying strict-mode deletion through generated
+  bytecode; this stage is fully green
 - the stencil Error stage now reaches 47/93 after adding shared `Error.isError`
   detection and preserving constructor-call prototypes; stack accessors and
   remaining descriptor semantics are still open

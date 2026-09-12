@@ -335,11 +335,13 @@ pub enum DynOp {
         dst: Register,
         object: Register,
         key: String,
+        strict: bool,
     },
     DeleteComputed {
         dst: Register,
         object: Register,
         key: Register,
+        strict: bool,
     },
     Call {
         dst: Register,
@@ -516,6 +518,7 @@ pub struct Compiler {
     hoisted: Vec<(String, *const Function<'static>)>,
     controls: Vec<Control>,
     source_id: Option<usize>,
+    strict: bool,
 }
 
 impl Compiler {
@@ -523,6 +526,7 @@ impl Compiler {
         statements: &[Statement<'static>],
         source_id: usize,
         span: Span,
+        strict: bool,
     ) -> Result<DynCode, CompileGap> {
         let mut compiler = Self {
             ops: Vec::new(),
@@ -532,6 +536,7 @@ impl Compiler {
             hoisted: Vec::new(),
             controls: Vec::new(),
             source_id: Some(source_id),
+            strict,
         };
         compiler.collect_hoisted(statements);
         for (index, statement) in statements.iter().enumerate() {
@@ -553,6 +558,7 @@ impl Compiler {
     pub fn compile(
         function: &Function<'static>,
         source_id: Option<usize>,
+        strict: bool,
     ) -> Result<DynCode, CompileGap> {
         let body = function.body.as_ref().ok_or(CompileGap {
             span: function.span,
@@ -577,6 +583,7 @@ impl Compiler {
             hoisted: Vec::new(),
             controls: Vec::new(),
             source_id,
+            strict,
         };
         compiler.collect_hoisted(&body.statements);
         for statement in &body.statements {
@@ -588,6 +595,7 @@ impl Compiler {
     pub fn compile_arrow(
         function: &ArrowFunctionExpression<'static>,
         source_id: Option<usize>,
+        strict: bool,
     ) -> Result<DynCode, CompileGap> {
         let params = function
             .params
@@ -608,6 +616,7 @@ impl Compiler {
             hoisted: Vec::new(),
             controls: Vec::new(),
             source_id,
+            strict,
         };
         if let ArrowFunctionBody::FunctionBody(body) = &function.body {
             compiler.collect_hoisted(&body.statements);
@@ -1660,12 +1669,24 @@ impl Compiler {
             let dst = self.alloc()?;
             if let Some(member) = value.argument.as_member_expression() {
                 match self.member_lvalue(member)? {
-                    Lvalue::Static { object, key } => {
-                        self.emit(DynOp::DeleteStatic { dst, object, key }, value.span)
-                    }
-                    Lvalue::Computed { object, key } => {
-                        self.emit(DynOp::DeleteComputed { dst, object, key }, value.span)
-                    }
+                    Lvalue::Static { object, key } => self.emit(
+                        DynOp::DeleteStatic {
+                            dst,
+                            object,
+                            key,
+                            strict: self.strict,
+                        },
+                        value.span,
+                    ),
+                    Lvalue::Computed { object, key } => self.emit(
+                        DynOp::DeleteComputed {
+                            dst,
+                            object,
+                            key,
+                            strict: self.strict,
+                        },
+                        value.span,
+                    ),
                     Lvalue::Name(_) => unreachable!(),
                 };
             } else {
