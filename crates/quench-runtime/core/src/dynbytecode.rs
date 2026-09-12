@@ -534,8 +534,18 @@ impl Compiler {
             source_id: Some(source_id),
         };
         compiler.collect_hoisted(statements);
-        for statement in statements {
-            compiler.statement(statement)?;
+        for (index, statement) in statements.iter().enumerate() {
+            if index + 1 == statements.len()
+                && let Statement::ExpressionStatement(item) = statement
+            {
+                // Script completion values are observable through direct and
+                // indirect eval.  Preserve the final expression in the same
+                // stencil instead of routing eval through the legacy VM.
+                let src = compiler.expression(&item.expression)?;
+                compiler.emit(DynOp::Return { src: Some(src) }, item.span);
+            } else {
+                compiler.statement(statement)?;
+            }
         }
         Ok(compiler.finish(span, true))
     }
