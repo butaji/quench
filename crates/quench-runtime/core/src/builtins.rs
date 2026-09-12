@@ -45,6 +45,53 @@ impl BuiltinOwner {
             _ => None,
         }
     }
+
+    /// Describe where an intrinsic is installed in the VM object graph.
+    ///
+    /// The catalog already owns the semantic owner of every builtin. Keeping
+    /// this projection beside that owner declaration lets installation derive
+    /// its target instead of repeating one branch per namespace.
+    pub(crate) const fn install_target(self) -> BuiltinInstallTarget {
+        match self {
+            Self::Global => BuiltinInstallTarget::Global,
+            Self::Math => BuiltinInstallTarget::Namespace("Math"),
+            Self::Reflect => BuiltinInstallTarget::Namespace("Reflect"),
+            Self::Console => BuiltinInstallTarget::Namespace("console"),
+            Self::Assert => BuiltinInstallTarget::Namespace("assert"),
+            // `process` is installed by the host-facing entry point after the
+            // core realm is created; its catalog methods are attached there.
+            Self::Process => BuiltinInstallTarget::Ignored,
+            Self::StringConstructor => {
+                BuiltinInstallTarget::Constructor(BuiltinId::StringConstructor)
+            }
+            Self::NumberConstructor => {
+                BuiltinInstallTarget::Constructor(BuiltinId::NumberConstructor)
+            }
+            Self::DateConstructor => BuiltinInstallTarget::Constructor(BuiltinId::DateConstructor),
+            Self::ObjectConstructor => {
+                BuiltinInstallTarget::Constructor(BuiltinId::ObjectConstructor)
+            }
+            Self::ArrayConstructor => {
+                BuiltinInstallTarget::Constructor(BuiltinId::ArrayConstructor)
+            }
+            Self::FunctionConstructor => {
+                BuiltinInstallTarget::Constructor(BuiltinId::FunctionConstructor)
+            }
+            owner => match owner.prototype_constructor() {
+                Some(id) => BuiltinInstallTarget::Prototype(id),
+                None => BuiltinInstallTarget::Ignored,
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BuiltinInstallTarget {
+    Global,
+    Namespace(&'static str),
+    Constructor(BuiltinId),
+    Prototype(BuiltinId),
+    Ignored,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

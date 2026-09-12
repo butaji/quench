@@ -29,7 +29,7 @@ mod region_plan;
 #[cfg(feature = "inline-census")]
 mod static_call_census;
 
-use builtins::{BuiltinId, BuiltinOwner};
+use builtins::{BuiltinId, BuiltinInstallTarget, BuiltinOwner};
 use chrono::{Datelike, Duration, TimeZone, Timelike};
 use coverage::Coverage;
 use dynbytecode::DynOpcode;
@@ -5229,58 +5229,24 @@ impl Vm {
                     || recipe.key.to_owned(),
                     |name| self.well_known_symbol_key(name),
                 );
-            match recipe.owner {
-                BuiltinOwner::Global => Environment::set(&g, &property_key, value),
-                BuiltinOwner::Math => {
-                    let math = Environment::get(&g, "Math").expect("Math namespace is installed");
-                    self.set_prop(&math, &property_key, value);
+            let target = recipe.owner.install_target();
+            let value = match recipe.id {
+                BuiltinId::NumberParseFloat => Environment::get(&g, "parseFloat").unwrap_or(value),
+                BuiltinId::NumberParseInt => Environment::get(&g, "parseInt").unwrap_or(value),
+                _ => value,
+            };
+            match target {
+                BuiltinInstallTarget::Global => Environment::set(&g, &property_key, value),
+                BuiltinInstallTarget::Namespace(name) => {
+                    let namespace = Environment::get(&g, name)
+                        .unwrap_or_else(|| panic!("{name} namespace is installed"));
+                    self.set_prop(&namespace, &property_key, value);
                 }
-                BuiltinOwner::Reflect => {
-                    let reflect =
-                        Environment::get(&g, "Reflect").expect("Reflect namespace is installed");
-                    self.set_prop(&reflect, &property_key, value);
+                BuiltinInstallTarget::Constructor(id) => {
+                    self.set_prop(&self.builtin(id), &property_key, value);
                 }
-                BuiltinOwner::Console => {
-                    let console =
-                        Environment::get(&g, "console").expect("console namespace is installed");
-                    self.set_prop(&console, &property_key, value);
-                }
-                BuiltinOwner::Assert => {
-                    let assert =
-                        Environment::get(&g, "assert").expect("assert function is installed");
-                    self.set_prop(&assert, &property_key, value);
-                }
-                BuiltinOwner::StringConstructor => {
-                    let string = self.builtin(BuiltinId::StringConstructor);
-                    self.set_prop(&string, &property_key, value);
-                }
-                BuiltinOwner::NumberConstructor => {
-                    let number = self.builtin(BuiltinId::NumberConstructor);
-                    let value = match recipe.id {
-                        BuiltinId::NumberParseFloat => {
-                            Environment::get(&g, "parseFloat").unwrap_or(value)
-                        }
-                        BuiltinId::NumberParseInt => {
-                            Environment::get(&g, "parseInt").unwrap_or(value)
-                        }
-                        _ => value,
-                    };
-                    self.set_prop(&number, &property_key, value);
-                }
-                BuiltinOwner::DateConstructor => {
-                    let date = self.builtin(BuiltinId::DateConstructor);
-                    self.set_prop(&date, &property_key, value);
-                }
-                BuiltinOwner::ObjectConstructor => {
-                    let object = self.builtin(BuiltinId::ObjectConstructor);
-                    self.set_prop(&object, &property_key, value);
-                }
-                BuiltinOwner::ArrayConstructor => {
-                    let array = self.builtin(BuiltinId::ArrayConstructor);
-                    self.set_prop(&array, &property_key, value);
-                }
-                owner if let Some(constructor) = owner.prototype_constructor() => {
-                    let function = self.builtin(constructor);
+                BuiltinInstallTarget::Prototype(id) => {
+                    let function = self.builtin(id);
                     let prototype = Value::Object(
                         function
                             .as_function_ref()
@@ -5293,7 +5259,7 @@ impl Vm {
                     }
                     self.set_prop(&prototype, &property_key, value);
                 }
-                _ => {}
+                BuiltinInstallTarget::Ignored => {}
             }
         }
         // Annex B keeps the historical spellings as identity aliases of the
