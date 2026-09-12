@@ -304,6 +304,7 @@ builtin_catalog! {
     ArraySome, ArrayPrototype, "some", native_array_some, Generic, MAY_CALL_JS;
     ArrayEvery, ArrayPrototype, "every", native_array_every, Generic, MAY_CALL_JS;
     ArrayIndexOf, ArrayPrototype, "indexOf", native_array_index_of, Generic, PURE;
+    ArrayLastIndexOf, ArrayPrototype, "lastIndexOf", native_array_last_index_of, Generic, PURE;
     ArrayIncludes, ArrayPrototype, "includes", native_array_includes, Generic, PURE;
     ArrayReduce, ArrayPrototype, "reduce", native_array_reduce, Generic, MAY_CALL_JS;
     ArrayReduceRight, ArrayPrototype, "reduceRight", native_array_reduce_right, Generic, MAY_CALL_JS;
@@ -314,6 +315,16 @@ builtin_catalog! {
     ArraySort, ArrayPrototype, "sort", native_array_sort, Generic, MAY_MUTATE;
     ArrayFlat, ArrayPrototype, "flat", native_array_flat, Generic, MAY_ALLOCATE;
     ArrayFlatMap, ArrayPrototype, "flatMap", native_array_flat_map, Generic, MAY_ALLOCATE;
+    ArrayAt, ArrayPrototype, "at", native_array_at, Generic, PURE;
+    ArrayFill, ArrayPrototype, "fill", native_array_fill, Generic, MAY_MUTATE;
+    ArrayCopyWithin, ArrayPrototype, "copyWithin", native_array_copy_within, Generic, MAY_MUTATE;
+    ArrayKeys, ArrayPrototype, "keys", native_array_keys, Generic, MAY_ALLOCATE;
+    ArrayValues, ArrayPrototype, "values", native_array_values, Generic, MAY_ALLOCATE;
+    ArrayEntries, ArrayPrototype, "entries", native_array_entries, Generic, MAY_ALLOCATE;
+    ArrayToReversed, ArrayPrototype, "toReversed", native_array_to_reversed, Generic, MAY_ALLOCATE;
+    ArrayToSorted, ArrayPrototype, "toSorted", native_array_to_sorted, Generic, MAY_ALLOCATE;
+    ArrayToSpliced, ArrayPrototype, "toSpliced", native_array_to_spliced, Generic, MAY_ALLOCATE;
+    ArrayWith, ArrayPrototype, "with", native_array_with, Generic, MAY_ALLOCATE;
     StringSubstring, StringPrototype, "substring", native_string_substring, Generic, MAY_ALLOCATE;
     StringSlice, StringPrototype, "slice", native_string_slice, Generic, MAY_ALLOCATE;
     StringCharCodeAt, StringPrototype, "charCodeAt", native_string_char_code_at, Generic, PURE;
@@ -615,6 +626,11 @@ fn builtin_length(id: BuiltinId) -> usize {
         BuiltinId::StringPadStart | BuiltinId::StringPadEnd => 2,
         BuiltinId::StringMatchAll | BuiltinId::StringSearch | BuiltinId::RegExpMatchAll => 1,
         BuiltinId::StringLocaleCompare => 1,
+        BuiltinId::ArrayAt => 1,
+        BuiltinId::ArrayFill => 3,
+        BuiltinId::ArrayCopyWithin => 2,
+        BuiltinId::ArrayWith => 2,
+        BuiltinId::ArrayToSpliced => 2,
         BuiltinId::StringAnchor
         | BuiltinId::StringFontcolor
         | BuiltinId::StringFontsize
