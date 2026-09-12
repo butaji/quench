@@ -5160,30 +5160,38 @@ impl Vm {
         Environment::set(&g, "JSON", json);
         for recipe in builtins::BUILTIN_RECIPES {
             let value = self.builtin(recipe.id);
+            let property_key = recipe
+                .key
+                .strip_prefix("Symbol(Symbol.")
+                .and_then(|name| name.strip_suffix(')'))
+                .map_or_else(
+                    || recipe.key.to_owned(),
+                    |name| self.well_known_symbol_key(name),
+                );
             match recipe.owner {
-                BuiltinOwner::Global => Environment::set(&g, recipe.key, value),
+                BuiltinOwner::Global => Environment::set(&g, &property_key, value),
                 BuiltinOwner::Math => {
                     let math = Environment::get(&g, "Math").expect("Math namespace is installed");
-                    self.set_prop(&math, recipe.key, value);
+                    self.set_prop(&math, &property_key, value);
                 }
                 BuiltinOwner::Reflect => {
                     let reflect =
                         Environment::get(&g, "Reflect").expect("Reflect namespace is installed");
-                    self.set_prop(&reflect, recipe.key, value);
+                    self.set_prop(&reflect, &property_key, value);
                 }
                 BuiltinOwner::Console => {
                     let console =
                         Environment::get(&g, "console").expect("console namespace is installed");
-                    self.set_prop(&console, recipe.key, value);
+                    self.set_prop(&console, &property_key, value);
                 }
                 BuiltinOwner::Assert => {
                     let assert =
                         Environment::get(&g, "assert").expect("assert function is installed");
-                    self.set_prop(&assert, recipe.key, value);
+                    self.set_prop(&assert, &property_key, value);
                 }
                 BuiltinOwner::StringConstructor => {
                     let string = self.builtin(BuiltinId::StringConstructor);
-                    self.set_prop(&string, recipe.key, value);
+                    self.set_prop(&string, &property_key, value);
                 }
                 BuiltinOwner::NumberConstructor => {
                     let number = self.builtin(BuiltinId::NumberConstructor);
@@ -5196,19 +5204,19 @@ impl Vm {
                         }
                         _ => value,
                     };
-                    self.set_prop(&number, recipe.key, value);
+                    self.set_prop(&number, &property_key, value);
                 }
                 BuiltinOwner::DateConstructor => {
                     let date = self.builtin(BuiltinId::DateConstructor);
-                    self.set_prop(&date, recipe.key, value);
+                    self.set_prop(&date, &property_key, value);
                 }
                 BuiltinOwner::ObjectConstructor => {
                     let object = self.builtin(BuiltinId::ObjectConstructor);
-                    self.set_prop(&object, recipe.key, value);
+                    self.set_prop(&object, &property_key, value);
                 }
                 BuiltinOwner::ArrayConstructor => {
                     let array = self.builtin(BuiltinId::ArrayConstructor);
-                    self.set_prop(&array, recipe.key, value);
+                    self.set_prop(&array, &property_key, value);
                 }
                 owner if let Some(constructor) = owner.prototype_constructor() => {
                     let function = self.builtin(constructor);
@@ -5222,7 +5230,7 @@ impl Vm {
                     if let Some(object) = prototype.as_object_ref() {
                         object.borrow_mut().builtin_prototype = true;
                     }
-                    self.set_prop(&prototype, recipe.key, value);
+                    self.set_prop(&prototype, &property_key, value);
                 }
                 _ => {}
             }
@@ -11791,6 +11799,8 @@ fn native_array(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
 
 const ARRAY_ITERATOR_SOURCE: &str = "\0array_iterator_source";
 const ARRAY_ITERATOR_INDEX: &str = "\0array_iterator_index";
+const STRING_ITERATOR_SOURCE: &str = "\0string_iterator_source";
+const STRING_ITERATOR_INDEX: &str = "\0string_iterator_index";
 
 fn native_array_iterator(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     if !this.is_object_like() {
@@ -11814,6 +11824,45 @@ fn native_array_iterator(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Valu
 
 fn native_iterator_self(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     Ok(this)
+}
+
+fn native_string_iterator(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let source = string_receiver(vm, &this, "Symbol.iterator")?;
+    let iterator = vm.object(None);
+    vm.set_prop(
+        &iterator,
+        STRING_ITERATOR_SOURCE,
+        Value::string_value(source),
+    );
+    vm.set_prop(&iterator, STRING_ITERATOR_INDEX, Value::Number(0.0));
+    vm.set_prop(&iterator, "next", vm.native(native_string_iterator_next));
+    let key = vm.well_known_symbol_key("iterator");
+    vm.set_prop(&iterator, &key, vm.native(native_iterator_self));
+    Ok(iterator)
+}
+
+fn native_string_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let source = vm.get_prop(&this, STRING_ITERATOR_SOURCE);
+    let index = vm
+        .get_prop(&this, STRING_ITERATOR_INDEX)
+        .as_number()
+        .unwrap_or(0.0) as usize;
+    let result = vm.object(None);
+    let source = source.string();
+    let mut chars = source.chars();
+    if let Some(character) = chars.nth(index) {
+        vm.set_prop(
+            &this,
+            STRING_ITERATOR_INDEX,
+            Value::Number((index + 1) as f64),
+        );
+        vm.set_prop(&result, "value", Value::string_value(character.to_string()));
+        vm.set_prop(&result, "done", Value::Bool(false));
+    } else {
+        vm.set_prop(&result, "value", Value::Undefined);
+        vm.set_prop(&result, "done", Value::Bool(true));
+    }
+    Ok(result)
 }
 
 fn native_array_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
