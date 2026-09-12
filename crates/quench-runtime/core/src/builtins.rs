@@ -321,6 +321,7 @@ builtin_catalog! {
     StringToLowerCase, StringPrototype, "toLowerCase", native_string_lower, Generic, MAY_ALLOCATE;
     StringToUpperCase, StringPrototype, "toUpperCase", native_string_upper, Generic, MAY_ALLOCATE;
     StringToString, StringPrototype, "toString", native_string_to_string, Generic, PURE;
+    StringValueOf, StringPrototype, "valueOf", native_string_value_of, Generic, PURE;
     StringConcat, StringPrototype, "concat", native_string_concat, Generic, MAY_ALLOCATE;
     StringReplace, StringPrototype, "replace", native_string_replace, Generic, MAY_ALLOCATE;
     StringReplaceAll, StringPrototype, "replaceAll", native_string_replace_all, Generic, MAY_ALLOCATE;

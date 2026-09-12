@@ -9147,6 +9147,25 @@ fn native_string_to_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Va
     }
     Ok(Value::string_value(this.string()))
 }
+fn native_string_value_of(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if this.is_string() {
+        return Ok(this);
+    }
+    if let Some(primitive) = this.as_object_ref().and_then(|object| {
+        object
+            .borrow()
+            .props
+            .get("\0primitive")
+            .cloned()
+            .filter(Value::is_string)
+    }) {
+        return Ok(primitive);
+    }
+    Err(JsError::Throw(type_error(
+        vm,
+        "String.prototype.valueOf called on incompatible receiver",
+    )))
+}
 fn native_noop(_: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Ok(Value::Undefined)
 }
