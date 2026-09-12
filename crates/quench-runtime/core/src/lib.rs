@@ -7913,6 +7913,18 @@ impl Vm {
                 }
                 let o = self.object(Some(function.prototype.clone()));
                 let args = self.eval_args(&v.arguments, e)?;
+                if matches!(
+                    function.kind,
+                    FunctionKind::Builtin(BuiltinId::StringConstructor)
+                ) && args
+                    .first()
+                    .is_some_and(|value| symbol_primitive(value).is_some())
+                {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "Cannot convert a Symbol value to a string",
+                    )));
+                }
                 let r = self.call(c.clone(), o.clone(), args)?;
                 let native = c.as_function().is_some_and(|function| {
                     matches!(
@@ -11294,7 +11306,7 @@ fn string_receiver(vm: &mut Vm, this: &Value, method: &str) -> JsResult<String> 
             &format!("String.prototype.{method} called on incompatible receiver"),
         )));
     }
-    to_string_with_vm(vm, this)
+    string_argument(vm, this)
 }
 
 fn native_string_includes(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
