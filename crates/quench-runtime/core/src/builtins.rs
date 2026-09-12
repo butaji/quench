@@ -488,6 +488,10 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::MathLog1p => 1,
         BuiltinId::ArraySplice => 2,
         BuiltinId::ArrayFlatMap => 1,
+        BuiltinId::NumberToFixed
+        | BuiltinId::NumberToPrecision
+        | BuiltinId::NumberToExponential
+        | BuiltinId::NumberToString => 1,
         BuiltinId::ClearTimeout
         | BuiltinId::ProcessNextTick
         | BuiltinId::StringFromCharCode
@@ -525,10 +529,6 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::StringMatch
         | BuiltinId::StringIndexOf
         | BuiltinId::StringLastIndexOf
-        | BuiltinId::NumberToFixed
-        | BuiltinId::NumberToPrecision
-        | BuiltinId::NumberToExponential
-        | BuiltinId::NumberToString
         | BuiltinId::RegExpTest
         | BuiltinId::RegExpExec
         | BuiltinId::ObjectToString
