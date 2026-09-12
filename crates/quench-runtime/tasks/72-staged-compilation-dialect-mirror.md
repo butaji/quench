@@ -1,0 +1,12 @@
+# 72 — Staged compilation mirroring LLVM's own IR staging
+
+Status: planned
+
+LLVM itself is layered (IR → SelectionDAG → MachineIR → MC), and [[63-dialect-lattice-lowering]] already proposes an intermediate architecture-neutral dialect between `StencilNode` and per-architecture machine code, MLIR-style. Sharpen that proposal using multi-level-language staging discipline (MetaML-style quote/splice) so the "front cooks AST demand, back cooks LLVM capability" methodology in [[53-bidirectional-stencil-cooking]] becomes a precise staged-compilation pipeline rather than an informal two-sided checklist: each stage boundary (AST → intermediate dialect → architecture instruction category → LLVM's own IR stages) is a proven functor (per [[63-dialect-lattice-lowering]]'s requirement), and "cooking" a template means explicitly choosing which stage introduces which specialization, mirroring how LLVM's own pass pipeline stages its optimizations (IR-level canonicalization vs. MachineIR-level scheduling/regalloc).
+
+Concrete steps:
+1. Enumerate LLVM's own staging boundaries relevant to the AOT handler pipeline (`stencil-aot/handlers.rs` compiling through `rustc`/LLVM IR/SelectionDAG/MachineIR per [[54-llvm-capability-catalog]]) and map each of [[54-llvm-capability-catalog]]'s capability entries to the specific LLVM stage where it's actually decided (e.g. branchless `csel` selection happens at SelectionDAG, not IR level).
+2. Extend [[63-dialect-lattice-lowering]]'s intermediate dialect definition to explicitly declare, per rewrite rule, which stage (this project's `StencilNode` category vs. LLVM's own internal stages) is responsible for realizing it — avoiding the case where a rewrite is attempted at the wrong stage and silently fails to have the intended effect on generated code.
+3. Verify empirically (via the `llvm-mca`/objdump evidence discipline already required by [[54-llvm-capability-catalog]]) that each capability's assigned stage actually produces the claimed effect, closing the loop between the staged design and observed machine code.
+
+Acceptance: every entry in [[54-llvm-capability-catalog]] is annotated with the specific compilation stage (this project's category vs. a named LLVM internal stage) responsible for realizing it; a rewrite rule mistakenly targeting the wrong stage is caught by the verification step in 3 rather than shipped as a silent no-op; [[53-bidirectional-stencil-cooking]]'s bidirectional cooking methodology references this staging explicitly rather than treating "front" and "back" as a flat two-sided match.
