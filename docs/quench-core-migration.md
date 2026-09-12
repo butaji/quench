@@ -92,8 +92,9 @@ Verification completed:
   diagnostics, proving the corpus reaches the new VM without silently falling
   back
 - after that aggregate run, the Array stage was rerun against the extended
-  callback/index/reduction methods and reached 761/3,081; the aggregate total
-  above is intentionally left as the last complete-corpus measurement
+  callback/index/reduction/flattening methods and reached 1,090/3,081; the
+  aggregate total above is intentionally left as the last complete-corpus
+  measurement
 - canonical V8V7 exact driver, all eight fixtures valid
 - focused stencil probes now cover `Array.from`/`Array.of`/`Array.isArray`,
   `Object.preventExtensions` + `defineProperty`, bound function calls, and
