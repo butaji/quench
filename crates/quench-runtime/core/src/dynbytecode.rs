@@ -333,12 +333,14 @@ pub enum DynOp {
         object: Register,
         key: String,
         src: Register,
+        strict: bool,
     },
     SetComputed {
         object: Register,
         key: Register,
         src: Register,
         accessor: Option<AccessorKind>,
+        strict: bool,
     },
     DeleteStatic {
         dst: Register,
@@ -1662,6 +1664,7 @@ impl Compiler {
                             PropertyKind::Set => Some(AccessorKind::Setter),
                             _ => None,
                         },
+                        strict: self.strict,
                     },
                     property.span,
                 );
@@ -1678,6 +1681,7 @@ impl Compiler {
                         object: dst,
                         key,
                         src,
+                        strict: self.strict,
                     },
                     property.span,
                 );
@@ -2215,7 +2219,15 @@ impl Compiler {
                 self.emit(DynOp::StoreName { name, src }, span);
             }
             Lvalue::Static { object, key } => {
-                self.emit(DynOp::SetStatic { object, key, src }, span);
+                self.emit(
+                    DynOp::SetStatic {
+                        object,
+                        key,
+                        src,
+                        strict: self.strict,
+                    },
+                    span,
+                );
             }
             Lvalue::Computed { object, key } => {
                 self.emit(
@@ -2224,6 +2236,7 @@ impl Compiler {
                         key,
                         src,
                         accessor: None,
+                        strict: self.strict,
                     },
                     span,
                 );
