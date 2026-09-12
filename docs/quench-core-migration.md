@@ -116,7 +116,7 @@ Verification completed:
 - the stencil String stage now reaches 424/1,223 after routing constructor
   coercion and global binding projection through the shared stencil VM; the
   remaining failures are unsupported syntax, accessors, and Unicode details
-- the stencil Object stage now reaches 2,887/3,411 after enforcing
+- the stencil Object stage now reaches 2,963/3,411 after enforcing
   `Object.create` prototype validation, applying its property descriptors with
   correct defaults, honoring enumerable descriptor selection, routing
   descriptor/accessor fields through the shared property model, preserving
@@ -140,13 +140,16 @@ Verification completed:
 - the stencil Boolean stage now reaches 51/51 after projecting the constructor
   onto `globalThis` and carrying strict-mode deletion through generated
   bytecode; this stage is fully green
-- the stencil Error stage now reaches 79/93 after adding shared `Error.isError`
+- the stencil Error stage now reaches 78/93 after adding shared `Error.isError`
   detection, preserving constructor-call prototypes, and modeling the shared
   `Error.prototype.stack` accessor contract; proxy/realm and accessor-descriptor
   edge cases remain open
 - intrinsic data-property installation now uses the declarative
   `install_data_properties!` Rust macro for Math and BigInt tables, keeping
   values and descriptors in one source-of-truth declaration
+- global-object aliases now use the declarative `install_global_aliases!`
+  macro, deriving environment lookup and immutable-global descriptor policy
+  from one name table
 - builtin prototype ownership is now declared once on `BuiltinOwner` and
   lowered through one installer path; Node host bootstrap values likewise use
   the `with_host_values!` declaration macro so ordered host wiring has one
