@@ -9781,7 +9781,17 @@ fn native_string_match(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
     if vals.is_empty() {
         Ok(Value::Null)
     } else {
-        Ok(vm.array_from_values(vals))
+        let result = vm.array_from_values(vals);
+        if !b.global {
+            let index = b
+                .capture_locations
+                .as_ref()
+                .and_then(|locations| locations.get(0))
+                .map_or(0, |(start, _)| start);
+            vm.set_prop(&result, "index", Value::Number(index as f64));
+            vm.set_prop(&result, "input", Value::string_value(s));
+        }
+        Ok(result)
     }
 }
 fn native_string_match_all(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
@@ -10138,7 +10148,15 @@ fn native_regexp_exec(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Valu
     let Some(a) = b.capture_values(&s) else {
         return Ok(Value::Null);
     };
-    Ok(vm.array_from_values(a))
+    let index = b
+        .capture_locations
+        .as_ref()
+        .and_then(|locations| locations.get(0))
+        .map_or(0, |(start, _)| start);
+    let result = vm.array_from_values(a);
+    vm.set_prop(&result, "index", Value::Number(index as f64));
+    vm.set_prop(&result, "input", Value::string_value(s));
+    Ok(result)
 }
 fn checked_number_precision(
     vm: &mut Vm,
