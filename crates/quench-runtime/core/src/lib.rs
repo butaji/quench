@@ -4188,7 +4188,7 @@ fn to_primitive_for_binary(vm: &mut Vm, value: &Value, string_hint: bool) -> JsR
     // object store. Consult @@toPrimitive at the boundary before ordinary
     // valueOf/toString dispatch, preserving the ECMAScript ordering.
     let exotic = vm.get_prop_with_accessors(value, "Symbol(Symbol.toPrimitive)")?;
-    if !exotic.is_undefined() {
+    if !exotic.is_undefined() && !exotic.is_null() {
         if !exotic.is_function() {
             return Err(JsError::Throw(type_error(
                 vm,
@@ -9333,7 +9333,12 @@ fn native_assert_throws(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value
         )));
     }
     match vm.call(callback, Value::Undefined, Vec::new()) {
-        Err(JsError::Throw(_)) => Ok(Value::Undefined),
+        Err(JsError::Throw(value)) => {
+            if std::env::var_os("QUENCH_DEBUG_THROWS").is_some() {
+                eprintln!("assert.throws caught {}", value.display());
+            }
+            Ok(Value::Undefined)
+        }
         Err(JsError::Message(message)) if message.contains("uncaught") => Ok(Value::Undefined),
         Err(error) => Err(error),
         Ok(_) => Err(JsError::Throw(assertion_error(
