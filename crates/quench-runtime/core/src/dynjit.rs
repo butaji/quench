@@ -3586,6 +3586,13 @@ fn construct(
             .unwrap_or(None);
         vm(frame).object(prototype)
     } else if native {
+        let native_prototype = callee.as_function_ref().and_then(|function| {
+            matches!(
+                function.kind,
+                FunctionKind::Builtin(BuiltinId::DateConstructor)
+            )
+            .then(|| function.prototype.clone())
+        });
         let error_prototype = callee.as_function_ref().and_then(|function| {
             matches!(
                 function.kind,
@@ -3602,9 +3609,11 @@ fn construct(
             )
             .then(|| function.prototype.clone())
         });
-        error_prototype.map_or(Value::Undefined, |prototype| {
-            vm(frame).object(Some(prototype))
-        })
+        error_prototype
+            .or(native_prototype)
+            .map_or(Value::Undefined, |prototype| {
+                vm(frame).object(Some(prototype))
+            })
     } else if let Some(function) = callee.as_function_ref() {
         let prototype = Some(function.prototype);
         match constructor_shape {
