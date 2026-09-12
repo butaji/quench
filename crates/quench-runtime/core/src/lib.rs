@@ -10496,20 +10496,21 @@ fn native_object_define_properties(vm: &mut Vm, _: Value, args: &[Value]) -> JsR
             "Object.defineProperties target is undefined",
         )));
     };
-    let Some(descriptors) = args.get(1).and_then(Value::as_object) else {
+    let descriptor_source = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if descriptor_source.is_null() || descriptor_source.is_undefined() {
         return Err(JsError::Throw(type_error(
             vm,
             "Object.defineProperties descriptors is not an object",
         )));
+    }
+    let descriptor_source = if descriptor_source.is_object() || descriptor_source.is_function() {
+        descriptor_source
+    } else {
+        native_object(vm, Value::Undefined, &[descriptor_source])?
     };
-    let keys = descriptors
-        .borrow()
-        .props
-        .keys()
-        .cloned()
-        .collect::<Vec<_>>();
+    let keys = object_own_property_keys(&descriptor_source);
     for key in keys {
-        let descriptor = vm.get_prop_with_accessors(&Value::Object(descriptors.clone()), &key)?;
+        let descriptor = vm.get_prop_with_accessors(&descriptor_source, &key)?;
         native_object_define_property(
             vm,
             Value::Undefined,
@@ -10747,13 +10748,7 @@ fn native_object_create(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value
     // `Object.create(null)` must retain a null prototype; `Vm::object` creates
     // ordinary objects with the default Object.prototype for language literals.
     let object = vm.object_value(Object::ordinary(prototype));
-    if let Some(descriptors) = args.get(1) {
-        if !descriptors.is_object() && !descriptors.is_function() {
-            return Err(JsError::Throw(type_error(
-                vm,
-                "Object property descriptors must be an object",
-            )));
-        }
+    if let Some(descriptors) = args.get(1).filter(|value| !value.is_undefined()) {
         native_object_define_properties(
             vm,
             Value::Undefined,
@@ -10874,6 +10869,56 @@ fn object_own_enumerable_keys(target: &Value) -> Vec<String> {
             (0..string.chars().count())
                 .map(|index| index.to_string())
                 .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Own-property ordering used by descriptor collection.  This is deliberately
+/// derived from the same compact storage as enumerable keys, but retains
+/// non-enumerable fields (notably string-wrapper indices and `length`).
+fn object_own_property_keys(target: &Value) -> Vec<String> {
+    if let Some(object) = target.as_object_ref() {
+        let object = object.borrow();
+        let mut keys = object
+            .array
+            .as_ref()
+            .map(|array| {
+                (0..array.len())
+                    .filter(|index| !array.holes[*index])
+                    .map(|index| index.to_string())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if object.array.is_some() {
+            keys.push("length".into());
+        }
+        let ordinary = object
+            .props
+            .keys()
+            .filter(|key| !key.starts_with('\0') && !keys.iter().any(|item| item == *key))
+            .cloned()
+            .collect::<Vec<_>>();
+        keys.extend(ordinary);
+        let accessors = object
+            .props
+            .keys()
+            .filter_map(|key| accessor_key(key).map(|(_, key)| key.to_owned()))
+            .filter(|key| !keys.iter().any(|item| item == key))
+            .collect::<Vec<_>>();
+        keys.extend(accessors);
+        return keys;
+    }
+    if let Some(function) = target.as_function_ref() {
+        return function.props.borrow().keys().cloned().collect();
+    }
+    target
+        .as_string()
+        .map(|string| {
+            let mut keys = (0..string.chars().count())
+                .map(|index| index.to_string())
+                .collect::<Vec<_>>();
+            keys.push("length".into());
+            keys
         })
         .unwrap_or_default()
 }
