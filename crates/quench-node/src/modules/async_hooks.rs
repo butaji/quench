@@ -1428,16 +1428,16 @@ fn promise_context(
         .cloned()?;
     let id = id_property(&resource, ASYNC_ID).and_then(number)?;
     let mut host = state.borrow_mut();
-    let previous = (host.async_hooks.current_id, host.async_hooks.current_resource.clone());
+    let previous = (
+        host.async_hooks.current_id,
+        host.async_hooks.current_resource.clone(),
+    );
     host.async_hooks.current_id = id;
     host.async_hooks.current_resource = Some(resource);
     Some(previous)
 }
 
-fn restore_promise_context(
-    state: &Rc<RefCell<HostState>>,
-    previous: Option<(u64, Option<Value>)>,
-) {
+fn restore_promise_context(state: &Rc<RefCell<HostState>>, previous: Option<(u64, Option<Value>)>) {
     if let Some((id, resource)) = previous {
         let mut host = state.borrow_mut();
         host.async_hooks.current_id = id;

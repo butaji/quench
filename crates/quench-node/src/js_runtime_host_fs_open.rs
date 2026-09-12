@@ -70,7 +70,12 @@ impl QuenchNodeHost {
         let id = self.next_directory.get();
         self.next_directory.set(id.saturating_add(1));
         self.directories.borrow_mut().insert(id, (values, 0));
-        Ok(Value::object(vec![
+        let global = quench_runtime::vm::current_global_object();
+        let fs_module = quench_runtime::execute::get_property(&global, "__nodeFs");
+        let dir_constructor = quench_runtime::execute::get_property(&fs_module, "Dir");
+        let prototype = quench_runtime::execute::get_property(&dir_constructor, "prototype");
+        let mut properties = vec![
+            ("path".into(), Value::String(path.into())),
             (
                 "readSync".into(),
                 capability_function(HostCapabilityKind::Custom(CapabilityName::FsDirReadSync)),
@@ -88,7 +93,14 @@ impl QuenchNodeHost {
                 capability_function(HostCapabilityKind::Custom(CapabilityName::FsDirCloseAsync)),
             ),
             ("\0dirId".into(), Value::Number(id as f64)),
-        ]))
+        ];
+        if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
+            // Host-created objects are assembled with their internal prototype
+            // slot up front.  This avoids publishing a copy-on-write
+            // replacement that the legacy host dispatcher cannot retain.
+            properties.push(("\0prototype".into(), prototype));
+        }
+        Ok(Value::object(properties))
     }
 
     fn fs_opendir_async(&self, arguments: &[Value]) -> Result<Value, VmError> {

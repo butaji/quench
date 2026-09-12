@@ -1672,8 +1672,7 @@ fn is_basic_emoji_units(units: &[Unit]) -> bool {
 
 fn is_basic_emoji_code_point(value: u32) -> bool {
     char::from_u32(value).is_some_and(|character| {
-        icu_properties::EmojiSetData::new::<icu_properties::props::BasicEmoji>()
-            .contains(character)
+        icu_properties::EmojiSetData::new::<icu_properties::props::BasicEmoji>().contains(character)
     })
 }
 
@@ -1877,20 +1876,26 @@ impl PropertyMatcher {
             PropertyMatcherKind::Assigned => CodePointMapData::<props::GeneralCategory>::new()
                 .iter_ranges_for_value_complemented(props::GeneralCategory::Unassigned)
                 .collect(),
-            PropertyMatcherKind::Script(target) => icu_properties::CodePointMapData::<props::Script>::new()
-                .iter_ranges_for_value(target)
-                .collect(),
+            PropertyMatcherKind::Script(target) => {
+                icu_properties::CodePointMapData::<props::Script>::new()
+                    .iter_ranges_for_value(target)
+                    .collect()
+            }
             PropertyMatcherKind::ScriptExtensions(target) => {
                 icu_properties::script::ScriptWithExtensions::new()
                     .get_script_extensions_ranges(target)
                     .collect()
             }
-            PropertyMatcherKind::GeneralCategory(target) => CodePointMapData::<props::GeneralCategory>::new()
-                .iter_ranges_for_value(target)
-                .collect(),
-            PropertyMatcherKind::GeneralCategoryGroup(target) => CodePointMapData::<props::GeneralCategory>::new()
-                .iter_ranges_for_group(target)
-                .collect(),
+            PropertyMatcherKind::GeneralCategory(target) => {
+                CodePointMapData::<props::GeneralCategory>::new()
+                    .iter_ranges_for_value(target)
+                    .collect()
+            }
+            PropertyMatcherKind::GeneralCategoryGroup(target) => {
+                CodePointMapData::<props::GeneralCategory>::new()
+                    .iter_ranges_for_group(target)
+                    .collect()
+            }
             PropertyMatcherKind::Binary { ranges, .. } => ranges(),
         }
     }
@@ -1908,16 +1913,14 @@ fn ascii_property_ranges() -> Vec<std::ops::RangeInclusive<u32>> {
     vec![0..=0x7F]
 }
 
-fn binary_property_ranges<P: icu_properties::props::BinaryProperty>() -> Vec<std::ops::RangeInclusive<u32>> {
+fn binary_property_ranges<P: icu_properties::props::BinaryProperty>(
+) -> Vec<std::ops::RangeInclusive<u32>> {
     icu_properties::CodePointSetData::new::<P>()
         .iter_ranges()
         .collect()
 }
 
-pub(crate) fn compile_property_matcher(
-    name: &str,
-    value: Option<&str>,
-) -> Option<PropertyMatcher> {
+pub(crate) fn compile_property_matcher(name: &str, value: Option<&str>) -> Option<PropertyMatcher> {
     use icu_properties::{props, PropertyParser};
     let kind = if name == "Any" {
         PropertyMatcherKind::Any
@@ -2074,9 +2077,7 @@ fn is_line_terminator(value: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        first_unit_at_or_after, units_from_str, Expr, Flags, Regex, MAX_BACKTRACK_STATES,
-    };
+    use super::{first_unit_at_or_after, units_from_str, Expr, Flags, Regex, MAX_BACKTRACK_STATES};
 
     #[test]
     fn captures_partition_a_greedy_run() {
@@ -2088,12 +2089,17 @@ mod tests {
 
     #[test]
     fn nested_repeat_frontier_preserves_captures() {
-        let regex = Regex::with_flags(r"<body.*>((.*\n?)*?)</body>", Flags::from("i"))
-            .unwrap();
+        let regex = Regex::with_flags(r"<body.*>((.*\n?)*?)</body>", Flags::from("i")).unwrap();
         let input = "<body onXXX=\"alert(event.type);\">\n<p>one</p>\n<p>two</p>\n</body>";
         let matched = regex.find_from(input, 0).next().unwrap();
-        assert_eq!(&input[matched.range], "<body onXXX=\"alert(event.type);\">\n<p>one</p>\n<p>two</p>\n</body>");
-        assert_eq!(&input[matched.captures[0].clone().unwrap()], "\n<p>one</p>\n<p>two</p>\n");
+        assert_eq!(
+            &input[matched.range],
+            "<body onXXX=\"alert(event.type);\">\n<p>one</p>\n<p>two</p>\n</body>"
+        );
+        assert_eq!(
+            &input[matched.captures[0].clone().unwrap()],
+            "\n<p>one</p>\n<p>two</p>\n"
+        );
         assert_eq!(&input[matched.captures[1].clone().unwrap()], "<p>two</p>\n");
     }
 
@@ -2153,8 +2159,7 @@ mod tests {
         assert!(basic.find_from("0", 0).next().is_none());
 
         let modifier =
-            Regex::with_flags(r"^\p{RGI_Emoji_Modifier_Sequence}$", Flags::from("v"))
-                .unwrap();
+            Regex::with_flags(r"^\p{RGI_Emoji_Modifier_Sequence}$", Flags::from("v")).unwrap();
         assert!(modifier.find_from("👩🏽", 0).next().is_some());
         assert!(modifier.find_from("0🏽", 0).next().is_none());
 

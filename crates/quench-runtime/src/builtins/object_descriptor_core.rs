@@ -6,19 +6,15 @@ fn configurable_global_descriptor(global: &Value, key: &str) -> Option<Value> {
         },
         key,
     )?;
-    let Value::Object(properties) = descriptor else {
+    let Value::Object(ref _properties) = descriptor else {
         return None;
     };
-    let mut properties = properties.properties.clone();
-    if let Some((_, mut value)) = properties
-        .iter_mut()
-        .find(|(name, _)| name == "configurable")
-    {
-        *value = Value::Boolean(true);
-    }
-    Some(Value::Object(Rc::new(ObjectData::from_shared_properties(
-        properties,
-    ))))
+    // Contextified sandboxes preserve the descriptor supplied by the caller.
+    // In particular, a non-configurable accessor must not become configurable
+    // merely because its object now lives in a child realm.  Intrinsic global
+    // properties carry their own explicit metadata and are handled by the
+    // global-builtin branch in `descriptor_for_value`.
+    Some(descriptor)
 }
 fn buffer_descriptor(buffer: &crate::value::ArrayBufferData, key: &str) -> Option<Value> {
     buffer

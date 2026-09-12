@@ -70,7 +70,10 @@ pub fn stream_construct(
     args: &[Value],
 ) -> Result<Value, VmError> {
     Ok(host_api::object(vec![
-        ("fd".into(), args.first().cloned().unwrap_or(Value::Undefined)),
+        (
+            "fd".into(),
+            args.first().cloned().unwrap_or(Value::Undefined),
+        ),
         ("isTTY".into(), Value::Boolean(false)),
         ("columns".into(), Value::Undefined),
         ("rows".into(), Value::Undefined),

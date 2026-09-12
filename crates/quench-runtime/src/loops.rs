@@ -845,7 +845,8 @@ fn capture_iteration_bindings(
     let slots = std::iter::once(slot)
         .chain(iteration_slots.iter().copied())
         .collect::<Vec<_>>();
-    slots.into_iter()
+    slots
+        .into_iter()
         .filter_map({
             let mut last = None;
             move |slot| {
@@ -1040,6 +1041,9 @@ mod tests {
         }]);
         let registers = RegisterFile::from_values(vec![Value::Boolean(true), Value::Undefined]);
 
-        assert_eq!(body_await_destination(body.code().expect("body code"), 1, &registers), 7);
+        assert_eq!(
+            body_await_destination(body.code().expect("body code"), 1, &registers),
+            7
+        );
     }
 }

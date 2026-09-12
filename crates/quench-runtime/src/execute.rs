@@ -44,6 +44,16 @@ pub fn set_property(
     crate::builtins::set_property(target, key, value)
 }
 
+/// Set a property through the ordinary receiver-aware semantics, including
+/// inherited setters. This is the host counterpart of JavaScript assignment.
+pub fn set_property_observable(
+    target: crate::value::Value,
+    key: &str,
+    value: crate::value::Value,
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    crate::properties::set_property_from_host(target, key, value)
+}
+
 /// Set the observable function name through the runtime's canonical
 /// function-name machinery. Hosts may request this semantic operation without
 /// reaching into VM internals.
@@ -78,6 +88,10 @@ pub fn set_property_in_place(
                 .push((key.to_string(), value));
             return true;
         }
+        crate::value::Value::Promise(promise) => {
+            promise.set_property(key, value);
+            return true;
+        }
         crate::value::Value::Array(array) => {
             unsafe {
                 (&mut *(Rc::as_ptr(array) as *mut crate::value::ArrayData))
@@ -94,6 +108,38 @@ pub fn set_property_in_place(
             .set_property_in_place(key, value);
     }
     true
+}
+
+/// Mutate a dense array index without routing it through named-property
+/// storage. Host-owned buffers use this to preserve indexed lookup identity.
+pub fn set_array_index_in_place(
+    target: &crate::value::Value,
+    index: usize,
+    value: crate::value::Value,
+) -> bool {
+    let crate::value::Value::Array(array) = target else {
+        return false;
+    };
+    unsafe {
+        (&mut *(Rc::as_ptr(array) as *mut crate::value::ArrayData)).set_index(index, value);
+    }
+    true
+}
+
+/// Return the execution-facing global object for host calls made from a
+/// running script. This may be a copy-on-write view distinct from the realm
+/// owner, so host state machines can apply observable writes to the same
+/// object JavaScript sees as `globalThis`.
+pub fn current_script_global() -> crate::value::Value {
+    crate::locals::current().get(0)
+}
+
+pub fn replace_global_object(old: &crate::value::Value, new: &crate::value::Value) {
+    crate::vm::replace_global_object(old, new);
+}
+
+pub fn store_global_binding(name: &str, value: crate::value::Value) -> bool {
+    crate::global_environment::store_global_binding(name, value)
 }
 
 /// Mutate an array element while preserving the array identity held by host

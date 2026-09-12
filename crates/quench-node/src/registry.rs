@@ -147,6 +147,9 @@ node_api! {
     (SPEC_TRACE_EVENTS_ENABLE, "trace_events:Tracing.enable", 2512),
     (SPEC_TRACE_EVENTS_DISABLE, "trace_events:Tracing.disable", 2513),
     (SPEC_TRACE_EVENTS_GET_ENABLED, "trace_events:getEnabledCategories", 2514),
+    (SPEC_TRACE_EVENTS_CATEGORY_ENABLED, "trace_events:isTraceCategoryEnabled", 2523),
+    (SPEC_TRACE_EVENTS_CATEGORY_BUFFER, "trace_events:getCategoryEnabledBuffer", 2524),
+    (SPEC_TRACE_EVENTS_TRACE, "trace_events:trace", 2525),
     (SPEC_COMMON_SKIP_IF_PERFETTO, "common:skipIfPerfettoEnabled", 2515),
     (SPEC_HTTP_AGENT_DESTROY, "http:Agent.destroy", 2516),
     (SPEC_TEST, "test:test", 0x1b00),
@@ -1068,8 +1071,7 @@ pub const SPEC_FS_WRITE_STREAM_WRITE: NodeSpec = NodeSpec::new("fs:WriteStream:w
 pub const SPEC_FS_WRITE_STREAM_CLOSE: NodeSpec = NodeSpec::new("fs:WriteStream:close", 0x1175);
 pub const SPEC_FS_WRITE_STREAM_RETRY_CALLBACK: NodeSpec =
     NodeSpec::new("fs:WriteStream:retryCallback", 0x1177);
-pub const SPEC_FS_WRITE_STREAM_FINAL: NodeSpec =
-    NodeSpec::new("fs:WriteStream:final", 0x1178);
+pub const SPEC_FS_WRITE_STREAM_FINAL: NodeSpec = NodeSpec::new("fs:WriteStream:final", 0x1178);
 pub const SPEC_FS_WRITE_STREAM_OPEN: NodeSpec = NodeSpec::new("fs:WriteStream:open", 0x7FD4);
 pub const SPEC_FS_WRITE_STREAM_AUTO_CLOSE_GET: NodeSpec =
     NodeSpec::new("fs:WriteStream:autoClose:get", 0x7FE3);
@@ -1254,6 +1256,7 @@ node_api! {
     (SPEC_MESSAGE_PORT_UNREF, CAP_MESSAGE_PORT_UNREF, "messagePort:unref", 0x014A),
     (SPEC_MESSAGE_PORT_HAS_REF, CAP_MESSAGE_PORT_HAS_REF, "messagePort:hasRef", 0x014B),
     (SPEC_MESSAGE_PORT_DELIVER, CAP_MESSAGE_PORT_DELIVER, "messagePort:deliver", 0x014C),
+    (SPEC_MESSAGE_PORT_MOVE, CAP_MESSAGE_PORT_MOVE, "messagePort:moveToContext", 0x014D),
 }
 node_api! {
     (SPEC_EVENT, CAP_EVENT, "Event", 0x0118),
@@ -1347,8 +1350,7 @@ pub const SPEC_WEBCRYPTO_KEY_CONSTRUCT: NodeSpec =
 pub const SPEC_WEBCRYPTO_SIGN: NodeSpec = NodeSpec::new("webcrypto:sign", 0x1c38);
 pub const SPEC_WEBCRYPTO_VERIFY: NodeSpec = NodeSpec::new("webcrypto:verify", 0x1c39);
 pub const SPEC_WEBCRYPTO_EXPORT_KEY: NodeSpec = NodeSpec::new("webcrypto:exportKey", 0x1c3a);
-pub const SPEC_WEBCRYPTO_GET_PUBLIC_KEY: NodeSpec =
-    NodeSpec::new("webcrypto:getPublicKey", 0x1c3c);
+pub const SPEC_WEBCRYPTO_GET_PUBLIC_KEY: NodeSpec = NodeSpec::new("webcrypto:getPublicKey", 0x1c3c);
 pub const SPEC_WEBCRYPTO_SUPPORTS: NodeSpec = NodeSpec::new("webcrypto:supports", 0x1c3d);
 pub const SPEC_WEBCRYPTO_WRAP_KEY: NodeSpec = NodeSpec::new("webcrypto:wrapKey", 0x1c3e);
 pub const SPEC_WEBCRYPTO_UNWRAP_KEY: NodeSpec = NodeSpec::new("webcrypto:unwrapKey", 0x1c3f);
@@ -1658,9 +1660,9 @@ pub const CAP_FS_WATCH: CapId = SPEC_FS_WATCH.cap;
 pub const CAP_FS_WATCH_CLOSE: CapId = SPEC_FS_WATCH_CLOSE.cap;
 pub const CAP_FS_READSTREAM: CapId = SPEC_FS_READSTREAM.cap;
 pub const CAP_FS_WRITESTREAM: CapId = SPEC_FS_WRITESTREAM.cap;
-pub const CAP_FS_HANDLE_READSTREAM: CapId = SPEC_FS_HANDLE_READSTREAM.cap;
 pub const CAP_FS_CREATE_READSTREAM: CapId = SPEC_FS_CREATE_READSTREAM.cap;
 pub const CAP_FS_READSTREAM_OPEN: CapId = SPEC_FS_READSTREAM_OPEN.cap;
+pub const CAP_FS_HANDLE_READSTREAM: CapId = SPEC_FS_HANDLE_READSTREAM.cap;
 pub const CAP_FS_OPEN: CapId = SPEC_FS_OPEN.cap;
 pub const CAP_FS_OPENDIR: CapId = SPEC_FS_OPENDIR.cap;
 pub const CAP_FS_OPENDIRSYNC: CapId = SPEC_FS_OPENDIRSYNC.cap;
@@ -2715,17 +2717,13 @@ pub fn namespace_bindings_with_exec_argv(
     );
     out.push(("CustomEvent".to_string(), custom_event));
     let message_event = crate::host::capability(crate::registry::SPEC_MESSAGE_EVENT);
-    let message_event_prototype = crate::host::namespace_object_from_pairs(vec![
-        (
-            "constructor".into(),
-            message_event.clone(),
-        ),
-    ]);
-    let message_event_prototype = quench_runtime::execute::set_prototype_of(
-        &message_event_prototype,
-        &event_prototype,
-    )
-    .unwrap_or(message_event_prototype);
+    let message_event_prototype = crate::host::namespace_object_from_pairs(vec![(
+        "constructor".into(),
+        message_event.clone(),
+    )]);
+    let message_event_prototype =
+        quench_runtime::execute::set_prototype_of(&message_event_prototype, &event_prototype)
+            .unwrap_or(message_event_prototype);
     let _ = quench_runtime::execute::set_callable_property(
         &message_event,
         "prototype",

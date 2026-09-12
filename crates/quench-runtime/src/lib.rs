@@ -6,21 +6,21 @@
 
 pub mod build_profile;
 mod bulk;
-mod wasm_atomic;
 pub mod dynamic;
 pub mod fast;
+pub mod gc;
 pub mod hir;
 pub mod hir_gc;
-pub mod gc;
 mod host_jobs;
 pub mod instance;
 pub mod interp;
-pub mod wasm;
 pub mod layer;
 pub mod mir;
 pub mod native;
 pub mod slot;
 pub mod unwind;
+pub mod wasm;
+mod wasm_atomic;
 pub use host_jobs::install_host_job_pump;
 
 mod arrays;
@@ -45,6 +45,14 @@ mod conversion;
 pub use conversion::is_callable;
 pub use conversion::to_number;
 pub use conversion::to_string;
+/// Return the realm associated with a callable value, preserving cross-context
+/// Function.prototype identity for host-created wrappers.
+pub fn callable_realm(value: &value::Value) -> ops::RealmId {
+    construct::constructor_realm(value)
+}
+pub fn collect_iterable(value: value::Value) -> Result<Vec<value::Value>, execute::VmError> {
+    collections::iterator::collect_iterable(value)
+}
 pub mod date;
 mod disposable_stack;
 mod environment;
@@ -90,8 +98,8 @@ mod private_slots;
 mod promise;
 pub use promise::{
     drain_microtasks_all as drain_promise_jobs, has_pending_jobs as has_pending_promise_jobs,
-    has_pending_unhandled_rejections, promise_then, reject_promise, resolve_promise,
-    take_unhandled_rejections,
+    has_pending_unhandled_rejections, new_promise, promise_resolve, promise_then, reject_promise,
+    resolve_promise, take_unhandled_rejections,
 };
 mod properties;
 mod property_define;
@@ -134,6 +142,7 @@ mod with_scope;
 /// Resetters replace their containers so a pathological fixture's capacity is
 /// not retained by the worker for the rest of a stage.
 pub fn reset_fixture_caches() {
+    vm::vm_ops::reset_call_stack();
     construct::reset_weak_refs();
     global_environment::reset_global_bindings();
     loops::reset_fixture_state();

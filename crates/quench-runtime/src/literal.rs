@@ -92,26 +92,18 @@ fn decode_unicode_escapes(raw: &str) -> Option<Vec<u16>> {
                 continue;
             }
             if escaped == '\\' {
-                if let Some(next) = chars.peek().copied().filter(|next| ('0'..='7').contains(next)) {
-                    let mut digits = String::from(next);
-                    chars.next();
-                    while digits.len() < 3 {
-                        let Some(next) = chars.peek().copied() else { break };
-                        if !('0'..='7').contains(&next) {
-                            break;
-                        }
-                        digits.push(next);
-                        chars.next();
-                    }
-                    let unit = u8::from_str_radix(&digits, 8).ok()?;
-                    units.push(u16::from(unit));
-                    continue;
-                }
+                // A doubled backslash is an escaped backslash. The following
+                // character starts a new escape (so `\\\\1` is `\\1`, not
+                // an octal escape).
+                units.push('\\' as u16);
+                continue;
             }
             if ('0'..='7').contains(&escaped) {
                 let mut digits = String::from(escaped);
                 while digits.len() < 3 {
-                    let Some(next) = chars.peek().copied() else { break };
+                    let Some(next) = chars.peek().copied() else {
+                        break;
+                    };
                     if !('0'..='7').contains(&next) {
                         break;
                     }

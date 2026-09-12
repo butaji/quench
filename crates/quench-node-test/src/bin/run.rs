@@ -69,7 +69,34 @@ fn wrap_combined_print_eval(source: &str) -> String {
 }
 
 fn main() -> ExitCode {
-    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    let mut arguments: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(raw) = std::env::var_os("NODE_OPTIONS") {
+        let raw = raw.to_string_lossy();
+        let options = match quench_node_test::reader::parse_node_options(&raw) {
+            Ok(options) => options,
+            Err(_) => {
+                eprintln!("{}: invalid NODE_OPTIONS", node_exec_path());
+                return ExitCode::from(9);
+            }
+        };
+        if let Some(disallowed) = options.iter().find(|option| node_option_disallowed(option)) {
+            eprintln!(
+                "{}: {disallowed} is not allowed in NODE_OPTIONS",
+                node_exec_path()
+            );
+            return ExitCode::from(9);
+        }
+        let mut with_environment = options;
+        with_environment.append(&mut arguments);
+        arguments = with_environment;
+    }
+    // OpenSSL 3 aborts during startup when an explicit provider configuration
+    // omits the default provider.  The Rust host does not delegate startup
+    // to OpenSSL's CLI, but must preserve this process-level contract for
+    // self-reexec children and ordinary command-line invocations.
+    if openssl_config_has_no_default_provider(&arguments) {
+        std::process::abort();
+    }
     // A self-reexecuted compatibility child must honor the same simple CLI
     // probe as Node even when permission flags precede --version.  Keep this
     // at the Rust boundary so child_process does not special-case filenames
@@ -119,10 +146,8 @@ fn main() -> ExitCode {
             Some("--print" | "-p" | "-pe" | "-ep")
         );
         let source = if is_print {
-            let combined_print_eval = matches!(
-                arguments.get(index).map(String::as_str),
-                Some("-pe")
-            );
+            let combined_print_eval =
+                matches!(arguments.get(index).map(String::as_str), Some("-pe"));
             if combined_print_eval {
                 wrap_combined_print_eval(source)
             } else {
@@ -131,6 +156,11 @@ fn main() -> ExitCode {
         } else {
             source.to_string()
         };
+        let source = format!(
+            "{}{}",
+            quench_node_test::reader::node_preload_program(&arguments),
+            source
+        );
         let source = if input_type == Some("module") {
             quench_node::esm_imports::transform_esm_imports(&source)
         } else {
@@ -149,10 +179,11 @@ fn main() -> ExitCode {
                 lines.push(line.to_string());
             }
         });
-        let outcome = quench_node::run::eval_script_with_input_type(
+        let outcome = quench_node::run::eval_script_with_exec_argv(
             &source,
             sink,
             input_type == Some("module"),
+            &arguments[..index],
         );
         if child_mode {
             if let Ok(lines) = captured.lock() {
@@ -284,4 +315,76 @@ fn main() -> ExitCode {
             ExitCode::from(0)
         }
     }
+}
+
+fn openssl_config_has_no_default_provider(arguments: &[String]) -> bool {
+    let config = arguments.iter().enumerate().find_map(|(index, argument)| {
+        argument
+            .strip_prefix("--openssl-config=")
+            .map(str::to_owned)
+            .or_else(|| {
+                (argument == "--openssl-config")
+                    .then(|| arguments.get(index + 1).cloned())
+                    .flatten()
+            })
+    });
+    let Some(config) = config else { return false };
+    let Ok(contents) = std::fs::read_to_string(config) else {
+        return false;
+    };
+    let has_provider_section = contents
+        .lines()
+        .any(|line| line.trim().eq_ignore_ascii_case("[provider_sect]"));
+    let has_default_provider = contents.lines().any(|line| {
+        line.split_once('=').is_some_and(|(name, value)| {
+            name.trim().eq_ignore_ascii_case("default")
+                && value.trim().eq_ignore_ascii_case("default_sect")
+        })
+    });
+    has_provider_section && !has_default_provider
+}
+
+fn node_option_disallowed(option: &str) -> bool {
+    [
+        "--version",
+        "-v",
+        "--help",
+        "-h",
+        "--eval",
+        "-e",
+        "--print",
+        "-p",
+        "-pe",
+        "--check",
+        "-c",
+        "--interactive",
+        "-i",
+        "--v8-options",
+        "--expose_internals",
+        "--expose-internals",
+        "--",
+        "--test",
+    ]
+    .iter()
+    .any(|&disallowed| option == disallowed || option.starts_with(&format!("{disallowed}=")))
+}
+
+fn node_exec_path() -> String {
+    let Some(path) = std::env::current_exe()
+        .ok()
+        .and_then(|path| std::fs::canonicalize(path).ok())
+    else {
+        return "quench-node".into();
+    };
+    let launcher = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(|stem| matches!(stem, "run" | "run-compat" | "run-parallel"));
+    if launcher {
+        let engine = path.with_file_name("quench-node");
+        if engine.is_file() {
+            return engine.to_string_lossy().into_owned();
+        }
+    }
+    path.to_string_lossy().into_owned()
 }

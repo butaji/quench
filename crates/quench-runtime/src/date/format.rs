@@ -50,7 +50,7 @@ fn date_part(ms: f64) -> String {
 
 fn time_part(ms: f64) -> String {
     local_fields(ms).map_or_else(invalid, |(_, _, _, h, min, sec, _)| {
-        let offset = chrono_utils::local_tz_offset_minutes();
+        let offset = chrono_utils::local_tz_offset_minutes_at(ms);
         let sign = if offset >= 0 { '+' } else { '-' };
         let zone = chrono_utils::local_tz_name()
             .map(|name| format!(" ({name})"))
@@ -91,7 +91,7 @@ fn iso_string(receiver: Option<&Value>) -> Result<String, VmError> {
 fn local_fields(ms: f64) -> Option<(i32, u32, u32, u32, u32, u32, usize)> {
     let (y, m, d, h, min, sec, _) = chrono_utils::local_components(ms)?;
     let day =
-        chrono_utils::weekday(ms + chrono_utils::local_tz_offset_minutes() as f64 * 60_000.0)?;
+        chrono_utils::weekday(ms + chrono_utils::local_tz_offset_minutes_at(ms) as f64 * 60_000.0)?;
     Some((y, m, d, h, min, sec, day))
 }
 

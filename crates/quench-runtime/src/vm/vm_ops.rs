@@ -86,11 +86,31 @@ pub fn execute_call(
     // result.  A miss falls through to the ordinary continuation path, which
     // preserves all dynamic call/throw/suspend semantics.
     if let Value::Function(function) = &callee_value {
-        if let Some(value) = crate::functions::try_execute_specialized(
-            function,
-            &receiver_value,
-            &arguments,
-        )? {
+        // Numeric input is complete for the proven population-count loop;
+        // finish it before diagnostic metadata lookup, which would otherwise
+        // walk the function's property descriptors on every call.
+        if matches!(
+            function.code.facts().counted_method_loop.as_deref(),
+            Some(crate::facts::CountedMethodLoopFact::BitCount)
+        ) {
+            if let Some(Value::Number(mut value)) = arguments.first().cloned() {
+                let mut count = 0_u32;
+                while value > 0.0 {
+                    let bits = crate::vm::vm_arithmetic::numeric_to_int32(value);
+                    value = f64::from(bits & bits.wrapping_sub(1));
+                    count += 1;
+                }
+                super::write_value(registers, dst, Value::Number(f64::from(count)));
+                return Ok(crate::completion::Completion::Normal);
+            }
+        }
+        let source_name = function_source_name(&callee_value);
+        let _source_guard = source_name
+            .as_deref()
+            .map(|name| crate::vm::active_source_name(Some(name)));
+        if let Some(value) =
+            crate::functions::try_execute_specialized(function, &receiver_value, &arguments)?
+        {
             super::write_value(registers, dst, value);
             return Ok(crate::completion::Completion::Normal);
         }
@@ -161,14 +181,148 @@ fn execute_call_continuation_inner(
         environment: std::rc::Rc<crate::environment::Environment>,
         pc: usize,
     }
+    struct CallStackGuard {
+        base: usize,
+    }
+    impl Drop for CallStackGuard {
+        fn drop(&mut self) {
+            CALL_STACK.with(|stack| stack.borrow_mut().truncate(self.base));
+            CALL_STACK_SOURCES.with(|stack| stack.borrow_mut().truncate(self.base));
+        }
+    }
     enum StartedCall {
         Active(ActiveCall),
         Fallback(crate::completion::CallContinuation),
         Error(VmError, crate::completion::CallContinuation),
     }
-    fn start(
-        continuation: crate::completion::CallContinuation,
-    ) -> StartedCall {
+    // Error objects are created before the VM knows which user frames will
+    // observe them.  Materialize the lightweight, observable portion of the
+    // stack at the unwind boundary; hidden-frame markers are attached by
+    // Node's `internal/errors.hideStackFrames` capability.
+    fn decorate_thrown(error: &Value, current: &ActiveCall, parents: &[ActiveCall]) {
+        let canonical = crate::locals::resolved_replacement(error.clone());
+        if matches!(
+            crate::execute::get_property(&canonical, "\0quench:system_error_instance"),
+            Value::Boolean(true)
+        ) {
+            return;
+        }
+        let Some(Value::String(mut stack_text)) =
+            crate::execute::get_property_result(error, "stack").ok()
+        else {
+            return;
+        };
+        if stack_text.lines().skip(1).count() > 1 {
+            return;
+        }
+        let mut frames = Vec::new();
+        let mut add = |callee: &Value| {
+            if !matches!(
+                crate::execute::get_property(callee, "\0quench:hidden_stack_frames"),
+                Value::Boolean(true)
+            ) {
+                let mut name = match crate::execute::get_property(callee, "name") {
+                    Value::String(name) if !name.is_empty() => name,
+                    _ => "<anonymous>".to_string(),
+                };
+                if name == "<anonymous>" && parents.is_empty() {
+                    if let Some(filename) = crate::vm::current_context().source_name() {
+                        name = filename.to_string();
+                    }
+                }
+                if let Some(filename) = crate::vm::current_context().source_name() {
+                    frames.push(format!("    at {name} ({filename}:1:1)"));
+                } else {
+                    frames.push(format!("    at {name}"));
+                }
+            }
+        };
+        add(&current.continuation.callee);
+        for parent in parents.iter().rev() {
+            add(&parent.continuation.callee);
+        }
+        if frames.is_empty() {
+            return;
+        }
+        // Host-created errors may already carry the generic top-level frame.
+        // Replace it with the actual user continuation so `at c`, `at b`, …
+        // occupy the same observable slots as V8's stack formatter.
+        if stack_text
+            .lines()
+            .nth(1)
+            .is_some_and(|line| line.starts_with("    at "))
+        {
+            stack_text.truncate(stack_text.find('\n').unwrap_or(stack_text.len()));
+        }
+        for frame in frames {
+            stack_text.push('\n');
+            stack_text.push_str(&frame);
+        }
+        let _ = crate::execute::set_property_in_place(
+            &canonical,
+            "stack",
+            Value::String(stack_text.clone()),
+        );
+        let _ = crate::execute::set_property_in_place(error, "stack", Value::String(stack_text));
+        let updated = crate::execute::set_property(
+            error.clone(),
+            "stack",
+            crate::execute::get_property(error, "stack"),
+        );
+        crate::locals::replace_value(error, &updated);
+        let _ = crate::execute::set_property_in_place(
+            &canonical,
+            "\0quench:stack_decorated",
+            Value::Boolean(true),
+        );
+    }
+    fn sync_call_stack(base: usize, current: &ActiveCall, parents: &[ActiveCall]) {
+        let mut names = Vec::new();
+        let mut sources = Vec::new();
+        // The execution stack stores callers from outermost to innermost;
+        // JavaScript stack traces expose the nearest caller first.
+        let mut add = |callee: &Value| {
+            if !matches!(
+                crate::execute::get_property(callee, "\0quench:hidden_stack_frames"),
+                Value::Boolean(true)
+            ) {
+                if let Value::String(name) = crate::execute::get_property(callee, "name") {
+                    if !name.is_empty() {
+                        names.push(name);
+                        sources.push(
+                            match crate::execute::get_property(callee, "\0quench:source_name") {
+                                Value::String(source) => Some(source),
+                                _ => None,
+                            },
+                        );
+                    }
+                }
+            }
+        };
+        for parent in parents.iter().rev() {
+            if let Value::Function(function) = &parent.continuation.callee {
+                let value = Value::Function(std::rc::Rc::clone(function));
+                add(&value);
+            }
+        }
+        if let Value::Function(function) = &current.continuation.callee {
+            let value = Value::Function(std::rc::Rc::clone(function));
+            add(&value);
+        }
+        CALL_STACK.with(|stack| {
+            let mut stack = stack.borrow_mut();
+            stack.truncate(base);
+            stack.extend(names);
+        });
+        CALL_STACK_SOURCES.with(|stack| {
+            let mut stack = stack.borrow_mut();
+            stack.truncate(base);
+            stack.extend(sources);
+        });
+    }
+    let stack_base = CALL_STACK.with(|stack| stack.borrow().len());
+    let _stack_guard = CallStackGuard { base: stack_base };
+    fn start(continuation: crate::completion::CallContinuation) -> StartedCall {
         let Value::Function(function) = &continuation.callee else {
             return StartedCall::Fallback(continuation);
         };
@@ -191,6 +345,13 @@ fn execute_call_continuation_inner(
         // corresponding completion setup. Inlining their raw ops would return
         // the body value directly and skip that observable protocol.
         if function.is_async || matches!(function.kind, crate::ops::FunctionKind::Generator) {
+            return StartedCall::Fallback(continuation);
+        }
+        // Arrow calls depend on the lexical environment of their creator.
+        // The packed continuation frame cannot yet preserve that environment
+        // across nested async/domain resumes, so use the complete invocation
+        // path until it can. This is a semantic guard, not a fixture check.
+        if matches!(function.kind, crate::ops::FunctionKind::Arrow) {
             return StartedCall::Fallback(continuation);
         }
         // Functions created inside a `with` scope carry a dynamic object
@@ -221,6 +382,10 @@ fn execute_call_continuation_inner(
         })
     }
     if let Value::Function(function) = &continuation.callee {
+        let source_name = function_source_name(&continuation.callee);
+        let _source_guard = source_name
+            .as_deref()
+            .map(|name| crate::vm::active_source_name(Some(name)));
         if let Some(value) = crate::functions::try_execute_specialized(
             function,
             &continuation.receiver,
@@ -250,7 +415,18 @@ fn execute_call_continuation_inner(
         }
     };
     let context = crate::vm::current_context_or_default();
+    let mut tail_depth = 0usize;
     let value = loop {
+        if tail_depth >= 512 {
+            return Err(crate::value::error::throw_range_error(
+                "Maximum call stack size exceeded",
+            ));
+        }
+        sync_call_stack(stack_base, &current, &stack);
+        let source_name = function_source_name(&current.continuation.callee);
+        let _source_guard = source_name
+            .as_deref()
+            .map(|name| crate::vm::active_source_name(Some(name)));
         let code = current.code.code().ok_or(VmError::MissingReturn)?;
         let (completion, next) = match crate::vm::execute_code_from(
             code,
@@ -263,6 +439,7 @@ fn execute_call_continuation_inner(
             Err(error) => {
                 if let crate::execute::VmError::Thrown(value) = error {
                     let thrown = value;
+                    decorate_thrown(&thrown, &current, &stack);
                     loop {
                         let view = current.code.code().ok_or(VmError::MissingReturn)?;
                         if let Some((handler, slot)) = view.catch_at(current.pc) {
@@ -274,6 +451,7 @@ fn execute_call_continuation_inner(
                             break;
                         }
                         let Some(parent) = stack.pop() else {
+                            decorate_thrown(&thrown, &current, &stack);
                             return Err(crate::execute::VmError::Thrown(thrown));
                         };
                         current = parent;
@@ -295,6 +473,7 @@ fn execute_call_continuation_inner(
         current.pc = next;
         if let crate::completion::Completion::Throw(value) = completion {
             let thrown = value;
+            decorate_thrown(&thrown, &current, &stack);
             loop {
                 let view = current.code.code().ok_or(VmError::MissingReturn)?;
                 if let Some((handler, slot)) = view.catch_at(current.pc) {
@@ -318,6 +497,11 @@ fn execute_call_continuation_inner(
             crate::completion::Completion::Normal => Some(Value::Undefined),
             crate::completion::Completion::Return(value) => Some(value),
             crate::completion::Completion::Call(mut nested) => {
+                if stack.len() >= 512 {
+                    return Err(crate::value::error::throw_range_error(
+                        "Maximum call stack size exceeded",
+                    ));
+                }
                 // `execute_call` moves the caller frame's registers into the
                 // continuation. Restore them on the suspended parent before
                 // pushing it, so nested results are written into the live
@@ -335,9 +519,44 @@ fn execute_call_continuation_inner(
                             Ok(value) => value,
                             Err(error) => {
                                 // A native nested call can throw before a child frame
-                                let parent = stack.pop().expect("caller frame just pushed");
-                                *registers = parent.registers;
-                                return Err(error);
+                                // exists. Resume the suspended caller and run the
+                                // ordinary catch search instead of returning directly;
+                                // otherwise `try { nativeCall() }` cannot observe the
+                                // host exception.
+                                let thrown = match error {
+                                    crate::execute::VmError::Thrown(value) => value,
+                                    other => {
+                                        let parent = stack.pop().expect("caller frame just pushed");
+                                        *registers = parent.registers;
+                                        return Err(other);
+                                    }
+                                };
+                                current = stack.pop().expect("caller frame just pushed");
+                                decorate_thrown(&thrown, &current, &stack);
+                                let mut thrown = Some(thrown);
+                                loop {
+                                    let view = current.code.code().ok_or(VmError::MissingReturn)?;
+                                    if let Some((handler, slot)) = view.catch_at(current.pc) {
+                                        let thrown = thrown.take().expect("thrown value present");
+                                        if let Some(slot) = slot {
+                                            super::write_value(
+                                                &mut current.registers,
+                                                slot,
+                                                thrown.clone(),
+                                            );
+                                            crate::locals::write(slot, thrown);
+                                        }
+                                        current.pc = handler;
+                                        break;
+                                    }
+                                    let Some(parent) = stack.pop() else {
+                                        return Err(crate::execute::VmError::Thrown(
+                                            thrown.take().expect("thrown value present"),
+                                        ));
+                                    };
+                                    current = parent;
+                                }
+                                continue;
                             }
                         };
                         let mut parent = stack.pop().expect("caller frame just pushed");
@@ -353,6 +572,7 @@ fn execute_call_continuation_inner(
                 None
             }
             crate::completion::Completion::TailCall(request) => {
+                tail_depth += 1;
                 // A reducer may promote the final call in a function body to a
                 // tail call.  Treat it as a frame replacement, not as an
                 // unconsumed completion: otherwise nested assert.throws sees an
@@ -491,6 +711,11 @@ pub fn execute_await(
     let value = crate::promise::promise_resolve(std::slice::from_ref(&value));
     match value {
         Value::Promise(promise) => {
+            // Await installs a rejection continuation even when the promise
+            // is already settled. Mark the source handled so a later
+            // unhandled-rejection sweep does not report a rejection consumed
+            // by `await`.
+            promise.rejection_handled.set(true);
             let state = promise.state.borrow().clone();
             match state {
                 crate::value::PromiseState::Fulfilled(value) => {
@@ -578,8 +803,17 @@ fn invoke_with_receiver(
             };
             let mut combined = bound.arguments.clone();
             combined.extend_from_slice(arguments);
-            let receiver = crate::functions::bound_this_for_call(bound)
-                .unwrap_or_else(|| receiver.clone());
+            let receiver = crate::functions::bound_this_for_call(bound).unwrap_or_else(|| {
+                if matches!(receiver, Value::Undefined)
+                    && bound.properties.borrow().iter().any(|(key, value)| {
+                        key == "\0vm_compiled_function" && matches!(value, Value::Boolean(true))
+                    })
+                {
+                    Value::BoundFunction(bound.clone())
+                } else {
+                    receiver.clone()
+                }
+            });
             crate::vm::execute_host_capability_with_receiver(
                 kind,
                 Some(&bound.receiver),

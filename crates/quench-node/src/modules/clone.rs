@@ -48,10 +48,22 @@ fn clone_typed_view(value: &Value) -> Option<Value> {
     try_clone_typed_array!(value, Int8Array, quench_runtime::value::Int8ArrayData);
     try_clone_typed_array!(value, Int16Array, quench_runtime::value::Int16ArrayData);
     try_clone_typed_array!(value, Int32Array, quench_runtime::value::Int32ArrayData);
-    try_clone_typed_array!(value, BigInt64Array, quench_runtime::value::BigInt64ArrayData);
-    try_clone_typed_array!(value, BigUint64Array, quench_runtime::value::BigUint64ArrayData);
+    try_clone_typed_array!(
+        value,
+        BigInt64Array,
+        quench_runtime::value::BigInt64ArrayData
+    );
+    try_clone_typed_array!(
+        value,
+        BigUint64Array,
+        quench_runtime::value::BigUint64ArrayData
+    );
     try_clone_typed_array!(value, Uint8Array, quench_runtime::value::Uint8ArrayData);
-    try_clone_typed_array!(value, Uint8ClampedArray, quench_runtime::value::Uint8ClampedArrayData);
+    try_clone_typed_array!(
+        value,
+        Uint8ClampedArray,
+        quench_runtime::value::Uint8ClampedArrayData
+    );
     try_clone_typed_array!(value, Uint16Array, quench_runtime::value::Uint16ArrayData);
     try_clone_typed_array!(value, Uint32Array, quench_runtime::value::Uint32ArrayData);
     if let Value::DataView(view) = value {
@@ -146,10 +158,7 @@ pub fn deep_clone(value: Value) -> Value {
             // after cloning the ordinary enumerable surface so this applies
             // to every MessagePort/structured-clone boundary.
             let is_block_list = matches!(
-                quench_runtime::execute::get_property(
-                    &value,
-                    "\0quench:blocklist:marker"
-                ),
+                quench_runtime::execute::get_property(&value, "\0quench:blocklist:marker"),
                 Value::Boolean(true)
             );
             let pairs = quench_runtime::execute::own_enumerable_keys(&value)
@@ -170,8 +179,7 @@ pub fn deep_clone(value: Value) -> Value {
                 ] {
                     let item = quench_runtime::execute::get_property(&value, name);
                     quench_runtime::execute::set_property_in_place(
-                        &clone,
-                        name,
+                        &clone, name,
                         // BlockList wraps one native rule set.  Node's clone
                         // creates a distinct wrapper around that same set,
                         // so mutations made through either wrapper remain
@@ -268,7 +276,9 @@ fn advanced_clone_inner(value: Value, seen: &mut HashMap<u64, Value>) -> Value {
                 let global = quench_runtime::vm::current_global_object();
                 let constructor = quench_runtime::execute::get_property(&global, &name);
                 let message = quench_runtime::execute::get_property(&value, "message");
-                if let Ok(mut clone) = quench_runtime::execute::construct_value(&constructor, &[message]) {
+                if let Ok(mut clone) =
+                    quench_runtime::execute::construct_value(&constructor, &[message])
+                {
                     let stack = quench_runtime::execute::get_property(&value, "stack");
                     clone = quench_runtime::execute::set_property(clone, "stack", stack);
                     return clone;
@@ -293,12 +303,13 @@ fn advanced_clone_inner(value: Value, seen: &mut HashMap<u64, Value>) -> Value {
             let start = view.byte_offset.min(source.len());
             let end = start.saturating_add(length).min(source.len());
             if end > start {
-                buffer.bytes.borrow_mut()[..end - start]
-                    .copy_from_slice(&source[start..end]);
+                buffer.bytes.borrow_mut()[..end - start].copy_from_slice(&source[start..end]);
             }
-            let cloned = Value::Uint8Array(Rc::new(
-                quench_runtime::value::Uint8ArrayData::new(Rc::new(buffer), 0, length),
-            ));
+            let cloned = Value::Uint8Array(Rc::new(quench_runtime::value::Uint8ArrayData::new(
+                Rc::new(buffer),
+                0,
+                length,
+            )));
             let prototype = if advanced_buffer_view(&value) {
                 crate::modules::buffer_proto::buffer_prototype()
             } else {
@@ -451,14 +462,16 @@ pub fn structured_clone(
             Value::Boolean(true)
         )
     {
-        return Err(quench_runtime::execute::VmError::Thrown(host_api::object(vec![
-            ("name".into(), Value::String("TypeError".into())),
-            (
-                "message".into(),
-                Value::String("Invalid state: File-backed Blobs are not cloneable".into()),
-            ),
-            ("code".into(), Value::String("ERR_INVALID_STATE".into())),
-        ])));
+        return Err(quench_runtime::execute::VmError::Thrown(host_api::object(
+            vec![
+                ("name".into(), Value::String("TypeError".into())),
+                (
+                    "message".into(),
+                    Value::String("Invalid state: File-backed Blobs are not cloneable".into()),
+                ),
+                ("code".into(), Value::String("ERR_INVALID_STATE".into())),
+            ],
+        )));
     }
     let clone = deep_clone(value);
     let Some(options) = options else {

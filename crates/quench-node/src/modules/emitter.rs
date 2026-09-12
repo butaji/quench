@@ -225,7 +225,9 @@ impl EmitterRegistry {
             for (_, listeners) in &mut emitter.events {
                 listeners.retain(|listener| listener.process_scope != process_scope);
             }
-            emitter.events.retain(|(_, listeners)| !listeners.is_empty());
+            emitter
+                .events
+                .retain(|(_, listeners)| !listeners.is_empty());
         }
     }
 }

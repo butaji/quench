@@ -1,6 +1,6 @@
 //! Chrono utility functions for Date implementation.
 
-use chrono::{DateTime, NaiveDate, NaiveDateTime, Offset, Utc};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Offset, TimeZone, Utc};
 use std::cell::{Cell, RefCell};
 
 thread_local! {
@@ -13,7 +13,14 @@ thread_local! {
 pub fn set_local_timezone(name: Option<&str>) {
     let offset = name.and_then(|name| {
         let zone = name.parse::<chrono_tz::Tz>().ok()?;
-        Some(chrono::Utc::now().with_timezone(&zone).offset().fix().local_minus_utc() / 60)
+        Some(
+            chrono::Utc::now()
+                .with_timezone(&zone)
+                .offset()
+                .fix()
+                .local_minus_utc()
+                / 60,
+        )
     });
     LOCAL_TZ_OFFSET.with(|current| current.set(offset));
     LOCAL_TZ_NAME.with(|current| *current.borrow_mut() = name.map(str::to_owned));

@@ -50,7 +50,13 @@ pub fn from_hir_imports(
     let id = registry::alloc_id();
     let gc = registry::heap();
     for global in module.globals.iter() {
-        let value = const_eval::eval(&global.init, &globals, id, Some(gc.as_ref()), &module.gc_types)?;
+        let value = const_eval::eval(
+            &global.init,
+            &globals,
+            id,
+            Some(gc.as_ref()),
+            &module.gc_types,
+        )?;
         globals.push(Rc::new(RefCell::new(Global {
             value,
             mutable: global.mutable,

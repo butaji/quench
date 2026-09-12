@@ -41,7 +41,10 @@ pub enum JsValue {
     ShortBigInt(i64),
     Float64(f64),
     /// Heap object. `id` is a Runtime-local handle; RC lives on the object.
-    Ptr { tag: Tag, id: u32 },
+    Ptr {
+        tag: Tag,
+        id: u32,
+    },
 }
 
 impl JsValue {

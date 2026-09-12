@@ -36,9 +36,7 @@ pub(crate) fn function_builtin(
             crate::builtins::array_find_last_index(receiver, arguments)
         }
         crate::ops::Builtin::ArrayFindIndex => crate::arrays::find_index(receiver, arguments),
-        crate::ops::Builtin::ArrayToSorted => {
-            crate::builtins::array_to_sorted(receiver, arguments)
-        }
+        crate::ops::Builtin::ArrayToSorted => crate::builtins::array_to_sorted(receiver, arguments),
         crate::ops::Builtin::ArrayToSpliced => {
             crate::builtins::array_to_spliced(receiver, arguments)
         }
@@ -129,7 +127,8 @@ pub(crate) fn try_execute_specialized(
             crate::value::Value::Generator(generator) => generator,
             _ => unreachable!("generator creation must return a generator"),
         };
-        return Ok(Some(crate::promise::start_async_function(generator)));
+        let result = crate::promise::start_async_function(generator);
+        return Ok(Some(result));
     }
     // Compact numeric leaves stay on the ordinary proven-leaf path.
     if function.code.code().is_some_and(|code| {
@@ -162,12 +161,55 @@ pub(crate) fn execute(
     this_value: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
-    if let Some(result) = try_execute_specialized(function, this_value, arguments)? {
-        return Ok(result);
+    // Complete proven specializations before looking up diagnostic metadata on
+    // the function object.  The metadata lookup is observable only when an
+    // execution falls through or throws, while hot successful kernels (for
+    // example the numeric bit-count loop) need no function-property walk.
+    match try_execute_specialized(function, this_value, arguments) {
+        Ok(Some(result)) => return Ok(result),
+        Ok(None) => {}
+        Err(crate::execute::VmError::Thrown(error)) => {
+            decorate_function_error(function, &error);
+            return Err(crate::execute::VmError::Thrown(error));
+        }
+        Err(error) => return Err(error),
     }
-    stacker::maybe_grow(64 * 1024 * 1024, 256 * 1024 * 1024, || {
+    let function_value = crate::value::Value::Function(std::rc::Rc::clone(function));
+    let source_name = match crate::execute::get_property(&function_value, "\0quench:source_name") {
+        crate::value::Value::String(name) => Some(name),
+        _ => None,
+    };
+    let _source_guard = source_name
+        .as_deref()
+        .map(|name| crate::vm::active_source_name(Some(name)));
+    let result = stacker::maybe_grow(64 * 1024 * 1024, 256 * 1024 * 1024, || {
         execute_interpreter(function, this_value, arguments)
-    })
+    });
+    match result {
+        Err(crate::execute::VmError::Thrown(error)) => {
+            decorate_function_error(function, &error);
+            Err(crate::execute::VmError::Thrown(error))
+        }
+        other => other,
+    }
+}
+
+fn decorate_function_error(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    error: &crate::value::Value,
+) {
+    let function_value = crate::value::Value::Function(std::rc::Rc::clone(function));
+    if matches!(
+        crate::execute::get_property(&function_value, "\0quench:hidden_stack_frames"),
+        crate::value::Value::Boolean(true)
+    ) {
+        return;
+    }
+    let name = match crate::execute::get_property(&function_value, "name") {
+        crate::value::Value::String(name) if !name.is_empty() => name,
+        _ => "<anonymous>".to_string(),
+    };
+    crate::vm::append_stack_frame(error, &name);
 }
 
 fn execute_interpreter(

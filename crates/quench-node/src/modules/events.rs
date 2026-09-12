@@ -408,17 +408,21 @@ pub fn method_on(
     {
         let stream = receiver.expect("checked receiver");
         execute::set_property_in_place(stream, "\0zlib:pendingDrain", Value::Boolean(false));
-        if let Some(listener) = args.get(1).filter(|value| quench_runtime::is_callable(value)) {
+        if let Some(listener) = args
+            .get(1)
+            .filter(|value| quench_runtime::is_callable(value))
+        {
             execute::call(listener, stream, &[])?;
         }
     }
-    if matches!(args.first(), Some(Value::String(event)) if event == "data")
-        && receiver.is_some()
-    {
+    if matches!(args.first(), Some(Value::String(event)) if event == "data") && receiver.is_some() {
         let stream = receiver.expect("checked receiver");
         let pending = execute::get_property(stream, "\0zlib:pendingData");
         if let Value::Array(chunks) = pending {
-            if let Some(listener) = args.get(1).filter(|value| quench_runtime::is_callable(value)) {
+            if let Some(listener) = args
+                .get(1)
+                .filter(|value| quench_runtime::is_callable(value))
+            {
                 for index in 0..chunks.len() {
                     let chunk = chunks.get(index).unwrap_or(Value::Undefined);
                     execute::call(listener, stream, &[chunk])?;
@@ -515,11 +519,8 @@ pub fn method_emit(
     let snapshot = emitter.borrow().listeners_for_scope(&event, process_scope);
     if event == "listening" {
         if let Some(worker) = args.get(1) {
-            let _ = execute::set_property_in_place(
-                worker,
-                "state",
-                Value::String("listening".into()),
-            );
+            let _ =
+                execute::set_property_in_place(worker, "state", Value::String("listening".into()));
         }
     }
     if snapshot.is_empty() {
@@ -739,6 +740,38 @@ fn attach_rejection_handler(
             let _ = emit_error_without_capture(state, receiver, reason)?;
         }
         _ => {}
+    }
+    Ok(())
+}
+
+/// Apply EventEmitter's rejected-listener-result policy to host-originated
+/// events.  Network callbacks are dispatched by the net pump so they can
+/// install async-resource context and scope listeners without re-entering the
+/// generic JS `emit` capability.  They still share the same observable
+/// capture-rejection fact as ordinary EventEmitter dispatch.
+pub(crate) fn handle_listener_result(
+    state: &Rc<RefCell<HostState>>,
+    receiver: &Value,
+    event: &str,
+    arguments: &[Value],
+    result: &Value,
+) -> Result<(), VmError> {
+    let capture_rejections = expect_emitter(state, Some(receiver))
+        .and_then(|id| state.borrow().emitters.get(id))
+        .is_some_and(|emitter| emitter.borrow().capture_rejections);
+    if matches!(result, Value::Promise(_)) {
+        if capture_rejections {
+            attach_rejection_handler(state, receiver, event, arguments, result)?;
+        } else {
+            attach_unhandled_rejection(result)?;
+        }
+    } else if capture_rejections
+        && matches!(
+            result,
+            Value::Object(_) | Value::ObjectAlias(_) | Value::Function(_) | Value::BoundFunction(_)
+        )
+    {
+        attach_rejection_handler(state, receiver, event, arguments, result)?;
     }
     Ok(())
 }

@@ -59,13 +59,23 @@ fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
             ),
         ]));
     }
+    if name == "fs" {
+        return Ok(quench_runtime::host_api::object(vec![(
+            "openFileHandle".into(),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::InternalFsOpenFileHandle,
+            )),
+        )]));
+    }
     if name == "tcp_wrap" {
-        let prototype = quench_runtime::host_api::object(vec![
-            ("setNoDelay".into(), crate::host::capability(crate::registry::SPEC_CLUSTER_DISCONNECT)),
-        ]);
-        return Ok(quench_runtime::host_api::object(vec![
-            ("TCPWrap".into(), quench_runtime::host_api::object(vec![("prototype".into(), prototype)])),
-        ]));
+        let prototype = quench_runtime::host_api::object(vec![(
+            "setNoDelay".into(),
+            crate::host::capability(crate::registry::SPEC_CLUSTER_DISCONNECT),
+        )]);
+        return Ok(quench_runtime::host_api::object(vec![(
+            "TCPWrap".into(),
+            quench_runtime::host_api::object(vec![("prototype".into(), prototype)]),
+        )]));
     }
     if name == "tty_wrap" {
         let mut tty = quench_runtime::host_api::object(Vec::new());
@@ -100,9 +110,13 @@ fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
         ]));
     }
     if name == "uv" {
-        return Ok(quench_runtime::host_api::object(vec![
-            ("UV_EOF".into(), Value::Number(-4095.0)),
-        ]));
+        return Ok(quench_runtime::host_api::object(vec![(
+            "UV_EOF".into(),
+            Value::Number(-4095.0),
+        )]));
+    }
+    if name == "http2" {
+        return Ok(crate::modules::http2_util::binding());
     }
     if [
         "buffer",
@@ -134,7 +148,6 @@ fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
         "Unknown internal builtin module",
     )))
 }
-
 
 pub(crate) fn util_types_module() -> Value {
     crate::modules::util::types_object()

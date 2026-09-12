@@ -267,9 +267,7 @@ pub struct StageReport {
 impl StageReport {
     /// Whether this report accounts for every discovered path exactly once.
     pub fn covers(&self, paths: &[std::path::PathBuf]) -> bool {
-        if self.total != paths.len()
-            || self.passed.checked_add(self.failed) != Some(self.total)
-        {
+        if self.total != paths.len() || self.passed.checked_add(self.failed) != Some(self.total) {
             return false;
         }
         let expected = paths.iter().collect::<std::collections::HashSet<_>>();

@@ -2807,7 +2807,10 @@ pub fn file_handle_readv(
     read_args.extend_from_slice(args);
     let buffers = args.first().cloned().unwrap_or(Value::Undefined);
     let result = readv_sync(state, None, &read_args).map(|bytes_read| {
-        host_api::object(vec![("bytesRead".into(), bytes_read), ("buffers".into(), buffers)])
+        host_api::object(vec![
+            ("bytesRead".into(), bytes_read),
+            ("buffers".into(), buffers),
+        ])
     });
     Ok(settle(result))
 }
@@ -3833,9 +3836,9 @@ pub fn build() -> Value {
     props.extend([
         ("createReadStream", create_read_stream),
         ("createWriteStream", write_stream.clone()),
-        ("Utf8Stream", crate::host::capability(SPEC_FS_UTF8STREAM)),
         ("ReadStream", read_stream),
         ("WriteStream", write_stream),
+        ("Utf8Stream", crate::host::capability(SPEC_FS_UTF8STREAM)),
     ]);
     props.extend(sync_props());
     props.extend([
@@ -5118,11 +5121,6 @@ pub fn validate_write_stream_options(
         .module_cache
         .get("fs")
         .is_some_and(|module| receiver.is_some_and(|value| execute::same_value(value, module)));
-    // A FileHandle method is represented by a bound capability whose first
-    // argument is the handle, while the JavaScript receiver is that same
-    // handle. It is an I/O owner, not a caller-supplied WriteStream object;
-    // treating it as the latter would overwrite the handle with Writable
-    // fields and lose the stream's lifecycle state.
     let handle_method = args
         .first()
         .is_some_and(|value| file_handle_descriptor(value).ok().flatten().is_some());
@@ -5133,6 +5131,11 @@ pub fn validate_write_stream_options(
                 && matches!(value, Value::Object(_) | Value::ObjectAlias(_))
         })
         .cloned();
+    // A FileHandle method is represented by a bound capability whose first
+    // argument is the handle, while the JavaScript receiver is that same
+    // handle. It is an I/O owner, not a caller-supplied WriteStream object;
+    // treating it as the latter would overwrite the handle with Writable
+    // fields and lose the stream's lifecycle state.
     let stream_namespace = crate::modules::stream::build(state)?;
     let writable = execute::get_property(&stream_namespace, "Writable");
     let writable_options = host_api::object(vec![
@@ -5278,7 +5281,10 @@ pub fn validate_write_stream_options(
 /// without teaching individual I/O paths about option-shape errors.
 fn validate_stream_fs_methods(options: &Value, methods: &[&str]) -> Result<(), VmError> {
     let fs = execute::get_property(options, "fs");
-    if !matches!(fs, Value::Object(_) | Value::ObjectAlias(_) | Value::Proxy(_)) {
+    if !matches!(
+        fs,
+        Value::Object(_) | Value::ObjectAlias(_) | Value::Proxy(_)
+    ) {
         return Ok(());
     }
     for method in methods {
@@ -5480,11 +5486,7 @@ fn record_write_stream_completion(stream: &Value, position: &Value, count: &Valu
         return;
     };
     let next = position + count;
-    let _ = execute::set_property_in_place(
-        stream,
-        WRITE_STREAM_POSITION_KEY,
-        Value::Number(next),
-    );
+    let _ = execute::set_property_in_place(stream, WRITE_STREAM_POSITION_KEY, Value::Number(next));
     let _ = execute::set_property_in_place(stream, "pos", Value::Number(next));
 }
 

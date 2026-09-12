@@ -896,11 +896,7 @@ pub fn module_enable_compile_cache(
                 return Ok(compile_cache_result(0.0, None, Some(message)));
             }
         }
-        return Ok(compile_cache_result(
-            2.0,
-            directory,
-            None,
-        ));
+        return Ok(compile_cache_result(2.0, directory, None));
     }
 
     let directory = directory
@@ -932,11 +928,7 @@ pub fn module_enable_compile_cache(
     Ok(compile_cache_result(1.0, Some(directory), None))
 }
 
-fn compile_cache_result(
-    status: f64,
-    directory: Option<String>,
-    message: Option<String>,
-) -> Value {
+fn compile_cache_result(status: f64, directory: Option<String>, message: Option<String>) -> Value {
     let mut properties = vec![("status".into(), Value::Number(status))];
     if let Some(directory) = directory {
         properties.push(("directory".into(), Value::String(directory)));
@@ -1533,12 +1525,12 @@ fn load_file_module(state: &Rc<RefCell<HostState>>, spec: &str) -> Result<Value,
         );
         let experimental_require = DYNAMIC_ESM_LOAD.with(|flag| flag.get())
             || matches!(
-                quench_runtime::execute::get_property(&experimental_require, "execArgv"),
-                Value::Array(ref values)
-                    if (0..values.logical_len()).any(|index| matches!(
-                        values.get(index),
-                        Some(Value::String(flag)) if flag == "--experimental-require-module"
-                    ))
+                    quench_runtime::execute::get_property(&experimental_require, "execArgv"),
+                    Value::Array(ref values)
+                        if (0..values.logical_len()).any(|index| matches!(
+                            values.get(index),
+                            Some(Value::String(flag)) if flag == "--experimental-require-module"
+                        ))
             );
         if experimental_require {
             let transformed = crate::esm_imports::transform_esm_module(&source);
@@ -2164,13 +2156,11 @@ fn execute_module(
     quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context)?;
     let module = module.unwrap_or(Value::Undefined);
     if await_module {
-        let result = quench_runtime::execute::get_property_result(
-            &module,
-            "\0quench:esm-promise",
-        )?;
+        let result = quench_runtime::execute::get_property_result(&module, "\0quench:esm-promise")?;
         crate::modules::pump::await_promise(state, &result)?;
         if let Value::Promise(promise) = &result {
-            if let quench_runtime::value::PromiseState::Fulfilled(value) = &*promise.state.borrow() {
+            if let quench_runtime::value::PromiseState::Fulfilled(value) = &*promise.state.borrow()
+            {
                 let value = value.clone();
                 let _ = quench_runtime::execute::delete_property(
                     module.clone(),
@@ -2179,10 +2169,7 @@ fn execute_module(
                 return Ok(value);
             }
         }
-        let _ = quench_runtime::execute::delete_property(
-            module.clone(),
-            "\0quench:esm-promise",
-        );
+        let _ = quench_runtime::execute::delete_property(module.clone(), "\0quench:esm-promise");
     }
     quench_runtime::execute::get_property_result(&module, "exports")
 }
@@ -2868,7 +2855,15 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "internal/dgram" => {
             let global = quench_runtime::vm::current_global_object();
             let symbol = quench_runtime::execute::get_property(&global, "__quenchDgramStateSymbol");
-            Some(host_api::object(vec![("kStateSymbol".into(), symbol)]))
+            Some(host_api::object(vec![
+                ("kStateSymbol".into(), symbol),
+                (
+                    "_createSocketHandle".into(),
+                    crate::host::capability(
+                        crate::registry::SPEC_INTERNAL_DGRAM_CREATE_SOCKET_HANDLE,
+                    ),
+                ),
+            ]))
         }
         "https" => {
             let http = crate::modules::http::build(state);
@@ -3620,10 +3615,7 @@ pub(crate) fn http2_module_value() -> Value {
             constructor("Http2ServerResponse"),
         ),
         ("Http2Server".into(), constructor("Http2Server")),
-        (
-            "Http2SecureServer".into(),
-            constructor("Http2SecureServer"),
-        ),
+        ("Http2SecureServer".into(), constructor("Http2SecureServer")),
         ("Http2Session".into(), constructor("Http2Session")),
         (
             "ClientHttp2Session".into(),
@@ -3665,13 +3657,7 @@ pub(crate) fn http2_module_value() -> Value {
 fn internal_crypto_util_module() -> Value {
     let digest = crate::host::namespace_object_from_pairs(
         [
-            "SHA-1",
-            "SHA-256",
-            "SHA-384",
-            "SHA-512",
-            "SHA3-256",
-            "SHA3-384",
-            "SHA3-512",
+            "SHA-1", "SHA-256", "SHA-384", "SHA-512", "SHA3-256", "SHA3-384", "SHA3-512",
         ]
         .into_iter()
         .map(|name| (name.to_string(), Value::Boolean(true)))
@@ -3695,10 +3681,24 @@ fn internal_crypto_util_module() -> Value {
     );
     let generate_key = crate::host::namespace_object_from_pairs(
         [
-            "AES-CBC", "AES-CTR", "AES-GCM", "AES-KW", "AES-OCB",
-            "ChaCha20-Poly1305", "ECDH", "ECDSA", "Ed25519", "Ed448",
-            "HMAC", "KMAC128", "KMAC256",
-            "RSA-OAEP", "RSA-PSS", "RSASSA-PKCS1-v1_5", "X25519", "X448",
+            "AES-CBC",
+            "AES-CTR",
+            "AES-GCM",
+            "AES-KW",
+            "AES-OCB",
+            "ChaCha20-Poly1305",
+            "ECDH",
+            "ECDSA",
+            "Ed25519",
+            "Ed448",
+            "HMAC",
+            "KMAC128",
+            "KMAC256",
+            "RSA-OAEP",
+            "RSA-PSS",
+            "RSASSA-PKCS1-v1_5",
+            "X25519",
+            "X448",
         ]
         .into_iter()
         .map(|name| (name.to_string(), Value::Null))

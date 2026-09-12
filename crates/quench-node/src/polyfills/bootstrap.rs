@@ -6,10 +6,10 @@
 
 #[path = "bootstrap/cluster.rs"]
 pub mod cluster;
-#[path = "bootstrap/iterators.rs"]
-pub mod iterators;
 #[path = "bootstrap/internal_fs_binding.rs"]
 pub mod internal_fs_binding_source;
+#[path = "bootstrap/iterators.rs"]
+pub mod iterators;
 abilities!(crate::polyfills::Phase::Bootstrap;
     "globals-extra" => globals_extra,
     "fetch" => fetch,

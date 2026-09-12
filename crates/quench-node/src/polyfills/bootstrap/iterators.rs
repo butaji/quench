@@ -1,6 +1,7 @@
 //! Polyfill: `zlib/iter`
 
-pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithZlibIter = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(
+    r#"const __quenchOriginalRequireWithZlibIter = globalThis.require;
 const __quenchZlibIterError = (message, code, ErrorType = TypeError) =>
   Object.assign(new ErrorType(message), { code });
 const __quenchValidateZlibIterOptions = (options, kind = "zlib") => {
@@ -125,4 +126,5 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithZlibIter(specifier);
 };
-"#);
+"#
+);

@@ -221,8 +221,17 @@ pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
         ));
     }
     if matches!(prototype, Value::Null) {
-        let constructor = crate::vm::get_property(&current, "constructor");
-        if let Value::String(name) = crate::vm::get_property(&constructor, "name") {
+        match target {
+            Value::Object(object) => object.capture_original_prototype(current.clone()),
+            Value::ObjectAlias(alias) => {
+                if let Some(object) = alias.target() {
+                    object.capture_original_prototype(current.clone());
+                }
+            }
+            _ => {}
+        }
+        let constructor = crate::execute::get_property(&current, "constructor");
+        if let Value::String(name) = crate::execute::get_property(&constructor, "name") {
             let _ = crate::execute::set_property_in_place(
                 target,
                 "\0original_constructor_name",
@@ -240,7 +249,9 @@ pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
             }
             target.clone()
         }
-        Value::Function(_) | Value::BoundFunction(_) => set_function_prototype(target, prototype),
+        Value::Function(_) | Value::BoundFunction(_) | Value::HostCapability(_) => {
+            set_function_prototype(target, prototype)
+        }
         Value::Object(data) => set_object_prototype(data, prototype),
         _ => crate::builtins::set_property(target.clone(), "\0prototype", prototype),
     };
@@ -439,6 +450,10 @@ fn descriptor_for_value(value: &Value, key: &str) -> Option<Value> {
         Value::Builtin(builtin) => builtin_descriptor(*builtin, key),
         Value::Function(function) => function_descriptor(function, key),
         Value::BoundFunction(bound) => bound_descriptor(bound, key),
+        Value::Iterator(data) => data.descriptor(key).or_else(|| {
+            data.property(key)
+                .map(|value| descriptor_object_with_flags(value, true, true, true))
+        }),
         Value::ArrayBuffer(buffer) => buffer_descriptor(buffer, key),
         Value::DataView(view) => data_view_descriptor(view, key),
         Value::Float64Array(_)

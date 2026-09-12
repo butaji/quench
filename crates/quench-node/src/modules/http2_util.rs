@@ -949,6 +949,12 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
             matches!(target_settings, Value::Object(_) | Value::ObjectAlias(_))
                 .then_some(&target_settings),
         );
+        set_local_initial_window(
+            state,
+            &socket,
+            matches!(target_settings, Value::Object(_) | Value::ObjectAlias(_))
+                .then_some(&target_settings),
+        );
         set_ping_limit(&socket, &target);
         if let Some(callback) = callback {
             // `createConnection` may return either an already-connected
@@ -1033,6 +1039,12 @@ fn connect(state: &Rc<RefCell<HostState>>, values: &[Value]) -> Result<Value, Vm
     }
     decorate_client_session(&socket, secure)?;
     configure_session_settings(
+        &socket,
+        matches!(target_settings, Value::Object(_) | Value::ObjectAlias(_))
+            .then_some(&target_settings),
+    );
+    set_local_initial_window(
+        state,
         &socket,
         matches!(target_settings, Value::Object(_) | Value::ObjectAlias(_))
             .then_some(&target_settings),
@@ -1145,6 +1157,28 @@ fn set_ping_limit(socket: &Value, options: &Value) {
                 Value::Number(limit),
             );
         }
+    }
+}
+
+fn set_local_initial_window(
+    state: &Rc<RefCell<HostState>>,
+    socket: &Value,
+    settings: Option<&Value>,
+) {
+    let Some(settings) = settings else {
+        return;
+    };
+    let Value::Number(window) = execute::get_property(settings, "initialWindowSize") else {
+        return;
+    };
+    if !window.is_finite() || !(0.0..=0x7fff_ffff as f64).contains(&window) {
+        return;
+    }
+    let Some(id) = crate::modules::net::net_id(socket) else {
+        return;
+    };
+    if let Some(session) = state.borrow_mut().net.http2_sessions.get_mut(&id) {
+        session.set_local_initial_window_size(window as u32);
     }
 }
 

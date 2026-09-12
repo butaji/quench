@@ -186,8 +186,8 @@ pub fn call(kind: u16, receiver: Option<&Value>, args: &[Value]) -> Result<Value
         PROMISE_HOOK => promise_hook(args),
         HOOK_ENABLE | HOOK_DISABLE => Ok(Value::Undefined),
         SERIALIZER_HEADER | DESERIALIZER_HEADER | SERIALIZER_RAW | SERIALIZER_UINT64
-        | SERIALIZER_DOUBLE | DESERIALIZER_UINT32 | DESERIALIZER_RAW
-        | DESERIALIZER_UINT64 | DESERIALIZER_DOUBLE => Ok(Value::Undefined),
+        | SERIALIZER_DOUBLE | DESERIALIZER_UINT32 | DESERIALIZER_RAW | DESERIALIZER_UINT64
+        | DESERIALIZER_DOUBLE => Ok(Value::Undefined),
         SERIALIZER_UINT32 => serializer_uint32(receiver, args),
         SERIALIZER_WRITE => serializer_write(receiver, args),
         SERIALIZER_RELEASE => Ok(receiver
@@ -442,9 +442,7 @@ fn decode_bytes(value: &Value) -> Result<Value, VmError> {
         .map_err(|error| VmError::EvalError(error.to_string()))?;
     if let serde_json::Value::Object(fields) = &json {
         if let Some(tag) = fields.get("__quench_ipc_host_tag") {
-            let valid = tag
-                .as_u64()
-                .is_some_and(|tag| tag == 0 || tag == 1);
+            let valid = tag.as_u64().is_some_and(|tag| tag == 0 || tag == 1);
             if !valid {
                 return Err(crate::modules::buffer_enc::invalid_state(
                     "Invalid host object tag".into(),

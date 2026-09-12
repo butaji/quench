@@ -51,7 +51,10 @@ fn execute_call_method(
     }
     if spreads.is_empty()
         && args.len() == 1
-        && matches!(callee, Value::Builtin(crate::ops::Builtin::StringCharCodeAt))
+        && matches!(
+            callee,
+            Value::Builtin(crate::ops::Builtin::StringCharCodeAt)
+        )
     {
         let argument = read_register(registers, args[0])?;
         if let Value::Number(index) = argument {
@@ -152,9 +155,7 @@ pub(crate) fn execute_registered(
     let first = instruction.a.saturating_sub(u16::from(instruction.flags));
     let receiver = crate::locals::resolved_replacement(read_register(registers, instruction.b)?);
     let callee = read_register(registers, instruction.c)?;
-    if instruction.flags <= 4
-        && matches!(callee, Value::Builtin(crate::ops::Builtin::ArrayPush))
-    {
+    if instruction.flags <= 4 && matches!(callee, Value::Builtin(crate::ops::Builtin::ArrayPush)) {
         // The intrinsic has already been resolved, so collect only the small
         // fixed argument window on the stack. Larger/dynamic calls retain the
         // ordinary Vec-backed path below, preserving all generic semantics.
@@ -169,16 +170,12 @@ pub(crate) fn execute_registered(
                     .saturating_add(offset as u16),
             )?;
         }
-        let value = crate::builtins::array_push(
-            Some(&receiver),
-            &arguments[..argument_count],
-        )?;
+        let value = crate::builtins::array_push(Some(&receiver), &arguments[..argument_count])?;
         write_value(registers, instruction.a, value);
         return Ok(None);
     }
     if instruction.flags == 1 {
-        if let Value::Builtin(builtin @ crate::ops::Builtin::StringCharCodeAt) = callee
-        {
+        if let Value::Builtin(builtin @ crate::ops::Builtin::StringCharCodeAt) = callee {
             let argument = read_register(registers, first)?;
             if let Value::Number(index) = argument {
                 if let Some(value) = crate::strings::char_code_at_number(&receiver, index) {
@@ -239,7 +236,9 @@ fn named_known_callee(receiver: &Value, cache: &std::cell::Cell<u64>) -> Option<
 
 #[inline]
 fn array_known_callee(receiver: &Value, key: &str) -> Option<Value> {
-    let Value::Array(array) = receiver else { return None };
+    let Value::Array(array) = receiver else {
+        return None;
+    };
     if !array.is_packed_ordinary() || !crate::builtins::array_prototype_is_clean() {
         return None;
     }

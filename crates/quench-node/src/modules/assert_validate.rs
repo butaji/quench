@@ -113,8 +113,8 @@ pub fn does_not_throw(
         (expected, _) => (expected, custom_message(args, 2)),
     };
     if let Some(expected) = expected {
-        let valid = is_regexp(expected)
-            || (is_callable(expected) && is_error_constructor(expected));
+        let valid =
+            is_regexp(expected) || (is_callable(expected) && is_error_constructor(expected));
         if !valid {
             return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
                 "The \"expected\" argument must be of type function or an instance of RegExp.{}",
@@ -236,7 +236,9 @@ fn validate_expected(
             if execute::own_enumerable_keys(expected).is_empty() && !error_instance {
                 let error = quench_runtime::builtins::error(
                     quench_runtime::ops::Builtin::TypeError,
-                    &[Value::String("The argument 'error' may not be an empty object. Received {}".into())],
+                    &[Value::String(
+                        "The argument 'error' may not be an empty object. Received {}".into(),
+                    )],
                 );
                 return Err(VmError::Thrown(execute::set_property(
                     error,
@@ -393,7 +395,9 @@ fn validate_callable(
                 caught,
             );
             Err(match user_message {
-                Some(message) => assertion_error(message, "throws", error.clone(), expected.clone(), false),
+                Some(message) => {
+                    assertion_error(message, "throws", error.clone(), expected.clone(), false)
+                }
                 None => assertion_error(detail, "throws", error.clone(), expected.clone(), true),
             })
         }
@@ -512,7 +516,10 @@ fn validate_object(
 ) -> Result<Value, VmError> {
     if !matches!(error, Value::Object(_) | Value::ObjectAlias(_)) {
         let diff = if matches!(expected, Value::Object(_) | Value::ObjectAlias(_)) {
-            let mut lines = vec![format!("+ {}", crate::modules::util::inspect(error)), "- {".into()];
+            let mut lines = vec![
+                format!("+ {}", crate::modules::util::inspect(error)),
+                "- {".into(),
+            ];
             let keys = execute::own_enumerable_keys(expected);
             for (index, key) in keys.iter().enumerate() {
                 let value = crate::modules::util::inspect_property_with_getters(expected, key, 0);
@@ -524,12 +531,16 @@ fn validate_object(
         } else {
             super::assert::deep_diff(error, expected)
         };
-        let prefix = user_message.unwrap_or_else(|| "Expected values to be strictly deep-equal:".into());
-        let message = format!(
-            "{prefix}\n+ actual - expected\n\n{}\n",
-            diff
-        );
-        return Err(assertion_error(message, "throws", error.clone(), expected.clone(), false));
+        let prefix =
+            user_message.unwrap_or_else(|| "Expected values to be strictly deep-equal:".into());
+        let message = format!("{prefix}\n+ actual - expected\n\n{}\n", diff);
+        return Err(assertion_error(
+            message,
+            "throws",
+            error.clone(),
+            expected.clone(),
+            false,
+        ));
     }
     let mut first_mismatch: Option<String> = None;
     for key in execute::own_enumerable_keys(expected) {
@@ -576,8 +587,7 @@ fn validate_object(
         }
     }
     if let Some(key) = first_mismatch {
-        if execute::has_own_property(expected, "code")
-            && execute::has_own_property(expected, "foo")
+        if execute::has_own_property(expected, "code") && execute::has_own_property(expected, "foo")
         {
             return Err(comparison_object_mismatch(error, expected, user_message));
         }
@@ -589,7 +599,11 @@ fn validate_object(
     Ok(Value::Undefined)
 }
 
-fn comparison_object_mismatch(actual: &Value, expected: &Value, user_message: Option<String>) -> VmError {
+fn comparison_object_mismatch(
+    actual: &Value,
+    expected: &Value,
+    user_message: Option<String>,
+) -> VmError {
     if let Some(message) = user_message {
         return assertion_error(message, "throws", Value::Undefined, Value::Undefined, false);
     }
@@ -600,15 +614,28 @@ fn comparison_object_mismatch(actual: &Value, expected: &Value, user_message: Op
         let suffix = if index + 1 < keys.len() { "," } else { "" };
         let expected_value = execute::get_property(expected, &key);
         let actual_value = execute::get_property(actual, &key);
-        let actual_has = execute::has_own_property(actual, &key)
-            || !matches!(actual_value, Value::Undefined);
-        if actual_has && expected_property_matches(&expected_value, &actual_value).unwrap_or(false) {
-            lines.push(format!("    {key}: {}{suffix}", crate::modules::util::inspect(&actual_value)));
+        let actual_has =
+            execute::has_own_property(actual, &key) || !matches!(actual_value, Value::Undefined);
+        if actual_has && expected_property_matches(&expected_value, &actual_value).unwrap_or(false)
+        {
+            lines.push(format!(
+                "    {key}: {}{suffix}",
+                crate::modules::util::inspect(&actual_value)
+            ));
         } else if actual_has {
-            lines.push(format!("+   {key}: {}{suffix}", crate::modules::util::inspect(&actual_value)));
-            lines.push(format!("-   {key}: {}{suffix}", crate::modules::util::inspect(&expected_value)));
+            lines.push(format!(
+                "+   {key}: {}{suffix}",
+                crate::modules::util::inspect(&actual_value)
+            ));
+            lines.push(format!(
+                "-   {key}: {}{suffix}",
+                crate::modules::util::inspect(&expected_value)
+            ));
         } else {
-            lines.push(format!("-   {key}: {}{suffix}", crate::modules::util::inspect(&expected_value)));
+            lines.push(format!(
+                "-   {key}: {}{suffix}",
+                crate::modules::util::inspect(&expected_value)
+            ));
         }
     }
     lines.push("  }".into());
@@ -654,8 +681,8 @@ fn comparison_mismatch(actual: &Value, expected: &Value, user_message: Option<St
     let expected_name = execute::get_property(expected, "name");
     let include_operator = execute::has_own_property(expected, "operator")
         || !matches!(actual_operator, Value::Undefined);
-    let include_name = !matches!(actual_name, Value::Undefined)
-        || !matches!(expected_name, Value::Undefined);
+    let include_name =
+        !matches!(actual_name, Value::Undefined) || !matches!(expected_name, Value::Undefined);
     if execute::has_own_property(expected, "operator") {
         let message = format!(
             "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  Comparison {{\n+   message: {},\n+   operator: {}\n-   message: {},\n-   operator: {}\n  }}\n",
@@ -672,14 +699,32 @@ fn comparison_mismatch(actual: &Value, expected: &Value, user_message: Option<St
         String::new(),
         "  Comparison {".to_string(),
     ];
-    let message_matches = expected_property_matches(&expected_message, &actual_message).unwrap_or(false);
+    let message_matches =
+        expected_property_matches(&expected_message, &actual_message).unwrap_or(false);
     if !message_matches {
-        let suffix = if include_name || include_operator { "," } else { "" };
-        lines.push(format!("+   message: {}{suffix}", inspect(actual_message, "+")));
-        lines.push(format!("-   message: {}{suffix}", inspect(expected_message, "-")));
+        let suffix = if include_name || include_operator {
+            ","
+        } else {
+            ""
+        };
+        lines.push(format!(
+            "+   message: {}{suffix}",
+            inspect(actual_message, "+")
+        ));
+        lines.push(format!(
+            "-   message: {}{suffix}",
+            inspect(expected_message, "-")
+        ));
     } else {
-        let suffix = if include_name || include_operator { "," } else { "" };
-        lines.push(format!("    message: {}{suffix}", inspect(actual_message, " ")));
+        let suffix = if include_name || include_operator {
+            ","
+        } else {
+            ""
+        };
+        lines.push(format!(
+            "    message: {}{suffix}",
+            inspect(actual_message, " ")
+        ));
     }
     if include_name {
         let name_matches = expected_property_matches(&expected_name, &actual_name).unwrap_or(false);
@@ -747,7 +792,11 @@ fn match_assert(args: &[Value], should_match: bool) -> Result<Value, VmError> {
             crate::modules::util::invalid_arg_received(&pattern)
         )));
     }
-    let operator = if should_match { "match" } else { "doesNotMatch" };
+    let operator = if should_match {
+        "match"
+    } else {
+        "doesNotMatch"
+    };
     let input = match arg(args, 0) {
         Value::String(text) => text,
         value => {
@@ -759,7 +808,9 @@ fn match_assert(args: &[Value], should_match: bool) -> Result<Value, VmError> {
         }
     };
     if let (Some(message), Some(candidate)) = (args.get(3), args.get(2)) {
-        if matches!(message, Value::String(_)) && (is_callable(candidate) || is_error_instance(candidate)) {
+        if matches!(message, Value::String(_))
+            && (is_callable(candidate) || is_error_instance(candidate))
+        {
             let label = if is_callable(candidate) {
                 match execute::get_property(candidate, "name") {
                     Value::String(name) if !name.is_empty() => name,
@@ -772,7 +823,11 @@ fn match_assert(args: &[Value], should_match: bool) -> Result<Value, VmError> {
                 quench_runtime::ops::Builtin::TypeError,
                 &[Value::String(format!("The \"error/message\" argument is ambiguous. The error message \"{label}\" is identical to the message."))],
             );
-            return Err(VmError::Thrown(execute::set_property(error, "code", Value::String("ERR_AMBIGUOUS_ARGUMENT".into()))));
+            return Err(VmError::Thrown(execute::set_property(
+                error,
+                "code",
+                Value::String("ERR_AMBIGUOUS_ARGUMENT".into()),
+            )));
         }
     }
     if regexp_matches(&pattern, &input)? == should_match {

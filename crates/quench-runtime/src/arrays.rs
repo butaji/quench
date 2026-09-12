@@ -48,13 +48,13 @@ fn execute_builtin_match(
         TypedArrayMap => Some(typed_array_map(receiver, arguments)),
         TypedArrayFilter => Some(typed_array_filter(receiver, arguments)),
         TypedArraySlice => Some(receiver.map_or_else(
-                || {
-                    Err(crate::value::error::throw_type_error(
-                        "TypedArray method called on incompatible receiver",
-                    ))
-                },
-                |value| typed_array_slice(value, arguments),
-            )),
+            || {
+                Err(crate::value::error::throw_type_error(
+                    "TypedArray method called on incompatible receiver",
+                ))
+            },
+            |value| typed_array_slice(value, arguments),
+        )),
         ArrayFind => Some(find(receiver, arguments)),
         TypedArrayFind => Some(typed_array_find(receiver, arguments)),
         TypedArrayFindIndex => Some(typed_array_find_index(receiver, arguments)),

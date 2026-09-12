@@ -393,10 +393,13 @@ pub fn move_message_port_to_context(
     ];
     let mut prototype = port.clone();
     for _ in 0..4 {
-        for key in execute::own_keys(&prototype).into_iter().filter_map(|key| match key {
-            Value::String(key) if !key.starts_with('\0') => Some(key),
-            _ => None,
-        }) {
+        for key in execute::own_keys(&prototype)
+            .into_iter()
+            .filter_map(|key| match key {
+                Value::String(key) if !key.starts_with('\0') => Some(key),
+                _ => None,
+            })
+        {
             if !properties.iter().any(|(existing, _)| existing == &key) {
                 properties.push((key.clone(), execute::get_property(port, &key)));
             }
@@ -407,10 +410,8 @@ pub fn move_message_port_to_context(
         }
     }
     let moved = execute::set_prototype_of(&host_api::object(properties), &Value::Null)?;
-    let constructor = execute::get_property(
-        &quench_runtime::vm::current_global_object(),
-        "MessagePort",
-    );
+    let constructor =
+        execute::get_property(&quench_runtime::vm::current_global_object(), "MessagePort");
     let moved = execute::set_property(moved, "constructor", constructor);
     crate::modules::event_target::remember_target_object(state, &moved)?;
     Ok(moved)
@@ -457,14 +458,10 @@ fn worker_environment_snapshot(state: &Rc<RefCell<HostState>>, options: &Value) 
     let source = if matches!(requested, Value::Object(_) | Value::ObjectAlias(_)) && !share_env {
         requested.clone()
     } else {
-        let process = state
-            .borrow()
-            .process_module
-            .clone()
-            .unwrap_or_else(|| {
-                let global = quench_runtime::vm::current_global_object();
-                execute::get_property(&global, "process")
-            });
+        let process = state.borrow().process_module.clone().unwrap_or_else(|| {
+            let global = quench_runtime::vm::current_global_object();
+            execute::get_property(&global, "process")
+        });
         execute::get_property(&process, "env")
     };
     // `process.env` is a Proxy whose ownKeys trap is backed by the canonical
@@ -476,9 +473,10 @@ fn worker_environment_snapshot(state: &Rc<RefCell<HostState>>, options: &Value) 
         match execute::get_property(&global, "__quench_env_keys") {
             Value::Array(values) => (0..values.logical_len())
                 .filter_map(|index| {
-                    execute::to_js_string(
-                        &execute::get_property(&Value::Array(values.clone()), &index.to_string()),
-                    )
+                    execute::to_js_string(&execute::get_property(
+                        &Value::Array(values.clone()),
+                        &index.to_string(),
+                    ))
                     .ok()
                 })
                 .collect(),
@@ -1231,8 +1229,8 @@ fn worker_post_message(
     };
     if let Value::String(id) = execute::get_property(port, TRANSFERRED_PORT_ID_PROP) {
         let value = args.first().cloned().unwrap_or(Value::Undefined);
-        let encoded = serde_json::to_string(&to_json(&value, state))
-            .unwrap_or_else(|_| "null".into());
+        let encoded =
+            serde_json::to_string(&to_json(&value, state)).unwrap_or_else(|_| "null".into());
         use std::io::Write;
         let _ = std::io::stdout()
             .write_all(format!("__QUENCH_WORKER_PORT_MESSAGE__{id}:{encoded}\n").as_bytes());
@@ -1494,14 +1492,21 @@ fn to_json(value: &Value, state: &Rc<RefCell<HostState>>) -> serde_json::Value {
                     .collect(),
             )
         }
-        Value::Object(_) | Value::ObjectAlias(_) if crate::modules::event_target::is_message_port(state, value) => {
+        Value::Object(_) | Value::ObjectAlias(_)
+            if crate::modules::event_target::is_message_port(state, value) =>
+        {
             let id = crate::modules::event_target::target_identity(value).unwrap_or(0);
             serde_json::json!({"__quench_message_port": id})
         }
         Value::Object(_) | Value::ObjectAlias(_) => serde_json::Value::Object(
             execute::own_enumerable_keys(value)
                 .into_iter()
-                .map(|key| (key.clone(), to_json(&execute::get_property(value, &key), state)))
+                .map(|key| {
+                    (
+                        key.clone(),
+                        to_json(&execute::get_property(value, &key), state),
+                    )
+                })
                 .collect(),
         ),
         _ => serde_json::Value::Null,

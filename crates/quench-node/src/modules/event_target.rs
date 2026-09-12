@@ -18,7 +18,7 @@ use crate::host::HostState;
 use crate::modules::emitter::{emitter_id, EmitterId, Listener};
 
 /// Hidden property storing the host-side target id on the JS object.
-const TARGET_ID_PROP: &str = "\0quench:event-target:id";
+pub(crate) const TARGET_ID_PROP: &str = "\0quench:event-target:id";
 /// Marks host-owned identity objects whose JS writes must remain visible to
 /// the canonical object retained by the host registry.
 pub const HOST_MUTABLE_PROP: &str = "\0quench:host:mutable";
@@ -44,6 +44,10 @@ pub struct EventTarget {
     pub message_peer: Option<Value>,
     pub message_closed: bool,
     pub message_refed: bool,
+    /// A port moved into a vm context needs context-aware clone delivery.
+    /// Keep the fact on the canonical target record so aliases and queued
+    /// deliveries observe one ownership state.
+    pub message_moved_context: bool,
     /// Messages posted before a listener is attached. `receiveMessageOnPort`
     /// consumes this queue synchronously; the event-loop delivery callback
     /// drains one entry when a listener is present.
@@ -153,12 +157,7 @@ pub(crate) fn post_message_to_target_id(
     id: u64,
     value: Value,
 ) -> Result<(), VmError> {
-    let port = state
-        .borrow()
-        .targets
-        .objects
-        .get(&TargetId(id))
-        .cloned();
+    let port = state.borrow().targets.objects.get(&TargetId(id)).cloned();
     if let Some(port) = port {
         message_port_post_message(state, Some(&port), &[value])?;
     }
@@ -449,6 +448,23 @@ pub(crate) fn set_message_port_prototype(prototype: Value) {
     MESSAGE_PORT_PROTOTYPE.with(|slot| *slot.borrow_mut() = Some(prototype));
 }
 
+/// Bind a canonical port to a vm context.  The target keeps the ownership
+/// fact independently of its current JS wrapper, so a later registry lookup
+/// cannot lose the context-sensitive clone rule.
+pub(crate) fn mark_message_port_moved_context(
+    state: &Rc<RefCell<HostState>>,
+    value: &Value,
+) -> Result<(), VmError> {
+    let Some(id) = target_id(value) else {
+        return Err(invalid_this());
+    };
+    let Some(target) = state.borrow().targets.get(id) else {
+        return Err(invalid_this());
+    };
+    target.borrow_mut().message_moved_context = true;
+    Ok(())
+}
+
 pub fn message_port_post_message(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -473,6 +489,13 @@ pub fn message_port_post_message(
     let Some(peer) = peer else {
         return Ok(Value::Undefined);
     };
+    // A MessagePort may have been moved into another context after its peer
+    // was linked. Resolve the peer through the canonical target registry so
+    // delivery follows the current wrapper rather than the stale channel
+    // link captured at construction time.
+    let peer = target_id(&peer)
+        .and_then(|peer_id| state.borrow().targets.objects.get(&peer_id).cloned())
+        .unwrap_or(peer);
     let posted = args.first().cloned().unwrap_or(Value::Undefined);
     let data = crate::modules::clone::deep_clone(posted.clone());
     let raw_transfer = args.get(1).cloned().unwrap_or(Value::Undefined);
@@ -505,14 +528,6 @@ pub fn message_port_post_message(
             }
             buffer.detach();
         }
-    }
-    if contains_uncloneable(&posted) {
-        return Err(quench_runtime::execute::VmError::Thrown(
-            quench_runtime::builtins::dom_exception(
-                "function foo() {} could not be cloned.",
-                "DataCloneError",
-            ),
-        ));
     }
     if let Some(target) = state.borrow().targets.get(id) {
         if let Some(peer_id) = target.borrow().message_peer.as_ref().and_then(target_id) {
@@ -598,10 +613,6 @@ fn transfer_type_error(message: &str) -> VmError {
     ]))
 }
 
-fn contains_uncloneable(value: &Value) -> bool {
-    quench_runtime::is_callable(value)
-}
-
 /// Deliver every message currently queued for a MessagePort peer.  A single
 /// host wake-up may represent several `postMessage()` calls; draining the
 /// FIFO here avoids depending on one event-loop wake-up per call.
@@ -669,7 +680,7 @@ fn message_port_deliver_one(
     let Some(target) = state.borrow().targets.get(id) else {
         return Ok(Value::Undefined);
     };
-    let (data, ports) = {
+    let (data, ports, moved_context) = {
         let mut target = target.borrow_mut();
         let Some((data, ports)) = target.message_queue.first().cloned() else {
             return Ok(Value::Undefined);
@@ -685,15 +696,52 @@ fn message_port_deliver_one(
         )
         .ok()
         .is_some_and(|value| matches!(value, Value::Number(count) if count > 0.0));
+        let moved_context = target.message_moved_context;
         if !has_event_target_listener
             && !has_emitter_listener
             && !quench_runtime::is_callable(&execute::get_property(peer, "onmessage"))
+            && !(moved_context
+                && quench_runtime::is_callable(&execute::get_property(peer, "onmessageerror")))
         {
             return Ok(Value::Undefined);
         }
         target.message_queue.remove(0);
-        (data, ports)
+        (data, ports, moved_context)
     };
+    if moved_context && contains_context_incompatible_value(&data) {
+        let error = host_api::object(vec![
+            ("name".into(), Value::String("Error".into())),
+            (
+                "code".into(),
+                Value::String("ERR_MESSAGE_TARGET_CONTEXT_UNAVAILABLE".into()),
+            ),
+            (
+                "message".into(),
+                Value::String("Message target context is unavailable".into()),
+            ),
+        ]);
+        let event_options = host_api::object(vec![
+            ("data".into(), error),
+            ("ports".into(), host_api::array(Vec::new())),
+        ]);
+        let event = crate::dispatch_handlers::message_event_new(
+            state,
+            &[Value::String("messageerror".into()), event_options],
+        )?;
+        execute::set_property_in_place(&event, "target", peer.clone());
+        execute::set_property_in_place(&event, "currentTarget", peer.clone());
+        let onmessageerror = execute::get_property(peer, "onmessageerror");
+        if quench_runtime::is_callable(&onmessageerror) {
+            execute::call(&onmessageerror, peer, std::slice::from_ref(&event))?;
+        }
+        let _ = dispatch_event(state, Some(peer), std::slice::from_ref(&event))?;
+        let _ = crate::modules::events::method_emit(
+            state,
+            Some(peer),
+            &[Value::String("messageerror".into()), event],
+        )?;
+        return Ok(Value::Undefined);
+    }
     let event_options = host_api::object(vec![
         ("data".into(), data.clone()),
         ("ports".into(), host_api::array(ports)),
@@ -722,6 +770,27 @@ fn message_port_deliver_one(
         &[Value::String("message".into()), data],
     )?;
     Ok(Value::Undefined)
+}
+
+/// Values whose host identity cannot be projected into a separately
+/// contextified MessagePort are delivered as `messageerror`.  This is kept as
+/// a structural predicate rather than a fixture check: nested records and
+/// arrays follow the same clone boundary as the ordinary structured clone.
+fn contains_context_incompatible_value(value: &Value) -> bool {
+    if matches!(
+        execute::get_property(value, crate::modules::webcrypto::KEY_MARKER_PROP),
+        Value::Boolean(true)
+    ) {
+        return true;
+    }
+    match value {
+        Value::Array(_) | Value::Object(_) | Value::ObjectAlias(_) => {
+            execute::own_enumerable_keys(value)
+                .into_iter()
+                .any(|key| contains_context_incompatible_value(&execute::get_property(value, &key)))
+        }
+        _ => false,
+    }
 }
 
 /// Drain queued BroadcastChannel messages by destination creation order.

@@ -1361,7 +1361,10 @@ fn diffie_hellman_impl(
         let format = execute::get_property(value, "format");
         let format_valid = matches!(format, Value::Undefined)
             || execute::to_js_string(&format).ok().is_some_and(|value| {
-                matches!(value.as_str(), "pem" | "der" | "jwk" | "raw-public" | "raw-private")
+                matches!(
+                    value.as_str(),
+                    "pem" | "der" | "jwk" | "raw-public" | "raw-private"
+                )
             });
         if !format_valid {
             return Err(error(

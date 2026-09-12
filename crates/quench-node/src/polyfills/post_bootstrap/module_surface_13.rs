@@ -4,7 +4,7 @@ pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchCryptoConstru
   for (const name of "Hash Hmac Sign Verify Certificate X509Certificate sign verify generateKeyPair generateKeyPairSync generateKey".split(
     " "
   )) {
-    result[name] ||= function Constructor() {};
+    if (typeof result[name] !== "function") result[name] = function Constructor() {};
   }
 };
 const __quenchCryptoUpdate = () =>

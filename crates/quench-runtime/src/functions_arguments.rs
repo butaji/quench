@@ -400,7 +400,18 @@ pub(crate) fn execute_target(
             };
             let mut combined = bound.arguments.clone();
             combined.extend_from_slice(arguments);
-            let receiver = bound_this_for_call(bound).unwrap_or_else(|| receiver.clone());
+            let receiver = bound_this_for_call(bound).unwrap_or_else(|| {
+                if matches!(receiver, crate::value::Value::Undefined)
+                    && bound.properties.borrow().iter().any(|(key, value)| {
+                        key == "\0vm_compiled_function"
+                            && matches!(value, crate::value::Value::Boolean(true))
+                    })
+                {
+                    crate::value::Value::BoundFunction(bound.clone())
+                } else {
+                    receiver.clone()
+                }
+            });
             crate::vm::execute_host_capability_with_receiver(
                 kind,
                 Some(&bound.receiver),
@@ -426,7 +437,13 @@ pub(crate) fn execute_target(
             // supplied by the caller is only relevant to an unbound method;
             // using it here made method properties (and host capabilities)
             // fail with "not callable" or an incompatible-receiver error.
-            let receiver = if crate::builtins::builtin_name(builtin).starts_with("get ")
+            let receiver = if matches!(bound.receiver, crate::value::Value::HostCapability(_)) {
+                // Realm intrinsic wrappers carry a capability token as their
+                // stored receiver; an explicit host call supplies the actual
+                // JavaScript `this` (Promise.prototype.then is the common
+                // example).
+                receiver
+            } else if crate::builtins::builtin_name(builtin).starts_with("get ")
                 || matches!(builtin, crate::ops::Builtin::StringToString | crate::ops::Builtin::StringValueOf)
             {
                 receiver
@@ -540,7 +557,18 @@ fn execute_function_call_in_realm(
             };
             let mut combined = bound.arguments.clone();
             combined.extend_from_slice(arguments.get(1..).unwrap_or_default());
-            let this = bound_this_for_call(bound).unwrap_or(this);
+            let this = bound_this_for_call(bound).unwrap_or_else(|| {
+                if matches!(this, crate::value::Value::Undefined)
+                    && bound.properties.borrow().iter().any(|(key, value)| {
+                        key == "\0vm_compiled_function"
+                            && matches!(value, crate::value::Value::Boolean(true))
+                    })
+                {
+                    crate::value::Value::BoundFunction(bound.clone())
+                } else {
+                    this
+                }
+            });
             return crate::vm::execute_host_capability_with_receiver(
                 kind,
                 Some(&capability),
@@ -577,6 +605,17 @@ fn execute_function_call_in_realm(
         call_arguments.push(this);
         call_arguments.extend_from_slice(arguments.get(1..).unwrap_or_default());
         return execute_target(receiver, &crate::value::Value::Undefined, &call_arguments);
+    }
+    if let crate::value::Value::BoundFunction(bound) = receiver {
+        if let crate::value::Value::Builtin(builtin) = bound.target {
+            if !matches!(builtin, crate::ops::Builtin::HostCapability(_)) {
+                return execute_builtin_target(
+                    builtin,
+                    Some(&this),
+                    arguments.get(1..).unwrap_or_default(),
+                );
+            }
+        }
     }
     execute_target(receiver, &this, arguments.get(1..).unwrap_or_default())
 }

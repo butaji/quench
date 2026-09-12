@@ -196,9 +196,11 @@ pub(crate) fn define_global_declaration_property(
         // non-configurable property with a value-only descriptor.  The
         // ordinary DefineProperty path preserves that property's flags;
         // complete the staged descriptor before replacing its metadata.
-        let previous_descriptor = staged.properties.iter().rev().find_map(|(key, value)| {
-            (key == &descriptor_key).then_some(value)
-        });
+        let previous_descriptor = staged
+            .properties
+            .iter()
+            .rev()
+            .find_map(|(key, value)| (key == &descriptor_key).then_some(value));
         let mut effective_descriptor = descriptor.to_vec();
         if let Some(crate::value::Value::Object(previous)) = previous_descriptor {
             for field in ["writable", "enumerable", "configurable", "get", "set"] {
@@ -214,9 +216,9 @@ pub(crate) fn define_global_declaration_property(
                 }
             }
         }
-        staged.properties.retain_names(|key| {
-            key != name && key != &descriptor_key && key != &deleted_key
-        });
+        staged
+            .properties
+            .retain_names(|key| key != name && key != &descriptor_key && key != &deleted_key);
         let value = effective_descriptor
             .iter()
             .rev()
@@ -225,9 +227,9 @@ pub(crate) fn define_global_declaration_property(
         staged.properties.push((name.into(), value));
         staged.properties.push((
             descriptor_key.into(),
-            crate::value::Value::Object(std::rc::Rc::new(
-                crate::value::ObjectData::new(effective_descriptor),
-            )),
+            crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
+                effective_descriptor,
+            ))),
         ));
         if !staged.created.iter().any(|key| key == name) {
             staged.created.push(name.into());
@@ -361,12 +363,8 @@ fn current_realm() -> RealmId {
     // Nested calls into a child realm install that realm's context while the
     // caller's global storage is still live. Prefer the execution context so
     // global name resolution and COW ownership observe the callee's realm.
-    let context_realm = CURRENT_CONTEXT.with(|context| {
-        context
-            .borrow()
-            .as_ref()
-            .map(|rc| rc.realm())
-    });
+    let context_realm =
+        CURRENT_CONTEXT.with(|context| context.borrow().as_ref().map(|rc| rc.realm()));
     if let Some(realm) = context_realm.filter(|realm| *realm != RealmId::ROOT) {
         return realm;
     }
@@ -437,7 +435,7 @@ pub struct SharedGlobal {
 
 /// Drop the thread-local root global between independent top-level programs.
 /// Nested executions retain the caller's object through `SharedGlobal`; only a
-/// top-level runner may clear this slot to give each conformance test a fresh
+/// top-level runner may clear this slot to give each execution a fresh
 /// global environment.
 pub fn reset_global_object() {
     if SHARED_GLOBAL.with(|count| count.get() != 0) {

@@ -2054,21 +2054,28 @@ fn inspect_error_extras(value: &Value, depth: usize) -> Vec<String> {
                         );
                         (matches!(getter, Value::Function(_) | Value::BoundFunction(_))
                             || matches!(setter, Value::Function(_) | Value::BoundFunction(_)))
-                            .then(|| {
-                                let kind = if matches!(getter, Value::Function(_) | Value::BoundFunction(_))
-                                    && matches!(setter, Value::Function(_) | Value::BoundFunction(_))
+                        .then(|| {
+                            let kind =
+                                if matches!(getter, Value::Function(_) | Value::BoundFunction(_))
+                                    && matches!(
+                                        setter,
+                                        Value::Function(_) | Value::BoundFunction(_)
+                                    )
                                 {
                                     "Getter/Setter"
-                                } else if matches!(getter, Value::Function(_) | Value::BoundFunction(_)) {
+                                } else if matches!(
+                                    getter,
+                                    Value::Function(_) | Value::BoundFunction(_)
+                                ) {
                                     "Getter"
                                 } else {
                                     "Setter"
                                 };
-                                format!(
-                                    "[{kind}: {}]",
-                                    inspect_depth(&rendered_value, depth.saturating_sub(1))
-                                )
-                            })
+                            format!(
+                                "[{kind}: {}]",
+                                inspect_depth(&rendered_value, depth.saturating_sub(1))
+                            )
+                        })
                     }
                     _ => None,
                 })
@@ -3004,10 +3011,13 @@ fn inspect_depth_inner(value: &Value, depth: usize) -> String {
                     let code = quench_runtime::execute::get_property(value, "code");
                     if is_system_error {
                         if let Value::String(code) = code {
-                            let message = quench_runtime::execute::get_property_result(value, "message")
-                                .ok()
-                                .and_then(|message| quench_runtime::execute::to_js_string(&message).ok())
-                                .unwrap_or_default();
+                            let message =
+                                quench_runtime::execute::get_property_result(value, "message")
+                                    .ok()
+                                    .and_then(|message| {
+                                        quench_runtime::execute::to_js_string(&message).ok()
+                                    })
+                                    .unwrap_or_default();
                             let header = format!("SystemError [{code}]: {message}");
                             stack.find('\n').map_or(header.clone(), |index| {
                                 format!("{header}{}", &stack[index..])
@@ -3019,8 +3029,8 @@ fn inspect_depth_inner(value: &Value, depth: usize) -> String {
                         stack
                     }
                 } else {
-                        refresh_error_stack_header(value, &stack)
-                    };
+                    refresh_error_stack_header(value, &stack)
+                };
                 let extras = inspect_error_extras(value, depth);
                 if !extras.is_empty() {
                     if stack_enumerable(value) {
