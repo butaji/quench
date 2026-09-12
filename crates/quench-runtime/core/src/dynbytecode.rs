@@ -1601,15 +1601,31 @@ impl Compiler {
                     reason: "object spread unsupported",
                 });
             };
-            let src = self.expression(&property.value)?;
-            self.emit(
-                DynOp::SetStatic {
-                    object: dst,
-                    key: prop_key(&property.key),
-                    src,
-                },
-                property.span,
-            );
+            if property.computed {
+                let key = self.expression(property.key.as_expression().ok_or(CompileGap {
+                    span: property.span,
+                    reason: "computed object key missing expression",
+                })?)?;
+                let src = self.expression(&property.value)?;
+                self.emit(
+                    DynOp::SetComputed {
+                        object: dst,
+                        key,
+                        src,
+                    },
+                    property.span,
+                );
+            } else {
+                let src = self.expression(&property.value)?;
+                self.emit(
+                    DynOp::SetStatic {
+                        object: dst,
+                        key: prop_key(&property.key),
+                        src,
+                    },
+                    property.span,
+                );
+            }
         }
         Ok(dst)
     }
