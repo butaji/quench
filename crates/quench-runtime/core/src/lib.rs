@@ -28,6 +28,8 @@ use builtins::{BuiltinId, BuiltinOwner};
 use coverage::Coverage;
 use dynbytecode::DynOpcode;
 use indexmap::IndexMap;
+use num_bigint::BigInt;
+use num_traits::ToPrimitive;
 use oxc_allocator::Allocator;
 use oxc_ast::ast::*;
 use oxc_parser::{ParseOptions, Parser};
@@ -4447,7 +4449,22 @@ impl Vm {
                 object.borrow_mut().attributes.insert(n.into(), PropertyAttributes { writable: false, enumerable: false, configurable: false });
             }
         }
-        Environment::set(g, "Math", m);
+        Environment::set(g, "Math", m.clone());
+        // Symbols are represented as property-key atoms by the current core;
+        // expose the well-known tag through the same canonical key path until
+        // the tagged Symbol value lands in the stencil representation.
+        let symbol = self.object(None);
+        self.set_prop(&symbol, "toStringTag", Value::string_value("Symbol.toStringTag"));
+        Environment::set(g, "Symbol", symbol);
+        self.set_prop(&m, "Symbol.toStringTag", Value::string_value("Math"));
+        if let Some(object) = m.as_object_ref() {
+            object.borrow_mut().attributes.insert(
+                "Symbol.toStringTag".into(),
+                PropertyAttributes { writable: false, enumerable: false, configurable: true },
+            );
+        }
+        let reflect = self.object(None);
+        Environment::set(g, "Reflect", reflect);
         let console = self.object(None);
         Environment::set(g, "console", console);
         let json = self.object(None);
@@ -4460,6 +4477,10 @@ impl Vm {
                 BuiltinOwner::Math => {
                     let math = Environment::get(g, "Math").expect("Math namespace is installed");
                     self.set_prop(&math, recipe.key, value);
+                }
+                BuiltinOwner::Reflect => {
+                    let reflect = Environment::get(g, "Reflect").expect("Reflect namespace is installed");
+                    self.set_prop(&reflect, recipe.key, value);
                 }
                 BuiltinOwner::Console => {
                     let console =
@@ -4630,6 +4651,7 @@ impl Vm {
         self.set_prop(&Value::Object(boolean_prototype), "\0primitive", Value::Bool(false));
         let string_prototype = self.builtin(BuiltinId::StringConstructor).as_function_ref().expect("String").prototype.clone();
         self.set_prop(&Value::Object(string_prototype), "\0primitive", Value::string_value(""));
+        self.install_global_aliases();
     }
 
     /// Install the small, host-provided part of Node's process object.
@@ -4714,15 +4736,22 @@ impl Vm {
         // the observable `global`/`globalThis` projection used by Node code.
         let global_this = self.object(None);
         for name in [
-            "process", "console", "Math", "Object", "Array", "String", "Number", "Date", "RegExp",
+            "process", "console", "Math", "Symbol", "Object", "Array", "String", "Number", "Date", "RegExp",
             "Error", "assert", "Buffer", "Blob", "JSON", "setTimeout", "clearTimeout",
         ] {
             if let Some(value) = Environment::get(&self.global, name) {
                 self.set_prop(&global_this, name, value);
+                if let Some(object) = global_this.as_object_ref() {
+                    object.borrow_mut().attributes.insert(
+                        name.into(),
+                        PropertyAttributes { writable: true, enumerable: false, configurable: true },
+                    );
+                }
             }
         }
         self.set_prop(&global_this, "global", global_this.clone());
         self.set_prop(&global_this, "globalThis", global_this.clone());
+        Environment::set(&self.global, "this", global_this.clone());
         Environment::set(&self.global, "global", global_this.clone());
         Environment::set(&self.global, "globalThis", global_this);
     }
@@ -5287,7 +5316,7 @@ impl Vm {
                 ))),
             }
         } else {
-            Err(JsError::Message(format!("not a function: {}", c.display())))
+            Err(JsError::Throw(type_error(self, "not a function")))
         }
     }
 
@@ -7370,13 +7399,19 @@ fn native_is_nan(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
         a.first().map(|v| v.number().is_nan()).unwrap_or(true),
     ))
 }
-fn native_math_pow(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    Ok(Value::Number(
-        a.first()
-            .unwrap_or(&Value::Undefined)
-            .number()
-            .powf(a.get(1).unwrap_or(&Value::Undefined).number()),
-    ))
+fn native_math_pow(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    let left = math_argument(vm, a, 0)?;
+    let right = math_argument(vm, a, 1)?;
+    if right == 0.0 {
+        return Ok(Value::Number(1.0));
+    }
+    if right.is_nan() || left.is_nan() {
+        return Ok(Value::Number(f64::NAN));
+    }
+    if left.abs() == 1.0 && right.is_infinite() {
+        return Ok(Value::Number(f64::NAN));
+    }
+    Ok(Value::Number(left.powf(right)))
 }
 
 // Keep the unary numeric semantics in one place. The catalog above owns the
@@ -7385,8 +7420,8 @@ fn native_math_pow(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
 macro_rules! define_math_unary {
     ($( $name:ident => $method:ident ),+ $(,)?) => {
         $(
-            fn $name(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
-                let value = args.first().map(Value::number).unwrap_or(f64::NAN);
+            fn $name(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+                let value = math_argument(vm, args, 0)?;
                 Ok(Value::Number(value.$method()))
             }
         )+
@@ -7410,7 +7445,6 @@ define_math_unary! {
     native_math_expm1 => exp_m1,
     native_math_log1p => ln_1p,
     native_math_abs => abs,
-    native_math_round => round,
     native_math_trunc => trunc,
     native_math_sin => sin,
     native_math_cos => cos,
@@ -7423,9 +7457,9 @@ define_math_unary! {
 macro_rules! define_math_binary {
     ($( $name:ident => $method:ident ),+ $(,)?) => {
         $(
-            fn $name(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
-                let left = args.first().map(Value::number).unwrap_or(f64::NAN);
-                let right = args.get(1).map(Value::number).unwrap_or(f64::NAN);
+            fn $name(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+                let left = math_argument(vm, args, 0)?;
+                let right = math_argument(vm, args, 1)?;
                 Ok(Value::Number(left.$method(right)))
             }
         )+
@@ -7436,48 +7470,209 @@ define_math_binary! {
     native_math_atan2 => atan2,
 }
 
-fn native_math_min(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    Ok(Value::Number(
-        a.iter().map(Value::number).fold(f64::INFINITY, f64::min),
-    ))
+fn math_argument(vm: &mut Vm, args: &[Value], index: usize) -> JsResult<f64> {
+    args.get(index)
+        .map(|value| to_number_with_vm(vm, value))
+        .transpose()
+        .map(|value| value.unwrap_or(f64::NAN))
 }
-fn native_math_max(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    Ok(Value::Number(
-        a.iter()
-            .map(Value::number)
-            .fold(f64::NEG_INFINITY, f64::max),
-    ))
+
+fn to_uint32_number(number: f64) -> u32 {
+    if !number.is_finite() || number == 0.0 {
+        return 0;
+    }
+    number.trunc().rem_euclid(4_294_967_296.0) as u32
 }
-fn native_math_sign(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    let n = a.first().map(Value::number).unwrap_or(f64::NAN);
+
+fn native_math_min(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let mut result = f64::INFINITY;
+    let mut saw_nan = false;
+    for index in 0..args.len() {
+        let value = math_argument(vm, args, index)?;
+        if value.is_nan() {
+            saw_nan = true;
+            continue;
+        }
+        result = if value == 0.0 && result == 0.0 {
+            if value.is_sign_negative() || result.is_sign_negative() { -0.0 } else { 0.0 }
+        } else {
+            result.min(value)
+        };
+    }
+    Ok(Value::Number(if saw_nan { f64::NAN } else { result }))
+}
+
+fn native_math_max(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let mut result = f64::NEG_INFINITY;
+    let mut saw_nan = false;
+    for index in 0..args.len() {
+        let value = math_argument(vm, args, index)?;
+        if value.is_nan() {
+            saw_nan = true;
+            continue;
+        }
+        result = if value == 0.0 && result == 0.0 {
+            if value.is_sign_positive() || result.is_sign_positive() { 0.0 } else { -0.0 }
+        } else {
+            result.max(value)
+        };
+    }
+    Ok(Value::Number(if saw_nan { f64::NAN } else { result }))
+}
+fn native_math_sign(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    let n = math_argument(vm, a, 0)?;
     Ok(Value::Number(if n.is_nan() { f64::NAN } else if n == 0.0 { n } else if n < 0.0 { -1.0 } else { 1.0 }))
 }
-fn native_math_hypot(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    Ok(Value::Number(a.iter().map(Value::number).fold(0.0, f64::hypot)))
-}
-fn native_math_clz32(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    let number = a.first().map(Value::number).unwrap_or(f64::NAN);
-    let uint32 = if !number.is_finite() {
-        0
+fn native_math_round(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let number = math_argument(vm, args, 0)?;
+    if !number.is_finite() || number == 0.0 {
+        return Ok(Value::Number(number));
+    }
+    let floor = number.floor();
+    let rounded = if number - floor < 0.5 { floor } else { floor + 1.0 };
+    Ok(Value::Number(if rounded == 0.0 && number.is_sign_negative() {
+        -0.0
     } else {
-        number.trunc() as i64 as u32
-    };
+        rounded
+    }))
+}
+fn native_math_hypot(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let mut result: f64 = 0.0;
+    for index in 0..args.len() {
+        result = result.hypot(math_argument(vm, args, index)?);
+    }
+    Ok(Value::Number(result))
+}
+fn native_math_clz32(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    let number = math_argument(vm, a, 0)?;
+    let uint32 = to_uint32_number(number);
     Ok(Value::Number(uint32.leading_zeros() as f64))
 }
-fn native_math_imul(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    let left = a.first().map(Value::number).unwrap_or(0.0) as u32;
-    let right = a.get(1).map(Value::number).unwrap_or(0.0) as u32;
+fn native_math_imul(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    let left = to_uint32_number(math_argument(vm, a, 0)?);
+    let right = to_uint32_number(math_argument(vm, a, 1)?);
     Ok(Value::Number((left.wrapping_mul(right) as i32) as f64))
 }
-fn native_math_fround(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    Ok(Value::Number((a.first().map(Value::number).unwrap_or(f64::NAN) as f32) as f64))
+fn native_math_fround(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    Ok(Value::Number((math_argument(vm, a, 0)? as f32) as f64))
 }
-fn native_math_f16round(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    // The core value representation is f64; f32 provides the nearest
-    // representable low-precision result until the half-precision lowering is
-    // shared with the numeric stencil backend.
-    Ok(Value::Number((a.first().map(Value::number).unwrap_or(f64::NAN) as f32) as f64))
+fn native_math_f16round(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    Ok(Value::Number(round_to_f16(math_argument(vm, a, 0)?)))
 }
+
+fn round_to_f16(value: f64) -> f64 {
+    if value.is_nan() || value.is_infinite() || value == 0.0 {
+        return value;
+    }
+    let sign = value.is_sign_negative();
+    let magnitude = value.abs();
+    let rounded = if magnitude < 2.0_f64.powi(-25) {
+        0.0
+    } else if magnitude < 2.0_f64.powi(-14) {
+        let units = round_ties_even(magnitude * 2.0_f64.powi(24));
+        units * 2.0_f64.powi(-24)
+    } else if magnitude >= 65520.0 {
+        f64::INFINITY
+    } else {
+        let exponent = magnitude.log2().floor() as i32;
+        let quantum = 2.0_f64.powi(exponent - 10);
+        let mut significand = round_ties_even(magnitude / quantum);
+        let mut result_exponent = exponent;
+        if significand >= 2048.0 {
+            significand = 1024.0;
+            result_exponent += 1;
+        }
+        significand * 2.0_f64.powi(result_exponent - 10)
+    };
+    if sign { -rounded } else { rounded }
+}
+
+fn round_ties_even(value: f64) -> f64 {
+    let lower = value.floor();
+    let fraction = value - lower;
+    if fraction > 0.5 || (fraction == 0.5 && (lower as u64) % 2 == 1) {
+        lower + 1.0
+    } else {
+        lower
+    }
+}
+
+fn native_math_sum_precise(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(source) = args.first().and_then(Value::as_object_ref) else {
+        return Err(JsError::Throw(type_error(vm, "value is not iterable")));
+    };
+    let values = source
+        .borrow()
+        .array
+        .as_ref()
+        .map(ArrayStorage::to_vec)
+        .ok_or_else(|| JsError::Throw(type_error(vm, "value is not iterable")))?;
+    let mut numbers = Vec::new();
+    let mut positive_infinity = false;
+    let mut negative_infinity = false;
+    for value in values {
+        let Some(number) = value.as_number() else {
+            return Err(JsError::Throw(type_error(vm, "sum value is not a number")));
+        };
+        if number == f64::INFINITY {
+            positive_infinity = true;
+            continue;
+        }
+        if number == f64::NEG_INFINITY {
+            negative_infinity = true;
+            continue;
+        }
+        if number.is_nan() {
+            return Ok(Value::Number(f64::NAN));
+        }
+        numbers.push(number);
+    }
+    if positive_infinity && negative_infinity {
+        return Ok(Value::Number(f64::NAN));
+    }
+    if positive_infinity {
+        return Ok(Value::Number(f64::INFINITY));
+    }
+    if negative_infinity {
+        return Ok(Value::Number(f64::NEG_INFINITY));
+    }
+    if numbers.is_empty() {
+        return Ok(Value::Number(-0.0));
+    }
+    if numbers.iter().all(|number| *number == 0.0) {
+        let all_negative_zero = numbers.iter().all(|number| number.is_sign_negative());
+        return Ok(Value::Number(if all_negative_zero { -0.0 } else { 0.0 }));
+    }
+    let minimum_exponent = numbers
+        .iter()
+        .map(|number| f64_components(*number).1)
+        .min()
+        .unwrap_or(0);
+    let exact = numbers.into_iter().fold(BigInt::from(0), |sum, number| {
+        let (mantissa, exponent) = f64_components(number);
+        sum + (BigInt::from(mantissa) << (exponent - minimum_exponent) as usize)
+    });
+    let bit_len = exact.magnitude().bits();
+    let reduction = bit_len.saturating_sub(1023);
+    let rounded_exact = if reduction == 0 { exact.clone() } else { &exact >> reduction };
+    let value = rounded_exact.to_f64().unwrap_or_else(|| {
+        if exact.sign() == num_bigint::Sign::Minus { f64::NEG_INFINITY } else { f64::INFINITY }
+    }) * 2.0_f64.powi(minimum_exponent + reduction as i32);
+    Ok(Value::Number(value))
+}
+
+fn f64_components(value: f64) -> (i64, i32) {
+    let bits = value.to_bits();
+    let sign = if bits >> 63 == 0 { 1 } else { -1 };
+    let exponent_bits = ((bits >> 52) & 0x7ff) as i32;
+    let fraction = bits & 0x000f_ffff_ffff_ffff;
+    if exponent_bits == 0 {
+        (sign * fraction as i64, -1074)
+    } else {
+        (sign * (((1_u64 << 52) | fraction) as i64), exponent_bits - 1023 - 52)
+    }
+}
+
 fn native_math_log(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     let value = a.first().cloned().unwrap_or(Value::Undefined);
     let value = if value.is_object() {
@@ -7488,6 +7683,76 @@ fn native_math_log(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     };
     Ok(Value::Number(value.number().ln()))
 }
+
+pub(crate) fn constructable(value: &Value) -> bool {
+    let Some(function) = value.as_function_ref() else { return false; };
+    match &function.kind {
+        FunctionKind::User { .. } | FunctionKind::Builtin(
+            BuiltinId::ObjectConstructor
+            | BuiltinId::ArrayConstructor
+            | BuiltinId::StringConstructor
+            | BuiltinId::NumberConstructor
+            | BuiltinId::BooleanConstructor
+            | BuiltinId::DateConstructor
+            | BuiltinId::RegExpConstructor
+            | BuiltinId::ErrorConstructor
+            | BuiltinId::TypeErrorConstructor
+            | BuiltinId::RangeErrorConstructor
+            | BuiltinId::URIErrorConstructor
+            | BuiltinId::SyntaxErrorConstructor
+            | BuiltinId::ReferenceErrorConstructor
+            | BuiltinId::EvalErrorConstructor
+            | BuiltinId::AggregateErrorConstructor
+            | BuiltinId::FunctionConstructor,
+        ) => true,
+        FunctionKind::Native(_) => true,
+        FunctionKind::Arrow { .. } | FunctionKind::Bound { .. } | FunctionKind::Builtin(_) => false,
+    }
+}
+
+fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
+    if !constructable(&target) {
+        return Err(JsError::Throw(type_error(vm, "target is not a constructor")));
+    }
+    let Some(argument_object) = args.get(1).and_then(Value::as_object_ref) else {
+        return Err(JsError::Throw(type_error(vm, "arguments list is not an object")));
+    };
+    let arguments = argument_object
+        .borrow()
+        .array
+        .as_ref()
+        .map(ArrayStorage::to_vec)
+        .unwrap_or_default();
+    let new_target = args.get(2).cloned().unwrap_or_else(|| target.clone());
+    if !constructable(&new_target) {
+        return Err(JsError::Throw(type_error(vm, "newTarget is not a constructor")));
+    }
+    let prototype = new_target
+        .as_function_ref()
+        .map(|function| function.prototype.clone());
+    let object = vm.object(prototype);
+    let result = vm.call(target.clone(), object.clone(), arguments)?;
+    let wrapper = target.as_function_ref().and_then(|function| match &function.kind {
+        FunctionKind::Builtin(BuiltinId::BooleanConstructor) => Some("Boolean"),
+        FunctionKind::Builtin(BuiltinId::NumberConstructor) => Some("Number"),
+        FunctionKind::Builtin(BuiltinId::StringConstructor) => Some("String"),
+        _ => None,
+    });
+    if let Some(wrapper) = wrapper {
+        vm.set_prop(&object, "\0primitive", result.clone());
+        vm.set_prop(&object, "\0wrapper", Value::string_value(wrapper));
+        if wrapper == "String" {
+            initialize_string_wrapper(vm, &object, &result);
+        }
+    }
+    Ok(if result.is_object() || result.is_function() || result.is_regexp() {
+        result
+    } else {
+        object
+    })
+}
+
 fn native_random(_: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Ok(Value::Number(0.5))
 }
