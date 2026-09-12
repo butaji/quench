@@ -5274,9 +5274,10 @@ impl Vm {
                 }
             }
             let prototype = Value::Object(prototype);
+            let iterator_key = self.well_known_symbol_key("iterator");
             self.set_prop(
                 &prototype,
-                "Symbol(Symbol.iterator)",
+                &iterator_key,
                 self.native(native_array_iterator),
             );
         }
@@ -5543,6 +5544,12 @@ impl Vm {
         self.install_global_aliases();
         let test262 = self.object(None);
         self.set_prop(&test262, "createRealm", self.native(native_create_realm));
+        // Test262's IsHTMLDDA fixture is a callable host object whose call
+        // result is not an iterator. Keep it VM-owned so Array.from and
+        // Object.is observe the same sentinel without a second host runtime.
+        let html_dda = self.native_named(native_html_dda, "IsHTMLDDA", 0);
+        self.set_prop(&html_dda, "\0html-dda", Value::Bool(true));
+        self.set_prop(&test262, "IsHTMLDDA", html_dda);
         Environment::set(&g, "$262", test262);
         if let (Some(global_this), Some(test262)) = (
             Environment::get(&g, "globalThis"),
@@ -7857,6 +7864,18 @@ impl Vm {
 }
 
 impl Vm {
+    fn well_known_symbol_key(&self, name: &str) -> String {
+        Environment::get(&self.global, "Symbol")
+            .and_then(|symbol| {
+                let value = self.get_prop(&symbol, name);
+                value
+                    .as_object_ref()
+                    .and_then(|object| object.borrow().props.get("\0symbol-key").cloned())
+            })
+            .and_then(|key| key.as_string().cloned())
+            .unwrap_or_else(|| format!("Symbol(Symbol.{name})"))
+    }
+
     fn to_property_key(&mut self, value: Value) -> JsResult<String> {
         if let Some(symbol_key) = value
             .as_object_ref()
@@ -9049,6 +9068,9 @@ fn native_string_to_string(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Val
 fn native_noop(_: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Ok(Value::Undefined)
 }
+fn native_html_dda(_: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
+    Ok(Value::Undefined)
+}
 fn native_throw_type_error(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Err(JsError::Throw(type_error(
         vm,
@@ -10196,7 +10218,8 @@ fn native_math_sum_precise(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Va
     let Some(source) = args.first().cloned() else {
         return Err(JsError::Throw(type_error(vm, "value is not iterable")));
     };
-    let iterator_method = vm.get_prop_with_accessors(&source, "Symbol(Symbol.iterator)")?;
+    let iterator_key = vm.well_known_symbol_key("iterator");
+    let iterator_method = vm.get_prop_with_accessors(&source, &iterator_key)?;
     let iterator = if iterator_method.is_function() {
         let iterator = vm.call_arguments(&iterator_method, source, &[] as &[Value])?;
         Some(iterator)
@@ -11274,7 +11297,7 @@ fn native_array_iterator(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Valu
     vm.set_prop(&iterator, "next", next);
     vm.set_prop(
         &iterator,
-        "Symbol(Symbol.iterator)",
+        &vm.well_known_symbol_key("iterator"),
         vm.native(native_iterator_self),
     );
     Ok(iterator)
@@ -11388,9 +11411,16 @@ fn native_array_from(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
         let length = values.len();
         (values, length, false)
     } else {
-        let iterator = vm.get_prop_with_accessors(&source, "Symbol(Symbol.iterator)")?;
+        let iterator_key = vm.well_known_symbol_key("iterator");
+        let iterator = vm.get_prop_with_accessors(&source, &iterator_key)?;
         if iterator.is_function() {
             let iterator = vm.call_arguments(&iterator, source.clone(), &[] as &[Value])?;
+            if iterator.is_undefined() || iterator.is_null() {
+                return Err(JsError::Throw(type_error(
+                    vm,
+                    "Array.from iterator method returned a non-object",
+                )));
+            }
             let mut values = Vec::new();
             loop {
                 let next = vm.get_prop_with_accessors(&iterator, "next")?;
