@@ -6032,9 +6032,16 @@ impl Vm {
             if let Some(array) = &mut object.array {
                 if let Some(index) = array_index_key(k) {
                     if index < array.len() {
-                        array.set(index, Value::Undefined);
+                        if array.values[index].as_number().is_some() {
+                            array.non_number_count = array.non_number_count.saturating_add(1);
+                        }
+                        Value::overwrite(&mut array.values[index], Value::Undefined);
+                        array.holes[index] = true;
                     }
                     object.props.shift_remove(k);
+                    object.props.shift_remove(&accessor_slot("get", k));
+                    object.props.shift_remove(&accessor_slot("set", k));
+                    object.attributes.remove(k);
                 }
                 return true;
             }
@@ -10548,6 +10555,96 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
     let has_set_field = vm.has_property(&descriptor, "set");
     let has_value = vm.has_property(&descriptor, "value");
     let has_writable = vm.has_property(&descriptor, "writable");
+    if let Some(current) = existing_attributes.filter(|attributes| !attributes.configurable) {
+        let requested_configurable = vm.get_prop_with_accessors(&descriptor, "configurable")?;
+        if requested_configurable.truthy() {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "cannot reconfigure a non-configurable property",
+            )));
+        }
+        let requested_enumerable = vm.get_prop_with_accessors(&descriptor, "enumerable")?;
+        if !requested_enumerable.is_undefined()
+            && requested_enumerable.truthy() != current.enumerable
+        {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "cannot change enumerability of a non-configurable property",
+            )));
+        }
+        let existing_accessor = target.as_object_ref().is_some_and(|object| {
+            let object = object.borrow();
+            object.props.contains_key(&accessor_slot("get", &key))
+                || object.props.contains_key(&accessor_slot("set", &key))
+        });
+        let requested_accessor = has_get_field || has_set_field;
+        if existing_accessor != requested_accessor {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "cannot change property kind of a non-configurable property",
+            )));
+        }
+        if existing_accessor {
+            let (old_getter, old_setter) = target
+                .as_object_ref()
+                .map(|object| {
+                    let object = object.borrow();
+                    (
+                        object.props.get(&accessor_slot("get", &key)).cloned(),
+                        object.props.get(&accessor_slot("set", &key)).cloned(),
+                    )
+                })
+                .unwrap_or((None, None));
+            let new_getter = if has_get_field {
+                vm.get_prop_with_accessors(&descriptor, "get")?
+            } else {
+                Value::Undefined
+            };
+            let new_setter = if has_set_field {
+                vm.get_prop_with_accessors(&descriptor, "set")?
+            } else {
+                Value::Undefined
+            };
+            if old_getter
+                .as_ref()
+                .is_some_and(|value| !value.same_bits(&new_getter))
+                || old_setter
+                    .as_ref()
+                    .is_some_and(|value| !value.same_bits(&new_setter))
+                || (old_getter.is_none() && !new_getter.is_undefined())
+                || (old_setter.is_none() && !new_setter.is_undefined())
+            {
+                return Err(JsError::Throw(type_error(
+                    vm,
+                    "cannot change accessor of a non-configurable property",
+                )));
+            }
+        } else if !current.writable {
+            if has_writable
+                && vm
+                    .get_prop_with_accessors(&descriptor, "writable")?
+                    .truthy()
+            {
+                return Err(JsError::Throw(type_error(
+                    vm,
+                    "cannot make a non-writable property writable",
+                )));
+            }
+            if has_value {
+                let old_value = target
+                    .as_object_ref()
+                    .and_then(|object| object.borrow().props.get(&key).cloned())
+                    .unwrap_or(Value::Undefined);
+                let new_value = vm.get_prop_with_accessors(&descriptor, "value")?;
+                if !old_value.same_bits(&new_value) {
+                    return Err(JsError::Throw(type_error(
+                        vm,
+                        "cannot change value of a non-writable property",
+                    )));
+                }
+            }
+        }
+    }
     if has_get_field || has_set_field {
         if has_value || has_writable {
             return Err(JsError::Throw(type_error(
