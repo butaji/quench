@@ -9676,6 +9676,16 @@ mod tests {
     }
 
     #[test]
+    fn constructor_static_methods_are_installed_on_the_constructor() {
+        let vm = Vm::new();
+        let number = Environment::get(&vm.global, "Number").expect("Number global");
+        assert!(vm.get_prop(&number, "isFinite").is_function());
+        assert!(vm.get_prop(&number, "parseInt").is_function());
+        let math = Environment::get(&vm.global, "Math").expect("Math global");
+        assert!(vm.get_prop(&math, "abs").is_function());
+    }
+
+    #[test]
     fn builtin_function_identity_is_scoped_to_one_vm_realm() {
         let first = Vm::new();
         let second = Vm::new();
