@@ -1731,7 +1731,7 @@ impl Environment {
     }
     fn set(e: &Env, k: &str, v: Value) {
         if let Some(location) = Self::resolve(e, k) {
-            if matches!(k, "NaN" | "Infinity") && Self::is_root_binding(e, k) {
+            if matches!(k, "undefined" | "NaN" | "Infinity") && Self::is_root_binding(e, k) {
                 return;
             }
             Self::set_at(e, location, v);
@@ -1759,7 +1759,7 @@ impl Environment {
         v: Value,
         cache: &NameIcSite,
     ) {
-        if matches!(k, "NaN" | "Infinity") && Self::is_root_binding(e, k) {
+        if matches!(k, "undefined" | "NaN" | "Infinity") && Self::is_root_binding(e, k) {
             return;
         }
         if let Some(location) = cache.get()
@@ -4771,6 +4771,13 @@ impl Vm {
         )
         .expect("well-known Symbol.toPrimitive creation");
         self.set_prop(&symbol, "toPrimitive", symbol_to_primitive);
+        let symbol_iterator = native_symbol(
+            self,
+            Value::Undefined,
+            &[Value::string_value("Symbol.iterator")],
+        )
+        .expect("well-known Symbol.iterator creation");
+        self.set_prop(&symbol, "iterator", symbol_iterator);
         Environment::set(&g, "Symbol", symbol);
         let bigint = self.native_named(native_bigint, "BigInt", 1);
         let as_int_n = self.native_named(native_bigint_as_int_n, "asIntN", 2);
@@ -4958,11 +4965,19 @@ impl Vm {
         {
             self.array_proto = Some(array.prototype.clone());
             let prototype = array.prototype;
-            let mut object = prototype.borrow_mut();
-            if object.array.is_none() {
-                object.array = Some(ArrayStorage::new());
-                object.publish_dense_access();
+            {
+                let mut object = prototype.borrow_mut();
+                if object.array.is_none() {
+                    object.array = Some(ArrayStorage::new());
+                    object.publish_dense_access();
+                }
             }
+            let prototype = Value::Object(prototype);
+            self.set_prop(
+                &prototype,
+                "Symbol(Symbol.iterator)",
+                self.native(native_array_iterator),
+            );
         }
         for (constructor, prototype) in [
             (BuiltinId::ObjectConstructor, BuiltinId::ObjectConstructor),
@@ -5310,6 +5325,7 @@ impl Vm {
         // the observable `global`/`globalThis` projection used by Node code.
         let global_this = self.object(None);
         for name in [
+            "undefined",
             "process",
             "console",
             "NaN",
@@ -5353,7 +5369,7 @@ impl Vm {
                 if let Some(object) = global_this.as_object_ref() {
                     object.borrow_mut().attributes.insert(
                         name.into(),
-                        if matches!(name, "NaN" | "Infinity") {
+                        if matches!(name, "undefined" | "NaN" | "Infinity") {
                             PropertyAttributes {
                                 writable: false,
                                 enumerable: false,
@@ -7346,7 +7362,7 @@ impl Vm {
     }
 
     fn readonly_global_binding(&self, environment: &Env, name: &str) -> bool {
-        if !matches!(name, "NaN" | "Infinity") {
+        if !matches!(name, "undefined" | "NaN" | "Infinity") {
             return false;
         }
         let mut current = Some(environment.clone());
@@ -7900,6 +7916,13 @@ fn array_values(this: &Value) -> Vec<Value> {
         .map(Value::number)
         .unwrap_or(0.0)
         .max(0.0) as usize;
+    // Array-like objects may advertise a 2^32/2^53-scale length without
+    // having dense storage.  Materializing that logical range would overflow
+    // a Rust allocation (and is never needed for the compact representation),
+    // so leave the values sparse at this boundary.
+    if length > MAX_MATERIALIZED_ARRAY_LENGTH {
+        return Vec::new();
+    }
     (0..length)
         .map(|index| {
             object
@@ -10247,6 +10270,63 @@ fn native_array(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     }
     Ok(o)
 }
+
+const ARRAY_ITERATOR_SOURCE: &str = "\0array_iterator_source";
+const ARRAY_ITERATOR_INDEX: &str = "\0array_iterator_index";
+
+fn native_array_iterator(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if !this.is_object_like() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Array.prototype[Symbol.iterator] called on incompatible receiver",
+        )));
+    }
+    let iterator = vm.object(None);
+    vm.set_prop(&iterator, ARRAY_ITERATOR_SOURCE, this);
+    vm.set_prop(&iterator, ARRAY_ITERATOR_INDEX, Value::Number(0.0));
+    let next = vm.native(native_array_iterator_next);
+    vm.set_prop(&iterator, "next", next);
+    vm.set_prop(
+        &iterator,
+        "Symbol(Symbol.iterator)",
+        vm.native(native_iterator_self),
+    );
+    Ok(iterator)
+}
+
+fn native_iterator_self(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    Ok(this)
+}
+
+fn native_array_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let source = vm.get_prop(&this, ARRAY_ITERATOR_SOURCE);
+    let index = vm
+        .get_prop(&this, ARRAY_ITERATOR_INDEX)
+        .as_number()
+        .unwrap_or(0.0) as usize;
+    let length = if source.is_object_like() {
+        let value = vm.get_prop_with_accessors(&source, "length")?;
+        to_number_with_vm(vm, &value)?.max(0.0).trunc() as usize
+    } else {
+        0
+    };
+    let result = vm.object(None);
+    if index >= length {
+        vm.set_prop(&result, "done", Value::Bool(true));
+        vm.set_prop(&result, "value", Value::Undefined);
+        return Ok(result);
+    }
+    let value = vm.get_prop_with_accessors(&source, &index.to_string())?;
+    vm.set_prop(
+        &this,
+        ARRAY_ITERATOR_INDEX,
+        Value::Number((index + 1) as f64),
+    );
+    vm.set_prop(&result, "done", Value::Bool(false));
+    vm.set_prop(&result, "value", value);
+    Ok(result)
+}
+
 fn native_array_is_array(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(Value::Bool(
         a.first()
@@ -10254,20 +10334,124 @@ fn native_array_is_array(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
             .is_some_and(|object| object.borrow().array.is_some()),
     ))
 }
-fn native_array_from(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    let Some(source) = a.first() else {
-        return Ok(vm.array());
-    };
-    if source.as_object_ref().is_some() {
-        return Ok(vm.array_from_values(array_values(source)));
+fn array_from_length(vm: &mut Vm, source: &Value) -> JsResult<usize> {
+    let length_value = vm.get_prop_with_accessors(source, "length")?;
+    let length = to_number_with_vm(vm, &length_value)?;
+    if !length.is_finite() || length <= 0.0 {
+        return Ok(0);
     }
-    let string = source.string();
-    Ok(vm.array_from_values(
-        string
+    let length = length.trunc();
+    if length > u32::MAX as f64 {
+        return Err(JsError::Throw(range_error(
+            vm,
+            "Array.from length exceeds the array index limit",
+        )));
+    }
+    Ok(length as usize)
+}
+
+fn array_from_target(
+    vm: &mut Vm,
+    target: &Value,
+    length: usize,
+    pass_length: bool,
+) -> JsResult<Value> {
+    if !constructable(target) {
+        return Ok(vm.array());
+    }
+    let prototype = vm.get_prop(target, "prototype").as_object();
+    let receiver = vm.object(prototype);
+    let arguments = pass_length
+        .then(|| vec![Value::Number(length as f64)])
+        .unwrap_or_default();
+    let result = vm.call(target.clone(), receiver.clone(), arguments)?;
+    Ok(if result.is_object_like() {
+        result
+    } else {
+        receiver
+    })
+}
+
+fn native_array_from(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
+    let source = a.first().cloned().unwrap_or(Value::Undefined);
+    if source.is_null() || source.is_undefined() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Array.from requires an array-like object",
+        )));
+    }
+    let map_fn = a.get(1).cloned().unwrap_or(Value::Undefined);
+    if !map_fn.is_undefined() && !map_fn.is_function() {
+        return Err(JsError::Throw(type_error(vm, "mapFn is not callable")));
+    }
+    let this_arg = a.get(2).cloned().unwrap_or_else(|| {
+        let strict = map_fn
+            .as_function_ref()
+            .is_some_and(|function| function.strict);
+        if strict {
+            Value::Undefined
+        } else {
+            Environment::get(&vm.global, "globalThis").unwrap_or(Value::Undefined)
+        }
+    });
+    let (values, length, pass_length) = if let Some(string) = source.as_string() {
+        let values = string
             .chars()
             .map(|ch| Value::string_value(ch.to_string()))
-            .collect(),
-    ))
+            .collect::<Vec<_>>();
+        let length = values.len();
+        (values, length, false)
+    } else {
+        let iterator = vm.get_prop_with_accessors(&source, "Symbol(Symbol.iterator)")?;
+        if iterator.is_function() {
+            let iterator = vm.call_arguments(&iterator, source.clone(), &[] as &[Value])?;
+            let mut values = Vec::new();
+            loop {
+                let next = vm.get_prop_with_accessors(&iterator, "next")?;
+                let step = vm.call_arguments(&next, iterator.clone(), &[] as &[Value])?;
+                if vm.get_prop_with_accessors(&step, "done")?.truthy() {
+                    break;
+                }
+                values.push(vm.get_prop_with_accessors(&step, "value")?);
+                if values.len() > MAX_MATERIALIZED_ARRAY_LENGTH {
+                    return Err(JsError::Throw(range_error(
+                        vm,
+                        "Array.from iterable exceeds the materialized array limit",
+                    )));
+                }
+            }
+            let length = values.len();
+            (values, length, false)
+        } else {
+            let length = array_from_length(vm, &source)?;
+            if length > MAX_MATERIALIZED_ARRAY_LENGTH {
+                return Err(JsError::Throw(range_error(
+                    vm,
+                    "Array.from length exceeds the materialized array limit",
+                )));
+            }
+            let mut values = Vec::with_capacity(length);
+            for index in 0..length {
+                values.push(vm.get_prop_with_accessors(&source, &index.to_string())?);
+            }
+            (values, length, true)
+        }
+    };
+    let target = array_from_target(vm, &this, length, pass_length)?;
+    for (index, value) in values.into_iter().enumerate() {
+        let value = if map_fn.is_function() {
+            vm.call_arguments(
+                &map_fn,
+                this_arg.clone(),
+                &[value, Value::Number(index as f64)][..],
+            )?
+        } else {
+            value
+        };
+        vm.set_prop_with_accessors(&target, &index.to_string(), value)?;
+    }
+    vm.set_prop_with_accessors(&target, "length", Value::Number(length as f64))?;
+    Ok(target)
 }
 fn native_array_of(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(vm.array_from_values(a.to_vec()))
