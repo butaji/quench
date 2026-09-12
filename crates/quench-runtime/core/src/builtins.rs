@@ -258,6 +258,8 @@ builtin_catalog! {
     DateParse, DateConstructor, "parse", native_date_parse, Generic, MAY_ALLOCATE;
     DateUTC, DateConstructor, "UTC", native_date_utc, Generic, MAY_ALLOCATE;
     RegExpConstructor, Global, "RegExp", native_regexp, Generic, MAY_ALLOCATE;
+    RegExpCompile, RegExpPrototype, "compile", native_regexp_compile, Generic, MAY_MUTATE;
+    RegExpToString, RegExpPrototype, "toString", native_regexp_to_string, Generic, MAY_ALLOCATE;
     ErrorConstructor, Global, "Error", native_error, Generic, MAY_ALLOCATE;
     TypeErrorConstructor, Global, "TypeError", native_error, Generic, MAY_ALLOCATE;
     RangeErrorConstructor, Global, "RangeError", native_error, Generic, MAY_ALLOCATE;
@@ -569,6 +571,7 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::StringLastIndexOf
         | BuiltinId::RegExpTest
         | BuiltinId::RegExpExec
+        | BuiltinId::RegExpToString
         | BuiltinId::ObjectToString
         | BuiltinId::ObjectToLocaleString
         | BuiltinId::ObjectValueOf => 0,
@@ -578,6 +581,7 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::StringLink
         | BuiltinId::Escape
         | BuiltinId::Unescape => 1,
+        BuiltinId::RegExpCompile => 2,
         BuiltinId::ObjectIsPrototypeOf
         | BuiltinId::ObjectHasOwnProperty
         | BuiltinId::ObjectPropertyIsEnumerable
