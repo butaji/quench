@@ -10202,7 +10202,44 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
 
 fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     let realm = vm.object(None);
-    let global = Environment::get(&vm.global, "globalThis").unwrap_or(Value::Undefined);
+    // Keep the registry VM-global, while giving each realm its own intrinsic
+    // constructor identity.  The compact host does not need a second
+    // execution environment for this compatibility boundary.
+    let global = vm.object(None);
+    let symbol = vm.native_named(native_symbol, "Symbol", 0);
+    let parent_symbol = Environment::get(&vm.global, "Symbol");
+    let symbol_for = vm.native_named(native_symbol_for, "for", 1);
+    let symbol_key_for = vm.native_named(native_symbol_key_for, "keyFor", 1);
+    vm.mark_nonconstructable(&symbol_for);
+    vm.mark_nonconstructable(&symbol_key_for);
+    vm.set_prop(&symbol, "for", symbol_for);
+    vm.set_prop(&symbol, "keyFor", symbol_key_for);
+    for name in [
+        "asyncDispose",
+        "asyncIterator",
+        "dispose",
+        "hasInstance",
+        "isConcatSpreadable",
+        "iterator",
+        "match",
+        "matchAll",
+        "replace",
+        "search",
+        "species",
+        "split",
+        "toPrimitive",
+        "toStringTag",
+        "unscopables",
+    ] {
+        if let Some(parent_symbol) = parent_symbol.as_ref() {
+            let value = vm.get_prop(parent_symbol, name);
+            if !value.is_undefined() {
+                vm.set_prop(&symbol, name, value);
+            }
+        }
+    }
+    vm.set_prop(&global, "Symbol", symbol);
+    vm.set_prop(&global, "globalThis", global.clone());
     vm.set_prop(&realm, "global", global);
     Ok(realm)
 }
