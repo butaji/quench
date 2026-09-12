@@ -159,7 +159,19 @@ builtin_catalog! {
     MathF16Round, Math, "f16round", native_math_f16round, UnaryNumber, PURE;
     MathSumPrecise, Math, "sumPrecise", native_math_sum_precise, Generic, MAY_ALLOCATE;
     MathRandom, Math, "random", native_random, Generic, PURE;
+    ReflectApply, Reflect, "apply", native_reflect_apply, Generic, MAY_CALL_JS;
     ReflectConstruct, Reflect, "construct", native_reflect_construct, Generic, MAY_ALLOCATE;
+    ReflectDefineProperty, Reflect, "defineProperty", native_reflect_define_property, Generic, MAY_MUTATE;
+    ReflectDeleteProperty, Reflect, "deleteProperty", native_reflect_delete_property, Generic, MAY_MUTATE;
+    ReflectGet, Reflect, "get", native_reflect_get, Generic, MAY_CALL_JS;
+    ReflectGetOwnPropertyDescriptor, Reflect, "getOwnPropertyDescriptor", native_reflect_get_own_property_descriptor, Generic, MAY_ALLOCATE;
+    ReflectGetPrototypeOf, Reflect, "getPrototypeOf", native_reflect_get_prototype_of, Generic, PURE;
+    ReflectHas, Reflect, "has", native_reflect_has, Generic, PURE;
+    ReflectIsExtensible, Reflect, "isExtensible", native_reflect_is_extensible, Generic, PURE;
+    ReflectOwnKeys, Reflect, "ownKeys", native_reflect_own_keys, Generic, MAY_ALLOCATE;
+    ReflectPreventExtensions, Reflect, "preventExtensions", native_reflect_prevent_extensions, Generic, MAY_MUTATE;
+    ReflectSet, Reflect, "set", native_reflect_set, Generic, MAY_MUTATE;
+    ReflectSetPrototypeOf, Reflect, "setPrototypeOf", native_reflect_set_prototype_of, Generic, MAY_MUTATE;
     ObjectConstructor, Global, "Object", native_object, Generic, MAY_ALLOCATE;
     ObjectGetOwnPropertyDescriptor, ObjectConstructor, "getOwnPropertyDescriptor", native_object_get_own_property_descriptor, Generic, MAY_ALLOCATE;
     ObjectGetPrototypeOf, ObjectConstructor, "getPrototypeOf", native_object_get_prototype_of, Generic, PURE;
@@ -410,7 +422,19 @@ fn builtin_length(id: BuiltinId) -> usize {
         BuiltinId::DateParse => 1,
         BuiltinId::DateUTC => 7,
         BuiltinId::DateToJSON => 1,
+        BuiltinId::ReflectApply => 3,
         BuiltinId::ReflectConstruct => 2,
+        BuiltinId::ReflectDefineProperty => 3,
+        BuiltinId::ReflectGetPrototypeOf
+        | BuiltinId::ReflectIsExtensible
+        | BuiltinId::ReflectOwnKeys
+        | BuiltinId::ReflectPreventExtensions => 1,
+        BuiltinId::ReflectDeleteProperty
+        | BuiltinId::ReflectGetOwnPropertyDescriptor
+        | BuiltinId::ReflectHas => 2,
+        BuiltinId::ReflectGet => 2,
+        BuiltinId::ReflectSet => 3,
+        BuiltinId::ReflectSetPrototypeOf => 2,
         BuiltinId::MathAtan2 => 2,
         BuiltinId::MathSumPrecise => 1,
         BuiltinId::NumberToLocaleString => 0,
