@@ -4908,6 +4908,7 @@ impl Vm {
         if let Some(object) = m.as_object_ref() {
             object.borrow_mut().builtin_prototype = true;
         }
+        self.set_prop(&m, "\0wrapper", Value::string_value("Math"));
         install_data_properties!(
             self,
             m.clone(),
