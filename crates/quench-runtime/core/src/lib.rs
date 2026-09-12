@@ -33,8 +33,8 @@ use builtins::{BuiltinId, BuiltinOwner};
 use coverage::Coverage;
 use dynbytecode::DynOpcode;
 use indexmap::IndexMap;
-use num_bigint::BigInt;
-use num_traits::ToPrimitive;
+use num_bigint::{BigInt, Sign};
+use num_traits::{FromPrimitive, ToPrimitive};
 use oxc_allocator::Allocator;
 use oxc_ast::ast::*;
 use oxc_parser::{ParseOptions, Parser};
@@ -4236,9 +4236,10 @@ fn binary_with_vm(vm: &mut Vm, op: Op, left: &Value, right: &Value) -> JsResult<
     }
     if is_bigint_marker(&left) || is_bigint_marker(&right) {
         if is_bigint_marker(&left) && is_bigint_marker(&right) {
-            let left = parse_bigint_text(left.as_string().map_or("", String::as_str)).unwrap_or(0);
-            let right =
-                parse_bigint_text(right.as_string().map_or("", String::as_str)).unwrap_or(0);
+            let left = parse_bigint_text(left.as_string().map_or("", String::as_str))
+                .unwrap_or_else(|_| BigInt::from(0));
+            let right = parse_bigint_text(right.as_string().map_or("", String::as_str))
+                .unwrap_or_else(|_| BigInt::from(0));
             return Ok(bigint_binary(op, left, right));
         }
         if matches!(op, Op::Eq | Op::Ne) {
@@ -4256,14 +4257,22 @@ fn binary_with_vm(vm: &mut Vm, op: Op, left: &Value, right: &Value) -> JsResult<
     Ok(exec_numeric_op(op, left, right))
 }
 
-fn bigint_binary(op: Op, left: i128, right: i128) -> Value {
+fn bigint_binary(op: Op, left: BigInt, right: BigInt) -> Value {
     match op {
         Op::Add => bigint_marker(left + right),
         Op::Sub => bigint_marker(left - right),
         Op::Mul => bigint_marker(left * right),
-        Op::Div => bigint_marker(if right == 0 { 0 } else { left / right }),
-        Op::Rem => bigint_marker(if right == 0 { 0 } else { left % right }),
-        Op::Pow => bigint_marker(left.pow(right.max(0) as u32)),
+        Op::Div => bigint_marker(if right == 0.into() {
+            BigInt::from(0)
+        } else {
+            left / right
+        }),
+        Op::Rem => bigint_marker(if right == 0.into() {
+            BigInt::from(0)
+        } else {
+            left % right
+        }),
+        Op::Pow => bigint_marker(left.pow(right.to_u32().unwrap_or(0))),
         Op::Eq => Value::Bool(left == right),
         Op::Ne => Value::Bool(left != right),
         Op::StrictEq => Value::Bool(left == right),
@@ -7784,6 +7793,18 @@ fn to_number_with_vm(vm: &mut Vm, value: &Value) -> JsResult<f64> {
         return Ok(text.parse().unwrap_or(f64::NAN));
     }
     if value.is_object() || value.is_function() {
+        if value.as_object_ref().is_some_and(|object| {
+            object
+                .borrow()
+                .props
+                .get("\0primitive")
+                .is_some_and(is_bigint_marker)
+        }) {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "cannot convert a BigInt value to a number",
+            )));
+        }
         if value
             .as_object_ref()
             .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
@@ -7864,11 +7885,11 @@ fn native_symbol_to_string(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Val
     Ok(Value::string_value(format!("Symbol({description})")))
 }
 
-fn bigint_marker(value: i128) -> Value {
+fn bigint_marker(value: BigInt) -> Value {
     Value::string_value(format!("\0bigint:{value}"))
 }
 
-fn bigint_value(vm: &mut Vm, value: &Value) -> JsResult<i128> {
+fn bigint_value(vm: &mut Vm, value: &Value) -> JsResult<BigInt> {
     if let Some(primitive) = value
         .as_object_ref()
         .and_then(|object| object.borrow().props.get("\0primitive").cloned())
@@ -7876,29 +7897,36 @@ fn bigint_value(vm: &mut Vm, value: &Value) -> JsResult<i128> {
         return bigint_value(vm, &primitive);
     }
     let primitive = to_primitive_for_binary(vm, value, false)?;
+    if primitive.is_undefined() || primitive.is_null() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "cannot convert value to BigInt",
+        )));
+    }
     if let Some(text) = primitive.as_string() {
         return parse_bigint_text(text)
-            .map_err(|_| JsError::Throw(range_error(vm, "cannot convert value to BigInt")));
+            .map_err(|_| JsError::Throw(syntax_error(vm, "cannot convert value to BigInt")));
     }
     if let Some(number) = primitive.as_number() {
         if number.is_finite() && number.fract() == 0.0 {
-            return Ok(number as i128);
+            return BigInt::from_f64(number)
+                .ok_or_else(|| JsError::Throw(type_error(vm, "cannot convert value to BigInt")));
         }
     }
     if let Some(boolean) = primitive.as_bool() {
-        return Ok(i128::from(boolean));
+        return Ok(BigInt::from(i128::from(boolean)));
     }
-    Err(JsError::Throw(type_error(
+    Err(JsError::Throw(range_error(
         vm,
         "cannot convert value to BigInt",
     )))
 }
 
-fn parse_bigint_text(text: &str) -> Result<i128, ()> {
+fn parse_bigint_text(text: &str) -> Result<BigInt, ()> {
     let text = text.trim();
     let text = text.strip_prefix("\0bigint:").unwrap_or(text);
     if text.is_empty() {
-        return Ok(0);
+        return Ok(BigInt::from(0));
     }
     let (negative, digits) = if let Some(rest) = text.strip_prefix('+') {
         (false, rest)
@@ -7926,7 +7954,7 @@ fn parse_bigint_text(text: &str) -> Result<i128, ()> {
             },
         },
     };
-    let magnitude = i128::from_str_radix(digits, radix).map_err(|_| ())?;
+    let magnitude = BigInt::parse_bytes(digits.as_bytes(), radix).ok_or(())?;
     Ok(if negative { -magnitude } else { magnitude })
 }
 
@@ -7942,8 +7970,23 @@ fn native_bigint(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
 }
 
 fn bigint_bits(vm: &mut Vm, value: &Value) -> JsResult<u32> {
+    if is_bigint_marker(value)
+        || value
+            .as_object_ref()
+            .and_then(|object| object.borrow().props.get("\0primitive").cloned())
+            .is_some_and(|primitive| is_bigint_marker(&primitive))
+    {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "cannot convert a BigInt value to an index",
+        )));
+    }
     let number = to_number_with_vm(vm, value)?;
-    if !number.is_finite() || number < 0.0 || number.fract() != 0.0 {
+    if !number.is_finite()
+        || number < 0.0
+        || number.fract() != 0.0
+        || number > 9_007_199_254_740_991.0
+    {
         return Err(JsError::Throw(range_error(vm, "invalid BigInt width")));
     }
     Ok((number as u64).min(u32::MAX as u64) as u32)
@@ -7953,34 +7996,35 @@ fn native_bigint_as_uint_n(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Va
     let bits = bigint_bits(vm, args.first().unwrap_or(&Value::Undefined))?;
     let value = bigint_value(vm, args.get(1).unwrap_or(&Value::Undefined))?;
     if bits == 0 {
-        return Ok(bigint_marker(0));
+        return Ok(bigint_marker(BigInt::from(0)));
     }
-    let modulus = if bits >= 127 {
-        i128::MAX
-    } else {
-        1i128 << bits
-    };
-    Ok(bigint_marker(value.rem_euclid(modulus)))
+    let modulus = BigInt::from(1u8) << bits;
+    Ok(bigint_marker(bigint_mod(&value, &modulus)))
 }
 
 fn native_bigint_as_int_n(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let bits = bigint_bits(vm, args.first().unwrap_or(&Value::Undefined))?;
     let value = bigint_value(vm, args.get(1).unwrap_or(&Value::Undefined))?;
     if bits == 0 {
-        return Ok(bigint_marker(0));
+        return Ok(bigint_marker(BigInt::from(0)));
     }
-    let modulus = if bits >= 127 {
-        i128::MAX
-    } else {
-        1i128 << bits
-    };
-    let unsigned = value.rem_euclid(modulus);
-    let signed = if bits < 127 && unsigned >= (1i128 << (bits - 1)) {
-        unsigned - modulus
+    let modulus = BigInt::from(1u8) << bits;
+    let unsigned = bigint_mod(&value, &modulus);
+    let signed = if unsigned >= (BigInt::from(1u8) << (bits - 1)) {
+        unsigned - &modulus
     } else {
         unsigned
     };
     Ok(bigint_marker(signed))
+}
+
+fn bigint_mod(value: &BigInt, modulus: &BigInt) -> BigInt {
+    let remainder = value % modulus;
+    if remainder.sign() == Sign::Minus {
+        remainder + modulus
+    } else {
+        remainder
+    }
 }
 
 fn bigint_method(vm: &Vm, key: &str) -> Value {
@@ -8020,6 +8064,9 @@ fn native_bigint_value_of(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Val
 fn native_bigint_to_string(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let value = native_bigint_value_of(vm, this, &[])?;
     let number = bigint_value(vm, &value)?;
+    if args.first().is_some_and(is_bigint_marker) {
+        return Err(JsError::Throw(type_error(vm, "radix cannot be a BigInt")));
+    }
     let radix = match args.first() {
         None => 10.0,
         Some(value) if value.is_undefined() => 10.0,
@@ -8037,19 +8084,20 @@ fn native_bigint_to_string(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
     )))
 }
 
-fn format_bigint_radix(mut value: i128, radix: u32) -> String {
-    if value == 0 {
+fn format_bigint_radix(mut value: BigInt, radix: u32) -> String {
+    if value == BigInt::from(0) {
         return "0".into();
     }
-    let negative = value < 0;
+    let negative = value.sign() == Sign::Minus;
     if negative {
         value = -value;
     }
     let digits = b"0123456789abcdefghijklmnopqrstuvwxyz";
     let mut output = Vec::new();
-    while value > 0 {
-        output.push(digits[(value % i128::from(radix)) as usize] as char);
-        value /= i128::from(radix);
+    while value > BigInt::from(0) {
+        let remainder = (&value % radix).to_usize().unwrap_or(0);
+        output.push(digits[remainder] as char);
+        value /= radix;
     }
     if negative {
         output.push('-');
