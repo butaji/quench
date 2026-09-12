@@ -6857,7 +6857,12 @@ fn native_eval(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
         .last()
         .cloned()
         .unwrap_or_else(|| PathBuf::from("<eval>"));
-    vm.run_source_text_in_environment(&path, &source, vm.global.clone())
+    match vm.run_source_text_in_environment(&path, &source, vm.global.clone()) {
+        Err(JsError::Message(message)) if message.starts_with("parse error:") => {
+            Err(JsError::Throw(syntax_error(vm, &message)))
+        }
+        result => result,
+    }
 }
 
 fn native_is_finite(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
