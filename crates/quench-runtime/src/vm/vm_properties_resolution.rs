@@ -976,6 +976,21 @@ pub(crate) fn get_property_with_receiver(
         if key == "length" || crate::arrays::array_index(key).is_some() {
             return Ok(Value::Undefined);
         }
+        if key == "description" {
+            let Value::String(symbol) = value else { unreachable!() };
+            let full = symbol.trim_end_matches('\0');
+            if crate::conversion::well_known_symbol(full).is_some() {
+                return Ok(Value::String(full.to_string()));
+            }
+            let description = symbol
+                .strip_prefix("Symbol.for.")
+                .or_else(|| symbol.strip_prefix("Symbol."))
+                .and_then(|text| text.rsplit_once('\0').map(|(description, _)| description));
+            return Ok(match description {
+                Some("\u{1}") | None => Value::Undefined,
+                Some(description) => Value::String(description.to_string()),
+            });
+        }
         let prototype = crate::vm::realm_intrinsic(crate::ops::Builtin::SymbolPrototype);
         return get_property_with_receiver(&prototype, key, receiver);
     }

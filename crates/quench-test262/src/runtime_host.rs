@@ -339,6 +339,7 @@ impl LinkedModule {
 
 thread_local! {
     static TEST_CAN_BLOCK: Cell<bool> = const { Cell::new(false) };
+    static TEST_FLOAT16: Cell<bool> = const { Cell::new(false) };
     static CURRENT_MODULE_GRAPH: Cell<Option<(*const LinkedModuleGraph, *const ModuleGraph)>> =
         const { Cell::new(None) };
     static CURRENT_MODULE_ID: Cell<Option<ModuleId>> = const { Cell::new(None) };
@@ -360,6 +361,9 @@ fn module_source_cell() -> ModuleBindingCell {
 impl Test262Host for RuntimeHost {
     fn configure(&mut self, metadata: &crate::TestMetadata) {
         TEST_CAN_BLOCK.with(|can_block| can_block.set(metadata.can_block));
+        TEST_FLOAT16.with(|enabled| {
+            enabled.set(metadata.features.iter().any(|feature| feature == "Float16Array"));
+        });
     }
 
     fn run_script(&mut self, source: &str) -> Result<(), String> {
@@ -467,12 +471,17 @@ fn fresh_context() -> VmContext {
             quench_runtime::ops::HostCapabilityKind::IsHTMLDDA,
         ],
     )
-    // The runtime stores Float16 views in the canonical Uint16 backing type
-    // with an explicit marker.  Expose the corresponding constructor in the
-    // conformance realm so tests that probe the standardized Float16 surface
-    // exercise those semantics instead of observing an absent global.
-    .with_host_value("Float16Array", float16_constructor())
     .with_can_block(TEST_CAN_BLOCK.with(Cell::get));
+    // Float16Array is exposed only to tests that declare the feature.  This
+    // preserves Test262's feature-gated global surface for the ordinary
+    // TypedArray tests while enabling the staging Float16 shell.
+    let context = TEST_FLOAT16.with(|enabled| {
+        if enabled.get() {
+            context.with_host_value("Float16Array", float16_constructor())
+        } else {
+            context
+        }
+    });
     context.with_host_capability(
         "$262",
         quench_runtime::ops::HostCapabilityRef {
@@ -496,6 +505,7 @@ fn float16_constructor() -> quench_runtime::value::Value {
         ),
         ("\0prototype".to_string(), prototype.clone()),
     ]);
+    let receiver_for_update = receiver.clone();
     let constructor = quench_runtime::host_api::bound_builtin(
         quench_runtime::ops::Builtin::Uint16Array,
         receiver,
@@ -524,11 +534,23 @@ fn float16_constructor() -> quench_runtime::value::Value {
         "\0function_prototype",
         quench_runtime::value::Value::Builtin(quench_runtime::ops::Builtin::TypedArray),
     );
-    let _ = quench_runtime::execute::set_property(
-        prototype,
+    let prototype = quench_runtime::builtins::define_own_property_public(
+        &prototype,
         "constructor",
-        constructor.clone(),
+        &[
+            ("value".to_string(), constructor.clone()),
+            ("writable".to_string(), quench_runtime::value::Value::Boolean(true)),
+            ("enumerable".to_string(), quench_runtime::value::Value::Boolean(false)),
+            ("configurable".to_string(), quench_runtime::value::Value::Boolean(true)),
+        ],
+    )
+    .unwrap_or(prototype);
+    let _ = quench_runtime::execute::set_property_in_place(
+        &receiver_for_update,
+        "\0prototype",
+        prototype.clone(),
     );
+    let constructor = quench_runtime::execute::set_property(constructor, "prototype", prototype);
     constructor
 }
 fn host_context() -> VmContext {
