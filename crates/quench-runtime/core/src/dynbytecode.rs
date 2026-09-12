@@ -1647,10 +1647,16 @@ impl Compiler {
                 );
             } else {
                 let src = self.expression(&property.value)?;
+                let key = prop_key(&property.key);
+                let key = match property.kind {
+                    PropertyKind::Get => super::accessor_slot("get", &key),
+                    PropertyKind::Set => super::accessor_slot("set", &key),
+                    _ => key,
+                };
                 self.emit(
                     DynOp::SetStatic {
                         object: dst,
-                        key: prop_key(&property.key),
+                        key,
                         src,
                     },
                     property.span,

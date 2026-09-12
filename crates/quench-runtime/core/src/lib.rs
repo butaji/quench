@@ -1347,6 +1347,17 @@ impl PropertyAttributes {
         configurable: true,
     };
 }
+
+fn accessor_slot(kind: &str, key: &str) -> String {
+    format!("\0accessor:{kind}:{key}")
+}
+
+fn accessor_key(slot: &str) -> Option<(&str, &str)> {
+    let rest = slot.strip_prefix("\0accessor:")?;
+    let (kind, key) = rest.split_once(':')?;
+    Some((kind, key))
+}
+
 impl Object {
     fn ordinary(proto: Option<ObjectHandle>) -> Self {
         Self {
@@ -4176,7 +4187,7 @@ fn to_primitive_for_binary(vm: &mut Vm, value: &Value, string_hint: bool) -> JsR
     // Symbols are represented by their stable textual key in the compact
     // object store. Consult @@toPrimitive at the boundary before ordinary
     // valueOf/toString dispatch, preserving the ECMAScript ordering.
-    let exotic = vm.get_prop(value, "Symbol(Symbol.toPrimitive)");
+    let exotic = vm.get_prop_with_accessors(value, "Symbol(Symbol.toPrimitive)")?;
     if !exotic.is_undefined() {
         if !exotic.is_function() {
             return Err(JsError::Throw(type_error(
@@ -4209,7 +4220,7 @@ fn to_primitive_for_binary(vm: &mut Vm, value: &Value, string_hint: bool) -> JsR
         ["valueOf", "toString"]
     };
     for method_name in methods {
-        let method = vm.get_prop(value, method_name);
+        let method = vm.get_prop_with_accessors(value, method_name)?;
         if !method.is_function() {
             continue;
         }
@@ -5644,6 +5655,143 @@ impl Vm {
         }
         self.get_prop(object, &key.string())
     }
+
+    pub(crate) fn find_accessor(
+        &self,
+        value: &Value,
+        key: &str,
+    ) -> Option<(Option<Value>, Option<Value>)> {
+        let mut current = value.as_object();
+        while let Some(object) = current {
+            let borrowed = object.borrow();
+            if borrowed.props.contains_key(key) {
+                return None;
+            }
+            let getter = borrowed.props.get(&accessor_slot("get", key)).cloned();
+            let setter = borrowed.props.get(&accessor_slot("set", key)).cloned();
+            if getter.is_some() || setter.is_some() {
+                return Some((getter, setter));
+            }
+            current = borrowed.prototype;
+        }
+        None
+    }
+
+    fn has_property(&self, value: &Value, key: &str) -> bool {
+        if let Some(object) = value.as_object() {
+            let borrowed = object.borrow();
+            if borrowed.props.contains_key(key)
+                || borrowed.props.contains_key(&accessor_slot("get", key))
+                || borrowed.props.contains_key(&accessor_slot("set", key))
+            {
+                return true;
+            }
+            return borrowed
+                .prototype
+                .map(|prototype| self.has_property(&Value::Object(prototype), key))
+                .unwrap_or(false);
+        }
+        value
+            .as_function_ref()
+            .is_some_and(|function| function.props.borrow().contains_key(key))
+    }
+
+    pub(crate) fn get_prop_with_accessors(&mut self, object: &Value, key: &str) -> JsResult<Value> {
+        if let Some((getter, _)) = self.find_accessor(object, key) {
+            let Some(getter) = getter else {
+                return Ok(Value::Undefined);
+            };
+            return self.call_arguments(&getter, object.clone(), &[] as &[Value]);
+        }
+        Ok(self.get_prop(object, key))
+    }
+
+    pub(crate) fn set_prop_with_accessors(
+        &mut self,
+        object: &Value,
+        key: &str,
+        value: Value,
+    ) -> JsResult<()> {
+        if let Some((_, setter)) = self.find_accessor(object, key) {
+            let Some(setter) = setter else {
+                return Err(JsError::Throw(type_error(self, "property has no setter")));
+            };
+            self.call_arguments(&setter, object.clone(), &[value][..])?;
+            return Ok(());
+        }
+        if let Some(target) = object.as_object() {
+            let borrowed = target.borrow();
+            if borrowed
+                .attributes
+                .get(key)
+                .is_some_and(|attributes| !attributes.writable)
+            {
+                return Err(JsError::Throw(type_error(
+                    self,
+                    "cannot assign to read-only property",
+                )));
+            }
+            if !borrowed.extensible && !borrowed.props.contains_key(key) {
+                return Err(JsError::Throw(type_error(self, "object is not extensible")));
+            }
+        }
+        self.set_prop(object, key, value);
+        Ok(())
+    }
+
+    fn define_accessor_slot(
+        &self,
+        object: &Value,
+        key: &str,
+        getter: Option<Value>,
+        setter: Option<Value>,
+        attributes: PropertyAttributes,
+    ) {
+        let Some(object) = object.as_object_ref() else {
+            return;
+        };
+        let mut object = object.borrow_mut();
+        object.props.shift_remove(key);
+        object.props.shift_remove(&accessor_slot("get", key));
+        object.props.shift_remove(&accessor_slot("set", key));
+        if let Some(getter) = getter {
+            let slot = accessor_slot("get", key);
+            object.props.insert(&slot, getter);
+        }
+        if let Some(setter) = setter {
+            let slot = accessor_slot("set", key);
+            object.props.insert(&slot, setter);
+        }
+        object.attributes.insert(key.to_owned(), attributes);
+    }
+
+    pub(crate) fn install_accessor_slot(&self, object: &Value, slot: &str, value: Value) {
+        let Some((kind, key)) = accessor_key(slot) else {
+            return;
+        };
+        let (mut getter, mut setter) = (None, None);
+        if let Some(target) = object.as_object_ref() {
+            let target = target.borrow();
+            getter = target.props.get(&accessor_slot("get", key)).cloned();
+            setter = target.props.get(&accessor_slot("set", key)).cloned();
+        }
+        if kind == "get" {
+            getter = Some(value);
+        } else if kind == "set" {
+            setter = Some(value);
+        }
+        self.define_accessor_slot(
+            object,
+            key,
+            getter,
+            setter,
+            PropertyAttributes {
+                writable: false,
+                enumerable: true,
+                configurable: true,
+            },
+        );
+    }
     fn function_prop(&self, f: &FunctionValue<'static>, k: &str) -> Value {
         if let Some(v) = f.props.borrow().get(k) {
             return v.clone();
@@ -7041,7 +7189,7 @@ impl Vm {
             return Ok(value.string());
         }
         for method_name in ["toString", "valueOf"] {
-            let method = self.get_prop(&value, method_name);
+            let method = self.get_prop_with_accessors(&value, method_name)?;
             if !method.is_function() {
                 continue;
             }
@@ -9858,11 +10006,11 @@ fn native_error(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
             );
         }
     }
-    if let Some(cause) = a
+    if let Some(options) = a
         .get(1)
-        .and_then(Value::as_object_ref)
-        .and_then(|object| object.borrow().props.get("cause").cloned())
+        .filter(|value| value.is_object() || value.is_function())
     {
+        let cause = vm.get_prop_with_accessors(options, "cause")?;
         vm.set_prop(&o, "cause", cause);
         if let Some(object) = o.as_object_ref() {
             object.borrow_mut().attributes.insert(
@@ -9946,6 +10094,13 @@ fn native_error_stack_set(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<
             "Error.prototype.stack setter requires a string",
         )));
     };
+    if let Some((_, setter)) = vm.find_accessor(&this, "stack") {
+        let Some(setter) = setter else {
+            return Err(JsError::Throw(type_error(vm, "property has no setter")));
+        };
+        vm.call_arguments(&setter, this, &[Value::string_value(value)][..])?;
+        return Ok(Value::Undefined);
+    }
     if let Some(object) = this.as_object_ref() {
         let object = object.borrow();
         if let Some(attributes) = object.attributes.get("stack")
@@ -9979,13 +10134,13 @@ fn native_error_to_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Val
             "Error.prototype.toString called on incompatible receiver",
         )));
     }
-    let name_value = vm.get_prop(&this, "name");
+    let name_value = vm.get_prop_with_accessors(&this, "name")?;
     let name = if name_value.is_undefined() {
         "Error".to_owned()
     } else {
         to_string_with_vm(vm, &name_value)?
     };
-    let message_value = vm.get_prop(&this, "message");
+    let message_value = vm.get_prop_with_accessors(&this, "message")?;
     let message = if message_value.is_undefined() {
         String::new()
     } else {
@@ -10070,6 +10225,36 @@ fn native_object_get_own_property_descriptor(
         vm.set_prop(&descriptor, "enumerable", Value::Bool(false));
         vm.set_prop(&descriptor, "configurable", Value::Bool(true));
         return Ok(descriptor);
+    }
+    if let Some(object) = target.as_object_ref() {
+        let object = object.borrow();
+        let getter = object.props.get(&accessor_slot("get", &key)).cloned();
+        let setter = object.props.get(&accessor_slot("set", &key)).cloned();
+        if getter.is_some() || setter.is_some() {
+            let descriptor = vm.object(None);
+            vm.set_prop(&descriptor, "get", getter.unwrap_or(Value::Undefined));
+            vm.set_prop(&descriptor, "set", setter.unwrap_or(Value::Undefined));
+            let attributes = object
+                .attributes
+                .get(&key)
+                .copied()
+                .unwrap_or(PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: false,
+                });
+            vm.set_prop(
+                &descriptor,
+                "enumerable",
+                Value::Bool(attributes.enumerable),
+            );
+            vm.set_prop(
+                &descriptor,
+                "configurable",
+                Value::Bool(attributes.configurable),
+            );
+            return Ok(descriptor);
+        }
     }
     let value = if let Some(function) = target.as_function_ref() {
         if key == "prototype" {
@@ -10169,6 +10354,56 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
                 key == "length" || array_index_key(&key).is_some_and(|index| index < array.len())
             })
     });
+    let has_get_field = descriptor
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.contains_key("get"));
+    let has_set_field = descriptor
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.contains_key("set"));
+    if has_get_field || has_set_field {
+        let getter = has_get_field.then(|| vm.get_prop(&descriptor, "get"));
+        let setter = has_set_field.then(|| vm.get_prop(&descriptor, "set"));
+        if getter
+            .as_ref()
+            .is_some_and(|value| !value.is_undefined() && !value.is_function())
+            || setter
+                .as_ref()
+                .is_some_and(|value| !value.is_undefined() && !value.is_function())
+        {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "accessor must be callable or undefined",
+            )));
+        }
+        let enumerable = vm.get_prop(&descriptor, "enumerable");
+        let configurable = vm.get_prop(&descriptor, "configurable");
+        let attributes = existing_attributes.unwrap_or(if existing_property {
+            PropertyAttributes::DEFAULT
+        } else {
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+            }
+        });
+        let attributes = PropertyAttributes {
+            writable: false,
+            enumerable: if enumerable.is_undefined() {
+                attributes.enumerable
+            } else {
+                enumerable.truthy()
+            },
+            configurable: if configurable.is_undefined() {
+                attributes.configurable
+            } else {
+                configurable.truthy()
+            },
+        };
+        let getter = getter.and_then(|value| (!value.is_undefined()).then_some(value));
+        let setter = setter.and_then(|value| (!value.is_undefined()).then_some(value));
+        vm.define_accessor_slot(target, &key, getter, setter, attributes);
+        return Ok(target.clone());
+    }
     if let Some(object) = target.as_object_ref() {
         let object = object.borrow();
         let present = object.array.as_ref().is_some_and(|array| {
@@ -10378,6 +10613,14 @@ fn native_object_get_own_property_names(vm: &mut Vm, _: Value, args: &[Value]) -
                 .cloned()
                 .map(Value::string_value),
         );
+        let accessor_keys = object
+            .props
+            .keys()
+            .filter_map(|key| accessor_key(key).map(|(_, key)| key.to_owned()))
+            .filter(|key| !keys.iter().any(|existing| existing.string() == *key))
+            .map(Value::string_value)
+            .collect::<Vec<_>>();
+        keys.extend(accessor_keys);
     } else if let Some(string) = target.as_string() {
         keys.push(Value::string_value("length"));
         keys.extend(
@@ -10516,14 +10759,8 @@ fn native_object_assign(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value
             // accessors and mutations observe the same order as ECMAScript's
             // [[OwnPropertyKeys]]/Get/Set sequence.
             for key in object_own_enumerable_keys(source) {
-                let value = vm.get_prop(source, &key);
-                if target_property_readonly(&target, &key) {
-                    return Err(JsError::Throw(type_error(
-                        vm,
-                        "cannot assign to read-only property",
-                    )));
-                }
-                vm.set_prop(&target, &key, value);
+                let value = vm.get_prop_with_accessors(source, &key)?;
+                vm.set_prop_with_accessors(&target, &key, value)?;
             }
         } else if let Some(function) = source.as_function_ref() {
             for (key, value) in function.props.borrow().iter() {
@@ -10532,13 +10769,7 @@ fn native_object_assign(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value
                 if !enumerable {
                     continue;
                 }
-                if target_property_readonly(&target, key) {
-                    return Err(JsError::Throw(type_error(
-                        vm,
-                        "cannot assign to read-only property",
-                    )));
-                }
-                vm.set_prop(&target, key, value.clone());
+                vm.set_prop_with_accessors(&target, key, value.clone())?;
             }
         } else if source.is_string() {
             for (index, value) in source
@@ -10548,13 +10779,7 @@ fn native_object_assign(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value
                 .enumerate()
             {
                 let key = index.to_string();
-                if target_property_readonly(&target, &key) {
-                    return Err(JsError::Throw(type_error(
-                        vm,
-                        "cannot assign to read-only property",
-                    )));
-                }
-                vm.set_prop(&target, &key, value);
+                vm.set_prop_with_accessors(&target, &key, value)?;
             }
         }
     }
@@ -10586,6 +10811,20 @@ fn object_own_enumerable_keys(target: &Value) -> Vec<String> {
                             .is_none_or(|attrs| attrs.enumerable)
                 })
                 .cloned(),
+        );
+        keys.extend(
+            object
+                .props
+                .keys()
+                .filter_map(|key| accessor_key(key).map(|(_, key)| key.to_owned()))
+                .filter(|key| {
+                    !keys.iter().any(|existing| existing == key)
+                        && object
+                            .attributes
+                            .get(key)
+                            .is_none_or(|attributes| attributes.enumerable)
+                })
+                .collect::<Vec<_>>(),
         );
         return keys;
     }
@@ -10620,10 +10859,10 @@ fn native_object_values(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value
             "Object.values target is nullish",
         )));
     }
-    let values = object_own_enumerable_keys(target)
-        .into_iter()
-        .map(|key| vm.get_prop(target, &key))
-        .collect();
+    let mut values = Vec::new();
+    for key in object_own_enumerable_keys(target) {
+        values.push(vm.get_prop_with_accessors(target, &key)?);
+    }
     Ok(vm.array_from_values(values))
 }
 fn native_object_entries(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
@@ -10636,13 +10875,11 @@ fn native_object_entries(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Valu
             "Object.entries target is nullish",
         )));
     }
-    let entries = object_own_enumerable_keys(target)
-        .into_iter()
-        .map(|key| {
-            let value = vm.get_prop(target, &key);
-            vm.array_from_values(vec![Value::string_value(key), value])
-        })
-        .collect();
+    let mut entries = Vec::new();
+    for key in object_own_enumerable_keys(target) {
+        let value = vm.get_prop_with_accessors(target, &key)?;
+        entries.push(vm.array_from_values(vec![Value::string_value(key), value]));
+    }
     Ok(vm.array_from_values(entries))
 }
 fn native_object_from_entries(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
@@ -10876,8 +11113,13 @@ fn native_object_has_own_property(vm: &mut Vm, this: Value, args: &[Value]) -> J
                 key == "length"
                     || array_index_key(&key).is_some_and(|index| index < array.len())
                     || object.props.contains_key(&key)
+                    || object.props.contains_key(&accessor_slot("get", &key))
+                    || object.props.contains_key(&accessor_slot("set", &key))
             } else {
-                object.props.contains_key(&key) || error_stack
+                object.props.contains_key(&key)
+                    || object.props.contains_key(&accessor_slot("get", &key))
+                    || object.props.contains_key(&accessor_slot("set", &key))
+                    || error_stack
             }
         })
     };
