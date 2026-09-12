@@ -274,7 +274,11 @@ fn typed_array_find(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let value = typed_array_receiver(receiver, "find")?;
-    find(Some(&value), arguments)
+    find_with_length(
+        Some(&value),
+        arguments,
+        crate::typed_array_ops::logical_len(&value),
+    )
 }
 
 fn typed_array_find_index(
@@ -282,7 +286,11 @@ fn typed_array_find_index(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let value = typed_array_receiver(receiver, "findIndex")?;
-    find_index(Some(&value), arguments)
+    find_index_with_length(
+        Some(&value),
+        arguments,
+        crate::typed_array_ops::logical_len(&value),
+    )
 }
 
 fn typed_array_find_last(
@@ -290,7 +298,7 @@ fn typed_array_find_last(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let value = typed_array_receiver(receiver, "findLast")?;
-    crate::builtins::array_find_last(Some(&value), arguments)
+    crate::builtins::array_find_last_typed(Some(&value), arguments)
 }
 
 fn typed_array_find_last_index(
@@ -298,7 +306,7 @@ fn typed_array_find_last_index(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let value = typed_array_receiver(receiver, "findLastIndex")?;
-    crate::builtins::array_find_last_index(Some(&value), arguments)
+    crate::builtins::array_find_last_index_typed(Some(&value), arguments)
 }
 
 fn typed_array_includes(
@@ -335,7 +343,21 @@ fn typed_array_at(
             "TypedArray.prototype.at called on out-of-bounds view",
         ));
     }
-    at(Some(&value), arguments)
+    // TypedArray.prototype.at reads the internal array length, not the
+    // receiver's observable `length` property.  Reusing Array.prototype.at
+    // would invoke a user-installed length accessor on the typed array.
+    let length = crate::typed_array_ops::logical_len(&value).unwrap_or(0);
+    let number = crate::conversion::to_number(arguments.first().unwrap_or(&Value::Undefined))?;
+    let index = if number.is_nan() { 0.0 } else { number.trunc() };
+    let position = if index < 0.0 {
+        length as f64 + index
+    } else {
+        index
+    };
+    if position < 0.0 || position >= length as f64 {
+        return Ok(Value::Undefined);
+    }
+    crate::execute::get_property_result(&value, &(position as usize).to_string())
 }
 
 pub(crate) fn typed_array_join(
@@ -348,7 +370,7 @@ pub(crate) fn typed_array_join(
             "TypedArray.prototype.join called on out-of-bounds view",
         ));
     }
-    crate::builtins::array_join(Some(&value), arguments)
+    crate::builtins::array_join_typed(Some(&value), arguments)
 }
 
 fn typed_array_to_locale_string(
@@ -361,7 +383,7 @@ fn typed_array_to_locale_string(
             "TypedArray.prototype.toLocaleString called on out-of-bounds view",
         ));
     }
-    array_to_locale_string(Some(&value), arguments)
+    crate::intl::tolocale::array_to_locale_string_typed(Some(&value), arguments)
 }
 
 fn typed_array_reverse(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
@@ -385,7 +407,7 @@ fn typed_array_reverse(receiver: Option<&Value>) -> Result<Value, crate::execute
             "TypedArray.prototype.reverse called on invalid view",
         ));
     }
-    crate::builtins::array_reverse(Some(&value))
+    crate::builtins::array_reverse_typed(Some(&value))
 }
 
 fn typed_array_reduce(
@@ -879,7 +901,10 @@ fn numeric_subtract_sort(elements: &mut [Value], compare: Option<&Value>) -> boo
     let Some(fact) = crate::function_call_fact::numeric_comparator(function) else {
         return false;
     };
-    if !elements.iter().all(|value| matches!(value, Value::Number(_))) {
+    if !elements
+        .iter()
+        .all(|value| matches!(value, Value::Number(_)))
+    {
         return false;
     }
     elements.sort_by(|left, right| {
@@ -1491,7 +1516,11 @@ pub(crate) fn reduce_values(
         ));
     }
     let receiver = crate::construct::to_object(receiver)?;
-    let length = crate::builtins::map_length(&receiver)?;
+    let length = if typed {
+        crate::typed_array_ops::logical_len(&receiver).unwrap_or(0)
+    } else {
+        crate::builtins::map_length(&receiver)?
+    };
     let Some(callback) = arguments.first() else {
         return Err(crate::vm::not_callable());
     };

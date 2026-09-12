@@ -41,7 +41,7 @@ fn select_nested_recurrence(body: CodeView<'_>) -> Option<(u16, u16, OrderedRecu
     for pc in 0..body.len() {
         let instruction = body.instruction(pc)?;
         match instruction.opcode {
-            Opcode::Slow => select_nested_loop(body, pc, &mut nested)?,
+            opcode if opcode.is_cold_marker() => select_nested_loop(body, pc, &mut nested)?,
             Opcode::LoadConst => select_undefined(body, instruction.b)?,
             Opcode::Move => select_forward(instruction, &nested, &mut forwarded)?,
             Opcode::Return => {}

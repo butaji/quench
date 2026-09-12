@@ -299,7 +299,10 @@ impl SlotStore {
     }
 
     #[inline(always)]
-    fn immediate_word_ptr(&self, index: usize) -> Option<*mut crate::tagged_value::TaggedValue> {
+    fn immediate_word_ptr(
+        &self,
+        index: usize,
+    ) -> Option<*mut crate::native_core::value_word::TaggedValue> {
         if self
             .bridges()
             .and_then(|bridges| bridges.get(index))
@@ -474,13 +477,18 @@ impl SlotRefs {
     /// the frame `Environment`, so checking the frame Rc count alone is not
     /// sufficient to establish unique ownership of its local suffix.
     fn suffix_has_external_owners(&self) -> bool {
-        self.suffix_store
-            .as_ref()
-            .is_some_and(|store| Rc::strong_count(store) > 1)
-            || self
-                .suffix_overrides
-                .iter()
-                .any(|entry| Rc::strong_count(&entry.binding.store) > 1)
+        self.suffix_store.as_ref().is_some_and(|store| {
+            Rc::strong_count(store) > 1
+                || store.bridges().is_some_and(|bridges| {
+                    bridges
+                        .iter()
+                        .flatten()
+                        .any(|cell| Rc::strong_count(cell) > 1)
+                })
+        }) || self
+            .suffix_overrides
+            .iter()
+            .any(|entry| Rc::strong_count(&entry.binding.store) > 1)
     }
 
     fn push(&mut self, binding: BindingRef) {
@@ -1009,7 +1017,7 @@ impl Environment {
     pub(crate) fn proven_word_ptr(
         &self,
         slot: u16,
-    ) -> Option<*const crate::tagged_value::TaggedValue> {
+    ) -> Option<*const crate::native_core::value_word::TaggedValue> {
         if self.is_deleted_slot(slot) || self.is_uninitialized(slot) {
             return None;
         }
@@ -1040,16 +1048,16 @@ impl Environment {
         use_object: impl FnOnce(&crate::value::ObjectData) -> R,
     ) -> Option<R> {
         let bits = self.proven_tagged_bits(slot)?;
-        let crate::tagged_value::DecodedValue::ObjectPtr(pointer) =
-            crate::tagged_value::TaggedValue::from_bits(bits).decode()
+        let crate::native_core::value_word::DecodedValue::ObjectPtr(pointer) =
+            crate::native_core::value_word::TaggedValue::from_bits(bits).decode()
         else {
             return None;
         };
-        // SAFETY: the proven slot owns this ObjectData for the closure's
-        // duration; the API does not expose the borrowed reference.
-        Some(use_object(unsafe {
-            &*(pointer as *const crate::value::ObjectData)
-        }))
+        // A slot word can outlive a structural replacement. Resolve that
+        // ownership fact at the borrow boundary so native property/call
+        // consumers receive either the current representative or a miss.
+        let object = unsafe { &*(pointer as *const crate::value::ObjectData) };
+        (!object.has_replacement()).then(|| use_object(object))
     }
 
     /// Retain the current callable represented by a proven owning slot.
@@ -1060,8 +1068,8 @@ impl Environment {
         slot: u16,
     ) -> Option<Rc<crate::value::FunctionValue>> {
         let bits = self.proven_tagged_bits(slot)?;
-        let crate::tagged_value::DecodedValue::FunctionPtr(pointer) =
-            crate::tagged_value::TaggedValue::from_bits(bits).decode()
+        let crate::native_core::value_word::DecodedValue::FunctionPtr(pointer) =
+            crate::native_core::value_word::TaggedValue::from_bits(bits).decode()
         else {
             return None;
         };
@@ -1074,8 +1082,8 @@ impl Environment {
     #[inline(always)]
     pub(crate) fn retain_proven_object(&self, slot: u16) -> Option<Rc<crate::value::ObjectData>> {
         let bits = self.proven_tagged_bits(slot)?;
-        let crate::tagged_value::DecodedValue::ObjectPtr(pointer) =
-            crate::tagged_value::TaggedValue::from_bits(bits).decode()
+        let crate::native_core::value_word::DecodedValue::ObjectPtr(pointer) =
+            crate::native_core::value_word::TaggedValue::from_bits(bits).decode()
         else {
             return None;
         };
@@ -1094,14 +1102,16 @@ impl Environment {
         use_array: impl FnOnce(&crate::value::ArrayData) -> R,
     ) -> Option<R> {
         let bits = self.proven_tagged_bits(slot)?;
-        let crate::tagged_value::DecodedValue::ArrayPtr(pointer) =
-            crate::tagged_value::TaggedValue::from_bits(bits).decode()
+        let crate::native_core::value_word::DecodedValue::ArrayPtr(pointer) =
+            crate::native_core::value_word::TaggedValue::from_bits(bits).decode()
         else {
             return None;
         };
-        Some(use_array(unsafe {
-            &*(pointer as *const crate::value::ArrayData)
-        }))
+        // A slot word can outlive a structural replacement.  Resolve that
+        // ownership fact at the borrow boundary so every native consumer
+        // receives either the current representative or an ordinary miss.
+        let array = unsafe { &*(pointer as *const crate::value::ArrayData) };
+        crate::locals::array_word_is_current(array).then(|| use_array(array))
     }
 
     /// Commit a tagged word into a proven ordinary local slot. The register
@@ -1610,7 +1620,8 @@ include!("environment_alias.rs");
 #[cfg(test)]
 mod tests {
     use super::{Environment, SlotStore};
-    use crate::value::Value;
+    use crate::value::{ArrayData, Value};
+    use std::rc::Rc;
 
     #[test]
     fn child_frames_share_captured_bindings_but_not_slot_replacements() {
@@ -1629,6 +1640,52 @@ mod tests {
         first.replace_slot(0, Value::Number(3.0));
         assert_eq!(first.get(0), Value::Number(3.0));
         assert_eq!(second.get(0), Value::Number(2.0));
+    }
+
+    #[test]
+    fn proven_array_borrow_rejects_a_superseded_representative() {
+        crate::locals::reset_replacements();
+        let environment = Environment::new();
+        let original = Rc::new(ArrayData::new(vec![Value::Number(1.0)]));
+        let mut changed = original.as_ref().clone();
+        changed.set_index(0, Value::Number(2.0));
+        let latest = Rc::new(changed);
+        environment.set(0, Value::Array(Rc::clone(&original)));
+
+        crate::locals::replace_value(
+            &Value::Array(Rc::clone(&original)),
+            &Value::Array(Rc::clone(&latest)),
+        );
+
+        assert!(environment.with_proven_array(0, |_| ()).is_none());
+        environment.set(0, Value::Array(Rc::clone(&latest)));
+        assert!(environment.with_proven_array(0, |_| ()).is_some());
+        crate::locals::reset_replacements();
+    }
+
+    #[test]
+    fn proven_object_borrow_rejects_a_superseded_representative() {
+        crate::locals::reset_replacements();
+        let environment = Environment::new();
+        let original = Rc::new(crate::value::ObjectData::new(vec![(
+            "value".into(),
+            Value::Number(1.0),
+        )]));
+        let latest = Rc::new(crate::value::ObjectData::new(vec![(
+            "value".into(),
+            Value::Number(2.0),
+        )]));
+        environment.set(0, Value::Object(Rc::clone(&original)));
+
+        crate::locals::replace_value(
+            &Value::Object(Rc::clone(&original)),
+            &Value::Object(Rc::clone(&latest)),
+        );
+
+        assert!(environment.with_proven_object(0, |_| ()).is_none());
+        environment.set(0, Value::Object(Rc::clone(&latest)));
+        assert!(environment.with_proven_object(0, |_| ()).is_some());
+        crate::locals::reset_replacements();
     }
 
     #[test]

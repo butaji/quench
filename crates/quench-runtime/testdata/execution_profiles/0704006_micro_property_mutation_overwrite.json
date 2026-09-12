@@ -1,16 +1,26 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "string", "value": "[\"array\",[[\"number\",\"2016\"],[\"array\",[[\"string\",\"x\"],[\"string\",\"y\"]]]]]" },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["property-mutation", "overwrite"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadConst",
+    "LoadConst",
+    "MakeObject",
+    "StoreLocal",
+    "LoadConst",
+    "StoreLocal",
+    "LoadConst",
+    "Loop",
+    "LoadLocal",
+    "GetN",
+    "GetN",
+    "LoadLocal",
+    "CallN",
+    "MakeArray",
+    "Return"
+  ],
+  "result": {
+    "kind": "string",
+    "value": "[\"array\",[[\"number\",\"2016\"],[\"array\",[[\"string\",\"x\"],[\"string\",\"y\"]]]]]"
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "property_mutation_overwrite_region": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

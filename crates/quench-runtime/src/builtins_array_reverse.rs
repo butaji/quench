@@ -1,13 +1,30 @@
 pub(crate) fn array_reverse(
     receiver: Option<&Value>,
 ) -> Result<Value, crate::execute::VmError> {
+    array_reverse_with_length(receiver, None)
+}
+
+pub(crate) fn array_reverse_typed(
+    receiver: Option<&Value>,
+) -> Result<Value, crate::execute::VmError> {
+    let length = receiver.and_then(crate::typed_array_ops::logical_len);
+    array_reverse_with_length(receiver, length)
+}
+
+fn array_reverse_with_length(
+    receiver: Option<&Value>,
+    internal_length: Option<usize>,
+) -> Result<Value, crate::execute::VmError> {
     let Some(receiver) = receiver else {
         return Err(crate::value::error::throw_type_error(
             "Array.prototype.reverse called on null or undefined",
         ));
     };
     let mut target = crate::construct::to_object(receiver)?;
-    let length = crate::arrays::array_like_length(&target)?;
+    let length = match internal_length {
+        Some(length) => length,
+        None => crate::arrays::array_like_length(&target)?,
+    };
     if crate::typed_array_ops::is_view(&target)
         && crate::typed_array_prototype::is_out_of_bounds(&target)
     {

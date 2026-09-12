@@ -3,7 +3,6 @@
 use std::{cell::RefCell, rc::Rc};
 
 const MACHINE_SLAB_BYTES: usize = 4096;
-const MAX_ITERATIONS: usize = 1 << 20;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ResultRepresentation {
@@ -42,13 +41,7 @@ impl CountedI32Recurrence {
     }
 
     fn range_is_bounded(self) -> bool {
-        self.counted.start >= 0
-            && self
-                .counted
-                .end
-                .checked_sub(self.counted.start)
-                .and_then(|value| usize::try_from(value).ok())
-                .is_some_and(|iterations| iterations <= MAX_ITERATIONS)
+        self.counted.start >= 0 && self.counted.end.checked_sub(self.counted.start).is_some()
     }
 
     fn result_value(self, value: i32) -> f64 {
@@ -83,10 +76,8 @@ impl CountedI32Context {
 }
 
 struct CountedI32Machine {
-    owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
     image: crate::stencil_region_layout::VerifiedRegionImage,
-    cache: crate::stencil_select::RenderedRegionCache,
-    installed: Option<crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>>,
+    physical: crate::stencil_installation::SharedPhysicalEntry<crate::stencil_arena::DispatchEntry>,
 }
 
 thread_local! {
@@ -104,42 +95,32 @@ impl CountedI32Machine {
         let values = crate::stencil_fact::PatchValues::from_site(&site);
         let image = crate::stencil_region_layout::finalize_selected_leaf(view, &values).ok()?;
         Some(Self {
-            owner: Rc::new(RefCell::new(
+            physical: crate::stencil_installation::SharedPhysicalEntry::new(Rc::new(RefCell::new(
                 crate::stencil_arena::SharedStencilSlab::new(MACHINE_SLAB_BYTES).ok()?,
-            )),
+            ))),
             image,
-            cache: crate::stencil_select::RenderedRegionCache::new(),
-            installed: None,
         })
     }
 
     fn invoke(&mut self, context: &mut CountedI32Context) -> Option<u64> {
         let entry = self.entry()?;
-        let lease = crate::stencil_arena::SharedStencilSlab::acquire_owned(&self.owner, entry).ok()?;
-        lease.invoke(|call| call((context as *mut CountedI32Context).cast())).ok()
+        self.physical
+            .invoke(entry, |call| {
+                call((context as *mut CountedI32Context).cast())
+            })
+            .ok()
     }
 
     fn entry(
         &mut self,
     ) -> Option<crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>> {
-        if let Some(entry) = self
-            .installed
-            .filter(|entry| self.owner.borrow().entry_token_is_live(*entry))
-        {
-            return Some(entry);
-        }
-        let address = self
-            .owner
-            .borrow_mut()
-            .publish_region_image_or_get(&mut self.cache, &self.image)
-            .ok()?;
-        let entry = self
-            .owner
-            .borrow()
-            .owned_numeric_i32_bitwise_loop_entry(address)
-            .ok()?;
-        self.installed = Some(entry);
-        Some(entry)
+        let image = &self.image;
+        self.physical
+            .entry(
+                |owner, cache| owner.borrow_mut().publish_region_image_or_get(cache, image),
+                |pool, address| pool.owned_numeric_i32_bitwise_loop_entry(address),
+            )
+            .ok()
     }
 }
 
@@ -188,9 +169,7 @@ fn intrinsic_global_guard(global: &crate::value::ObjectData) -> bool {
         .is_some_and(|word| word.is_builtin(crate::ops::Builtin::Math));
     let clean_override =
         crate::builtins::read_intrinsic_override(crate::ops::Builtin::Math, "imul").is_none();
-    let present = !crate::builtins::builtin_prototype_property_is_removed(
-        crate::ops::Builtin::Math,
-        "imul",
-    );
+    let present =
+        !crate::builtins::builtin_prototype_property_is_removed(crate::ops::Builtin::Math, "imul");
     intrinsic && clean_override && present
 }

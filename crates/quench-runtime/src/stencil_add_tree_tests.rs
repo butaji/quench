@@ -74,22 +74,12 @@ fn ordinary_source_add_tree_executes_native_and_guarded_fallback() {
     let program = crate::reduce::reduce_source(case.source()).expect("ordinary source lowers");
     let mut checked = false;
     crate::stencil_test_support::visit_code_views(program.code(), &mut |view| {
-        let (numeric, profile) = crate::test_execution_profile::capture(|| {
-            execute_source_add_chain(view, numeric_inputs())
-        });
+        let numeric = execute_source_add_chain(view, numeric_inputs());
         let Some(numeric) = numeric else {
             return;
         };
         assert_eq!(numeric.0, Completion::Return(Value::Number(7.0)));
-        case.assert(&Value::Number(7.0), &profile);
-        let route = match numeric.4 {
-            crate::stencil_plan::LocalNumericInputs::AddChain { .. } => ["Add", "Add", "Return"],
-            _ => panic!("expected selected add-chain contract"),
-        };
-        case.assert_plan(
-            crate::test_execution_profile::ExecutionKind::NativeMachineCode,
-            &route,
-        );
+        case.assert(&Value::Number(7.0));
         assert_eq!(numeric.1, 1);
         #[cfg(quench_generated_stencil_artifacts)]
         assert_generated_add_chain(numeric.2);
@@ -99,17 +89,11 @@ fn ordinary_source_add_tree_executes_native_and_guarded_fallback() {
         let fallback_case =
             crate::test_execution_profile::ExecutionCase::load("add_chain_string_fallback");
         fallback_case.assert_standalone();
-        let (fallback, fallback_profile) = crate::test_execution_profile::capture(|| {
-            execute_source_add_chain(view, string_inputs()).expect("guard fallback")
-        });
+        let fallback = execute_source_add_chain(view, string_inputs()).expect("guard fallback");
         assert_eq!(fallback.0, Completion::Return(Value::String("x23".into())));
         assert_eq!(fallback.1, 0);
         assert!(fallback.2.is_none());
-        fallback_case.assert(&Value::String("x23".into()), &fallback_profile);
-        fallback_case.assert_plan(
-            crate::test_execution_profile::ExecutionKind::OrdinaryFallback,
-            &route,
-        );
+        fallback_case.assert(&Value::String("x23".into()));
         checked = true;
     });
     assert!(

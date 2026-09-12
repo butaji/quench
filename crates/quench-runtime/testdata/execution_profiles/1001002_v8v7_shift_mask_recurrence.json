@@ -1,16 +1,46 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "number", "value": 543300779 },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["int32_proof", "shift_mask_xor", "loop_backedge", "uint32_materialize"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadConst",
+    "LoadConst",
+    "BitwiseOr",
+    "StoreLocal",
+    "LoadConst",
+    "LoadConst",
+    "StoreLocal",
+    "LoadConst",
+    "LoadLocal",
+    "LoadConst",
+    "LessThan",
+    "JumpIfFalse",
+    "LoadLocal",
+    "LoadConst",
+    "ShiftLeft",
+    "LoadLocal",
+    "LoadConst",
+    "ShiftRightZeroFill",
+    "BitwiseXor",
+    "LoadLocal",
+    "BitwiseXor",
+    "LoadConst",
+    "BitwiseOr",
+    "StoreLocal",
+    "Move",
+    "LoadLocal",
+    "LoadConst",
+    "NumericAdd",
+    "StoreLocal",
+    "Unary",
+    "Jump",
+    "LoadLocal",
+    "LoadConst",
+    "ShiftRightZeroFill",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": 543300779
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "i32_shift_mask_recurrence": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

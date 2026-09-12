@@ -1,16 +1,19 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "number", "value": -1155123478 },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["Binary", "Sub", "AGetI", "Binary", "Binary", "AddConst", "Jump", "Return"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "LoadConst",
+    "LoadConst",
+    "LoadConst",
+    "LoadConst",
+    "MakeArray",
+    "Call",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": -1155123478
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "dense_i32_limb_mix_loop": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

@@ -229,7 +229,9 @@ pub(crate) fn execute_set_property(
     // appending in place. Accessors, read-only inherited data, custom
     // prototypes, and existing properties retain the complete setter path.
     if let crate::value::Value::Object(object_data) = &target {
-        if crate::builtins::object_alias::plain_named_write(object_data, &key)
+        if !object_data.is_script_global_view()
+            && !object_data.is_realm_global()
+            && crate::builtins::object_alias::plain_named_write(object_data, &key)
             && object_data.hot_properties().position_rev(&key).is_none()
             && inherited_prototype_allows_plain_write(&target, &key)?
         {
@@ -444,8 +446,12 @@ pub(crate) fn execute_set_named_cached(
             }
         }
     }
+    // Once a quickening site is present, its generic shape/state table is the
+    // sole own-slot authority. Keep the packed cache only for legacy callers
+    // that have no site yet; probing both would duplicate the same layout and
+    // descriptor proof and could leave the generic site permanently cold.
     let cached = cache.get();
-    if cached & WRITE_TRANSITION_TAG == 0 {
+    if site.is_none() && cached & WRITE_TRANSITION_TAG == 0 {
         if let Some(data) = registers.read_object(usize::from(object)) {
             if !data.has_replacement()
                 && !data.has_regexp_internal_slot()
@@ -482,24 +488,26 @@ pub(crate) fn execute_set_named_cached(
         if let crate::value::Value::Object(data) = &target {
             if data.has_replacement() {
                 crate::execution_trace::event(crate::execution_trace::Event::NamedSetReplacement);
-            } else if let Some((layout, slot)) = crate::machine::unpack_named_cache(cache.get()) {
-                if let Some(word) = cached_plain_writable_slot(data, key, layout, slot)
-                    .filter(|_| assignment_source_is_direct(registers, src))
-                {
-                    crate::execution_trace::event(
-                        crate::execution_trace::Event::NamedPropertySetHit,
-                    );
-                    word.store_from_register(registers, usize::from(src))
-                        .ok_or(crate::execute::VmError::MissingReturn)?;
-                    return Ok(());
-                } else if data.semantic_layout_id() != layout {
-                    crate::execution_trace::event(
-                        crate::execution_trace::Event::NamedSetLayoutMismatch,
-                    );
-                } else {
-                    crate::execution_trace::event(
-                        crate::execution_trace::Event::NamedSetSlotNotCell,
-                    );
+            } else if site.is_none() {
+                if let Some((layout, slot)) = crate::machine::unpack_named_cache(cache.get()) {
+                    if let Some(word) = cached_plain_writable_slot(data, key, layout, slot)
+                        .filter(|_| assignment_source_is_direct(registers, src))
+                    {
+                        crate::execution_trace::event(
+                            crate::execution_trace::Event::NamedPropertySetHit,
+                        );
+                        word.store_from_register(registers, usize::from(src))
+                            .ok_or(crate::execute::VmError::MissingReturn)?;
+                        return Ok(());
+                    } else if !data.has_current_layout(layout) {
+                        crate::execution_trace::event(
+                            crate::execution_trace::Event::NamedSetLayoutMismatch,
+                        );
+                    } else {
+                        crate::execution_trace::event(
+                            crate::execution_trace::Event::NamedSetSlotNotCell,
+                        );
+                    }
                 }
             } else {
                 crate::execution_trace::event(crate::execution_trace::Event::NamedSetCacheEmpty);
@@ -556,6 +564,9 @@ fn try_named_write_transition_attributed(
 }
 
 fn cacheable_named_write_slot(data: &crate::value::ObjectData, key: &str) -> Option<u32> {
+    if data.has_replacement() {
+        return None;
+    }
     if !plain_writable_own_data(data, key) {
         return None;
     }
@@ -607,7 +618,7 @@ fn cached_plain_writable_slot<'a>(
     layout: u32,
     slot: u32,
 ) -> Option<&'a crate::register_file::SlotWord> {
-    (data.semantic_layout_id() == layout).then_some(())?;
+    data.has_current_layout(layout).then_some(())?;
     let slot = usize::try_from(slot).ok()?;
     data.hot_properties()
         .name_at(slot)
@@ -1088,7 +1099,9 @@ pub(crate) fn prevent_extensions(
     target: Option<&crate::value::Value>,
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     let Some(target) = target else {
-        return Err(crate::value::error::throw_type_error("Object expected"));
+        // Object.preventExtensions follows the same ES coercion behavior as
+        // seal/freeze for an omitted argument.
+        return Ok(crate::value::Value::Undefined);
     };
     if let crate::value::Value::BindingCell(cell) = target {
         let current = cell.load();
@@ -1243,7 +1256,7 @@ include!("properties_reflect_set.rs");
 
 #[cfg(test)]
 mod named_write_cache_tests {
-    use super::execute_set_named_cached;
+    use super::{cacheable_named_write_slot, execute_set_named_cached};
     use crate::{
         machine,
         register_file::RegisterFile,
@@ -1336,6 +1349,47 @@ mod named_write_cache_tests {
             second.hot_properties().slot_value(1),
             Some(Value::Number(20.0))
         );
+    }
+
+    #[test]
+    fn named_write_site_replaces_legacy_packed_slot_probe() {
+        let object = Rc::new(ObjectData::new(vec![(
+            "field".to_owned(),
+            Value::Number(1.0),
+        )]));
+        let layout = object.semantic_layout_id();
+        let site = std::cell::RefCell::new(crate::quickening::QuickeningSite::<4>::new(
+            crate::ir::Opcode::SetN,
+        ));
+        let cache = Cell::new(machine::pack_named_cache(layout, 0));
+        let mut registers =
+            RegisterFile::from_values(vec![Value::Object(Rc::clone(&object)), Value::Number(9.0)]);
+
+        execute_set_named_cached(&mut registers, 0, "field", 1, false, &cache, Some(&site))
+            .expect("site-backed write");
+
+        assert_eq!(site.borrow().cache_len(), 1);
+        assert_eq!(
+            object.hot_properties().slot_value(0),
+            Some(Value::Number(9.0))
+        );
+    }
+
+    #[test]
+    fn named_write_cache_installation_rejects_superseded_receiver() {
+        crate::locals::reset_replacements();
+        let receiver = Rc::new(ObjectData::new(vec![(
+            "field".to_owned(),
+            Value::Number(1.0),
+        )]));
+        let stale = Value::Object(Rc::clone(&receiver));
+        let replacement = Value::Object(Rc::new(ObjectData::new(vec![(
+            "field".to_owned(),
+            Value::Number(2.0),
+        )])));
+        crate::locals::replace_value(&stale, &replacement);
+        assert!(cacheable_named_write_slot(&receiver, "field").is_none());
+        crate::locals::reset_replacements();
     }
 
     #[test]

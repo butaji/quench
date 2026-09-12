@@ -112,9 +112,7 @@ fn validate_named_loop_test(
         && is_named_get(ops[9].opcode)
         && ops[9].b == ops[8].a
         && metadata_name(code, 9).is_some()
-        && ops[10].opcode == Opcode::Binary
-        && crate::ir::compact_binary_operator(ops[10].flags)
-            == Some(crate::ops::BinaryOp::LessThan)
+        && ops[10].opcode.binary_operator(ops[10].flags) == Some(crate::ops::BinaryOp::LessThan)
         && ops[10].b == ops[7].a
         && ops[10].c == ops[9].a
         && ops[11] == crate::ir::Instruction::jump_if_false(ops[10].a, 24))
@@ -148,10 +146,7 @@ fn validate_named_loop_body(
 }
 
 fn is_named_get(opcode: crate::ir::Opcode) -> bool {
-    matches!(
-        opcode,
-        crate::ir::Opcode::GetN | crate::ir::Opcode::GetNQuickened
-    )
+    opcode.semantic_opcode() == crate::ir::Opcode::GetN
 }
 
 fn validate_named_loop_update(
@@ -162,9 +157,7 @@ fn validate_named_loop_update(
     (ops[18].opcode == Opcode::LoadLocal
         && ops[18].b == ops[5].a
         && number_constant(code, ops[19], 1.0)
-        && ops[20].opcode == Opcode::Binary
-        && crate::ir::compact_binary_operator(ops[20].flags)
-            == Some(crate::ops::BinaryOp::NumericAdd)
+        && ops[20].opcode.binary_operator(ops[20].flags) == Some(crate::ops::BinaryOp::NumericAdd)
         && ops[20].b == ops[18].a
         && ops[20].c == ops[19].a
         && ops[21].opcode == Opcode::StoreLocal
@@ -220,9 +213,7 @@ fn validate_dataflow(
         && !add.add_const_is_left()
         && add.b == multiply.a
         && zero.opcode == Opcode::LoadConst
-        && truncate.opcode == Opcode::Binary
-        && crate::ir::compact_binary_operator(truncate.flags)
-            == Some(crate::ops::BinaryOp::BitwiseOr)
+        && truncate.opcode.binary_operator(truncate.flags) == Some(crate::ops::BinaryOp::BitwiseOr)
         && truncate.b == add.a
         && truncate.c == zero.a
         && ret.opcode == Opcode::Return

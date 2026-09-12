@@ -373,14 +373,9 @@ fn ordinary_source_own_get_executes_native_and_rejects_accessor() {
     let receiver = Rc::new(ObjectData::new(vec![("value".into(), Value::Number(19.0))]));
     assert_eq!(case.warmup(), 1);
     assert_eq!(run_get(code, &plan, pc, &receiver), Value::Number(19.0));
-    let (value, profile) =
-        crate::test_execution_profile::capture(|| run_get(code, &plan, pc, &receiver));
+    let value = run_get(code, &plan, pc, &receiver);
     assert_eq!(value, Value::Number(19.0));
-    case.assert(&value, &profile);
-    case.assert_plan(
-        crate::test_execution_profile::ExecutionKind::NativeMachineCode,
-        &[code.instruction(pc).unwrap().opcode.name(), "Return"],
-    );
+    case.assert(&value);
     let before = native_count(&plan, pc);
     assert!(before > 0, "warm own-data lookup must execute native bytes");
     assert_generated_own_entry(&plan, pc);
@@ -429,14 +424,9 @@ fn assert_accessor_fallback(
         &crate::builtins::descriptor_key("value"),
         descriptor,
     ));
-    let (value, profile) =
-        crate::test_execution_profile::capture(|| run_get(code, plan, pc, receiver));
+    let value = run_get(code, plan, pc, receiver);
     assert_eq!(value, Value::Undefined);
-    case.assert(&value, &profile);
-    case.assert_plan(
-        crate::test_execution_profile::ExecutionKind::OrdinaryFallback,
-        &[code.instruction(pc).unwrap().opcode.name(), "Return"],
-    );
+    case.assert(&value);
     assert_eq!(native_count(plan, pc), before, "accessor must reject entry");
 }
 
@@ -478,13 +468,8 @@ fn ordinary_source_property_site_degrades_from_native_to_bounded_fallback() {
     );
     let before = native_count(&plan, pc);
     assert_eq!(case.warmup(), 3);
-    let (value, profile) =
-        crate::test_execution_profile::capture(|| run_get(code, &plan, pc, &receivers[2]));
-    case.assert(&value, &profile);
-    case.assert_plan(
-        crate::test_execution_profile::ExecutionKind::OrdinaryFallback,
-        &[code.instruction(pc).unwrap().opcode.name(), "Return"],
-    );
+    let value = run_get(code, &plan, pc, &receivers[2]);
+    case.assert(&value);
     assert_eq!(native_count(&plan, pc), before, "megamorphic site degrades");
     let descriptor = Value::Object(Rc::new(ObjectData::new(vec![(
         "get".into(),

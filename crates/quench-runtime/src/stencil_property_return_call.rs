@@ -56,7 +56,11 @@ fn observed_or_layout_slot(
     field: &str,
 ) -> Option<u32> {
     let property = crate::identity::property_key_id(field);
-    if let Some(slot) = code.quickening_site(1)?.borrow_mut().probe_shape(shape, property) {
+    if let Some(slot) = code
+        .quickening_site(1)?
+        .borrow_mut()
+        .probe_shape(shape, property)
+    {
         return Some(slot);
     }
     u32::try_from(receiver.physical_slot_for_name(field)?).ok()

@@ -1,6 +1,7 @@
 use std::{
     env, fs,
-    path::PathBuf,
+    io::Write,
+    path::{Path, PathBuf},
     process::Command,
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
@@ -11,8 +12,8 @@ const __quenchBenchPrint = typeof console !== "undefined" && typeof console.log 
   ? console.log.bind(console)
   : print;
 BenchmarkSuite.RunSuites({
-  NotifyResult(name, result) { __quenchBenchPrint(name + ": " + result); },
-  NotifyError(name, error) { __quenchBenchSucceeded = false; __quenchBenchPrint(name + ": " + error); },
+  NotifyResult(name, result) { __quenchBenchPrint("__quenchBenchResult: " + name + ": " + result); },
+  NotifyError(name, error) { __quenchBenchSucceeded = false; __quenchBenchPrint("__quenchBenchError: " + name + ": " + error); },
   NotifyScore(score) {
     if (__quenchBenchSucceeded) {
       __quenchBenchPrint("----");
@@ -22,6 +23,16 @@ BenchmarkSuite.RunSuites({
 });
 "#;
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
+
+#[derive(Debug)]
+struct FixtureRecord {
+    json: String,
+    source: String,
+    valid: bool,
+    node_score: Option<f64>,
+    bun_score: Option<f64>,
+    quench_score: Option<f64>,
+}
 
 #[derive(Debug)]
 struct Sample {
@@ -48,6 +59,10 @@ fn main() {
     let mut bun = "bun".into();
     let mut quench = "target/bench-throughput/quench-node".into();
     let mut runs = 1usize;
+    let mut output: Option<PathBuf> = None;
+    if env::var_os("QUENCH_EXEC_TRACE").is_some() {
+        usage("scored runs must not inherit QUENCH_EXEC_TRACE; use a diagnostic harness");
+    }
     // Every engine invocation is bounded unless the caller explicitly opts
     // into a different positive duration.  The suite still records all
     // fixtures after a timeout so one stale workload cannot hide the rest.
@@ -71,6 +86,11 @@ fn main() {
                     .filter(|v| *v > 0)
                     .unwrap_or_else(|| usage("invalid --timeout-ms"))
             }
+            "--out" => {
+                output = Some(PathBuf::from(
+                    a.next().unwrap_or_else(|| usage("missing --out path")),
+                ))
+            }
             _ => usage("unknown argument"),
         }
     }
@@ -91,36 +111,60 @@ fn main() {
         vec![PathBuf::from(first)]
     };
     let mut all_valid = true;
+    let mut records = Vec::with_capacity(fsx.len());
     for f in fsx {
         let x = materialize(&f);
-        let n = (0..runs)
-            .map(|_| run(&node, &[], &x, timeout_ms))
-            .collect::<Vec<_>>();
-        let b = (0..runs)
-            .map(|_| run(&bun, &[], &x, timeout_ms))
-            .collect::<Vec<_>>();
-        let q = (0..runs)
-            .map(|_| run(&quench, &[], &x, timeout_ms))
-            .collect::<Vec<_>>();
+        let mut n = Vec::with_capacity(runs);
+        let mut b = Vec::with_capacity(runs);
+        let mut q = Vec::with_capacity(runs);
+        let mut fixture_complete = true;
+        for i in 0..runs {
+            // Alternate the complete engine order so thermal drift and host
+            // scheduling do not consistently favor one artifact.
+            let order = if i % 2 == 0 {
+                [(&node, 0u8), (&bun, 1), (&quench, 2)]
+            } else {
+                [(&quench, 2u8), (&bun, 1), (&node, 0)]
+            };
+            for (engine, slot) in order {
+                let sample = run(engine, &[], &x, timeout_ms);
+                match slot {
+                    0 => n.push(sample),
+                    1 => b.push(sample),
+                    _ => q.push(sample),
+                }
+            }
+            if !n.last().is_some_and(Sample::valid)
+                || !b.last().is_some_and(Sample::valid)
+                || !q.last().is_some_and(Sample::valid)
+            {
+                // A failed round cannot become valid through repetition. Keep
+                // the attempted samples, mark the fixture incomplete, and
+                // continue with the remaining fixtures.
+                fixture_complete = false;
+                break;
+            }
+        }
         let e = n.iter().zip(&b).zip(&q).all(|((n, b), q)| {
             n.status == b.status
                 && b.status == q.status
-                && n.stdout == b.stdout
-                && b.stdout == q.stdout
+                && semantic_output(&n.stdout) == semantic_output(&b.stdout)
+                && semantic_output(&b.stdout) == semantic_output(&q.stdout)
         });
         // Scores are intentionally engine-dependent; output_equal is retained
         // as evidence, while validity is based on successful, scored runs.
-        let valid = n.iter().chain(&b).chain(&q).all(Sample::valid);
+        let valid = fixture_complete && n.iter().chain(&b).chain(&q).all(Sample::valid);
         let (nw, nr) = summary(&n);
         let (bw, br) = summary(&b);
         let (qw, qr) = summary(&q);
-        println!(
-            "{{\"fixture\":{},\"runs\":{},\"valid\":{},\"output_equal\":{},\"node\":{{\"wall_ns\":{},\"peak_rss_bytes\":{},\"samples\":{}}},\"bun\":{{\"wall_ns\":{},\"peak_rss_bytes\":{},\"samples\":{}}},\"quench\":{{\"wall_ns\":{},\"peak_rss_bytes\":{},\"samples\":{}}}}}",
+        let fixture_json = format!(
+            "{{\"fixture\":{},\"runs\":{},\"valid\":{},\"output_equal\":{},\"node\":{},\"bun\":{},\"quench\":{}}}",
             json(&f.display().to_string()), runs, valid, e,
-            option_u128(nw), option_u64(nr), samples(&n),
-            option_u128(bw), option_u64(br), samples(&b),
-            option_u128(qw), option_u64(qr), samples(&q)
+            engine_report(&n, nw, nr), engine_report(&b, bw, br),
+            engine_report(&q, qw, qr)
         );
+        println!("{fixture_json}");
+        let _ = std::io::stdout().flush();
         // The materialized source is runner scratch, never benchmark state.
         // Remove it after all three bounded processes have reaped so a later
         // invocation cannot accidentally consume stale fixture contents.
@@ -128,6 +172,17 @@ fn main() {
         if !valid {
             all_valid = false;
         }
+        records.push(FixtureRecord {
+            json: fixture_json,
+            source: file_manifest(&f),
+            valid,
+            node_score: score_median(&n),
+            bun_score: score_median(&b),
+            quench_score: score_median(&q),
+        });
+    }
+    if let Some(path) = output {
+        write_report(&path, &records, runs, timeout_ms, &node, &bun, &quench);
     }
     if !all_valid {
         std::process::exit(1);
@@ -136,7 +191,7 @@ fn main() {
 
 impl Sample {
     fn valid(&self) -> bool {
-        self.status == 0 && !self.timed_out && self.score.is_some()
+        self.status == 0 && !self.timed_out && self.score.is_some_and(f64::is_finite)
     }
 }
 fn summary(samples: &[Sample]) -> (Option<u128>, Option<u64>) {
@@ -147,6 +202,39 @@ fn summary(samples: &[Sample]) -> (Option<u128>, Option<u64>) {
     (
         walls.get(walls.len() / 2).copied(),
         rss.get(rss.len() / 2).copied(),
+    )
+}
+fn score_median(samples: &[Sample]) -> Option<f64> {
+    let mut values: Vec<_> = samples
+        .iter()
+        .filter_map(|s| s.score)
+        .filter(|v| v.is_finite())
+        .collect();
+    values.sort_by(f64::total_cmp);
+    values.get(values.len() / 2).copied()
+}
+fn score_ci95(samples: &[Sample]) -> Option<f64> {
+    let values: Vec<_> = samples
+        .iter()
+        .filter_map(|s| s.score)
+        .filter(|v| v.is_finite())
+        .collect();
+    if values.len() < 2 {
+        return None;
+    }
+    let mean = values.iter().sum::<f64>() / values.len() as f64;
+    let variance =
+        values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (values.len() - 1) as f64;
+    Some(1.96 * variance.sqrt() / (values.len() as f64).sqrt())
+}
+fn engine_report(samples: &[Sample], wall: Option<u128>, rss: Option<u64>) -> String {
+    format!(
+        "{{\"wall_ns\":{},\"peak_rss_bytes\":{},\"score\":{},\"score_ci95\":{},\"samples\":{}}}",
+        option_u128(wall),
+        option_u64(rss),
+        option_f64(score_median(samples)),
+        option_f64(score_ci95(samples)),
+        samples_json(samples)
     )
 }
 fn materialize(f: &PathBuf) -> PathBuf {
@@ -223,16 +311,26 @@ fn time_metric(stderr: &str, suffix: &str) -> Option<u64> {
             .and_then(|value| value.trim().parse().ok())
     })
 }
-fn samples(v: &[Sample]) -> String {
+fn samples_json(v: &[Sample]) -> String {
     format!("[{}]",v.iter().map(|s|format!("{{\"program\":{},\"status\":{},\"timed_out\":{},\"wall_ns\":{},\"peak_rss_bytes\":{},\"score\":{},\"instructions\":{},\"cycles\":{},\"page_faults\":{},\"page_reclaims\":{},\"involuntary_context_switches\":{},\"stdout\":{},\"stderr\":{}}}",json(&s.program),s.status,s.timed_out,s.wall_ns,option_u64(s.peak_rss_bytes),option_f64(s.score),option_u64(s.instructions),option_u64(s.cycles),option_u64(s.page_faults),option_u64(s.page_reclaims),option_u64(s.involuntary_context_switches),json(&s.stdout),json(&s.stderr))).collect::<Vec<_>>().join(","))
 }
 fn json(s: &str) -> String {
-    format!(
-        "\"{}\"",
-        s.replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-    )
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0c}' => out.push_str("\\f"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 fn option_u128(value: Option<u128>) -> String {
     value.map_or_else(|| "null".into(), |v| v.to_string())
@@ -241,16 +339,164 @@ fn option_u64(value: Option<u64>) -> String {
     value.map_or_else(|| "null".into(), |v| v.to_string())
 }
 fn option_f64(value: Option<f64>) -> String {
-    value.map_or_else(|| "null".into(), |v| v.to_string())
+    value.map_or_else(
+        || "null".into(),
+        |v| {
+            if v.is_finite() {
+                v.to_string()
+            } else {
+                "null".into()
+            }
+        },
+    )
 }
 fn usage(s: &str) -> ! {
-    eprintln!("{s}\nusage: quench-bench <fixture.js>|--all [--node PATH] [--bun PATH] [--quench PATH] [--runs N] [--timeout-ms N]");
+    eprintln!("{s}\nusage: quench-bench <fixture.js>|--all [--node PATH] [--bun PATH] [--quench PATH] [--runs N] [--timeout-ms N] [--out PATH]");
     std::process::exit(2)
+}
+
+fn semantic_output(stdout: &str) -> String {
+    stdout
+        .lines()
+        .filter(|line| {
+            !line.starts_with("Score: ")
+                && *line != "----"
+                && !line.starts_with("__quenchBenchResult: ")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn write_report(
+    path: &Path,
+    records: &[FixtureRecord],
+    runs: usize,
+    timeout_ms: u64,
+    node: &str,
+    bun: &str,
+    quench: &str,
+) {
+    let base = Path::new("quench-bench/js-engine-benchmark/v8-v7/base.js");
+    let fixtures = records
+        .iter()
+        .map(|r| r.json.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    let complete = records.iter().all(|r| r.valid);
+    let aggregate = if complete {
+        format!(
+            "{{\"node\":{},\"bun\":{},\"quench\":{}}}",
+            option_f64(geometric_mean(records.iter().filter_map(|r| r.node_score))),
+            option_f64(geometric_mean(records.iter().filter_map(|r| r.bun_score))),
+            option_f64(geometric_mean(
+                records.iter().filter_map(|r| r.quench_score)
+            ))
+        )
+    } else {
+        "null".into()
+    };
+    let source_fixtures = records
+        .iter()
+        .map(|r| r.source.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    let report = format!(
+        "{{\"schema\":2,\"created_unix_ns\":{},\"runs\":{},\"timeout_ms\":{},\"git\":{},\"environment\":{},\"source\":{{\"base\":{},\"fixtures\":[{}]}},\"artifacts\":{{\"node\":{},\"bun\":{},\"quench\":{}}},\"fixtures\":[{}],\"complete\":{},\"aggregate_score\":{}}}",
+        now_ns(), runs, timeout_ms, git_identity(), environment_manifest(), file_manifest(base), source_fixtures,
+        artifact_manifest(node), artifact_manifest(bun), artifact_manifest(quench),
+        fixtures, complete, aggregate
+    );
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .unwrap_or_else(|e| panic!("refusing to overwrite evidence {}: {e}", path.display()));
+    file.write_all(report.as_bytes())
+        .expect("write evidence report");
+}
+
+fn geometric_mean(values: impl Iterator<Item = f64>) -> Option<f64> {
+    let values: Vec<_> = values.filter(|v| v.is_finite() && *v > 0.0).collect();
+    if values.is_empty() || values.len() != 8 {
+        return None;
+    }
+    Some((values.iter().map(|v| v.ln()).sum::<f64>() / values.len() as f64).exp())
+}
+
+fn now_ns() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos())
+}
+fn git_identity() -> String {
+    let rev = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    let dirty = Command::new("git")
+        .args(["status", "--porcelain"])
+        .output()
+        .ok()
+        .is_some_and(|o| !o.stdout.is_empty());
+    format!("{{\"revision\":{},\"dirty\":{}}}", json(&rev), dirty)
+}
+fn environment_manifest() -> String {
+    format!(
+        "{{\"rustc\":{},\"host\":{}}}",
+        command_text("rustc", &["-Vv"]),
+        command_text("uname", &["-a"])
+    )
+}
+fn command_text(program: &str, args: &[&str]) -> String {
+    Command::new(program)
+        .args(args)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| json(&String::from_utf8_lossy(&o.stdout)))
+        .unwrap_or_else(|| "null".into())
+}
+fn artifact_manifest(path: &str) -> String {
+    file_manifest(Path::new(path))
+}
+fn file_manifest(path: &Path) -> String {
+    let metadata = fs::metadata(path).ok();
+    let size = metadata.as_ref().map(|m| m.len());
+    let modified = metadata
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos());
+    let hash = sha256(path);
+    format!(
+        "{{\"path\":{},\"size\":{},\"modified_unix_ns\":{},\"sha256\":{}}}",
+        json(&path.display().to_string()),
+        option_u64(size),
+        option_u128(modified),
+        hash.map_or_else(|| "null".into(), |h| json(&h))
+    )
+}
+fn sha256(path: &Path) -> Option<String> {
+    let output = Command::new("shasum")
+        .args(["-a", "256"])
+        .arg(path)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .next()
+        .map(str::to_string)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{option_u128, option_u64, summary, Sample};
+    use super::{
+        geometric_mean, option_u128, option_u64, score_ci95, semantic_output, summary, Sample,
+    };
 
     #[test]
     fn summary_uses_median_measurements() {
@@ -309,5 +555,59 @@ mod tests {
         assert_eq!(option_u128(Some(42)), "42");
         assert_eq!(option_u64(None), "null");
         assert_eq!(option_u64(Some(7)), "7");
+    }
+
+    #[test]
+    fn semantic_output_ignores_engine_scores() {
+        assert_eq!(semantic_output("foo: 1\n----\nScore: 12.5\n"), "foo: 1");
+    }
+
+    #[test]
+    fn sample_validity_rejects_missing_or_unusable_scores() {
+        let sample = |status, timed_out, score| Sample {
+            program: "test".into(),
+            status,
+            timed_out,
+            wall_ns: 1,
+            peak_rss_bytes: None,
+            score,
+            instructions: None,
+            cycles: None,
+            page_faults: None,
+            page_reclaims: None,
+            involuntary_context_switches: None,
+            stdout: String::new(),
+            stderr: String::new(),
+        };
+        assert!(sample(0, false, Some(1.0)).valid());
+        assert!(!sample(1, false, Some(1.0)).valid());
+        assert!(!sample(0, true, Some(1.0)).valid());
+        assert!(!sample(0, false, None).valid());
+        assert!(!sample(0, false, Some(f64::NAN)).valid());
+    }
+
+    #[test]
+    fn confidence_and_geometric_mean_require_real_samples() {
+        let samples = (1..=3)
+            .map(|score| Sample {
+                program: "test".into(),
+                status: 0,
+                timed_out: false,
+                wall_ns: 1,
+                peak_rss_bytes: None,
+                score: Some(score as f64),
+                instructions: None,
+                cycles: None,
+                page_faults: None,
+                page_reclaims: None,
+                involuntary_context_switches: None,
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+            .collect::<Vec<_>>();
+        assert!(score_ci95(&samples).is_some_and(|v| v > 0.0));
+        assert!(geometric_mean(std::iter::repeat(2.0).take(8))
+            .is_some_and(|v| (v - 2.0).abs() < f64::EPSILON));
+        assert!(geometric_mean(std::iter::repeat(2.0).take(7)).is_none());
     }
 }

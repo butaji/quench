@@ -1,16 +1,16 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "string", "value": "[\"number\",\"577\"]" },
-  "plan": {
-    "execution_kind": "portable_recipe",
-    "operation_route": ["builtins", "string_case"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "GetN",
+    "CallN",
+    "GetN",
+    "Return"
+  ],
+  "result": {
+    "kind": "string",
+    "value": "[\"number\",\"577\"]"
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "builtins_string_case_region": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

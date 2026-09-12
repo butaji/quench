@@ -244,12 +244,12 @@ impl RecipeBuilder {
         pc: usize,
         instruction: crate::ir::Instruction,
     ) -> Option<()> {
-        let recipe = match instruction.opcode {
+        let recipe = match instruction.opcode.semantic_opcode() {
             Opcode::LoadLocal | Opcode::LoadLocalChecked => ValueRecipe::Local(instruction.b),
             Opcode::Move if instruction.flags == 0 => {
                 ValueRecipe::Alias(self.current(instruction.b)?)
             }
-            Opcode::GetN | Opcode::GetNQuickened if instruction.flags == 0 => {
+            Opcode::GetN if instruction.flags == 0 => {
                 code.metadata_at(pc)?.name.as_deref()?;
                 self.properties = self.properties.checked_add(1)?;
                 ValueRecipe::Property {
@@ -423,14 +423,9 @@ mod tests {
             execute(code, &plan, pc, slots, values.clone()),
             Value::Number(32.0)
         );
-        let (result, profile) =
-            crate::test_execution_profile::capture(|| execute(code, &plan, pc, slots, values));
-        case.assert(&result, &profile);
+        let result = execute(code, &plan, pc, slots, values);
+        case.assert(&result);
         let fused = plan.property_numeric_at(pc).unwrap().borrow();
-        case.assert_plan(
-            crate::test_execution_profile::ExecutionKind::PortableRecipe,
-            &fused.selection().operation_route(),
-        );
         assert_eq!(fused.selection().property_count(), 6);
         assert_eq!(
             fused.selection().operation_route(),
@@ -469,25 +464,19 @@ mod tests {
         case.assert_standalone();
         let (body, plan, pc, slots) = source_plan(case.source());
         let code = body.code().unwrap();
-        let (value, profile) = crate::test_execution_profile::capture(|| {
-            execute(
-                code,
-                &plan,
-                pc,
-                slots,
-                [
-                    Value::String("not an object".into()),
-                    object([4.0, 5.0, 6.0]),
-                ],
-            )
-        });
-        assert!(matches!(&value, Value::Number(number) if number.is_nan()));
-        case.assert(&value, &profile);
-        let selection = plan.property_numeric_at(pc).unwrap().borrow().selection();
-        case.assert_plan(
-            crate::test_execution_profile::ExecutionKind::OrdinaryFallback,
-            &selection.operation_route(),
+        let value = execute(
+            code,
+            &plan,
+            pc,
+            slots,
+            [
+                Value::String("not an object".into()),
+                object([4.0, 5.0, 6.0]),
+            ],
         );
+        assert!(matches!(&value, Value::Number(number) if number.is_nan()));
+        case.assert(&value);
+        let selection = plan.property_numeric_at(pc).unwrap().borrow().selection();
         assert_eq!(
             plan.property_numeric_at(pc).unwrap().borrow().entry_count(),
             0

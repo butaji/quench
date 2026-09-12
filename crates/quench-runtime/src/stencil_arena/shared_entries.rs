@@ -174,7 +174,7 @@ impl SharedStencilSlab {
     typed_owned_entry!(
         owned_tagged_word_entry,
         tagged_word_entry,
-        extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64,
+        extern "C" fn(*const crate::native_core::value_word::TaggedValue) -> u64,
         crate::stencil_select::RegionAbi::TaggedWord
     );
     typed_owned_entry!(
@@ -412,7 +412,8 @@ impl SharedStencilSlab {
     pub(crate) fn tagged_word_entry(
         &self,
         address: usize,
-    ) -> Result<extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64, ArenaError> {
+    ) -> Result<extern "C" fn(*const crate::native_core::value_word::TaggedValue) -> u64, ArenaError>
+    {
         self.slab_for(address)
             .ok_or(ArenaError::ProtectionFailed)?
             .tagged_word_entry(address)

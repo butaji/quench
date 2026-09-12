@@ -1,16 +1,23 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "number", "value": 61 },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["AGetI", "AGetI", "Add", "ASetI", "AddConst", "Jump", "Return"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "LoadConst",
+    "LoadConst",
+    "LoadConst",
+    "MakeArray",
+    "LoadConst",
+    "LoadConst",
+    "LoadConst",
+    "MakeArray",
+    "LoadLocal",
+    "Call",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": 61
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "dense_elementwise_add_loop": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

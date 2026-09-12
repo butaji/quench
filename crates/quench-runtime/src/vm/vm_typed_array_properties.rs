@@ -1,4 +1,24 @@
 fn typed_array_method(receiver: Value, prototype: Builtin, key: &str) -> Value {
+    // `constructor` is a data property on each concrete typed-array
+    // prototype. It is not a callable prototype method and must never be
+    // receiver-bound (identity is observable through TypedArray species).
+    if key == "constructor" {
+        let constructor = match prototype {
+            Builtin::Float64ArrayPrototype => Builtin::Float64Array,
+            Builtin::Float32ArrayPrototype => Builtin::Float32Array,
+            Builtin::Int8ArrayPrototype => Builtin::Int8Array,
+            Builtin::Int16ArrayPrototype => Builtin::Int16Array,
+            Builtin::Uint8ArrayPrototype => Builtin::Uint8Array,
+            Builtin::Uint8ClampedArrayPrototype => Builtin::Uint8ClampedArray,
+            Builtin::Uint16ArrayPrototype => Builtin::Uint16Array,
+            Builtin::Uint32ArrayPrototype => Builtin::Uint32Array,
+            Builtin::Int32ArrayPrototype => Builtin::Int32Array,
+            Builtin::BigInt64ArrayPrototype => Builtin::BigInt64Array,
+            Builtin::BigUint64ArrayPrototype => Builtin::BigUint64Array,
+            _ => return Value::Undefined,
+        };
+        return crate::vm::realm_intrinsic(constructor);
+    }
     crate::vm::bind_receiver_property(crate::builtins::property(prototype, key), &receiver)
 }
 
@@ -189,7 +209,13 @@ fn int32_array_property(view: &crate::value::Int32ArrayData, key: &str) -> Value
     }
 }
 fn uint16_array_property(view: &crate::value::Uint16ArrayData, key: &str) -> Value {
-    let float16 = view.meta.property("\0float16_array").is_some();
+    let float16 = view.meta.property("\0float16_array").is_some()
+        || view.meta.prototype().is_some_and(|prototype| {
+            matches!(
+                crate::execute::get_property(&prototype, "\0float16_constructor"),
+                Value::Boolean(true)
+            )
+        });
     if let Some(value) = typed_index(key, |index| {
         view.get(index).map(|bits| {
             if float16 {
@@ -268,9 +294,15 @@ fn uint8_array_property(view: &crate::value::Uint8ArrayData, key: &str) -> Value
             // Buffer.prototype stand-in) participates in the chain
             // before the built-in typed-array prototype.
             if let Some(prototype) = view.meta.prototype() {
-                let inherited = crate::vm::get_property(&prototype, key);
-                if !matches!(inherited, Value::Undefined) {
-                    return crate::vm::bind_receiver_property(inherited, &Value::Uint8Array(std::rc::Rc::new(view.clone())));
+                let default = crate::vm::realm_intrinsic(Builtin::Uint8ArrayPrototype);
+                if !crate::builtins::same_value(Some(&prototype), Some(&default)) {
+                    let inherited = crate::vm::get_property(&prototype, key);
+                    if !matches!(inherited, Value::Undefined) {
+                        return crate::vm::bind_receiver_property(
+                            inherited,
+                            &Value::Uint8Array(std::rc::Rc::new(view.clone())),
+                        );
+                    }
                 }
             }
             typed_array_method(Value::Uint8Array(std::rc::Rc::new(view.clone())), Builtin::Uint8ArrayPrototype, key)

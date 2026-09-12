@@ -22,7 +22,8 @@ fn cacheable_virtual_builtin_method(
     key: &str,
     value: &crate::value::Value,
 ) -> Option<VirtualBuiltinMethodCache> {
-    if key != "exec"
+    if object.has_replacement()
+        || key != "exec"
         || !matches!(value, crate::value::Value::Builtin(crate::ops::Builtin::RegExpExec))
         || object.physical_slot_for_name(key).is_some()
         || object
@@ -45,11 +46,12 @@ fn cacheable_virtual_builtin_method(
 }
 
 fn virtual_builtin_cache_hit(
-    _object: &crate::value::ObjectData,
+    object: &crate::value::ObjectData,
     layout: u32,
     cache: u64,
     site: usize,
 ) -> Option<NamedCachedPayload> {
+    object.has_current_layout(layout).then_some(())?;
     let index = virtual_builtin_cache_index(cache)?;
     VIRTUAL_BUILTIN_METHOD_CACHES.with(|caches| {
         let entry = caches.borrow().get(index).and_then(Clone::clone)?;

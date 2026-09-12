@@ -1,9 +1,8 @@
-//! Exact-i32 two-state masked recurrences over bounded counted loops.
+//! Exact-i32 two-state masked recurrences over counted loops.
 
 use std::{cell::RefCell, rc::Rc};
 
 const MACHINE_SLAB_BYTES: usize = 4096;
-const MAX_ITERATIONS: usize = 1 << 20;
 
 #[derive(Clone, Copy, Debug)]
 struct TwoState {
@@ -37,8 +36,8 @@ impl FunctionTwoState {
 }
 
 fn validate_range(counted: crate::stencil_counted_loop::CountedLoop) -> Option<()> {
-    let iterations = usize::try_from(counted.end.checked_sub(counted.start)?).ok()?;
-    (counted.start >= 0 && iterations <= MAX_ITERATIONS).then_some(())
+    counted.end.checked_sub(counted.start)?;
+    (counted.start >= 0).then_some(())
 }
 
 #[repr(C)]
@@ -67,10 +66,8 @@ impl TwoStateContext {
 }
 
 struct TwoStateMachine {
-    owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
     image: crate::stencil_region_layout::VerifiedRegionImage,
-    cache: crate::stencil_select::RenderedRegionCache,
-    installed: Option<crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>>,
+    physical: crate::stencil_installation::SharedPhysicalEntry<crate::stencil_arena::DispatchEntry>,
 }
 
 thread_local! {
@@ -88,38 +85,30 @@ impl TwoStateMachine {
         let values = crate::stencil_fact::PatchValues::from_site(&site);
         let image = crate::stencil_region_layout::finalize_selected_leaf(view, &values).ok()?;
         Some(Self {
-            owner: Rc::new(RefCell::new(
+            physical: crate::stencil_installation::SharedPhysicalEntry::new(Rc::new(RefCell::new(
                 crate::stencil_arena::SharedStencilSlab::new(MACHINE_SLAB_BYTES).ok()?,
-            )),
+            ))),
             image,
-            cache: crate::stencil_select::RenderedRegionCache::new(),
-            installed: None,
         })
     }
 
     fn invoke(&mut self, context: &mut TwoStateContext) -> Option<u64> {
         let entry = self.entry()?;
-        let lease = crate::stencil_arena::SharedStencilSlab::acquire_owned(&self.owner, entry).ok()?;
-        lease.invoke(|call| call((context as *mut TwoStateContext).cast())).ok()
+        self.physical
+            .invoke(entry, |call| call((context as *mut TwoStateContext).cast()))
+            .ok()
     }
 
     fn entry(
         &mut self,
     ) -> Option<crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>> {
-        if let Some(entry) = self
-            .installed
-            .filter(|entry| self.owner.borrow().entry_token_is_live(*entry))
-        {
-            return Some(entry);
-        }
-        let address = self
-            .owner
-            .borrow_mut()
-            .publish_region_image_or_get(&mut self.cache, &self.image)
-            .ok()?;
-        let entry = self.owner.borrow().owned_two_state_i32_loop_entry(address).ok()?;
-        self.installed = Some(entry);
-        Some(entry)
+        let image = &self.image;
+        self.physical
+            .entry(
+                |owner, cache| owner.borrow_mut().publish_region_image_or_get(cache, image),
+                |pool, address| pool.owned_two_state_i32_loop_entry(address),
+            )
+            .ok()
     }
 }
 
@@ -131,7 +120,10 @@ fn execute_machine(
     if machine.is_none() {
         *machine = TwoStateMachine::new();
     }
-    let Some(status) = machine.as_mut().and_then(|machine| machine.invoke(&mut context)) else {
+    let Some(status) = machine
+        .as_mut()
+        .and_then(|machine| machine.invoke(&mut context))
+    else {
         return Ok(None);
     };
     drop(machine);
@@ -139,7 +131,10 @@ fn execute_machine(
         crate::vm::current_context_or_default().clear_interrupt();
         finish_portable(&mut context);
     }
-    if matches!(status, crate::vm::NATIVE_DISPATCH_OK | crate::vm::NATIVE_DISPATCH_INTERRUPT) {
+    if matches!(
+        status,
+        crate::vm::NATIVE_DISPATCH_OK | crate::vm::NATIVE_DISPATCH_INTERRUPT
+    ) {
         return Ok(Some(context.second));
     }
     Err(crate::execute::VmError::EvalError(

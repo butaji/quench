@@ -6,16 +6,45 @@ use std::{cell::RefCell, rc::Rc};
 
 const REGION_LEN: usize = 39;
 const OPERATIONS: [Opcode; REGION_LEN] = [
-    Opcode::LoadLocal, Opcode::LoadLocal, Opcode::Binary, Opcode::LoadConst,
-    Opcode::JumpIfFalse, Opcode::LoadConst, Opcode::Return, Opcode::LoadConst,
-    Opcode::Jump, Opcode::LoadLocal, Opcode::LoadConst, Opcode::Binary,
-    Opcode::JumpIfFalse, Opcode::LoadConst, Opcode::LoadLocal, Opcode::Div,
-    Opcode::LoadConst, Opcode::Unary, Opcode::Binary, Opcode::Move, Opcode::Jump,
-    Opcode::Move, Opcode::LoadConst, Opcode::JumpIfFalse, Opcode::LoadConst,
-    Opcode::Return, Opcode::LoadConst, Opcode::Jump, Opcode::LoadLocal,
-    Opcode::LoadConst, Opcode::Binary, Opcode::LoadConst, Opcode::JumpIfFalse,
-    Opcode::LoadConst, Opcode::Return, Opcode::LoadConst, Opcode::Jump,
-    Opcode::LoadConst, Opcode::Return,
+    Opcode::LoadLocal,
+    Opcode::LoadLocal,
+    Opcode::Binary,
+    Opcode::LoadConst,
+    Opcode::JumpIfFalse,
+    Opcode::LoadConst,
+    Opcode::Return,
+    Opcode::LoadConst,
+    Opcode::Jump,
+    Opcode::LoadLocal,
+    Opcode::LoadConst,
+    Opcode::Binary,
+    Opcode::JumpIfFalse,
+    Opcode::LoadConst,
+    Opcode::LoadLocal,
+    Opcode::Div,
+    Opcode::LoadConst,
+    Opcode::Unary,
+    Opcode::Binary,
+    Opcode::Move,
+    Opcode::Jump,
+    Opcode::Move,
+    Opcode::LoadConst,
+    Opcode::JumpIfFalse,
+    Opcode::LoadConst,
+    Opcode::Return,
+    Opcode::LoadConst,
+    Opcode::Jump,
+    Opcode::LoadLocal,
+    Opcode::LoadConst,
+    Opcode::Binary,
+    Opcode::LoadConst,
+    Opcode::JumpIfFalse,
+    Opcode::LoadConst,
+    Opcode::Return,
+    Opcode::LoadConst,
+    Opcode::Jump,
+    Opcode::LoadConst,
+    Opcode::Return,
 ];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -25,10 +54,8 @@ pub(crate) struct NumberClassifySelection {
 
 pub(crate) struct NativeNumberClassifyPlan {
     selection: NumberClassifySelection,
-    owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
     view: crate::stencil_select::PhysicalStencilView,
-    cache: crate::stencil_select::RenderedRegionCache,
-    installed: Option<crate::stencil_arena::EntryToken<extern "C" fn(f64) -> f64>>,
+    physical: crate::stencil_installation::SharedPhysicalEntry<extern "C" fn(f64) -> f64>,
 }
 
 impl NativeNumberClassifyPlan {
@@ -44,42 +71,36 @@ impl NativeNumberClassifyPlan {
         )?;
         view.generated.then_some(Self {
             selection,
-            owner,
             view,
-            cache: crate::stencil_select::RenderedRegionCache::new(),
-            installed: None,
+            physical: crate::stencil_installation::SharedPhysicalEntry::new(owner),
         })
     }
 
     pub(crate) fn execute(&mut self, environment: &crate::environment::Environment) -> Option<f64> {
         let value = environment.get_number(self.selection.source_slot)?;
         let entry = self.entry()?;
-        let lease = crate::stencil_arena::SharedStencilSlab::acquire_owned(&self.owner, entry).ok()?;
-        lease.invoke(|call| call(value)).ok()
+        self.physical.invoke(entry, |call| call(value)).ok()
     }
 
     pub(crate) const fn span(&self) -> usize {
         REGION_LEN
     }
 
-    fn entry(
-        &mut self,
-    ) -> Option<crate::stencil_arena::EntryToken<extern "C" fn(f64) -> f64>> {
-        if let Some(entry) = self.installed.filter(|entry| self.owner.borrow().entry_token_is_live(*entry)) {
-            return Some(entry);
-        }
-        self.installed = None;
+    fn entry(&mut self) -> Option<crate::stencil_arena::EntryToken<extern "C" fn(f64) -> f64>> {
         let site = crate::quickening::QuickeningSite::<4>::new(Opcode::Binary);
         let values = crate::stencil_fact::PatchValues::from_site(&site);
-        let address = self.owner.borrow_mut().render_physical_view_or_get(
-            &mut self.cache,
-            self.view,
-            &values,
-        ).ok()?;
-        self.owner.borrow_mut().make_executable(address).ok()?;
-        let entry = self.owner.borrow().owned_f64_unary_entry(address).ok()?;
-        self.installed = Some(entry);
-        Some(entry)
+        self.physical
+            .entry(
+                |owner, cache| {
+                    let address = owner
+                        .borrow_mut()
+                        .render_physical_view_or_get(cache, self.view, &values)?;
+                    owner.borrow_mut().make_executable(address)?;
+                    Ok(address)
+                },
+                |pool, address| pool.owned_f64_unary_entry(address),
+            )
+            .ok()
     }
 }
 
@@ -91,19 +112,30 @@ pub(crate) fn select_number_classify(
 ) -> Option<NumberClassifySelection> {
     let end = start.checked_add(REGION_LEN)?;
     let instructions = entries.get(start..end)?;
-    (start == 0 && instructions.iter().zip(OPERATIONS).all(|(entry, opcode)| {
-        entry.instruction.opcode == opcode
-    })).then_some(())?;
+    (start == 0
+        && instructions
+            .iter()
+            .zip(OPERATIONS)
+            .all(|(entry, opcode)| opcode.matches_physical_contract(entry.instruction.opcode)))
+    .then_some(())?;
     cfg.region_entry_is_legal(start, end).then_some(())?;
     let source_slot = first_guard(code, instructions)?;
     negative_zero_guard(code, instructions, source_slot)?;
     negative_guard(code, instructions, source_slot)?;
-    return_number(code, instructions[37].instruction, instructions[38].instruction, 4.0)?;
+    return_number(
+        code,
+        instructions[37].instruction,
+        instructions[38].instruction,
+        4.0,
+    )?;
     Some(NumberClassifySelection { source_slot })
 }
 
 fn first_guard(code: CodeView<'_>, entries: &[BaselineEntry]) -> Option<u16> {
-    let i = entries.iter().map(|entry| entry.instruction).collect::<Vec<_>>();
+    let i = entries
+        .iter()
+        .map(|entry| entry.instruction)
+        .collect::<Vec<_>>();
     same_local(i[0], i[1])?;
     binary(i[2], crate::ops::BinaryOp::StrictNotEqual, i[0].a, i[1].a)?;
     branch(i[4], i[2].a, 9)?;
@@ -113,7 +145,10 @@ fn first_guard(code: CodeView<'_>, entries: &[BaselineEntry]) -> Option<u16> {
 }
 
 fn negative_zero_guard(code: CodeView<'_>, entries: &[BaselineEntry], slot: u16) -> Option<()> {
-    let i = entries.iter().map(|entry| entry.instruction).collect::<Vec<_>>();
+    let i = entries
+        .iter()
+        .map(|entry| entry.instruction)
+        .collect::<Vec<_>>();
     local(i[9], slot)?;
     number(code, i[10], 0.0)?;
     binary(i[11], crate::ops::BinaryOp::StrictEqual, i[9].a, i[10].a)?;
@@ -133,7 +168,10 @@ fn negative_zero_guard(code: CodeView<'_>, entries: &[BaselineEntry], slot: u16)
 }
 
 fn negative_guard(code: CodeView<'_>, entries: &[BaselineEntry], slot: u16) -> Option<()> {
-    let i = entries.iter().map(|entry| entry.instruction).collect::<Vec<_>>();
+    let i = entries
+        .iter()
+        .map(|entry| entry.instruction)
+        .collect::<Vec<_>>();
     local(i[28], slot)?;
     number(code, i[29], 0.0)?;
     binary(i[30], crate::ops::BinaryOp::LessThan, i[28].a, i[29].a)?;
@@ -152,7 +190,9 @@ fn local(instruction: Instruction, slot: u16) -> Option<()> {
 }
 
 fn number(code: CodeView<'_>, instruction: Instruction, expected: f64) -> Option<()> {
-    let crate::ops::Constant::Number(value) = code.constant(instruction.b)? else { return None };
+    let crate::ops::Constant::Number(value) = code.constant(instruction.b)? else {
+        return None;
+    };
     (instruction.opcode == Opcode::LoadConst && value.to_bits() == expected.to_bits()).then_some(())
 }
 
@@ -166,10 +206,16 @@ fn return_number(
     return_number_register(ret, load.a)
 }
 
-fn binary(instruction: Instruction, operator: crate::ops::BinaryOp, lhs: u16, rhs: u16) -> Option<()> {
-    (instruction.opcode == Opcode::Binary
-        && instruction.flags == crate::ir::compact_binary_id(operator)
-        && instruction.b == lhs && instruction.c == rhs).then_some(())
+fn binary(
+    instruction: Instruction,
+    operator: crate::ops::BinaryOp,
+    lhs: u16,
+    rhs: u16,
+) -> Option<()> {
+    (instruction.opcode.binary_operator(instruction.flags) == Some(operator)
+        && instruction.b == lhs
+        && instruction.c == rhs)
+        .then_some(())
 }
 
 fn arithmetic(instruction: Instruction, opcode: Opcode, lhs: u16, rhs: u16) -> Option<()> {
@@ -179,11 +225,15 @@ fn arithmetic(instruction: Instruction, opcode: Opcode, lhs: u16, rhs: u16) -> O
 fn unary_minus(instruction: Instruction, source: u16) -> Option<()> {
     (instruction.opcode == Opcode::Unary
         && instruction.flags == crate::ir::compact_unary_id(crate::ops::UnaryOp::Minus)
-        && instruction.b == source).then_some(())
+        && instruction.b == source)
+        .then_some(())
 }
 
 fn branch(instruction: Instruction, condition: u16, target: u16) -> Option<()> {
-    (instruction.opcode == Opcode::JumpIfFalse && instruction.a == condition && instruction.b == target).then_some(())
+    (instruction.opcode == Opcode::JumpIfFalse
+        && instruction.a == condition
+        && instruction.b == target)
+        .then_some(())
 }
 
 fn jump(instruction: Instruction, target: u16) -> Option<()> {
@@ -199,5 +249,6 @@ fn move_to(instruction: Instruction, source: u16) -> Option<()> {
 }
 
 fn move_pair(instruction: Instruction, destination: u16, source: u16) -> Option<()> {
-    (instruction.opcode == Opcode::Move && instruction.a == destination && instruction.b == source).then_some(())
+    (instruction.opcode == Opcode::Move && instruction.a == destination && instruction.b == source)
+        .then_some(())
 }

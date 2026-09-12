@@ -2,11 +2,13 @@ use std::{
     env,
     io::{self, Write},
     path::{Path, PathBuf},
-    process::{Command, ExitCode},
+    process::{Command, ExitCode, Stdio},
     sync::{
         atomic::{AtomicUsize, Ordering},
         mpsc, Arc,
     },
+    thread,
+    time::{Duration, Instant},
 };
 
 use quench_test262::{
@@ -400,11 +402,38 @@ fn run_file_in_process(root: &Path, path: &Path) -> Result<TestOutcome, String> 
     let executable = env::current_exe()
         .map_err(|error| format!("stage executable lookup failed: {error}"))?
         .with_file_name("run-test");
-    let output = Command::new(executable)
+    let mut child = Command::new(executable)
         .env("TEST262_DIR", root)
         .arg(path)
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|error| format!("stage test process failed: {error}"))?;
+    let timeout_ms = env::var("QUENCH_STAGE_TEST_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(30_000);
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    loop {
+        if child
+            .try_wait()
+            .map_err(|error| format!("stage test process wait failed: {error}"))?
+            .is_some()
+        {
+            break;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(TestOutcome::Fail {
+                reason: format!("test process timed out after {timeout_ms}ms"),
+            });
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("stage test process collect failed: {error}"))?;
     if output.status.success() {
         return Ok(TestOutcome::Pass);
     }
