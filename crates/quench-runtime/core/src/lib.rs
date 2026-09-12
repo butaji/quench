@@ -10159,6 +10159,16 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
     };
     let key = args.get(1).map(Value::string).unwrap_or_default();
     let descriptor = args.get(2).cloned().unwrap_or(Value::Undefined);
+    let existing_attributes = target
+        .as_object_ref()
+        .and_then(|object| object.borrow().attributes.get(&key).copied());
+    let existing_property = target.as_object_ref().is_some_and(|object| {
+        let object = object.borrow();
+        object.props.contains_key(&key)
+            || object.array.as_ref().is_some_and(|array| {
+                key == "length" || array_index_key(&key).is_some_and(|index| index < array.len())
+            })
+    });
     if let Some(object) = target.as_object_ref() {
         let object = object.borrow();
         let present = object.array.as_ref().is_some_and(|array| {
@@ -10180,11 +10190,15 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
     let configurable = vm.get_prop(&descriptor, "configurable");
     if let Some(object) = target.as_object_ref() {
         let mut object = object.borrow_mut();
-        let current = object
-            .attributes
-            .get(&key)
-            .copied()
-            .unwrap_or(PropertyAttributes::DEFAULT);
+        let current = existing_attributes.unwrap_or(if existing_property {
+            PropertyAttributes::DEFAULT
+        } else {
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+            }
+        });
         object.attributes.insert(
             key,
             PropertyAttributes {
