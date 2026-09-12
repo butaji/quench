@@ -93,9 +93,13 @@ Verification completed:
   back
 - after that aggregate run, the Array stage was rerun against the extended
   callback/index/reduction/flattening methods and descriptor guards and reached
-  1,140/3,081; the
+  1,154/3,081; the
   aggregate total above is intentionally left as the last complete-corpus
   measurement
+- the Object stage was rerun after adding boxed primitive identity, prototype
+  inheritance, constructor metadata, sparse-array holes, and `Object.assign`
+  descriptor guards and reached 514/3,411; the remaining failures are recorded as missing semantics,
+  not a fallback to the legacy VM
 - canonical V8V7 exact driver, all eight fixtures valid
 - focused stencil probes now cover `Array.from`/`Array.of`/`Array.isArray`,
   `Object.preventExtensions` + `defineProperty`, bound function calls, and
