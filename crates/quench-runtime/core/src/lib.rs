@@ -10339,13 +10339,34 @@ fn native_error_to_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Val
     ))
 }
 fn native_object_to_string(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    let tag = if this.as_function_ref().is_some() {
+    let tag = if this.is_undefined() {
+        "Undefined"
+    } else if this.is_null() {
+        "Null"
+    } else if this.as_bool().is_some() {
+        "Boolean"
+    } else if this.as_number().is_some() {
+        "Number"
+    } else if this.as_string().is_some() {
+        "String"
+    } else if is_bigint_marker(&this) {
+        "BigInt"
+    } else if this
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
+    {
+        "Symbol"
+    } else if this
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.contains_key("\0date"))
+    {
+        "Date"
+    } else if this.as_function_ref().is_some() {
         "Function"
-    } else if is_bigint_marker(&this)
-        || this
-            .as_object_ref()
-            .and_then(|object| object.borrow().props.get("\0wrapper").cloned())
-            .is_some_and(|value| value.as_string().is_some_and(|name| name == "BigInt"))
+    } else if this
+        .as_object_ref()
+        .and_then(|object| object.borrow().props.get("\0wrapper").cloned())
+        .is_some_and(|value| value.as_string().is_some_and(|name| name == "BigInt"))
     {
         "BigInt"
     } else if this
