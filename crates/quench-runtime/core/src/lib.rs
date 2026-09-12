@@ -2161,11 +2161,11 @@ impl RegExpValue {
         Some(
             (0..locations.len())
                 .map(|index| {
-                    let text = locations
+                    locations
                         .get(index)
-                        .map(|(start, end)| &subject[start..end])
-                        .unwrap_or("");
-                    Value::string_value(text)
+                        .map_or(Value::Undefined, |(start, end)| {
+                            Value::string_value(&subject[start..end])
+                        })
                 })
                 .collect(),
         )
@@ -10752,12 +10752,22 @@ fn native_string_match(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
     let regexp = if let Some(r) = args.first().and_then(Value::as_regexp) {
         r
     } else {
-        let pattern = string_argument(vm, args.first().unwrap_or(&Value::Undefined))?;
-        let source = regex::escape(&pattern);
-        Rc::new(RefCell::new(RegExpValue::new(
+        let pattern = args
+            .first()
+            .filter(|value| !value.is_undefined())
+            .map(|value| string_argument(vm, value))
+            .transpose()?
+            .unwrap_or_default();
+        let source = pattern;
+        let regexp = Value::RegExp(Rc::new(RefCell::new(RegExpValue::new(
             Rc::new(compile_regex(&source, false)?),
             false,
-        )))
+        ))));
+        if let Some(value) = regexp.as_regexp() {
+            value.borrow_mut().source = source;
+        }
+        let method = vm.get_prop_with_accessors(&regexp, &vm.well_known_symbol_key("match"))?;
+        return vm.call_arguments(&method, regexp, &[Value::string_value(s)][..]);
     };
     let r = &regexp;
     let mut b = r.borrow_mut();
@@ -10811,13 +10821,24 @@ fn native_string_match_all(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
         }
         return Ok(make_regexp_string_iterator(vm, r, s));
     }
-    let pattern = string_argument(vm, args.first().unwrap_or(&Value::Undefined))?;
-    let source = regex::escape(&pattern);
-    let kernel = Rc::new(compile_regex(&source, false)?);
-    let regexp = Rc::new(RefCell::new(RegExpValue::new(kernel, true)));
-    regexp.borrow_mut().source = source;
-    regexp.borrow_mut().flags = "g".into();
-    Ok(make_regexp_string_iterator(vm, regexp, s))
+    let pattern = args
+        .first()
+        .filter(|value| !value.is_undefined())
+        .map(|value| string_argument(vm, value))
+        .transpose()?
+        .unwrap_or_default();
+    let source = pattern;
+    let regexp = Value::RegExp(Rc::new(RefCell::new(RegExpValue::new(
+        Rc::new(compile_regex(&source, false)?),
+        true,
+    ))));
+    if let Some(value) = regexp.as_regexp() {
+        let mut value = value.borrow_mut();
+        value.source = source;
+        value.flags = "g".into();
+    }
+    let method = vm.get_prop_with_accessors(&regexp, &vm.well_known_symbol_key("matchAll"))?;
+    vm.call_arguments(&method, regexp, &[Value::string_value(s)][..])
 }
 
 fn make_regexp_string_iterator(
@@ -10926,6 +10947,36 @@ fn native_regexp_string_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> 
     }
     let regexp_value = Value::RegExp(regexp.clone());
     let exec = vm.get_prop_with_accessors(&regexp_value, "exec")?;
+    let default_exec = exec
+        .as_function_ref()
+        .is_some_and(|function| match function.kind {
+            FunctionKind::Builtin(BuiltinId::RegExpExec) => true,
+            FunctionKind::Native(native) => native as *const () == native_regexp_exec as *const (),
+            _ => false,
+        });
+    if default_exec && regexp.borrow().regex.is_match("") && index <= source.len() {
+        let mut regexp = regexp.borrow_mut();
+        let values = regexp
+            .capture_values_at(&source, index)
+            .unwrap_or_else(|| vec![Value::string_value("")]);
+        let match_result = vm.array_from_values(values);
+        vm.set_prop(&match_result, "index", Value::Number(index as f64));
+        vm.set_prop(&match_result, "input", Value::string_value(source.clone()));
+        vm.set_prop(
+            &this,
+            REGEXP_ITERATOR_INDEX,
+            Value::Number(index.saturating_add(1) as f64),
+        );
+        vm.set_prop(&result, "value", match_result);
+        vm.set_prop(&result, "done", Value::Bool(false));
+        return Ok(result);
+    }
+    if default_exec && regexp.borrow().regex.is_match("") && index > source.len() {
+        vm.set_prop(&this, REGEXP_ITERATOR_DONE, Value::Bool(true));
+        vm.set_prop(&result, "value", Value::Undefined);
+        vm.set_prop(&result, "done", Value::Bool(true));
+        return Ok(result);
+    }
     if exec.is_function() {
         let match_value = vm.call_arguments(
             &exec,
@@ -11014,7 +11065,12 @@ fn native_string_search(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Va
             .map(|m| m.start() as f64)
             .unwrap_or(-1.0)
     } else {
-        let pattern = string_argument(vm, args.first().unwrap_or(&Value::Undefined))?;
+        let pattern = args
+            .first()
+            .filter(|value| !value.is_undefined())
+            .map(|value| string_argument(vm, value))
+            .transpose()?
+            .unwrap_or_default();
         s.find(&pattern).map(|index| index as f64).unwrap_or(-1.0)
     };
     Ok(Value::Number(index))
@@ -11344,6 +11400,14 @@ fn native_string_to_well_formed(vm: &mut Vm, this: Value, _: &[Value]) -> JsResu
 }
 fn regexp_method(vm: &Vm, _regexp: &RefCell<RegExpValue>, name: &str) -> Value {
     let regexp = _regexp.borrow();
+    if let Some(prototype) = vm
+        .builtin(BuiltinId::RegExpConstructor)
+        .as_function_ref()
+        .map(|function| function.prototype.clone())
+        && let Some(value) = prototype.borrow().props.get(name).cloned()
+    {
+        return value;
+    }
     // Symbol property keys are canonical VM atoms rather than their source
     // spelling. Resolve the well-known matchAll key before consulting the
     // declarative builtin catalog.
@@ -17371,9 +17435,10 @@ mod tests {
             as *const CaptureLocations;
         assert_eq!(scratch, reused);
         assert_eq!(
-            second.iter().map(Value::string).collect::<Vec<_>>(),
-            ["a", "a", ""]
+            second[..2].iter().map(Value::string).collect::<Vec<_>>(),
+            ["a", "a"]
         );
+        assert!(second[2].is_undefined());
     }
 
     #[test]
