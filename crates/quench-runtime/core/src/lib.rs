@@ -5223,6 +5223,7 @@ impl Vm {
             "BigInt",
             "Object",
             "Array",
+            "Boolean",
             "String",
             "Number",
             "Function",
@@ -5987,7 +5988,11 @@ impl Vm {
             *function.numeric_jit.borrow_mut() = Some(numeric);
             self.jit_stats.compiled_images = self.jit_stats.compiled_images.saturating_add(1);
         }
-        let bytecode = match dynbytecode::Compiler::compile(node, function.source_id) {
+        let bytecode = match dynbytecode::Compiler::compile(
+            node,
+            function.source_id,
+            function.strict,
+        ) {
             Ok(bytecode) => bytecode,
             Err(gap) => {
                 self.jit_stats.compile_rejections += 1;
@@ -6071,7 +6076,7 @@ impl Vm {
             return Ok(());
         }
         self.jit_stats.compile_attempts += 1;
-        let bytecode = dynbytecode::Compiler::compile_arrow(node, function.source_id).map_err(
+        let bytecode = dynbytecode::Compiler::compile_arrow(node, function.source_id, function.strict).map_err(
             |gap| {
                 self.jit_stats.compile_rejections += 1;
                 let location = function
@@ -6203,21 +6208,25 @@ impl Vm {
             (|| {
                 let statements: &'static [Statement<'static>] =
                     unsafe { std::mem::transmute(r.program.body.as_slice()) };
-                let code =
-                    dynbytecode::Compiler::compile_script(statements, source_id, r.program.span)
-                        .map_err(|gap| {
-                            let location = self
-                                .coverage
-                                .location(source_id, gap.span.start)
-                                .map_or_else(
-                                    || format!("{:?}", gap.span),
-                                    |(path, line)| format!("{}:{}", path.display(), line),
-                                );
-                            JsError::Message(format!(
-                                "missing top-level stencil at {location}: {}",
-                                gap.reason
-                            ))
-                        })?;
+                let code = dynbytecode::Compiler::compile_script(
+                    statements,
+                    source_id,
+                    r.program.span,
+                    self.strict_mode,
+                )
+                .map_err(|gap| {
+                    let location = self
+                        .coverage
+                        .location(source_id, gap.span.start)
+                        .map_or_else(
+                            || format!("{:?}", gap.span),
+                            |(path, line)| format!("{}:{}", path.display(), line),
+                        );
+                    JsError::Message(format!(
+                        "missing top-level stencil at {location}: {}",
+                        gap.reason
+                    ))
+                })?;
                 let instrumented_kernels = self.instrumented_kernels();
                 let image = {
                     let mut arena = self.code_arena.borrow_mut();
@@ -11916,7 +11925,7 @@ mod tests {
         // parsed arena outlives both the image and VM for this test.
         let function =
             unsafe { std::mem::transmute::<&Function<'_>, &Function<'static>>(function) };
-        let code = dynbytecode::Compiler::compile(function, None)
+        let code = dynbytecode::Compiler::compile(function, None, false)
             .unwrap_or_else(|gap| panic!("array literal lowering failed: {}", gap.reason));
         assert_eq!(
             code.ops
@@ -11997,7 +12006,7 @@ mod tests {
         };
         let function =
             unsafe { std::mem::transmute::<&Function<'_>, &Function<'static>>(function) };
-        let code = dynbytecode::Compiler::compile(function, None)
+        let code = dynbytecode::Compiler::compile(function, None, false)
             .unwrap_or_else(|gap| panic!("object literal lowering failed: {}", gap.reason));
         assert_eq!(
             code.ops
