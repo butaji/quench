@@ -2778,6 +2778,7 @@ dependencies = [
 name = "quench-runtime-core"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "indexmap",
  "num-bigint 0.4.8",
  "num-traits",
