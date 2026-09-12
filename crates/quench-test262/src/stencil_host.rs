@@ -83,12 +83,13 @@ impl Test262Host for StencilHost {
 
 /// Select the conformance host from `QUENCH_TEST262_ENGINE`.
 ///
-/// The default remains the compatibility host while migration is in flight;
-/// setting the value to `stencil` runs the exact same corpus through the new
-/// VM core.
+/// The stencil core is the only supported execution path. The environment
+/// variable is retained as an explicit compatibility diagnostic switch while
+/// downstream callers finish migrating; ordinary runs never silently select
+/// the residual VM host.
 pub fn selected_host() -> Box<dyn Test262Host> {
     match std::env::var("QUENCH_TEST262_ENGINE").as_deref() {
-        Ok("stencil") => Box::new(StencilHost::default()),
-        _ => Box::new(crate::RuntimeHost),
+        Ok("compat") => Box::new(crate::RuntimeHost),
+        _ => Box::new(StencilHost::default()),
     }
 }
