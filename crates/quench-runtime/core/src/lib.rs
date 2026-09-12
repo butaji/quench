@@ -11112,6 +11112,7 @@ fn native_regexp_string_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> 
             _ => false,
         });
     if default_exec && regexp.borrow().regex.is_match("") && index <= source.len() {
+        let unicode = regexp.borrow().flags.contains('u') || regexp.borrow().flags.contains('v');
         let mut regexp = regexp.borrow_mut();
         let values = regexp
             .capture_values_at(&source, index)
@@ -11126,7 +11127,16 @@ fn native_regexp_string_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> 
         vm.set_prop(
             &this,
             REGEXP_ITERATOR_INDEX,
-            Value::Number(index.saturating_add(1) as f64),
+            Value::Number(if unicode {
+                source
+                    .get(index..)
+                    .and_then(|tail| tail.chars().next())
+                    .map_or(source.len().saturating_add(1), |character| {
+                        index.saturating_add(character.len_utf8())
+                    })
+            } else {
+                index.saturating_add(1)
+            } as f64),
         );
         vm.set_prop(&result, "value", match_result);
         vm.set_prop(&result, "done", Value::Bool(false));
