@@ -4291,7 +4291,16 @@ impl Vm {
         Environment::set(g, "NaN", Value::Number(f64::NAN));
         Environment::set(g, "Infinity", Value::Number(f64::INFINITY));
         let m = self.object(None);
-        for (n, v) in [("E", std::f64::consts::E), ("PI", std::f64::consts::PI)] {
+        for (n, v) in [
+            ("E", std::f64::consts::E),
+            ("PI", std::f64::consts::PI),
+            ("LN10", std::f64::consts::LN_10),
+            ("LN2", std::f64::consts::LN_2),
+            ("LOG10E", std::f64::consts::LOG10_E),
+            ("LOG2E", std::f64::consts::LOG2_E),
+            ("SQRT1_2", std::f64::consts::FRAC_1_SQRT_2),
+            ("SQRT2", std::f64::consts::SQRT_2),
+        ] {
             self.set_prop(&m, n, Value::Number(v));
         }
         Environment::set(g, "Math", m);
