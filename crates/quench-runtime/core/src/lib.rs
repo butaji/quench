@@ -4346,7 +4346,7 @@ fn u32_js(v: f64) -> u32 {
     v as i64 as u64 as u32
 }
 define_ops! {
- Add => numeric |x:f64,y:f64| Value::Number(x+y), generic |a:&Value,b:&Value| if a.is_string() || b.is_string(){Value::String(Rc::new(format!("{}{}",a.string(),b.string()).into()))}else{exec_numeric_op(Op::Add,a.number(),b.number())};
+ Add => numeric |x:f64,y:f64| Value::Number(x+y), generic |a:&Value,b:&Value| if a.is_string() || b.is_string(){Value::String(Rc::new(concat_string_values(&a.string(), &b.string()).into()))}else{exec_numeric_op(Op::Add,a.number(),b.number())};
  Sub => numeric |x:f64,y:f64| Value::Number(x-y), generic |a:&Value,b:&Value| exec_numeric_op(Op::Sub,a.number(),b.number());
  Mul => numeric |x:f64,y:f64| Value::Number(x*y), generic |a:&Value,b:&Value| exec_numeric_op(Op::Mul,a.number(),b.number());
  Div => numeric |x:f64,y:f64| Value::Number(x/y), generic |a:&Value,b:&Value| exec_numeric_op(Op::Div,a.number(),b.number());
@@ -4459,11 +4459,9 @@ fn binary_with_vm(vm: &mut Vm, op: Op, left: &Value, right: &Value) -> JsResult<
         && ((left.is_string() && !is_bigint_marker(&left))
             || (right.is_string() && !is_bigint_marker(&right)))
     {
-        return Ok(Value::string_value(format!(
-            "{}{}",
-            to_string_with_vm(vm, &left)?,
-            to_string_with_vm(vm, &right)?
-        )));
+        let left = to_string_with_vm(vm, &left)?;
+        let right = to_string_with_vm(vm, &right)?;
+        return Ok(Value::string_value(concat_string_values(&left, &right)));
     }
     if matches!(op, Op::Eq | Op::Ne) && !is_bigint_marker(&left) && !is_bigint_marker(&right) {
         return Ok(exec_op_ref(op, &left, &right));
@@ -6118,12 +6116,12 @@ impl Vm {
         }
         if let Some(string) = o.as_string() {
             return if k == "length" {
-                Value::Number(string.encode_utf16().count() as f64)
+                Value::Number(utf16_units(string).len() as f64)
             } else if let Some(index) = array_index_key(k) {
-                string
-                    .encode_utf16()
-                    .nth(index)
-                    .map(|unit| Value::string_value(String::from_utf16_lossy(&[unit])))
+                utf16_units(string)
+                    .get(index)
+                    .copied()
+                    .map(|unit| Value::string_value(string_from_utf16_units(&[unit])))
                     .unwrap_or(Value::Undefined)
             } else {
                 if let Some(value) = self.prototype_property(BuiltinOwner::StringPrototype, k) {
@@ -7693,7 +7691,7 @@ impl Vm {
             )
             .map(bigint_marker)
             .map_err(|_| JsError::Throw(syntax_error(self, "invalid BigInt literal"))),
-            StringLiteral(v) => Ok(Value::String(Rc::new(v.value.to_string().into()))),
+            StringLiteral(v) => Ok(Value::String(Rc::new(string_literal_value(v).into()))),
             Identifier(v) => Ok(Environment::get(&e, v.name.as_str()).unwrap_or(Value::Undefined)),
             ThisExpression(_) => Ok(Environment::get(&e, "this").unwrap_or(Value::Undefined)),
             ArrayExpression(v) => {
@@ -8610,11 +8608,17 @@ fn native_encode_uri_impl(source: &str, component: bool) -> Value {
 
 fn native_encode_uri(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     let source = to_string_with_vm(vm, a.first().unwrap_or(&Value::Undefined))?;
+    if contains_surrogate_sentinel(&source) {
+        return Err(JsError::Throw(uri_error(vm, "malformed URI")));
+    }
     Ok(native_encode_uri_impl(&source, false))
 }
 
 fn native_encode_uri_component(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     let source = to_string_with_vm(vm, a.first().unwrap_or(&Value::Undefined))?;
+    if contains_surrogate_sentinel(&source) {
+        return Err(JsError::Throw(uri_error(vm, "malformed URI")));
+    }
     Ok(native_encode_uri_impl(&source, true))
 }
 
@@ -8965,7 +8969,7 @@ fn array_like_length(vm: &mut Vm, value: &Value) -> JsResult<usize> {
         )));
     }
     let length = if value.is_string() {
-        value.string().encode_utf16().count() as f64
+        utf16_units(&value.string()).len() as f64
     } else {
         let length_value = vm.get_prop_with_accessors(value, "length")?;
         to_number_with_vm(vm, &length_value)?
@@ -9002,7 +9006,7 @@ fn array_like_value(vm: &mut Vm, value: &Value, index: usize) -> JsResult<Option
     }
     if value.is_string() {
         let key = index.to_string();
-        if index >= value.string().encode_utf16().count() {
+        if index >= utf16_units(&value.string()).len() {
             return Ok(None);
         }
         return Ok(Some(vm.get_prop_with_accessors(value, &key)?));
@@ -9558,7 +9562,7 @@ fn native_array_flat_map(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
 }
 fn native_string_substring(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let source = string_receiver(vm, &this, "substring")?;
-    let units = source.encode_utf16().collect::<Vec<_>>();
+    let units = utf16_units(&source);
     let length = units.len() as f64;
     let start = args
         .first()
@@ -9578,7 +9582,7 @@ fn native_string_substring(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
     } else {
         (end, start)
     };
-    Ok(Value::string_value(String::from_utf16_lossy(
+    Ok(Value::string_value(string_from_utf16_units(
         &units[start..end],
     )))
 }
@@ -9630,7 +9634,7 @@ fn to_length_for_string_raw(vm: &mut Vm, value: &Value) -> JsResult<usize> {
 
 fn native_string_slice(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let source = string_receiver(vm, &this, "slice")?;
-    let units = source.encode_utf16().collect::<Vec<_>>();
+    let units = utf16_units(&source);
     let length = units.len() as f64;
     let normalize = |value: f64| {
         if value < 0.0 {
@@ -9653,7 +9657,7 @@ fn native_string_slice(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
     let start = normalize(start);
     let end = normalize(end);
     Ok(Value::string_value(if end > start {
-        String::from_utf16_lossy(&units[start..end])
+        string_from_utf16_units(&units[start..end])
     } else {
         String::new()
     }))
@@ -9670,7 +9674,7 @@ fn native_string_char_code_at(vm: &mut Vm, this: Value, args: &[Value]) -> JsRes
         .then_some(index)
         .filter(|index| *index >= 0.0)
         .map(|index| index as usize)
-        .and_then(|index| source.encode_utf16().nth(index));
+        .and_then(|index| utf16_units(&source).get(index).copied());
     Ok(Value::Number(unit.map_or(f64::NAN, f64::from)))
 }
 fn native_string_char_at(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
@@ -9685,8 +9689,8 @@ fn native_string_char_at(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
         .then_some(index)
         .filter(|index| *index >= 0.0)
         .map(|index| index as usize)
-        .and_then(|index| source.encode_utf16().nth(index))
-        .map_or_else(String::new, |unit| String::from_utf16_lossy(&[unit]));
+        .and_then(|index| utf16_units(&source).get(index).copied())
+        .map_or_else(String::new, |unit| string_from_utf16_units(&[unit]));
     Ok(Value::string_value(value))
 }
 fn native_string_substr(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
@@ -9702,7 +9706,7 @@ fn native_string_substr(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Va
         )));
     }
     let source = to_string_with_vm(vm, &this)?;
-    let units = source.encode_utf16().collect::<Vec<_>>();
+    let units = utf16_units(&source);
     let length = units.len() as f64;
     let start_number = args
         .first()
@@ -9723,7 +9727,7 @@ fn native_string_substr(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Va
             .max(0.0)
             .min(available as f64) as usize,
     };
-    Ok(Value::string_value(String::from_utf16_lossy(
+    Ok(Value::string_value(string_from_utf16_units(
         &units[start..start + count],
     )))
 }
@@ -9932,9 +9936,8 @@ fn to_number_with_vm(vm: &mut Vm, value: &Value) -> JsResult<f64> {
 }
 fn native_string_from_char_code(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     // `fromCharCode` consumes UTF-16 code units. Decode the complete unit
-    // sequence at once so a valid surrogate pair becomes one scalar instead
-    // of two replacement characters; lone surrogates keep the compact core's
-    // established lossy-string behavior.
+    // sequence at once so a valid surrogate pair becomes one scalar while an
+    // unpaired unit is retained through the compact-core sentinel.
     let mut units = Vec::with_capacity(args.len());
     for value in args {
         let number = to_number_with_vm(vm, value)?;
@@ -9945,7 +9948,7 @@ fn native_string_from_char_code(vm: &mut Vm, _: Value, args: &[Value]) -> JsResu
         };
         units.push(unit as u16);
     }
-    Ok(Value::string_value(String::from_utf16_lossy(&units)))
+    Ok(Value::string_value(string_from_utf16_units(&units)))
 }
 fn native_string_from_code_point(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let mut output = String::new();
@@ -10977,6 +10980,149 @@ fn utf16_index(source: &str, byte_index: usize) -> usize {
     }
     units
 }
+
+// Rust strings cannot contain UTF-16 surrogate code points. Keep unpaired
+// JavaScript units losslessly inside the compact core as a marker/payload
+// pair. A pair is required because every single Unicode scalar, including
+// supplementary private-use characters, is also a valid JavaScript value.
+const SURROGATE_SENTINEL_MARKER: u32 = 0x10fffd;
+const SURROGATE_SENTINEL_PAYLOAD_BASE: u32 = 0xf1000;
+
+fn surrogate_sentinel(unit: u16) -> Option<(char, char)> {
+    (0xd800..=0xdfff).contains(&unit).then(|| {
+        (
+            char::from_u32(SURROGATE_SENTINEL_MARKER).unwrap(),
+            char::from_u32(SURROGATE_SENTINEL_PAYLOAD_BASE + u32::from(unit - 0xd800)).unwrap(),
+        )
+    })
+}
+
+fn sentinel_surrogate(marker: char, payload: char) -> Option<u16> {
+    if marker as u32 != SURROGATE_SENTINEL_MARKER {
+        return None;
+    }
+    let value = payload as u32;
+    (SURROGATE_SENTINEL_PAYLOAD_BASE..SURROGATE_SENTINEL_PAYLOAD_BASE + 0x800)
+        .contains(&value)
+        .then(|| 0xd800 + (value - SURROGATE_SENTINEL_PAYLOAD_BASE) as u16)
+}
+
+fn utf16_units(source: &str) -> Vec<u16> {
+    let mut units = Vec::new();
+    let mut chars = source.chars().peekable();
+    while let Some(character) = chars.next() {
+        if let Some(&payload) = chars.peek()
+            && let Some(unit) = sentinel_surrogate(character, payload)
+        {
+            chars.next();
+            units.push(unit);
+            continue;
+        }
+        units.extend(character.encode_utf16(&mut [0; 2]).iter().copied());
+    }
+    units
+}
+
+fn string_from_utf16_units(units: &[u16]) -> String {
+    let mut output = String::new();
+    let mut index = 0;
+    while index < units.len() {
+        let unit = units[index];
+        if (0xd800..=0xdbff).contains(&unit)
+            && units
+                .get(index + 1)
+                .is_some_and(|next| (0xdc00..=0xdfff).contains(next))
+        {
+            let high = u32::from(unit - 0xd800);
+            let low = u32::from(units[index + 1] - 0xdc00);
+            output.push(char::from_u32(0x1_0000 + (high << 10) + low).unwrap());
+            index += 2;
+            continue;
+        }
+        if let Some((marker, payload)) = surrogate_sentinel(unit) {
+            output.push(marker);
+            output.push(payload);
+        } else {
+            output.push(char::from_u32(u32::from(unit)).unwrap());
+        }
+        index += 1;
+    }
+    output
+}
+
+fn contains_surrogate_sentinel(source: &str) -> bool {
+    let mut chars = source.chars().peekable();
+    while let Some(character) = chars.next() {
+        if chars
+            .peek()
+            .copied()
+            .is_some_and(|payload| sentinel_surrogate(character, payload).is_some())
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn concat_string_values(left: &str, right: &str) -> String {
+    let mut units = utf16_units(left);
+    units.extend(utf16_units(right));
+    string_from_utf16_units(&units)
+}
+
+fn string_literal_value(literal: &StringLiteral<'_>) -> String {
+    let value = literal.value.to_string();
+    let Some(raw) = literal.raw.as_ref() else {
+        return value;
+    };
+    let raw = raw.as_str();
+    if !raw_contains_surrogate_escape(raw) {
+        return value;
+    }
+    let body = if (raw.starts_with('\'') && raw.ends_with('\''))
+        || (raw.starts_with('"') && raw.ends_with('"'))
+    {
+        &raw[1..raw.len().saturating_sub(1)]
+    } else {
+        raw
+    };
+    let mut units = Vec::new();
+    let mut chars = body.chars().peekable();
+    while let Some(character) = chars.next() {
+        if character == '\\' && chars.next_if_eq(&'\\').is_some() {
+            units.push('\\' as u16);
+            continue;
+        }
+        if character == '\\' && chars.next_if_eq(&'u').is_some() {
+            let digits = chars.by_ref().take(4).collect::<String>();
+            if digits.len() == 4 {
+                if let Ok(unit) = u16::from_str_radix(&digits, 16) {
+                    units.push(unit);
+                    continue;
+                }
+            }
+            return value;
+        }
+        let mut encoded = [0; 2];
+        let count = character.encode_utf16(&mut encoded).len();
+        units.extend_from_slice(&encoded[..count]);
+    }
+    string_from_utf16_units(&units)
+}
+
+fn raw_contains_surrogate_escape(raw: &str) -> bool {
+    let bytes = raw.as_bytes();
+    bytes.windows(6).any(|window| {
+        if window[0] != b'\\' || window[1] != b'u' {
+            return false;
+        }
+        std::str::from_utf8(&window[2..])
+            .ok()
+            .and_then(|digits| u16::from_str_radix(digits, 16).ok())
+            .is_some_and(|unit| (0xd800..=0xdfff).contains(&unit))
+    })
+}
+
 fn native_string_match(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let s = string_receiver(vm, &this, "match")?;
     if let Some(regexp) = args.first()
@@ -11272,7 +11418,7 @@ fn native_regexp_string_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> 
             .unwrap_or(index as f64) as usize;
         let match_zero = vm.get_prop_with_accessors(&match_value, "0")?;
         let match_text = to_string_with_vm(vm, &match_zero)?;
-        let match_len = match_text.encode_utf16().count();
+        let match_len = utf16_units(&match_text).len();
         let mut empty_match_next = None;
         if global && match_len == 0 {
             // Empty global matches advance from the RegExp's observable
@@ -11361,8 +11507,8 @@ fn string_index_search(vm: &mut Vm, this: Value, args: &[Value], reverse: bool) 
     let source = string_receiver(vm, &this, if reverse { "lastIndexOf" } else { "indexOf" })?;
     let search_value = args.first().cloned().unwrap_or(Value::Undefined);
     let search = string_argument(vm, &search_value)?;
-    let source_units = source.encode_utf16().collect::<Vec<_>>();
-    let search_units = search.encode_utf16().collect::<Vec<_>>();
+    let source_units = utf16_units(&source);
+    let search_units = utf16_units(&search);
     if search_units.is_empty() {
         let position = string_search_position(vm, args.get(1), reverse, source_units.len())?;
         return Ok(Value::Number(
@@ -11440,8 +11586,8 @@ fn native_string_includes(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<
         .transpose()?
         .unwrap_or(0.0)
         .max(0.0) as usize;
-    let source_units = source.encode_utf16().collect::<Vec<_>>();
-    let search_units = search.encode_utf16().collect::<Vec<_>>();
+    let source_units = utf16_units(&source);
+    let search_units = utf16_units(&search);
     let length = source_units.len();
     Ok(Value::Bool(if position > length {
         search_units.is_empty()
@@ -11474,8 +11620,8 @@ fn native_string_starts_with(vm: &mut Vm, this: Value, args: &[Value]) -> JsResu
         .map(|value| to_integer_or_infinity(vm, value))
         .transpose()?
         .unwrap_or(0.0);
-    let source_units = source.encode_utf16().collect::<Vec<_>>();
-    let search_units = search.encode_utf16().collect::<Vec<_>>();
+    let source_units = utf16_units(&source);
+    let search_units = utf16_units(&search);
     let start = start.max(0.0).min(source_units.len() as f64) as usize;
     Ok(Value::Bool(
         source_units
@@ -11498,15 +11644,15 @@ fn native_string_ends_with(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
         )));
     }
     let search = string_argument(vm, args.first().unwrap_or(&Value::Undefined))?;
+    let source_units = utf16_units(&source);
     let end = args
         .get(1)
         .map(|value| to_integer_or_infinity(vm, value))
         .transpose()?
         .map(|value| value.max(0.0) as usize)
-        .unwrap_or_else(|| source.encode_utf16().count())
-        .min(source.encode_utf16().count());
-    let source_units = source.encode_utf16().collect::<Vec<_>>();
-    let search_units = search.encode_utf16().collect::<Vec<_>>();
+        .unwrap_or(source_units.len())
+        .min(source_units.len());
+    let search_units = utf16_units(&search);
     Ok(Value::Bool(source_units[..end].ends_with(&search_units)))
 }
 
@@ -11539,7 +11685,8 @@ fn string_pad(vm: &mut Vm, this: Value, args: &[Value], start: bool) -> JsResult
         .transpose()?
         .unwrap_or(0.0)
         .max(0.0) as usize;
-    let source_len = source.encode_utf16().count();
+    let source_units = utf16_units(&source);
+    let source_len = source_units.len();
     if target <= source_len {
         return Ok(Value::string_value(source));
     }
@@ -11557,16 +11704,20 @@ fn string_pad(vm: &mut Vm, this: Value, args: &[Value], start: bool) -> JsResult
         return Ok(Value::string_value(source));
     }
     let needed = target - source_len;
-    let padding = fill.encode_utf16().cycle().take(needed).collect::<Vec<_>>();
+    let padding = utf16_units(&fill)
+        .into_iter()
+        .cycle()
+        .take(needed)
+        .collect::<Vec<_>>();
     let mut result = Vec::with_capacity(target);
     if start {
         result.extend(padding);
-        result.extend(source.encode_utf16());
+        result.extend(source_units);
     } else {
-        result.extend(source.encode_utf16());
+        result.extend(source_units);
         result.extend(padding);
     }
-    Ok(Value::string_value(String::from_utf16_lossy(&result)))
+    Ok(Value::string_value(string_from_utf16_units(&result)))
 }
 
 fn native_string_at(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
@@ -11576,13 +11727,14 @@ fn native_string_at(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value>
         .map(|value| to_integer_or_infinity(vm, value))
         .transpose()?
         .unwrap_or(0.0);
-    let length = source.encode_utf16().count() as f64;
+    let units = utf16_units(&source);
+    let length = units.len() as f64;
     let index = if index < 0.0 { length + index } else { index };
     let Some(index) = (index >= 0.0 && index < length).then_some(index as usize) else {
         return Ok(Value::Undefined);
     };
-    let unit = source.encode_utf16().nth(index).unwrap();
-    Ok(Value::string_value(String::from_utf16_lossy(&[unit])))
+    let unit = units[index];
+    Ok(Value::string_value(string_from_utf16_units(&[unit])))
 }
 
 fn native_string_code_point_at(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
@@ -11595,7 +11747,7 @@ fn native_string_code_point_at(vm: &mut Vm, this: Value, args: &[Value]) -> JsRe
     if index < 0.0 {
         return Ok(Value::Undefined);
     }
-    let units = source.encode_utf16().collect::<Vec<_>>();
+    let units = utf16_units(&source);
     let index = index as usize;
     let Some(&first) = units.get(index) else {
         return Ok(Value::Undefined);
@@ -11660,17 +11812,51 @@ fn native_string_locale_compare(vm: &mut Vm, this: Value, args: &[Value]) -> JsR
 
 fn native_string_is_well_formed(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     let source = string_receiver(vm, &this, "isWellFormed")?;
-    Ok(Value::Bool(source.encode_utf16().all(|unit| {
-        !(0xd800..=0xdfff).contains(&unit) || (0xd800..=0xdbff).contains(&unit)
-    })))
+    let units = utf16_units(&source);
+    let mut index = 0;
+    while index < units.len() {
+        let unit = units[index];
+        if (0xd800..=0xdbff).contains(&unit)
+            && units
+                .get(index + 1)
+                .is_some_and(|next| (0xdc00..=0xdfff).contains(next))
+        {
+            index += 2;
+            continue;
+        }
+        if (0xd800..=0xdfff).contains(&unit) {
+            return Ok(Value::Bool(false));
+        }
+        index += 1;
+    }
+    Ok(Value::Bool(true))
 }
 
 fn native_string_to_well_formed(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    Ok(Value::string_value(string_receiver(
-        vm,
-        &this,
-        "toWellFormed",
-    )?))
+    let source = string_receiver(vm, &this, "toWellFormed")?;
+    let units = utf16_units(&source);
+    let mut output = String::new();
+    let mut index = 0;
+    while index < units.len() {
+        let unit = units[index];
+        if (0xd800..=0xdbff).contains(&unit)
+            && units
+                .get(index + 1)
+                .is_some_and(|next| (0xdc00..=0xdfff).contains(next))
+        {
+            let high = u32::from(unit - 0xd800);
+            let low = u32::from(units[index + 1] - 0xdc00);
+            output.push(char::from_u32(0x1_0000 + (high << 10) + low).unwrap());
+            index += 2;
+        } else if (0xd800..=0xdfff).contains(&unit) {
+            output.push('\u{fffd}');
+            index += 1;
+        } else {
+            output.push(char::from_u32(u32::from(unit)).unwrap());
+            index += 1;
+        }
+    }
+    Ok(Value::string_value(output))
 }
 fn regexp_method(vm: &Vm, _regexp: &RefCell<RegExpValue>, name: &str) -> Value {
     let regexp = _regexp.borrow();
@@ -13539,7 +13725,7 @@ fn initialize_string_wrapper(vm: &mut Vm, object: &Value, value: &Value) {
     vm.set_prop(
         object,
         "length",
-        Value::Number(text.encode_utf16().count() as f64),
+        Value::Number(utf16_units(&text).len() as f64),
     );
     if let Some(handle) = object.as_object_ref() {
         let mut object = handle.borrow_mut();
