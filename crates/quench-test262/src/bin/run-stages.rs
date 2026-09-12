@@ -12,7 +12,7 @@ use std::{
 };
 
 use quench_test262::{
-    discover_js_files, resolve_stages, HarnessCache, ResolvedStage, RuntimeHost, StageReport,
+    discover_js_files, resolve_stages, selected_host, HarnessCache, ResolvedStage, StageReport,
     Test262Runner, TestOutcome,
 };
 
@@ -389,7 +389,7 @@ fn run_isolated_file(root: &Path, path: &Path) -> Result<TestOutcome, String> {
     std::thread::Builder::new()
         .stack_size(256 * 1024 * 1024)
         .spawn(move || {
-            let mut runner = Test262Runner::new(RuntimeHost);
+            let mut runner = Test262Runner::new(selected_host());
             let mut harness = HarnessCache::new(root.join("harness"));
             runner.run_file_with_cache(path, &mut harness)
         })

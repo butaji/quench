@@ -11,9 +11,11 @@ mod harness_cache;
 pub mod module_graph;
 mod runner_support;
 pub mod runtime_host;
+pub mod stencil_host;
 mod stages;
 pub use harness_cache::HarnessCache;
 pub use runtime_host::{LinkedModule, LinkedModuleGraph, RuntimeHost};
+pub use stencil_host::{selected_host, StencilHost};
 pub use stages::{list_stages, resolve_stages, ConformanceStage, ResolvedStage};
 
 /// Engine-facing execution contract for an external conformance runner.
@@ -49,6 +51,42 @@ pub trait Test262Host: Send {
         _path: &Path,
     ) -> Result<(), String> {
         self.run_harnessed_module(harness, source)
+    }
+}
+
+impl<T: Test262Host + ?Sized> Test262Host for Box<T> {
+    fn configure(&mut self, metadata: &TestMetadata) {
+        (**self).configure(metadata)
+    }
+
+    fn run_script(&mut self, source: &str) -> Result<(), String> {
+        (**self).run_script(source)
+    }
+
+    fn run_module_script(&mut self, source: &str) -> Result<(), String> {
+        (**self).run_module_script(source)
+    }
+
+    fn run_harnessed_script(
+        &mut self,
+        harness: &[&str],
+        source: &str,
+        strict: bool,
+    ) -> Result<(), String> {
+        (**self).run_harnessed_script(harness, source, strict)
+    }
+
+    fn run_harnessed_module(&mut self, harness: &[&str], source: &str) -> Result<(), String> {
+        (**self).run_harnessed_module(harness, source)
+    }
+
+    fn run_harnessed_module_at(
+        &mut self,
+        harness: &[&str],
+        source: &str,
+        path: &Path,
+    ) -> Result<(), String> {
+        (**self).run_harnessed_module_at(harness, source, path)
     }
 }
 
