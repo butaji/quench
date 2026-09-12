@@ -9689,36 +9689,19 @@ fn native_object_assign(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value
     };
     for source in args.iter().skip(1) {
         if let Some(object) = source.as_object_ref() {
-            let object = object.borrow();
-            if let Some(array) = &object.array {
-                for (index, value) in array.values.iter().cloned().enumerate() {
-                    if array.holes[index] {
-                        continue;
-                    }
-                    let key = index.to_string();
-                    if target_property_readonly(&target, &key) {
-                        return Err(JsError::Throw(type_error(
-                            vm,
-                            "cannot assign to read-only property",
-                        )));
-                    }
-                    vm.set_prop(&target, &key, value);
+            let _ = object;
+            // Snapshot enumerable keys first, then perform Get for each key so
+            // accessors and mutations observe the same order as ECMAScript's
+            // [[OwnPropertyKeys]]/Get/Set sequence.
+            for key in object_own_enumerable_keys(source) {
+                let value = vm.get_prop(source, &key);
+                if target_property_readonly(&target, &key) {
+                    return Err(JsError::Throw(type_error(
+                        vm,
+                        "cannot assign to read-only property",
+                    )));
                 }
-            }
-            for (key, value) in object.props.iter() {
-                let enumerable = object
-                    .attributes
-                    .get(key)
-                    .map_or(!object.builtin_prototype, |attrs| attrs.enumerable);
-                if enumerable && !key.starts_with('\0') {
-                    if target_property_readonly(&target, key) {
-                        return Err(JsError::Throw(type_error(
-                            vm,
-                            "cannot assign to read-only property",
-                        )));
-                    }
-                    vm.set_prop(&target, key, value.clone());
-                }
+                vm.set_prop(&target, &key, value);
             }
         } else if let Some(function) = source.as_function_ref() {
             for (key, value) in function.props.borrow().iter() {
