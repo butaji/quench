@@ -347,7 +347,7 @@ pub(crate) fn wait(arguments: &[Value]) -> Result<Value, VmError> {
             ))
         };
     }
-    // Agent execution is cooperative in the Test262 host: a callback runs to
+    // Agent execution is cooperative in this host: a callback runs to
     // its next host boundary before the main agent can notify it.  A positive
     // one-millisecond timeout therefore cannot be observed as a wakeup in
     // this model; complete it as the specified timeout rather than leaving a
@@ -759,7 +759,7 @@ fn execute_bigint(builtin: Builtin, args: &[Value]) -> Result<Value, VmError> {
                 next > 1_000
             });
         if escaped {
-            // The Test262 agent host is cooperative rather than threaded. A
+            // The agent host is cooperative rather than threaded. A
             // waiter has already yielded to the main agent, so terminate the
             // guest spin using the same lock transition as the numeric path.
             // This is the host scheduling boundary, not a guest-visible
