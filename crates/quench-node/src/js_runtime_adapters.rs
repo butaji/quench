@@ -1,3 +1,13 @@
+// Keep host bootstrap data declarative: each binding is represented once and
+// lowered to the immutable builder chain used by the runtime context.
+macro_rules! with_host_values {
+    ($context:expr; $( $name:expr => $value:expr ),+ $(,)?) => {{
+        let mut context = $context;
+        $( context = context.with_host_value($name, $value); )+
+        context
+    }};
+}
+
 impl JsRuntime for QuenchRuntime {
     fn execute(
         &self,
@@ -239,157 +249,78 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
         )
         .with_host(Rc::new(QuenchNodeHost::default()))
         .with_host_capability("require", capability)
-        // Bootstrap's compatibility loader is JavaScript, but native-owned
-        // modules retain an explicit Rust require capability so their public
-        // entry points do not accidentally resolve to a legacy polyfill.
-        .with_host_value(
-            "__quenchNativeRequire",
-            quench_runtime::host_api::capability_function(
-                HostCapabilityKind::Custom(CapabilityName::Require),
-            ),
-        )
         .with_host_capability(
             "console",
             HostCapabilityRef {
                 realm: RealmId::ROOT,
                 kind: HostCapabilityKind::Custom(CapabilityName::Console),
             },
-        )
-        .with_host_value(
-            "__quench_pid",
-            Value::Number(std::process::id() as f64),
-        )
-        .with_host_value(
-            "__quench_ppid",
-            Value::Number(
+        );
+        // Bootstrap's compatibility loader is JavaScript, but native-owned
+        // modules retain an explicit Rust require capability so their public
+        // entry points do not accidentally resolve to a legacy polyfill.
+        let context = with_host_values!(context;
+            "__quenchNativeRequire" => quench_runtime::host_api::capability_function(
+                HostCapabilityKind::Custom(CapabilityName::Require),
+            ),
+            "__quench_pid" => Value::Number(std::process::id() as f64),
+            "__quench_ppid" => Value::Number(
                 std::env::var("QUENCH_PARENT_PID")
                     .ok()
                     .and_then(|value| value.parse::<u32>().ok())
                     .unwrap_or_else(process_parent_id) as f64,
             ),
-        )
-        .with_host_value(
-            "__filename",
-            Value::String(
+            "__filename" => Value::String(
                 path.map(|path| path.to_string_lossy().into_owned())
                     .unwrap_or_default(),
             ),
-        )
-        .with_host_value(
-            "__quench_module_url",
-            Value::String(
+            "__quench_module_url" => Value::String(
                 path.map(|path| format!("file://{}", path.to_string_lossy()))
                     .unwrap_or_default(),
             ),
-        )
-        .with_host_value(
-            "__dirname",
-            Value::String(
+            "__dirname" => Value::String(
                 path.and_then(Path::parent)
                     .unwrap_or_else(|| Path::new("."))
                     .to_string_lossy()
                     .into_owned(),
             ),
-        )
-        .with_host_value(
-            "URL",
-            capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
-        )
-        .with_host_value(
-            "URLSearchParams",
-            capability_function(HostCapabilityKind::Custom(CapabilityName::UrlSearchParams)),
-        )
-        .with_host_value(
-            "TextEncoder",
-            capability_function(HostCapabilityKind::Custom(
-                CapabilityName::TextEncoderConstructor,
-            )),
-        )
-        .with_host_value(
-            "TextDecoder",
-            capability_function(HostCapabilityKind::Custom(
-                CapabilityName::TextDecoderConstructor,
-            )),
-        )
+            "URL" => capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
+            "URLSearchParams" => capability_function(HostCapabilityKind::Custom(CapabilityName::UrlSearchParams)),
+            "TextEncoder" => capability_function(HostCapabilityKind::Custom(CapabilityName::TextEncoderConstructor)),
+            "TextDecoder" => capability_function(HostCapabilityKind::Custom(CapabilityName::TextDecoderConstructor)),
         // Structured cloning is a host capability. Keeping it in the
         // context data prevents the adapter from silently substituting a
         // shallow JavaScript object spread (which loses transfer semantics).
-        .with_host_value(
-            "structuredClone",
-            capability_function(HostCapabilityKind::Custom(
+            "structuredClone" => capability_function(HostCapabilityKind::Custom(
                 crate::registry::SPEC_STRUCTURED_CLONE.cap,
-            )),
-        )
-        .with_host_value(
-            "setImmediate",
-            capability_function(HostCapabilityKind::Custom(CapabilityName::TimerImmediate)),
-        )
-        .with_host_value(
-            "gc",
-            capability_function(HostCapabilityKind::Custom(CapabilityName::Gc)),
-        )
-        .with_host_value(
-            "setTimeout",
-            capability_function(HostCapabilityKind::Custom(CapabilityName::Timer)),
-        )
-        .with_host_value(
-            "setInterval",
-            capability_function(HostCapabilityKind::Custom(CapabilityName::Timer)),
-        )
-        .with_host_value(
-            "clearInterval",
-            capability_function(HostCapabilityKind::Custom(
+            ),
+            "setImmediate" => capability_function(HostCapabilityKind::Custom(CapabilityName::TimerImmediate)),
+            "gc" => capability_function(HostCapabilityKind::Custom(CapabilityName::Gc)),
+            "setTimeout" => capability_function(HostCapabilityKind::Custom(CapabilityName::Timer)),
+            "setInterval" => capability_function(HostCapabilityKind::Custom(CapabilityName::Timer)),
+            "clearInterval" => capability_function(HostCapabilityKind::Custom(
                 CapabilityName::TimerClearImmediate,
             )),
-        )
-        .with_host_value(
-            "clearImmediate",
-            capability_function(HostCapabilityKind::Custom(
+            "clearImmediate" => capability_function(HostCapabilityKind::Custom(
                 CapabilityName::TimerClearImmediate,
             )),
-        )
-        .with_host_value(
-            "queueMicrotask",
-            capability_function(HostCapabilityKind::Custom(CapabilityName::QueueMicrotask)),
-        )
-        .with_host_value("Buffer", buffer_module());
-        let context = context
-            .with_host_value(
-                "__quench_fs_access",
-                capability_function(HostCapabilityKind::Custom(CapabilityName::FsAccess)),
-            )
-            .with_host_value(
-                "__quench_fs_write_bytes",
-                capability_function(HostCapabilityKind::Custom(CapabilityName::FsWriteBytes)),
-            )
-            .with_host_value(
-                "__quench_fs_append_bytes",
-                capability_function(HostCapabilityKind::Custom(CapabilityName::FsAppendBytes)),
-            )
-            .with_host_value(
-                "__quench_fs_unlink",
-                capability_function(HostCapabilityKind::Custom(CapabilityName::FsUnlink)),
-            )
-            .with_host_value(
-                "__quench_fs_mkdtemp",
-                capability_function(HostCapabilityKind::Custom(CapabilityName::FsMkdtemp)),
-            )
-            .with_host_value(
-                "__quench_digest_bytes",
-                capability_function(HostCapabilityKind::Custom(
+            "queueMicrotask" => capability_function(HostCapabilityKind::Custom(CapabilityName::QueueMicrotask)),
+            "Buffer" => buffer_module(),
+        );
+        let context = with_host_values!(context;
+            "__quench_fs_access" => capability_function(HostCapabilityKind::Custom(CapabilityName::FsAccess)),
+            "__quench_fs_write_bytes" => capability_function(HostCapabilityKind::Custom(CapabilityName::FsWriteBytes)),
+            "__quench_fs_append_bytes" => capability_function(HostCapabilityKind::Custom(CapabilityName::FsAppendBytes)),
+            "__quench_fs_unlink" => capability_function(HostCapabilityKind::Custom(CapabilityName::FsUnlink)),
+            "__quench_fs_mkdtemp" => capability_function(HostCapabilityKind::Custom(CapabilityName::FsMkdtemp)),
+            "__quench_digest_bytes" => capability_function(HostCapabilityKind::Custom(
                     CapabilityName::CryptoDigestBytes,
-                )),
-            )
-            .with_host_value(
-                "__quench_shake_bytes",
-                capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoShakeBytes)),
-            )
-            .with_host_value(
-                "__quench_drain_dgram_callbacks",
-                capability_function(HostCapabilityKind::Custom(
+            )),
+            "__quench_shake_bytes" => capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoShakeBytes)),
+            "__quench_drain_dgram_callbacks" => capability_function(HostCapabilityKind::Custom(
                     CapabilityName::DgramDrainCallbacks,
-                )),
-            );
+            )),
+        );
         quench_runtime::execute::execute_code_with_context(program.code(), &context)
             .map(|_| ())
             .map_err(|error| error.render().into())
