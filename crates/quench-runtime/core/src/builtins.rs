@@ -254,6 +254,10 @@ builtin_catalog! {
     ObjectHasOwnProperty, ObjectPrototype, "hasOwnProperty", native_object_has_own_property, Generic, PURE;
     ObjectPropertyIsEnumerable, ObjectPrototype, "propertyIsEnumerable", native_object_property_is_enumerable, Generic, PURE;
     ObjectIsPrototypeOf, ObjectPrototype, "isPrototypeOf", native_object_is_prototype_of, Generic, PURE;
+    ObjectDefineGetter, ObjectPrototype, "__defineGetter__", native_object_define_getter, Generic, MAY_MUTATE;
+    ObjectDefineSetter, ObjectPrototype, "__defineSetter__", native_object_define_setter, Generic, MAY_MUTATE;
+    ObjectLookupGetter, ObjectPrototype, "__lookupGetter__", native_object_lookup_getter, Generic, PURE;
+    ObjectLookupSetter, ObjectPrototype, "__lookupSetter__", native_object_lookup_setter, Generic, PURE;
     FunctionCall, FunctionPrototype, "call", native_function_call, Generic, MAY_CALL_JS;
     FunctionApply, FunctionPrototype, "apply", native_function_apply, Generic, MAY_CALL_JS;
     FunctionBind, FunctionPrototype, "bind", native_function_bind, Generic, MAY_ALLOCATE;
@@ -429,8 +433,13 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::RegExpExec
         | BuiltinId::ObjectToString
         | BuiltinId::ObjectToLocaleString
-        | BuiltinId::ObjectIsPrototypeOf
-        | BuiltinId::ObjectValueOf => 1,
+        | BuiltinId::ObjectValueOf => 0,
+        BuiltinId::ObjectIsPrototypeOf
+        | BuiltinId::ObjectHasOwnProperty
+        | BuiltinId::ObjectPropertyIsEnumerable
+        | BuiltinId::ObjectLookupGetter
+        | BuiltinId::ObjectLookupSetter => 1,
+        BuiltinId::ObjectDefineGetter | BuiltinId::ObjectDefineSetter => 2,
         _ => 0,
     }
 }
