@@ -8494,9 +8494,29 @@ fn native_array_slice(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Valu
         a.values[start.min(a.len())..end.min(a.len()).max(start.min(a.len()))].to_vec(),
     ))
 }
-fn native_array_join(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    let Some(o) = array_this(this) else {
-        return Ok(Value::String(Rc::new(String::new().into())));
+fn native_array_join(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(o) = array_this(this.clone()) else {
+        if this.is_null() || this.is_undefined() {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "Array.prototype.join called on null or undefined",
+            )));
+        }
+        let length = array_like_length(vm, &this)?;
+        let sep = args
+            .first()
+            .map(Value::string)
+            .unwrap_or_else(|| ",".into());
+        let mut parts = Vec::with_capacity(length);
+        for index in 0..length {
+            let value = array_like_value(vm, &this, index)?.unwrap_or(Value::Undefined);
+            parts.push(if value.is_null() || value.is_undefined() {
+                String::new()
+            } else {
+                value.string()
+            });
+        }
+        return Ok(Value::string_value(parts.join(&sep)));
     };
     let sep = args
         .first()
@@ -8504,15 +8524,30 @@ fn native_array_join(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value>
         .unwrap_or_else(|| ",".into());
     let b = o.borrow();
     let a = b.array.as_ref().unwrap();
-    Ok(Value::String(Rc::new(
-        a.iter()
-            .map(Value::string)
-            .collect::<Vec<_>>()
-            .join(&sep)
-            .into(),
-    )))
+    let parts = (0..a.len())
+        .map(|index| {
+            if a.holes[index] {
+                String::new()
+            } else {
+                let value = &a.values[index];
+                if value.is_null() || value.is_undefined() {
+                    String::new()
+                } else {
+                    value.string()
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+    Ok(Value::string_value(parts.join(&sep)))
 }
 fn native_array_to_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if array_this(this.clone()).is_none() {
+        let join = vm.get_prop(&this, "join");
+        if join.is_function() {
+            return vm.call_arguments(&join, this, &[] as &[Value]);
+        }
+        return native_object_to_string(vm, this, &[]);
+    }
     native_array_join(vm, this, &[])
 }
 fn native_array_concat(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
