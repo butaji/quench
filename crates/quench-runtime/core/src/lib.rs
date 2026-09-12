@@ -8205,6 +8205,14 @@ fn native_escape(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
             let code = character as u32;
             if code <= 0xff {
                 output.push_str(&format!("%{code:02X}"));
+            } else if code > 0xffff {
+                // Annex B escape operates on UTF-16 code units. Rust iterates
+                // Unicode scalar values, so expand supplementary characters
+                // into the exact surrogate pair that JavaScript observes.
+                let supplementary = code - 0x1_0000;
+                let high = 0xd800 + (supplementary >> 10);
+                let low = 0xdc00 + (supplementary & 0x3ff);
+                output.push_str(&format!("%u{high:04X}%u{low:04X}"));
             } else {
                 output.push_str(&format!("%u{code:04X}"));
             }
