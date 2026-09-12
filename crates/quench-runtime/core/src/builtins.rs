@@ -219,6 +219,7 @@ builtin_catalog! {
     DateGetUTCSeconds, DatePrototype, "getUTCSeconds", native_date_get_utc_seconds, Generic, PURE;
     DateGetUTCMilliseconds, DatePrototype, "getUTCMilliseconds", native_date_get_utc_milliseconds, Generic, PURE;
     DateGetFullYear, DatePrototype, "getFullYear", native_date_get_utc_full_year, Generic, PURE;
+    DateGetYear, DatePrototype, "getYear", native_date_get_year, Generic, PURE;
     DateGetMonth, DatePrototype, "getMonth", native_date_get_utc_month, Generic, PURE;
     DateGetDate, DatePrototype, "getDate", native_date_get_utc_date, Generic, PURE;
     DateGetDay, DatePrototype, "getDay", native_date_get_utc_day, Generic, PURE;
@@ -235,6 +236,7 @@ builtin_catalog! {
     DateSetUTCSeconds, DatePrototype, "setUTCSeconds", native_date_set_utc_seconds, Generic, MAY_MUTATE;
     DateSetUTCMilliseconds, DatePrototype, "setUTCMilliseconds", native_date_set_utc_milliseconds, Generic, MAY_MUTATE;
     DateSetFullYear, DatePrototype, "setFullYear", native_date_set_utc_full_year, Generic, MAY_MUTATE;
+    DateSetYear, DatePrototype, "setYear", native_date_set_year, Generic, MAY_MUTATE;
     DateSetMonth, DatePrototype, "setMonth", native_date_set_utc_month, Generic, MAY_MUTATE;
     DateSetDate, DatePrototype, "setDate", native_date_set_utc_date, Generic, MAY_MUTATE;
     DateSetHours, DatePrototype, "setHours", native_date_set_utc_hours, Generic, MAY_MUTATE;

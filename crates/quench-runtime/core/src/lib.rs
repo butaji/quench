@@ -11500,6 +11500,12 @@ fn native_date_get_timezone_offset(_: &mut Vm, this: Value, _: &[Value]) -> JsRe
     Ok(Value::Number(date_utc(&this).map_or(f64::NAN, |_| 0.0)))
 }
 
+fn native_date_get_year(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    Ok(Value::Number(
+        date_utc(&this).map_or(f64::NAN, |date| date.year() as f64 - 1900.0),
+    ))
+}
+
 fn native_date_to_temporal_instant(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     let Some(millis) = date_millis(&this) else {
         return Err(JsError::Throw(type_error(vm, "Date receiver required")));
@@ -11580,6 +11586,31 @@ fn native_date_set_time(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Va
         .transpose()?
         .unwrap_or(f64::NAN);
     date_set_millis(vm, &this, millis)
+}
+
+fn native_date_set_year(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let year = date_component_number(vm, args, 0, f64::NAN)?;
+    let year = if (0.0..=99.0).contains(&year) {
+        year + 1900.0
+    } else {
+        year
+    };
+    let Some(current) = date_utc(&this) else {
+        return date_set_millis(vm, &this, f64::NAN);
+    };
+    let month = date_component_number(vm, args, 1, current.month0() as f64)?;
+    let day = date_component_number(vm, args, 2, current.day() as f64)?;
+    let date = date_from_parts(
+        year as i64,
+        month as i64,
+        day as i64,
+        current.hour() as i64,
+        current.minute() as i64,
+        current.second() as i64,
+        current.timestamp_subsec_millis() as i64,
+    )
+    .ok_or_else(|| JsError::Throw(range_error(vm, "Invalid time value")))?;
+    date_set_millis(vm, &this, date.timestamp_millis() as f64)
 }
 
 fn date_component_number(vm: &mut Vm, args: &[Value], index: usize, default: f64) -> JsResult<f64> {
