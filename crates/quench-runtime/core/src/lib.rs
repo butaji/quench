@@ -454,6 +454,11 @@ impl Value {
         {
             return primitive.string();
         }
+        if let Some(object) = self.as_object_ref()
+            && let Some(description) = object.borrow().props.get("\0symbol")
+        {
+            return format!("Symbol({})", description.string());
+        }
         self.as_string()
             .map_or_else(|| self.display(), ToString::to_string)
     }
@@ -7275,7 +7280,16 @@ fn native_symbol(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
         .unwrap_or_default();
     let symbol = vm.object(None);
     vm.set_prop(&symbol, "\0symbol", Value::string_value(description));
+    vm.set_prop(&symbol, "toString", vm.native(native_symbol_to_string));
     Ok(symbol)
+}
+fn native_symbol_to_string(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let description = this
+        .as_object_ref()
+        .and_then(|object| object.borrow().props.get("\0symbol").cloned())
+        .map(|value| value.string())
+        .unwrap_or_default();
+    Ok(Value::string_value(format!("Symbol({description})")))
 }
 fn native_string_replace(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let s = string_this(this);
