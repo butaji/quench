@@ -110,13 +110,14 @@ Verification completed:
 - the stencil String stage now reaches 424/1,223 after routing constructor
   coercion and global binding projection through the shared stencil VM; the
   remaining failures are unsupported syntax, accessors, and Unicode details
-- the stencil Object stage now reaches 2,782/3,411 after enforcing
+- the stencil Object stage now reaches 2,806/3,411 after enforcing
   `Object.create` prototype validation, applying its property descriptors with
   correct defaults, honoring enumerable descriptor selection, routing
   descriptor/accessor fields through the shared property model, preserving
-  computed accessor kinds through stencil lowering, and modeling RegExp
-  expandos plus Arguments object tags; the remaining failures are mostly
-  arrays, proxies, and unsupported stencil features
+  computed accessor kinds through stencil lowering, modeling RegExp expandos
+  plus Arguments object tags, and deriving number property-key formatting from
+  the shared ECMAScript number-to-string helper; the remaining failures are
+  mostly arrays, proxies, and unsupported stencil features
 - the stencil BigInt stage now reaches 77/77 after deriving one marker-based
   conversion path, preserving BigInt update/operator semantics, routing
   computed keys through `ToPropertyKey`, and honoring wrapper/string coercion;
