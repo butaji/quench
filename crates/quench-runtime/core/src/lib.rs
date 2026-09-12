@@ -5508,6 +5508,12 @@ impl Vm {
         if is_bigint_marker(&o) {
             return bigint_method(self, k);
         }
+        if o.as_bool().is_some() {
+            return match k {
+                "valueOf" | "toString" => self.builtin_property(BuiltinOwner::BooleanPrototype, k),
+                _ => Value::Undefined,
+            };
+        }
         if let Some(string) = o.as_string() {
             return if k == "length" {
                 Value::Number(string.len() as f64)
