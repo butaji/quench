@@ -10,8 +10,7 @@ use std::path::Path;
 use crate::{Test262Host, TestMetadata};
 
 #[derive(Debug, Default)]
-pub struct StencilHost {
-}
+pub struct StencilHost {}
 
 impl StencilHost {
     fn run_source_at(&self, source: &str, path: &Path) -> Result<(), String> {

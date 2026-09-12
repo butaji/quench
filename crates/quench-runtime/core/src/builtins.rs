@@ -430,8 +430,7 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::ObjectToString
         | BuiltinId::ObjectToLocaleString
         | BuiltinId::ObjectIsPrototypeOf
-        | BuiltinId::ObjectValueOf
-        => 1,
+        | BuiltinId::ObjectValueOf => 1,
         _ => 0,
     }
 }

@@ -500,11 +500,8 @@ fn float16_constructor() -> quench_runtime::value::Value {
         quench_runtime::ops::Builtin::Uint16Array,
         receiver,
     );
-    let constructor = quench_runtime::execute::set_property(
-        constructor,
-        "prototype",
-        prototype.clone(),
-    );
+    let constructor =
+        quench_runtime::execute::set_property(constructor, "prototype", prototype.clone());
     let constructor = quench_runtime::execute::set_property(
         constructor,
         "name",
@@ -524,11 +521,7 @@ fn float16_constructor() -> quench_runtime::value::Value {
         "\0function_prototype",
         quench_runtime::value::Value::Builtin(quench_runtime::ops::Builtin::TypedArray),
     );
-    let _ = quench_runtime::execute::set_property(
-        prototype,
-        "constructor",
-        constructor.clone(),
-    );
+    let _ = quench_runtime::execute::set_property(prototype, "constructor", constructor.clone());
     constructor
 }
 fn host_context() -> VmContext {
