@@ -61,17 +61,58 @@ pub(crate) fn take_call_continuation(
     receiver: Value,
     arguments: crate::completion::CallArguments,
 ) -> crate::completion::Completion {
-    crate::completion::Completion::Call(crate::completion::CallContinuation {
+    crate::completion::Completion::Call(crate::completion::CallContinuation::new(
         callee,
         receiver,
         arguments,
-        caller_code: crate::identity::CodeId(0),
-        caller_pc: 0,
-        caller_registers: std::mem::take(registers),
-        caller_environment: crate::identity::EnvironmentRef(0),
         destination,
-        guards: crate::completion::ContinuationGuards::default(),
-    })
+        std::mem::take(registers),
+    ))
+}
+
+/// Iterative activation state for the cross-tier call driver. The stack owns
+/// suspended callee frames; reserve failure restores the frame's caller window
+/// before returning a VM error, so resource exhaustion cannot leak a moved
+/// register file or panic in Rust allocation code.
+struct ActiveCall {
+    continuation: crate::completion::CallContinuation,
+    code: crate::machine::FunctionCode,
+    registers: crate::register_file::RegisterFile,
+    environment: std::rc::Rc<crate::environment::Environment>,
+    pc: usize,
+}
+
+struct ActiveCallStack {
+    frames: Vec<ActiveCall>,
+}
+
+impl ActiveCallStack {
+    fn new() -> Self {
+        Self { frames: Vec::new() }
+    }
+
+    fn try_push(
+        &mut self,
+        frame: ActiveCall,
+        registers: &mut crate::register_file::RegisterFile,
+    ) -> Result<(), VmError> {
+        if self.frames.len() == self.frames.capacity() && self.frames.try_reserve(1).is_err() {
+            frame.continuation.restore_caller_registers(registers);
+            return Err(crate::value::error::throw_range_error(
+                "Unable to allocate nested call continuation",
+            ));
+        }
+        self.frames.push(frame);
+        Ok(())
+    }
+
+    fn pop(&mut self) -> Option<ActiveCall> {
+        self.frames.pop()
+    }
+
+    fn last(&self) -> Option<&ActiveCall> {
+        self.frames.last()
+    }
 }
 
 fn peel_binding_cell(mut value: Value) -> Value {
@@ -110,13 +151,6 @@ fn execute_call_continuation_inner(
     registers: &mut crate::register_file::RegisterFile,
     continuation: crate::completion::CallContinuation,
 ) -> Result<(), VmError> {
-    struct ActiveCall {
-        continuation: crate::completion::CallContinuation,
-        code: crate::machine::FunctionCode,
-        registers: crate::register_file::RegisterFile,
-        environment: std::rc::Rc<crate::environment::Environment>,
-        pc: usize,
-    }
     enum StartedCall {
         Active(ActiveCall),
         Fallback(crate::completion::CallContinuation),
@@ -188,12 +222,11 @@ fn execute_call_continuation_inner(
             &continuation.receiver,
             &continuation.arguments,
         )? {
-            *registers = continuation.caller_registers;
-            super::write_value(registers, continuation.destination, value);
+            continuation.deliver_to_caller(registers, value);
             return Ok(());
         }
     }
-    let mut stack: Vec<ActiveCall> = Vec::new();
+    let mut stack = ActiveCallStack::new();
     let mut current = match start(continuation) {
         StartedCall::Active(active) => active,
         StartedCall::Fallback(continuation) => {
@@ -202,12 +235,11 @@ fn execute_call_continuation_inner(
                 &continuation.receiver,
                 &continuation.arguments,
             )?;
-            *registers = continuation.caller_registers;
-            super::write_value(registers, continuation.destination, value);
+            continuation.deliver_to_caller(registers, value);
             return Ok(());
         }
         StartedCall::Error(error, continuation) => {
-            *registers = continuation.caller_registers;
+            continuation.restore_caller_registers(registers);
             return Err(error);
         }
     };
@@ -308,7 +340,7 @@ fn execute_call_continuation_inner(
                 // pushing it, so nested results are written into the live
                 // parent frame rather than an empty register vector.
                 current.registers = std::mem::take(&mut nested.caller_registers);
-                stack.push(current);
+                stack.try_push(current, registers)?;
                 current = match start(nested) {
                     StartedCall::Active(active) => active,
                     StartedCall::Fallback(nested) => {
@@ -343,17 +375,19 @@ fn execute_call_continuation_inner(
                 // unconsumed completion: otherwise nested assert.throws sees an
                 // internal EvalError instead of the callback's own error value.
                 let parent = current.continuation;
-                let tail = crate::completion::CallContinuation {
-                    callee: request.callee,
-                    receiver: request.receiver,
-                    arguments: request.arguments,
-                    caller_code: parent.caller_code,
-                    caller_pc: parent.caller_pc,
-                    caller_registers: parent.caller_registers,
-                    caller_environment: parent.caller_environment,
-                    destination: parent.destination,
-                    guards: parent.guards,
-                };
+                let tail = crate::completion::CallContinuation::new(
+                    request.callee,
+                    request.receiver,
+                    request.arguments,
+                    parent.destination,
+                    parent.caller_registers,
+                )
+                .with_caller(
+                    parent.caller_code,
+                    parent.caller_pc,
+                    parent.caller_environment,
+                )
+                .with_guards(parent.guards);
                 current = match start(tail) {
                     StartedCall::Active(active) => active,
                     StartedCall::Fallback(tail) => {
@@ -372,15 +406,14 @@ fn execute_call_continuation_inner(
                                 return Err(error);
                             }
                         };
-                        *registers = tail.caller_registers;
-                        super::write_value(registers, tail.destination, value);
+                        tail.deliver_to_caller(registers, value);
                         return Ok(());
                     }
                     StartedCall::Error(error, tail) => {
                         if let Some(parent) = stack.last() {
                             *registers = parent.registers.clone();
                         } else {
-                            *registers = tail.caller_registers;
+                            tail.restore_caller_registers(registers);
                         }
                         return Err(error);
                     }
@@ -411,8 +444,7 @@ fn execute_call_continuation_inner(
             break value;
         }
     };
-    *registers = current.continuation.caller_registers;
-    super::write_value(registers, current.continuation.destination, value);
+    current.continuation.deliver_to_caller(registers, value);
     Ok(())
 }
 pub fn execute_optional_call(
@@ -536,7 +568,8 @@ pub(crate) fn collect_call_arguments(
     args: &[u16],
     spreads: &[bool],
 ) -> Result<crate::completion::CallArguments, VmError> {
-    let mut arguments = crate::completion::CallArguments::with_capacity(args.len());
+    let mut arguments = crate::completion::CallArguments::try_with_capacity(args.len())
+        .map_err(|_| crate::value::error::throw_range_error("Unable to allocate call arguments"))?;
     for (i, index) in args.iter().enumerate() {
         push_argument_value(
             &mut arguments,
@@ -554,12 +587,18 @@ fn push_argument_value(
     is_spread: bool,
 ) -> Result<(), VmError> {
     if is_spread {
-        arguments.extend(
-            crate::collections::iterator::collect_iterable(value).map_err(map_not_callable)?,
-        );
+        arguments
+            .try_extend(
+                crate::collections::iterator::collect_iterable(value).map_err(map_not_callable)?,
+            )
+            .map_err(|_| {
+                crate::value::error::throw_range_error("Unable to allocate call arguments")
+            })?;
         return Ok(());
     }
-    arguments.push(value);
+    arguments
+        .try_push(value)
+        .map_err(|_| crate::value::error::throw_range_error("Unable to allocate call arguments"))?;
     Ok(())
 }
 

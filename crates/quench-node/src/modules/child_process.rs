@@ -107,7 +107,11 @@ pub(crate) fn needs_shell(command: &str) -> bool {
 /// `worker_threads` bootstrap and must not leak into ordinary child
 /// processes, otherwise a child recursively re-enters worker mode.
 pub(crate) fn clear_worker_markers(command: &mut Command) {
-    for key in ["QUENCH_WORKER", "QUENCH_WORKER_DATA", "QUENCH_WORKER_MESSAGE"] {
+    for key in [
+        "QUENCH_WORKER",
+        "QUENCH_WORKER_DATA",
+        "QUENCH_WORKER_MESSAGE",
+    ] {
         command.env_remove(key);
     }
 }

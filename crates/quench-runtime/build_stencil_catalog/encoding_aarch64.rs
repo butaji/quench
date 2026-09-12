@@ -213,6 +213,7 @@ const fn aarch64_prototype_property_guard_bytes() -> [u8; 292] {
 
 const AARCH64_PROTOTYPE_PROPERTY_GUARD_BYTES: [u8; 292] = aarch64_prototype_property_guard_bytes();
 const AARCH64_MOVE_BYTES: [u8; 8] = AARCH64_PROPERTY_BYTES;
+const AARCH64_IDENTITY_BYTES: [u8; 4] = aarch64_ret().to_le_bytes();
 const AARCH64_ARRAY_GET_NUMBER_BYTES: [u8; 20] = aarch64_array_get_number_bytes();
 const AARCH64_ARRAY_SET_NUMBER_BYTES: [u8; 20] = aarch64_array_set_number_bytes();
 const AARCH64_ARRAY_GET_INC_NUMBER_BYTES: [u8; 32] = {

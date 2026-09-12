@@ -340,7 +340,8 @@ impl StencilArena {
     pub(crate) fn tagged_word_entry(
         &self,
         address: usize,
-    ) -> Result<extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64, ArenaError> {
+    ) -> Result<extern "C" fn(*const crate::native_core::value_word::TaggedValue) -> u64, ArenaError>
+    {
         self.require_abi(address, crate::stencil_select::RegionAbi::TaggedWord)?;
         let base = self.ptr as usize;
         let end = base.saturating_add(self.cursor);
@@ -390,7 +391,7 @@ impl StencilArena {
     pub fn execute_tagged_word(
         &self,
         address: usize,
-        word: *const crate::tagged_value::TaggedValue,
+        word: *const crate::native_core::value_word::TaggedValue,
     ) -> Result<u64, ArenaError> {
         if word.is_null() {
             return Err(ArenaError::ProtectionFailed);
@@ -455,7 +456,7 @@ impl StencilArena {
     pub fn execute_tagged_word(
         &self,
         _address: usize,
-        _word: *const crate::tagged_value::TaggedValue,
+        _word: *const crate::native_core::value_word::TaggedValue,
     ) -> Result<u64, ArenaError> {
         Err(ArenaError::ProtectionFailed)
     }

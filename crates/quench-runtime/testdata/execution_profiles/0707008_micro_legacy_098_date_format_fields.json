@@ -1,16 +1,15 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "string", "value": "15126" },
-  "plan": {
-    "execution_kind": "portable_recipe",
-    "operation_route": ["date_format_fields"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "TailCall",
+    "LoadConst",
+    "Return"
+  ],
+  "result": {
+    "kind": "string",
+    "value": "15126"
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "date_format_fields_region": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

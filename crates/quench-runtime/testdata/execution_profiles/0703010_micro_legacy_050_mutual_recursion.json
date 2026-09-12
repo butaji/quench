@@ -1,16 +1,33 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "string", "value": "470" },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["mutual_recursion"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "MarkUninitialized",
+    "LoadConst",
+    "StoreLocal",
+    "MakeFunctionWithKind",
+    "SetFunctionName",
+    "LoadConst",
+    "SetN",
+    "StoreLocal",
+    "LoadConst",
+    "StoreLocal",
+    "MakeFunctionWithKind",
+    "SetFunctionName",
+    "LoadConst",
+    "SetN",
+    "StoreLocal",
+    "MarkUninitialized",
+    "LoadConst",
+    "InitLocal",
+    "LoadConst",
+    "Loop",
+    "LoadLocalChecked",
+    "Return"
+  ],
+  "result": {
+    "kind": "string",
+    "value": "470"
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "mutual_recursion_region": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

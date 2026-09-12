@@ -237,9 +237,8 @@ pub(crate) fn construct_float16_array(
     };
     for index in 0..source.logical_len() {
         let item = crate::execute::get_property(&Value::Array(source.clone()), &index.to_string());
-        if matches!(item, Value::Number(number) if number == 0.0 && number.is_sign_negative()) {
-            target.set(index, 0x8000);
-        }
+        let number = crate::conversion::to_number(&item)?;
+        target.set(index, crate::value::float64_to_float16(number));
     }
     Ok(value)
 }

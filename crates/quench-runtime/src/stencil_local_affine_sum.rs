@@ -7,7 +7,6 @@ use crate::ops::{BinaryOp, FunctionKind, Op, UnaryOp};
 pub(crate) const REGION_END: usize = 38;
 const LOOP_HEADER: usize = 13;
 const LOOP_EXIT: usize = 34;
-const MAX_ITERATIONS: usize = 4096;
 const MAX_EXACT_INTEGER: i128 = 1_i128 << 53;
 
 #[derive(Clone, Copy)]
@@ -254,10 +253,7 @@ fn operation_window(entries: &[BaselineEntry]) -> Option<[Instruction; REGION_EN
     values
         .iter()
         .zip(expected)
-        .all(|(actual, expected)| {
-            actual.opcode == expected
-                || (expected == Opcode::GetN && actual.opcode == Opcode::GetNQuickened)
-        })
+        .all(|(actual, expected)| expected.matches_physical_contract(actual.opcode))
         .then_some(values)
 }
 
@@ -268,14 +264,12 @@ fn named_get(
     object: u16,
     name: &str,
 ) -> Option<()> {
-    (matches!(op.opcode, Opcode::GetN | Opcode::GetNQuickened) && op.b == object).then_some(())?;
+    (op.opcode.semantic_opcode() == Opcode::GetN && op.b == object).then_some(())?;
     (code.metadata_at(pc)?.name.as_deref() == Some(name)).then_some(())
 }
 
 fn binary(op: Instruction, operator: BinaryOp, left: u16, right: u16) -> Option<()> {
-    (crate::ir::compact_binary_operator(op.flags) == Some(operator)
-        && op.b == left
-        && op.c == right)
+    (op.opcode.binary_operator(op.flags) == Some(operator) && op.b == left && op.c == right)
         .then_some(())
 }
 
@@ -303,7 +297,6 @@ fn guarded_integer_property(
 
 fn exact_sum(selection: LocalAffineSumSelection, seed: i32, end: i32) -> Option<()> {
     let count = usize::try_from(end).ok()?;
-    (count <= MAX_ITERATIONS).then_some(())?;
     (!selection.requires_nonnegative || seed >= 0).then_some(())?;
     let count = count as i128;
     let first = i128::from(seed) * i128::from(selection.multiplier) + i128::from(selection.addend);

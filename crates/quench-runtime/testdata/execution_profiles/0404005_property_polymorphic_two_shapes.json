@@ -1,25 +1,19 @@
 {
-  "schema": 1,
-  "warmup": 2,
-  "result": { "kind": "number", "value": 83 },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": [
-      "ShapeGuard",
-      "FieldLoad",
-      "AddConst",
-      "ShapeGuard",
-      "FieldLoad",
-      "AddConst",
-      "Add",
-      "Return"
-    ],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "LoadLocal",
+    "Call",
+    "LoadLocal",
+    "LoadLocal",
+    "Call",
+    "Add",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": 83
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "polymorphic_property_pair_sum_return": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 2
 }

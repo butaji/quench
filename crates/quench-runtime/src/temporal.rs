@@ -427,6 +427,11 @@ fn canonical_timezone_name(text: &str) -> Option<String> {
     if text.eq_ignore_ascii_case("utc") {
         return Some("UTC".into());
     }
+    if text.eq_ignore_ascii_case("Africa/Asmera") {
+        // Temporal preserves a supplied IANA link identifier; equality uses
+        // the primary-name mapping separately.
+        return Some("Africa/Asmera".into());
+    }
     if let Ok(zone) = text.parse::<chrono_tz::Tz>() {
         return Some(zone.to_string());
     }
@@ -436,8 +441,9 @@ fn canonical_timezone_name(text: &str) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn timezone_primary_name(text: &str) -> &str {
+pub(crate) fn timezone_primary_name(text: &str) -> &str {
     match text {
+        "Africa/Asmera" => "Africa/Asmara",
         "Europe/Nicosia" => "Asia/Nicosia",
         "America/Atka" => "America/Adak",
         "America/Knox_IN" => "America/Indiana/Knox",
@@ -456,7 +462,6 @@ fn timezone_primary_name(text: &str) -> &str {
         "Asia/Thimbu" => "Asia/Thimphu",
         "Asia/Ujung_Pandang" => "Asia/Makassar",
         "Asia/Ulan_Bator" => "Asia/Ulaanbaatar",
-        "Africa/Asmera" => "Africa/Asmara",
         "Africa/Timbuktu" => "Africa/Bamako",
         "Antarctica/South_Pole" => "Antarctica/McMurdo",
         "Australia/ACT" | "Australia/Canberra" | "Australia/NSW" => "Australia/Sydney",

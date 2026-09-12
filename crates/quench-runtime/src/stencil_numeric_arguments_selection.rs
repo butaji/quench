@@ -25,15 +25,16 @@ pub(crate) fn select_arguments_loop(
     validate_prefix(code, &i, function)?;
     let (multiplier, addend) = call_formula(code, &i, function)?;
     validate_loop(code, &i)?;
-    Some(IntegerLoopSelection {
-        state_slot: i[7].b,
-        value_slot: i[9].a,
-        index_slot: i[12].a,
-        seed_pc: 8,
-        bound_pc: 16,
+    IntegerLoopSelection::at(
+        0,
+        i[7].b,
+        i[9].a,
+        i[12].a,
+        8,
+        16,
         multiplier,
-        recurrence: IntegerRecurrence::ArgumentConstants(addend),
-    })
+        IntegerRecurrence::ArgumentConstants(addend),
+    )
 }
 
 fn local_function(code: CodeView<'_>) -> Option<u16> {
@@ -153,7 +154,7 @@ fn validate_affine_body(code: CodeView<'_>, captures: u16) -> Option<()> {
     ];
     i.iter()
         .zip(expected)
-        .all(|(a, b)| a.opcode == b)
+        .all(|(a, b)| b.matches_physical_contract(a.opcode))
         .then_some(())?;
     validate_body_flow(code, &i, captures)
 }
@@ -222,7 +223,10 @@ fn operation_window(entries: &[BaselineEntry]) -> Option<[Instruction; ARGUMENTS
     ];
     i.iter()
         .zip(expected)
-        .all(|(a, b)| a.opcode == b || (b == Opcode::GetN && a.opcode == Opcode::GetNQuickened))
+        .all(|(a, b)| {
+            b.matches_physical_contract(a.opcode)
+                || (b == Opcode::GetN && a.opcode == Opcode::GetNQuickened)
+        })
         .then_some(i)
 }
 

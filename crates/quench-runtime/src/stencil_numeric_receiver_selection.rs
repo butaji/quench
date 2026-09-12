@@ -23,15 +23,16 @@ pub(crate) fn select_receiver_loop(
     let ops = operation_window(entries)?;
     let receiver = receiver_fact(code, &ops)?;
     validate_loop(code, &ops, receiver.object, receiver.function)?;
-    Some(IntegerLoopSelection {
-        state_slot: ops[5].b,
-        value_slot: ops[7].a,
-        index_slot: ops[10].a,
-        seed_pc: 6,
-        bound_pc: 14,
-        multiplier: receiver.multiplier,
-        recurrence: IntegerRecurrence::ReceiverConstant(receiver.addend),
-    })
+    IntegerLoopSelection::at(
+        0,
+        ops[5].b,
+        ops[7].a,
+        ops[10].a,
+        6,
+        14,
+        receiver.multiplier,
+        IntegerRecurrence::ReceiverConstant(receiver.addend),
+    )
 }
 
 struct ReceiverFact {
@@ -112,7 +113,10 @@ fn affine_receiver_method(code: CodeView<'_>) -> Option<i32> {
     ];
     i.iter()
         .zip(expected)
-        .all(|(a, b)| a.opcode == b || (b == Opcode::GetN && a.opcode == Opcode::GetNQuickened))
+        .all(|(a, b)| {
+            b.matches_physical_contract(a.opcode)
+                || (b == Opcode::GetN && a.opcode == Opcode::GetNQuickened)
+        })
         .then_some(())?;
     validate_method_flow(code, &i)?;
     number_i32(code, i[1])
@@ -237,7 +241,10 @@ fn operation_window(entries: &[BaselineEntry]) -> Option<[Instruction; RECEIVER_
     ];
     i.iter()
         .zip(expected)
-        .all(|(a, b)| a.opcode == b || (b == Opcode::GetN && a.opcode == Opcode::GetNQuickened))
+        .all(|(a, b)| {
+            b.matches_physical_contract(a.opcode)
+                || (b == Opcode::GetN && a.opcode == Opcode::GetNQuickened)
+        })
         .then_some(i)
 }
 

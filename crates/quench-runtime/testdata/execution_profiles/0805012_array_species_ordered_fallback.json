@@ -1,16 +1,20 @@
 {
-  "schema": 1,
-  "warmup": 0,
-  "result": { "kind": "string", "value": "get0,define0,get1,define1,setlength" },
-  "plan": {
-    "execution_kind": "portable_recipe",
-    "operation_route": ["CallN", "Return"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "LoadLocal",
+    "LoadLocal",
+    "Call",
+    "LoadLocal",
+    "GetN",
+    "LoadConst",
+    "CallN",
+    "Return"
+  ],
+  "result": {
+    "kind": "string",
+    "value": "get0,define0,get1,define1,setlength"
   },
-  "profile": {
-    "residual": {},
-    "slow": { "ArraySpeciesCreate": 1, "ArraySliceElement": 2 },
-    "stencils": { "observable_array_slice": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 0
 }

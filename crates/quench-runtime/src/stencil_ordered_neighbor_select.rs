@@ -64,7 +64,7 @@ pub(super) fn select_init(code: CodeView<'_>) -> Option<(u16, i32)> {
             Opcode::LoadConst => select_init_constant(code, instruction, &mut constant)?,
             Opcode::InitLocal => initialized = Some((instruction.a, instruction.b)),
             Opcode::Return => {}
-            Opcode::Slow if is_uninitialized_marker(code, pc) => {}
+            opcode if opcode.is_cold_marker() && is_uninitialized_marker(code, pc) => {}
             _ => return None,
         }
     }
@@ -111,7 +111,9 @@ pub(super) fn select_test(code: CodeView<'_>, index_slot: u16) -> Option<(Bound,
                 );
             }
             Opcode::Sub | Opcode::Add => apply_binary(&mut values, instruction)?,
-            Opcode::Binary => comparison = select_comparison(&values, instruction, index_slot),
+            opcode if opcode.is_binary_family() => {
+                comparison = select_comparison(&values, instruction, index_slot)
+            }
             Opcode::Return => {}
             _ => return None,
         }
@@ -124,7 +126,7 @@ fn select_comparison(
     instruction: crate::ir::Instruction,
     index_slot: u16,
 ) -> Option<(Bound, bool)> {
-    let operator = crate::ir::compact_binary_operator(instruction.flags)?;
+    let operator = instruction.opcode.binary_operator(instruction.flags)?;
     let inclusive = match operator {
         crate::ops::BinaryOp::LessThan => false,
         crate::ops::BinaryOp::LessEqual => true,
@@ -198,7 +200,7 @@ fn select_body_instruction(
         Opcode::Sub | Opcode::Add | Opcode::Mul | Opcode::Div => apply_binary(values, instruction)?,
         Opcode::AGetI => apply_indexed_load(values, instruction, index_slot)?,
         Opcode::ASetI => *store = Some(select_store(values, instruction, index_slot)?),
-        Opcode::Slow if require_object(code, pc, values) => {}
+        opcode if opcode.is_cold_marker() && require_object(code, pc, values) => {}
         _ => return None,
     }
     Some(())

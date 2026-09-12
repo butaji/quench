@@ -66,7 +66,9 @@ fn select_body(code: CodeView<'_>, index_slot: u16) -> Option<(u16, i32, i32)> {
             | Opcode::AddConst => graph
                 .push(instruction, |constant| number_bits(code, constant))
                 .then_some(())?,
-            Opcode::Binary => graph.push_i32_binary(instruction).then_some(())?,
+            opcode if opcode.is_binary_family() => {
+                graph.push_i32_binary(instruction).then_some(())?
+            }
             Opcode::StoreLocal => {
                 stored = Some((instruction.a, graph.current(instruction.b)?));
             }

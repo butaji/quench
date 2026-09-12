@@ -84,18 +84,19 @@ fn select_instruction(
         }
         Opcode::Move => copy(values, instruction)?,
         Opcode::LoadConst => load_constant(code, instruction, values)?,
-        Opcode::Binary => select_binary(instruction, values)?,
+        opcode if opcode.is_binary_family() => select_binary(instruction, values)?,
         Opcode::Sub => select_sub(instruction, values)?,
         Opcode::ASetI => select_store(instruction, values, stored)?,
         Opcode::AGetI => select_load(instruction, values)?,
         Opcode::Mul => select_square(instruction, values)?,
         Opcode::Add => select_add(instruction, values)?,
         Opcode::StoreLocal => select_total_store(instruction, values, update)?,
-        Opcode::Slow
-            if matches!(
-                code.cold_at(pc)?,
-                crate::ops::Op::RequireObjectCoercible { .. }
-            ) => {}
+        opcode
+            if opcode.is_cold_marker()
+                && matches!(
+                    code.cold_at(pc)?,
+                    crate::ops::Op::RequireObjectCoercible { .. }
+                ) => {}
         _ => return None,
     }
     Some(())
@@ -137,7 +138,7 @@ fn select_binary(
     instruction: crate::ir::Instruction,
     values: &mut BTreeMap<u16, Value>,
 ) -> Option<()> {
-    (crate::ir::compact_binary_operator(instruction.flags)
+    (instruction.opcode.binary_operator(instruction.flags)
         == Some(crate::ops::BinaryOp::BitwiseXor))
     .then_some(())?;
     let left = *values.get(&instruction.b)?;

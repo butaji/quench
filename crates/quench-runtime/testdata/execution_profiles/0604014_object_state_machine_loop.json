@@ -1,16 +1,18 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "number", "value": 30 },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["GetNQuickened", "Binary", "JumpIfFalse", "GetNQuickened", "AddConst", "SetN", "CallN", "Jump"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "LoadConst",
+    "LoadConst",
+    "MakeObject",
+    "LoadConst",
+    "Call",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": 30
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "monomorphic_state_machine_loop": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

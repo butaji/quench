@@ -1,16 +1,53 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "string", "value": "[\"number\",\"80\"]" },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["array-interaction", "alias"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "GetN",
+    "MakeArray",
+    "StoreLocal",
+    "LoadLocal",
+    "StoreLocal",
+    "LoadConst",
+    "LoadConst",
+    "StoreLocal",
+    "LoadConst",
+    "LoadLocal",
+    "LoadLocal",
+    "GetN",
+    "LessThan",
+    "JumpIfFalse",
+    "LoadLocal",
+    "Move",
+    "LoadLocal",
+    "Move",
+    "LoadLocal",
+    "RequireObjectCoercible",
+    "LoadLocal",
+    "LoadConst",
+    "Sub",
+    "AGetI",
+    "AddConst",
+    "ASetI",
+    "Move",
+    "LoadLocal",
+    "LoadConst",
+    "NumericAdd",
+    "StoreLocal",
+    "Unary",
+    "Jump",
+    "LoadLocal",
+    "RequireObjectCoercible",
+    "LoadLocal",
+    "GetN",
+    "LoadConst",
+    "Sub",
+    "AGetI",
+    "Return"
+  ],
+  "result": {
+    "kind": "string",
+    "value": "[\"number\",\"80\"]"
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "array_interaction_alias_region": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

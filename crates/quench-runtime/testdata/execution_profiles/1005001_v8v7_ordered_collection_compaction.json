@@ -1,16 +1,43 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "number", "value": 16 },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["dense_element_load", "bitwise_test", "guarded_element_store", "array_length_store"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "LoadConst",
+    "LoadConst",
+    "LoadConst",
+    "LoadConst",
+    "LoadConst",
+    "LoadConst",
+    "LoadConst",
+    "LoadConst",
+    "MakeArray",
+    "Call",
+    "StoreLocal",
+    "LoadLocal",
+    "RequireObjectCoercible",
+    "LoadConst",
+    "AGetI",
+    "LoadLocal",
+    "RequireObjectCoercible",
+    "LoadConst",
+    "AGetI",
+    "Add",
+    "LoadLocal",
+    "RequireObjectCoercible",
+    "LoadConst",
+    "AGetI",
+    "Add",
+    "LoadLocal",
+    "RequireObjectCoercible",
+    "LoadConst",
+    "AGetI",
+    "Add",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": 16
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "ordered_dense_array_compaction": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

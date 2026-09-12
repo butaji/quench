@@ -1,16 +1,21 @@
 {
-  "schema": 1,
-  "warmup": 2,
-  "result": { "kind": "number", "value": 41 },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["LoadLocalChecked", "Call", "Return"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "LoadLocal",
+    "LoadConst",
+    "Call",
+    "LoadLocal",
+    "LoadLocal",
+    "LoadConst",
+    "Call",
+    "Add",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": 41
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "polymorphic_call_return": { "entries": 2, "fallbacks": 0 } },
-    "events": { "leaf_hit": 2 }
-  }
+  "schema": 3,
+  "warmup": 2
 }
