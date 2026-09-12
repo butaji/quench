@@ -13,6 +13,15 @@ pub mod vm_core {
         run_file_with_argv_and_output_status, run_source_with_argv_and_output,
         run_source_with_argv_and_output_status,
     };
+
+    /// Runtime-owned Wasm boundary. Format decoding stays in `quench-wasm`,
+    /// while the instantiated module and typed value ladder are exposed from
+    /// this single execution namespace during the lowering migration.
+    pub mod wasm {
+        pub use crate::hir::{FuncSig, ImportKind};
+        pub use crate::instance::{Instance, InvokeError, ResolvedImport};
+        pub use crate::slot::Slot;
+    }
 }
 mod bulk;
 pub mod dynamic;

@@ -1,14 +1,13 @@
-//! Execute-class wast directives against the compatibility Wasm instance.
+//! Execute-class wast directives through the runtime-owned Wasm boundary.
 //!
-//! This is a temporary spec-harness adapter: `quench-wasm` owns loading and
-//! directive decoding, while production Wasm execution is being lowered into
-//! the stencil VM exposed by `quench-runtime`.
+//! `quench-wasm` owns format loading and directive decoding; all instantiated
+//! modules and typed values enter through `quench_runtime::vm_core::wasm`.
 
 use std::collections::HashMap;
 
-use quench_runtime::hir::ImportKind;
-use quench_runtime::instance::{Instance, InvokeError, ResolvedImport};
-use quench_runtime::slot::Slot;
+use quench_runtime::vm_core::wasm::{
+    FuncSig, ImportKind, Instance, InvokeError, ResolvedImport, Slot,
+};
 use wasmparser::WasmFeatures;
 use wast::core::{WastArgCore, WastRetCore};
 use wast::{QuoteWat, WastArg, WastExecute, WastInvoke, WastRet, Wat};
@@ -100,7 +99,7 @@ impl Store {
         module: &str,
         name: &str,
         kind: &ImportKind,
-        types: &[quench_runtime::hir::FuncSig],
+        types: &[FuncSig],
     ) -> Result<ResolvedImport, InvokeError> {
         let instance = if module == "spectest" {
             &self.spectest
