@@ -98,11 +98,11 @@ Verification completed:
   measurement
 - the Object stage was rerun after adding boxed primitive identity, prototype
   inheritance, constructor metadata, sparse-array holes, and `Object.assign`
-  descriptor guards and reached 514/3,411; the remaining failures are recorded as missing semantics,
+  descriptor guards, integrity levels, and Object static collections and reached 904/3,411; the remaining failures are recorded as missing semantics,
   not a fallback to the legacy VM
 - the String stage was rerun after restoring historical conversion behavior,
   array `toString`, ordinary-object prototypes, and boxed-string own properties
-  and reached 287/1,223; the remaining failures include UTF-16 surrogate,
+  and reached 299/1,223; the remaining failures include UTF-16 surrogate,
   Symbol, and unsupported-stencil cases
 - the Function stage was rerun after restoring dynamic `Function` source
   compilation, strict early-error checks, callable metadata, and restricted
