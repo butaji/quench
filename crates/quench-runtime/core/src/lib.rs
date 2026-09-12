@@ -9870,7 +9870,11 @@ fn to_number_with_vm(vm: &mut Vm, value: &Value) -> JsResult<f64> {
     Ok(f64::NAN)
 }
 fn native_string_from_char_code(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
-    let mut output = String::new();
+    // `fromCharCode` consumes UTF-16 code units. Decode the complete unit
+    // sequence at once so a valid surrogate pair becomes one scalar instead
+    // of two replacement characters; lone surrogates keep the compact core's
+    // established lossy-string behavior.
+    let mut units = Vec::with_capacity(args.len());
     for value in args {
         let number = to_number_with_vm(vm, value)?;
         let unit = if !number.is_finite() || number == 0.0 {
@@ -9878,9 +9882,9 @@ fn native_string_from_char_code(vm: &mut Vm, _: Value, args: &[Value]) -> JsResu
         } else {
             (number.trunc() as i64 as u64 & 0xffff) as u32
         };
-        output.push(char::from_u32(unit).unwrap_or('\u{fffd}'));
+        units.push(unit as u16);
     }
-    Ok(Value::string_value(output))
+    Ok(Value::string_value(String::from_utf16_lossy(&units)))
 }
 fn native_string_from_code_point(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let mut output = String::new();
