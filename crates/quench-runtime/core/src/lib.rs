@@ -6447,6 +6447,66 @@ fn native_array_includes(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Va
             .any(|value| eq_same_value_zero(&value, &needle)),
     ))
 }
+fn array_reduce_impl(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+    reverse: bool,
+) -> JsResult<Value> {
+    let Some(callback) = args.first().filter(|value| value.is_function()) else {
+        return Err(JsError::Throw(type_error(vm, "callback is not a function")));
+    };
+    let values = array_values(&this);
+    let indexed = values.into_iter().enumerate().collect::<Vec<_>>();
+    let mut iter = if reverse {
+        Box::new(indexed.into_iter().rev()) as Box<dyn Iterator<Item = (usize, Value)>>
+    } else {
+        Box::new(indexed.into_iter())
+    };
+    let mut accumulator = if let Some(initial) = args.get(1) {
+        initial.clone()
+    } else {
+        iter.next()
+            .map(|(_, value)| value)
+            .ok_or_else(|| JsError::Throw(type_error(vm, "reduce of empty array")))?
+    };
+    for (index, value) in iter {
+        accumulator = vm.call_arguments(
+            callback,
+            Value::Undefined,
+            &[accumulator, value, Value::Number(index as f64), this.clone()][..],
+        )?;
+    }
+    Ok(accumulator)
+}
+fn native_array_reduce(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    array_reduce_impl(vm, this, args, false)
+}
+fn native_array_reduce_right(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    array_reduce_impl(vm, this, args, true)
+}
+fn native_array_find(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(callback) = args.first().filter(|value| value.is_function()) else {
+        return Err(JsError::Throw(type_error(vm, "callback is not a function")));
+    };
+    for (index, value) in array_values(&this).into_iter().enumerate() {
+        if array_callback(vm, callback, value.clone(), index, this.clone())?.truthy() {
+            return Ok(value);
+        }
+    }
+    Ok(Value::Undefined)
+}
+fn native_array_find_index(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(callback) = args.first().filter(|value| value.is_function()) else {
+        return Err(JsError::Throw(type_error(vm, "callback is not a function")));
+    };
+    for (index, value) in array_values(&this).into_iter().enumerate() {
+        if array_callback(vm, callback, value, index, this.clone())?.truthy() {
+            return Ok(Value::Number(index as f64));
+        }
+    }
+    Ok(Value::Number(-1.0))
+}
 fn string_this(this: Value) -> String {
     this.string()
 }
@@ -7603,7 +7663,7 @@ mod tests {
         vm.install_process(Vec::new(), Vec::new());
         vm.run_source_text(
             Path::new("<array-builtins>"),
-            "var a = Array.from('ab'); var b = Array.of(1, 2); var mapped = b.map(function (x) { return x + 1; }); var filtered = mapped.filter(function (x) { return x > 2; }); var bound = Function.prototype.call.bind(Array.prototype.join); result = [bound([1, 2], '-'), mapped[1], filtered.length];",
+            "var a = Array.from('ab'); var b = Array.of(1, 2); var mapped = b.map(function (x) { return x + 1; }); var filtered = mapped.filter(function (x) { return x > 2; }); var reduced = b.reduce(function (x, y) { return x + y; }, 0); var bound = Function.prototype.call.bind(Array.prototype.join); result = [bound([1, 2], '-'), mapped[1], filtered.length, reduced]; try { throw new TypeError(); } catch (e) { errorOk = e.constructor === TypeError && e.name === 'TypeError'; }",
         )
         .expect("array helpers and errors execute");
         let result = Environment::get(&vm.global, "result").expect("result");
@@ -7611,6 +7671,8 @@ mod tests {
         assert_eq!(values[0].string(), "1-2");
         assert_eq!(values[1].as_number(), Some(3.0));
         assert_eq!(values[2].as_number(), Some(1.0));
+        assert_eq!(values[3].as_number(), Some(3.0));
+        assert_eq!(Environment::get(&vm.global, "errorOk").and_then(|v| v.as_bool()), Some(true));
     }
 
     #[test]
