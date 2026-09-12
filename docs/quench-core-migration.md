@@ -129,10 +129,11 @@ Verification completed:
 - the stencil String stage now reaches 424/1,223 after routing constructor
   coercion and global binding projection through the shared stencil VM; the
   remaining failures are unsupported syntax, accessors, and Unicode details
-- the stencil Object stage now reaches 1,213/3,411 after enforcing
-  `Object.create` prototype validation, applying its property descriptors, and
-  preserving array own-property enumeration; the remaining failures are
-  mostly accessors, proxies, and unsupported stencil features
+- the stencil Object stage now reaches 1,293/3,411 after enforcing
+  `Object.create` prototype validation, applying its property descriptors with
+  correct defaults, and preserving array own-property enumeration; the
+  remaining failures are mostly accessors, proxies, and unsupported stencil
+  features
 - the stencil BigInt stage now reaches 71/77 after deriving one marker-based
   conversion path, native metadata, computed Symbol keys, wrapper prototypes,
   and radix formatting; remaining failures are numeric edge errors and
