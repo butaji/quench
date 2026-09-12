@@ -5388,6 +5388,18 @@ impl Vm {
         }
         self.set_prop(&global_this, "global", global_this.clone());
         self.set_prop(&global_this, "globalThis", global_this.clone());
+        if let Some(object) = global_this.as_object_ref() {
+            let mut object = object.borrow_mut();
+            for name in ["global", "globalThis"] {
+                object.attributes.insert(
+                    name.into(),
+                    PropertyAttributes {
+                        enumerable: false,
+                        ..PropertyAttributes::DEFAULT
+                    },
+                );
+            }
+        }
         Environment::set(&self.global, "this", global_this.clone());
         Environment::set(&self.global, "global", global_this.clone());
         Environment::set(&self.global, "globalThis", global_this);
