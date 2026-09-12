@@ -87,8 +87,8 @@ Verification completed:
   fixtures successfully; 247 failures remain in Atomics, TypedArray, and one
   Intl fallback case
 - full stencil-host Test262 stage sweep (stages 0..113), invoked with
-  `QUENCH_TEST262_ENGINE=stencil`, ran 3,986/51,900 fixtures successfully;
-  47,914 failures remain as explicit missing-stencil or missing-built-in
+  `QUENCH_TEST262_ENGINE=stencil`, ran 4,240/51,900 fixtures successfully;
+  47,660 failures remain as explicit missing-stencil or missing-built-in
   diagnostics, proving the corpus reaches the new VM without silently falling
   back
 - canonical V8V7 exact driver, all eight fixtures valid
