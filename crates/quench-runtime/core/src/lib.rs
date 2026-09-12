@@ -15042,17 +15042,19 @@ fn native_error(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
         .get(1)
         .filter(|value| value.is_object() || value.is_function())
     {
-        let cause = vm.get_prop_with_accessors(options, "cause")?;
-        vm.set_prop(&o, "cause", cause);
-        if let Some(object) = o.as_object_ref() {
-            object.borrow_mut().attributes.insert(
-                "cause".into(),
-                PropertyAttributes {
-                    writable: true,
-                    enumerable: false,
-                    configurable: true,
-                },
-            );
+        if vm.has_property(options, "cause") {
+            let cause = vm.get_prop_with_accessors(options, "cause")?;
+            vm.set_prop(&o, "cause", cause);
+            if let Some(object) = o.as_object_ref() {
+                object.borrow_mut().attributes.insert(
+                    "cause".into(),
+                    PropertyAttributes {
+                        writable: true,
+                        enumerable: false,
+                        configurable: true,
+                    },
+                );
+            }
         }
     }
     Ok(o)
