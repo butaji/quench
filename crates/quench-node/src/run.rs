@@ -68,6 +68,17 @@ pub fn run_script_with_exec_argv(
     source: &str,
     sink: OutputSink,
 ) -> RunOutcome {
+    // V8V7 can measure the runtime-owned VM core directly. The compatibility
+    // host remains the default for Node surface tests and normal invocations.
+    if std::env::var_os("QUENCH_USE_NATIVE_CORE").is_some()
+        && exec_argv.is_empty()
+        && script.exists()
+    {
+        return match quench_runtime::vm_core::run_file(script) {
+            Ok(()) => RunOutcome::success(),
+            Err(error) => RunOutcome::fail(1, error),
+        };
+    }
     // Compatibility tests model the Node executable, not the test harness
     // binary that happens to host it.
     let exec = "quench-node".to_string();

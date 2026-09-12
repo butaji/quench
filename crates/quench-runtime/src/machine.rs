@@ -1589,7 +1589,7 @@ pub enum ExecutionTier {
     Baseline,
     /// Quench-specific extra promotion layer. It re-wraps already compiled
     /// baseline entries as a physical execution view, not a second semantic
-    /// IR and not the (nonexistent) optimizing JIT in Deegen's two-tier paper.
+    /// IR and not an external optimizing-JIT tier.
     Optimizing,
 }
 
