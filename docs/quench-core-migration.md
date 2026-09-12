@@ -89,8 +89,8 @@ Verification completed:
 - full stencil-host Test262 stage sweep (stages 0..113), invoked with
   `QUENCH_TEST262_ENGINE=stencil`, ran 3,986/51,900 fixtures successfully;
   47,914 failures remain as explicit missing-stencil or missing-built-in
-  diagnostics (log: `/tmp/test262-stencil-f6cf72d009.log`), proving the corpus
-  reaches the new VM without silently falling back
+  diagnostics, proving the corpus reaches the new VM without silently falling
+  back
 - canonical V8V7 exact driver, all eight fixtures valid
 - focused stencil probes now cover `Array.from`/`Array.of`/`Array.isArray`,
   `Object.preventExtensions` + `defineProperty`, bound function calls, and
