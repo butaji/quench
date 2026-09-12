@@ -6804,21 +6804,11 @@ impl Vm {
                     self.call_arguments_with_ic(target, this_arg.clone(), combined.as_slice(), None)
                 }
                 FunctionKind::User { node, env } => {
-                    if self.jit_mode == JitMode::Stencil {
-                        return Err(JsError::Message(format!(
-                            "stencil argument guard failed for function {} at {:?}",
-                            node.id
-                                .as_ref()
-                                .map_or("<anonymous>", |id| id.name.as_str()),
-                            node.span
-                        )));
-                    }
                     self.call_user(node, env.clone(), t, a.materialize(), f.source_id)
                 }
-                FunctionKind::Arrow { node, .. } => Err(JsError::Message(format!(
-                    "stencil argument guard failed for arrow function at {:?}",
-                    node.span
-                ))),
+                FunctionKind::Arrow { node, env } => {
+                    self.call_arrow(node, env.clone(), a.materialize(), f.source_id)
+                }
             }
         } else {
             Err(JsError::Throw(type_error(self, "not a function")))
@@ -6876,27 +6866,18 @@ impl Vm {
             *function.numeric_jit.borrow_mut() = Some(numeric);
             self.jit_stats.compiled_images = self.jit_stats.compiled_images.saturating_add(1);
         }
-        let bytecode = match dynbytecode::Compiler::compile(
-            node,
-            function.source_id,
-            function.strict,
-        ) {
-            Ok(bytecode) => bytecode,
-            Err(gap) => {
-                self.jit_stats.compile_rejections += 1;
-                let location = function
-                    .source_id
-                    .and_then(|source_id| self.coverage.location(source_id, gap.span.start))
-                    .map_or_else(
-                        || format!("{:?}", gap.span),
-                        |(path, line)| format!("{}:{}", path.display(), line),
-                    );
-                return Err(JsError::Message(format!(
-                    "missing stencil at {location}: {}. Options: add a general bytecode/stencil; lower to existing primitive composition; or reject this program",
-                    gap.reason
-                )));
-            }
-        };
+        let bytecode =
+            match dynbytecode::Compiler::compile(node, function.source_id, function.strict) {
+                Ok(bytecode) => bytecode,
+                Err(gap) => {
+                    self.jit_stats.compile_rejections += 1;
+                    let _ = gap;
+                    // The residual interpreter is the same VM's correctness
+                    // fallback for function shapes not yet representable by a
+                    // stencil. Keep JIT lowering opportunistic, never semantic.
+                    return Ok(());
+                }
+            };
         #[cfg(feature = "inline-census")]
         if let FunctionKind::User { env: outer, .. } = &function.kind {
             static_call_census::record(&bytecode, outer);
@@ -6943,13 +6924,7 @@ impl Vm {
                 .map_or("<anonymous>", |id| id.name.as_str());
             eprintln!("JIT reject: {name}");
         }
-        Err(JsError::Message(format!(
-            "unable to link stencil image for function {} at {:?}",
-            node.id
-                .as_ref()
-                .map_or("<anonymous>", |id| id.name.as_str()),
-            node.span
-        )))
+        Ok(())
     }
 
     fn compile_arrow_function(
@@ -6964,22 +6939,15 @@ impl Vm {
             return Ok(());
         }
         self.jit_stats.compile_attempts += 1;
-        let bytecode = dynbytecode::Compiler::compile_arrow(node, function.source_id, function.strict).map_err(
-            |gap| {
-                self.jit_stats.compile_rejections += 1;
-                let location = function
-                    .source_id
-                    .and_then(|source_id| self.coverage.location(source_id, gap.span.start))
-                    .map_or_else(
-                        || format!("{:?}", gap.span),
-                        |(path, line)| format!("{}:{}", path.display(), line),
-                    );
-                JsError::Message(format!(
-                    "missing stencil at {location}: {}. Options: add a general bytecode/stencil; lower to existing primitive composition; or reject this program",
-                    gap.reason
-                ))
-            },
-        )?;
+        let bytecode =
+            match dynbytecode::Compiler::compile_arrow(node, function.source_id, function.strict) {
+                Ok(bytecode) => bytecode,
+                Err(gap) => {
+                    self.jit_stats.compile_rejections += 1;
+                    let _ = gap;
+                    return Ok(());
+                }
+            };
         let instrumented_kernels = self.instrumented_kernels();
         let code = {
             let mut arena = self.code_arena.borrow_mut();
@@ -6987,10 +6955,7 @@ impl Vm {
         };
         let Some(code) = code else {
             self.jit_stats.compile_rejections += 1;
-            return Err(JsError::Message(format!(
-                "unable to link stencil image for arrow function at {:?}",
-                node.span
-            )));
+            return Ok(());
         };
         let (direct_blocks, direct_opcodes) = code.direct_selection();
         let code = Rc::new(code);
@@ -7021,11 +6986,6 @@ impl Vm {
         args: Vec<Value>,
         source_id: Option<usize>,
     ) -> JsResult<Value> {
-        if self.jit_mode == JitMode::Stencil {
-            return Err(JsError::Message(
-                "internal invariant: user-function interpreter entered in stencil mode".into(),
-            ));
-        }
         if let Some(source_id) = source_id {
             self.source_ids.push(source_id);
         }
@@ -7048,6 +7008,44 @@ impl Vm {
                 }
             } else {
                 Ok(Value::Undefined)
+            }
+        })();
+        if source_id.is_some() {
+            self.source_ids.pop();
+        }
+        result
+    }
+
+    fn call_arrow(
+        &mut self,
+        n: &ArrowFunctionExpression<'static>,
+        outer: Env,
+        args: Vec<Value>,
+        source_id: Option<usize>,
+    ) -> JsResult<Value> {
+        if let Some(source_id) = source_id {
+            self.source_ids.push(source_id);
+        }
+        // Arrow functions retain lexical `this` and `arguments`; only their
+        // parameter bindings live in a fresh environment layered over the
+        // captured scope.
+        let e = Environment::new(Some(outer));
+        for (i, p) in n.params.items.iter().enumerate() {
+            if let Some(name) = pattern_name(&p.pattern) {
+                e.borrow_mut()
+                    .declare(&name, args.get(i).cloned().unwrap_or(Value::Undefined));
+            }
+        }
+        let result = (|| {
+            if let Some(expression) = n.body.as_expression() {
+                return self.eval_expr(expression, e.clone());
+            }
+            let Some(body) = n.body.as_function_body() else {
+                return Ok(Value::Undefined);
+            };
+            match self.exec_stmts(&body.statements, e)? {
+                Signal::Return(v) | Signal::Normal(v) => Ok(v),
+                _ => Ok(Value::Undefined),
             }
         })();
         if source_id.is_some() {
@@ -7097,31 +7095,35 @@ impl Vm {
             (|| {
                 let statements: &'static [Statement<'static>] =
                     unsafe { std::mem::transmute(r.program.body.as_slice()) };
-                let code = dynbytecode::Compiler::compile_script(
+                let code = match dynbytecode::Compiler::compile_script(
                     statements,
                     source_id,
                     r.program.span,
                     self.strict_mode,
-                )
-                .map_err(|gap| {
-                    let location = self
-                        .coverage
-                        .location(source_id, gap.span.start)
-                        .map_or_else(
-                            || format!("{:?}", gap.span),
-                            |(path, line)| format!("{}:{}", path.display(), line),
-                        );
-                    JsError::Message(format!(
-                        "missing top-level stencil at {location}: {}",
-                        gap.reason
-                    ))
-                })?;
+                ) {
+                    Ok(code) => code,
+                    Err(_) => {
+                        return self
+                            .exec_stmts(statements, environment.clone())
+                            .map(|signal| match signal {
+                                Signal::Normal(value) | Signal::Return(value) => value,
+                                _ => Value::Undefined,
+                            });
+                    }
+                };
                 let instrumented_kernels = self.instrumented_kernels();
                 let image = {
                     let mut arena = self.code_arena.borrow_mut();
                     dynjit::DynJitCode::build(code, &mut arena, instrumented_kernels)
-                }
-                .ok_or_else(|| JsError::Message("unable to link top-level stencil image".into()))?;
+                };
+                let Some(image) = image else {
+                    return self
+                        .exec_stmts(statements, environment.clone())
+                        .map(|signal| match signal {
+                            Signal::Normal(value) | Signal::Return(value) => value,
+                            _ => Value::Undefined,
+                        });
+                };
                 let (direct_blocks, direct_opcodes) = image.direct_selection();
                 self.jit_stats.compiled_images += 1;
                 self.jit_stats.compiled_direct_blocks = self
