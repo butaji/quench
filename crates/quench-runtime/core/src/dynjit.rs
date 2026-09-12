@@ -2754,9 +2754,11 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
         let pc = next.checked_sub(NEXT_INSTRUCTION_DISTANCE)?;
         (pc < frame.name_ic_count).then(|| unsafe { &*frame.name_ics.add(pc) })
     };
-    let property_ic = || {
+    let property_ic_count = frame.property_ic_count;
+    let property_ics = frame.property_ics;
+    let property_ic = move || {
         let pc = next.checked_sub(NEXT_INSTRUCTION_DISTANCE)?;
-        (pc < frame.property_ic_count).then(|| unsafe { &*frame.property_ics.add(pc) })
+        (pc < property_ic_count).then(|| unsafe { &*property_ics.add(pc) })
     };
     let instanceof_ic = || {
         let pc = next.checked_sub(NEXT_INSTRUCTION_DISTANCE)?;
@@ -2926,43 +2928,55 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
         }
         DynOp::GetStatic { dst, object, key } => {
             let value = {
-                let object = get_ref(frame, *object);
+                let object = get_ref(frame, *object).clone();
                 if object.is_null() || object.is_undefined() {
                     return Err(JsError::Message(format!(
                         "cannot read property {key} of {}",
                         object.display()
                     )));
                 }
-                if unsafe { &*frame.vm }.restricted_function_property(object, key) {
+                if unsafe { &*frame.vm }.restricted_function_property(&object, key) {
                     return Err(JsError::Throw(super::type_error(
                         unsafe { &mut *frame.vm },
                         "'caller' and 'arguments' are unavailable on this function",
                     )));
                 }
-                property_ic()
-                    .and_then(|cache| get_static_cached(object, key, cache))
-                    .unwrap_or_else(|| unsafe { &*frame.vm }.get_prop(object, key))
+                let cache = property_ic();
+                let vm = unsafe { &mut *frame.vm };
+                let cached = vm
+                    .find_accessor(&object, key)
+                    .is_none()
+                    .then(|| cache.and_then(|cache| get_static_cached(&object, key, cache)))
+                    .flatten();
+                cached.unwrap_or(vm.get_prop_with_accessors(&object, key)?)
             };
             put(frame, dst, value);
         }
         DynOp::GetComputed { dst, object, key } => {
             let value = {
-                let object = get_ref(frame, *object);
+                let object = get_ref(frame, *object).clone();
                 if object.is_null() || object.is_undefined() {
                     return Err(JsError::Message(format!(
                         "cannot read computed property of {}",
                         object.display()
                     )));
                 }
-                let key = get_ref(frame, *key);
+                let key = get_ref(frame, *key).clone();
                 let key_string = key.string();
-                if unsafe { &*frame.vm }.restricted_function_property(object, &key_string) {
+                if unsafe { &*frame.vm }.restricted_function_property(&object, &key_string) {
                     return Err(JsError::Throw(super::type_error(
                         unsafe { &mut *frame.vm },
                         "'caller' and 'arguments' are unavailable on this function",
                     )));
                 }
-                unsafe { &*frame.vm }.get_computed_prop(object, key)
+                let cache = property_ic();
+                let vm = unsafe { &mut *frame.vm };
+                let cached = vm
+                    .find_accessor(&object, &key_string)
+                    .is_none()
+                    .then(|| cache.and_then(|cache| get_static_cached(&object, &key_string, cache)))
+                    .flatten();
+                cached.unwrap_or(vm.get_prop_with_accessors(&object, &key_string)?)
             };
             put(frame, dst, value);
         }
@@ -2975,18 +2989,24 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
                     object.display()
                 )));
             }
+            if super::accessor_key(key).is_some() {
+                unsafe { &*frame.vm }.install_accessor_slot(&object, key, value);
+                return Ok(next);
+            }
             if key == "stack" && unsafe { &*frame.vm }.has_error_stack_accessor(&object) {
                 super::native_error_stack_set(unsafe { &mut *frame.vm }, object.clone(), &[value])?;
                 return Ok(next);
             }
-            match property_ic() {
-                Some(cache) => {
-                    if let Err(value) = set_static_cached(&object, key, value, cache) {
-                        unsafe { &*frame.vm }.set_prop(&object, key, value);
+            let cache = property_ic();
+            let vm = unsafe { &mut *frame.vm };
+            if vm.find_accessor(&object, key).is_none() {
+                if let Some(cache) = cache {
+                    if set_static_cached(&object, key, value.clone(), cache).is_ok() {
+                        return Ok(next);
                     }
                 }
-                None => unsafe { &*frame.vm }.set_prop(&object, key, value),
             }
+            vm.set_prop_with_accessors(&object, key, value)?;
         }
         DynOp::SetComputed { object, key, src } => {
             let value = get(frame, src);
@@ -3002,7 +3022,7 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
                 super::native_error_stack_set(unsafe { &mut *frame.vm }, object, &[value])?;
                 return Ok(next);
             }
-            unsafe { &mut *frame.vm }.set_computed_prop(&object, &key, value)?;
+            unsafe { &mut *frame.vm }.set_prop_with_accessors(&object, &key.string(), value)?;
         }
         DynOp::DeleteStatic {
             dst,
