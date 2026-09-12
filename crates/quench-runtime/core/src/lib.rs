@@ -5176,6 +5176,17 @@ impl Vm {
                 },
             );
         }
+        let reflect_tag_key = self.well_known_symbol_key("toStringTag");
+        self.set_prop(&reflect, &reflect_tag_key, Value::string_value("Reflect"));
+        set_property_attributes(
+            &reflect,
+            &reflect_tag_key,
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
         Environment::set(&g, "Reflect", reflect);
         let console = self.object(None);
         Environment::set(&g, "console", console);
@@ -5708,6 +5719,7 @@ impl Vm {
                 "Function",
                 "Date",
                 "RegExp",
+                "Reflect",
                 "Error",
                 "EvalError",
                 "RangeError",
@@ -7468,6 +7480,14 @@ impl Vm {
             ThisExpression(_) => Ok(Environment::get(&e, "this").unwrap_or(Value::Undefined)),
             ArrayExpression(v) => {
                 let a = self.array();
+                if let Some(object) = a.as_object_ref() {
+                    object
+                        .borrow_mut()
+                        .array
+                        .as_mut()
+                        .expect("array literal storage")
+                        .resize(v.elements.len(), Value::Undefined);
+                }
                 for (i, z) in v.elements.iter().enumerate() {
                     if let Some(z) = z.as_expression() {
                         let value = self.eval_expr(z, e.clone())?;
@@ -11308,7 +11328,12 @@ fn native_reflect_own_keys(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Va
     Ok(vm.array_from_values(
         object_own_property_keys(&target)
             .into_iter()
-            .map(Value::string_value)
+            .map(|key| {
+                vm.symbol_keys
+                    .get(&key)
+                    .cloned()
+                    .unwrap_or_else(|| Value::string_value(key))
+            })
             .collect(),
     ))
 }

@@ -2879,11 +2879,21 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             put(frame, dst, value);
         }
         DynOp::NewArrayFromRegisters { dst, elements } => {
-            let values = elements
-                .iter()
-                .map(|source| source.map_or(Value::Undefined, |source| get(frame, &source)))
-                .collect();
-            let value = vm(frame).array_from_values(values);
+            let value = vm(frame).array();
+            if let Some(object) = value.as_object_ref() {
+                object
+                    .borrow_mut()
+                    .array
+                    .as_mut()
+                    .expect("array literal storage")
+                    .resize(elements.len(), Value::Undefined);
+            }
+            for (index, source) in elements.iter().enumerate() {
+                if let Some(source) = source {
+                    let element = get(frame, source);
+                    vm(frame).set_prop(&value, &index.to_string(), element);
+                }
+            }
             put(frame, dst, value);
         }
         DynOp::NewObject { dst } => {
