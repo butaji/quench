@@ -1,20 +1,15 @@
 {
-  "schema": 1,
-  "warmup": 3,
-  "result": { "kind": "number", "value": 12 },
-  "plan": {
-    "execution_kind": "portable_recipe",
-    "operation_route": ["GetNQuickened", "Return"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "LoadLocal",
+    "Call",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": 12
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": {
-      "megamorphic_property_return": { "entries": 1, "fallbacks": 0 }
-    },
-    "events": {
-      "leaf_hit": 1
-    }
-  }
+  "schema": 3,
+  "warmup": 3
 }

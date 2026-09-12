@@ -27,10 +27,10 @@ fn select_instruction(
         Opcode::LoadConst => load_constant(code, instruction, values, false)?,
         Opcode::AddConst => add_constant(code, instruction, values)?,
         Opcode::Add | Opcode::Sub => add(instruction, values)?,
-        Opcode::Binary => binary(instruction, values, index_slot)?,
+        opcode if opcode.is_binary_family() => binary(instruction, values, index_slot)?,
         Opcode::StoreLocal => store(instruction, values, stored)?,
         Opcode::Move => copy(instruction, values)?,
-        Opcode::Slow if is_unlabelled_break(code.cold_at(pc)?) => {}
+        opcode if opcode.is_cold_marker() && is_unlabelled_break(code.cold_at(pc)?) => {}
         _ => return None,
     }
     Some(())
@@ -97,7 +97,7 @@ fn binary(
     values: &mut BTreeMap<u16, Value>,
     index_slot: u16,
 ) -> Option<()> {
-    let operator = crate::ir::compact_binary_operator(instruction.flags)?;
+    let operator = instruction.opcode.binary_operator(instruction.flags)?;
     let left = *values.get(&instruction.b)?;
     let right = *values.get(&instruction.c)?;
     let value = match (operator, left, right) {

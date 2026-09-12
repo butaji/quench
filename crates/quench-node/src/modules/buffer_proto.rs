@@ -136,11 +136,8 @@ pub fn buffer_prototype() -> Value {
         let mut prototype = crate::host::namespace_object(methods)
             .unwrap_or_else(|_| quench_runtime::host_api::object(Vec::new()));
         let constructor = crate::host::capability(r::SPEC_BUFFER_NEW);
-        prototype = quench_runtime::execute::set_property(
-            prototype,
-            "constructor",
-            constructor.clone(),
-        );
+        prototype =
+            quench_runtime::execute::set_property(prototype, "constructor", constructor.clone());
         quench_runtime::execute::set_property_in_place(
             &prototype,
             "\0quench:buffer:constructor",
@@ -174,10 +171,7 @@ pub fn buffer_prototype() -> Value {
 /// value lets native code distinguish that mutation from the original Buffer
 /// identity without comparing freshly allocated capability wrappers.
 pub(crate) fn canonical_buffer_constructor() -> Value {
-    quench_runtime::execute::get_property(
-        &buffer_prototype(),
-        "\0quench:buffer:constructor",
-    )
+    quench_runtime::execute::get_property(&buffer_prototype(), "\0quench:buffer:constructor")
 }
 
 /// Attach Buffer identity to a view: shared prototype + `parent` and `offset` own data properties.

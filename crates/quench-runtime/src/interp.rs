@@ -1,4 +1,4 @@
-//! One interpreter loop over MIR.
+//! One interpreter loop over the canonical HIR instruction stream.
 
 use crate::fast::Fast;
 use crate::hir::{HirFunc, Inst, LoadOp, StoreOp, WideOp};

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-// Task 056 measurement-only probe.  It deliberately runs the VM in a fresh
-// process for each size and reads peak RSS from macOS /usr/bin/time; no
+// Ownership/lifetime measurement-only probe. It deliberately runs the VM in a
+// fresh process for each size and reads peak RSS from macOS /usr/bin/time; no
 // benchmark fixture or source identity is inspected by production code.
 import { spawnSync } from "node:child_process";
 

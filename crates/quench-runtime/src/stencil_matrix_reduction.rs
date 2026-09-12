@@ -3,8 +3,6 @@
 use std::{cell::RefCell, rc::Rc};
 
 const MACHINE_SLAB_BYTES: usize = 4096;
-const MAX_DIMENSION: usize = 256;
-const MAX_ITERATIONS: usize = 1 << 20;
 
 #[derive(Clone, Copy, Debug)]
 struct MatrixReduction {
@@ -64,12 +62,17 @@ fn numeric_rows(value: crate::value::Value) -> Option<Vec<Rc<crate::value::Array
     let crate::value::Value::Array(matrix) = value else {
         return None;
     };
-    matrix.is_plain_dense_access().then_some(())?;
+    (crate::locals::array_word_is_current(&matrix) && matrix.is_plain_dense_access())
+        .then_some(())?;
     matrix
         .packed_values()?
         .into_iter()
         .map(|row| match row {
-            crate::value::Value::Array(row) if row.is_dense_numeric_data() => Some(row),
+            crate::value::Value::Array(row)
+                if crate::locals::array_word_is_current(&row) && row.is_dense_numeric_data() =>
+            {
+                Some(row)
+            }
             _ => None,
         })
         .collect()
@@ -123,13 +126,8 @@ fn validate_loop_bounds(loops: [crate::stencil_counted_loop::CountedLoop; 3]) ->
     let dimensions = dimensions(loops)?;
     loops.iter().all(|loop_| loop_.start == 0).then_some(())?;
     dimensions
-        .iter()
-        .all(|value| *value <= MAX_DIMENSION)
-        .then_some(())?;
-    dimensions
         .into_iter()
         .try_fold(1usize, usize::checked_mul)
-        .filter(|iterations| *iterations <= MAX_ITERATIONS)
         .map(|_| ())
 }
 
@@ -183,10 +181,8 @@ impl MatrixReductionContext {
 }
 
 struct MatrixMachine {
-    owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
     image: crate::stencil_region_layout::VerifiedRegionImage,
-    cache: crate::stencil_select::RenderedRegionCache,
-    installed: Option<crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>>,
+    physical: crate::stencil_installation::SharedPhysicalEntry<crate::stencil_arena::DispatchEntry>,
 }
 
 thread_local! {
@@ -203,46 +199,37 @@ impl MatrixMachine {
         let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::AGetI);
         let values = crate::stencil_fact::PatchValues::from_site(&site);
         let image = crate::stencil_region_layout::finalize_selected_leaf(view, &values).ok()?;
+        let owner = Rc::new(RefCell::new(
+            crate::stencil_arena::SharedStencilSlab::new(MACHINE_SLAB_BYTES).ok()?,
+        ));
         Some(Self {
-            owner: Rc::new(RefCell::new(
-                crate::stencil_arena::SharedStencilSlab::new(MACHINE_SLAB_BYTES).ok()?,
-            )),
             image,
-            cache: crate::stencil_select::RenderedRegionCache::new(),
-            installed: None,
+            physical: crate::stencil_installation::SharedPhysicalEntry::new(owner),
         })
     }
 
     fn invoke(&mut self, context: &mut MatrixReductionContext) -> Option<u64> {
         let entry = self.entry()?;
-        let lease =
-            crate::stencil_arena::SharedStencilSlab::acquire_owned(&self.owner, entry).ok()?;
-        lease
-            .invoke(|call| call((context as *mut MatrixReductionContext).cast()))
+        self.physical
+            .invoke(entry, |call| {
+                call((context as *mut MatrixReductionContext).cast())
+            })
             .ok()
     }
 
     fn entry(
         &mut self,
     ) -> Option<crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>> {
-        if let Some(entry) = self
-            .installed
-            .filter(|entry| self.owner.borrow().entry_token_is_live(*entry))
-        {
-            return Some(entry);
-        }
-        let address = self
-            .owner
-            .borrow_mut()
-            .publish_region_image_or_get(&mut self.cache, &self.image)
-            .ok()?;
-        let entry = self
-            .owner
-            .borrow()
-            .owned_matrix_reduction_loop_entry(address)
-            .ok()?;
-        self.installed = Some(entry);
-        Some(entry)
+        self.physical
+            .entry(
+                |owner, cache| {
+                    owner
+                        .borrow_mut()
+                        .publish_region_image_or_get(cache, &self.image)
+                },
+                |pool, address| pool.owned_matrix_reduction_loop_entry(address),
+            )
+            .ok()
     }
 }
 

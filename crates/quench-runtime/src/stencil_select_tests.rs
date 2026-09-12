@@ -187,7 +187,10 @@ fn dispatch_row_covers_every_compact_opcode() {
         let opcode = crate::ir::Opcode::from_u8(opcode).expect("catalog opcode");
         assert!(record.operations.contains(&opcode));
     }
-    assert_eq!(record.executable, cfg!(target_arch = "x86_64"));
+    assert_eq!(
+        record.executable,
+        cfg!(any(target_arch = "x86_64", target_arch = "aarch64"))
+    );
     assert_eq!(
         record.stencil.holes.len(),
         if cfg!(any(target_arch = "x86_64", target_arch = "aarch64")) {

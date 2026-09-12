@@ -1,16 +1,14 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "negative_zero" },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["Mul", "Return"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "LoadConst",
+    "Mul",
+    "Return"
+  ],
+  "result": {
+    "kind": "negative_zero"
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "local_binary": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

@@ -35,9 +35,21 @@ rust_leaf_catalog! {
         x86: &X86_NEGATE_BYTES, aarch64: &AARCH64_NEGATE_BYTES,
         holes: &[(16, 8, "Literal64")], aarch64_holes: &[]
     },
+    Identity {
+        name: "identity", abi: ScalarF64Unary, ops: ["Unary", "Return"],
+        params: "a: f64", result: "f64", body: "a",
+        x86: &X86_IDENTITY_BYTES, aarch64: &AARCH64_IDENTITY_BYTES,
+        holes: &[], aarch64_holes: &[]
+    },
     Increment {
         name: "increment", abi: ScalarF64Binary, ops: ["IncI", "Return"],
         params: "a: f64, _unused: f64", result: "f64", body: "a + 1.0",
+        x86: &X86_ADD_CONST_BYTES, aarch64: &AARCH64_ADD_CONST_BYTES,
+        holes: &[(13, 8, "Literal64")], aarch64_holes: &[(16, 8, "Literal64")]
+    },
+    Decrement {
+        name: "decrement", abi: ScalarF64Binary, ops: ["IncI", "Return"],
+        params: "a: f64, _unused: f64", result: "f64", body: "a - 1.0",
         x86: &X86_ADD_CONST_BYTES, aarch64: &AARCH64_ADD_CONST_BYTES,
         holes: &[(13, 8, "Literal64")], aarch64_holes: &[(16, 8, "Literal64")]
     },

@@ -86,6 +86,10 @@ where
         N
     }
 
+    pub(crate) const fn replacement_cursor(&self) -> usize {
+        self.next_replacement
+    }
+
     pub fn lookup(&self, key: &K) -> Option<S> {
         self.entries
             .iter()
@@ -294,11 +298,9 @@ impl<const N: usize> QuickeningSite<N> {
             hash = mix_signature(hash, u64::from(entry.property.0));
             hash = mix_signature(hash, u64::from(entry.slot));
         }
-        for entry in self.callable_cache.entries.iter() {
-            let pointer = entry
-                .as_ref()
-                .map_or(0, |weak| weak.as_ptr() as usize as u64);
-            hash = mix_signature(hash, pointer);
+        for (pointer, weak) in self.callable_cache.entries() {
+            hash = mix_signature(hash, *pointer as u64);
+            hash = mix_signature(hash, weak.as_ptr() as usize as u64);
         }
         hash
     }
@@ -443,86 +445,90 @@ fn mix_signature(mut hash: u64, value: u64) -> u64 {
 
 #[derive(Debug, Clone)]
 struct CallableCache<const N: usize> {
-    entries: [Option<std::rc::Weak<crate::value::FunctionValue>>; N],
-    next_replacement: usize,
+    entries: GenericInlineCache<usize, std::rc::Weak<crate::value::FunctionValue>, N>,
 }
 
 impl<const N: usize> PartialEq for CallableCache<N> {
     fn eq(&self, other: &Self) -> bool {
-        self.next_replacement == other.next_replacement
-            && self
-                .entries
-                .iter()
-                .zip(other.entries.iter())
-                .all(|(left, right)| match (left, right) {
-                    (Some(left), Some(right)) => std::rc::Weak::ptr_eq(left, right),
-                    (None, None) => true,
-                    _ => false,
-                })
+        if self.entries.replacement_cursor() != other.entries.replacement_cursor() {
+            return false;
+        }
+        let left = self.entries.entries();
+        let right = other.entries.entries();
+        let mut left = left.peekable();
+        let mut right = right.peekable();
+        loop {
+            match (left.next(), right.next()) {
+                (None, None) => return true,
+                (Some((left_key, left_state)), Some((right_key, right_state)))
+                    if left_key == right_key && std::rc::Weak::ptr_eq(left_state, right_state) => {}
+                _ => return false,
+            }
+        }
     }
 }
 
 impl<const N: usize> CallableCache<N> {
     fn new() -> Self {
         Self {
-            entries: std::array::from_fn(|_| None),
-            next_replacement: 0,
+            entries: GenericInlineCache::new(),
         }
     }
 
     fn lookup(&mut self, function: &std::rc::Rc<crate::value::FunctionValue>) -> bool {
-        let mut hit = false;
-        for entry in &mut self.entries {
-            let Some(weak) = entry.as_ref() else {
-                continue;
-            };
-            let Some(candidate) = weak.upgrade() else {
-                // A dead weak edge is disposable physical state. Remove it
-                // before probing so allocator address reuse cannot turn a
-                // stale callable identity into a false hit.
-                *entry = None;
-                continue;
-            };
-            if std::rc::Rc::ptr_eq(&candidate, function) {
-                hit = true;
-            }
+        // Preserve the old weak-cache lifecycle: every probe cleans dead
+        // identities, not only the key currently being queried. This keeps
+        // disposable entries from occupying the bounded polymorphic chain.
+        self.entries.retain(|_, weak| weak.upgrade().is_some());
+        let key = std::rc::Rc::as_ptr(function) as usize;
+        let Some(weak) = self.entries.lookup(&key) else {
+            return false;
+        };
+        let Some(candidate) = weak.upgrade() else {
+            // A dead weak edge is disposable physical state. Remove it
+            // before probing so allocator address reuse cannot turn a stale
+            // callable identity into a false hit.
+            self.entries.retain(|entry_key, _| *entry_key != key);
+            return false;
+        };
+        if std::rc::Rc::ptr_eq(&candidate, function) {
+            true
+        } else {
+            // The pointer is only a compact probe key. The weak identity is
+            // authoritative, so a mismatched live allocation is never a hit.
+            self.entries.retain(|entry_key, _| *entry_key != key);
+            false
         }
-        hit
     }
 
     fn insert(&mut self, function: &std::rc::Rc<crate::value::FunctionValue>) {
-        let weak = std::rc::Rc::downgrade(function);
         if self.lookup(function) {
             return;
         }
-        if N == 0 {
-            return;
-        }
-        self.entries[self.next_replacement] = Some(weak);
-        self.next_replacement = (self.next_replacement + 1) % N;
+        let key = std::rc::Rc::as_ptr(function) as usize;
+        let weak = std::rc::Rc::downgrade(function);
+        let _ = self.entries.observe(key, |_| Some(weak));
     }
 
     fn promote(&mut self, function: &std::rc::Rc<crate::value::FunctionValue>) {
-        let Some(index) = self.entries.iter().position(|entry| {
-            entry
-                .as_ref()
-                .and_then(std::rc::Weak::upgrade)
-                .is_some_and(|entry| std::rc::Rc::ptr_eq(&entry, function))
-        }) else {
-            return;
-        };
-        if index != 0 {
-            self.entries.swap(0, index);
+        let key = std::rc::Rc::as_ptr(function) as usize;
+        if self.lookup(function) {
+            self.entries.promote(&key);
         }
     }
 
     fn clear(&mut self) {
-        self.entries.fill(None);
-        self.next_replacement = 0;
+        self.entries.clear();
     }
 
     fn len(&self) -> usize {
-        self.entries.iter().flatten().count()
+        self.entries.len()
+    }
+
+    fn entries(
+        &self,
+    ) -> impl Iterator<Item = (&usize, &std::rc::Weak<crate::value::FunctionValue>)> {
+        self.entries.entries()
     }
 }
 
@@ -636,6 +642,40 @@ mod tests {
             site.observe_callable(&functions[2]),
             QuickeningDecision::GuardedCallHit
         );
+    }
+
+    #[test]
+    fn callable_cache_removes_dead_weak_state_before_reuse() {
+        let make_function = || {
+            std::rc::Rc::new(crate::value::FunctionValue {
+                code: crate::machine::FunctionCode::pending(Vec::new()),
+                params: 0,
+                captures: crate::environment::Environment::new(),
+                with_captures: Vec::new(),
+                properties: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+                private_slots: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+                private_environment: crate::private_environment::PrivateEnvironment::default(),
+                instance_fields: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+                kind: crate::ops::FunctionKind::Ordinary,
+                strictness: crate::ops::FunctionStrictness::Sloppy,
+                is_async: false,
+                mapped_arguments: false,
+            })
+        };
+        let mut site = QuickeningSite::<2>::new(Opcode::Call);
+        let first = make_function();
+        assert_eq!(
+            site.observe_callable(&first),
+            QuickeningDecision::InstallCallGuard
+        );
+        drop(first);
+
+        let replacement = make_function();
+        assert_eq!(
+            site.observe_callable(&replacement),
+            QuickeningDecision::InstallCallGuard
+        );
+        assert_eq!(site.callable_cache_len(), 1);
     }
 
     #[test]

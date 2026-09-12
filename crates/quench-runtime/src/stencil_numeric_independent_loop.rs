@@ -5,14 +5,21 @@ use crate::machine::{BaselineEntry, CodeView, NativeDispatchError};
 use std::{cell::RefCell, rc::Rc};
 
 pub(crate) const REGION_END: usize = 46;
-const LOOP_HEADER: usize = 11;
-const LOOP_BACKEDGE: usize = 39;
-const LOOP_EXIT: usize = 40;
-const ARRAY_RESULT: usize = 42;
-const MAX_ITERATIONS: usize = 1 << 20;
+const SEED_OFFSET: usize = 1;
+const BOUND_OFFSET: usize = 13;
+const LOOP_HEADER_OFFSET: usize = 11;
+const LOOP_BACKEDGE_OFFSET: usize = 39;
+const LOOP_EXIT_OFFSET: usize = 40;
+const ARRAY_RESULT_OFFSET: usize = 42;
 
 #[derive(Clone, Copy)]
 pub(crate) struct IndependentLoopSelection {
+    start: usize,
+    seed_pc: usize,
+    bound_pc: usize,
+    loop_header_pc: usize,
+    loop_backedge_pc: usize,
+    region_end_pc: usize,
     state_slot: u16,
     left_slot: u16,
     right_slot: u16,
@@ -38,10 +45,8 @@ struct IndependentLoopContext {
 
 pub(crate) struct NativeIndependentLoopPlan {
     selection: IndependentLoopSelection,
-    owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
     image: crate::stencil_region_layout::VerifiedRegionImage,
-    cache: crate::stencil_select::RenderedRegionCache,
-    installed: Option<crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>>,
+    physical: crate::stencil_installation::SharedPhysicalEntry<crate::stencil_arena::DispatchEntry>,
 }
 
 impl NativeIndependentLoopPlan {
@@ -61,10 +66,8 @@ impl NativeIndependentLoopPlan {
         let image = crate::stencil_region_layout::finalize_selected_leaf(view, &values).ok()?;
         Some(Self {
             selection,
-            owner,
             image,
-            cache: crate::stencil_select::RenderedRegionCache::new(),
-            installed: None,
+            physical: crate::stencil_installation::SharedPhysicalEntry::new(owner),
         })
     }
 
@@ -89,8 +92,10 @@ impl NativeIndependentLoopPlan {
     ) -> Option<(i32, usize)> {
         environment
             .with_proven_object(self.selection.state_slot, |object| {
-                let seed = crate::vm::cached_own_property_number(code, 1, object)?;
-                let end = crate::vm::cached_own_property_number(code, 13, object)?;
+                let seed =
+                    crate::vm::cached_own_property_number(code, self.selection.seed_pc, object)?;
+                let end =
+                    crate::vm::cached_own_property_number(code, self.selection.bound_pc, object)?;
                 let seed = exact_i32(seed)?;
                 seed.checked_add(1)?;
                 Some((seed, exact_bound(end)?))
@@ -112,12 +117,10 @@ impl NativeIndependentLoopPlan {
 
     fn invoke(&mut self, context: &mut IndependentLoopContext) -> Result<u64, NativeDispatchError> {
         let entry = self.entry()?;
-        let lease = crate::stencil_arena::SharedStencilSlab::acquire_owned(&self.owner, entry)
-            .map_err(|error| {
-                NativeDispatchError::Physical(format!("pair loop lease: {error:?}"))
-            })?;
-        lease
-            .invoke(|call| call((context as *mut IndependentLoopContext).cast()))
+        self.physical
+            .invoke(entry, |call| {
+                call((context as *mut IndependentLoopContext).cast())
+            })
             .map_err(|error| NativeDispatchError::Physical(format!("pair loop invoke: {error:?}")))
     }
 
@@ -131,11 +134,13 @@ impl NativeIndependentLoopPlan {
         if status == crate::vm::NATIVE_DISPATCH_INTERRUPT && context.index < context.end {
             vm.clear_interrupt();
             self.commit(&context, environment);
-            return Ok(IndependentLoopOutcome::Resume { pc: LOOP_HEADER });
+            return Ok(IndependentLoopOutcome::Resume {
+                pc: self.selection.loop_header_pc,
+            });
         }
         if status != crate::vm::NATIVE_DISPATCH_OK || context.index != context.end {
             return Err(NativeDispatchError::committed(
-                LOOP_BACKEDGE,
+                self.selection.loop_backedge_pc,
                 "independent recurrence returned incomplete progress",
             ));
         }
@@ -143,7 +148,9 @@ impl NativeIndependentLoopPlan {
             crate::value::Value::Number(f64::from(context.left)),
             crate::value::Value::Number(f64::from(context.right)),
         ];
-        Ok(IndependentLoopOutcome::Completed(crate::value::Value::array(values)))
+        Ok(IndependentLoopOutcome::Completed(
+            crate::value::Value::array(values),
+        ))
     }
 
     fn commit(
@@ -171,29 +178,21 @@ impl NativeIndependentLoopPlan {
         crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>,
         NativeDispatchError,
     > {
-        if let Some(entry) = self
-            .installed
-            .filter(|entry| self.owner.borrow().entry_token_is_live(*entry))
-        {
-            return Ok(entry);
-        }
-        self.installed = None;
-        let address = self
-            .owner
-            .borrow_mut()
-            .publish_region_image_or_get(&mut self.cache, &self.image)
-            .map_err(|error| {
-                NativeDispatchError::Physical(format!("pair loop publish: {error:?}"))
-            })?;
-        let entry = self
-            .owner
-            .borrow()
-            .owned_numeric_i32_pair_loop_entry(address)
-            .map_err(|error| {
-                NativeDispatchError::Physical(format!("pair loop entry: {error:?}"))
-            })?;
-        self.installed = Some(entry);
-        Ok(entry)
+        let image = &self.image;
+        self.physical
+            .entry(
+                |owner, cache| owner.borrow_mut().publish_region_image_or_get(cache, image),
+                |pool, address| pool.owned_numeric_i32_pair_loop_entry(address),
+            )
+            .map_err(|error| NativeDispatchError::Physical(format!("pair loop entry: {error:?}")))
+    }
+
+    pub(crate) const fn start_pc(&self) -> usize {
+        self.selection.start
+    }
+
+    pub(crate) const fn region_end_pc(&self) -> usize {
+        self.selection.region_end_pc
     }
 }
 
@@ -203,13 +202,19 @@ pub(crate) fn select_independent_loop(
     cfg: &crate::stencil_cfg::ControlFlowFacts,
     start: usize,
 ) -> Option<IndependentLoopSelection> {
-    (start == 0 && entries.len() >= REGION_END).then_some(())?;
-    cfg.region_control(start, REGION_END)?;
-    let instructions = operation_window(entries)?;
+    let end = start.checked_add(REGION_END)?;
+    cfg.region_control(start, end)?;
+    let instructions = operation_window(entries, start)?;
     constants_and_operators(code, &instructions)?;
-    bindings_match(code, &instructions)?;
-    array_result_matches(code, &instructions)?;
+    bindings_match(code, &instructions, start)?;
+    array_result_matches(code, &instructions, start)?;
     Some(IndependentLoopSelection {
+        start,
+        seed_pc: start.checked_add(SEED_OFFSET)?,
+        bound_pc: start.checked_add(BOUND_OFFSET)?,
+        loop_header_pc: start.checked_add(LOOP_HEADER_OFFSET)?,
+        loop_backedge_pc: start.checked_add(LOOP_BACKEDGE_OFFSET)?,
+        region_end_pc: end,
         state_slot: instructions[0].b,
         left_slot: instructions[2].a,
         right_slot: instructions[6].a,
@@ -218,9 +223,9 @@ pub(crate) fn select_independent_loop(
     })
 }
 
-fn operation_window(entries: &[BaselineEntry]) -> Option<[Instruction; REGION_END]> {
+fn operation_window(entries: &[BaselineEntry], start: usize) -> Option<[Instruction; REGION_END]> {
     let instructions: [Instruction; REGION_END] = entries
-        .get(..REGION_END)?
+        .get(start..start.checked_add(REGION_END)?)?
         .iter()
         .map(|entry| entry.instruction)
         .collect::<Vec<_>>()
@@ -277,10 +282,7 @@ fn operation_window(entries: &[BaselineEntry]) -> Option<[Instruction; REGION_EN
     instructions
         .iter()
         .zip(expected)
-        .all(|(actual, expected)| {
-            actual.opcode == expected
-                || (expected == Opcode::GetN && actual.opcode == Opcode::GetNQuickened)
-        })
+        .all(|(actual, expected)| expected.matches_physical_contract(actual.opcode))
         .then_some(instructions)
 }
 
@@ -308,7 +310,7 @@ fn constants_and_operators(code: CodeView<'_>, i: &[Instruction; REGION_END]) ->
         .then_some(())
 }
 
-fn bindings_match(code: CodeView<'_>, i: &[Instruction; REGION_END]) -> Option<()> {
+fn bindings_match(code: CodeView<'_>, i: &[Instruction; REGION_END], start: usize) -> Option<()> {
     let state = i[0].b;
     let left = i[2].a;
     let right = i[6].a;
@@ -322,16 +324,23 @@ fn bindings_match(code: CodeView<'_>, i: &[Instruction; REGION_END]) -> Option<(
     (i[5].b == i[4].a && i[6].b == i[5].a && i[9].b == i[8].a).then_some(())?;
     (i[11].b == index && i[12].b == state && i[13].b == i[12].a).then_some(())?;
     (i[14].b == i[11].a && i[14].c == i[13].a && i[15].a == i[14].a).then_some(())?;
-    (usize::from(i[15].b) == LOOP_EXIT && usize::from(i[39].a) == LOOP_HEADER).then_some(())?;
+    (usize::from(i[15].b) == start.checked_add(LOOP_EXIT_OFFSET)?
+        && usize::from(i[39].a) == start.checked_add(LOOP_HEADER_OFFSET)?
+        && usize::from(i[39].a) < start.checked_add(LOOP_BACKEDGE_OFFSET)?
+        && usize::from(i[15].b) < start.checked_add(REGION_END)?)
+    .then_some(())?;
     recurrence_bindings(i, 16, left, index)?;
     recurrence_bindings(i, 25, right, index)?;
     (i[34].b == index && i[36].b == i[34].a && i[36].c == i[35].a).then_some(())?;
     (i[37].a == index && i[37].b == i[36].a && i[38].b == i[34].a).then_some(())?;
-    (i[40].b == left && i[41].b == right && i[45].a == i[44].a)
-        .then_some(())?;
-    code.metadata_at(1)?.name.as_deref()?;
-    code.metadata_at(4)?.name.as_deref()?;
-    code.metadata_at(13)?.name.as_deref()?;
+    (i[40].b == left && i[41].b == right && i[45].a == i[44].a).then_some(())?;
+    code.metadata_at(start.checked_add(SEED_OFFSET)?)?
+        .name
+        .as_deref()?;
+    code.metadata_at(start.checked_add(4)?)?.name.as_deref()?;
+    code.metadata_at(start.checked_add(BOUND_OFFSET)?)?
+        .name
+        .as_deref()?;
     Some(())
 }
 
@@ -348,15 +357,21 @@ fn recurrence_bindings(
     (i[at + 7].a == slot && i[at + 7].b == i[at + 6].a && i[at + 8].b == i[at + 6].a).then_some(())
 }
 
-fn array_result_matches(code: CodeView<'_>, i: &[Instruction; REGION_END]) -> Option<()> {
-    let crate::ops::Op::MakeArray { dst, elements } = code.cold_at(ARRAY_RESULT)? else {
+fn array_result_matches(
+    code: CodeView<'_>,
+    i: &[Instruction; REGION_END],
+    start: usize,
+) -> Option<()> {
+    let crate::ops::Op::MakeArray { dst, elements } =
+        code.cold_at(start.checked_add(ARRAY_RESULT_OFFSET)?)?
+    else {
         return None;
     };
     (elements.as_slice() == [i[40].a, i[41].a] && *dst == i[43].a).then_some(())
 }
 
 fn binary_operator(instruction: Instruction, expected: crate::ops::BinaryOp) -> Option<()> {
-    (crate::ir::compact_binary_operator(instruction.flags) == Some(expected)).then_some(())
+    (instruction.opcode.binary_operator(instruction.flags) == Some(expected)).then_some(())
 }
 fn undefined_constant(code: CodeView<'_>, instruction: Instruction) -> Option<()> {
     matches!(
@@ -391,6 +406,8 @@ fn exact_i32(value: f64) -> Option<i32> {
     (f64::from(result).to_bits() == value.to_bits()).then_some(result)
 }
 fn exact_bound(value: f64) -> Option<usize> {
-    (value.is_finite() && value >= 0.0 && value.fract() == 0.0 && value <= MAX_ITERATIONS as f64)
-        .then_some(value as usize)
+    (value.is_finite() && value >= 0.0 && value < usize::MAX as f64 && value.fract() == 0.0)
+        .then_some(())?;
+    let integer = value as usize;
+    (integer as f64 == value).then_some(integer)
 }

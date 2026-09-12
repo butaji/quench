@@ -122,6 +122,20 @@ fn extract_frontmatter(source: &str) -> Result<&str, String> {
             body = rest;
             continue;
         }
+        // Test262 files commonly place a copyright block comment before the
+        // metadata marker. Skip only complete comments here; the `/*---`
+        // marker itself must remain the frontmatter opener, and arbitrary
+        // JavaScript preambles must not be treated as metadata.
+        if let Some(rest) = body.strip_prefix("/*") {
+            if body.starts_with("/*---") {
+                break;
+            }
+            let Some(end) = rest.find("*/") else {
+                break;
+            };
+            body = &rest[end + 2..];
+            continue;
+        }
         let Some(rest) = body.strip_prefix("//") else {
             break;
         };
@@ -607,5 +621,26 @@ impl<H: Test262Host> Test262Runner<H> {
             source,
             metadata.only_strict,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TestMetadata;
+
+    #[test]
+    fn metadata_skips_copyright_block_before_frontmatter() {
+        let source = "/* copyright */\n/*---\nincludes: [sm/non262-strict-shell.js]\nflags: [onlyStrict]\n---*/\n";
+        let metadata = TestMetadata::parse(source).expect("metadata parses");
+        assert_eq!(metadata.includes, vec!["sm/non262-strict-shell.js"]);
+        assert!(metadata.only_strict);
+    }
+
+    #[test]
+    fn metadata_does_not_skip_javascript_before_frontmatter() {
+        let source = "var preamble = 1;\n/*---\nflags: [onlyStrict]\n---*/\n";
+        let metadata = TestMetadata::parse(source).expect("metadata parses");
+        assert!(metadata.includes.is_empty());
+        assert!(!metadata.only_strict);
     }
 }

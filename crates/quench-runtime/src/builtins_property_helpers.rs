@@ -92,11 +92,17 @@ pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execu
     }
     let key = crate::conversion::to_property_key(arguments.get(1).unwrap_or(&Value::Undefined))?;
     if matches!(target, Value::Proxy(_)) {
-        return crate::proxy::proxy_define_property(
+        let result = crate::proxy::proxy_define_property(
             &target,
             &key,
             arguments.get(2).unwrap_or(&Value::Undefined),
-        );
+        )?;
+        if !crate::execute::is_truthy(&result) {
+            return Err(crate::value::error::throw_type_error(
+                "Proxy defineProperty trap returned false",
+            ));
+        }
+        return Ok(target);
     }
     let Some(descriptor) = arguments.get(2) else {
         return Ok(target.clone());
@@ -163,6 +169,29 @@ pub(crate) fn define_own_property(
     if let Some(result) = prepare_array_length_definition(&target, key, descriptor)? {
         return Ok(result);
     }
+    // Integer-indexed exotic objects reject definitions for an index that is
+    // outside the current view.  In particular a fixed-length view backed by
+    // a resizable buffer becomes out of bounds after a shrink; treating the
+    // failed store as a successful ordinary definition would make
+    // Object.defineProperty incorrectly return normally.
+    if let Some(index) = crate::typed_array_ops::typed_array_index(key) {
+        let typed_array_oob = crate::typed_array_prototype::is_out_of_bounds(&target)
+            || crate::typed_array_ops::logical_len(&target)
+                .is_some_and(|length| index >= length);
+        if typed_array_oob {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot define a property on an out-of-bounds typed array",
+            ));
+        }
+    }
+    if crate::typed_array_ops::is_view(&target)
+        && crate::typed_array_ops::canonical_numeric_index(key)
+        && crate::typed_array_ops::typed_array_index(key).is_none()
+    {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot define a property on an integer-indexed exotic object",
+        ));
+    }
     let key_value = Value::String(key.to_string());
     let current = ordinary_own_descriptor(&target, key, &key_value)?;
     if matches!(current, Value::Undefined) && !crate::properties::object_is_extensible(&target) {
@@ -173,6 +202,18 @@ pub(crate) fn define_own_property(
     validate_redefinition(&current, descriptor)?;
     let preserved_temporal_slot = temporal_slot_value(&target, key, &current);
     let descriptor = complete_descriptor(descriptor, &current);
+    if crate::typed_array_ops::typed_array_index(key).is_some()
+        && crate::typed_array_ops::is_view(&target)
+        && (descriptor.iter().any(|(name, value)| {
+            matches!(name.as_str(), "get" | "set")
+                || matches!(name.as_str(), "configurable" | "enumerable" | "writable")
+                    && matches!(value, Value::Boolean(false))
+        }))
+    {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot define a property on an integer-indexed exotic object",
+        ));
+    }
     let value = descriptor
         .iter()
         .rev()
@@ -208,6 +249,23 @@ pub(crate) fn define_own_property(
         define_property_value(target.clone(), key, value)
     };
     store_descriptor_metadata(&mut result, key, &descriptor);
+    if crate::vm::is_global_object(&target) {
+        let flag = |name: &str| {
+            descriptor.iter().rev().find_map(|(field, value)| {
+                (field == name).then_some(matches!(value, Value::Boolean(true)))
+            })
+        };
+        if let (Some(writable), Some(enumerable), Some(configurable)) =
+            (flag("writable"), flag("enumerable"), flag("configurable"))
+        {
+            crate::global_environment::remember_descriptor_flags(
+                key,
+                writable,
+                enumerable,
+                configurable,
+            );
+        }
+    }
     if let Some(value) = preserved_temporal_slot {
         if let Value::Object(properties) = &mut result {
             Rc::make_mut(properties).push((format!("\0temporal-slot:\0{key}").into(), value));
@@ -305,7 +363,9 @@ fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(Strin
     let descriptor_key = descriptor_key(key);
     if let Value::Object(properties) = result {
         if default_ordinary_descriptor(descriptor) {
-            Rc::make_mut(properties).retain(|(name, _)| name != &descriptor_key);
+            let properties = Rc::make_mut(properties);
+            properties.retain(|(name, _)| name != &descriptor_key);
+            properties.invalidate_layout();
             return;
         }
     }
@@ -316,6 +376,7 @@ fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(Strin
             let properties = Rc::make_mut(properties);
             properties.retain(|(name, _)| name != &descriptor_key);
             properties.push((descriptor_key.into(), metadata));
+            properties.invalidate_layout();
         }
         Value::Function(function) => {
             let mut properties = function.properties.borrow_mut();
@@ -335,6 +396,17 @@ fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(Strin
             properties.retain(|(name, _)| name != &descriptor_key);
             properties.push((descriptor_key, metadata));
         }
+        Value::Float64Array(view) => view.meta.set_descriptor(key, metadata),
+        Value::Float32Array(view) => view.meta.set_descriptor(key, metadata),
+        Value::Int8Array(view) => view.meta.set_descriptor(key, metadata),
+        Value::Int16Array(view) => view.meta.set_descriptor(key, metadata),
+        Value::Int32Array(view) => view.meta.set_descriptor(key, metadata),
+        Value::BigInt64Array(view) => view.meta.set_descriptor(key, metadata),
+        Value::BigUint64Array(view) => view.meta.set_descriptor(key, metadata),
+        Value::Uint32Array(view) => view.meta.set_descriptor(key, metadata),
+        Value::Uint8Array(view) => view.meta.set_descriptor(key, metadata),
+        Value::Uint8ClampedArray(view) => view.meta.set_descriptor(key, metadata),
+        Value::Uint16Array(view) => view.meta.set_descriptor(key, metadata),
         _ => {}
     }
 }

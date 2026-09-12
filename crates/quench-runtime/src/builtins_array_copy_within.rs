@@ -31,16 +31,10 @@ pub(crate) fn array_copy_within(
         return copy_within_object(current, target, start, count);
     }
 
-    // The dense backing store is canonical only for packed ordinary arrays.
-    // In that state copy_dense_within supplies memmove ordering without a
-    // temporary Vec; all other representations retain the property-aware
-    // clone path below.
     if values.is_packed_ordinary() {
-        let mut updated = values.clone();
-        debug_assert!(Rc::make_mut(&mut updated).copy_dense_within(start, target, count));
-        let result = Value::Array(updated);
-        crate::locals::replace_value(receiver, &result);
-        return Ok(result);
+        if values.copy_dense_within_shared(start, target, count) {
+            return Ok(current);
+        }
     }
 
     let mut updated = values.as_ref().clone();

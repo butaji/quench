@@ -6,7 +6,8 @@ fn generated_artifact_target_is_selected_as_one_physical_view() {
         return;
     }
     for artifact in BUILD_STENCIL_ARTIFACTS {
-        let view = select_physical(artifact.key).expect("selected physical view");
+        let view = select_physical(artifact.key)
+            .unwrap_or_else(|| panic!("selected physical view for {}", artifact.name));
         assert!(view.generated);
         assert_eq!(view.key, artifact.key);
         assert_eq!(view.artifact_id, artifact.artifact_id);

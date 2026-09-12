@@ -1,16 +1,26 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "number", "value": -864 },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["i32_counter_recurrence"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "LoadConst",
+    "LoadConst",
+    "Call",
+    "LoadLocal",
+    "LoadConst",
+    "LoadConst",
+    "Call",
+    "Add",
+    "LoadLocal",
+    "LoadConst",
+    "LoadConst",
+    "Call",
+    "Add",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": -864
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "i32_counter_recurrence": { "entries": 3, "fallbacks": 0 } },
-    "events": { "leaf_hit": 3 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

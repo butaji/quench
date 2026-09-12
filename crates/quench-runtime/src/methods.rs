@@ -60,7 +60,7 @@ pub(crate) fn execute_named(
 ) -> Result<Option<crate::completion::Completion>, VmError> {
     crate::execution_trace::named_call(key);
     if instruction.flags <= 1 {
-        if let Some(outcome) = execute_named_word_fast(registers, instruction, key, cache)? {
+        if let Some(outcome) = execute_named_word_fast(registers, instruction, key, cache, site)? {
             crate::execution_trace::call_method(
                 usize::from(instruction.flags),
                 false,
@@ -94,7 +94,7 @@ pub(crate) fn execute_named(
         }
     }
     let receiver = crate::locals::resolved_replacement(read_register(registers, instruction.b)?);
-    let callee = named_known_callee(&receiver, key, cache).map_or_else(
+    let callee = named_known_callee(&receiver, key, cache, site).map_or_else(
         || crate::vm::get_named_property_result(&receiver, key, cache),
         Ok,
     )?;
@@ -143,17 +143,28 @@ fn execute_named_word_fast(
     instruction: crate::ir::Instruction,
     key: &str,
     cache: &std::cell::Cell<u64>,
+    site: Option<&std::cell::RefCell<crate::quickening::QuickeningSite<4>>>,
 ) -> Result<Option<NamedFunctionCall>, VmError> {
     let receiver = crate::locals::resolved_replacement(read_register(registers, instruction.b)?);
     let Value::Object(object) = &receiver else {
         return Ok(None);
     };
-    let Some(crate::vm::NamedCachedPayload::Word(slot)) =
+    let payload = if let Some(site) = site {
+        let payload = crate::vm::get_named_site_cached_payload(object, key, site);
+        if payload.is_none() && crate::vm::proven_own_slot(object, key).is_some() {
+            // The site either installed a new own-slot state or rejected a
+            // stale one; let the lower named gateway perform the complete
+            // semantic path rather than consulting a second own-slot cache.
+            return Ok(None);
+        }
+        payload.or_else(|| crate::vm::get_named_cached_payload(object, key, cache))
+    } else {
         crate::vm::get_named_cached_payload(object, key, cache).or_else(|| {
             crate::vm::proven_own_word(object, key)
                 .map(|slot| crate::vm::NamedCachedPayload::Word(std::ptr::from_ref(slot)))
         })
-    else {
+    };
+    let Some(crate::vm::NamedCachedPayload::Word(slot)) = payload else {
         return Ok(None);
     };
     let Some(pointer) = (unsafe { (&*slot).function_ptr() }) else {
@@ -238,9 +249,16 @@ pub(crate) fn execute_registered(
     // Registered calls are the common fixed-arity path for builtins and
     // methods. Keep their arguments in the bounded inline representation used
     // by continuations instead of allocating a fresh Vec on every call.
-    let mut arguments = crate::completion::CallArguments::with_capacity(argument_registers.len());
+    let mut arguments = crate::completion::CallArguments::try_with_capacity(
+        argument_registers.len(),
+    )
+    .map_err(|_| crate::value::error::throw_range_error("Unable to allocate call arguments"))?;
     for register in argument_registers {
-        arguments.push(read_register(registers, *register)?);
+        arguments
+            .try_push(read_register(registers, *register)?)
+            .map_err(|_| {
+                crate::value::error::throw_range_error("Unable to allocate call arguments")
+            })?;
     }
     finish_named_call_owned(
         registers,
@@ -275,13 +293,25 @@ fn observe_callable(
     })
 }
 
-fn named_known_callee(receiver: &Value, key: &str, cache: &std::cell::Cell<u64>) -> Option<Value> {
+fn named_known_callee(
+    receiver: &Value,
+    key: &str,
+    cache: &std::cell::Cell<u64>,
+    site: Option<&std::cell::RefCell<crate::quickening::QuickeningSite<4>>>,
+) -> Option<Value> {
     let Value::Object(object) = receiver else {
         return None;
     };
-    let crate::vm::NamedCachedPayload::Word(slot) =
-        crate::vm::get_named_cached_payload(object, key, cache)?
-    else {
+    let payload = if let Some(site) = site {
+        let payload = crate::vm::get_named_site_cached_payload(object, key, site);
+        if payload.is_none() && crate::vm::proven_own_slot(object, key).is_some() {
+            return None;
+        }
+        payload.or_else(|| crate::vm::get_named_cached_payload(object, key, cache))
+    } else {
+        crate::vm::get_named_cached_payload(object, key, cache)
+    }?;
+    let crate::vm::NamedCachedPayload::Word(slot) = payload else {
         return None;
     };
     // SAFETY: receiver owns the method slot for this call.

@@ -400,17 +400,21 @@ pub fn method_on(
     {
         let stream = receiver.expect("checked receiver");
         execute::set_property_in_place(stream, "\0zlib:pendingDrain", Value::Boolean(false));
-        if let Some(listener) = args.get(1).filter(|value| quench_runtime::is_callable(value)) {
+        if let Some(listener) = args
+            .get(1)
+            .filter(|value| quench_runtime::is_callable(value))
+        {
             execute::call(listener, stream, &[])?;
         }
     }
-    if matches!(args.first(), Some(Value::String(event)) if event == "data")
-        && receiver.is_some()
-    {
+    if matches!(args.first(), Some(Value::String(event)) if event == "data") && receiver.is_some() {
         let stream = receiver.expect("checked receiver");
         let pending = execute::get_property(stream, "\0zlib:pendingData");
         if let Value::Array(chunks) = pending {
-            if let Some(listener) = args.get(1).filter(|value| quench_runtime::is_callable(value)) {
+            if let Some(listener) = args
+                .get(1)
+                .filter(|value| quench_runtime::is_callable(value))
+            {
                 for index in 0..chunks.len() {
                     let chunk = chunks.get(index).unwrap_or(Value::Undefined);
                     execute::call(listener, stream, &[chunk])?;
@@ -507,11 +511,8 @@ pub fn method_emit(
     let snapshot = emitter.borrow().listeners_for_scope(&event, process_scope);
     if event == "listening" {
         if let Some(worker) = args.get(1) {
-            let _ = execute::set_property_in_place(
-                worker,
-                "state",
-                Value::String("listening".into()),
-            );
+            let _ =
+                execute::set_property_in_place(worker, "state", Value::String("listening".into()));
         }
     }
     if snapshot.is_empty() {

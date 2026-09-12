@@ -1,16 +1,49 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "string", "value": "[\"array\",[[\"number\",\"1088\"],[\"number\",\"64\"]]]" },
-  "plan": {
-    "execution_kind": "portable_recipe",
-    "operation_route": ["dynamic", "proxy"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadConst",
+    "StoreLocal",
+    "GetN",
+    "LoadLocal",
+    "GetN",
+    "MakeObject",
+    "MakeFunctionWithKind",
+    "SetFunctionName",
+    "MakeObject",
+    "Construct",
+    "StoreLocal",
+    "LoadConst",
+    "StoreLocal",
+    "LoadConst",
+    "LoadConst",
+    "StoreLocal",
+    "LoadConst",
+    "LoadLocal",
+    "LoadLocal",
+    "GetN",
+    "LessThan",
+    "JumpIfFalse",
+    "LoadLocal",
+    "LoadLocal",
+    "GetN",
+    "Add",
+    "StoreLocal",
+    "Move",
+    "LoadLocal",
+    "LoadConst",
+    "NumericAdd",
+    "StoreLocal",
+    "Unary",
+    "Jump",
+    "LoadLocal",
+    "LoadLocal",
+    "MakeArray",
+    "Return"
+  ],
+  "result": {
+    "kind": "string",
+    "value": "[\"array\",[[\"number\",\"1088\"],[\"number\",\"64\"]]]"
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "dynamic_proxy_region": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

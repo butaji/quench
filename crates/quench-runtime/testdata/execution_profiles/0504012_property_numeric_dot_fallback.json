@@ -1,26 +1,18 @@
 {
-  "schema": 1,
-  "warmup": 0,
-  "result": { "kind": "nan" },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": [
-      "local", "guarded_property_number", "local", "guarded_property_number",
-      "number_multiply", "local", "guarded_property_number", "local",
-      "guarded_property_number", "number_multiply", "number_add", "local",
-      "guarded_property_number", "local", "guarded_property_number",
-      "number_multiply", "number_add", "return"
-    ],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "LoadConst",
+    "LoadConst",
+    "LoadConst",
+    "LoadConst",
+    "MakeObject",
+    "Call",
+    "Return"
+  ],
+  "result": {
+    "kind": "nan"
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": {
-      "primitive_missing_vector_dot_return": { "entries": 1, "fallbacks": 0 }
-    },
-    "events": {
-      "leaf_hit": 1
-    }
-  }
+  "schema": 3,
+  "warmup": 0
 }

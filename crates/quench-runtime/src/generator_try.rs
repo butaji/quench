@@ -1,12 +1,27 @@
 fn suspended_try_op(op: &crate::ops::Op, generator: &GeneratorData) -> bool {
     match op {
         crate::ops::Op::Yield { .. } | crate::ops::Op::Await { .. } => true,
+        // The active yield-star operation is selected structurally by the
+        // suspended code range. Its iterator slot may still be undefined on
+        // the first suspension (initialization happens as part of the same
+        // operation), so do not reject it based on the slot value.
         crate::ops::Op::YieldStar { iterator, .. } => {
-            crate::execute::read_register(&registers(generator), *iterator)
-                .is_ok_and(|value| !matches!(value, Value::Undefined))
+            has_repeat_iterator(generator)
+                || crate::execute::read_register(&registers(generator), *iterator)
+                    .is_ok_and(|value| !matches!(value, Value::Undefined))
         }
         _ => false,
     }
+}
+
+fn has_repeat_iterator(generator: &GeneratorData) -> bool {
+    generator
+        .machine
+        .borrow()
+        .frames
+        .frames
+        .iter()
+        .any(|frame| matches!(frame, crate::machine::Frame::Iterator { repeat: true, .. }))
 }
 
 fn resume_suspended_try_op(

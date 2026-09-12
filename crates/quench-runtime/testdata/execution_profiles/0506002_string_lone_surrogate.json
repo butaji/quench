@@ -1,16 +1,15 @@
 {
-  "schema": 1,
-  "warmup": 0,
-  "result": { "kind": "number", "value": 55296 },
-  "plan": {
-    "execution_kind": "portable_recipe",
-    "operation_route": ["CallN", "CallN", "Return"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "LoadLocal",
+    "Call",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": 55296
   },
-  "profile": {
-    "residual": {},
-    "slow": { "StringRepeatUtf16": 1, "StringCharCodeAt": 1 },
-    "stencils": { "utf16_repeat_char_code_return": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 0
 }

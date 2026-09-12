@@ -10,14 +10,38 @@ const MAX_OBJECT_FIELDS: usize = 8;
 pub(crate) const PROFILE_NAME: &str = "guarded_vector3_dot_return";
 const PRIMITIVE_PROFILE_NAME: &str = "primitive_missing_vector_dot_return";
 const VECTOR_ROUTE: [&str; 12] = [
-    "GetNQuickened", "GetNQuickened", "Mul", "GetNQuickened", "GetNQuickened", "Mul",
-    "Add", "GetNQuickened", "GetNQuickened", "Mul", "Add", "Return",
+    "GetNQuickened",
+    "GetNQuickened",
+    "Mul",
+    "GetNQuickened",
+    "GetNQuickened",
+    "Mul",
+    "Add",
+    "GetNQuickened",
+    "GetNQuickened",
+    "Mul",
+    "Add",
+    "Return",
 ];
 const PRIMITIVE_ROUTE: [&str; 18] = [
-    "local", "guarded_property_number", "local", "guarded_property_number", "number_multiply",
-    "local", "guarded_property_number", "local", "guarded_property_number", "number_multiply",
-    "number_add", "local", "guarded_property_number", "local", "guarded_property_number",
-    "number_multiply", "number_add", "return",
+    "local",
+    "guarded_property_number",
+    "local",
+    "guarded_property_number",
+    "number_multiply",
+    "local",
+    "guarded_property_number",
+    "local",
+    "guarded_property_number",
+    "number_multiply",
+    "number_add",
+    "local",
+    "guarded_property_number",
+    "local",
+    "guarded_property_number",
+    "number_multiply",
+    "number_add",
+    "return",
 ];
 
 #[derive(Clone)]
@@ -88,20 +112,32 @@ impl NativeFreshObjectCallPlan {
 
 impl FreshObjectCallSelection {
     fn has_primitive(&self) -> bool {
-        self.inputs.iter().any(|input| matches!(input, DotInput::PrimitiveString))
+        self.inputs
+            .iter()
+            .any(|input| matches!(input, DotInput::PrimitiveString))
     }
 
     fn profile_name(&self) -> &'static str {
-        if self.has_primitive() { PRIMITIVE_PROFILE_NAME } else { PROFILE_NAME }
+        if self.has_primitive() {
+            PRIMITIVE_PROFILE_NAME
+        } else {
+            PROFILE_NAME
+        }
     }
 
     fn route(&self) -> &'static [&'static str] {
-        if self.has_primitive() { &PRIMITIVE_ROUTE } else { &VECTOR_ROUTE }
+        if self.has_primitive() {
+            &PRIMITIVE_ROUTE
+        } else {
+            &VECTOR_ROUTE
+        }
     }
 }
 
 fn ordered_input(input: &DotInput, fields: &[std::rc::Rc<str>; 3]) -> Option<[f64; 3]> {
-    let DotInput::Literal(object) = input else { return None };
+    let DotInput::Literal(object) = input else {
+        return None;
+    };
     ordered_values(object, fields)
 }
 
@@ -137,15 +173,25 @@ pub(crate) fn select_fresh_object_call(
 }
 
 pub(crate) fn eager_candidate(code: CodeView<'_>) -> bool {
-    if code.instruction(0).is_none_or(|op| op.opcode != Opcode::LoadLocal) {
+    if code
+        .instruction(0)
+        .is_none_or(|op| op.opcode != Opcode::LoadLocal)
+    {
         return false;
     }
     let mut inputs = 0;
     for pc in 1..code.len().min(MAX_REGION_LEN) {
-        let Some(instruction) = code.instruction(pc) else { return false };
+        let Some(instruction) = code.instruction(pc) else {
+            return false;
+        };
         match instruction.opcode {
             Opcode::LoadConst if primitive_string(code, instruction) => inputs += 1,
-            Opcode::Slow if matches!(code.cold_at(pc), Some(Op::MakeObject { .. })) => inputs += 1,
+            opcode
+                if opcode.is_cold_marker()
+                    && matches!(code.cold_at(pc), Some(Op::MakeObject { .. })) =>
+            {
+                inputs += 1
+            }
             Opcode::Call if inputs == 2 => return is_followed_by_return(code, pc),
             _ => {}
         }
@@ -175,7 +221,7 @@ fn collect_definition(
     match instruction.opcode {
         Opcode::LoadConst => collect_constant(code, instruction, values, inputs),
         Opcode::Unary => collect_unary(instruction, values),
-        Opcode::Slow => collect_object(code.cold_at(pc)?, values, inputs),
+        opcode if opcode.is_cold_marker() => collect_object(code.cold_at(pc)?, values, inputs),
         _ => None,
     }
 }
@@ -252,7 +298,7 @@ fn primitive_fields_missing(fields: &[std::rc::Rc<str>; 3]) -> Option<u64> {
     use crate::ops::Builtin::{ObjectPrototype, StringPrototype};
     (crate::builtins::read_intrinsic_prototype_override(StringPrototype).is_none()
         && crate::builtins::read_intrinsic_prototype_override(ObjectPrototype).is_none())
-        .then_some(())?;
+    .then_some(())?;
     for field in fields {
         primitive_field_missing(field, StringPrototype, ObjectPrototype)?;
     }
@@ -269,8 +315,11 @@ fn primitive_field_missing(
         crate::builtins::read_intrinsic_override(builtin, field)
             .is_none()
             .then_some(())?;
-        matches!(crate::builtins::property(builtin, field), crate::value::Value::Undefined)
-            .then_some(())?;
+        matches!(
+            crate::builtins::property(builtin, field),
+            crate::value::Value::Undefined
+        )
+        .then_some(())?;
     }
     Some(())
 }

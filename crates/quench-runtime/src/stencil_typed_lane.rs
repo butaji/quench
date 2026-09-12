@@ -3,7 +3,6 @@
 use std::{cell::RefCell, rc::Rc};
 
 const MACHINE_SLAB_BYTES: usize = 4096;
-const MAX_ITERATIONS: usize = 1 << 20;
 const BYTES_PER_LANE: usize = std::mem::size_of::<i32>();
 
 #[derive(Clone, Copy, Debug)]
@@ -83,9 +82,9 @@ fn validate_view(
     view: &Rc<crate::value::Int32ArrayData>,
 ) -> Option<usize> {
     let loop_ = fact.selected.counted;
-    let iterations = usize::try_from(loop_.end.checked_sub(loop_.start)?).ok()?;
     let end = usize::try_from(loop_.end).ok()?;
-    (loop_.start >= 0 && iterations <= MAX_ITERATIONS && view.logical_len() >= end).then_some(())?;
+    loop_.end.checked_sub(loop_.start)?;
+    (loop_.start >= 0 && view.logical_len() >= end).then_some(())?;
     (!view.buffer.shared && !view.buffer.immutable && view.buffer.max_byte_length.is_none())
         .then_some(())?;
     let value = crate::value::Value::Int32Array(Rc::clone(view));
@@ -128,10 +127,8 @@ impl TypedLaneContext {
 }
 
 struct TypedLaneMachine {
-    owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
     image: crate::stencil_region_layout::VerifiedRegionImage,
-    cache: crate::stencil_select::RenderedRegionCache,
-    installed: Option<crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>>,
+    physical: crate::stencil_installation::SharedPhysicalEntry<crate::stencil_arena::DispatchEntry>,
 }
 
 thread_local! {
@@ -148,46 +145,37 @@ impl TypedLaneMachine {
         let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::ASetI);
         let values = crate::stencil_fact::PatchValues::from_site(&site);
         let image = crate::stencil_region_layout::finalize_selected_leaf(view, &values).ok()?;
+        let owner = Rc::new(RefCell::new(
+            crate::stencil_arena::SharedStencilSlab::new(MACHINE_SLAB_BYTES).ok()?,
+        ));
         Some(Self {
-            owner: Rc::new(RefCell::new(
-                crate::stencil_arena::SharedStencilSlab::new(MACHINE_SLAB_BYTES).ok()?,
-            )),
             image,
-            cache: crate::stencil_select::RenderedRegionCache::new(),
-            installed: None,
+            physical: crate::stencil_installation::SharedPhysicalEntry::new(Rc::clone(&owner)),
         })
     }
 
     fn invoke(&mut self, context: &mut TypedLaneContext) -> Option<u64> {
         let entry = self.entry()?;
-        let lease =
-            crate::stencil_arena::SharedStencilSlab::acquire_owned(&self.owner, entry).ok()?;
-        lease
-            .invoke(|call| call((context as *mut TypedLaneContext).cast()))
+        self.physical
+            .invoke(entry, |call| {
+                call((context as *mut TypedLaneContext).cast())
+            })
             .ok()
     }
 
     fn entry(
         &mut self,
     ) -> Option<crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>> {
-        if let Some(entry) = self
-            .installed
-            .filter(|entry| self.owner.borrow().entry_token_is_live(*entry))
-        {
-            return Some(entry);
-        }
-        let address = self
-            .owner
-            .borrow_mut()
-            .publish_region_image_or_get(&mut self.cache, &self.image)
-            .ok()?;
-        let entry = self
-            .owner
-            .borrow()
-            .owned_typed_lane_loop_entry(address)
-            .ok()?;
-        self.installed = Some(entry);
-        Some(entry)
+        self.physical
+            .entry(
+                |owner, cache| {
+                    owner
+                        .borrow_mut()
+                        .publish_region_image_or_get(cache, &self.image)
+                },
+                |pool, address| pool.owned_typed_lane_loop_entry(address),
+            )
+            .ok()
     }
 }
 

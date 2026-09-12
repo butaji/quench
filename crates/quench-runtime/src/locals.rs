@@ -637,7 +637,7 @@ pub(crate) fn load_proven_in(
 }
 
 #[inline(always)]
-fn load_checked_in(
+pub(crate) fn load_checked_in(
     environment: &Environment,
     registers: &mut crate::register_file::RegisterFile,
     dst: u16,
@@ -683,9 +683,34 @@ pub(crate) fn update(
     slot: u16,
     decrement: bool,
 ) -> Result<(), VmError> {
+    if let Some(result) = with_current_ref(|environment| {
+        environment.map(|environment| {
+            update_in(
+                environment,
+                registers,
+                old_dst,
+                updated_dst,
+                slot,
+                decrement,
+            )
+        })
+    }) {
+        return result;
+    }
+    update_in(&current(), registers, old_dst, updated_dst, slot, decrement)
+}
+
+#[inline(always)]
+pub(crate) fn update_in(
+    environment: &Environment,
+    registers: &mut crate::register_file::RegisterFile,
+    old_dst: u16,
+    updated_dst: u16,
+    slot: u16,
+    decrement: bool,
+) -> Result<(), VmError> {
     crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
     let delta = if decrement { -1.0 } else { 1.0 };
-    let environment = current();
     if environment.is_immutable_slot(slot) && !environment.is_uninitialized(slot) {
         return Err(crate::value::error::throw_type_error(
             "Cannot assign to immutable binding",
@@ -736,7 +761,21 @@ pub(crate) fn mark_immutable(slot: u16) {
 }
 
 pub(crate) fn check_initialized(slot: u16, name: &str) -> Result<(), VmError> {
-    ensure_initialized(slot, name)
+    check_initialized_in(&current(), slot, name)
+}
+
+#[inline(always)]
+pub(crate) fn check_initialized_in(
+    environment: &Environment,
+    slot: u16,
+    name: &str,
+) -> Result<(), VmError> {
+    if environment.is_uninitialized(slot) {
+        return Err(crate::value::error::throw_reference_error(&format!(
+            "Cannot access '{name}' before initialization"
+        )));
+    }
+    Ok(())
 }
 
 pub(crate) fn initialize(slot: u16) {
@@ -752,6 +791,17 @@ pub(crate) fn load_parameter(
     Ok(())
 }
 
+#[inline(always)]
+pub(crate) fn load_parameter_in(
+    environment: &Environment,
+    registers: &mut crate::register_file::RegisterFile,
+    dst: u16,
+    slot: u16,
+) -> Result<(), VmError> {
+    crate::execute::write_value(registers, dst, environment.get(slot));
+    Ok(())
+}
+
 pub(crate) fn slot_cell(slot: u16) -> Rc<crate::value::BindingCell> {
     current().slot_cell(slot)
 }
@@ -761,12 +811,7 @@ pub(crate) fn install_slot_cell(slot: u16, cell: Rc<crate::value::BindingCell>) 
 }
 
 fn ensure_initialized(slot: u16, name: &str) -> Result<(), VmError> {
-    if current().is_uninitialized(slot) {
-        return Err(crate::value::error::throw_reference_error(&format!(
-            "Cannot access '{name}' before initialization"
-        )));
-    }
-    Ok(())
+    check_initialized_in(&current(), slot, name)
 }
 
 pub(crate) fn alias_eval_name(name: &str, slot: u16) {

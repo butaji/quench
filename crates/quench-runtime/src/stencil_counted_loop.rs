@@ -33,7 +33,7 @@ fn select_init(code: CodeView<'_>) -> Option<(u16, i32)> {
             Opcode::LoadConst => select_init_constant(code, instruction, &mut constant)?,
             Opcode::InitLocal => initialized = Some((instruction.a, instruction.b)),
             Opcode::Return => {}
-            Opcode::Slow if is_uninitialized_marker(code, pc) => {}
+            opcode if opcode.is_cold_marker() && is_uninitialized_marker(code, pc) => {}
             _ => return None,
         }
     }
@@ -67,7 +67,9 @@ fn select_test(code: CodeView<'_>, index_slot: u16) -> Option<i32> {
                 index_register = Some(instruction.a);
             }
             Opcode::LoadConst => bound = Some((instruction.a, number(code, instruction.b)?)),
-            Opcode::Binary => select_less_than(instruction, index_register?, bound?.0)?,
+            opcode if opcode.is_binary_family() => {
+                select_less_than(instruction, index_register?, bound?.0)?
+            }
             Opcode::Return => {}
             _ => return None,
         }
@@ -80,7 +82,7 @@ fn select_less_than(
     index_register: u16,
     bound_register: u16,
 ) -> Option<()> {
-    let operator = crate::ir::compact_binary_operator(instruction.flags)?;
+    let operator = instruction.opcode.binary_operator(instruction.flags)?;
     (operator == crate::ops::BinaryOp::LessThan
         && instruction.b == index_register
         && instruction.c == bound_register)

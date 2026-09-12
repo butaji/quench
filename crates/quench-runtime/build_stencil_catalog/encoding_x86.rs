@@ -23,6 +23,13 @@ const fn x86_word_load_ret() -> [u8; 4] {
     [0x48, 0x8B, x86_modrm_reg_mem(0, 7), x86_ret()]
 }
 
+const fn x86_word_return() -> [u8; 4] {
+    // System V passes the tagged word in RDI and returns it in RAX.  Keep the
+    // return boundary a real physical leaf instead of relying on a bare RET
+    // (which is correct for AArch64's x0-in/x0-out ABI but not for x86-64).
+    [0x48, 0x89, 0xF8, x86_ret()] // mov rax,rdi; ret
+}
+
 const fn x86_compare_equal_bytes() -> [u8; 11] {
     // UCOMISD sets ZF for numeric equality; SETE is false for unordered NaN.
     [
@@ -186,6 +193,8 @@ const X86_PROPERTY_WRITE_BYTES: [u8; 48] = [
     0x31, 0xC0, 0xC3, // rejected: status=0; ret
 ];
 const X86_MOVE_BYTES: [u8; 4] = x86_word_load_ret();
+const X86_IDENTITY_BYTES: [u8; 1] = [x86_ret()];
+const X86_RETURN_WORD_BYTES: [u8; 4] = x86_word_return();
 const fn x86_fallthrough_bytes() -> [u8; 9] {
     let add = x86_sse2_binary(0x58, 0, 1);
     [add[0], add[1], add[2], add[3], 0xE9, 0, 0, 0, 0]

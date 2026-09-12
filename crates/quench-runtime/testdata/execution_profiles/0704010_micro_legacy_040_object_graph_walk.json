@@ -1,16 +1,15 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "string", "value": "21717" },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["object_graph_walk"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "TailCall",
+    "LoadConst",
+    "Return"
+  ],
+  "result": {
+    "kind": "string",
+    "value": "21717"
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "object_graph_walk_region": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

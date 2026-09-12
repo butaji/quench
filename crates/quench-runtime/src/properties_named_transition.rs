@@ -95,8 +95,7 @@ fn guarded_transition_object(
     entry: &NamedWriteTransition,
 ) -> Option<std::rc::Rc<crate::value::ObjectData>> {
     let crate::value::Value::Object(object) = target else { return None };
-    if object.has_replacement()
-        || object.semantic_layout_id() != entry.source_layout
+    if !object.has_current_layout(entry.source_layout)
         || crate::identity::property_key_id(key) != entry.key
         || crate::builtins::intrinsic_override_generation() != entry.intrinsic_generation
     {
@@ -105,7 +104,7 @@ fn guarded_transition_object(
     let prototype = immediate_plain_prototype(object)?;
     let expected = entry.prototype.upgrade()?;
     (std::rc::Rc::ptr_eq(&prototype, &expected)
-        && prototype.semantic_layout_id() == entry.prototype_layout)
+        && prototype.has_current_layout(entry.prototype_layout))
     .then(|| std::rc::Rc::clone(object))
 }
 

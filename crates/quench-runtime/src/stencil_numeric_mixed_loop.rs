@@ -8,7 +8,6 @@ pub(crate) const REGION_END: usize = 39;
 const LOOP_HEADER: usize = 7;
 const LOOP_BACKEDGE: usize = 34;
 const LOOP_EXIT: usize = 35;
-const MAX_ITERATIONS: usize = 1 << 20;
 
 #[derive(Clone, Copy)]
 pub(crate) struct MixedLoopSelection {
@@ -40,10 +39,8 @@ struct MixedLoopContext {
 
 pub(crate) struct NativeMixedLoopPlan {
     selection: MixedLoopSelection,
-    owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
     image: crate::stencil_region_layout::VerifiedRegionImage,
-    cache: crate::stencil_select::RenderedRegionCache,
-    installed: Option<crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>>,
+    physical: crate::stencil_installation::SharedPhysicalEntry<crate::stencil_arena::DispatchEntry>,
 }
 
 impl NativeMixedLoopPlan {
@@ -63,10 +60,8 @@ impl NativeMixedLoopPlan {
         let image = crate::stencil_region_layout::finalize_selected_leaf(view, &values).ok()?;
         Some(Self {
             selection,
-            owner,
             image,
-            cache: crate::stencil_select::RenderedRegionCache::new(),
-            installed: None,
+            physical: crate::stencil_installation::SharedPhysicalEntry::new(owner),
         })
     }
 
@@ -113,12 +108,10 @@ impl NativeMixedLoopPlan {
 
     fn invoke(&mut self, context: &mut MixedLoopContext) -> Result<u64, NativeDispatchError> {
         let entry = self.entry()?;
-        let lease = crate::stencil_arena::SharedStencilSlab::acquire_owned(&self.owner, entry)
-            .map_err(|error| {
-                NativeDispatchError::Physical(format!("mixed loop lease: {error:?}"))
-            })?;
-        lease
-            .invoke(|call| call((context as *mut MixedLoopContext).cast()))
+        self.physical
+            .invoke(entry, |call| {
+                call((context as *mut MixedLoopContext).cast())
+            })
             .map_err(|error| NativeDispatchError::Physical(format!("mixed loop invoke: {error:?}")))
     }
 
@@ -160,29 +153,13 @@ impl NativeMixedLoopPlan {
         crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>,
         NativeDispatchError,
     > {
-        if let Some(entry) = self
-            .installed
-            .filter(|entry| self.owner.borrow().entry_token_is_live(*entry))
-        {
-            return Ok(entry);
-        }
-        self.installed = None;
-        let address = self
-            .owner
-            .borrow_mut()
-            .publish_region_image_or_get(&mut self.cache, &self.image)
-            .map_err(|error| {
-                NativeDispatchError::Physical(format!("mixed loop publish: {error:?}"))
-            })?;
-        let entry = self
-            .owner
-            .borrow()
-            .owned_numeric_f64_mixed_loop_entry(address)
-            .map_err(|error| {
-                NativeDispatchError::Physical(format!("mixed loop entry: {error:?}"))
-            })?;
-        self.installed = Some(entry);
-        Ok(entry)
+        let image = &self.image;
+        self.physical
+            .entry(
+                |owner, cache| owner.borrow_mut().publish_region_image_or_get(cache, image),
+                |pool, address| pool.owned_numeric_f64_mixed_loop_entry(address),
+            )
+            .map_err(|error| NativeDispatchError::Physical(format!("mixed loop entry: {error:?}")))
     }
 }
 
@@ -280,10 +257,7 @@ fn operation_window(entries: &[BaselineEntry]) -> Option<[Instruction; REGION_EN
     instructions
         .iter()
         .zip(expected)
-        .all(|(actual, expected)| {
-            actual.opcode == expected
-                || (expected == Opcode::GetN && actual.opcode == Opcode::GetNQuickened)
-        })
+        .all(|(actual, expected)| expected.matches_physical_contract(actual.opcode))
         .then_some(instructions)
 }
 
@@ -348,7 +322,7 @@ fn bindings_match(code: CodeView<'_>, i: &[Instruction; REGION_END]) -> Option<(
 }
 
 fn binary_operator(instruction: Instruction, expected: crate::ops::BinaryOp) -> Option<()> {
-    (crate::ir::compact_binary_operator(instruction.flags) == Some(expected)).then_some(())
+    (instruction.opcode.binary_operator(instruction.flags) == Some(expected)).then_some(())
 }
 fn undefined_constant(code: CodeView<'_>, instruction: Instruction) -> Option<()> {
     matches!(
@@ -367,10 +341,14 @@ fn number_constant(code: CodeView<'_>, instruction: Instruction) -> Option<f64> 
     Some(*value)
 }
 fn exact_positive_usize(value: f64) -> Option<usize> {
-    (value.is_finite() && value >= 1.0 && value.fract() == 0.0 && value <= MAX_ITERATIONS as f64)
-        .then_some(value as usize)
+    exact_usize(value).filter(|value| *value >= 1)
 }
 fn exact_bound(value: f64) -> Option<usize> {
-    (value.is_finite() && value >= 0.0 && value.fract() == 0.0 && value <= MAX_ITERATIONS as f64)
-        .then_some(value as usize)
+    exact_usize(value)
+}
+fn exact_usize(value: f64) -> Option<usize> {
+    (value.is_finite() && value >= 0.0 && value < usize::MAX as f64 && value.fract() == 0.0)
+        .then_some(())?;
+    let integer = value as usize;
+    (integer as f64 == value).then_some(integer)
 }

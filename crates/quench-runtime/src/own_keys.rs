@@ -220,7 +220,8 @@ fn script_global_view_keys(target: &Value) -> Option<Vec<String>> {
     let Value::Object(live) = crate::vm::current_global_object() else {
         return Some(keys);
     };
-    for key in object_enumerable_keys(&live) {
+    let live_keys = object_enumerable_keys(&live);
+    for key in live_keys {
         if !keys.iter().any(|current| current == &key) {
             keys.push(key);
         }

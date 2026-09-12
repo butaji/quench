@@ -5,13 +5,20 @@ use crate::machine::{BaselineEntry, CodeView, NativeDispatchError};
 use std::{cell::RefCell, rc::Rc};
 
 pub(crate) const REGION_END: usize = 35;
-const LOOP_HEADER: usize = 9;
-const LOOP_BACKEDGE: usize = 30;
-const LOOP_EXIT: usize = 31;
-const MAX_ITERATIONS: usize = 1 << 20;
+const SEED_OFFSET: usize = 1;
+const BOUND_OFFSET: usize = 11;
+const LOOP_HEADER_OFFSET: usize = 9;
+const LOOP_BACKEDGE_OFFSET: usize = 30;
+const LOOP_EXIT_OFFSET: usize = 31;
 
 #[derive(Clone, Copy)]
 pub(crate) struct FloatingLoopSelection {
+    start: usize,
+    seed_pc: usize,
+    bound_pc: usize,
+    loop_header_pc: usize,
+    loop_backedge_pc: usize,
+    region_end_pc: usize,
     state_slot: u16,
     value_slot: u16,
     index_slot: u16,
@@ -40,10 +47,8 @@ struct FloatingLoopContext {
 
 pub(crate) struct NativeFloatingLoopPlan {
     selection: FloatingLoopSelection,
-    owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
     image: crate::stencil_region_layout::VerifiedRegionImage,
-    cache: crate::stencil_select::RenderedRegionCache,
-    installed: Option<crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>>,
+    physical: crate::stencil_installation::SharedPhysicalEntry<crate::stencil_arena::DispatchEntry>,
 }
 
 impl NativeFloatingLoopPlan {
@@ -63,10 +68,8 @@ impl NativeFloatingLoopPlan {
         let image = crate::stencil_region_layout::finalize_selected_leaf(view, &values).ok()?;
         Some(Self {
             selection,
-            owner,
             image,
-            cache: crate::stencil_select::RenderedRegionCache::new(),
-            installed: None,
+            physical: crate::stencil_installation::SharedPhysicalEntry::new(owner),
         })
     }
 
@@ -91,8 +94,10 @@ impl NativeFloatingLoopPlan {
     ) -> Option<(f64, usize)> {
         environment
             .with_proven_object(self.selection.state_slot, |object| {
-                let seed = crate::vm::cached_own_property_number(code, 1, object)?;
-                let end = crate::vm::cached_own_property_number(code, 11, object)?;
+                let seed =
+                    crate::vm::cached_own_property_number(code, self.selection.seed_pc, object)?;
+                let end =
+                    crate::vm::cached_own_property_number(code, self.selection.bound_pc, object)?;
                 Some((seed / self.selection.seed_divisor, exact_bound(end)?))
             })
             .flatten()
@@ -112,12 +117,10 @@ impl NativeFloatingLoopPlan {
 
     fn invoke(&mut self, context: &mut FloatingLoopContext) -> Result<u64, NativeDispatchError> {
         let entry = self.entry()?;
-        let lease = crate::stencil_arena::SharedStencilSlab::acquire_owned(&self.owner, entry)
-            .map_err(|error| {
-                NativeDispatchError::Physical(format!("floating loop lease: {error:?}"))
-            })?;
-        lease
-            .invoke(|call| call((context as *mut FloatingLoopContext).cast()))
+        self.physical
+            .invoke(entry, |call| {
+                call((context as *mut FloatingLoopContext).cast())
+            })
             .map_err(|error| {
                 NativeDispatchError::Physical(format!("floating loop invoke: {error:?}"))
             })
@@ -133,11 +136,13 @@ impl NativeFloatingLoopPlan {
         if status == crate::vm::NATIVE_DISPATCH_INTERRUPT && context.index < context.end {
             vm.clear_interrupt();
             self.commit(&context, environment);
-            return Ok(FloatingLoopOutcome::Resume { pc: LOOP_HEADER });
+            return Ok(FloatingLoopOutcome::Resume {
+                pc: self.selection.loop_header_pc,
+            });
         }
         if status != crate::vm::NATIVE_DISPATCH_OK || context.index != context.end {
             return Err(NativeDispatchError::committed(
-                LOOP_BACKEDGE,
+                self.selection.loop_backedge_pc,
                 "floating recurrence returned incomplete progress",
             ));
         }
@@ -161,29 +166,23 @@ impl NativeFloatingLoopPlan {
         crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>,
         NativeDispatchError,
     > {
-        if let Some(entry) = self
-            .installed
-            .filter(|entry| self.owner.borrow().entry_token_is_live(*entry))
-        {
-            return Ok(entry);
-        }
-        self.installed = None;
-        let address = self
-            .owner
-            .borrow_mut()
-            .publish_region_image_or_get(&mut self.cache, &self.image)
-            .map_err(|error| {
-                NativeDispatchError::Physical(format!("floating loop publish: {error:?}"))
-            })?;
-        let entry = self
-            .owner
-            .borrow()
-            .owned_numeric_f64_loop_entry(address)
+        let image = &self.image;
+        self.physical
+            .entry(
+                |owner, cache| owner.borrow_mut().publish_region_image_or_get(cache, image),
+                |pool, address| pool.owned_numeric_f64_loop_entry(address),
+            )
             .map_err(|error| {
                 NativeDispatchError::Physical(format!("floating loop entry: {error:?}"))
-            })?;
-        self.installed = Some(entry);
-        Ok(entry)
+            })
+    }
+
+    pub(crate) const fn start_pc(&self) -> usize {
+        self.selection.start
+    }
+
+    pub(crate) const fn region_end_pc(&self) -> usize {
+        self.selection.region_end_pc
     }
 }
 
@@ -193,12 +192,18 @@ pub(crate) fn select_floating_loop(
     cfg: &crate::stencil_cfg::ControlFlowFacts,
     start: usize,
 ) -> Option<FloatingLoopSelection> {
-    (start == 0 && entries.len() >= REGION_END).then_some(())?;
-    cfg.region_control(start, REGION_END)?;
-    let instructions = operation_window(entries)?;
+    let end = start.checked_add(REGION_END)?;
+    cfg.region_control(start, end)?;
+    let instructions = operation_window(entries, start)?;
     let constants = constants_and_operators(code, &instructions)?;
-    bindings_match(code, &instructions)?;
+    bindings_match(code, &instructions, start)?;
     Some(FloatingLoopSelection {
+        start,
+        seed_pc: start.checked_add(SEED_OFFSET)?,
+        bound_pc: start.checked_add(BOUND_OFFSET)?,
+        loop_header_pc: start.checked_add(LOOP_HEADER_OFFSET)?,
+        loop_backedge_pc: start.checked_add(LOOP_BACKEDGE_OFFSET)?,
+        region_end_pc: end,
         state_slot: instructions[0].b,
         value_slot: instructions[4].a,
         index_slot: instructions[7].a,
@@ -216,9 +221,9 @@ struct FloatingConstants {
     term_divisor: f64,
 }
 
-fn operation_window(entries: &[BaselineEntry]) -> Option<[Instruction; REGION_END]> {
+fn operation_window(entries: &[BaselineEntry], start: usize) -> Option<[Instruction; REGION_END]> {
     let instructions: [Instruction; REGION_END] = entries
-        .get(..REGION_END)?
+        .get(start..start.checked_add(REGION_END)?)?
         .iter()
         .map(|entry| entry.instruction)
         .collect::<Vec<_>>()
@@ -264,10 +269,7 @@ fn operation_window(entries: &[BaselineEntry]) -> Option<[Instruction; REGION_EN
     instructions
         .iter()
         .zip(expected)
-        .all(|(actual, expected)| {
-            actual.opcode == expected
-                || (expected == Opcode::GetN && actual.opcode == Opcode::GetNQuickened)
-        })
+        .all(|(actual, expected)| expected.matches_physical_contract(actual.opcode))
         .then_some(instructions)
 }
 
@@ -298,7 +300,7 @@ fn constants_and_operators(
     })
 }
 
-fn bindings_match(code: CodeView<'_>, i: &[Instruction; REGION_END]) -> Option<()> {
+fn bindings_match(code: CodeView<'_>, i: &[Instruction; REGION_END], start: usize) -> Option<()> {
     let state = i[0].b;
     let value = i[4].a;
     let index = i[7].a;
@@ -307,7 +309,11 @@ fn bindings_match(code: CodeView<'_>, i: &[Instruction; REGION_END]) -> Option<(
     (i[4].b == i[3].a && i[7].b == i[6].a).then_some(())?;
     (i[9].b == index && i[10].b == state && i[11].b == i[10].a).then_some(())?;
     (i[12].b == i[9].a && i[12].c == i[11].a && i[13].a == i[12].a).then_some(())?;
-    (usize::from(i[13].b) == LOOP_EXIT && usize::from(i[30].a) == LOOP_HEADER).then_some(())?;
+    (usize::from(i[13].b) == start.checked_add(LOOP_EXIT_OFFSET)?
+        && usize::from(i[30].a) == start.checked_add(LOOP_HEADER_OFFSET)?
+        && usize::from(i[30].a) < start.checked_add(LOOP_BACKEDGE_OFFSET)?
+        && usize::from(i[13].b) < start.checked_add(REGION_END)?)
+    .then_some(())?;
     (i[14].b == value && i[16].b == i[14].a && i[16].c == i[15].a).then_some(())?;
     (i[17].b == index && i[19].b == i[17].a && i[19].c == i[18].a).then_some(())?;
     (i[21].b == i[19].a && i[21].c == i[20].a).then_some(())?;
@@ -316,13 +322,17 @@ fn bindings_match(code: CodeView<'_>, i: &[Instruction; REGION_END]) -> Option<(
     (i[25].b == index && i[27].b == i[25].a && i[27].c == i[26].a).then_some(())?;
     (i[28].a == index && i[28].b == i[27].a && i[29].b == i[25].a).then_some(())?;
     (i[31].b == value && i[32].a == i[31].a && i[34].a == i[33].a).then_some(())?;
-    code.metadata_at(1)?.name.as_deref()?;
-    code.metadata_at(11)?.name.as_deref()?;
+    code.metadata_at(start.checked_add(SEED_OFFSET)?)?
+        .name
+        .as_deref()?;
+    code.metadata_at(start.checked_add(BOUND_OFFSET)?)?
+        .name
+        .as_deref()?;
     Some(())
 }
 
 fn binary_operator(instruction: Instruction, expected: crate::ops::BinaryOp) -> Option<()> {
-    (crate::ir::compact_binary_operator(instruction.flags) == Some(expected)).then_some(())
+    (instruction.opcode.binary_operator(instruction.flags) == Some(expected)).then_some(())
 }
 
 fn undefined_constant(code: CodeView<'_>, instruction: Instruction) -> Option<()> {
@@ -345,11 +355,16 @@ fn number_constant(code: CodeView<'_>, instruction: Instruction) -> Option<f64> 
 }
 
 fn exact_positive_usize(value: f64) -> Option<usize> {
-    (value.is_finite() && value >= 1.0 && value.fract() == 0.0 && value <= MAX_ITERATIONS as f64)
-        .then_some(value as usize)
+    exact_usize(value).filter(|value| *value >= 1)
 }
 
 fn exact_bound(value: f64) -> Option<usize> {
-    (value.is_finite() && value >= 0.0 && value.fract() == 0.0 && value <= MAX_ITERATIONS as f64)
-        .then_some(value as usize)
+    exact_usize(value)
+}
+
+fn exact_usize(value: f64) -> Option<usize> {
+    (value.is_finite() && value >= 0.0 && value < usize::MAX as f64 && value.fract() == 0.0)
+        .then_some(())?;
+    let integer = value as usize;
+    (integer as f64 == value).then_some(integer)
 }

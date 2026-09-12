@@ -1,16 +1,15 @@
 {
-  "schema": 1,
-  "warmup": 0,
-  "result": { "kind": "number", "value": 41 },
-  "plan": {
-    "execution_kind": "ordinary_fallback",
-    "operation_route": ["AGetI", "Return"],
-    "fallback": true
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "LoadLocal",
+    "Call",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": 41
   },
-  "profile": {
-    "residual": { "AGetI": 1 },
-    "slow": { "GetP": 1 },
-    "stencils": { "dense_index_get": { "entries": 0, "fallbacks": 1 } },
-    "events": { "leaf_reject": 1 }
-  }
+  "schema": 3,
+  "warmup": 0
 }

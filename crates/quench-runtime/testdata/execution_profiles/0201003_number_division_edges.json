@@ -1,16 +1,14 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "positive_infinity" },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["LoadLocalChecked", "LoadLocalChecked", "Div", "Return"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "LoadLocal",
+    "Div",
+    "Return"
+  ],
+  "result": {
+    "kind": "positive_infinity"
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "number_divide_return": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

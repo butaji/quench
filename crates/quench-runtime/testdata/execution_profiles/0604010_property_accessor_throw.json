@@ -1,16 +1,17 @@
 {
-  "schema": 1,
-  "warmup": 0,
-  "result": { "kind": "string", "value": "boom:1" },
-  "plan": {
-    "execution_kind": "portable_recipe",
-    "operation_route": ["GetN", "Call", "Throw"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadConst",
+    "Try",
+    "LoadConst",
+    "LoadLocal",
+    "Add",
+    "Return"
+  ],
+  "result": {
+    "kind": "string",
+    "value": "boom:1"
   },
-  "profile": {
-    "residual": {},
-    "slow": { "GetN": 1, "Call": 1 },
-    "stencils": { "accessor_get_throw_boundary": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 0
 }

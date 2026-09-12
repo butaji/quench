@@ -38,15 +38,16 @@ fn select_bound_loop(
     let i = bound_operation_window(entries)?;
     validate_bound_prefix(code, &i)?;
     validate_bound_loop(code, &i)?;
-    Some(IntegerLoopSelection {
-        state_slot: i[0].b,
-        value_slot: i[8].a,
-        index_slot: i[11].a,
-        seed_pc: 7,
-        bound_pc: 15,
-        multiplier: 0,
-        recurrence: IntegerRecurrence::BoundCallee(metadata_name(code, 1)?),
-    })
+    IntegerLoopSelection::at(
+        0,
+        i[0].b,
+        i[8].a,
+        i[11].a,
+        7,
+        15,
+        0,
+        IntegerRecurrence::BoundCallee(metadata_name(code, 1)?),
+    )
 }
 
 fn validate_bound_prefix(code: CodeView<'_>, i: &[Instruction; BOUND_REGION_END]) -> Option<()> {
@@ -127,7 +128,7 @@ fn bound_operation_window(entries: &[BaselineEntry]) -> Option<[Instruction; BOU
     ];
     i.iter()
         .zip(expected)
-        .all(|(a, b)| a.opcode == b || (b == Opcode::GetN && a.opcode == Opcode::GetNQuickened))
+        .all(|(a, b)| b.matches_physical_contract(a.opcode))
         .then_some(i)
 }
 
@@ -139,15 +140,16 @@ fn select_direct_loop(
     cfg.region_control(0, DIRECT_REGION_END)?;
     let i = direct_operation_window(entries)?;
     direct_bindings_match(code, &i)?;
-    Some(IntegerLoopSelection {
-        state_slot: i[0].b,
-        value_slot: i[2].a,
-        index_slot: i[8].a,
-        seed_pc: 1,
-        bound_pc: 12,
-        multiplier: 0,
-        recurrence: IntegerRecurrence::DirectCallee(metadata_name(code, 4)?),
-    })
+    IntegerLoopSelection::at(
+        0,
+        i[0].b,
+        i[2].a,
+        i[8].a,
+        1,
+        12,
+        0,
+        IntegerRecurrence::DirectCallee(metadata_name(code, 4)?),
+    )
 }
 
 fn direct_operation_window(entries: &[BaselineEntry]) -> Option<[Instruction; DIRECT_REGION_END]> {
@@ -192,10 +194,7 @@ fn direct_operation_window(entries: &[BaselineEntry]) -> Option<[Instruction; DI
     ];
     i.iter()
         .zip(expected)
-        .all(|(actual, expected)| {
-            actual.opcode == expected
-                || (expected == Opcode::GetN && actual.opcode == Opcode::GetNQuickened)
-        })
+        .all(|(actual, expected)| expected.matches_physical_contract(actual.opcode))
         .then_some(i)
 }
 
@@ -261,18 +260,16 @@ fn select_polymorphic_loop(
     cfg.region_control(0, POLYMORPHIC_REGION_END)?;
     let i = polymorphic_operation_window(entries)?;
     polymorphic_bindings_match(code, &i)?;
-    Some(IntegerLoopSelection {
-        state_slot: i[0].b,
-        value_slot: i[2].a,
-        index_slot: i[5].a,
-        seed_pc: 1,
-        bound_pc: 9,
-        multiplier: 0,
-        recurrence: IntegerRecurrence::EquivalentCallees([
-            metadata_name(code, 17)?,
-            metadata_name(code, 21)?,
-        ]),
-    })
+    IntegerLoopSelection::at(
+        0,
+        i[0].b,
+        i[2].a,
+        i[5].a,
+        1,
+        9,
+        0,
+        IntegerRecurrence::EquivalentCallees([metadata_name(code, 17)?, metadata_name(code, 21)?]),
+    )
 }
 
 fn polymorphic_operation_window(
@@ -326,10 +323,7 @@ fn polymorphic_operation_window(
     ];
     i.iter()
         .zip(expected)
-        .all(|(actual, expected)| {
-            actual.opcode == expected
-                || (expected == Opcode::GetN && actual.opcode == Opcode::GetNQuickened)
-        })
+        .all(|(actual, expected)| expected.matches_physical_contract(actual.opcode))
         .then_some(i)
 }
 
@@ -393,13 +387,14 @@ fn select_named_loop(
 ) -> Option<IntegerLoopSelection> {
     cfg.region_control(0, NAMED_REGION_END)?;
     let fact = crate::function_physical::numeric_affine_named_loop(code)?;
-    Some(IntegerLoopSelection {
-        state_slot: fact.parameter_slot,
-        value_slot: fact.value_slot,
-        index_slot: fact.index_slot,
-        seed_pc: 1,
-        bound_pc: 9,
-        multiplier: 0,
-        recurrence: IntegerRecurrence::NamedCallee(fact.method_key),
-    })
+    IntegerLoopSelection::at(
+        0,
+        fact.parameter_slot,
+        fact.value_slot,
+        fact.index_slot,
+        1,
+        9,
+        0,
+        IntegerRecurrence::NamedCallee(fact.method_key),
+    )
 }

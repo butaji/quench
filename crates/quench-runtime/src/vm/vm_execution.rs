@@ -288,6 +288,11 @@ pub(crate) fn execute_function_code_completion_step_in_current_frame(
         let crate::completion::Completion::Call(continuation) = step.completion else {
             return Ok(step);
         };
+        let continuation = continuation.with_caller(
+            code.range().code,
+            step.next as u32,
+            crate::machine::EnvironmentRef(0),
+        );
         match crate::vm::vm_ops::execute_call_continuation(registers, continuation) {
             Ok(()) => pc = step.next,
             Err(VmError::Thrown(value)) => {
@@ -419,6 +424,11 @@ fn drive_completion(
         pc = step.next;
         match step.completion {
             crate::completion::Completion::Call(continuation) => {
+                let continuation = continuation.with_caller(
+                    code.range().code,
+                    pc as u32,
+                    crate::machine::EnvironmentRef(0),
+                );
                 if let Err(VmError::Thrown(value)) =
                     crate::vm::vm_ops::execute_call_continuation(registers, continuation)
                 {
@@ -441,6 +451,11 @@ fn drive_code_completion(
         pc = step.next;
         match step.completion {
             crate::completion::Completion::Call(continuation) => {
+                let continuation = continuation.with_caller(
+                    code.range().code,
+                    pc as u32,
+                    crate::machine::EnvironmentRef(0),
+                );
                 if let Err(VmError::Thrown(value)) =
                     crate::vm::vm_ops::execute_call_continuation(registers, continuation)
                 {
@@ -482,6 +497,11 @@ fn drive_code_completion_with_plan(
         pc = step.next;
         match step.completion {
             crate::completion::Completion::Call(continuation) => {
+                let continuation = continuation.with_caller(
+                    code.range().code,
+                    pc as u32,
+                    crate::machine::EnvironmentRef(0),
+                );
                 if let Err(VmError::Thrown(value)) =
                     crate::vm::vm_ops::execute_call_continuation(registers, continuation)
                 {
@@ -548,6 +568,11 @@ fn drive_code_completion_with_optimizing_plan(
         pc = next;
         match completion {
             crate::completion::Completion::Call(continuation) => {
+                let continuation = continuation.with_caller(
+                    code.range().code,
+                    pc as u32,
+                    crate::machine::EnvironmentRef(0),
+                );
                 if let Err(VmError::Thrown(value)) =
                     crate::vm::vm_ops::execute_call_continuation(registers, continuation)
                 {
@@ -582,6 +607,11 @@ fn drive_code_completion_with_tier(
         pc = next;
         match completion {
             crate::completion::Completion::Call(continuation) => {
+                let continuation = continuation.with_caller(
+                    code.range().code,
+                    pc as u32,
+                    crate::machine::EnvironmentRef(0),
+                );
                 if let Err(VmError::Thrown(value)) =
                     crate::vm::vm_ops::execute_call_continuation(registers, continuation)
                 {
@@ -618,8 +648,10 @@ pub(crate) fn execute_in_environment(
     let _global_guard = GlobalObjectGuard::install();
     let _environment_guard = crate::locals::EnvironmentGuard::install(Rc::clone(&environment));
     let register_count = registers.len().min(usize::from(u16::MAX)) as u16;
-    let mut machine = crate::machine::Machine::with_register_count(
-        crate::machine::CodeId(0),
+    // This API executes an operation slice supplied by a host scope rather
+    // than a frozen FunctionCode. Keep that boundary explicit: detached
+    // machines cannot accidentally be mistaken for canonical activations.
+    let mut machine = crate::machine::Machine::detached(
         crate::machine::EnvironmentRef(0),
         register_count,
     );
@@ -630,10 +662,18 @@ pub(crate) fn execute_in_environment(
         let completion = step.completion;
         let next = step.next;
         match completion {
-            crate::completion::Completion::Call(mut continuation) => {
-                continuation.caller_code = machine.code_id();
-                continuation.caller_pc = next as u32;
-                machine.push_call_frame(continuation);
+            crate::completion::Completion::Call(continuation) => {
+                let continuation = continuation.with_caller(
+                    machine.code_id(),
+                    next as u32,
+                    machine.environment,
+                );
+                if let Err(continuation) = machine.try_push_call_frame(continuation) {
+                    machine.restore_registers(continuation.caller_registers);
+                    return Err(crate::value::error::throw_range_error(
+                        "Unable to allocate call continuation",
+                    ));
+                }
                 let continuation = machine.pop_call_frame().expect("call frame just pushed");
                 crate::vm::vm_ops::execute_call_continuation(
                     machine.registers_mut(),
@@ -648,17 +688,13 @@ pub(crate) fn execute_in_environment(
                 // callee iteratively (including nested tail calls) and keeps
                 // ordinary calls on the upstream fast path.
                 let mut caller_registers = machine.take_registers();
-                let continuation = crate::completion::CallContinuation {
-                    callee: request.callee,
-                    receiver: request.receiver,
-                    arguments: request.arguments,
-                    caller_code: crate::identity::CodeId(0),
-                    caller_pc: 0,
-                    caller_registers: std::mem::take(&mut caller_registers),
-                    caller_environment: crate::identity::EnvironmentRef(0),
-                    destination: 0,
-                    guards: crate::completion::ContinuationGuards::default(),
-                };
+                let continuation = crate::completion::CallContinuation::new(
+                    request.callee,
+                    request.receiver,
+                    request.arguments,
+                    0,
+                    std::mem::take(&mut caller_registers),
+                );
                 crate::vm::vm_ops::execute_call_continuation(&mut caller_registers, continuation)?;
                 let value = crate::vm::read_register(&caller_registers, 0)?;
                 *registers = caller_registers;
@@ -689,21 +725,22 @@ pub(crate) fn execute_code_in_environment(
         pc = step.next;
         match step.completion {
             crate::completion::Completion::Call(continuation) => {
+                let continuation = continuation.with_caller(
+                    code.range().code,
+                    pc as u32,
+                    crate::machine::EnvironmentRef(0),
+                );
                 crate::vm::vm_ops::execute_call_continuation(registers, continuation)?;
             }
             crate::completion::Completion::TailCall(request) => {
                 let mut caller_registers = std::mem::take(registers);
-                let continuation = crate::completion::CallContinuation {
-                    callee: request.callee,
-                    receiver: request.receiver,
-                    arguments: request.arguments,
-                    caller_code: crate::identity::CodeId(0),
-                    caller_pc: 0,
-                    caller_registers: std::mem::take(&mut caller_registers),
-                    caller_environment: crate::identity::EnvironmentRef(0),
-                    destination: 0,
-                    guards: crate::completion::ContinuationGuards::default(),
-                };
+                let continuation = crate::completion::CallContinuation::new(
+                    request.callee,
+                    request.receiver,
+                    request.arguments,
+                    0,
+                    std::mem::take(&mut caller_registers),
+                );
                 crate::vm::vm_ops::execute_call_continuation(&mut caller_registers, continuation)?;
                 let value = crate::vm::read_register(&caller_registers, 0)?;
                 *registers = caller_registers;
@@ -730,6 +767,11 @@ pub(crate) fn execute_frame_completion(
         pc = step.next;
         match step.completion {
             crate::completion::Completion::Call(continuation) => {
+                let continuation = continuation.with_caller(
+                    code.range().code,
+                    pc as u32,
+                    crate::machine::EnvironmentRef(0),
+                );
                 if let Err(VmError::Thrown(value)) =
                     crate::vm::vm_ops::execute_call_continuation(registers, continuation)
                 {
@@ -1350,9 +1392,16 @@ mod tests {
             "benchmark must contain a meaningful dispatch sequence"
         );
         let started = Instant::now();
-        let result =
-            crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default())
-                .expect("dispatch benchmark runs");
+        let result = crate::stencil_policy::with_policy_for_test(
+            crate::stencil_policy::ExecutionPolicy::disabled_for_test(),
+            || {
+                crate::vm::execute_code_with_context(
+                    program.code(),
+                    &crate::vm::VmContext::default(),
+                )
+            },
+        )
+        .expect("dispatch benchmark runs");
         let elapsed = started.elapsed();
         assert_eq!(result, Value::Undefined);
         // Generous wall-clock guard: this is evidence against pathological

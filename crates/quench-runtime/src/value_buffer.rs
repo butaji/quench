@@ -542,6 +542,14 @@ fn f64_to_half(value: f64) -> u16 {
     sign | (half_exponent << 10) | significand
 }
 
+pub(crate) fn float64_to_float16(value: f64) -> u16 {
+    f64_to_half(value)
+}
+
+pub(crate) fn float16_to_float64(value: u16) -> f64 {
+    half_to_f64(value)
+}
+
 #[cfg(test)]
 mod tests {
     use super::ArrayBufferData;

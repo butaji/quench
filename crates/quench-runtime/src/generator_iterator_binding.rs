@@ -115,6 +115,16 @@ fn resume_iterator_frame(
     state: &mut GeneratorState,
     resume: crate::completion::Completion,
 ) -> Result<Option<crate::completion::Completion>, VmError> {
+    resume_iterator_frame_mode(generator, state, resume, false, false)
+}
+
+fn resume_iterator_frame_mode(
+    generator: &GeneratorData,
+    state: &mut GeneratorState,
+    resume: crate::completion::Completion,
+    skip_try_suffix: bool,
+    skip_finalizer_resume: bool,
+) -> Result<Option<crate::completion::Completion>, VmError> {
     let Some(frame) = iterator_frame_resume(generator) else {
         return Ok(None);
     };
@@ -131,8 +141,11 @@ fn resume_iterator_frame(
         .clone()
         .ok_or(VmError::MissingReturn)?;
     let frame_body = store.code(frame.body).ok_or(VmError::MissingReturn)?;
-    if frame.repeat && code_needs_nested_resume(frame_body, true) {
-        return resume_for_of_repeat_frame(generator, state, resume, &frame).map(Some);
+    if frame.repeat
+        && (code_needs_nested_resume(frame_body, true)
+            || (code_view_contains_finalizer_yield_star(frame_body) && !skip_finalizer_resume))
+    {
+        return resume_for_of_repeat_frame(generator, state, resume, &frame, skip_try_suffix).map(Some);
     }
     if !frame.repeat && code_needs_nested_resume(frame_body, false) {
         return resume_iterator_nested_frame(generator, state, resume, &frame).map(Some);
@@ -217,10 +230,21 @@ fn resume_for_of_repeat_frame(
     state: &mut GeneratorState,
     resume: crate::completion::Completion,
     frame: &IteratorFrameResume,
+    skip_try_suffix: bool,
 ) -> Result<crate::completion::Completion, VmError> {
     if !matches!(resume, crate::completion::Completion::Normal) {
+        let store = generator
+            .machine
+            .borrow()
+            .store
+            .clone()
+            .ok_or(VmError::MissingReturn)?;
+        let body = store.code(frame.body).ok_or(VmError::MissingReturn)?;
+        let completion = execute_with_generator_registers(generator, |registers| {
+            close_active_nested_iterator(body, registers, resume.clone())
+        })?;
         set_iterator_phase(generator, crate::machine::IteratorPhase::Close);
-        return finish_iterator_frame(generator, state, frame, resume);
+        return finish_iterator_frame(generator, state, frame, completion);
     }
     let store = generator
         .machine
@@ -230,7 +254,7 @@ fn resume_for_of_repeat_frame(
         .ok_or(VmError::MissingReturn)?;
     let body = store.code(frame.body).ok_or(VmError::MissingReturn)?;
     let completion = execute_with_generator_registers(generator, |registers| {
-        resume_nested_code(body, registers)
+        resume_nested_code_mode(body, registers, false, skip_try_suffix)
     })?;
     set_iterator_phase(generator, crate::machine::IteratorPhase::Close);
     finish_iterator_frame(generator, state, frame, completion)
@@ -243,8 +267,18 @@ fn resume_iterator_nested_frame(
     frame: &IteratorFrameResume,
 ) -> Result<crate::completion::Completion, VmError> {
     if !matches!(resume, crate::completion::Completion::Normal) {
+        let store = generator
+            .machine
+            .borrow()
+            .store
+            .clone()
+            .ok_or(VmError::MissingReturn)?;
+        let body = store.code(frame.body).ok_or(VmError::MissingReturn)?;
+        let completion = execute_with_generator_registers(generator, |registers| {
+            close_active_nested_iterator(body, registers, resume.clone())
+        })?;
         set_iterator_phase(generator, crate::machine::IteratorPhase::Close);
-        return finish_iterator_frame(generator, state, frame, resume);
+        return finish_iterator_frame(generator, state, frame, completion);
     }
     let store = generator
         .machine
@@ -260,17 +294,79 @@ fn resume_iterator_nested_frame(
     finish_iterator_frame(generator, state, frame, completion)
 }
 
+/// Close the iterator binding that owns a suspended yield inside a for-of body.
+/// The structural frame stack normally contains this binding, but a yield in a
+/// destructuring body can be represented only by the surrounding repeat frame.
+/// Keep IteratorClose exact by recovering the deepest binding before closing the
+/// enclosing for-of iterator.
+fn close_active_nested_iterator(
+    code: crate::machine::CodeView<'_>,
+    registers: &crate::register_file::RegisterFile,
+    completion: crate::completion::Completion,
+) -> Result<crate::completion::Completion, VmError> {
+    for (_, op) in code.cold_ops() {
+        match op {
+            Op::IteratorBinding { body, .. } => {
+                let Some(body_code) = body.code() else { continue };
+                if !code_view_contains_yield(body_code) {
+                    continue;
+                }
+                let completion = close_active_nested_iterator(body_code, registers, completion)?;
+                return close_iterator_binding(op, registers, completion);
+            }
+            Op::Conditional { consequent, alternate, .. } => {
+                for branch in [consequent, alternate] {
+                    if branch.code().is_some_and(code_view_contains_yield) {
+                        return close_active_nested_iterator(branch.code().unwrap(), registers, completion);
+                    }
+                }
+            }
+            Op::Try { body, handler, finalizer, .. } => {
+                for branch in std::iter::once(body)
+                    .chain(handler.iter())
+                    .chain(finalizer.iter())
+                {
+                    if branch.code().is_some_and(code_view_contains_yield) {
+                        return close_active_nested_iterator(branch.code().unwrap(), registers, completion);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(completion)
+}
+
 fn resume_nested_code(
     view: crate::machine::CodeView<'_>,
     registers: &mut crate::register_file::RegisterFile,
+) -> Result<crate::completion::Completion, VmError> {
+    resume_nested_code_mode(view, registers, false, false)
+}
+
+fn resume_nested_code_mode(
+    view: crate::machine::CodeView<'_>,
+    registers: &mut crate::register_file::RegisterFile,
+    binding_body: bool,
+    skip_try_suffix: bool,
 ) -> Result<crate::completion::Completion, VmError> {
     let Some((index, op)) = view.cold_ops().find(|(_, op)| op_contains_yield(op)) else {
         return crate::vm::execute_code_completion_in_current_frame(view, registers);
     };
     match op {
-        Op::Yield { .. } => {
+        Op::Yield { src } => {
             let suffix = view.slice(index + 1, view.len()).ok_or(VmError::MissingReturn)?;
-            crate::vm::execute_code_completion_in_current_frame(suffix, registers)
+            let completion = execute_nested_from(view, registers, index + 1)?;
+            if binding_body && (suffix.is_empty() || suffix.cold_ops().next().is_none()) {
+                if matches!(&completion, crate::completion::Completion::Normal) {
+                    return crate::execute::read_register(registers, *src)
+                        .map(crate::completion::Completion::Return);
+                }
+            }
+            Ok(completion)
+        }
+        Op::YieldStar { .. } => {
+            execute_nested_from(view, registers, index + 1)
         }
         Op::Conditional {
             dst,
@@ -284,13 +380,12 @@ fn resume_nested_code(
                 alternate
             };
             let branch = branch.code().ok_or(VmError::MissingReturn)?;
-            let completion = resume_nested_code(branch, registers)?;
-            let crate::completion::Completion::Return(value) = completion else {
+            let completion = resume_nested_code_mode(branch, registers, binding_body, skip_try_suffix)?;
+            let crate::completion::Completion::Return(value) = &completion else {
                 return Ok(completion);
             };
-            crate::execute::write_value(registers, *dst, value);
-            let suffix = view.slice(index + 1, view.len()).ok_or(VmError::MissingReturn)?;
-            crate::vm::execute_code_completion_in_current_frame(suffix, registers)
+            crate::execute::write_value(registers, *dst, value.clone());
+            execute_nested_from(view, registers, index + 1)
         }
         Op::IteratorBinding {
             iterator,
@@ -299,7 +394,14 @@ fn resume_nested_code(
         } => {
             let iterator_value = crate::execute::read_register(registers, *iterator)?;
             let body = body.code().ok_or(VmError::MissingReturn)?;
-            let completion = resume_nested_code(body, registers)?;
+            let completion = match resume_nested_code_mode(body, registers, true, skip_try_suffix)? {
+                // A binding body uses Return as its internal value channel;
+                // consume it instead of propagating it through for-of.
+                crate::completion::Completion::Return(_) => {
+                    crate::completion::Completion::Normal
+                }
+                completion => completion,
+            };
             let completion = if matches!(completion, crate::completion::Completion::Normal)
                 && !close_normal
             {
@@ -310,8 +412,7 @@ fn resume_nested_code(
             if !matches!(completion, crate::completion::Completion::Normal) {
                 return Ok(completion);
             }
-            let suffix = view.slice(index + 1, view.len()).ok_or(VmError::MissingReturn)?;
-            crate::vm::execute_code_completion_in_current_frame(suffix, registers)
+            execute_nested_from(view, registers, index + 1)
         }
         Op::Try {
             body,
@@ -331,15 +432,34 @@ fn resume_nested_code(
                 finalizer.as_ref().and_then(|body| body.code())
             }
             .ok_or(VmError::MissingReturn)?;
-            let completion = resume_nested_code(nested, registers)?;
+            let completion = resume_nested_code_mode(nested, registers, binding_body, skip_try_suffix)?;
             if !matches!(completion, crate::completion::Completion::Normal) {
                 return Ok(completion);
             }
-            let suffix = view.slice(index + 1, view.len()).ok_or(VmError::MissingReturn)?;
-            crate::vm::execute_code_completion_in_current_frame(suffix, registers)
+            if skip_try_suffix {
+                // The enclosing try frame already resumed the suffix.
+                Ok(crate::completion::Completion::Normal)
+            } else {
+                execute_nested_from(view, registers, index + 1)
+            }
         }
         _ => Err(VmError::MissingReturn),
     }
+}
+
+fn execute_nested_from(
+    view: crate::machine::CodeView<'_>,
+    registers: &mut crate::register_file::RegisterFile,
+    start: usize,
+) -> Result<crate::completion::Completion, VmError> {
+    let step = crate::vm::execute_generator_code_step(
+        view,
+        registers,
+        crate::locals::current(),
+        start,
+        crate::completion::Completion::Normal,
+    )?;
+    Ok(step.completion)
 }
 
 fn op_contains_yield(op: &Op) -> bool {
@@ -376,11 +496,48 @@ fn code_view_contains_yield(view: crate::machine::CodeView<'_>) -> bool {
     view.cold_ops().any(|(_, op)| op_contains_yield(op))
 }
 
+fn op_contains_yield_star(op: &Op) -> bool {
+    match op {
+        Op::YieldStar { .. } => true,
+        Op::Conditional { consequent, alternate, .. } => {
+            consequent.code().is_some_and(code_view_contains_yield_star)
+                || alternate.code().is_some_and(code_view_contains_yield_star)
+        }
+        Op::IteratorBinding { body, .. } | Op::ForOf { body, .. } | Op::ForIn { body, .. } => {
+            body.code().is_some_and(code_view_contains_yield_star)
+        }
+        Op::Try { body, handler, finalizer, .. } => {
+            body.code().is_some_and(code_view_contains_yield_star)
+                || handler.as_ref().and_then(|body| body.code()).is_some_and(code_view_contains_yield_star)
+                || finalizer.as_ref().and_then(|body| body.code()).is_some_and(code_view_contains_yield_star)
+        }
+        _ => false,
+    }
+}
+
+fn code_view_contains_yield_star(view: crate::machine::CodeView<'_>) -> bool {
+    view.cold_ops().any(|(_, op)| op_contains_yield_star(op))
+}
+
+fn code_view_contains_finalizer_yield_star(view: crate::machine::CodeView<'_>) -> bool {
+    view.cold_ops().any(|(_, op)| match op {
+        Op::Try { finalizer, .. } => finalizer
+            .as_ref()
+            .and_then(|body| body.code())
+            .is_some_and(code_view_contains_yield_star),
+        _ => false,
+    })
+}
+
 fn code_needs_nested_resume(view: crate::machine::CodeView<'_>, repeat: bool) -> bool {
     view.cold_ops().any(|(_, op)| {
-        (matches!(op, Op::Conditional { .. } | Op::IteratorBinding { .. })
-            || (!repeat && matches!(op, Op::Try { .. })))
-            && op_contains_yield(op)
+        if repeat {
+            op_contains_yield(op) && !op_contains_yield_star(op)
+        } else {
+            (matches!(op, Op::Conditional { .. } | Op::IteratorBinding { .. })
+                || matches!(op, Op::Try { .. }))
+                && op_contains_yield(op)
+        }
     })
 }
 
@@ -412,7 +569,32 @@ fn continue_for_of(
         .ok_or(VmError::MissingReturn)?;
     let body = store.code(frame.body).ok_or(VmError::MissingReturn)?;
     loop {
-        let next = crate::collections::iterator::step_value(&frame.iterator)?;
+        // A completed nested delegate/try belongs to the previous iteration.
+        // Keep the repeat frame as the sole owner before starting the next
+        // body, otherwise stale structural frames duplicate delegation.
+        loop {
+            let stale = {
+                let machine = generator.machine.borrow();
+                if machine.frames.frames.is_empty() {
+                    false
+                } else {
+                !matches!(
+                    machine.frames.frames.last(),
+                    Some(crate::machine::Frame::Iterator { body: current, .. }) if *current == frame.body
+                )
+                }
+            };
+            if !stale {
+                break;
+            }
+            generator.machine.borrow_mut().pop_frame();
+        }
+        let next = match crate::collections::iterator::step_value(&frame.iterator) {
+            Ok(next) => next,
+            Err(error) => {
+                return Err(error);
+            }
+        };
         let Some(value) = next else {
             crate::loops::take_live_for_of();
             generator.machine.borrow_mut().pop_frame();
@@ -433,9 +615,51 @@ fn continue_for_of(
                 0,
                 crate::completion::Completion::Normal,
             )
-        })?;
+        });
+        let step = match step {
+            Ok(step) => step,
+            Err(error) => {
+                return Err(error);
+            }
+        };
+        // This path resumes a new loop iteration from inside the suspended
+        // context. Publish the new suspension point before handing the
+        // completion back to `resume_machine_frame`; otherwise it can reuse
+        // the previous iteration's yield-star point and install a duplicate
+        // delegate frame.
+        state.suspension = step.suspension.clone();
         if step.completion.is_suspension() {
-            if !push_for_of_body_frame(generator, frame, &body)? {
+            // Nested try/conditional/iterator bodies are resumed by the
+            // repeat-frame scanner. Installing a second structural frame here
+            // would replay the same branch on the next generator request.
+            let already_has_delegate = matches!(
+                generator.machine.borrow().frames.frames.last(),
+                Some(crate::machine::Frame::Delegate { .. })
+            );
+            let has_structured_suspension = state
+                .suspension
+                .as_ref()
+                .is_some_and(is_structured_suspension);
+            if has_structured_suspension {
+                // `resume_machine_frame` will materialize the composed
+                // Try/Delegate path from this canonical suspension point.
+            } else if already_has_delegate {
+                // The main suspension installer already captured the exact
+                // nested yield-star path for this iteration.
+            } else if code_needs_nested_resume(body, true) && !code_view_contains_yield_star(body) {
+                // The repeat frame already stores the canonical continuation
+                // immediately after the structured body operation.
+            } else if push_for_of_body_frame(generator, frame, &body)? {
+                // The explicit structural frames now own this suspension.
+                // Clear the raw yield-star point so `resume_machine_frame`
+                // does not install a second Delegate frame for it.
+                if matches!(
+                    state.suspension,
+                    Some(crate::continuation::SuspensionPoint::YieldStar { .. })
+                ) {
+                    state.suspension = None;
+                }
+            } else {
                 advance_frame_after_yield(generator, frame.body, step.pc)?;
             }
             set_iterator_phase(generator, crate::machine::IteratorPhase::Body);
@@ -502,7 +726,8 @@ fn push_for_of_body_frame(
     body: &crate::machine::CodeView<'_>,
 ) -> Result<bool, VmError> {
     let Some((index, op)) = body.cold_ops().find(|(_, op)| {
-        matches!(op, Op::YieldStar { .. }) || try_contains_yield(op)
+        matches!(op, Op::YieldStar { .. } | Op::IteratorBinding { .. })
+            || try_contains_yield(op)
     }) else {
         return Ok(false);
     };
@@ -536,13 +761,30 @@ fn push_for_of_body_frame(
         )?;
         return Ok(true);
     }
+    if matches!(op, Op::IteratorBinding { .. }) {
+        let mut frames = Vec::new();
+        if !collect_iterator_frames(
+            op,
+            range_after_iterator_op(frame.body, index),
+            &registers(generator),
+            &mut frames,
+        )? {
+            return Ok(false);
+        }
+        let mut machine = generator.machine.borrow_mut();
+        for nested in frames {
+            try_push_frame(&mut machine, nested)?;
+        }
+        return Ok(true);
+    }
     let mut frames = Vec::new();
-    if !collect_try_frames(
+    let collected = collect_try_frames(
         op,
         range_after_iterator_op(frame.body, index),
         &registers(generator),
         &mut frames,
-    )? {
+    )?;
+    if !collected {
         return Ok(false);
     }
     let mut machine = generator.machine.borrow_mut();
@@ -607,8 +849,22 @@ fn suspended_iterator_binding<'a>(
         .nested
         .checked_sub(1)
         .filter(|index| *index < body.len())
-        .or_else(|| body.position_cold(|op| matches!(op, Op::Yield { .. })))?;
-    Some((op, body, index))
+        .or_else(|| body.position_cold(|op| matches!(op, Op::Yield { .. })));
+    if let Some(index) = index {
+        return Some((op, body, index));
+    }
+    // Destructuring patterns can nest IteratorBinding operations. Once the
+    // inner binding yields, its body is the executable continuation; expose
+    // that canonical range so resume input and suffix execution target the
+    // actual suspension rather than skipping the nested binding entirely.
+    body.cold_ops().find_map(|(_, nested)| {
+        let Op::IteratorBinding { body: nested_body, .. } = nested else {
+            return None;
+        };
+        let nested_body = nested_body.code()?;
+        let index = nested_body.position_cold(|op| matches!(op, Op::Yield { .. }))?;
+        Some((nested, nested_body, index))
+    })
 }
 
 fn resume_suspended_iterator_binding(
@@ -630,10 +886,18 @@ fn resume_suspended_iterator_binding(
         return close_iterator_binding(op, &registers(generator), resume).map(Some);
     }
     let step = execute_with_generator_registers(generator, |registers| {
-        crate::vm::execute_code_completion_step_in_place(
-            body.slice(index + 1, body.len()).ok_or(VmError::MissingReturn)?,
+        crate::vm::execute_generator_code_step(
+            body,
             registers,
+            machine_environment(generator)?,
+            index + 1,
+            crate::completion::Completion::Normal,
         )
+        .map(|step| crate::vm::CompletionStep {
+            completion: step.completion,
+            next: step.pc,
+            suspended_pc: None,
+        })
     })?;
     let completion = step.completion;
     if matches!(completion, crate::completion::Completion::Yield(_)) {
@@ -641,7 +905,12 @@ fn resume_suspended_iterator_binding(
         return Ok(Some(completion));
     }
     state.nested = 0;
-    close_iterator_binding(op, &registers(generator), completion).map(Some)
+    let completion = close_iterator_binding(op, &registers(generator), completion)?;
+    if matches!(completion, crate::completion::Completion::Normal) {
+        let parent = parent_resume_range(generator, state);
+        return resume_generator_range(generator, state, parent, completion).map(Some);
+    }
+    Ok(Some(completion))
 }
 
 fn resume_iterator_conditional(

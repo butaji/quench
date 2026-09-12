@@ -31,8 +31,11 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
         // it does not need the canonical byte-template holes (AddConst is the
         // first example). Unsupported hole-bearing recipes remain skipped
         // until a declared relocation plan exists.
-        let assembly = target
-            .starts_with("aarch64")
+        let assembly = (target.starts_with("aarch64")
+            // The return-word leaf has a dedicated x86-64 ABI-correct
+            // template; other assembly recipes remain AArch64-only until
+            // their x86 source and relocation contracts are declared.
+            || (target.starts_with("x86_64") && declaration.name == "return_word"))
             .then(|| super::rust_assembly_recipe(declaration))
             .flatten();
         let extracted = if let Some(recipe) = assembly {

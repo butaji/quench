@@ -7182,7 +7182,10 @@ pub fn http_outgoing_assign_socket(
     if execute::same_value(&current, receiver) {
         return Err(VmError::Thrown(host_api::object(vec![
             ("name".into(), Value::String("Error".into())),
-            ("code".into(), Value::String("ERR_HTTP_SOCKET_ASSIGNED".into())),
+            (
+                "code".into(),
+                Value::String("ERR_HTTP_SOCKET_ASSIGNED".into()),
+            ),
         ])));
     }
     execute::set_property_in_place(&socket, "_httpMessage", receiver.clone());
@@ -7251,7 +7254,9 @@ pub fn http_outgoing_end(
         let _ = crate::modules::net::socket_write(
             state,
             Some(&socket),
-            &[Value::String("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n\r\n".into())],
+            &[Value::String(
+                "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n\r\n".into(),
+            )],
         );
         let _ = crate::modules::net::socket_end(state, Some(&socket), &[]);
         execute::set_property_in_place(&socket, "_httpMessage", Value::Null);
@@ -8770,10 +8775,7 @@ fn cp_run_host_child(
         (arg.ends_with(".js") || arg.ends_with(".mjs") || arg.ends_with(".cjs"))
             && std::path::Path::new(arg).is_file()
     });
-    if !has_entry
-        && !version_probe
-        && !args.iter().any(|arg| arg == "-e" || arg == "--eval")
-    {
+    if !has_entry && !version_probe && !args.iter().any(|arg| arg == "-e" || arg == "--eval") {
         return None;
     }
     // `process.execPath` points at the compatibility runner selected by the

@@ -4,7 +4,11 @@ fn call_frame_suspend_and_resume_restores_caller_state() {
         super::Op::Move { dst: 0, src: 0 },
         super::Op::Move { dst: 1, src: 1 },
     ]);
-    let mut machine = super::Machine::with_function(&function, super::EnvironmentRef(7), 2);
+    let mut machine = super::Machine::with_function(
+        &function,
+        super::EnvironmentRef(7),
+        2,
+    );
     machine.set_program_counter(1);
     machine.registers_mut().write(0, super::Value::Number(11.0));
     machine.suspend_call(
@@ -13,7 +17,8 @@ fn call_frame_suspend_and_resume_restores_caller_state() {
         vec![super::Value::Number(3.0)],
         1,
         crate::completion::ContinuationGuards::new(9),
-    );
+    )
+    .expect("call continuation allocation");
     assert_eq!(machine.call_frames.len(), 1);
     assert!(machine.registers_mut().is_empty());
 
@@ -116,7 +121,8 @@ fn escaped_nested_function_clone_retains_code_store() {
 fn machine_rejects_call_continuation_from_unknown_code_source() {
     let function = super::FunctionCode::from_ops(vec![super::Op::ParameterEnd]);
     let mut machine = Machine::with_function(&function, EnvironmentRef(0), 1);
-    machine.push_call_frame(crate::completion::CallContinuation {
+    machine
+        .try_push_call_frame(crate::completion::CallContinuation {
         callee: super::Value::Undefined,
         receiver: super::Value::Undefined,
         arguments: Vec::new().into(),
@@ -126,7 +132,8 @@ fn machine_rejects_call_continuation_from_unknown_code_source() {
         caller_environment: EnvironmentRef(0),
         destination: 0,
         guards: crate::completion::ContinuationGuards::default(),
-    });
+        })
+        .expect("valid continuation source");
     assert!(machine.resume_call(super::Value::Number(1.0)).is_none());
     assert_eq!(machine.program_counter(), 0);
 }
@@ -265,6 +272,124 @@ fn ordinary_counted_numeric_loop_lowers_to_one_cfg_backedge() {
         }
     });
     assert!(matched, "ordinary loop did not expose its canonical CFG");
+}
+
+#[test]
+fn current_local_integer_loop_selector_matches_cfg_shape() {
+    let source = concat!(
+        "function f(s){var x=17;for(var i=0;i<s.n;i++)x=(x*33+7)|0;return x}",
+        "if(f({n:4})!==20420077)throw new Error('bad loop')"
+    );
+    let program = crate::reduce::reduce_source(source).expect("counted loop lowers");
+    let mut found = false;
+    crate::stencil_test_support::visit_code_views(program.code(), &mut |code| {
+        let entries = super::baseline_entries(code);
+        let operand_windows = (0..entries.len())
+            .map(|pc| code.operand_window_at(pc))
+            .collect::<Vec<_>>();
+        let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+        let Some(selection) = crate::stencil_numeric_integer_selection::select_integer_loop(
+            code, &entries, &cfg, 0,
+        ) else {
+            return;
+        };
+        assert!(matches!(
+            selection.recurrence,
+            crate::stencil_numeric_integer_loop::IntegerRecurrence::LocalConstant(7)
+        ));
+        assert_eq!(selection.value_slot, 11);
+        assert_eq!(selection.index_slot, 12);
+        assert_eq!(selection.state_slot, 6);
+        found = true;
+    });
+    assert!(found, "current local integer loop shape was not admitted");
+}
+
+#[test]
+fn local_integer_loop_selector_admits_osr_loop_header() {
+    let source = "function f(s){var x=17;for(var i=0;i<s.n;i++)x=(x*33+7)|0;return x}";
+    let program = crate::reduce::reduce_source(source).expect("counted loop lowers");
+    let mut found = false;
+    crate::stencil_test_support::visit_code_views(program.code(), &mut |code| {
+        let entries = super::baseline_entries(code);
+        let operand_windows = (0..entries.len())
+            .map(|pc| code.operand_window_at(pc))
+            .collect::<Vec<_>>();
+        let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+        let Some(selection) = crate::stencil_numeric_integer_selection::select_integer_loop(
+            code, &entries, &cfg, 6,
+        ) else {
+            return;
+        };
+        assert!(matches!(
+            selection.recurrence,
+            crate::stencil_numeric_integer_loop::IntegerRecurrence::LocalConstantBody(7)
+        ));
+        assert_eq!(selection.loop_header_pc, 6);
+        assert_eq!(selection.backedge_pc, 24);
+        assert_eq!(selection.region_end_pc, 29);
+        assert_eq!(selection.value_slot, 11);
+        assert_eq!(selection.index_slot, 12);
+        assert_eq!(selection.state_slot, 6);
+        found = true;
+    });
+    assert!(found, "local integer loop OSR header was not admitted");
+}
+
+#[test]
+fn cfg_derived_loop_body_admission_reuses_one_region_plan() {
+    let function = super::FunctionCode::from_ops(vec![
+        super::Op::CheckInitialized {
+            slot: 0,
+            name: "left".into(),
+        },
+        super::Op::LoadLocal { dst: 1, slot: 0 },
+        super::Op::CheckInitialized {
+            slot: 1,
+            name: "right".into(),
+        },
+        super::Op::LoadLocal { dst: 2, slot: 1 },
+        super::Op::Binary {
+            dst: 3,
+            operator: crate::ops::BinaryOp::Add,
+            lhs: 1,
+            rhs: 2,
+        },
+        super::Op::StoreLocal { slot: 3, src: 3 },
+        super::Op::Move { dst: 4, src: 3 },
+        super::Op::LoadLocal { dst: 5, slot: 0 },
+        super::Op::Const {
+            dst: 6,
+            value: crate::ops::Constant::Number(1.0),
+        },
+        super::Op::Binary {
+            dst: 7,
+            operator: crate::ops::BinaryOp::NumericAdd,
+            lhs: 5,
+            rhs: 6,
+        },
+        super::Op::CheckInitialized {
+            slot: 0,
+            name: "left".into(),
+        },
+        super::Op::StoreLocal { slot: 0, src: 7 },
+        super::Op::Return { src: 4 },
+    ]);
+    let code = function.code().expect("loop body lowers");
+    let plan = super::BaselinePlan::compile_for_test(
+        code,
+        crate::stencil_policy::ExecutionPolicy::bridge_opt_in_for_test(),
+    );
+    let region = plan
+        .native_region_at(0)
+        .expect("CFG-derived loop body admission");
+    let region = region.borrow();
+    assert_eq!(
+        region.key_for_test(),
+        crate::stencil_select::loop_body_region_key()
+    );
+    assert_eq!(region.trace_operations().len(), 7);
+    assert!(region.admitted_control_for_test().is_some());
 }
 
 #[test]
@@ -435,6 +560,93 @@ fn baseline_region_admission_respects_declared_abi() {
 }
 
 #[test]
+fn generic_region_admission_excludes_typed_only_abis() {
+    use crate::stencil_select::RegionAbi;
+
+    for abi in [
+        RegionAbi::Bridge,
+        RegionAbi::ArrayKernel,
+        RegionAbi::ArrayNumericLoop,
+        RegionAbi::AffineI32Loop,
+    ] {
+        assert!(
+            super::generic_region_context_abi_for_test(abi),
+            "generic region ABI unexpectedly rejected: {abi:?}"
+        );
+    }
+    for abi in [
+        RegionAbi::ArrayCopyLoop,
+        RegionAbi::ArrayReductionLoop,
+        RegionAbi::I32CounterLoop,
+        RegionAbi::BooleanReductionLoop,
+        RegionAbi::BranchRecurrenceLoop,
+        RegionAbi::NestedXorLoop,
+        RegionAbi::SwitchReductionLoop,
+        RegionAbi::MatrixReductionLoop,
+        RegionAbi::TypedLaneLoop,
+        RegionAbi::TwoStateI32Loop,
+        RegionAbi::NumericF64Loop,
+        RegionAbi::NumericI32BitwiseLoop,
+        RegionAbi::NumericI32PairLoop,
+        RegionAbi::NumericF64MixedLoop,
+        RegionAbi::CompareBranch,
+    ] {
+        assert!(
+            !super::generic_region_context_abi_for_test(abi),
+            "typed-only ABI leaked into generic region admission: {abi:?}"
+        );
+    }
+}
+
+#[test]
+fn eager_straight_line_admission_has_no_numeric_dag_window() {
+    let mut operations = (0..40)
+        .map(|slot| super::Op::Move {
+            dst: slot as u16,
+            src: slot as u16,
+        })
+        .collect::<Vec<_>>();
+    operations.push(super::Op::Return { src: 0 });
+    let function = super::FunctionCode::from_ops(operations);
+    let code = function.code().expect("compact code");
+
+    // This body is longer than the numeric DAG's fixed storage window.  It
+    // is still a valid straight-line candidate; the DAG's own bounded
+    // selector must not silently narrow admission for unrelated operations.
+    assert!(super::eager_straight_line_candidate(code));
+}
+
+#[test]
+fn eager_straight_line_admission_rejects_allocating_operations() {
+    let function = super::FunctionCode::from_ops(vec![
+        super::Op::MakeObject {
+            dst: 0,
+            properties: Vec::new(),
+        },
+        super::Op::Return { src: 0 },
+    ]);
+    let code = function.code().expect("allocating compact code");
+    assert!(!super::eager_straight_line_candidate(code));
+}
+
+#[test]
+fn eager_admission_uses_effect_facts_for_unshaped_heap_reads() {
+    let function = super::FunctionCode::from_ops(vec![
+        super::Op::GetProperty {
+            dst: 0,
+            object: 1,
+            key: "value".into(),
+        },
+        super::Op::Return { src: 0 },
+    ]);
+    let code = function.code().expect("property-read compact code");
+    // No recipe-shaped call/property sequence is required merely to build the
+    // baseline facts. The read/throw/observable boundary remains canonical at
+    // execution time when no specialized admission proves it.
+    assert!(super::eager_straight_line_candidate(code));
+}
+
+#[test]
 fn baseline_admissions_use_sparse_indexed_storage() {
     let function = numeric_admission_function(1);
     let code = function.code().expect("compact code");
@@ -454,13 +666,6 @@ fn baseline_admissions_use_sparse_indexed_storage() {
             <= crate::stencil_admission_budget::MAX_GLOBAL_ADMISSION_BYTES
     );
     assert!(std::mem::size_of::<crate::stencil_admission::AdmissionSpan>() <= 8);
-    eprintln!(
-        "baseline-admission-layout entries={} sparse={} span={} record={}",
-        plan.entries.len(),
-        admission.entries_len(),
-        std::mem::size_of::<crate::stencil_admission::AdmissionSpan>(),
-        std::mem::size_of::<super::NativeAdmission>()
-    );
 }
 
 #[test]
@@ -491,6 +696,7 @@ fn disabled_native_policy_keeps_admission_and_executable_storage_empty() {
     let plan =
         super::BaselinePlan::compile_for_test(function.code().expect("compact code"), disabled);
     assert!(plan.admission.is_none());
+    assert!(!plan.has_admission_at(0));
     assert_eq!(plan.shared_region_arena.borrow().slab_count(), 0);
     assert_eq!(plan.shared_region_arena.borrow().capacity(), 0);
 }
@@ -507,10 +713,12 @@ fn optimizing_entries_reuse_sparse_admission_storage() {
         super::Op::Return { src: 0 },
     ]);
     let code = function.code().expect("compact code");
-    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    policy.fused_regions = true;
     let baseline = super::BaselinePlan::compile_for_test(code, policy);
     let optimizing = super::OptimizingPlan::compile(&baseline, policy);
     assert_eq!(optimizing.entries.len(), baseline.entries.len());
+    assert!(baseline.has_admission_at(0));
     assert!(std::rc::Rc::ptr_eq(&optimizing.entries, &baseline.entries));
     let baseline_admission = baseline.admission.as_ref().expect("baseline admission");
     let optimizing_admission = optimizing.admission.as_ref().expect("optimizing admission");
@@ -541,7 +749,8 @@ fn numeric_admission_function(count: usize) -> super::FunctionCode {
 fn admission_metadata_stays_within_owner_budget_and_falls_back() {
     let function = numeric_admission_function(2048);
     let code = function.code().expect("compact code");
-    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    policy.fused_regions = true;
     let plan = super::BaselinePlan::compile_for_test(code, policy);
     assert!(
         plan.admission
@@ -551,7 +760,7 @@ fn admission_metadata_stays_within_owner_budget_and_falls_back() {
             <= crate::stencil_admission_budget::MAX_OWNER_ADMISSION_BYTES
     );
     let cold = (0..2048)
-        .find(|pc| plan.admissions_at(*pc).is_empty())
+        .find(|pc| !plan.has_admission_at(*pc))
         .expect("owner budget must leave a canonical suffix");
     let mut registers = crate::register_file::RegisterFile::with_undefined(3);
     registers.write_number(1, 1.0);
@@ -826,6 +1035,3462 @@ fn composed_plan_retires_cached_bytes_after_committed_failure() {
 }
 
 #[test]
+fn bridge_region_follows_verified_forward_join_while_using_binary_leaf() {
+    let executable = super::ExecutableCode::from_ops(vec![
+        super::Op::LoadLocal { dst: 1, slot: 0 },
+        super::Op::LoadLocal { dst: 2, slot: 1 },
+        super::Op::Binary {
+            dst: 3,
+            operator: crate::ops::BinaryOp::LessThan,
+            lhs: 1,
+            rhs: 2,
+        },
+        super::Op::Branch {
+            condition: 3,
+            then_ops: super::FunctionCode::pending(vec![
+                super::Op::Const {
+                    dst: 4,
+                    value: crate::ops::Constant::Number(10.0),
+                },
+                super::Op::Move { dst: 5, src: 4 },
+            ]),
+            else_ops: super::FunctionCode::pending(vec![
+                super::Op::Const {
+                    dst: 6,
+                    value: crate::ops::Constant::Number(20.0),
+                },
+                super::Op::Move { dst: 5, src: 6 },
+            ]),
+        },
+        super::Op::Return { src: 5 },
+    ]);
+    let code = executable.code();
+    let key = crate::stencil_select::binary_branch_glue_region_key();
+    let record = crate::stencil_select::select_region(key).expect("binary branch row");
+    assert_eq!(code.len(), record.operations.len());
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let control = cfg
+        .region_plan(&entries, 0, record.operations)
+        .expect("verified branch CFG");
+    let context = crate::vm::current_context_or_default();
+    for (left, right, expected, expected_retired) in [
+        (1.0, 2.0, 10.0, 8),
+        (3.0, 2.0, 20.0, 7),
+    ] {
+        let (transition, native, branch_entries, constant_entries, move_entries, load_entries, retired) = crate::stencil_policy::with_policy_for_test(
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+            || {
+                let environment = crate::environment::Environment::new();
+                environment.set(0, crate::value::Value::Number(left));
+                environment.set(1, crate::value::Value::Number(right));
+                let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+                let arena = std::rc::Rc::new(std::cell::RefCell::new(
+                    crate::stencil_arena::SharedStencilSlab::new(4096).expect("region arena"),
+                ));
+                let mut region = super::NativeRegionPlan::new_inner(
+                    key,
+                    true,
+                    arena,
+                    Some(control.clone()),
+                )
+                .expect("binary branch region plan");
+                let mut registers = crate::register_file::RegisterFile::with_undefined(8);
+                let transition = region
+                    .execute(code, 0, &mut registers, &context, Some(&environment))
+                    .expect("branch region execution");
+                (
+                    transition,
+                    region.last_native_execution(),
+                    region.branch_entry_count_for_test(),
+                    region.constant_entry_count_for_test(),
+                    region.move_entry_count_for_test(),
+                    region.load_local_entry_count_for_test(),
+                    region.retired_operations(),
+                )
+            },
+        );
+        assert_eq!(
+            transition.completion,
+            Some(crate::completion::Completion::Return(
+                crate::value::Value::Number(expected),
+            ))
+        );
+        assert!(native);
+        assert_eq!(branch_entries, 1);
+        assert_eq!(constant_entries, 1);
+        assert_eq!(move_entries, 1);
+        assert_eq!(load_entries, 2);
+        assert_eq!(retired, expected_retired);
+    }
+}
+
+#[test]
+fn control_only_bridge_follows_canonical_join_after_boolean_guard_miss() {
+    let executable = super::ExecutableCode::from_ops(vec![
+        super::Op::Branch {
+            condition: 0,
+            then_ops: super::FunctionCode::pending(vec![super::Op::Move { dst: 3, src: 1 }]),
+            else_ops: super::FunctionCode::pending(vec![super::Op::Move { dst: 3, src: 2 }]),
+        },
+        super::Op::Return { src: 3 },
+    ]);
+    let code = executable.code();
+    let key = crate::stencil_select::branch_glue_region_key();
+    let record = crate::stencil_select::select_region(key).expect("branch row");
+    assert_eq!(code.len(), record.operations.len());
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let control = cfg
+        .region_plan(&entries, 0, record.operations)
+        .expect("verified branch CFG");
+    let context = crate::vm::current_context_or_default();
+    for (condition, expected, retired, native, jumps) in [
+        (crate::value::Value::Number(0.0), 22.0, 3, false, 0),
+        (crate::value::Value::Number(3.0), 11.0, 4, true, 1),
+    ] {
+        let arena = std::rc::Rc::new(std::cell::RefCell::new(
+            crate::stencil_arena::SharedStencilSlab::new(4096).expect("region arena"),
+        ));
+        let mut region = super::NativeRegionPlan::new_inner(key, true, arena, Some(control.clone()))
+            .expect("branch region plan");
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![
+            condition,
+            crate::value::Value::Number(11.0),
+            crate::value::Value::Number(22.0),
+            crate::value::Value::Undefined,
+        ]);
+        let transition = crate::stencil_policy::with_policy_for_test(
+            crate::stencil_policy::ExecutionPolicy::bridge_opt_in_for_test(),
+            || {
+                region
+                    .execute(code, 0, &mut registers, &context, None)
+                    .expect("branch region execution")
+            },
+        );
+        assert_eq!(
+            transition.completion,
+            Some(crate::completion::Completion::Return(
+                crate::value::Value::Number(expected),
+            ))
+        );
+        assert_eq!(region.last_native_execution(), native);
+        assert_eq!(region.jump_entry_count_for_test(), jumps);
+        assert_eq!(region.retired_operations(), retired);
+    }
+}
+
+#[test]
+fn nested_branch_bridge_follows_two_cfg_conditions_into_one_join() {
+    let instructions = vec![
+        crate::ir::Instruction::load_local(0, 0),
+        crate::ir::Instruction::jump_if_false(0, 8),
+        crate::ir::Instruction::load_local(1, 1),
+        crate::ir::Instruction::jump_if_false(1, 6),
+        crate::ir::Instruction::load_const(2, 0),
+        crate::ir::Instruction::jump(9),
+        crate::ir::Instruction::load_const(2, 1),
+        crate::ir::Instruction::jump(9),
+        crate::ir::Instruction::load_const(2, 2),
+        crate::ir::Instruction::ret(2),
+    ];
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: instructions.into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 10)].into(),
+        constants: vec![super::ConstantPool::new(vec![
+            super::Constant::Number(1.0),
+            super::Constant::Number(2.0),
+            super::Constant::Number(3.0),
+        ])]
+        .into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 10]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 3,
+            frame_register_count: 3,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let range = super::CodeRange::new(super::CodeId(0), 0, 10).expect("nested branch range");
+    let code = store.code(range).expect("nested branch code");
+    let key = crate::stencil_select::nested_branch_glue_region_key();
+    let record = crate::stencil_select::select_region(key).expect("nested branch row");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let control = cfg
+        .region_plan(&entries, 0, record.operations)
+        .expect("verified nested branch CFG");
+    assert_eq!(control.join_blocks(), [9]);
+    assert_eq!(control.internal_backedges(), []);
+    let context = crate::vm::current_context_or_default();
+    crate::stencil_policy::with_policy_for_test(
+        crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        || {
+            for (outer, inner, expected, branches, jumps, loads, retired) in [
+                (true, true, 1.0, 2, 1, 2, 7),
+                (true, false, 2.0, 2, 1, 2, 7),
+                (false, true, 3.0, 1, 0, 1, 4),
+            ] {
+                let environment = crate::environment::Environment::new();
+                environment.set(0, crate::value::Value::Boolean(outer));
+                environment.set(1, crate::value::Value::Boolean(inner));
+                let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+                let arena = std::rc::Rc::new(std::cell::RefCell::new(
+                    crate::stencil_arena::SharedStencilSlab::new(4096).expect("region arena"),
+                ));
+                let mut region = super::NativeRegionPlan::new_inner(
+                    key,
+                    true,
+                    arena,
+                    Some(control.clone()),
+                )
+                .expect("nested branch region plan");
+                let mut registers = crate::register_file::RegisterFile::with_undefined(3);
+                let transition = region
+                    .execute(code, 0, &mut registers, &context, Some(&environment))
+                    .expect("nested branch region execution");
+                assert_eq!(
+                    transition.completion,
+                    Some(crate::completion::Completion::Return(
+                        crate::value::Value::Number(expected),
+                    ))
+                );
+                assert!(region.last_native_execution());
+                assert_eq!(region.branch_entry_count_for_test(), branches);
+                assert_eq!(region.jump_entry_count_for_test(), jumps);
+                assert_eq!(region.load_local_entry_count_for_test(), loads);
+                assert_eq!(region.constant_entry_count_for_test(), 1);
+                assert_eq!(region.retired_operations(), retired);
+            }
+        },
+    );
+}
+
+#[test]
+fn generic_bridge_admission_uses_operator_facts_not_opcode_names() {
+    let generic_binary = |operator| crate::ir::Instruction {
+        opcode: crate::ir::Opcode::Binary,
+        flags: crate::ir::compact_binary_id(operator),
+        a: 0,
+        b: 1,
+        c: 2,
+    };
+    assert!(super::generic_bridge_candidate(generic_binary(
+        crate::ops::BinaryOp::StrictEqual
+    )));
+    for operator in [
+        crate::ops::BinaryOp::Add,
+        crate::ops::BinaryOp::Subtract,
+        crate::ops::BinaryOp::Multiply,
+        crate::ops::BinaryOp::Divide,
+    ] {
+        assert!(
+            super::generic_bridge_candidate(generic_binary(operator)),
+            "generic {operator:?} should use its dedicated numeric leaf when guarded"
+        );
+    }
+    for (operator, expected) in [
+        (crate::ops::BinaryOp::Add, 5.0),
+        (crate::ops::BinaryOp::Subtract, -1.0),
+        (crate::ops::BinaryOp::Multiply, 6.0),
+        (crate::ops::BinaryOp::Divide, 2.0 / 3.0),
+    ] {
+        let instruction = crate::ir::Instruction {
+            opcode: crate::ir::Opcode::Binary,
+            flags: crate::ir::compact_binary_id(operator),
+            a: 0,
+            b: 1,
+            c: 2,
+        };
+        let mut plan = super::NativeBinaryPlan::new(
+            instruction,
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        )
+        .unwrap_or_else(|| panic!("generic {operator:?} must resolve its scalar artifact"));
+        assert_eq!(
+            plan.execute(2.0, 3.0)
+                .unwrap_or_else(|error| panic!("generic {operator:?} leaf failed: {error:?}")),
+            expected,
+            "generic {operator:?} should use the dedicated scalar semantics"
+        );
+    }
+    for operator in [
+        crate::ops::BinaryOp::NumericAdd,
+        crate::ops::BinaryOp::NumericSubtract,
+    ] {
+        assert!(
+            super::generic_bridge_candidate(generic_binary(operator)),
+            "generic {operator:?} must use the generated update family"
+        );
+    }
+    for opcode in [crate::ir::Opcode::NumericAdd, crate::ir::Opcode::NumericSubtract] {
+        assert!(
+            super::generic_bridge_candidate(crate::ir::Instruction {
+                opcode,
+                flags: 0,
+                a: 0,
+                b: 1,
+                c: 2,
+            }),
+            "{opcode:?} should use the generated ±1 update family"
+        );
+        let mut plan = super::NativeBinaryPlan::new(
+                crate::ir::Instruction {
+                    opcode,
+                    flags: 0,
+                    a: 0,
+                    b: 1,
+                    c: 2,
+                },
+                crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+            )
+            .unwrap_or_else(|| panic!("{opcode:?} must resolve its generated update artifact"));
+        let actual = plan
+            .execute(2.0, 99.0)
+            .unwrap_or_else(|error| panic!("{opcode:?} update leaf failed: {error:?}"));
+        let expected = if opcode == crate::ir::Opcode::NumericAdd {
+            3.0
+        } else {
+            1.0
+        };
+        assert_eq!(actual, expected, "{opcode:?} must ignore the encoded RHS");
+    }
+    assert!(super::generic_bridge_candidate(crate::ir::Instruction::inc_i(
+        0, 1, false
+    )));
+    assert!(!super::generic_bridge_candidate(crate::ir::Instruction {
+        opcode: crate::ir::Opcode::Remainder,
+        flags: 0,
+        a: 0,
+        b: 1,
+        c: 2,
+    }));
+    for opcode in [crate::ir::Opcode::Exponentiate, crate::ir::Opcode::Instanceof] {
+        assert!(
+            !super::generic_bridge_candidate(crate::ir::Instruction {
+                opcode,
+                flags: 0,
+                a: 0,
+                b: 1,
+                c: 2,
+            }),
+            "{opcode:?} has no generated leaf and must remain canonical"
+        );
+    }
+    assert!(super::generic_bridge_candidate(crate::ir::Instruction::unary_operator(
+        0,
+        crate::ops::UnaryOp::Not,
+        1,
+    )));
+    assert!(super::generic_bridge_candidate(crate::ir::Instruction::unary_operator(
+        0,
+        crate::ops::UnaryOp::Plus,
+        1,
+    )));
+    assert!(super::generic_bridge_candidate(crate::ir::Instruction::unary_operator(
+        0,
+        crate::ops::UnaryOp::Void,
+        1,
+    )));
+    assert!(super::generic_bridge_candidate(crate::ir::Instruction::unary_operator(
+        0,
+        crate::ops::UnaryOp::Delete,
+        1,
+    )));
+    for operator in [
+        crate::ops::UnaryOp::Typeof,
+        crate::ops::UnaryOp::ToString,
+        crate::ops::UnaryOp::ToNumeric,
+    ] {
+        assert!(
+            !super::generic_bridge_candidate(crate::ir::Instruction::unary_operator(
+                0, operator, 1,
+            )),
+            "unsupported unary {operator:?} must retain canonical fallback"
+        );
+    }
+    assert!(!super::generic_bridge_candidate(crate::ir::Instruction {
+        opcode: crate::ir::Opcode::AddConst,
+        flags: crate::ir::ADD_CONST_LEFT_FLAG,
+        a: 0,
+        b: 1,
+        c: 0,
+    }));
+    assert!(super::generic_bridge_candidate(
+        crate::ir::Instruction::initialize_local(0)
+    ));
+    assert!(!super::generic_bridge_candidate(crate::ir::Instruction {
+        opcode: crate::ir::Opcode::InitLocal,
+        flags: 0,
+        a: 0,
+        b: 1,
+        c: 0,
+    }));
+    assert!(super::generic_bridge_candidate(crate::ir::Instruction {
+        opcode: crate::ir::Opcode::InitLocal,
+        flags: 0,
+        a: 1,
+        b: 2,
+        c: 0,
+    }));
+    assert!(super::generic_bridge_candidate(crate::ir::Instruction {
+        opcode: crate::ir::Opcode::Move,
+        flags: 1,
+        a: 0,
+        b: 1,
+        c: 2,
+    }));
+    assert!(!super::generic_bridge_candidate(crate::ir::Instruction {
+        opcode: crate::ir::Opcode::Move,
+        flags: 2,
+        a: 0,
+        b: 1,
+        c: 2,
+    }));
+    assert!(super::generic_bridge_candidate(crate::ir::Instruction {
+        opcode: crate::ir::Opcode::MarkUninitialized,
+        flags: 1,
+        a: 0,
+        b: 0,
+        c: 0,
+    }));
+    assert!(super::generic_bridge_candidate(crate::ir::Instruction {
+        opcode: crate::ir::Opcode::MarkImmutable,
+        flags: 0,
+        a: 0,
+        b: 0,
+        c: 0,
+    }));
+    assert!(super::generic_bridge_candidate(crate::ir::Instruction {
+        opcode: crate::ir::Opcode::CheckInitialized,
+        flags: 0,
+        a: 0,
+        b: 0,
+        c: 0,
+    }));
+    assert!(super::generic_bridge_candidate(crate::ir::Instruction {
+        opcode: crate::ir::Opcode::RequireObjectCoercible,
+        flags: 0,
+        a: 0,
+        b: 0,
+        c: 0,
+    }));
+    assert!(super::generic_bridge_candidate(crate::ir::Instruction {
+        opcode: crate::ir::Opcode::Throw,
+        flags: 0,
+        a: 0,
+        b: 0,
+        c: 0,
+    }));
+    assert!(super::generic_bridge_candidate(crate::ir::Instruction::ret(0)));
+    assert_eq!(
+        crate::stencil_select::numeric_region_key(crate::ir::Opcode::NumericAdd),
+        Some(crate::stencil_select::increment_region_key())
+    );
+    assert_eq!(
+        crate::stencil_select::numeric_region_key(crate::ir::Opcode::NumericSubtract),
+        Some(crate::stencil_select::decrement_region_key())
+    );
+    for opcode in crate::ir::Opcode::ALL {
+        let instruction = crate::ir::Instruction {
+            opcode: *opcode,
+            flags: 0,
+            a: 0,
+            b: 1,
+            c: 2,
+        };
+        if super::generic_bridge_candidate(instruction) {
+            assert!(
+                !opcode.has_effect(crate::facts::OperationEffect::ReadHeap)
+                    && !opcode.has_effect(crate::facts::OperationEffect::WriteHeap)
+                    && !opcode.has_effect(crate::facts::OperationEffect::Allocate)
+                    && !opcode.has_effect(crate::facts::OperationEffect::Observable),
+                "Bridge candidate {opcode:?} crossed a generated effect boundary"
+            );
+            assert_ne!(
+                opcode.control_flow(),
+                crate::facts::ControlFlow::Loop,
+                "Bridge candidate {opcode:?} swallowed a structured loop gateway"
+            );
+        }
+    }
+}
+
+#[test]
+fn generic_bridge_return_is_admitted_only_without_helper_effects() {
+    let function = super::FunctionCode::from_ops(vec![
+        super::Op::Return { src: 0 },
+    ]);
+    let code = function.code().expect("return code");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let arena = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("region arena"),
+    ));
+    let policy = crate::stencil_policy::ExecutionPolicy::bridge_opt_in_for_test()
+        .with_leaf_dependencies();
+    let admission = super::generic_cfg_region_admission(&entries, &cfg, 0, policy, &arena);
+    assert!(admission.is_some(), "return leaf should be a standalone bridge");
+
+    let helper = super::FunctionCode::from_ops(vec![
+        super::Op::Call {
+            dst: 0,
+            callee: 1,
+            receiver: None,
+            args: Vec::new(),
+            spreads: Vec::new(),
+        },
+        super::Op::Return { src: 0 },
+    ]);
+    let helper_code = helper.code().expect("helper code");
+    let helper_entries = super::baseline_entries(helper_code);
+    let helper_operand_windows = (0..helper_entries.len())
+        .map(|pc| helper_code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let helper_cfg = super::ControlFlowFacts::new(&helper_entries, &helper_operand_windows);
+    assert!(
+        super::generic_cfg_region_admission(
+            &helper_entries,
+            &helper_cfg,
+            0,
+            policy,
+            &arena,
+        )
+        .is_none(),
+        "helper boundary must stay canonical"
+    );
+
+    let result = crate::stencil_policy::with_policy_for_test(policy, || {
+        let plan = super::BaselinePlan::compile_for_test(code, policy);
+        assert!(plan.native_region_at(0).is_some());
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![
+            crate::value::Value::Number(7.0),
+        ]);
+        let environment = crate::environment::Environment::new();
+        let (completion, next) = crate::vm::execute_baseline_code_from(
+            code,
+            &plan,
+            0,
+            &mut registers,
+            &crate::vm::VmContext::default(),
+            environment,
+        )
+        .expect("standalone return bridge executes");
+        let entered = plan
+            .native_region_at(0)
+            .is_some_and(|region| region.borrow().last_native_execution());
+        (completion, next, entered)
+    });
+    assert_eq!(
+        result.0,
+        crate::completion::Completion::Return(crate::value::Value::Number(7.0))
+    );
+    assert_eq!(result.1, 1);
+    assert!(result.2, "validated return artifact should be entered");
+}
+
+#[test]
+fn generic_bridge_stops_at_helper_boundary_without_poisoning_prefix() {
+    let function = super::FunctionCode::from_ops(vec![
+        super::Op::Const {
+            dst: 0,
+            value: crate::ops::Constant::Number(1.0),
+        },
+        super::Op::Call {
+            dst: 0,
+            callee: 1,
+            receiver: None,
+            args: Vec::new(),
+            spreads: Vec::new(),
+        },
+        super::Op::Return { src: 0 },
+    ]);
+    let code = function.code().expect("prefix/helper code");
+    let mut policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    policy.fused_regions = true;
+    let plan = super::BaselinePlan::compile_for_test(code, policy);
+    let region = plan
+        .native_region_at(0)
+        .expect("pure prefix remains bridge-admissible");
+    assert_eq!(
+        region.borrow().trace_operations().as_ref(),
+        &[crate::ir::Opcode::LoadConst]
+    );
+    assert_ne!(
+        plan.native_region_at(1)
+            .map(|region| region.borrow().key_for_test()),
+        Some(crate::stencil_select::dispatch_region_key()),
+        "helper boundary must not be folded into the generic bridge"
+    );
+    let environment = crate::environment::Environment::new();
+    let mut registers = crate::register_file::RegisterFile::with_undefined(2);
+    let transition = crate::stencil_policy::with_policy_for_test(policy, || {
+        plan.native_region_at(0)
+            .expect("prefix region")
+            .borrow_mut()
+            .execute(
+                code,
+                0,
+                &mut registers,
+                &crate::vm::VmContext::default(),
+                Some(&environment),
+            )
+    })
+    .expect("pure prefix executes");
+    assert_eq!(transition.target, crate::vm::DispatchTarget::Callee(1));
+    assert!(
+        plan.native_region_at(0)
+            .is_some_and(|region| region.borrow().last_native_execution()),
+        "pure prefix did not reach generated execution"
+    );
+}
+
+#[test]
+fn generic_bridge_keeps_branch_edges_to_helper_boundary_external() {
+    let instructions = vec![
+        crate::ir::Instruction::jump_if_false(0, 3),
+        crate::ir::Instruction::load_const(0, 0),
+        crate::ir::Instruction::jump(4),
+        crate::ir::Instruction {
+            opcode: crate::ir::Opcode::Call,
+            flags: 0,
+            a: 0,
+            b: 1,
+            c: 0,
+        },
+        crate::ir::Instruction::ret(0),
+    ];
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: instructions.into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 5)].into(),
+        constants: vec![super::ConstantPool::new(vec![super::Constant::Number(1.0)])].into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 5]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 2,
+            frame_register_count: 2,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let code = store
+        .code(super::CodeRange::new(super::CodeId(0), 0, 5).expect("branch/helper range"))
+        .expect("branch/helper code");
+    let mut policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    policy.fused_regions = true;
+    let plan = super::BaselinePlan::compile_for_test(code, policy);
+    let region = plan
+        .native_region_at(0)
+        .expect("branch prefix remains bridge-admissible");
+    assert_eq!(
+        region.borrow().trace_operations().as_ref(),
+        &[
+            crate::ir::Opcode::JumpIfFalse,
+            crate::ir::Opcode::LoadConst,
+            crate::ir::Opcode::Jump,
+        ]
+    );
+
+    // Planning alone is insufficient here: execute the prefix and prove the
+    // valid external edge reaches the helper boundary at pc 4.  The bridge
+    // must retire only its three fused operations and leave the helper to the
+    // ordinary dispatcher.
+    let context = crate::vm::current_context_or_default();
+    let environment = crate::environment::Environment::new();
+    let mut registers = crate::register_file::RegisterFile::from_values(vec![
+        crate::value::Value::Boolean(true),
+        crate::value::Value::Undefined,
+    ]);
+    let transition = crate::stencil_policy::with_policy_for_test(policy, || {
+        region
+            .borrow_mut()
+            .execute(code, 0, &mut registers, &context, Some(&environment))
+            .expect("external helper edge executes")
+    });
+    assert_eq!(transition.target, crate::vm::DispatchTarget::Callee(4));
+    assert_eq!(transition.completion, None);
+    assert_eq!(region.borrow().retired_operations(), 3);
+    assert!(region.borrow().last_native_execution());
+}
+
+#[test]
+fn local_numeric_fusion_respects_opaque_register_windows() {
+    for opcode in [
+        crate::ir::Opcode::MakeObject,
+        crate::ir::Opcode::MakeArray,
+        crate::ir::Opcode::Construct,
+        crate::ir::Opcode::TailCall,
+        crate::ir::Opcode::ForOf,
+    ] {
+        assert!(
+            super::implicit_register_consumer(opcode),
+            "{opcode:?} consumes an implicit register window"
+        );
+    }
+    assert!(!super::implicit_register_consumer(crate::ir::Opcode::Add));
+    assert!(!super::implicit_register_consumer(crate::ir::Opcode::StoreLocal));
+}
+
+#[test]
+fn generic_cfg_bridge_consumes_initialize_local_transition() {
+    let mut arena = super::CodeArena::new();
+    let range = arena.append(vec![
+        super::Op::InitializeLocal { slot: 0 },
+        super::Op::Return { src: 1 },
+    ]);
+    let store = arena.freeze();
+    let code = store.code(range).expect("initialize code");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let mut policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    policy.fused_regions = true;
+    let arena = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("initialize arena"),
+    ));
+    assert!(super::generic_cfg_region_admission(&entries, &cfg, 0, policy, &arena).is_some());
+
+    crate::stencil_policy::with_policy_for_test(policy, || {
+        let baseline = super::BaselinePlan::compile_for_test(code, policy);
+        let environment = crate::environment::Environment::new();
+        environment.mark_uninitialized(0);
+        let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+        let mut registers = crate::register_file::RegisterFile::with_undefined(2);
+        registers.write_number(1, 7.0);
+        let completion = crate::vm::execute_baseline_code_from(
+            code,
+            &baseline,
+            0,
+            &mut registers,
+            &crate::vm::current_context_or_default(),
+            environment.clone(),
+        )
+        .expect("initialize execution")
+        .0;
+        assert_eq!(
+            completion,
+            crate::completion::Completion::Return(crate::value::Value::Number(7.0))
+        );
+        assert!(!environment.is_uninitialized(0));
+        let region = baseline.native_region_at(0).expect("initialize region");
+        let region = region.borrow();
+        assert!(region.last_native_execution());
+        assert_eq!(region.retired_operations(), 2);
+    });
+}
+
+#[test]
+fn generic_cfg_bridge_consumes_init_local_value_transition() {
+    let instructions = vec![
+        crate::ir::Instruction::init_local(1, 2),
+        crate::ir::Instruction::ret(2),
+    ];
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: instructions.into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 2)].into(),
+        constants: vec![super::ConstantPool::empty()].into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 2]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 3,
+            frame_register_count: 3,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let range = super::CodeRange::new(super::CodeId(0), 0, 2).expect("init-local range");
+    let code = store.code(range).expect("init-local code");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let mut policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    policy.fused_regions = true;
+    let arena = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("init-local arena"),
+    ));
+    assert!(super::generic_cfg_region_admission(&entries, &cfg, 0, policy, &arena).is_some());
+
+    crate::stencil_policy::with_policy_for_test(policy, || {
+        let baseline = super::BaselinePlan::compile_for_test(code, policy);
+        let environment = crate::environment::Environment::new();
+        environment.mark_uninitialized(1);
+        let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+        let mut registers = crate::register_file::RegisterFile::with_undefined(3);
+        registers.write_number(2, 13.0);
+        let completion = crate::vm::execute_baseline_code_from(
+            code,
+            &baseline,
+            0,
+            &mut registers,
+            &crate::vm::current_context_or_default(),
+            environment.clone(),
+        )
+        .expect("init-local execution")
+        .0;
+        assert_eq!(
+            completion,
+            crate::completion::Completion::Return(crate::value::Value::Number(13.0))
+        );
+        assert!(!environment.is_uninitialized(1));
+        assert_eq!(environment.get_number(1), Some(13.0));
+        let region = baseline.native_region_at(0).expect("init-local region");
+        let region = region.borrow();
+        assert!(region.last_native_execution());
+        assert_eq!(region.retired_operations(), 2);
+    });
+}
+
+#[test]
+fn generic_cfg_bridge_consumes_environment_metadata_transitions() {
+    let mut arena = super::CodeArena::new();
+    let range = arena.append(vec![
+        super::Op::MarkUninitialized {
+            slot: 0,
+            shared: true,
+        },
+        super::Op::InitializeLocal { slot: 0 },
+        super::Op::CheckInitialized {
+            slot: 0,
+            name: "x".into(),
+        },
+        super::Op::MarkImmutable { slot: 0 },
+        super::Op::Return { src: 1 },
+    ]);
+    let store = arena.freeze();
+    let code = store.code(range).expect("metadata code");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let mut policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    policy.fused_regions = true;
+    let arena = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("metadata arena"),
+    ));
+    assert!(super::generic_cfg_region_admission(&entries, &cfg, 0, policy, &arena).is_some());
+
+    crate::stencil_policy::with_policy_for_test(policy, || {
+        let baseline = super::BaselinePlan::compile_for_test(code, policy);
+        let environment = crate::environment::Environment::new();
+        let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+        let mut registers = crate::register_file::RegisterFile::with_undefined(2);
+        registers.write_number(1, 11.0);
+        let completion = crate::vm::execute_baseline_code_from(
+            code,
+            &baseline,
+            0,
+            &mut registers,
+            &crate::vm::current_context_or_default(),
+            environment.clone(),
+        )
+        .expect("metadata execution")
+        .0;
+        assert_eq!(
+            completion,
+            crate::completion::Completion::Return(crate::value::Value::Number(11.0))
+        );
+        assert!(!environment.is_uninitialized(0));
+        assert!(environment.is_immutable_slot(0));
+        let region = baseline.native_region_at(0).expect("metadata region");
+        let region = region.borrow();
+        assert!(region.last_native_execution());
+        assert_eq!(region.retired_operations(), 5);
+    });
+}
+
+#[test]
+fn generic_cfg_bridge_guards_object_coercibility_before_canonical_throw() {
+    let mut arena = super::CodeArena::new();
+    let range = arena.append(vec![
+        super::Op::RequireObjectCoercible { src: 1 },
+        super::Op::Return { src: 1 },
+    ]);
+    let store = arena.freeze();
+    let code = store.code(range).expect("coercibility code");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let mut policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    policy.fused_regions = true;
+    let arena = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("coercibility arena"),
+    ));
+    assert!(super::generic_cfg_region_admission(&entries, &cfg, 0, policy, &arena).is_some());
+
+    crate::stencil_policy::with_policy_for_test(policy, || {
+        for (value, native) in [
+            (crate::value::Value::Number(5.0), true),
+            (crate::value::Value::Null, false),
+        ] {
+            let baseline = super::BaselinePlan::compile_for_test(code, policy);
+            let environment = crate::environment::Environment::new();
+            let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+            let mut registers = crate::register_file::RegisterFile::from_values(vec![
+                crate::value::Value::Undefined,
+                value,
+            ]);
+            let result = crate::vm::execute_baseline_code_from(
+                code,
+                &baseline,
+                0,
+                &mut registers,
+                &crate::vm::current_context_or_default(),
+                environment,
+            );
+            if native {
+                assert_eq!(
+                    result.expect("non-nullish coercibility").0,
+                    crate::completion::Completion::Return(crate::value::Value::Number(5.0))
+                );
+            } else {
+                assert!(
+                    matches!(
+                        result.expect("canonical coercibility throw").0,
+                        crate::completion::Completion::Throw(_)
+                    ),
+                    "nullish coercibility must throw"
+                );
+            }
+            let region = baseline.native_region_at(0).expect("coercibility region");
+            assert_eq!(region.borrow().last_native_execution(), native);
+        }
+    });
+}
+
+#[test]
+fn generic_cfg_bridge_materializes_terminal_throw_completion() {
+    let mut arena = super::CodeArena::new();
+    let range = arena.append(vec![
+        super::Op::Const {
+            dst: 1,
+            value: crate::ops::Constant::Number(21.0),
+        },
+        super::Op::Throw { src: 1 },
+    ]);
+    let store = arena.freeze();
+    let code = store.code(range).expect("throw code");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let mut policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    policy.fused_regions = true;
+    let arena = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("throw arena"),
+    ));
+    assert!(super::generic_cfg_region_admission(&entries, &cfg, 0, policy, &arena).is_some());
+
+    crate::stencil_policy::with_policy_for_test(policy, || {
+        let baseline = super::BaselinePlan::compile_for_test(code, policy);
+        let environment = crate::environment::Environment::new();
+        let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+        let mut registers = crate::register_file::RegisterFile::with_undefined(2);
+        let completion = crate::vm::execute_baseline_code_from(
+            code,
+            &baseline,
+            0,
+            &mut registers,
+            &crate::vm::current_context_or_default(),
+            environment,
+        )
+        .expect("throw execution")
+        .0;
+        assert_eq!(
+            completion,
+            crate::completion::Completion::Throw(crate::value::Value::Number(21.0))
+        );
+        let region = baseline.native_region_at(0).expect("throw region");
+        let region = region.borrow();
+        assert!(region.last_native_execution());
+        assert_eq!(region.retired_operations(), 2);
+    });
+}
+
+#[test]
+fn generic_cfg_bridge_admits_multiple_terminal_exits_without_static_shape() {
+    let instructions = vec![
+        crate::ir::Instruction::load_local(0, 0),
+        crate::ir::Instruction::jump_if_false(0, 6),
+        crate::ir::Instruction::load_const(1, 0),
+        crate::ir::Instruction::load_const(2, 1),
+        crate::ir::Instruction::binary(crate::ir::Opcode::Add, 3, 1, 2),
+        crate::ir::Instruction::ret(3),
+        crate::ir::Instruction::load_const(3, 2),
+        crate::ir::Instruction::ret(3),
+    ];
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: instructions.into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 8)].into(),
+        constants: vec![super::ConstantPool::new(vec![
+            super::Constant::Number(1.0),
+            super::Constant::Number(2.0),
+            super::Constant::Number(9.0),
+        ])]
+        .into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 8]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 4,
+            frame_register_count: 4,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let range = super::CodeRange::new(super::CodeId(0), 0, 8).expect("generic CFG range");
+    let code = store.code(range).expect("generic CFG code");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let operations = entries
+        .iter()
+        .map(|entry| entry.instruction.opcode)
+        .collect::<Vec<_>>();
+    let control = cfg
+        .region_plan_with_terminal_exits(&entries, 0, &operations)
+        .expect("multiple terminal exits are CFG-valid");
+    assert_eq!(control.end(), 8);
+    assert_eq!(control.internal_backedges(), []);
+
+    let dispatch_key = crate::stencil_select::dispatch_region_key();
+    let dispatch = crate::stencil_select::select_region(dispatch_key).expect("dispatch row");
+    assert_eq!(dispatch.abi, crate::stencil_select::RegionAbi::Bridge);
+    assert!(dispatch.executable);
+    assert!(super::generic_region_context_abi_for_test(dispatch.abi));
+    let dispatch_view = crate::stencil_select::select_physical(dispatch_key).expect("dispatch view");
+    assert!(dispatch_view.executable);
+    assert_eq!(super::validate_physical_view(dispatch, dispatch_view.stencil), Ok(()));
+    let mut policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    policy.fused_regions = true;
+    let candidate_arena = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("candidate arena"),
+    ));
+    assert!(super::generic_cfg_region_admission(
+        &entries,
+        &cfg,
+        0,
+        policy,
+        &candidate_arena
+    )
+    .is_some());
+
+    crate::stencil_policy::with_policy_for_test(policy, || {
+        let baseline = super::BaselinePlan::compile_for_test(code, policy);
+        let region = baseline.native_region_at(0).expect("generic CFG admission");
+        assert_eq!(region.borrow().key_for_test(), dispatch_key);
+        assert_eq!(region.borrow().trace_operations().len(), 8);
+        let context = crate::vm::current_context_or_default();
+        for (condition, expected, constants, binaries, loads, branches, retired) in [
+            (true, 3.0, 2, 1, 1, 1, 6),
+            (false, 9.0, 1, 0, 1, 1, 4),
+        ] {
+            let baseline = super::BaselinePlan::compile_for_test(code, policy);
+            let environment = crate::environment::Environment::new();
+            environment.set(0, crate::value::Value::Boolean(condition));
+            let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+            let mut registers = crate::register_file::RegisterFile::with_undefined(4);
+            let completion = crate::vm::execute_baseline_code_from(
+                code,
+                &baseline,
+                0,
+                &mut registers,
+                &context,
+                environment,
+            )
+            .expect("generic CFG execution")
+            .0;
+            assert_eq!(
+                completion,
+                crate::completion::Completion::Return(crate::value::Value::Number(expected))
+            );
+            let region = baseline.native_region_at(0).expect("region retained");
+            let region = region.borrow();
+            assert_eq!(region.key_for_test(), dispatch_key);
+            assert!(region.last_native_execution());
+            assert_eq!(region.constant_entry_count_for_test(), constants);
+            assert_eq!(region.binary_entry_count_for_test(), binaries);
+            assert_eq!(region.load_local_entry_count_for_test(), loads);
+            assert_eq!(region.branch_entry_count_for_test(), branches);
+            assert_eq!(region.retired_operations(), retired);
+        }
+    });
+}
+
+#[test]
+fn generic_cfg_bridge_stops_before_allocation_boundary() {
+    let instructions = vec![
+        crate::ir::Instruction::load_const(0, 0),
+        crate::ir::Instruction {
+            opcode: crate::ir::Opcode::MakeObject,
+            flags: 0,
+            a: 0,
+            b: 0,
+            c: 0,
+        },
+        crate::ir::Instruction::ret(0),
+    ];
+    let entries = instructions
+        .into_iter()
+        .map(|instruction| super::BaselineEntry {
+            control: instruction.opcode.control_operands(instruction),
+            instruction,
+        })
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &[None; 3]);
+    assert_eq!(cfg.pure_control_prefix_end(0), Some(1));
+    assert_eq!(cfg.pure_control_prefix_end(1), Some(1));
+    assert_eq!(cfg.pure_control_prefix_end(2), Some(3));
+
+    let arena = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("region arena"),
+    ));
+    let policy = crate::stencil_policy::ExecutionPolicy::bridge_opt_in_for_test()
+        .with_leaf_dependencies();
+    let admission = super::generic_cfg_region_admission(&entries, &cfg, 0, policy, &arena)
+        .expect("value prefix before allocation should remain admissible");
+    let super::NativeAdmission::Region(region) = admission else {
+        panic!("allocation boundary selected a non-region admission");
+    };
+    assert_eq!(region.borrow().admitted_control_for_test().unwrap().span_len(), 1);
+}
+
+#[test]
+fn generic_cfg_bridge_resides_arbitrary_numeric_backedge() {
+    let instructions = vec![
+        crate::ir::Instruction::load_local(0, 0),
+        crate::ir::Instruction::jump_if_false(0, 6),
+        crate::ir::Instruction::update_local(1, 2, 0, true),
+        crate::ir::Instruction::jump(0),
+        crate::ir::Instruction::load_const(3, 0),
+        crate::ir::Instruction::ret(3),
+        crate::ir::Instruction::load_local(3, 0),
+        crate::ir::Instruction::ret(3),
+    ];
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: instructions.into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 8)].into(),
+        constants: vec![super::ConstantPool::new(vec![super::Constant::Number(-1.0)])].into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 8]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 4,
+            frame_register_count: 4,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let range = super::CodeRange::new(super::CodeId(0), 0, 8).expect("backedge range");
+    let code = store.code(range).expect("backedge code");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let operations = entries
+        .iter()
+        .map(|entry| entry.instruction.opcode)
+        .collect::<Vec<_>>();
+    let control = cfg
+        .region_plan_with_terminal_exits(&entries, 0, &operations)
+        .expect("arbitrary backedge CFG");
+    assert_eq!(control.internal_backedges(), [crate::stencil_cfg::RegionEdge { from: 3, to: 0 }]);
+
+    let dispatch_key = crate::stencil_select::dispatch_region_key();
+    let mut policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    policy.fused_regions = true;
+    let arena = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("backedge arena"),
+    ));
+    assert!(super::generic_cfg_region_admission(&entries, &cfg, 0, policy, &arena).is_some());
+
+    crate::stencil_policy::with_policy_for_test(policy, || {
+        let baseline = super::BaselinePlan::compile_for_test(code, policy);
+        let region = baseline.native_region_at(0).expect("generic backedge region");
+        assert_eq!(region.borrow().key_for_test(), dispatch_key);
+        let environment = crate::environment::Environment::new();
+        environment.set(0, crate::value::Value::Number(3.0));
+        let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+        let context = crate::vm::current_context_or_default();
+        let mut registers = crate::register_file::RegisterFile::with_undefined(4);
+        let completion = crate::vm::execute_baseline_code_from(
+            code,
+            &baseline,
+            0,
+            &mut registers,
+            &context,
+            environment.clone(),
+        )
+        .expect("generic backedge execution")
+        .0;
+        assert_eq!(
+            completion,
+            crate::completion::Completion::Return(crate::value::Value::Number(0.0))
+        );
+        let region = baseline.native_region_at(0).expect("backedge region retained");
+        let region = region.borrow();
+        assert!(region.last_native_execution());
+        assert_eq!(region.load_local_entry_count_for_test(), 5);
+        assert_eq!(region.update_entry_count_for_test(), 3);
+        assert_eq!(region.branch_entry_count_for_test(), 0);
+        assert_eq!(region.truthiness_entry_count_for_test(), 4);
+        assert_eq!(region.jump_entry_count_for_test(), 3);
+        assert_eq!(region.return_entry_count_for_test(), 1);
+        assert_eq!(region.retired_operations(), 16);
+        assert_eq!(environment.get(0), crate::value::Value::Number(0.0));
+    });
+}
+
+#[test]
+fn generic_cfg_bridge_consumes_add_const_pool_operand() {
+    let instructions = vec![
+        crate::ir::Instruction::load_local(0, 0),
+        crate::ir::Instruction::add_const(1, 0, 0),
+        crate::ir::Instruction::ret(1),
+    ];
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: instructions.into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 3)].into(),
+        constants: vec![super::ConstantPool::new(vec![super::Constant::Number(2.25)])].into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 3]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 2,
+            frame_register_count: 2,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let range = super::CodeRange::new(super::CodeId(0), 0, 3).expect("AddConst range");
+    let code = store.code(range).expect("AddConst code");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let mut policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    policy.fused_regions = true;
+    let arena = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("AddConst arena"),
+    ));
+    assert!(super::generic_cfg_region_admission(&entries, &cfg, 0, policy, &arena).is_some());
+
+    crate::stencil_policy::with_policy_for_test(policy, || {
+        let baseline = super::BaselinePlan::compile_for_test(code, policy);
+        let region = baseline.native_region_at(0).expect("generic AddConst region");
+        assert_eq!(region.borrow().key_for_test(), crate::stencil_select::dispatch_region_key());
+        let environment = crate::environment::Environment::new();
+        environment.set(0, crate::value::Value::Number(3.5));
+        let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+        let context = crate::vm::current_context_or_default();
+        let mut registers = crate::register_file::RegisterFile::with_undefined(2);
+        let completion = crate::vm::execute_baseline_code_from(
+            code,
+            &baseline,
+            0,
+            &mut registers,
+            &context,
+            environment,
+        )
+        .expect("generic AddConst execution")
+        .0;
+        assert_eq!(
+            completion,
+            crate::completion::Completion::Return(crate::value::Value::Number(5.75))
+        );
+        let region = baseline.native_region_at(0).expect("region retained");
+        let region = region.borrow();
+        assert!(region.last_native_execution());
+        assert_eq!(region.binary_entry_count_for_test(), 1);
+        assert_eq!(region.load_local_entry_count_for_test(), 1);
+        assert_eq!(region.retired_operations(), 3);
+    });
+}
+
+#[test]
+fn generic_cfg_bridge_consumes_numeric_update_opcode_leaf() {
+    let instructions = vec![
+        crate::ir::Instruction::load_const(0, 0),
+        crate::ir::Instruction::load_const(2, 1),
+        crate::ir::Instruction::binary(crate::ir::Opcode::NumericAdd, 1, 0, 2),
+        crate::ir::Instruction::ret(1),
+    ];
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: instructions.into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 4)].into(),
+        constants: vec![super::ConstantPool::new(vec![
+            super::Constant::Number(2.0),
+            // NumericAdd is an update operation: its encoded RHS is not
+            // consulted. An undefined RHS proves the generic binary operand
+            // path does not accidentally impose a binary-number guard.
+            super::Constant::Undefined,
+        ])]
+        .into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 4]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 3,
+            frame_register_count: 3,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let range = super::CodeRange::new(super::CodeId(0), 0, 4).expect("numeric update range");
+    let code = store.code(range).expect("numeric update code");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let mut policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    policy.fused_regions = true;
+    let arena = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("numeric update arena"),
+    ));
+    assert!(super::generic_cfg_region_admission(&entries, &cfg, 0, policy, &arena).is_some());
+
+    crate::stencil_policy::with_policy_for_test(policy, || {
+        let baseline = super::BaselinePlan::compile_for_test(code, policy);
+        let environment = crate::environment::Environment::new();
+        let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+        let context = crate::vm::current_context_or_default();
+        let mut registers = crate::register_file::RegisterFile::with_undefined(3);
+        let completion = crate::vm::execute_baseline_code_from(
+            code,
+            &baseline,
+            0,
+            &mut registers,
+            &context,
+            environment,
+        )
+        .expect("generic NumericAdd execution")
+        .0;
+        assert_eq!(
+            completion,
+            crate::completion::Completion::Return(crate::value::Value::Number(3.0))
+        );
+        let region = baseline.native_region_at(0).expect("numeric update region");
+        let region = region.borrow();
+        assert!(region.last_native_execution());
+        assert_eq!(region.binary_entry_count_for_test(), 1);
+        assert_eq!(region.last_native_view_for_test().map(|view| view.key),
+            Some(crate::stencil_select::increment_region_key()));
+        assert_eq!(region.retired_operations(), 4);
+    });
+}
+
+#[test]
+fn generic_cfg_bridge_consumes_numeric_decrement_with_dead_rhs() {
+    let function = super::FunctionCode::from_ops(vec![
+        super::Op::Const {
+            dst: 0,
+            value: super::Constant::Number(2.0),
+        },
+        super::Op::Const {
+            dst: 2,
+            value: super::Constant::Undefined,
+        },
+        super::Op::Binary {
+            dst: 1,
+            operator: crate::ops::BinaryOp::NumericSubtract,
+            lhs: 0,
+            rhs: 2,
+        },
+        super::Op::Return { src: 1 },
+    ]);
+    let code = function.code().expect("numeric decrement code");
+    let mut policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    policy.fused_regions = true;
+    crate::stencil_policy::with_policy_for_test(policy, || {
+        let baseline = super::BaselinePlan::compile_for_test(code, policy);
+        let environment = crate::environment::Environment::new();
+        let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+        let mut registers = crate::register_file::RegisterFile::with_undefined(3);
+        let completion = crate::vm::execute_baseline_code_from(
+            code,
+            &baseline,
+            0,
+            &mut registers,
+            &crate::vm::current_context_or_default(),
+            environment,
+        )
+        .expect("generic NumericSubtract execution")
+        .0;
+        assert_eq!(
+            completion,
+            crate::completion::Completion::Return(crate::value::Value::Number(1.0))
+        );
+        let region = baseline
+            .native_region_at(0)
+            .expect("numeric decrement region");
+        let region = region.borrow();
+        assert!(region.last_native_execution());
+        assert_eq!(region.binary_entry_count_for_test(), 1);
+        assert_eq!(
+            region.last_native_view_for_test().map(|view| view.key),
+            Some(crate::stencil_select::decrement_region_key())
+        );
+    });
+}
+
+#[test]
+fn generic_cfg_bridge_consumes_generic_binary_numeric_decrement() {
+    let instructions = vec![
+        crate::ir::Instruction::load_const(0, 0),
+        crate::ir::Instruction::load_const(2, 1),
+        crate::ir::Instruction {
+            opcode: crate::ir::Opcode::Binary,
+            flags: crate::ir::compact_binary_id(crate::ops::BinaryOp::NumericSubtract),
+            a: 1,
+            b: 0,
+            c: 2,
+        },
+        crate::ir::Instruction::ret(1),
+    ];
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: instructions.into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 4)].into(),
+        constants: vec![super::ConstantPool::new(vec![
+            super::Constant::Number(2.0),
+            super::Constant::Undefined,
+        ])]
+        .into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 4]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 3,
+            frame_register_count: 3,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let range = super::CodeRange::new(super::CodeId(0), 0, 4).expect("generic binary range");
+    let code = store.code(range).expect("generic binary code");
+    let mut policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    policy.fused_regions = true;
+    crate::stencil_policy::with_policy_for_test(policy, || {
+        let baseline = super::BaselinePlan::compile_for_test(code, policy);
+        let environment = crate::environment::Environment::new();
+        let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+        let mut registers = crate::register_file::RegisterFile::with_undefined(3);
+        let completion = crate::vm::execute_baseline_code_from(
+            code,
+            &baseline,
+            0,
+            &mut registers,
+            &crate::vm::current_context_or_default(),
+            environment,
+        )
+        .expect("generic Binary NumericSubtract execution")
+        .0;
+        assert_eq!(
+            completion,
+            crate::completion::Completion::Return(crate::value::Value::Number(1.0))
+        );
+        let region = baseline
+            .native_region_at(0)
+            .expect("generic binary decrement region");
+        let region = region.borrow();
+        assert!(region.last_native_execution());
+        assert_eq!(region.binary_entry_count_for_test(), 1);
+        assert_eq!(
+            region.last_native_view_for_test().map(|view| view.key),
+            Some(crate::stencil_select::decrement_region_key())
+        );
+    });
+}
+
+#[test]
+fn generic_cfg_bridge_consumes_proven_local_move() {
+    let instructions = vec![
+        crate::ir::Instruction::move_local(2, 0, 1),
+        crate::ir::Instruction::ret(2),
+    ];
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: instructions.into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 2)].into(),
+        constants: vec![super::ConstantPool::empty()].into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 2]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 3,
+            frame_register_count: 3,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let range = super::CodeRange::new(super::CodeId(0), 0, 2).expect("local-move range");
+    let code = store.code(range).expect("local-move code");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let mut policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    policy.fused_regions = true;
+    let arena = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("local-move arena"),
+    ));
+    let operations = entries
+        .iter()
+        .map(|entry| entry.instruction.opcode)
+        .collect::<Vec<_>>();
+    assert!(
+        cfg.region_plan_with_terminal_exits(&entries, 0, &operations)
+            .is_some()
+    );
+    assert!(super::generic_bridge_candidate(entries[0].instruction));
+    assert!(super::generic_cfg_region_admission(&entries, &cfg, 0, policy, &arena).is_some());
+    assert!(
+        super::region_admission_with_code(code, &entries, &cfg, 0, policy, &arena).is_some()
+    );
+
+    crate::stencil_policy::with_policy_for_test(policy, || {
+        let baseline = super::BaselinePlan::compile_for_test(code, policy);
+        let environment = crate::environment::Environment::new();
+        environment.set(0, crate::value::Value::Number(17.0));
+        environment.set(1, crate::value::Value::Number(0.0));
+        let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+        let mut registers = crate::register_file::RegisterFile::with_undefined(3);
+        let completion = crate::vm::execute_baseline_code_from(
+            code,
+            &baseline,
+            0,
+            &mut registers,
+            &crate::vm::current_context_or_default(),
+            environment.clone(),
+        )
+        .expect("local-move execution")
+        .0;
+        assert_eq!(
+            completion,
+            crate::completion::Completion::Return(crate::value::Value::Number(17.0))
+        );
+        assert_eq!(environment.get_number(1), Some(17.0));
+        let region = baseline.native_region_at(0).expect("local-move region");
+        let region = region.borrow();
+        assert!(region.last_native_execution());
+        assert_eq!(region.move_entry_count_for_test(), 1);
+        assert_eq!(region.retired_operations(), 2);
+    });
+}
+
+#[test]
+fn generic_cfg_bridge_rejects_non_numeric_add_const_at_admission() {
+    let instructions = vec![
+        crate::ir::Instruction::add_const(0, 1, 0),
+        crate::ir::Instruction::ret(0),
+    ];
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: instructions.into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 2)].into(),
+        constants: vec![super::ConstantPool::new(vec![super::Constant::String(
+            "not numeric".into(),
+        )])]
+        .into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 2]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 2,
+            frame_register_count: 2,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let range = super::CodeRange::new(super::CodeId(0), 0, 2).expect("string AddConst range");
+    let code = store.code(range).expect("string AddConst code");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let arena = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("string AddConst arena"),
+    ));
+    assert!(
+        super::region_admission_with_code(code, &entries, &cfg, 0, policy, &arena).is_none(),
+        "non-numeric AddConst must not publish a generic bridge"
+    );
+    assert!(!super::generic_bridge_candidate_at(
+        code,
+        crate::ir::Instruction::load_const(0, 0),
+    ));
+}
+
+#[test]
+fn generic_bridge_constant_pool_guard_matches_tagged_word_contract() {
+    // `LoadConst` is a candidate only when its range-owned constant can be
+    // represented by the immutable tagged-word leaf.  Heap-owning strings
+    // and BigInts must remain canonical even when a later Return makes the
+    // surrounding bridge useful; primitive words are eligible.
+    let cases = [
+        (crate::ops::Constant::Number(1.5), true),
+        (crate::ops::Constant::Boolean(true), true),
+        (crate::ops::Constant::Null, true),
+        (crate::ops::Constant::Undefined, true),
+        (crate::ops::Constant::String("heap-owned".into()), false),
+        (crate::ops::Constant::BigInt("123".into()), false),
+    ];
+    for (constant, expected) in cases {
+        let executable = crate::machine::ExecutableCode::from_ops(vec![
+            crate::ops::Op::Const { dst: 0, value: constant },
+            crate::ops::Op::Return { src: 0 },
+        ]);
+        let code = executable.code();
+        let load = code.instruction(0).expect("constant lowering emits LoadConst");
+        assert_eq!(load.opcode, crate::ir::Opcode::LoadConst);
+        assert_eq!(
+            super::generic_bridge_candidate_at(code, load),
+            expected,
+            "LoadConst candidate must match its tagged-word representation"
+        );
+    }
+}
+
+#[test]
+fn generic_cfg_bridge_consumes_bitwise_leaf() {
+    let instructions = vec![
+        crate::ir::Instruction::load_local(0, 0),
+        crate::ir::Instruction::load_local(1, 1),
+        crate::ir::Instruction {
+            opcode: crate::ir::Opcode::BitwiseAnd,
+            flags: 0,
+            a: 2,
+            b: 0,
+            c: 1,
+        },
+        crate::ir::Instruction::ret(2),
+    ];
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: instructions.into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 4)].into(),
+        constants: vec![super::ConstantPool::new(Vec::new())].into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 4]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 3,
+            frame_register_count: 3,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let range = super::CodeRange::new(super::CodeId(0), 0, 4).expect("bitwise range");
+    let code = store.code(range).expect("bitwise code");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let mut policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    policy.fused_regions = true;
+    let arena = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("bitwise arena"),
+    ));
+    assert!(super::generic_cfg_region_admission(&entries, &cfg, 0, policy, &arena).is_some());
+
+    crate::stencil_policy::with_policy_for_test(policy, || {
+        let baseline = super::BaselinePlan::compile_for_test(code, policy);
+        let environment = crate::environment::Environment::new();
+        environment.set(0, crate::value::Value::Number(5.0));
+        environment.set(1, crate::value::Value::Number(3.0));
+        let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+        let context = crate::vm::current_context_or_default();
+        let mut registers = crate::register_file::RegisterFile::with_undefined(3);
+        let completion = crate::vm::execute_baseline_code_from(
+            code,
+            &baseline,
+            0,
+            &mut registers,
+            &context,
+            environment,
+        )
+        .expect("generic bitwise execution")
+        .0;
+        assert_eq!(
+            completion,
+            crate::completion::Completion::Return(crate::value::Value::Number(1.0))
+        );
+        let region = baseline.native_region_at(0).expect("bitwise region retained");
+        let region = region.borrow();
+        assert!(region.last_native_execution());
+        assert_eq!(region.binary_entry_count_for_test(), 1);
+        assert_eq!(region.load_local_entry_count_for_test(), 2);
+        assert_eq!(region.retired_operations(), 4);
+    });
+}
+
+#[test]
+fn generic_cfg_bridge_consumes_flagged_binary_arithmetic_leaf() {
+    let instructions = vec![
+        crate::ir::Instruction::load_local(0, 0),
+        crate::ir::Instruction::load_local(1, 1),
+        crate::ir::Instruction {
+            opcode: crate::ir::Opcode::Binary,
+            flags: crate::ir::compact_binary_id(crate::ops::BinaryOp::Add),
+            a: 2,
+            b: 0,
+            c: 1,
+        },
+        crate::ir::Instruction::ret(2),
+    ];
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: instructions.into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 4)].into(),
+        constants: vec![super::ConstantPool::new(Vec::new())].into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 4]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 3,
+            frame_register_count: 3,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let range = super::CodeRange::new(super::CodeId(0), 0, 4).expect("binary range");
+    let code = store.code(range).expect("binary code");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let mut policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    policy.fused_regions = true;
+    let arena = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("binary arena"),
+    ));
+    assert!(super::generic_bridge_candidate(entries[2].instruction));
+    assert!(super::generic_cfg_region_admission(&entries, &cfg, 0, policy, &arena).is_some());
+
+    crate::stencil_policy::with_policy_for_test(policy, || {
+        let baseline = super::BaselinePlan::compile_for_test(code, policy);
+        let environment = crate::environment::Environment::new();
+        environment.set(0, crate::value::Value::Number(2.0));
+        environment.set(1, crate::value::Value::Number(3.0));
+        let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+        let context = crate::vm::current_context_or_default();
+        let mut registers = crate::register_file::RegisterFile::with_undefined(3);
+        let completion = crate::vm::execute_baseline_code_from(
+            code,
+            &baseline,
+            0,
+            &mut registers,
+            &context,
+            environment,
+        )
+        .expect("generic binary execution")
+        .0;
+        assert_eq!(
+            completion,
+            crate::completion::Completion::Return(crate::value::Value::Number(5.0))
+        );
+        let region = baseline.native_region_at(0).expect("binary region retained");
+        let region = region.borrow();
+        assert!(region.last_native_execution());
+        assert_eq!(region.binary_entry_count_for_test(), 1);
+        assert_eq!(region.load_local_entry_count_for_test(), 2);
+        assert_eq!(region.retired_operations(), 4);
+    });
+}
+
+#[test]
+fn generic_cfg_bridge_consumes_flagged_binary_compare_branch() {
+    let instructions = vec![
+        crate::ir::Instruction::load_local(0, 0),
+        crate::ir::Instruction::load_local(1, 1),
+        crate::ir::Instruction {
+            opcode: crate::ir::Opcode::Binary,
+            flags: crate::ir::compact_binary_id(crate::ops::BinaryOp::LessThan),
+            a: 2,
+            b: 0,
+            c: 1,
+        },
+        crate::ir::Instruction::jump_if_false(2, 6),
+        crate::ir::Instruction::load_const(3, 0),
+        crate::ir::Instruction::ret(3),
+        crate::ir::Instruction::load_const(3, 1),
+        crate::ir::Instruction::ret(3),
+    ];
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: instructions.into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 8)].into(),
+        constants: vec![super::ConstantPool::new(vec![
+            super::Constant::Number(10.0),
+            super::Constant::Number(20.0),
+        ])]
+        .into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 8]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 4,
+            frame_register_count: 4,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let code = store
+        .code(super::CodeRange::new(super::CodeId(0), 0, 8).expect("compare branch range"))
+        .expect("compare branch code");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let mut policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    policy.fused_regions = true;
+    let arena = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("compare branch arena"),
+    ));
+    assert!(super::generic_cfg_region_admission(&entries, &cfg, 0, policy, &arena).is_some());
+
+    crate::stencil_policy::with_policy_for_test(policy, || {
+        for (left, right, expected) in [(1.0, 2.0, 10.0), (3.0, 2.0, 20.0)] {
+            let baseline = super::BaselinePlan::compile_for_test(code, policy);
+            let environment = crate::environment::Environment::new();
+            environment.set(0, crate::value::Value::Number(left));
+            environment.set(1, crate::value::Value::Number(right));
+            let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+            let mut registers = crate::register_file::RegisterFile::with_undefined(4);
+            let completion = crate::vm::execute_baseline_code_from(
+                code,
+                &baseline,
+                0,
+                &mut registers,
+                &crate::vm::current_context_or_default(),
+                environment,
+            )
+            .expect("generic compare branch execution")
+            .0;
+            assert_eq!(
+                completion,
+                crate::completion::Completion::Return(crate::value::Value::Number(expected))
+            );
+            let region = baseline.native_region_at(0).expect("compare branch region retained");
+            let region = region.borrow();
+            assert!(region.last_native_execution());
+            assert_eq!(region.binary_entry_count_for_test(), 1);
+            assert!(region.branch_entry_count_for_test() >= 1);
+            assert_eq!(region.retired_operations(), 6);
+        }
+    });
+}
+
+#[test]
+fn generic_cfg_bridge_consumes_tagged_strict_equality_leaf() {
+    let instructions = vec![
+        crate::ir::Instruction::load_local(0, 0),
+        crate::ir::Instruction::load_local(1, 1),
+        crate::ir::Instruction {
+            opcode: crate::ir::Opcode::StrictEqual,
+            flags: 0,
+            a: 2,
+            b: 0,
+            c: 1,
+        },
+        crate::ir::Instruction::ret(2),
+    ];
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: instructions.into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 4)].into(),
+        constants: vec![super::ConstantPool::new(Vec::new())].into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 4]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 3,
+            frame_register_count: 3,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let range = super::CodeRange::new(super::CodeId(0), 0, 4).expect("strict equality range");
+    let code = store.code(range).expect("strict equality code");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let mut policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    policy.fused_regions = true;
+    let arena = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("strict equality arena"),
+    ));
+    assert!(super::generic_cfg_region_admission(&entries, &cfg, 0, policy, &arena).is_some());
+
+    crate::stencil_policy::with_policy_for_test(policy, || {
+        let baseline = super::BaselinePlan::compile_for_test(code, policy);
+        let environment = crate::environment::Environment::new();
+        environment.set(0, crate::value::Value::Boolean(true));
+        environment.set(1, crate::value::Value::Boolean(true));
+        let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+        let context = crate::vm::current_context_or_default();
+        let mut registers = crate::register_file::RegisterFile::with_undefined(3);
+        let completion = crate::vm::execute_baseline_code_from(
+            code,
+            &baseline,
+            0,
+            &mut registers,
+            &context,
+            environment,
+        )
+        .expect("generic strict equality execution")
+        .0;
+        assert_eq!(
+            completion,
+            crate::completion::Completion::Return(crate::value::Value::Boolean(true))
+        );
+        let region = baseline
+            .native_region_at(0)
+            .expect("strict equality region retained");
+        let region = region.borrow();
+        assert!(region.last_native_execution());
+        assert_eq!(region.binary_entry_count_for_test(), 1);
+        assert_eq!(region.load_local_entry_count_for_test(), 2);
+        assert_eq!(region.retired_operations(), 4);
+    });
+}
+
+#[test]
+fn generic_cfg_bridge_consumes_update_local_leaf() {
+    let instructions = vec![
+        crate::ir::Instruction::load_local(0, 0),
+        crate::ir::Instruction::update_local(1, 2, 0, false),
+        crate::ir::Instruction::ret(2),
+    ];
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: instructions.into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 3)].into(),
+        constants: vec![super::ConstantPool::empty()].into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 3]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 3,
+            frame_register_count: 3,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let range = super::CodeRange::new(super::CodeId(0), 0, 3).expect("update range");
+    let code = store.code(range).expect("update code");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let mut policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    policy.fused_regions = true;
+    let arena = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("update arena"),
+    ));
+    assert!(super::generic_cfg_region_admission(&entries, &cfg, 0, policy, &arena).is_some());
+
+    crate::stencil_policy::with_policy_for_test(policy, || {
+        let baseline = super::BaselinePlan::compile_for_test(code, policy);
+        let region = baseline.native_region_at(0).expect("generic update region");
+        assert_eq!(
+            region.borrow().key_for_test(),
+            crate::stencil_select::dispatch_region_key()
+        );
+        let environment = crate::environment::Environment::new();
+        environment.set(0, crate::value::Value::Number(3.0));
+        let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+        let context = crate::vm::current_context_or_default();
+        let mut registers = crate::register_file::RegisterFile::with_undefined(3);
+        let completion = crate::vm::execute_baseline_code_from(
+            code,
+            &baseline,
+            0,
+            &mut registers,
+            &context,
+            environment.clone(),
+        )
+        .expect("generic update execution")
+        .0;
+        assert_eq!(
+            completion,
+            crate::completion::Completion::Return(crate::value::Value::Number(4.0))
+        );
+        let region = baseline.native_region_at(0).expect("update region retained");
+        let region = region.borrow();
+        assert!(region.last_native_execution());
+        assert_eq!(region.update_entry_count_for_test(), 1);
+        assert_eq!(region.load_local_entry_count_for_test(), 1);
+        assert_eq!(region.retired_operations(), 3);
+        assert_eq!(environment.get(0), crate::value::Value::Number(4.0));
+    });
+}
+
+#[test]
+fn control_only_bridge_consumes_numeric_truthiness_leaf_when_enabled() {
+    let executable = super::ExecutableCode::from_ops(vec![
+        super::Op::Branch {
+            condition: 0,
+            then_ops: super::FunctionCode::pending(vec![super::Op::Move { dst: 3, src: 1 }]),
+            else_ops: super::FunctionCode::pending(vec![super::Op::Move { dst: 3, src: 2 }]),
+        },
+        super::Op::Return { src: 3 },
+    ]);
+    let code = executable.code();
+    let key = crate::stencil_select::branch_glue_region_key();
+    let record = crate::stencil_select::select_region(key).expect("branch row");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let control = cfg
+        .region_plan(&entries, 0, record.operations)
+        .expect("verified branch CFG");
+    let context = crate::vm::current_context_or_default();
+    crate::stencil_policy::with_policy_for_test(
+        crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        || {
+            for (condition, expected) in [(0.0, 22.0), (3.0, 11.0)] {
+                let arena = std::rc::Rc::new(std::cell::RefCell::new(
+                    crate::stencil_arena::SharedStencilSlab::new(4096).expect("region arena"),
+                ));
+                let mut region = super::NativeRegionPlan::new_inner(
+                    key,
+                    true,
+                    arena,
+                    Some(control.clone()),
+                )
+                .expect("branch region plan");
+                let mut registers = crate::register_file::RegisterFile::from_values(vec![
+                    crate::value::Value::Number(condition),
+                    crate::value::Value::Number(11.0),
+                    crate::value::Value::Number(22.0),
+                    crate::value::Value::Undefined,
+                ]);
+                let transition = region
+                    .execute(code, 0, &mut registers, &context, None)
+                    .expect("branch region execution");
+                assert_eq!(
+                    transition.completion,
+                    Some(crate::completion::Completion::Return(
+                        crate::value::Value::Number(expected),
+                    ))
+                );
+                assert!(region.last_native_execution());
+                assert_eq!(region.truthiness_entry_count_for_test(), 1);
+            }
+        },
+    );
+}
+
+#[test]
+fn bridge_region_commits_proven_store_local_word_before_return() {
+    let executable = super::ExecutableCode::from_ops(vec![
+        super::Op::LoadLocal { dst: 1, slot: 0 },
+        super::Op::StoreLocal { slot: 1, src: 1 },
+        super::Op::Return { src: 1 },
+    ]);
+    let code = executable.code();
+    let key = crate::stencil_select::store_glue_region_key();
+    let record = crate::stencil_select::select_region(key).expect("store row");
+    assert_eq!(code.len(), record.operations.len());
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let control = cfg
+        .region_plan(&entries, 0, record.operations)
+        .expect("verified store CFG");
+    let context = crate::vm::current_context_or_default();
+    let (transition, native, loads, stores, retired, stored_value) =
+        crate::stencil_policy::with_policy_for_test(
+        crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        || {
+            let environment = crate::environment::Environment::new();
+            environment.set(0, crate::value::Value::Number(41.0));
+            environment.set(1, crate::value::Value::Number(0.0));
+            let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+            let arena = std::rc::Rc::new(std::cell::RefCell::new(
+                crate::stencil_arena::SharedStencilSlab::new(4096).expect("region arena"),
+            ));
+            let mut region = super::NativeRegionPlan::new_inner(
+                key,
+                true,
+                arena,
+                Some(control.clone()),
+            )
+            .expect("store region plan");
+            let mut registers = crate::register_file::RegisterFile::with_undefined(4);
+            let transition = region
+                .execute(code, 0, &mut registers, &context, Some(&environment))
+                .expect("store region execution");
+            (
+                transition,
+                region.last_native_execution(),
+                region.load_local_entry_count_for_test(),
+                region.store_local_entry_count_for_test(),
+                region.retired_operations(),
+                environment.get(1),
+            )
+        },
+    );
+    assert_eq!(
+        transition.completion,
+        Some(crate::completion::Completion::Return(
+            crate::value::Value::Number(41.0),
+        ))
+    );
+    assert_eq!(native, true);
+    assert_eq!(loads, 1);
+    assert_eq!(stores, 1);
+    assert_eq!(retired, 3);
+    assert_eq!(stored_value, crate::value::Value::Number(41.0));
+}
+
+#[test]
+fn bridge_region_consumes_generated_increment_leaf() {
+    let key = crate::stencil_select::inc_glue_region_key();
+    let record = crate::stencil_select::select_region(key).expect("increment row");
+    let context = crate::vm::current_context_or_default();
+    for (decrement, expected) in [(false, 42.0), (true, 40.0)] {
+        let mut arena = super::CodeArena::new();
+        let range = arena.append(vec![
+            super::Op::Move { dst: 2, src: 1 },
+            super::Op::Return { src: 2 },
+        ]);
+        arena.instructions[0] = crate::ir::Instruction::inc_i(2, 1, decrement);
+        let store = arena.freeze();
+        let code = store.code(range).expect("increment code range");
+        assert_eq!(code.len(), record.operations.len());
+        let entries = super::baseline_entries(code);
+        let operand_windows = (0..entries.len())
+            .map(|pc| code.operand_window_at(pc))
+            .collect::<Vec<_>>();
+        let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+        let control = cfg
+            .region_plan(&entries, 0, record.operations)
+            .expect("verified increment CFG");
+        let (transition, native, binaries, view_key, retired) =
+            crate::stencil_policy::with_policy_for_test(
+                crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+                || {
+                    let environment = crate::environment::Environment::new();
+                    environment.set(0, crate::value::Value::Number(41.0));
+                    let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+                    let arena = std::rc::Rc::new(std::cell::RefCell::new(
+                        crate::stencil_arena::SharedStencilSlab::new(4096)
+                            .expect("region arena"),
+                    ));
+                    let mut region = super::NativeRegionPlan::new_inner(
+                        key,
+                        true,
+                        arena,
+                        Some(control.clone()),
+                    )
+                    .expect("increment region plan");
+                    let mut registers = crate::register_file::RegisterFile::with_undefined(4);
+                    registers.write_number(1, 41.0);
+                    let transition = region
+                        .execute(code, 0, &mut registers, &context, Some(&environment))
+                        .expect("increment region execution");
+                    (
+                        transition,
+                        region.last_native_execution(),
+                        region.binary_entry_count_for_test(),
+                        region.last_native_view_for_test().map(|view| view.key),
+                        region.retired_operations(),
+                    )
+                },
+            );
+        assert_eq!(
+            transition.completion,
+            Some(crate::completion::Completion::Return(
+                crate::value::Value::Number(expected),
+            ))
+        );
+        assert!(native);
+        assert_eq!(binaries, 1);
+        assert_eq!(
+            view_key,
+            Some(if decrement {
+                crate::stencil_select::decrement_region_key()
+            } else {
+                crate::stencil_select::increment_region_key()
+            })
+        );
+        assert_eq!(retired, 2);
+    }
+}
+
+#[test]
+fn bridge_region_consumes_generated_numeric_unary_leaf() {
+    let key = crate::stencil_select::unary_glue_region_key();
+    let record = crate::stencil_select::select_region(key).expect("unary row");
+    let context = crate::vm::current_context_or_default();
+    for (operator, input, expected) in [
+        (crate::ops::UnaryOp::Plus, -0.0, -0.0),
+        (crate::ops::UnaryOp::Minus, 3.25, -3.25),
+        (crate::ops::UnaryOp::BitwiseNot, 3.75, -4.0),
+    ] {
+        let mut arena = super::CodeArena::new();
+        let range = arena.append(vec![
+            super::Op::Move { dst: 0, src: 1 },
+            super::Op::Return { src: 0 },
+        ]);
+        arena.instructions[0] = crate::ir::Instruction::unary_operator(0, operator, 1);
+        let store = arena.freeze();
+        let code = store.code(range).expect("unary code range");
+        assert_eq!(code.len(), record.operations.len());
+        let entries = super::baseline_entries(code);
+        let operand_windows = (0..entries.len())
+            .map(|pc| code.operand_window_at(pc))
+            .collect::<Vec<_>>();
+        let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+        let control = cfg
+            .region_plan(&entries, 0, record.operations)
+            .expect("verified unary CFG");
+        let (transition, native, entries, retired) = crate::stencil_policy::with_policy_for_test(
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+            || {
+                let arena = std::rc::Rc::new(std::cell::RefCell::new(
+                    crate::stencil_arena::SharedStencilSlab::new(4096).expect("region arena"),
+                ));
+                let mut region = super::NativeRegionPlan::new_inner(
+                    key,
+                    true,
+                    arena,
+                    Some(control.clone()),
+                )
+                .expect("unary region plan");
+                let mut registers = crate::register_file::RegisterFile::with_undefined(2);
+                registers.write_number(1, input);
+                let transition = region
+                    .execute(code, 0, &mut registers, &context, None)
+                    .expect("unary region execution");
+                (
+                    transition,
+                    region.last_native_execution(),
+                    region.unary_entry_count_for_test(),
+                    region.retired_operations(),
+                )
+            },
+        );
+        assert_eq!(
+            transition.completion,
+            Some(crate::completion::Completion::Return(
+                crate::value::Value::Number(expected),
+            ))
+        );
+        assert!(native);
+        assert_eq!(entries, 1);
+        assert_eq!(retired, 2);
+    }
+}
+
+#[test]
+fn bridge_region_unary_plus_falls_back_for_non_number() {
+    let key = crate::stencil_select::unary_glue_region_key();
+    let mut arena = super::CodeArena::new();
+    let range = arena.append(vec![
+        super::Op::Move { dst: 0, src: 1 },
+        super::Op::Return { src: 0 },
+    ]);
+    arena.instructions[0] = crate::ir::Instruction::unary_operator(
+        0,
+        crate::ops::UnaryOp::Plus,
+        1,
+    );
+    let store = arena.freeze();
+    let code = store.code(range).expect("unary plus code range");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let control = cfg
+        .region_plan(&entries, 0, crate::stencil_select::select_region(key).unwrap().operations)
+        .expect("verified unary plus CFG");
+    let (transition, native, unary_entries) = crate::stencil_policy::with_policy_for_test(
+        crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        || {
+            let arena = std::rc::Rc::new(std::cell::RefCell::new(
+                crate::stencil_arena::SharedStencilSlab::new(4096).expect("region arena"),
+            ));
+            let mut region = super::NativeRegionPlan::new_inner(key, true, arena, Some(control))
+                .expect("unary plus region plan");
+            let mut registers = crate::register_file::RegisterFile::from_values(vec![
+                crate::value::Value::Undefined,
+                crate::value::Value::String("4".into()),
+            ]);
+            let transition = region
+                .execute(code, 0, &mut registers, &crate::vm::current_context_or_default(), None)
+                .expect("unary plus fallback");
+            (
+                transition,
+                region.last_native_execution(),
+                region.unary_entry_count_for_test(),
+            )
+        },
+    );
+    assert_eq!(
+        transition.completion,
+        Some(crate::completion::Completion::Return(
+            crate::value::Value::Number(4.0),
+        ))
+    );
+    assert!(!native);
+    assert_eq!(unary_entries, 0);
+}
+
+#[test]
+fn bridge_region_consumes_generated_void_constant_leaf() {
+    let key = crate::stencil_select::unary_glue_region_key();
+    let record = crate::stencil_select::select_region(key).expect("unary row");
+    let mut arena = super::CodeArena::new();
+    let range = arena.append(vec![
+        super::Op::Move { dst: 0, src: 1 },
+        super::Op::Return { src: 0 },
+    ]);
+    arena.instructions[0] = crate::ir::Instruction::unary_operator(
+        0,
+        crate::ops::UnaryOp::Void,
+        1,
+    );
+    let store = arena.freeze();
+    let code = store.code(range).expect("void code range");
+    assert_eq!(code.len(), record.operations.len());
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let control = cfg
+        .region_plan(&entries, 0, record.operations)
+        .expect("verified void CFG");
+    let (transition, native, constants, retired) = crate::stencil_policy::with_policy_for_test(
+        crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        || {
+            let arena = std::rc::Rc::new(std::cell::RefCell::new(
+                crate::stencil_arena::SharedStencilSlab::new(4096).expect("region arena"),
+            ));
+            let mut region = super::NativeRegionPlan::new_inner(
+                key,
+                true,
+                arena,
+                Some(control),
+            )
+            .expect("void region plan");
+            let mut registers = crate::register_file::RegisterFile::from_values(vec![
+                crate::value::Value::Undefined,
+                crate::value::Value::Number(3.5),
+            ]);
+            let transition = region
+                .execute(code, 0, &mut registers, &crate::vm::current_context_or_default(), None)
+                .expect("void region execution");
+            (
+                transition,
+                region.last_native_execution(),
+                region.constant_entry_count_for_test(),
+                region.retired_operations(),
+            )
+        },
+    );
+    assert_eq!(
+        transition.completion,
+        Some(crate::completion::Completion::Return(
+            crate::value::Value::Undefined,
+        ))
+    );
+    assert!(native);
+    assert_eq!(constants, 1);
+    assert_eq!(retired, 2);
+}
+
+#[test]
+fn bridge_region_consumes_generated_delete_constant_leaf() {
+    let key = crate::stencil_select::unary_glue_region_key();
+    let mut arena = super::CodeArena::new();
+    let range = arena.append(vec![
+        super::Op::Move { dst: 0, src: 1 },
+        super::Op::Return { src: 0 },
+    ]);
+    arena.instructions[0] = crate::ir::Instruction::unary_operator(
+        0,
+        crate::ops::UnaryOp::Delete,
+        1,
+    );
+    let store = arena.freeze();
+    let code = store.code(range).expect("delete code range");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let operations = crate::stencil_select::select_region(key).unwrap().operations;
+    let control = cfg
+        .region_plan(&entries, 0, operations)
+        .expect("verified delete CFG");
+    let (transition, native, constants) = crate::stencil_policy::with_policy_for_test(
+        crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        || {
+            let arena = std::rc::Rc::new(std::cell::RefCell::new(
+                crate::stencil_arena::SharedStencilSlab::new(4096).expect("region arena"),
+            ));
+            let mut region = super::NativeRegionPlan::new_inner(key, true, arena, Some(control))
+                .expect("delete region plan");
+            let mut registers = crate::register_file::RegisterFile::from_values(vec![
+                crate::value::Value::Undefined,
+                crate::value::Value::Null,
+            ]);
+            let transition = region
+                .execute(code, 0, &mut registers, &crate::vm::current_context_or_default(), None)
+                .expect("delete region execution");
+            (
+                transition,
+                region.last_native_execution(),
+                region.constant_entry_count_for_test(),
+            )
+        },
+    );
+    assert_eq!(
+        transition.completion,
+        Some(crate::completion::Completion::Return(
+            crate::value::Value::Boolean(true),
+        ))
+    );
+    assert!(native);
+    assert_eq!(constants, 1);
+}
+
+#[test]
+fn bridge_region_consumes_generated_nullish_word_leaf() {
+    let key = crate::stencil_select::unary_glue_region_key();
+    let record = crate::stencil_select::select_region(key).expect("unary row");
+    let context = crate::vm::current_context_or_default();
+    for (input, expected) in [
+        (crate::value::Value::Null, true),
+        (crate::value::Value::Undefined, true),
+        (crate::value::Value::Number(0.0), false),
+    ] {
+        let mut arena = super::CodeArena::new();
+        let range = arena.append(vec![
+            super::Op::Move { dst: 0, src: 1 },
+            super::Op::Return { src: 0 },
+        ]);
+        arena.instructions[0] = crate::ir::Instruction::unary_operator(
+            0,
+            crate::ops::UnaryOp::IsNullish,
+            1,
+        );
+        let store = arena.freeze();
+        let code = store.code(range).expect("nullish code range");
+        assert_eq!(code.len(), record.operations.len());
+        let entries = super::baseline_entries(code);
+        let operand_windows = (0..entries.len())
+            .map(|pc| code.operand_window_at(pc))
+            .collect::<Vec<_>>();
+        let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+        let control = cfg
+            .region_plan(&entries, 0, record.operations)
+            .expect("verified nullish CFG");
+        let (transition, native, entries, retired) = crate::stencil_policy::with_policy_for_test(
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+            || {
+                let arena = std::rc::Rc::new(std::cell::RefCell::new(
+                    crate::stencil_arena::SharedStencilSlab::new(4096).expect("region arena"),
+                ));
+                let mut region = super::NativeRegionPlan::new_inner(
+                    key,
+                    true,
+                    arena,
+                    Some(control.clone()),
+                )
+                .expect("nullish region plan");
+                let mut registers = crate::register_file::RegisterFile::from_values(vec![
+                    crate::value::Value::Undefined,
+                    input,
+                ]);
+                let transition = region
+                    .execute(code, 0, &mut registers, &context, None)
+                    .expect("nullish region execution");
+                (
+                    transition,
+                    region.last_native_execution(),
+                    region.nullish_entry_count_for_test(),
+                    region.retired_operations(),
+                )
+            },
+        );
+        assert_eq!(
+            transition.completion,
+            Some(crate::completion::Completion::Return(
+                crate::value::Value::Boolean(expected),
+            ))
+        );
+        assert!(native);
+        assert_eq!(entries, 1);
+        assert_eq!(retired, 2);
+    }
+}
+
+#[test]
+fn bridge_region_consumes_checked_local_word_pair_after_guards() {
+    let executable = super::ExecutableCode::from_ops(vec![
+        super::Op::CheckInitialized {
+            slot: 0,
+            name: "source".into(),
+        },
+        super::Op::LoadLocal { dst: 1, slot: 0 },
+        super::Op::CheckInitialized {
+            slot: 1,
+            name: "target".into(),
+        },
+        super::Op::StoreLocal { slot: 1, src: 1 },
+        super::Op::Return { src: 1 },
+    ]);
+    let code = executable.code();
+    let key = crate::stencil_select::checked_store_glue_region_key();
+    let record = crate::stencil_select::select_region(key).expect("checked store row");
+    assert_eq!(code.len(), record.operations.len());
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let control = cfg
+        .region_plan(&entries, 0, record.operations)
+        .expect("verified checked store CFG");
+    let context = crate::vm::current_context_or_default();
+    let (transition, native, loads, stores, retired, stored_value) =
+        crate::stencil_policy::with_policy_for_test(
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+            || {
+                let environment = crate::environment::Environment::new();
+                environment.set(0, crate::value::Value::Number(41.0));
+                environment.set(1, crate::value::Value::Number(0.0));
+                let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+                let arena = std::rc::Rc::new(std::cell::RefCell::new(
+                    crate::stencil_arena::SharedStencilSlab::new(4096).expect("region arena"),
+                ));
+                let mut region = super::NativeRegionPlan::new_inner(
+                    key,
+                    true,
+                    arena,
+                    Some(control.clone()),
+                )
+                .expect("checked store region plan");
+                let mut registers = crate::register_file::RegisterFile::with_undefined(4);
+                let transition = region
+                    .execute(code, 0, &mut registers, &context, Some(&environment))
+                    .expect("checked store region execution");
+                (
+                    transition,
+                    region.last_native_execution(),
+                    region.load_local_entry_count_for_test(),
+                    region.store_local_entry_count_for_test(),
+                    region.retired_operations(),
+                    environment.get(1),
+                )
+            },
+        );
+    assert_eq!(
+        transition.completion,
+        Some(crate::completion::Completion::Return(
+            crate::value::Value::Number(41.0),
+        ))
+    );
+    assert!(native);
+    assert_eq!(loads, 1);
+    assert_eq!(stores, 1);
+    assert_eq!(retired, 3);
+    assert_eq!(stored_value, crate::value::Value::Number(41.0));
+}
+
+#[test]
+fn bridge_region_consumes_proven_parameter_word_load() {
+    let executable = super::ExecutableCode::from_ops(vec![
+        super::Op::LoadParameter { dst: 1, slot: 0 },
+        super::Op::Return { src: 1 },
+    ]);
+    let code = executable.code();
+    let key = crate::stencil_select::parameter_glue_region_key();
+    let record = crate::stencil_select::select_region(key).expect("parameter row");
+    assert_eq!(code.len(), record.operations.len());
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let control = cfg
+        .region_plan(&entries, 0, record.operations)
+        .expect("verified parameter CFG");
+    let context = crate::vm::current_context_or_default();
+    let (transition, native, loads, retired) = crate::stencil_policy::with_policy_for_test(
+        crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        || {
+            let environment = crate::environment::Environment::new();
+            environment.set(0, crate::value::Value::Number(17.5));
+            let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+            let arena = std::rc::Rc::new(std::cell::RefCell::new(
+                crate::stencil_arena::SharedStencilSlab::new(4096).expect("region arena"),
+            ));
+            let mut region = super::NativeRegionPlan::new_inner(
+                key,
+                true,
+                arena,
+                Some(control.clone()),
+            )
+            .expect("parameter region plan");
+            let mut registers = crate::register_file::RegisterFile::with_undefined(4);
+            let transition = region
+                .execute(code, 0, &mut registers, &context, Some(&environment))
+                .expect("parameter region execution");
+            (
+                transition,
+                region.last_native_execution(),
+                region.load_local_entry_count_for_test(),
+                region.retired_operations(),
+            )
+        },
+    );
+    assert_eq!(
+        transition.completion,
+        Some(crate::completion::Completion::Return(
+            crate::value::Value::Number(17.5),
+        ))
+    );
+    assert!(native);
+    assert_eq!(loads, 1);
+    assert_eq!(retired, 2);
+}
+
+#[test]
+fn loop_body_bridge_consumes_word_leaves_around_canonical_update() {
+    let instructions = vec![
+        crate::ir::Instruction::load_local_checked(1, 0),
+        crate::ir::Instruction::load_local_checked(2, 1),
+        crate::ir::Instruction::binary(crate::ir::Opcode::Add, 3, 1, 2),
+        crate::ir::Instruction::store_local(3, 3),
+        crate::ir::Instruction::move_(4, 3),
+        crate::ir::Instruction::update_local(5, 6, 7, false),
+        crate::ir::Instruction::ret(4),
+    ];
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: instructions.into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 7)].into(),
+        constants: vec![super::ConstantPool::empty()].into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 7]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 8,
+            frame_register_count: 8,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let range = super::CodeRange::new(super::CodeId(0), 0, 7).expect("loop body range");
+    let code = store.code(range).expect("loop body code");
+    let key = crate::stencil_select::loop_body_region_key();
+    let record = crate::stencil_select::select_region(key).expect("loop body row");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let control = cfg
+        .region_plan(&entries, 0, record.operations)
+        .expect("verified loop body CFG");
+    let context = crate::vm::current_context_or_default();
+    let (transition, native, loads, stores, moves, updates, retired, stored, updated) =
+        crate::stencil_policy::with_policy_for_test(
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+            || {
+                let environment = crate::environment::Environment::new();
+                environment.set(0, crate::value::Value::Number(2.0));
+                environment.set(1, crate::value::Value::Number(3.0));
+                environment.set(3, crate::value::Value::Number(0.0));
+                environment.set(7, crate::value::Value::Number(10.0));
+                let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+                let arena = std::rc::Rc::new(std::cell::RefCell::new(
+                    crate::stencil_arena::SharedStencilSlab::new(4096).expect("region arena"),
+                ));
+                let mut region = super::NativeRegionPlan::new_inner(
+                    key,
+                    true,
+                    arena,
+                    Some(control.clone()),
+                )
+                .expect("loop body region plan");
+                let mut registers = crate::register_file::RegisterFile::with_undefined(8);
+                let transition = region
+                    .execute(code, 0, &mut registers, &context, Some(&environment))
+                    .expect("loop body region execution");
+                (
+                    transition,
+                    region.last_native_execution(),
+                    region.load_local_entry_count_for_test(),
+                    region.store_local_entry_count_for_test(),
+                    region.move_entry_count_for_test(),
+                    region.update_entry_count_for_test(),
+                    region.retired_operations(),
+                    environment.get(3),
+                    environment.get(7),
+                )
+            },
+        );
+    assert_eq!(
+        transition.completion,
+        Some(crate::completion::Completion::Return(
+            crate::value::Value::Number(5.0),
+        ))
+    );
+    assert!(native);
+    assert_eq!(loads, 2);
+    assert_eq!(stores, 1);
+    assert_eq!(moves, 1);
+    assert_eq!(updates, 1);
+    assert_eq!(retired, 7);
+    assert_eq!(stored, crate::value::Value::Number(5.0));
+    assert_eq!(updated, crate::value::Value::Number(11.0));
+}
+
+#[test]
+fn update_return_bridge_uses_inc_leaf_only_for_proven_direct_numeric_slots() {
+    let key = crate::stencil_select::update_return_region_key();
+    let record = crate::stencil_select::select_region(key).expect("update-return row");
+    let context = crate::vm::current_context_or_default();
+    for (decrement, expected_updated, expected_native, expected_entries) in
+        [(false, 42.0, true, 1), (true, 40.0, true, 1)]
+    {
+        let store = std::rc::Rc::new(super::CodeStore {
+            instructions: vec![
+                crate::ir::Instruction::update_local(0, 1, 2, decrement),
+                crate::ir::Instruction::ret(0),
+            ]
+            .into(),
+            cold: Vec::<super::Op>::new().into(),
+            ranges: vec![(0, 2)].into(),
+            constants: vec![super::ConstantPool::empty()].into(),
+            metadata: vec![vec![super::InstructionMeta::empty(); 2]].into(),
+            layouts: vec![super::FunctionLayout {
+                register_count: 3,
+                frame_register_count: 3,
+                parameter_end: None,
+            }]
+            .into(),
+            quickening_sites: vec![
+                Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                    .into_boxed_slice(),
+            ]
+            .into(),
+            operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+            catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+        });
+        let range = super::CodeRange::new(super::CodeId(0), 0, 2).expect("update-return range");
+        let code = store.code(range).expect("update-return code");
+        let entries = super::baseline_entries(code);
+        let operand_windows = (0..entries.len())
+            .map(|pc| code.operand_window_at(pc))
+            .collect::<Vec<_>>();
+        let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+        let control = cfg
+            .region_plan(&entries, 0, record.operations)
+            .expect("verified update-return CFG");
+        crate::stencil_policy::with_policy_for_test(
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+            || {
+                let environment = crate::environment::Environment::new();
+                environment.set(2, crate::value::Value::Number(41.0));
+                let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+                let arena = std::rc::Rc::new(std::cell::RefCell::new(
+                    crate::stencil_arena::SharedStencilSlab::new(4096).expect("region arena"),
+                ));
+                let mut region = super::NativeRegionPlan::new_inner(
+                    key,
+                    true,
+                    arena,
+                    Some(control.clone()),
+                )
+                .expect("update-return region plan");
+                let mut registers = crate::register_file::RegisterFile::with_undefined(3);
+                let transition = region
+                    .execute(code, 0, &mut registers, &context, Some(&environment))
+                    .expect("update-return region execution");
+                assert_eq!(
+                    transition.completion,
+                    Some(crate::completion::Completion::Return(
+                        crate::value::Value::Number(41.0),
+                    ))
+                );
+                assert_eq!(region.last_native_execution(), expected_native);
+                assert_eq!(region.update_entry_count_for_test(), expected_entries);
+                assert_eq!(environment.get(2), crate::value::Value::Number(expected_updated));
+                assert_eq!(registers.read_number(1), Some(expected_updated));
+            },
+        );
+    }
+
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: vec![
+            crate::ir::Instruction::update_local(0, 1, 2, false),
+            crate::ir::Instruction::ret(0),
+        ]
+        .into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 2)].into(),
+        constants: vec![super::ConstantPool::empty()].into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 2]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 3,
+            frame_register_count: 3,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let range = super::CodeRange::new(super::CodeId(0), 0, 2).expect("immutable range");
+    let code = store.code(range).expect("immutable code");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let control = cfg
+        .region_plan(&entries, 0, record.operations)
+        .expect("verified immutable CFG");
+    crate::stencil_policy::with_policy_for_test(
+        crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        || {
+            let environment = crate::environment::Environment::new();
+            environment.set(2, crate::value::Value::Number(41.0));
+            environment.mark_immutable_slot(2);
+            let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+            let arena = std::rc::Rc::new(std::cell::RefCell::new(
+                crate::stencil_arena::SharedStencilSlab::new(4096).expect("region arena"),
+            ));
+            let mut region = super::NativeRegionPlan::new_inner(
+                key,
+                true,
+                arena,
+                Some(control),
+            )
+            .expect("immutable update-return region plan");
+            let mut registers = crate::register_file::RegisterFile::with_undefined(3);
+            assert!(region
+                .execute(code, 0, &mut registers, &context, Some(&environment))
+                .is_err());
+            assert!(!region.last_native_execution());
+            assert_eq!(region.update_entry_count_for_test(), 0);
+            assert_eq!(environment.get(2), crate::value::Value::Number(41.0));
+        },
+    );
+}
+
+#[test]
+fn counted_bridge_resides_through_verified_backedge_with_physical_control() {
+    let instructions = vec![
+        crate::ir::Instruction::load_const(0, 0),
+        crate::ir::Instruction::load_const(1, 1),
+        crate::ir::Instruction::binary(crate::ir::Opcode::LessThan, 2, 0, 1),
+        crate::ir::Instruction::jump_if_false(2, 6),
+        crate::ir::Instruction::inc_i(0, 0, false),
+        crate::ir::Instruction::jump(2),
+        crate::ir::Instruction::ret(0),
+    ];
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: instructions.into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 7)].into(),
+        constants: vec![super::ConstantPool::new(vec![
+            super::Constant::Number(0.0),
+            super::Constant::Number(3.0),
+        ])]
+        .into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 7]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 3,
+            frame_register_count: 3,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let range = super::CodeRange::new(super::CodeId(0), 0, 7).expect("counted range");
+    let code = store.code(range).expect("counted code");
+    let key = crate::stencil_select::counted_glue_region_key();
+    let record = crate::stencil_select::select_region(key).expect("counted row");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let control = cfg
+        .region_plan(&entries, 0, record.operations)
+        .expect("verified counted CFG");
+    assert_eq!(
+        control.internal_backedges(),
+        [crate::stencil_cfg::RegionEdge { from: 5, to: 2 }]
+    );
+    let mut selection_policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    selection_policy.fused_regions = true;
+    let candidate_arena = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("candidate arena"),
+    ));
+    assert!(super::region_admission(
+        &entries,
+        &cfg,
+        0,
+        selection_policy,
+        &candidate_arena
+    )
+    .is_some());
+    let baseline = super::BaselinePlan::compile_for_test(code, selection_policy);
+    assert!(
+        baseline.native_region_at(0).is_some(),
+        "generic region admission must select the counted CFG witness"
+    );
+    let context = crate::vm::current_context_or_default();
+    let (transition, native, constants, binaries, branches, jumps, retired) =
+        crate::stencil_policy::with_policy_for_test(
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+            || {
+                let arena = std::rc::Rc::new(std::cell::RefCell::new(
+                    crate::stencil_arena::SharedStencilSlab::new(4096).expect("region arena"),
+                ));
+                let mut region = super::NativeRegionPlan::new_inner(
+                    key,
+                    true,
+                    arena,
+                    Some(control.clone()),
+                )
+                .expect("counted region plan");
+                let mut registers = crate::register_file::RegisterFile::with_undefined(3);
+                let transition = region
+                    .execute(code, 0, &mut registers, &context, None)
+                    .expect("counted region execution");
+                (
+                    transition,
+                    region.last_native_execution(),
+                    region.constant_entry_count_for_test(),
+                    region.binary_entry_count_for_test(),
+                    region.branch_entry_count_for_test(),
+                    region.jump_entry_count_for_test(),
+                    region.retired_operations(),
+                )
+            },
+        );
+    assert_eq!(
+        transition.completion,
+        Some(crate::completion::Completion::Return(
+            crate::value::Value::Number(3.0),
+        ))
+    );
+    assert!(native);
+    assert_eq!(constants, 2);
+    assert_eq!(binaries, 7);
+    assert_eq!(branches, 4);
+    assert_eq!(jumps, 3);
+    assert_eq!(retired, 17);
+
+    let interrupt_context = crate::vm::VmContext::default();
+    interrupt_context.request_interrupt();
+    let (handoff, interrupted_retired, interrupted_value, interrupt_cleared) =
+        crate::stencil_policy::with_policy_for_test(
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+            || {
+                let arena = std::rc::Rc::new(std::cell::RefCell::new(
+                    crate::stencil_arena::SharedStencilSlab::new(4096).expect("region arena"),
+                ));
+                let mut region = super::NativeRegionPlan::new_inner(
+                    key,
+                    true,
+                    arena,
+                    Some(control.clone()),
+                )
+                .expect("interrupted counted region plan");
+                let mut registers = crate::register_file::RegisterFile::with_undefined(3);
+                let handoff = region
+                    .execute(code, 0, &mut registers, &interrupt_context, None)
+                    .expect("interrupted counted region execution");
+                (
+                    handoff,
+                    region.retired_operations(),
+                    registers.read_number(0),
+                    !unsafe { &*interrupt_context.interrupt_flag() }
+                        .load(std::sync::atomic::Ordering::Acquire),
+                )
+            },
+        );
+    assert!(matches!(
+        handoff.target,
+        crate::vm::DispatchTarget::Callee(2)
+    ));
+    assert!(handoff.completion.is_none());
+    assert_eq!(interrupted_retired, 6);
+    assert_eq!(interrupted_value, Some(1.0));
+    assert!(interrupt_cleared);
+}
+
+#[test]
+fn counted_decrement_bridge_resides_with_distinct_minus_one_artifact() {
+    let instructions = vec![
+        crate::ir::Instruction::load_const(0, 0),
+        crate::ir::Instruction::load_const(1, 1),
+        crate::ir::Instruction::binary(crate::ir::Opcode::GreaterThan, 2, 0, 1),
+        crate::ir::Instruction::jump_if_false(2, 6),
+        crate::ir::Instruction::inc_i(0, 0, true),
+        crate::ir::Instruction::jump(2),
+        crate::ir::Instruction::ret(0),
+    ];
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: instructions.into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 7)].into(),
+        constants: vec![super::ConstantPool::new(vec![
+            super::Constant::Number(3.0),
+            super::Constant::Number(0.0),
+        ])]
+        .into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 7]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 3,
+            frame_register_count: 3,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let range = super::CodeRange::new(super::CodeId(0), 0, 7).expect("decrement range");
+    let code = store.code(range).expect("decrement code");
+    let key = crate::stencil_select::counted_decrement_glue_region_key();
+    let record = crate::stencil_select::select_region(key).expect("decrement counted row");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let control = cfg
+        .region_plan(&entries, 0, record.operations)
+        .expect("verified decrement CFG");
+    assert_eq!(
+        control.internal_backedges(),
+        [crate::stencil_cfg::RegionEdge { from: 5, to: 2 }]
+    );
+    let mut selection_policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    selection_policy.fused_regions = true;
+    let candidate_arena = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("candidate arena"),
+    ));
+    assert!(super::region_admission(
+        &entries,
+        &cfg,
+        0,
+        selection_policy,
+        &candidate_arena
+    )
+    .is_some());
+    let baseline = super::BaselinePlan::compile_for_test(code, selection_policy);
+    assert_eq!(
+        baseline
+            .native_region_at(0)
+            .expect("nested continue admission")
+            .borrow()
+            .key_for_test(),
+        key
+    );
+    let context = crate::vm::current_context_or_default();
+    let (transition, native, binaries, branches, jumps, retired) =
+        crate::stencil_policy::with_policy_for_test(
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+            || {
+                let arena = std::rc::Rc::new(std::cell::RefCell::new(
+                    crate::stencil_arena::SharedStencilSlab::new(4096).expect("region arena"),
+                ));
+                let mut region = super::NativeRegionPlan::new_inner(
+                    key,
+                    true,
+                    arena,
+                    Some(control.clone()),
+                )
+                .expect("decrement counted region plan");
+                let mut registers = crate::register_file::RegisterFile::with_undefined(3);
+                let transition = region
+                    .execute(code, 0, &mut registers, &context, None)
+                    .expect("decrement counted region execution");
+                (
+                    transition,
+                    region.last_native_execution(),
+                    region.binary_entry_count_for_test(),
+                    region.branch_entry_count_for_test(),
+                    region.jump_entry_count_for_test(),
+                    region.retired_operations(),
+                )
+            },
+        );
+    assert_eq!(
+        transition.completion,
+        Some(crate::completion::Completion::Return(
+            crate::value::Value::Number(0.0),
+        ))
+    );
+    assert!(native);
+    assert_eq!(binaries, 7);
+    assert_eq!(branches, 4);
+    assert_eq!(jumps, 3);
+    assert_eq!(retired, 17);
+}
+
+#[test]
+fn counted_continue_bridge_follows_nested_exits_and_resident_backedge() {
+    let instructions = vec![
+        crate::ir::Instruction::load_const(0, 0),
+        crate::ir::Instruction::load_const(1, 1),
+        crate::ir::Instruction::binary(crate::ir::Opcode::LessThan, 2, 0, 1),
+        crate::ir::Instruction::jump_if_false(2, 12),
+        crate::ir::Instruction::load_local(3, 0),
+        crate::ir::Instruction::jump_if_false(3, 8),
+        crate::ir::Instruction::load_local(4, 1),
+        crate::ir::Instruction::jump_if_false(4, 9),
+        crate::ir::Instruction::jump(12),
+        crate::ir::Instruction::inc_i(0, 0, false),
+        crate::ir::Instruction::jump(2),
+        crate::ir::Instruction::jump(12),
+        crate::ir::Instruction::ret(0),
+    ];
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: instructions.into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 13)].into(),
+        constants: vec![super::ConstantPool::new(vec![
+            super::Constant::Number(0.0),
+            super::Constant::Number(3.0),
+        ])]
+        .into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 13]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 5,
+            frame_register_count: 5,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let range = super::CodeRange::new(super::CodeId(0), 0, 13).expect("continue range");
+    let code = store.code(range).expect("continue code");
+    let key = crate::stencil_select::counted_continue_glue_region_key();
+    let record = crate::stencil_select::select_region(key).expect("continue row");
+    let entries = super::baseline_entries(code);
+    let operand_windows = (0..entries.len())
+        .map(|pc| code.operand_window_at(pc))
+        .collect::<Vec<_>>();
+    let cfg = super::ControlFlowFacts::new(&entries, &operand_windows);
+    let control = cfg
+        .region_plan(&entries, 0, record.operations)
+        .expect("verified nested continue CFG");
+    assert_eq!(
+        control.internal_backedges(),
+        [crate::stencil_cfg::RegionEdge { from: 10, to: 2 }]
+    );
+    assert_eq!(control.join_blocks(), [12, 8]);
+    let mut selection_policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    selection_policy.fused_regions = true;
+    let candidate_arena = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("candidate arena"),
+    ));
+    assert!(super::region_admission(
+        &entries,
+        &cfg,
+        0,
+        selection_policy,
+        &candidate_arena
+    )
+    .is_some());
+    let context = crate::vm::current_context_or_default();
+
+    crate::stencil_policy::with_policy_for_test(
+        crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        || {
+            for (skip, break_now, expected, constants, binaries, branches, jumps, loads, retired) in [
+                (true, false, 3.0, 2, 7, 10, 3, 6, 29),
+                (false, false, 0.0, 2, 1, 2, 1, 1, 8),
+                (true, true, 0.0, 2, 1, 3, 1, 2, 10),
+            ] {
+                let environment = crate::environment::Environment::new();
+                environment.set(0, crate::value::Value::Boolean(skip));
+                environment.set(1, crate::value::Value::Boolean(break_now));
+                let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+                let arena = std::rc::Rc::new(std::cell::RefCell::new(
+                    crate::stencil_arena::SharedStencilSlab::new(4096)
+                        .expect("region arena"),
+                ));
+                let mut region = super::NativeRegionPlan::new_inner(
+                    key,
+                    true,
+                    arena,
+                    Some(control.clone()),
+                )
+                .expect("nested continue region plan");
+                let mut registers = crate::register_file::RegisterFile::with_undefined(5);
+                let transition = region
+                    .execute(code, 0, &mut registers, &context, Some(&environment))
+                    .expect("nested continue region execution");
+                assert_eq!(
+                    transition.completion,
+                    Some(crate::completion::Completion::Return(
+                        crate::value::Value::Number(expected),
+                    ))
+                );
+                assert!(region.last_native_execution());
+                assert_eq!(region.constant_entry_count_for_test(), constants);
+                assert_eq!(region.binary_entry_count_for_test(), binaries);
+                assert_eq!(region.branch_entry_count_for_test(), branches);
+                assert_eq!(region.jump_entry_count_for_test(), jumps);
+                assert_eq!(region.load_local_entry_count_for_test(), loads);
+                assert_eq!(region.retired_operations(), retired);
+            }
+
+            let interrupt_context = crate::vm::VmContext::default();
+            interrupt_context.request_interrupt();
+            let environment = crate::environment::Environment::new();
+            environment.set(0, crate::value::Value::Boolean(true));
+            environment.set(1, crate::value::Value::Boolean(false));
+            let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
+            let arena = std::rc::Rc::new(std::cell::RefCell::new(
+                crate::stencil_arena::SharedStencilSlab::new(4096).expect("region arena"),
+            ));
+            let mut region = super::NativeRegionPlan::new_inner(
+                key,
+                true,
+                arena,
+                Some(control),
+            )
+            .expect("interrupted nested continue region plan");
+            let mut registers = crate::register_file::RegisterFile::with_undefined(5);
+            let handoff = region
+                .execute(
+                    code,
+                    0,
+                    &mut registers,
+                    &interrupt_context,
+                    Some(&environment),
+                )
+                .expect("interrupted nested continue execution");
+            assert!(matches!(
+                handoff.target,
+                crate::vm::DispatchTarget::Callee(2)
+            ));
+            assert!(handoff.completion.is_none());
+            assert_eq!(region.retired_operations(), 10);
+            assert_eq!(registers.read_number(0), Some(1.0));
+            assert!(!unsafe { &*interrupt_context.interrupt_flag() }
+                .load(std::sync::atomic::Ordering::Acquire));
+        },
+    );
+}
+
+#[test]
+fn physical_failure_releases_local_installation_storage() {
+    let mut physical = super::PhysicalInstallation::local(super::InstalledRegionEntry::Unpublished);
+    physical
+        .storage
+        .local_mut()
+        .expect("local physical storage");
+    assert!(physical.storage.local().is_some());
+    let failure: Result<(), super::NativeDispatchError> =
+        Err(super::NativeDispatchError::Physical("invalid entry".into()));
+
+    physical.apply_dispatch_outcome(
+        &failure,
+        None,
+        super::InstalledRegionEntry::Unpublished,
+    );
+
+    assert!(
+        physical.storage.local().is_none(),
+        "failed physical publication must release its local mapping"
+    );
+    assert_eq!(
+        physical.state.lifecycle.state(),
+        crate::stencil_lifecycle::StencilState::Cold
+    );
+}
+
+#[test]
+fn committed_failure_releases_local_storage_and_retires_state() {
+    let mut physical = super::PhysicalInstallation::local(super::InstalledRegionEntry::Unpublished);
+    physical
+        .storage
+        .local_mut()
+        .expect("local physical storage");
+    let failure: Result<(), super::NativeDispatchError> =
+        Err(super::NativeDispatchError::committed(3, "post-entry failure"));
+
+    physical.apply_dispatch_outcome(
+        &failure,
+        None,
+        super::InstalledRegionEntry::Unpublished,
+    );
+
+    assert!(physical.storage.local().is_none());
+    assert_eq!(
+        physical.state.lifecycle.state(),
+        crate::stencil_lifecycle::StencilState::Retired
+    );
+}
+
+#[test]
 fn region_admission_rejects_noncanonical_operands_before_publication() {
     let record =
         crate::stencil_select::select_region(crate::stencil_select::loop_body_region_key())
@@ -844,7 +4509,6 @@ fn region_admission_rejects_noncanonical_operands_before_publication() {
             };
             super::BaselineEntry {
                 instruction,
-                handler: opcode.handler(),
                 control: opcode.control_operands(instruction),
             }
         })
@@ -867,7 +4531,6 @@ fn region_admission_rejects_external_backedge_into_interior() {
         .into_iter()
         .map(|instruction| super::BaselineEntry {
             instruction,
-            handler: instruction.opcode.handler(),
             control: instruction.opcode.control_operands(instruction),
         })
         .collect::<Vec<_>>();
@@ -949,6 +4612,36 @@ fn hot_function_builds_one_reusable_baseline_plan() {
 }
 
 #[test]
+fn eager_baseline_plan_includes_composed_binary_series() {
+    crate::stencil_policy::with_policy_for_test(
+        crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        || {
+            let function = super::FunctionCode::from_ops(vec![
+                super::Op::Binary {
+                    dst: 3,
+                    operator: crate::ops::BinaryOp::Add,
+                    lhs: 1,
+                    rhs: 2,
+                },
+                super::Op::Binary {
+                    dst: 4,
+                    operator: crate::ops::BinaryOp::Multiply,
+                    lhs: 3,
+                    rhs: 2,
+                },
+                super::Op::Return { src: 4 },
+            ]);
+            assert_eq!(
+                function.enter_invocation(),
+                super::TierTransition::CompileBaseline
+            );
+            let plan = function.baseline_plan().expect("eager baseline plan");
+            assert!(plan.native_binary_series_at(0).is_some());
+        },
+    );
+}
+
+#[test]
 fn warm_baseline_function_admits_optimizing_plan() {
     let function = super::FunctionCode::from_ops(vec![
         super::Op::Binary {
@@ -1005,14 +4698,17 @@ fn hot_back_edge_osr_transfers_live_frame_into_baseline() {
         .into(),
         cold: Vec::<super::Op>::new().into(),
         ranges: vec![(0, 4)].into(),
-        parameter_ends: vec![None].into(),
         constants: vec![super::ConstantPool::new(vec![super::Constant::Boolean(
             false,
         )])]
         .into(),
         metadata: vec![vec![super::InstructionMeta::empty(); 4]].into(),
-        register_counts: vec![1].into(),
-        frame_register_counts: vec![1].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 1,
+            frame_register_count: 1,
+            parameter_end: None,
+        }]
+        .into(),
         quickening_sites: vec![
             Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
                 .into_boxed_slice(),
@@ -1030,9 +4726,13 @@ fn hot_back_edge_osr_transfers_live_frame_into_baseline() {
     let mut registers =
         crate::register_file::RegisterFile::from_values(vec![crate::value::Value::Boolean(true)]);
     let context = crate::vm::current_context_or_default();
-    let (completion, next) =
-        crate::vm::execute_function_code_step_from(code, &owner, 0, &mut registers, &context)
-            .expect("hot loop executes");
+    let (completion, next) = crate::stencil_policy::with_policy_for_test(
+        crate::stencil_policy::ExecutionPolicy::bridge_opt_in_for_test(),
+        || {
+            crate::vm::execute_function_code_step_from(code, &owner, 0, &mut registers, &context)
+                .expect("hot loop executes")
+        },
+    );
 
     assert_eq!(
         completion,
@@ -1043,6 +4743,23 @@ fn hot_back_edge_osr_transfers_live_frame_into_baseline() {
     let profile = owner.tier_profile();
     assert_eq!(profile.osr_entries, 1);
     assert_eq!(profile.osr_transfers, 1);
+    // The interpreter retires pc=0, pc=1 and the compiling back-edge pc=2;
+    // the baseline continuation then retires its exact committed prefix
+    // (pc=0 and pc=3).  OSR must not lose or double-count either view.
+    assert_eq!(profile.retired, 5);
+    let baseline = owner.baseline_plan().expect("baseline plan after OSR");
+    assert_eq!(baseline.osr_backedge_target_at(2), Some(0));
+    // OSR must enter the same admitted native region that a baseline start at
+    // the loop header would use.  The region may still report a canonical
+    // miss on an unavailable artifact, but this host has the validated Bridge
+    // artifact and therefore must execute its generated branch/return leaves.
+    let region = baseline
+        .native_region_at(0)
+        .expect("OSR target has a native region");
+    let region = region.borrow();
+    assert!(region.last_native_execution(), "OSR did not reach native CFG");
+    assert!(region.branch_entry_count_for_test() > 0);
+    assert!(region.return_entry_count_for_test() > 0);
     assert!(owner.is_osr_entry(2));
 
     // The same canonical compact code must remain correct when admission is
@@ -1064,6 +4781,411 @@ fn hot_back_edge_osr_transfers_live_frame_into_baseline() {
     assert_eq!(cold_next, next);
     assert_eq!(cold_owner.tier(), super::ExecutionTier::Interpreter);
     assert_eq!(cold_owner.tier_profile().osr_transfers, 0);
+}
+
+#[test]
+fn hot_conditional_backedge_osr_uses_the_same_cfg_target() {
+    // The branch itself is the resident backedge (rather than an
+    // unconditional Jump).  OSR must compile at that edge and resume at the
+    // CFG target without treating the fallthrough arm as the loop body.
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: vec![
+            crate::ir::Instruction::jump_if_false(0, 4),
+            crate::ir::Instruction::load_const(0, 0),
+            crate::ir::Instruction::jump_if_false(0, 0),
+            crate::ir::Instruction::load_const(0, 1),
+            crate::ir::Instruction::ret(0),
+        ]
+        .into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 5)].into(),
+        constants: vec![super::ConstantPool::new(vec![
+            super::Constant::Boolean(false),
+            super::Constant::Boolean(true),
+        ])]
+        .into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 5]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 1,
+            frame_register_count: 1,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let range = super::CodeRange::new(super::CodeId(0), 0, 5).expect("valid branch range");
+    let owner = super::FunctionCode::new(store, range);
+    owner.set_tier_threshold_for_test(1);
+    let mut registers = crate::register_file::RegisterFile::from_values(vec![
+        crate::value::Value::Boolean(true),
+    ]);
+    let context = crate::vm::current_context_or_default();
+    let (completion, next) = crate::stencil_policy::with_policy_for_test(
+        crate::stencil_policy::ExecutionPolicy::bridge_opt_in_for_test(),
+        || {
+            crate::vm::execute_function_code_step_from(
+                owner.code().expect("compact branch code"),
+                &owner,
+                0,
+                &mut registers,
+                &context,
+            )
+            .expect("conditional backedge executes")
+        },
+    );
+    assert_eq!(
+        completion,
+        crate::completion::Completion::Return(crate::value::Value::Boolean(false))
+    );
+    assert_eq!(next, 5);
+    assert_eq!(owner.tier(), super::ExecutionTier::Baseline);
+    let profile = owner.tier_profile();
+    assert_eq!(profile.osr_entries, 1);
+    assert_eq!(profile.osr_transfers, 1);
+    assert_eq!(profile.retired, 5);
+    assert_eq!(owner.osr_backedge_target_at(2), Some(0));
+    let plan = owner
+        .baseline_plan()
+        .expect("baseline plan after conditional OSR");
+    let region = plan
+        .native_region_at(0)
+        .expect("conditional OSR target has a region");
+    assert!(region.borrow().last_native_execution());
+    assert!(region.borrow().branch_entry_count_for_test() > 0);
+}
+
+#[test]
+fn bridge_accepts_branch_to_code_end_as_normal_exit() {
+    // The exclusive code-end PC is a legal external edge.  A bridge may
+    // execute the truthiness leaf or fall back to the canonical branch
+    // handler, but either view must complete normally without a synthetic
+    // instruction at the sentinel.
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: vec![
+            crate::ir::Instruction::jump_if_false(0, 3),
+            crate::ir::Instruction::load_const(0, 0),
+            crate::ir::Instruction::ret(0),
+        ]
+        .into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 3)].into(),
+        constants: vec![super::ConstantPool::new(vec![super::Constant::Boolean(
+            true,
+        )])]
+        .into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 3]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 1,
+            frame_register_count: 1,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let range = super::CodeRange::new(super::CodeId(0), 0, 3).expect("valid branch range");
+    let owner = super::FunctionCode::new(store, range);
+    owner.set_tier_threshold_for_test(100);
+    let code = owner.code().expect("compact branch code");
+    let bridge_policy = crate::stencil_policy::ExecutionPolicy::bridge_opt_in_for_test();
+    let baseline = super::BaselinePlan::compile_for_test(code, bridge_policy);
+    assert!(baseline
+        .control_facts()
+        .region_control(0, 3)
+        .is_some());
+    let mut registers = crate::register_file::RegisterFile::from_values(vec![
+        crate::value::Value::Boolean(false),
+    ]);
+    let context = crate::vm::current_context_or_default();
+    let (completion, next) = crate::stencil_policy::with_policy_for_test(
+        bridge_policy,
+        || {
+            crate::vm::execute_baseline_code_step_from(
+                code,
+                &baseline,
+                0,
+                &mut registers,
+                &context,
+            )
+            .expect("branch-to-end executes")
+        },
+    );
+    assert_eq!(completion, crate::completion::Completion::Normal);
+    assert_eq!(next, 3);
+    let region = baseline
+        .native_region_at(0)
+        .expect("branch-to-end bridge region");
+    let region = region.borrow();
+    assert!(region.last_native_execution());
+    assert_eq!(region.branch_entry_count_for_test(), 1);
+}
+
+#[test]
+fn admits_native_constant_branch_only_for_verified_cfg_shape() {
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: vec![
+            crate::ir::Instruction::jump_if_false(0, 3),
+            crate::ir::Instruction::load_const(0, 0),
+            crate::ir::Instruction::ret(0),
+            crate::ir::Instruction::load_const(0, 1),
+            crate::ir::Instruction::ret(0),
+        ]
+        .into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 5)].into(),
+        constants: vec![super::ConstantPool::new(vec![
+            super::Constant::Number(1.0),
+            super::Constant::Number(2.0),
+        ])]
+        .into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 5]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 1,
+            frame_register_count: 1,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let range = super::CodeRange::new(super::CodeId(0), 0, 5).expect("valid test range");
+    let owner = super::FunctionCode::new(store, range);
+    let code = owner.code().expect("compact test code");
+    let plan = super::BaselinePlan::compile_for_test(
+        code,
+        crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+    );
+    assert!(plan.native_constant_branch_at(0).is_some());
+    assert!(plan.native_constant_branch_at(1).is_none());
+
+    for (condition, expected) in [
+        (crate::value::Value::Boolean(true), crate::value::Value::Number(1.0)),
+        (crate::value::Value::Boolean(false), crate::value::Value::Number(2.0)),
+        (crate::value::Value::Number(0.0), crate::value::Value::Number(2.0)),
+        (crate::value::Value::Number(3.0), crate::value::Value::Number(1.0)),
+    ] {
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![condition]);
+        let context = crate::vm::current_context_or_default();
+        let (completion, _) = crate::vm::execute_baseline_code_step_from(
+            code, &plan, 0, &mut registers, &context,
+        )
+        .expect("constant branch executes");
+        assert_eq!(completion, crate::completion::Completion::Return(expected));
+    }
+}
+
+#[test]
+fn admits_boolean_branch_only_cover_for_nonterminal_arms() {
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: vec![
+            crate::ir::Instruction::load_const(0, 0),
+            crate::ir::Instruction::jump_if_false(0, 4),
+            crate::ir::Instruction::ret(1),
+            crate::ir::Instruction::ret(1),
+            crate::ir::Instruction::ret(2),
+        ]
+        .into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 5)].into(),
+        constants: vec![super::ConstantPool::new(vec![super::Constant::Boolean(true)])].into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 5]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 3,
+            frame_register_count: 3,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let range = super::CodeRange::new(super::CodeId(0), 0, 5).expect("valid branch range");
+    let owner = super::FunctionCode::new(store, range);
+    let code = owner.code().expect("compact branch code");
+    let plan = super::BaselinePlan::compile_for_test(
+        code,
+        crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+    );
+    if let Some(native) = plan.native_word_branch_at(1) {
+        assert_eq!(
+            native.borrow().continuation(),
+            crate::stencil_word_composition::NativeWordBranchContinuation::Jump {
+                truthy_pc: 2,
+                falsy_pc: 4,
+            }
+        );
+    }
+    let context = crate::vm::current_context_or_default();
+    for (condition, expected_pc) in [
+        (crate::value::Value::Boolean(true), 2),
+        (crate::value::Value::Boolean(false), 4),
+    ] {
+        let expected_value = if expected_pc == 2 { 11.0 } else { 22.0 };
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![
+            condition,
+            crate::value::Value::Number(11.0),
+            crate::value::Value::Number(22.0),
+        ]);
+        let (completion, next) = crate::vm::execute_baseline_code_step_from(
+            code, &plan, 1, &mut registers, &context,
+        )
+        .expect("boolean branch chooses canonical successor");
+        assert_eq!(
+            completion,
+            crate::completion::Completion::Return(crate::value::Value::Number(expected_value))
+        );
+        assert_eq!(next, expected_pc + 1);
+    }
+}
+
+#[test]
+fn admits_constant_branch_with_cfg_derived_arm_gap() {
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: vec![
+            crate::ir::Instruction::jump_if_false(0, 5),
+            crate::ir::Instruction::load_const(0, 0),
+            crate::ir::Instruction::ret(0),
+            // This straight-line padding is unreachable from the branch arms.
+            crate::ir::Instruction::move_(0, 0),
+            crate::ir::Instruction::move_(0, 0),
+            crate::ir::Instruction::load_const(0, 1),
+            crate::ir::Instruction::ret(0),
+        ]
+        .into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 7)].into(),
+        constants: vec![super::ConstantPool::new(vec![
+            super::Constant::Number(11.0),
+            super::Constant::Number(22.0),
+        ])]
+        .into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 7]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 1,
+            frame_register_count: 1,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let range = super::CodeRange::new(super::CodeId(0), 0, 7).expect("valid test range");
+    let owner = super::FunctionCode::new(store, range);
+    let code = owner.code().expect("compact test code");
+    let plan = super::BaselinePlan::compile_for_test(
+        code,
+        crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+    );
+    assert!(plan.native_constant_branch_at(0).is_some());
+
+    for (condition, expected) in [
+        (crate::value::Value::Boolean(true), 11.0),
+        (crate::value::Value::Boolean(false), 22.0),
+    ] {
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![condition]);
+        let context = crate::vm::current_context_or_default();
+        let (completion, _) = crate::vm::execute_baseline_code_step_from(
+            code, &plan, 0, &mut registers, &context,
+        )
+        .expect("gapped constant branch executes");
+        assert_eq!(
+            completion,
+            crate::completion::Completion::Return(crate::value::Value::Number(expected))
+        );
+    }
+}
+
+#[test]
+fn word_branch_shape_preserves_return_value_identity() {
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: vec![
+            crate::ir::Instruction::jump_if_false(0, 2),
+            crate::ir::Instruction::ret(1),
+            crate::ir::Instruction::ret(2),
+        ]
+        .into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 3)].into(),
+        constants: vec![super::ConstantPool::empty()].into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 3]].into(),
+        layouts: vec![super::FunctionLayout {
+            register_count: 3,
+            frame_register_count: 3,
+            parameter_end: None,
+        }]
+        .into(),
+        quickening_sites: vec![
+            Vec::<std::cell::RefCell<crate::quickening::QuickeningSite<4>>>::new()
+                .into_boxed_slice(),
+        ]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let range = super::CodeRange::new(super::CodeId(0), 0, 3).expect("valid branch range");
+    let owner = super::FunctionCode::new(store, range);
+    let code = owner.code().expect("compact branch code");
+    let plan = super::BaselinePlan::compile_for_test(
+        code,
+        crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+    );
+    let native_available = plan.native_word_branch_at(0).is_some();
+    #[cfg(quench_generated_stencil_artifacts)]
+    assert!(
+        native_available,
+        "generated word-branch artifacts must admit the canonical witness"
+    );
+    for (condition, expected) in [
+        (crate::value::Value::Boolean(true), 11.0),
+        (crate::value::Value::Boolean(false), 22.0),
+        (crate::value::Value::Number(0.0), 22.0),
+        (crate::value::Value::Number(3.0), 11.0),
+    ] {
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![
+            condition,
+            crate::value::Value::Number(11.0),
+            crate::value::Value::Number(22.0),
+        ]);
+        let context = crate::vm::current_context_or_default();
+        let (completion, _) = crate::vm::execute_baseline_code_step_from(
+            code, &plan, 0, &mut registers, &context,
+        )
+        .expect("word branch executes");
+        assert_eq!(
+            completion,
+            crate::completion::Completion::Return(crate::value::Value::Number(expected))
+        );
+    }
+    if native_available {
+        assert!(plan
+            .native_word_branch_at(0)
+            .is_some_and(|branch| branch.borrow().native_entry_count() >= 2));
+    }
 }
 
 #[test]
@@ -1134,6 +5256,34 @@ fn code_arena_lowers_constant_add_in_either_operand_position() {
     assert_eq!(add.opcode, crate::ir::Opcode::AddConst);
     assert_eq!((add.a, add.b), (2, 0));
     assert!(!add.add_const_is_left());
+}
+
+#[test]
+fn code_arena_serializes_structured_loop_as_typed_fori_marker() {
+    let empty = || super::FunctionCode::from_ops(Vec::new());
+    let function = super::FunctionCode::from_ops(vec![super::Op::Loop {
+        label: Some("labeled".into()),
+        init: empty(),
+        test: empty(),
+        body: empty(),
+        update: empty(),
+        post_test: false,
+        dst: 0,
+        per_iteration: Vec::new(),
+    }]);
+    let code = function.code().expect("structured loop code");
+    let instruction = code.instruction(0).expect("ForI marker");
+    assert_eq!(instruction.opcode, crate::ir::Opcode::ForI);
+    assert!(instruction.opcode.is_typed_cold_marker());
+    assert!(matches!(code.cold(instruction), Some(super::Op::Loop { .. })));
+    let mut policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    policy.fused_regions = true;
+    let baseline = super::BaselinePlan::compile_for_test(code, policy);
+    let region = baseline.native_region_at(0).expect("ForI gateway admission");
+    assert_eq!(
+        region.borrow().key_for_test(),
+        crate::stencil_select::for_i_region_key()
+    );
 }
 
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -1311,6 +5461,24 @@ fn native_strict_numeric_equality_uses_typed_scalar_entry() {
             "operator {operator:?}"
         );
     }
+
+    // Dedicated comparison rows use the same generated physical mapping as
+    // legacy flagged Binary, so future lowering can switch representations
+    // without losing native admission.
+    for opcode in [crate::ir::Opcode::Equal, crate::ir::Opcode::StrictEqual] {
+        let mut dedicated = super::NativeBinaryPlan::new(
+            crate::ir::Instruction {
+                opcode,
+                flags: 0,
+                ..instruction
+            },
+            policy,
+        )
+        .expect("dedicated comparison row");
+        assert!(dedicated.returns_boolean());
+        assert_eq!(dedicated.execute(2.0, 2.0), Ok(1.0));
+        assert_eq!(dedicated.execute(2.0, 3.0), Ok(0.0));
+    }
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -1362,9 +5530,8 @@ fn native_numeric_equality_covers_loose_numbers_and_falls_back_for_coercion() {
         }
         let Some(pc) = (0..view.len()).find(|pc| {
             view.instruction(*pc).is_some_and(|instruction| {
-                instruction.opcode == crate::ir::Opcode::Binary
-                    && crate::ir::compact_binary_operator(instruction.flags)
-                        == Some(crate::ops::BinaryOp::Equal)
+                instruction.opcode.binary_operator(instruction.flags)
+                    == Some(crate::ops::BinaryOp::Equal)
             })
         }) else {
             return;
@@ -2189,14 +6356,14 @@ fn shared_constant_entry_recovers_after_owner_eviction() {
         crate::stencil_arena::SharedStencilSlab::new(4096).expect("slab"),
     ));
     let mut plan = super::NativeLoadConstPlan::new_with_shared(
-        crate::tagged_value::TaggedValue::number(42.5).bits(),
+        crate::native_core::value_word::TaggedValue::number(42.5).bits(),
         crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
         shared.clone(),
     )
     .expect("shared constant plan");
     assert_eq!(
         plan.execute(),
-        Ok(crate::tagged_value::TaggedValue::number(42.5).bits())
+        Ok(crate::native_core::value_word::TaggedValue::number(42.5).bits())
     );
     assert!(matches!(
         plan.physical.installed(),
@@ -2205,7 +6372,7 @@ fn shared_constant_entry_recovers_after_owner_eviction() {
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert_eq!(
         plan.execute(),
-        Ok(crate::tagged_value::TaggedValue::number(42.5).bits())
+        Ok(crate::native_core::value_word::TaggedValue::number(42.5).bits())
     );
     assert!(
         matches!(
@@ -2259,9 +6426,8 @@ fn ordinary_source_lowering_admits_guarded_bitwise_region() {
         let plan = super::BaselinePlan::compile_for_test(view, policy);
         (0..view.len()).any(|pc| {
             view.instruction(pc).is_some_and(|instruction| {
-                instruction.opcode == crate::ir::Opcode::Binary
-                    && matches!(
-                        crate::ir::compact_binary_operator(instruction.flags),
+                matches!(
+                        instruction.opcode.binary_operator(instruction.flags),
                         Some(crate::ops::BinaryOp::BitwiseAnd)
                     )
                     && plan.native_binary_at(pc).is_some()
@@ -2294,18 +6460,16 @@ fn ordinary_source_lowering_executes_bitwise_region_and_falls_back_on_conversion
         }
         let Some(binary_pc) = (0..view.len()).find(|pc| {
             view.instruction(*pc).is_some_and(|instruction| {
-                instruction.opcode == crate::ir::Opcode::Binary
-                    && crate::ir::compact_binary_operator(instruction.flags)
-                        == Some(crate::ops::BinaryOp::BitwiseAnd)
+                instruction.opcode.binary_operator(instruction.flags)
+                    == Some(crate::ops::BinaryOp::BitwiseAnd)
             })
         }) else {
             return;
         };
         let Some(shift_pc) = (0..view.len()).find(|pc| {
             view.instruction(*pc).is_some_and(|instruction| {
-                instruction.opcode == crate::ir::Opcode::Binary
-                    && crate::ir::compact_binary_operator(instruction.flags)
-                        == Some(crate::ops::BinaryOp::ShiftLeft)
+                instruction.opcode.binary_operator(instruction.flags)
+                    == Some(crate::ops::BinaryOp::ShiftLeft)
             })
         }) else {
             return;
@@ -2645,32 +6809,21 @@ fn ordinary_source_executes_generated_affine_i32_loop_region() {
         affine_i32_environment(code, pc, 1.0, 4.0),
     )
     .expect("affine loop warmup");
-    let (completion, profile) = crate::test_execution_profile::capture(|| {
-        crate::vm::execute_baseline_code_from(
-            code,
-            &plan,
-            pc,
-            &mut registers,
-            &crate::vm::current_context_or_default(),
-            affine_i32_environment(code, pc, 1.0, 4.0),
-        )
-        .expect("normal driver executes affine loop")
-        .0
-    });
+    let completion = crate::vm::execute_baseline_code_from(
+        code,
+        &plan,
+        pc,
+        &mut registers,
+        &crate::vm::current_context_or_default(),
+        affine_i32_environment(code, pc, 1.0, 4.0),
+    )
+    .expect("normal driver executes affine loop")
+    .0;
     assert_eq!(
         completion,
         crate::completion::Completion::Return(super::Value::Number(1_445_341.0))
     );
-    case.assert(&super::Value::Number(1_445_341.0), &profile);
-    let operation_route = record
-        .operations
-        .iter()
-        .map(|opcode| opcode.name())
-        .collect::<Vec<_>>();
-    case.assert_plan(
-        crate::test_execution_profile::ExecutionKind::NativeMachineCode,
-        &operation_route,
-    );
+    case.assert(&super::Value::Number(1_445_341.0));
     assert!(region.borrow().last_native_execution());
     assert!(region
         .borrow()
@@ -2753,9 +6906,8 @@ fn ordinary_source_lowering_executes_numeric_comparison_and_falls_back_on_conver
         }
         let Some(pc) = (0..view.len()).find(|pc| {
             view.instruction(*pc).is_some_and(|instruction| {
-                instruction.opcode == crate::ir::Opcode::Binary
-                    && crate::ir::compact_binary_operator(instruction.flags)
-                        == Some(crate::ops::BinaryOp::LessThan)
+                instruction.opcode.binary_operator(instruction.flags)
+                    == Some(crate::ops::BinaryOp::LessThan)
             })
         }) else {
             return;
@@ -2920,9 +7072,8 @@ fn ordinary_source_lowering_executes_tagged_identity_comparison() {
         }
         let Some(pc) = (0..view.len()).find(|pc| {
             view.instruction(*pc).is_some_and(|instruction| {
-                instruction.opcode == crate::ir::Opcode::Binary
-                    && crate::ir::compact_binary_operator(instruction.flags)
-                        == Some(crate::ops::BinaryOp::StrictEqual)
+                instruction.opcode.binary_operator(instruction.flags)
+                    == Some(crate::ops::BinaryOp::StrictEqual)
             })
         }) else {
             return;
@@ -3044,9 +7195,8 @@ fn ordinary_source_lowering_executes_tagged_identity_inequality() {
         }
         let Some(pc) = (0..view.len()).find(|pc| {
             view.instruction(*pc).is_some_and(|instruction| {
-                instruction.opcode == crate::ir::Opcode::Binary
-                    && crate::ir::compact_binary_operator(instruction.flags)
-                        == Some(crate::ops::BinaryOp::StrictNotEqual)
+                instruction.opcode.binary_operator(instruction.flags)
+                    == Some(crate::ops::BinaryOp::StrictNotEqual)
             })
         }) else {
             return;
@@ -3154,19 +7304,19 @@ fn native_nullish_word_matches_canonical_tagged_values() {
     let mut plan =
         super::NativeNullishPlan::new(instruction, policy).expect("declared nullish word body");
     assert_eq!(
-        plan.execute(crate::tagged_value::TaggedValue::null().bits()),
+        plan.execute(crate::native_core::value_word::TaggedValue::null().bits()),
         Ok(true)
     );
     assert_eq!(
-        plan.execute(crate::tagged_value::TaggedValue::undefined().bits()),
+        plan.execute(crate::native_core::value_word::TaggedValue::undefined().bits()),
         Ok(true)
     );
     assert_eq!(
-        plan.execute(crate::tagged_value::TaggedValue::bool(true).bits()),
+        plan.execute(crate::native_core::value_word::TaggedValue::bool(true).bits()),
         Ok(false)
     );
     assert_eq!(
-        plan.execute(crate::tagged_value::TaggedValue::number(0.0).bits()),
+        plan.execute(crate::native_core::value_word::TaggedValue::number(0.0).bits()),
         Ok(false)
     );
 }
@@ -3233,7 +7383,7 @@ fn native_move_uses_rendered_address_without_remapping() {
         native_entry_count: 0,
         last_native_view: None,
     };
-    let source = crate::tagged_value::TaggedValue::from_bits(0x1234_5678_9ABC_DEF0);
+    let source = crate::native_core::value_word::TaggedValue::from_bits(0x1234_5678_9ABC_DEF0);
     assert_eq!(plan.execute(&source), Ok(source.bits()));
     #[cfg(quench_generated_stencil_artifacts)]
     assert!(plan.last_native_view.expect("invoked move view").generated);
@@ -3259,7 +7409,7 @@ fn native_move_shared_entry_reuses_owner_and_recovers_after_eviction() {
     let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
     let mut plan = super::NativeMovePlan::new_with_arena(instruction, policy, shared.clone())
         .expect("shared move plan");
-    let source = crate::tagged_value::TaggedValue::from_bits(0xCAFE_BABE);
+    let source = crate::native_core::value_word::TaggedValue::from_bits(0xCAFE_BABE);
     assert_eq!(plan.execute(&source), Ok(source.bits()));
     let used = shared.borrow().used();
     assert!(matches!(
@@ -3292,7 +7442,7 @@ fn native_load_local_uses_declared_tagged_word_entry() {
     ));
     let mut plan = super::NativeMovePlan::new_with_arena(instruction, policy, shared)
         .expect("declared LoadLocal body");
-    let source = crate::tagged_value::TaggedValue::from_bits(0x1357_9BDF);
+    let source = crate::native_core::value_word::TaggedValue::from_bits(0x1357_9BDF);
     assert_eq!(plan.execute(&source), Ok(source.bits()));
     #[cfg(quench_generated_stencil_artifacts)]
     assert!(
@@ -3318,7 +7468,7 @@ fn native_store_local_uses_declared_tagged_word_entry() {
     ));
     let mut plan = super::NativeMovePlan::new_with_arena(instruction, policy, shared)
         .expect("declared StoreLocal body");
-    let source = crate::tagged_value::TaggedValue::from_bits(0x2468_ACED);
+    let source = crate::native_core::value_word::TaggedValue::from_bits(0x2468_ACED);
     assert_eq!(plan.execute(&source), Ok(source.bits()));
     #[cfg(quench_generated_stencil_artifacts)]
     assert!(
@@ -3345,14 +7495,14 @@ fn native_property_uses_rendered_address_without_remapping() {
         .expect("plain guarded slot");
     assert_eq!(
         plan.execute(access, &site),
-        Ok(crate::tagged_value::TaggedValue::number(42.5).bits())
+        Ok(crate::native_core::value_word::TaggedValue::number(42.5).bits())
     );
     assert_eq!(plan.native_entry_count, 1);
     let used = plan.physical.storage.used();
     assert!(used > 0);
     assert_eq!(
         plan.execute(access, &site),
-        Ok(crate::tagged_value::TaggedValue::number(42.5).bits())
+        Ok(crate::native_core::value_word::TaggedValue::number(42.5).bits())
     );
     assert_eq!(plan.native_entry_count, 2);
     assert_eq!(plan.physical.storage.used(), used);
@@ -3454,7 +7604,7 @@ fn native_property_write_commits_only_after_live_guards() {
     assert!(access.accepts_non_owning_store());
     plan.execute_write(
         access,
-        crate::tagged_value::TaggedValue::number(5.0).bits(),
+        crate::native_core::value_word::TaggedValue::number(5.0).bits(),
         &site,
     )
     .expect("native write");
@@ -3470,7 +7620,7 @@ fn native_property_write_commits_only_after_live_guards() {
     assert!(plan
         .execute_write(
             stale,
-            crate::tagged_value::TaggedValue::number(9.0).bits(),
+            crate::native_core::value_word::TaggedValue::number(9.0).bits(),
             &site,
         )
         .is_err());
@@ -3504,7 +7654,7 @@ fn native_property_entries_reject_crossed_read_write_abis() {
     let access = object
         .guarded_plain_slot(object.semantic_layout_id(), 0, "value")
         .unwrap();
-    let bits = crate::tagged_value::TaggedValue::number(2.0).bits();
+    let bits = crate::native_core::value_word::TaggedValue::number(2.0).bits();
 
     assert!(read.execute_write(access, bits, &write_site).is_err());
     assert!(write.execute(access, &read_site).is_err());

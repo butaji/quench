@@ -46,7 +46,7 @@ fn instruction_step(
         Opcode::Jump => return Some(usize::from(instruction.a)),
         Opcode::LoadLocal | Opcode::LoadLocalChecked => load(instruction, index_slot, values),
         Opcode::LoadConst => load_constant(code, instruction, values)?,
-        Opcode::Binary => mask_index(instruction, values)?,
+        opcode if opcode.is_binary_family() => mask_index(instruction, values)?,
         Opcode::Add | Opcode::Sub => score_delta(instruction, values)?,
         Opcode::StoreLocal => store_score(instruction, values, update)?,
         Opcode::Move => copy(instruction, values)?,
@@ -98,7 +98,7 @@ fn mask_index(
     instruction: crate::ir::Instruction,
     values: &mut BTreeMap<u16, Value>,
 ) -> Option<()> {
-    (crate::ir::compact_binary_operator(instruction.flags)? == crate::ops::BinaryOp::BitwiseAnd)
+    (instruction.opcode.binary_operator(instruction.flags)? == crate::ops::BinaryOp::BitwiseAnd)
         .then_some(())?;
     let mask = match (values.get(&instruction.b)?, values.get(&instruction.c)?) {
         (Value::Index, Value::Constant(mask)) | (Value::Constant(mask), Value::Index) => *mask,

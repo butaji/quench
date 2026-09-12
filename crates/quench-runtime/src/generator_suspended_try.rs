@@ -19,12 +19,23 @@ fn suspended_try<'a>(
                 .code()?
                 .cold_ops()
                 .find_map(|(_, candidate)| match candidate {
-                    candidate @ Op::Try { body, .. }
-                        if body.code().is_some_and(|body| {
-                            body.cold_ops()
-                                .any(|(_, op)| matches!(op, Op::Await { .. }))
-                        }) =>
-                    {
+                    candidate @ Op::Try {
+                        body,
+                        handler,
+                        finalizer,
+                        ..
+                    } if body.code().is_some_and(|body| {
+                        body.cold_ops()
+                            .any(|(_, op)| matches!(op, Op::Await { .. } | Op::YieldStar { .. }))
+                    }) || handler.as_ref().is_some_and(|handler| {
+                        handler
+                            .code()
+                            .is_some_and(|code| code.cold_ops().any(|(_, op)| matches!(op, Op::YieldStar { .. })))
+                    }) || finalizer.as_ref().is_some_and(|finalizer| {
+                        finalizer
+                            .code()
+                            .is_some_and(|code| code.cold_ops().any(|(_, op)| matches!(op, Op::YieldStar { .. })))
+                    }) => {
                         try_yield_parts(generator, candidate, body)
                     }
                     _ => None,
@@ -36,13 +47,34 @@ fn suspended_try<'a>(
 fn try_yield_parts<'a>(
     generator: &GeneratorData,
     op: &'a Op,
-    body: &'a crate::machine::FunctionCode,
+    _body: &'a crate::machine::FunctionCode,
 ) -> Option<(&'a Op, &'a Op, crate::machine::CodeView<'a>)> {
-    let body = body.code()?;
-    let (yield_index, yield_op) = body
-        .cold_ops()
-        .find(|(_, candidate)| suspended_try_op(candidate, generator))?;
-    Some((op, yield_op, body.slice(yield_index + 1, body.len())?))
+    let Op::Try {
+        body,
+        handler,
+        finalizer,
+        ..
+    } = op
+    else {
+        return None;
+    };
+    let repeat_context = has_repeat_iterator(generator);
+    for branch in std::iter::once(body).chain(
+        repeat_context
+            .then(|| handler.iter().chain(finalizer.iter()))
+            .into_iter()
+            .flatten(),
+    )
+    {
+        let code = branch.code()?;
+        if let Some((yield_index, yield_op)) = code
+            .cold_ops()
+            .find(|(_, candidate)| suspended_try_op(candidate, generator))
+        {
+            return Some((op, yield_op, code.slice(yield_index + 1, code.len())?));
+        }
+    }
+    None
 }
 
 fn resume_suspended_try(

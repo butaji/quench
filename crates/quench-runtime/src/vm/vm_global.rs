@@ -305,7 +305,14 @@ pub(crate) fn synchronize_global_object(
     // instantiation is active.  A copy-on-write property write must update
     // that batch; waiting for the final flush would otherwise discard the
     // replacement and leave the real global view stale.
-    if batched_global_object().is_some_and(|staged| Rc::ptr_eq(&staged, &old_object)) {
+    let declaration_base_matches = GLOBAL_DECLARATION_BASE.with(|base| {
+        base.borrow()
+            .as_ref()
+            .is_some_and(|base| Rc::ptr_eq(base, &old_object))
+    });
+    if declaration_base_matches
+        || batched_global_object().is_some_and(|staged| Rc::ptr_eq(&staged, &old_object))
+    {
         update_global_declaration_batch(new);
         crate::locals::replace_value(old, new);
         retarget_global_alias(old, new_object);
@@ -446,6 +453,7 @@ pub fn reset_global_object() {
     GLOBAL_DECLARATION_BASE.with(|base| base.take());
     GLOBAL_DECLARATION_BATCH.with(|batch| batch.take());
     GLOBAL_DECLARATION_ACTIVE.with(|active| active.set(false));
+    crate::global_environment::reset_bindings();
 }
 
 impl SharedGlobal {

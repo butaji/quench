@@ -60,9 +60,9 @@ fn select_top(
         Opcode::LoadLocal | Opcode::LoadLocalChecked => {
             values.insert(instruction.a, Value::Local(instruction.b));
         }
-        Opcode::Binary => select_final_binary(instruction, values)?,
+        opcode if opcode.is_binary_family() => select_final_binary(instruction, values)?,
         Opcode::Return => select_return(instruction, values, returned),
-        Opcode::Slow => select_top_slow(code, pc, reduction)?,
+        opcode if opcode.is_cold_marker() => select_top_slow(code, pc, reduction)?,
         _ => return None,
     }
     Some(())
@@ -84,7 +84,7 @@ fn select_final_binary(
     instruction: crate::ir::Instruction,
     values: &mut BTreeMap<u16, Value>,
 ) -> Option<()> {
-    let operator = crate::ir::compact_binary_operator(instruction.flags)?;
+    let operator = instruction.opcode.binary_operator(instruction.flags)?;
     let left = *values.get(&instruction.b)?;
     let right = *values.get(&instruction.c)?;
     let slot = match (operator, left, right) {
@@ -150,9 +150,11 @@ fn select_loop_body(
             Opcode::Add | Opcode::Sub => {
                 affine_binary(instruction, &mut values, counted.index_slot)?
             }
-            Opcode::Binary => selector_remainder(instruction, &mut values, counted.index_slot)?,
+            opcode if opcode.is_binary_family() => {
+                selector_remainder(instruction, &mut values, counted.index_slot)?
+            }
             Opcode::Move => copy(instruction, &mut values)?,
-            Opcode::Slow if switch.is_none() => {
+            opcode if opcode.is_cold_marker() && switch.is_none() => {
                 let operation = code.cold_at(pc)?;
                 switch = Some(select_switch(operation, &values, counted)?);
                 let crate::ops::Op::Switch { dst, .. } = operation else {
@@ -215,7 +217,7 @@ fn selector_remainder(
     values: &mut BTreeMap<u16, Value>,
     index_slot: u16,
 ) -> Option<()> {
-    let operator = crate::ir::compact_binary_operator(instruction.flags)?;
+    let operator = instruction.opcode.binary_operator(instruction.flags)?;
     (operator == crate::ops::BinaryOp::Remainder).then_some(())?;
     let left = *values.get(&instruction.b)?;
     let Value::Constant(divisor) = values.get(&instruction.c)? else {

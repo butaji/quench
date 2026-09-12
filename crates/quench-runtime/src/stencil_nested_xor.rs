@@ -3,7 +3,6 @@
 use std::{cell::RefCell, rc::Rc};
 
 const MACHINE_SLAB_BYTES: usize = 4096;
-const MAX_ITERATIONS: i128 = 1 << 20;
 const MAX_SAFE_INTEGER: i128 = 9_007_199_254_740_991;
 
 #[derive(Clone, Copy, Debug)]
@@ -60,10 +59,8 @@ impl NestedXorContext {
 }
 
 struct NestedMachine {
-    owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
     image: crate::stencil_region_layout::VerifiedRegionImage,
-    cache: crate::stencil_select::RenderedRegionCache,
-    installed: Option<crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>>,
+    physical: crate::stencil_installation::SharedPhysicalEntry<crate::stencil_arena::DispatchEntry>,
 }
 
 thread_local! {
@@ -80,46 +77,37 @@ impl NestedMachine {
         let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::Binary);
         let values = crate::stencil_fact::PatchValues::from_site(&site);
         let image = crate::stencil_region_layout::finalize_selected_leaf(view, &values).ok()?;
+        let owner = Rc::new(RefCell::new(
+            crate::stencil_arena::SharedStencilSlab::new(MACHINE_SLAB_BYTES).ok()?,
+        ));
         Some(Self {
-            owner: Rc::new(RefCell::new(
-                crate::stencil_arena::SharedStencilSlab::new(MACHINE_SLAB_BYTES).ok()?,
-            )),
             image,
-            cache: crate::stencil_select::RenderedRegionCache::new(),
-            installed: None,
+            physical: crate::stencil_installation::SharedPhysicalEntry::new(owner),
         })
     }
 
     fn invoke(&mut self, context: &mut NestedXorContext) -> Option<u64> {
         let entry = self.entry()?;
-        let lease =
-            crate::stencil_arena::SharedStencilSlab::acquire_owned(&self.owner, entry).ok()?;
-        lease
-            .invoke(|call| call((context as *mut NestedXorContext).cast()))
+        self.physical
+            .invoke(entry, |call| {
+                call((context as *mut NestedXorContext).cast())
+            })
             .ok()
     }
 
     fn entry(
         &mut self,
     ) -> Option<crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>> {
-        if let Some(entry) = self
-            .installed
-            .filter(|entry| self.owner.borrow().entry_token_is_live(*entry))
-        {
-            return Some(entry);
-        }
-        let address = self
-            .owner
-            .borrow_mut()
-            .publish_region_image_or_get(&mut self.cache, &self.image)
-            .ok()?;
-        let entry = self
-            .owner
-            .borrow()
-            .owned_nested_xor_loop_entry(address)
-            .ok()?;
-        self.installed = Some(entry);
-        Some(entry)
+        self.physical
+            .entry(
+                |owner, cache| {
+                    owner
+                        .borrow_mut()
+                        .publish_region_image_or_get(cache, &self.image)
+                },
+                |pool, address| pool.owned_nested_xor_loop_entry(address),
+            )
+            .ok()
     }
 }
 
@@ -182,10 +170,6 @@ fn validate_range(fact: FunctionNestedXor) -> Option<()> {
     }
     let middle_visits = spans[0].checked_mul(spans[1])?;
     let iterations = middle_visits.checked_mul(spans[2])?;
-    let control_steps = spans[0]
-        .checked_add(middle_visits)?
-        .checked_add(iterations)?;
-    (control_steps <= MAX_ITERATIONS).then_some(())?;
     let maximum =
         i128::from(fact.initial_total).abs() + iterations * i128::from(fact.reduction.mask);
     (maximum <= MAX_SAFE_INTEGER).then_some(())

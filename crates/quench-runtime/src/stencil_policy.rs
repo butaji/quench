@@ -80,6 +80,13 @@ impl LocalFusionPolicy {
         self.0 != 0
     }
 
+    /// Admissions that combine several non-numeric families (string helpers
+    /// and property/call composites) require the complete fusion policy. A
+    /// numeric-only development mode must not silently turn those plans on.
+    pub(crate) const fn full(self) -> bool {
+        self.0 == Self::ALL.0
+    }
+
     pub(crate) const fn numeric(self) -> bool {
         self.0 & Self::NUMERIC != 0
     }
@@ -212,6 +219,25 @@ impl ExecutionPolicy {
         }
     }
 
+    /// Keep dispatch-path timing controls independent of architecture opt-ins.
+    #[cfg(test)]
+    pub(crate) const fn disabled_for_test() -> Self {
+        Self {
+            native_leaves: false,
+            local_fusions: LocalFusionPolicy::NONE,
+            native_dispatch: false,
+            fused_regions: false,
+            array_kernels: false,
+            array_numeric_loops: false,
+            affine_i32_loops: false,
+            numeric_i32_bitwise_loops: false,
+            numeric_i32_pair_loops: false,
+            numeric_f64_loops: false,
+            numeric_f64_mixed_loops: false,
+            optimizing_view: false,
+        }
+    }
+
     fn from_architecture(arch: Architecture, arm_opt_in: bool) -> Self {
         let arm_mode = if arm_opt_in {
             ArmMode::All
@@ -226,7 +252,12 @@ impl ExecutionPolicy {
             Architecture::X86_64 => Self {
                 native_leaves: true,
                 local_fusions: LocalFusionPolicy::ALL,
-                native_dispatch: true,
+                // The all-opcode dispatch stencil is a semantic bridge back
+                // into the Rust handler, not native operation coverage. Keep
+                // it available for focused lifecycle tests, but let ordinary
+                // production instructions use generated `Opcode::dispatch`
+                // directly unless a proven leaf admits them.
+                native_dispatch: false,
                 fused_regions: true,
                 array_kernels: true,
                 array_numeric_loops: true,
@@ -347,7 +378,7 @@ mod tests {
             ExecutionPolicy {
                 native_leaves: true,
                 local_fusions: super::LocalFusionPolicy::ALL,
-                native_dispatch: true,
+                native_dispatch: false,
                 fused_regions: true,
                 array_kernels: true,
                 array_numeric_loops: true,
@@ -444,6 +475,8 @@ mod tests {
             |mode| ExecutionPolicy::from_architecture_and_mode(Architecture::Aarch64, mode);
         let numeric = policy(ArmMode::FusionNumeric).local_fusions;
         assert!(numeric.numeric() && !numeric.property() && !numeric.predicate());
+        assert!(!numeric.full());
+        assert!(policy(ArmMode::Fusion).local_fusions.full());
         let property = policy(ArmMode::FusionProperty).local_fusions;
         assert!(!property.numeric() && property.property() && !property.predicate());
         let predicate = policy(ArmMode::FusionPredicate).local_fusions;

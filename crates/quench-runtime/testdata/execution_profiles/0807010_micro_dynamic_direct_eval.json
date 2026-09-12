@@ -1,16 +1,20 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "string", "value": "[\"number\",\"3168\"]" },
-  "plan": {
-    "execution_kind": "portable_recipe",
-    "operation_route": ["dynamic", "direct_eval"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "GetN",
+    "StoreLocal",
+    "LoadConst",
+    "StoreLocal",
+    "LoadConst",
+    "Loop",
+    "LoadLocal",
+    "Return"
+  ],
+  "result": {
+    "kind": "string",
+    "value": "[\"number\",\"3168\"]"
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "dynamic_direct_eval_region": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

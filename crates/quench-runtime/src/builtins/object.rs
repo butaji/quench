@@ -388,7 +388,45 @@ pub(crate) fn descriptor(
         return crate::proxy::proxy_get_own_property_descriptor(&value, &key);
     }
     crate::module_bindings::exports(&value, &key)?;
-    let descriptor = descriptor_for_value(&value, &key);
+    let mut descriptor = descriptor_for_value(&value, &key);
+    // A global object may be retained through a pre-declaration COW view.
+    // Its live value slot can be current while descriptor metadata is owned by
+    // the realm's current representative. Consult that representative before
+    // falling back to the ordinary default descriptor (which would incorrectly
+    // make a retained non-enumerable global enumerable).
+    if crate::vm::is_global_object(&value) && key != "undefined" {
+        if let Some((writable, enumerable, configurable)) =
+            crate::global_environment::descriptor_flags(&key)
+        {
+            let live = crate::execute::get_property(&value, &key);
+            descriptor = Some(descriptor_object_with_flags(
+                live,
+                writable,
+                enumerable,
+                configurable,
+            ));
+        }
+        let has_metadata = match &value {
+            Value::Object(properties) => {
+                crate::builtins::descriptor_metadata(properties.as_ref(), &key).is_some()
+            }
+            Value::ObjectAlias(alias) => alias
+                .target()
+                .and_then(|properties| {
+                    crate::builtins::descriptor_metadata(properties.as_ref(), &key)
+                })
+                .is_some(),
+            _ => false,
+        };
+        if !has_metadata && crate::global_environment::descriptor_flags(&key).is_none() {
+            if let Value::Object(current) = crate::vm::current_global_object() {
+                if let Some(metadata) = crate::builtins::descriptor_metadata(current.as_ref(), &key)
+                {
+                    descriptor = Some(public_descriptor(&metadata));
+                }
+            }
+        }
+    }
     Ok(descriptor.unwrap_or(Value::Undefined))
 }
 

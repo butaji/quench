@@ -49,12 +49,14 @@ fn select_top(
     match instruction.opcode {
         Opcode::LoadConst => load_top_constant(code, instruction, state)?,
         Opcode::LoadLocal | Opcode::LoadLocalChecked => {
-            state.values.insert(instruction.a, TopValue::Local(instruction.b));
+            state
+                .values
+                .insert(instruction.a, TopValue::Local(instruction.b));
         }
         Opcode::InitLocal => initialize_top(instruction, state)?,
-        Opcode::Binary => select_top_binary(instruction, state)?,
+        opcode if opcode.is_binary_family() => select_top_binary(instruction, state)?,
         Opcode::Return => select_return(instruction, state),
-        Opcode::Slow => select_top_slow(code, pc, state)?,
+        opcode if opcode.is_cold_marker() => select_top_slow(code, pc, state)?,
         _ => return None,
     }
     Some(())
@@ -83,13 +85,15 @@ fn initialize_top(instruction: Instruction, state: &mut TopState) -> Option<()> 
 }
 
 fn select_top_binary(instruction: Instruction, state: &mut TopState) -> Option<()> {
-    let operator = crate::ir::compact_binary_operator(instruction.flags)?;
+    let operator = instruction.opcode.binary_operator(instruction.flags)?;
     let left = *state.values.get(&instruction.b)?;
     let right = *state.values.get(&instruction.c)?;
     let result = match (operator, left, right) {
-        (crate::ops::BinaryOp::ShiftRightZeroFill, TopValue::Local(slot), TopValue::Number(0.0)) => {
-            TopValue::UnsignedLocal(slot)
-        }
+        (
+            crate::ops::BinaryOp::ShiftRightZeroFill,
+            TopValue::Local(slot),
+            TopValue::Number(0.0),
+        ) => TopValue::UnsignedLocal(slot),
         _ => return None,
     };
     state.values.insert(instruction.a, result);
@@ -120,7 +124,8 @@ fn select_top_slow(code: CodeView<'_>, pc: usize, state: &mut TopState) -> Optio
             per_iteration,
             ..
         } if state.loop_value.is_none() => {
-            let counted = crate::stencil_counted_loop::select(init.code()?, test.code()?, update.code()?)?;
+            let counted =
+                crate::stencil_counted_loop::select(init.code()?, test.code()?, update.code()?)?;
             (per_iteration.as_slice() == [counted.index_slot]).then_some(())?;
             let (slot, shift, multiplier) = select_body(body.code()?)?;
             state.loop_value = Some((counted, slot, shift, multiplier));
@@ -137,7 +142,15 @@ fn select_body(code: CodeView<'_>) -> Option<(u16, u32, i32)> {
     let mut stored = None;
     for pc in 0..code.len() {
         let instruction = code.instruction(pc)?;
-        select_body_op(code, pc, instruction, &mut graph, &mut global, &mut callee, &mut stored)?;
+        select_body_op(
+            code,
+            pc,
+            instruction,
+            &mut graph,
+            &mut global,
+            &mut callee,
+            &mut stored,
+        )?;
     }
     select_recurrence(&graph, stored?)
 }
@@ -160,7 +173,7 @@ fn select_body_op(
                 .push(instruction, |constant| number_bits(code, constant))
                 .then_some(())?;
         }
-        Opcode::Binary => graph.push_i32_binary(instruction).then_some(())?,
+        opcode if opcode.is_binary_family() => graph.push_i32_binary(instruction).then_some(())?,
         Opcode::GetN => select_intrinsic_name(code, pc, instruction, global, callee)?,
         Opcode::CallN => select_intrinsic_call(code, pc, instruction, graph, *global, *callee)?,
         Opcode::StoreLocal => {
@@ -207,7 +220,8 @@ fn select_recurrence(
     stored: (u16, ValueId),
 ) -> Option<(u16, u32, i32)> {
     let value = strip_i32_coercion(graph, stored.1)?;
-    let ValueDefinition::IntrinsicBinary { builtin, lhs, rhs } = graph.node(value)?.definition else {
+    let ValueDefinition::IntrinsicBinary { builtin, lhs, rhs } = graph.node(value)?.definition
+    else {
         return None;
     };
     (builtin == crate::ops::Builtin::MathImul).then_some(())?;
@@ -228,7 +242,9 @@ fn strip_i32_coercion(graph: &ValueGraph<MAX_BODY_VALUES>, id: ValueId) -> Optio
 }
 
 fn select_xor_shift(graph: &ValueGraph<MAX_BODY_VALUES>, id: ValueId) -> Option<(u16, u32)> {
-    let ValueDefinition::Binary { operator, lhs, rhs } = graph.node(graph.canonical(id)?)?.definition else {
+    let ValueDefinition::Binary { operator, lhs, rhs } =
+        graph.node(graph.canonical(id)?)?.definition
+    else {
         return None;
     };
     (operator == crate::ops::BinaryOp::BitwiseXor).then_some(())?;
@@ -241,7 +257,9 @@ fn select_state_shift(
     shifted: ValueId,
 ) -> Option<(u16, u32)> {
     let state_slot = local_source(graph, state)?;
-    let ValueDefinition::Binary { operator, lhs, rhs } = graph.node(graph.canonical(shifted)?)?.definition else {
+    let ValueDefinition::Binary { operator, lhs, rhs } =
+        graph.node(graph.canonical(shifted)?)?.definition
+    else {
         return None;
     };
     (operator == crate::ops::BinaryOp::ShiftRightZeroFill).then_some(())?;

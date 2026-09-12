@@ -1,16 +1,16 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "number", "value": 32 },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["callee_identity_guard", "receiver_shape_guard", "f64_field_load", "ordered_mul_add"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "GetN",
+    "LoadLocal",
+    "CallN",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": 32
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "monomorphic_vector_dot": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

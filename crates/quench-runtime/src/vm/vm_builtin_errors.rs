@@ -213,26 +213,17 @@ fn set_error_stack_home() -> Option<Value> {
 }
 
 fn has_error_slot(value: &Value) -> bool {
-    let mut current = Some(value.clone());
-    for _ in 0..16 {
-        let Some(candidate) = current else { break };
-        match &candidate {
-            Value::Object(object)
-                if object.iter().any(|(key, _)| {
-                    key == crate::builtins::ERROR_SLOT || key == "\0domexception"
-                }) => return true,
-            Value::ObjectAlias(alias)
-                if alias.0.borrow().upgrade().is_some_and(|object| {
-                    object.iter().any(|(key, _)| {
-                        key == crate::builtins::ERROR_SLOT || key == "\0domexception"
-                    })
-                }) => return true,
-            Value::Builtin(crate::ops::Builtin::DOMExceptionPrototype) => return true,
-            _ => {}
-        }
-        current = crate::execute::get_prototype_of(&candidate).ok();
+    match value {
+        Value::Object(object) => object.iter().any(|(key, _)| {
+            key == crate::builtins::ERROR_SLOT || key == "\0domexception"
+        }),
+        Value::ObjectAlias(alias) => alias.0.borrow().upgrade().is_some_and(|object| {
+            object.iter().any(|(key, _)| {
+                key == crate::builtins::ERROR_SLOT || key == "\0domexception"
+            })
+        }),
+        _ => false,
     }
-    false
 }
 
 fn error_to_string(receiver: Option<&Value>) -> Result<Value, VmError> {

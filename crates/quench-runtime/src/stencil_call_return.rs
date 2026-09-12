@@ -41,6 +41,11 @@ pub(crate) struct NativeCallReturnPlan {
     owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
     targets: Vec<InstalledTarget>,
     affine: Option<crate::stencil_numeric_integer_loop::NativeAffineI32Transform>,
+    /// A target whose immutable body has already failed the call-return
+    /// proof. Keep this weak so admission never extends function lifetime;
+    /// repeated calls to the same unsupported target can fall back without
+    /// rebuilding its key facts on every invocation.
+    rejected_target: Option<std::rc::Weak<crate::value::FunctionValue>>,
 }
 
 impl NativeCallReturnPlan {
@@ -55,6 +60,7 @@ impl NativeCallReturnPlan {
             owner,
             targets: Vec::with_capacity(MAX_TARGETS),
             affine: None,
+            rejected_target: None,
         })
     }
 
@@ -82,7 +88,17 @@ impl NativeCallReturnPlan {
         environment: &crate::environment::Environment,
     ) -> Option<crate::value::Value> {
         let target = self.read_target(environment)?;
-        let key = self.target_key(&target)?;
+        if self
+            .rejected_target
+            .as_ref()
+            .is_some_and(|rejected| rejected.as_ptr() == Rc::as_ptr(&target))
+        {
+            return None;
+        }
+        let Some(key) = self.target_key(&target) else {
+            self.rejected_target = Some(Rc::downgrade(&target));
+            return None;
+        };
         let index = self.target_index(key).or_else(|| self.install(key))?;
         match &mut self.targets[index].body {
             InstalledBody::Constant(constant) => {
