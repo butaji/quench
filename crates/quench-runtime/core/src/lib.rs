@@ -9536,6 +9536,12 @@ fn native_string_concat(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Va
     Ok(Value::string_value(result))
 }
 fn to_number_with_vm(vm: &mut Vm, value: &Value) -> JsResult<f64> {
+    if is_bigint_marker(value) {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "cannot convert a BigInt value to a number",
+        )));
+    }
     if let Some(number) = value.as_number() {
         return Ok(number);
     }
