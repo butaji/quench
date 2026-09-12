@@ -102,6 +102,18 @@ builtin_catalog! {
     MathMax, Math, "max", native_math_max, VariadicNumber, PURE;
     MathLog, Math, "log", native_math_log, UnaryNumber, MAY_CALL_JS;
     MathRound, Math, "round", native_math_round, UnaryNumber, PURE;
+    MathTrunc, Math, "trunc", native_math_trunc, UnaryNumber, PURE;
+    MathSign, Math, "sign", native_math_sign, UnaryNumber, PURE;
+    MathSin, Math, "sin", native_math_sin, UnaryNumber, PURE;
+    MathCos, Math, "cos", native_math_cos, UnaryNumber, PURE;
+    MathTan, Math, "tan", native_math_tan, UnaryNumber, PURE;
+    MathExp, Math, "exp", native_math_exp, UnaryNumber, PURE;
+    MathLog10, Math, "log10", native_math_log10, UnaryNumber, PURE;
+    MathLog2, Math, "log2", native_math_log2, UnaryNumber, PURE;
+    MathHypot, Math, "hypot", native_math_hypot, VariadicNumber, PURE;
+    MathClz32, Math, "clz32", native_math_clz32, UnaryNumber, PURE;
+    MathImul, Math, "imul", native_math_imul, BinaryNumber, PURE;
+    MathFround, Math, "fround", native_math_fround, UnaryNumber, PURE;
     MathRandom, Math, "random", native_random, Generic, PURE;
     ObjectConstructor, Global, "Object", native_object, Generic, MAY_ALLOCATE;
     ArrayConstructor, Global, "Array", native_array, Generic, MAY_ALLOCATE;
