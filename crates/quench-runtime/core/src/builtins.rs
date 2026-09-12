@@ -443,6 +443,30 @@ pub(crate) fn instantiate(vm: &Vm) -> Box<[Value]> {
 
 fn builtin_length(id: BuiltinId) -> usize {
     match id {
+        BuiltinId::StringFromCharCode
+        | BuiltinId::StringFromCodePoint
+        | BuiltinId::StringAt
+        | BuiltinId::StringCodePointAt
+        | BuiltinId::StringIncludes
+        | BuiltinId::StringStartsWith
+        | BuiltinId::StringEndsWith
+        | BuiltinId::StringRepeat => 1,
+        BuiltinId::ArrayPush
+        | BuiltinId::ArrayUnshift
+        | BuiltinId::ArrayJoin
+        | BuiltinId::ArrayConcat
+        | BuiltinId::ArrayForEach
+        | BuiltinId::ArrayMap
+        | BuiltinId::ArrayFilter
+        | BuiltinId::ArraySome
+        | BuiltinId::ArrayEvery
+        | BuiltinId::ArrayIndexOf
+        | BuiltinId::ArrayIncludes
+        | BuiltinId::ArrayReduce
+        | BuiltinId::ArrayReduceRight
+        | BuiltinId::ArrayFind
+        | BuiltinId::ArrayFindIndex => 1,
+        BuiltinId::ArraySlice => 2,
         BuiltinId::ObjectDefineProperty => 3,
         BuiltinId::ObjectGetOwnPropertyDescriptor
         | BuiltinId::ObjectGetOwnPropertySymbols
@@ -566,27 +590,9 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::NumberToString => 1,
         BuiltinId::ClearTimeout
         | BuiltinId::ProcessNextTick
-        | BuiltinId::StringFromCharCode
-        | BuiltinId::StringFromCodePoint
-        | BuiltinId::ArrayPush
         | BuiltinId::ArrayPop
         | BuiltinId::ArrayShift
-        | BuiltinId::ArrayUnshift
-        | BuiltinId::ArraySlice
-        | BuiltinId::ArrayJoin
         | BuiltinId::ArrayToString
-        | BuiltinId::ArrayConcat
-        | BuiltinId::ArrayForEach
-        | BuiltinId::ArrayMap
-        | BuiltinId::ArrayFilter
-        | BuiltinId::ArraySome
-        | BuiltinId::ArrayEvery
-        | BuiltinId::ArrayIndexOf
-        | BuiltinId::ArrayIncludes
-        | BuiltinId::ArrayReduce
-        | BuiltinId::ArrayReduceRight
-        | BuiltinId::ArrayFind
-        | BuiltinId::ArrayFindIndex
         | BuiltinId::StringToLowerCase
         | BuiltinId::StringToUpperCase
         | BuiltinId::StringToString
@@ -604,12 +610,6 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::StringTrimEnd
         | BuiltinId::StringTrimLeft
         | BuiltinId::StringTrimRight
-        | BuiltinId::StringAt
-        | BuiltinId::StringCodePointAt
-        | BuiltinId::StringIncludes
-        | BuiltinId::StringStartsWith
-        | BuiltinId::StringEndsWith
-        | BuiltinId::StringRepeat
         | BuiltinId::StringToLocaleLowerCase
         | BuiltinId::StringToLocaleUpperCase
         | BuiltinId::RegExpTest
