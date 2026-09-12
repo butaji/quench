@@ -9333,12 +9333,7 @@ fn native_assert_throws(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value
         )));
     }
     match vm.call(callback, Value::Undefined, Vec::new()) {
-        Err(JsError::Throw(value)) => {
-            if std::env::var_os("QUENCH_DEBUG_THROWS").is_some() {
-                eprintln!("assert.throws caught {}", value.display());
-            }
-            Ok(Value::Undefined)
-        }
+        Err(JsError::Throw(_)) => Ok(Value::Undefined),
         Err(JsError::Message(message)) if message.contains("uncaught") => Ok(Value::Undefined),
         Err(error) => Err(error),
         Ok(_) => Err(JsError::Throw(assertion_error(
