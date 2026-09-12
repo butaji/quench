@@ -211,6 +211,12 @@ builtin_catalog! {
     DateToString, DatePrototype, "toString", native_date_to_string, Generic, MAY_ALLOCATE;
     DateToDateString, DatePrototype, "toDateString", native_date_to_date_string, Generic, MAY_ALLOCATE;
     DateToUTCString, DatePrototype, "toUTCString", native_date_to_utc_string, Generic, MAY_ALLOCATE;
+    DateToTimeString, DatePrototype, "toTimeString", native_date_to_time_string, Generic, MAY_ALLOCATE;
+    DateToLocaleString, DatePrototype, "toLocaleString", native_date_to_string, Generic, MAY_ALLOCATE;
+    DateToLocaleDateString, DatePrototype, "toLocaleDateString", native_date_to_date_string, Generic, MAY_ALLOCATE;
+    DateToLocaleTimeString, DatePrototype, "toLocaleTimeString", native_date_to_time_string, Generic, MAY_ALLOCATE;
+    DateGetTimezoneOffset, DatePrototype, "getTimezoneOffset", native_date_get_timezone_offset, Generic, PURE;
+    DateToTemporalInstant, DatePrototype, "toTemporalInstant", native_date_to_temporal_instant, Generic, MAY_ALLOCATE;
     DateToPrimitive, DatePrototype, "Symbol(Symbol.toPrimitive)", native_date_to_primitive, Generic, MAY_ALLOCATE;
     DateNow, DateConstructor, "now", native_date_now, Generic, PURE;
     DateParse, DateConstructor, "parse", native_date_parse, Generic, MAY_ALLOCATE;
@@ -382,6 +388,7 @@ fn builtin_length(id: BuiltinId) -> usize {
         BuiltinId::DateNow => 0,
         BuiltinId::DateParse => 1,
         BuiltinId::DateUTC => 7,
+        BuiltinId::DateToJSON => 1,
         BuiltinId::ReflectConstruct => 2,
         BuiltinId::MathAtan2 => 2,
         BuiltinId::MathSumPrecise => 1,
