@@ -323,8 +323,11 @@ builtin_catalog! {
     StringToString, StringPrototype, "toString", native_string_to_string, Generic, PURE;
     StringConcat, StringPrototype, "concat", native_string_concat, Generic, MAY_ALLOCATE;
     StringReplace, StringPrototype, "replace", native_string_replace, Generic, MAY_ALLOCATE;
+    StringReplaceAll, StringPrototype, "replaceAll", native_string_replace_all, Generic, MAY_ALLOCATE;
     StringSplit, StringPrototype, "split", native_string_split, Generic, MAY_ALLOCATE;
     StringMatch, StringPrototype, "match", native_string_match, Generic, MAY_ALLOCATE;
+    StringMatchAll, StringPrototype, "matchAll", native_string_match_all, Generic, MAY_ALLOCATE;
+    StringSearch, StringPrototype, "search", native_string_search, Generic, MAY_ALLOCATE;
     StringAnchor, StringPrototype, "anchor", native_string_anchor, Generic, MAY_ALLOCATE;
     StringBig, StringPrototype, "big", native_string_big, Generic, MAY_ALLOCATE;
     StringBlink, StringPrototype, "blink", native_string_blink, Generic, MAY_ALLOCATE;
@@ -577,6 +580,8 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::ObjectToLocaleString
         | BuiltinId::ObjectValueOf => 0,
         BuiltinId::StringSubstr => 2,
+        BuiltinId::StringReplaceAll => 2,
+        BuiltinId::StringMatchAll | BuiltinId::StringSearch => 1,
         BuiltinId::StringAnchor
         | BuiltinId::StringFontcolor
         | BuiltinId::StringFontsize

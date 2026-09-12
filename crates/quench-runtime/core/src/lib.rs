@@ -9095,7 +9095,7 @@ fn native_noop(_: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Ok(Value::Undefined)
 }
 fn native_html_dda(_: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
-    Ok(Value::Undefined)
+    Ok(Value::Null)
 }
 fn native_throw_type_error(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Err(JsError::Throw(type_error(
@@ -9581,8 +9581,33 @@ fn format_bigint_radix(mut value: BigInt, radix: u32) -> String {
     output.iter().rev().collect()
 }
 
-fn native_string_replace(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+fn string_symbol_method(vm: &mut Vm, value: &Value, name: &str) -> JsResult<Option<Value>> {
+    let key = vm.well_known_symbol_key(name);
+    let method = vm.get_prop_with_accessors(value, &key)?;
+    if method.is_undefined() || method.is_null() {
+        return Ok(None);
+    }
+    if !method.is_function() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "String protocol method is not callable",
+        )));
+    }
+    Ok(Some(method))
+}
+
+fn native_string_replace(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let s = string_this(this);
+    if let Some(search) = args.first()
+        && let Some(method) = string_symbol_method(vm, search, "replace")?
+    {
+        let replacement = args.get(1).cloned().unwrap_or(Value::Undefined);
+        return vm.call_arguments(
+            &method,
+            search.clone(),
+            &[Value::string_value(s), replacement][..],
+        );
+    }
     if let Some(r) = args.first().and_then(Value::as_regexp) {
         let to = args.get(1).map(Value::string).unwrap_or_default();
         let b = r.borrow();
@@ -9597,8 +9622,49 @@ fn native_string_replace(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Va
     let to = args.get(1).map(Value::string).unwrap_or_default();
     Ok(Value::string_value(s.replacen(&from, &to, 1)))
 }
+fn native_string_replace_all(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let s = string_this(this);
+    if let Some(search) = args.first()
+        && let Some(method) = string_symbol_method(vm, search, "replace")?
+    {
+        let replacement = args.get(1).cloned().unwrap_or(Value::Undefined);
+        return vm.call_arguments(
+            &method,
+            search.clone(),
+            &[Value::string_value(s), replacement][..],
+        );
+    }
+    if let Some(r) = args.first().and_then(Value::as_regexp) {
+        let replacement = args.get(1).map(Value::string).unwrap_or_default();
+        return Ok(Value::string_value(
+            r.borrow()
+                .regex
+                .replace_all(&s, replacement.as_str())
+                .to_string(),
+        ));
+    }
+    let from = args.first().map(Value::string).unwrap_or_default();
+    let replacement = args.get(1).map(Value::string).unwrap_or_default();
+    if from.is_empty() {
+        return Ok(Value::string_value(format!(
+            "{}{}",
+            replacement,
+            s.chars()
+                .map(|character| format!("{character}{replacement}"))
+                .collect::<String>()
+        )));
+    }
+    Ok(Value::string_value(s.replace(&from, &replacement)))
+}
 fn native_string_split(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let s = string_this(this);
+    if let Some(separator) = args.first()
+        && let Some(method) = string_symbol_method(vm, separator, "split")?
+    {
+        let mut protocol_args = vec![Value::string_value(s)];
+        protocol_args.extend(args.iter().skip(1).cloned());
+        return vm.call_arguments(&method, separator.clone(), protocol_args.as_slice());
+    }
     if let Some(r) = args.first().and_then(Value::as_regexp) {
         let b = r.borrow();
         let parts = b.regex.split(&s).map(Value::string_value).collect();
@@ -9616,6 +9682,11 @@ fn native_string_split(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
 }
 fn native_string_match(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let s = string_this(this);
+    if let Some(regexp) = args.first()
+        && let Some(method) = string_symbol_method(vm, regexp, "match")?
+    {
+        return vm.call_arguments(&method, regexp.clone(), &[Value::string_value(s)][..]);
+    }
     let Some(r) = args.first().and_then(Value::as_regexp) else {
         return Ok(Value::Null);
     };
@@ -9635,6 +9706,44 @@ fn native_string_match(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
     } else {
         Ok(vm.array_from_values(vals))
     }
+}
+fn native_string_match_all(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let s = string_this(this);
+    if let Some(regexp) = args.first()
+        && let Some(method) = string_symbol_method(vm, regexp, "matchAll")?
+    {
+        return vm.call_arguments(&method, regexp.clone(), &[Value::string_value(s)][..]);
+    }
+    if let Some(r) = args.first().and_then(Value::as_regexp) {
+        let values = r
+            .borrow()
+            .regex
+            .find_iter(&s)
+            .map(|m| Value::string_value(m.as_str()))
+            .collect();
+        return Ok(vm.array_from_values(values));
+    }
+    Ok(vm.array_from_values(Vec::new()))
+}
+fn native_string_search(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let s = string_this(this);
+    if let Some(regexp) = args.first()
+        && let Some(method) = string_symbol_method(vm, regexp, "search")?
+    {
+        return vm.call_arguments(&method, regexp.clone(), &[Value::string_value(s)][..]);
+    }
+    let index = if let Some(r) = args.first().and_then(Value::as_regexp) {
+        r.borrow()
+            .regex
+            .find(&s)
+            .map(|m| m.start() as f64)
+            .unwrap_or(-1.0)
+    } else {
+        s.find(&args.first().map(Value::string).unwrap_or_default())
+            .map(|index| index as f64)
+            .unwrap_or(-1.0)
+    };
+    Ok(Value::Number(index))
 }
 fn native_string_index_of(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     Ok(Value::Number(
