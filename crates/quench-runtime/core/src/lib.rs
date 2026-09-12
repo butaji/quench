@@ -4870,18 +4870,14 @@ impl Vm {
         if let Some(v) = f.props.borrow().get(k) {
             return v.clone();
         }
-        if let Some(function_value) = Environment::get(&self.global, "Function")
-            && let Some(function) = function_value.as_function()
-            && let Some(v) = function.prototype.borrow().props.get(k)
-        {
-            return v.clone();
-        }
-        if let Some(object_value) = Environment::get(&self.global, "Object")
-            && let Some(object) = object_value.as_function()
-        {
-            if let Some(v) = object.prototype.borrow().props.get(k) {
+        let mut current = Environment::get(&self.global, "Function")
+            .and_then(|function| function.as_function_ref().map(|function| function.prototype.clone()));
+        while let Some(prototype) = current {
+            let object = prototype.borrow();
+            if let Some(v) = object.props.get(k) {
                 return v.clone();
             }
+            current = object.prototype.clone();
         }
         Value::Undefined
     }
@@ -7752,13 +7748,56 @@ fn native_object_create(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value
     let prototype = args.first().and_then(Value::as_object);
     Ok(vm.object(prototype))
 }
+fn native_object_assign(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(target_value) = args.first() else {
+        return Err(JsError::Throw(type_error(vm, "Object.assign target is not an object")));
+    };
+    if target_value.is_null() || target_value.is_undefined() {
+        return Err(JsError::Throw(type_error(vm, "Object.assign target is not an object")));
+    }
+    let target = if target_value.is_object() || target_value.is_function() {
+        target_value.clone()
+    } else {
+        native_object(vm, Value::Undefined, std::slice::from_ref(target_value))?
+    };
+    for source in args.iter().skip(1) {
+        if let Some(object) = source.as_object_ref() {
+            let object = object.borrow();
+            if let Some(array) = &object.array {
+                for (index, value) in array.values.iter().cloned().enumerate() {
+                    vm.set_prop(&target, &index.to_string(), value);
+                }
+            }
+            for (key, value) in object.props.iter() {
+                if !key.starts_with('\0') {
+                    vm.set_prop(&target, key, value.clone());
+                }
+            }
+        } else if let Some(function) = source.as_function_ref() {
+            for (key, value) in function.props.borrow().iter() {
+                vm.set_prop(&target, key, value.clone());
+            }
+        } else if source.is_string() {
+            for (index, value) in source.string().chars().map(|ch| Value::string_value(ch.to_string())).enumerate() {
+                vm.set_prop(&target, &index.to_string(), value);
+            }
+        }
+    }
+    Ok(target)
+}
 fn native_object_value_of(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if let Some(object) = this.as_object_ref()
+        && let Some(primitive) = object.borrow().props.get("\0primitive")
+    {
+        return Ok(primitive.clone());
+    }
     Ok(this)
 }
 fn native_object_has_own_property(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let key = args.first().map(Value::string).unwrap_or_default();
     let present = if let Some(function) = this.as_function_ref() {
         function.props.borrow().contains_key(&key)
+            || key == "prototype"
     } else {
         this.as_object_ref().is_some_and(|object| {
             let object = object.borrow();
@@ -7797,14 +7836,19 @@ fn native_object_property_is_enumerable(
     };
     Ok(Value::Bool(enumerable))
 }
-fn native_object_is_prototype_of(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    let Some(target) = args.first().and_then(Value::as_object_ref) else {
-        return Ok(Value::Bool(false));
-    };
+fn native_object_is_prototype_of(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let Some(this_object) = this.as_object() else {
         return Ok(Value::Bool(false));
     };
-    let mut current = target.borrow().prototype.clone();
+    let mut current = if let Some(target) = args.first().and_then(Value::as_object_ref) {
+        target.borrow().prototype.clone()
+    } else if args.first().is_some_and(Value::is_function) {
+        Environment::get(&vm.global, "Function")
+            .and_then(|function| function.as_function_ref().map(|function| Some(function.prototype.clone())))
+            .flatten()
+    } else {
+        None
+    };
     while let Some(prototype) = current {
         if prototype == this_object
             || prototype

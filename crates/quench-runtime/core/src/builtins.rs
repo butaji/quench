@@ -128,6 +128,7 @@ builtin_catalog! {
     ObjectDefineProperty, ObjectConstructor, "defineProperty", native_object_define_property, Generic, MAY_MUTATE;
     ObjectPreventExtensions, ObjectConstructor, "preventExtensions", native_object_prevent_extensions, Generic, MAY_MUTATE;
     ObjectIsExtensible, ObjectConstructor, "isExtensible", native_object_is_extensible, Generic, PURE;
+    ObjectAssign, ObjectConstructor, "assign", native_object_assign, Generic, MAY_MUTATE;
     ArrayConstructor, Global, "Array", native_array, Generic, MAY_ALLOCATE;
     ArrayIsArray, ArrayConstructor, "isArray", native_array_is_array, Generic, PURE;
     ArrayFrom, ArrayConstructor, "from", native_array_from, Generic, MAY_ALLOCATE;
@@ -210,6 +211,7 @@ builtin_catalog! {
     ObjectValueOf, ObjectPrototype, "valueOf", native_object_value_of, Generic, PURE;
     ObjectHasOwnProperty, ObjectPrototype, "hasOwnProperty", native_object_has_own_property, Generic, PURE;
     ObjectPropertyIsEnumerable, ObjectPrototype, "propertyIsEnumerable", native_object_property_is_enumerable, Generic, PURE;
+    ObjectIsPrototypeOf, ObjectPrototype, "isPrototypeOf", native_object_is_prototype_of, Generic, PURE;
     FunctionCall, FunctionPrototype, "call", native_function_call, Generic, MAY_CALL_JS;
     FunctionApply, FunctionPrototype, "apply", native_function_apply, Generic, MAY_CALL_JS;
     FunctionBind, FunctionPrototype, "bind", native_function_bind, Generic, MAY_ALLOCATE;
@@ -342,6 +344,7 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::RegExpExec
         | BuiltinId::ObjectToString
         | BuiltinId::ObjectToLocaleString
+        | BuiltinId::ObjectIsPrototypeOf
         | BuiltinId::ObjectValueOf
         | BuiltinId::FunctionCall
         | BuiltinId::FunctionApply => 1,
