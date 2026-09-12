@@ -576,7 +576,18 @@ impl Compiler {
                 compiler.statement(statement)?;
             }
         }
-        Ok(compiler.finish(span, true))
+        let code = compiler.finish(span, true);
+        if code
+            .ops
+            .iter()
+            .any(|instruction| matches!(instruction.op, DynOp::SetComputed { .. }))
+        {
+            return Err(CompileGap {
+                span,
+                reason: "computed property store deferred to shared semantics",
+            });
+        }
+        Ok(code)
     }
 
     pub fn compile(
@@ -613,7 +624,18 @@ impl Compiler {
         for statement in &body.statements {
             compiler.statement(statement)?;
         }
-        Ok(compiler.finish(function.span, false))
+        let code = compiler.finish(function.span, false);
+        if code
+            .ops
+            .iter()
+            .any(|instruction| matches!(instruction.op, DynOp::SetComputed { .. }))
+        {
+            return Err(CompileGap {
+                span: function.span,
+                reason: "computed property store deferred to shared semantics",
+            });
+        }
+        Ok(code)
     }
 
     pub fn compile_arrow(
@@ -651,7 +673,18 @@ impl Compiler {
             let src = compiler.expression(expression)?;
             compiler.emit(DynOp::Return { src: Some(src) }, function.span);
         }
-        Ok(compiler.finish(function.span, false))
+        let code = compiler.finish(function.span, false);
+        if code
+            .ops
+            .iter()
+            .any(|instruction| matches!(instruction.op, DynOp::SetComputed { .. }))
+        {
+            return Err(CompileGap {
+                span: function.span,
+                reason: "computed property store deferred to shared semantics",
+            });
+        }
+        Ok(code)
     }
 
     fn finish(mut self, span: Span, is_script: bool) -> DynCode {
