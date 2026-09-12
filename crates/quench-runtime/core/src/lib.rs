@@ -4946,7 +4946,7 @@ impl Vm {
         if let Some(f) = o.as_function_ref() {
             return if k == "prototype" {
                 let constructable = match &f.kind {
-                    FunctionKind::User { .. } => true,
+                    FunctionKind::User { node, .. } => !node.generator && !node.r#async,
                     FunctionKind::Builtin(id) => matches!(
                         id,
                         BuiltinId::ObjectConstructor
@@ -7687,7 +7687,8 @@ fn native_math_log(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
 pub(crate) fn constructable(value: &Value) -> bool {
     let Some(function) = value.as_function_ref() else { return false; };
     match &function.kind {
-        FunctionKind::User { .. } | FunctionKind::Builtin(
+        FunctionKind::User { node, .. } => !node.generator && !node.r#async,
+        FunctionKind::Builtin(
             BuiltinId::ObjectConstructor
             | BuiltinId::ArrayConstructor
             | BuiltinId::StringConstructor
