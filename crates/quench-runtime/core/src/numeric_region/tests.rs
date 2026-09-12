@@ -100,6 +100,7 @@ fn loop_code(tail: Vec<DynOp>) -> DynCode {
         blocks: Vec::new(),
         bindings: Vec::new(),
         is_script: false,
+        strict: false,
     }
 }
 
@@ -170,6 +171,7 @@ fn static_property_loop_code(property_local: usize) -> DynCode {
         ],
         bindings: Vec::new(),
         is_script: false,
+        strict: false,
     }
 }
 
@@ -380,6 +382,7 @@ fn quotes_copyable_object_property_without_claiming_it_is_numeric() {
         blocks: vec![(0, BLOCK_END, false), (BLOCK_END, BLOCK_END + 1, false)],
         bindings: Vec::new(),
         is_script: false,
+        strict: false,
     };
 
     let region = quote_block(&code, 0, BLOCK_END).expect("quote mixed copy/numeric block");
@@ -513,6 +516,7 @@ fn composes_property_prologue_with_dense_loop_as_one_typed_region() {
         blocks: vec![(0, PREFIX_END, false), (PREFIX_END, LOOP_END, true)],
         bindings: Vec::new(),
         is_script: false,
+        strict: false,
     };
 
     let region = quote_adjacent_loop(&code, 0, PREFIX_END, LOOP_END)
@@ -601,6 +605,7 @@ fn quotes_straight_numeric_block_as_a_non_trace_region() {
         blocks: vec![(0, BLOCK_END, false), (BLOCK_END, BLOCK_END + 1, false)],
         bindings: Vec::new(),
         is_script: false,
+        strict: false,
     };
 
     let region = quote_block(&code, 0, BLOCK_END).expect("quote numeric block");

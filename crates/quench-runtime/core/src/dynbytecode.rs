@@ -501,6 +501,7 @@ pub struct DynCode {
     pub blocks: Vec<(usize, usize, bool)>,
     pub bindings: Vec<String>,
     pub is_script: bool,
+    pub strict: bool,
 }
 
 pub struct CompileGap {
@@ -675,6 +676,7 @@ impl Compiler {
             blocks,
             bindings,
             is_script,
+            strict: self.strict,
         };
         super::region_plan::simplify_register_code(&mut code)
             .expect("compiler-produced bytecode has a valid register CFG");
