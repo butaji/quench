@@ -1,14 +1,18 @@
-//! VM DSL: Native | Fast | Dynamic, Arena + GC.
+//! Runtime semantics and the single VM: Native | Fast | Dynamic, Arena + GC.
 //!
 //! Layer and storage are independent. NIR | FIR | DIR filter one HIR enum.
-//! Wasm enters as Native. Arena holds linear memory and unboxed locals; GC
-//! holds structs/arrays/exns. QuickJS is the JS layer on top, not store GC.
+//! Wasm loading is supplied by `quench-wasm` and enters here as Native. Arena
+//! holds linear memory and unboxed locals; GC holds structs/arrays/exns.
 
 pub mod build_profile;
 /// The migrated native VM core. This is exposed as a runtime facility rather
 /// than a second executable; `quench-node` remains the Node compatibility host.
 pub mod vm_core {
-    pub use quench_runtime_core::run_file;
+    pub use quench_runtime_core::{
+        run_file, run_file_with_argv, run_file_with_argv_and_output,
+        run_file_with_argv_and_output_status, run_source_with_argv_and_output,
+        run_source_with_argv_and_output_status,
+    };
 }
 mod bulk;
 pub mod dynamic;

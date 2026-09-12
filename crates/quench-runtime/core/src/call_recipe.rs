@@ -178,10 +178,12 @@ fn uses_arguments(code: &DynCode, arguments_slot: usize) -> bool {
 
 fn captures_frame(code: &DynCode) -> bool {
     !code.hoisted.is_empty()
-        || code
-            .ops
-            .iter()
-            .any(|instruction| matches!(instruction.op, DynOp::MakeClosure { .. }))
+        || code.ops.iter().any(|instruction| {
+            matches!(
+                instruction.op,
+                DynOp::MakeClosure { .. } | DynOp::MakeArrow { .. }
+            )
+        })
 }
 
 #[cfg(test)]

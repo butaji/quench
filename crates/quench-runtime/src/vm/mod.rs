@@ -1,3 +1,9 @@
+//! Legacy JavaScript host executor retained during core migration.
+//!
+//! File-backed production runs must enter `crate::vm_core`; this module remains
+//! available only for compatibility surfaces (eval and host adapters)
+//! until those layers are lowered into the stencil VM.
+
 use crate::intl::tolocale::value::{is_finite, to_string};
 use crate::ops::{
     Builtin, FunctionKind, FunctionStrictness, HostCapabilityKind, HostCapabilityRef, Op, RealmId,

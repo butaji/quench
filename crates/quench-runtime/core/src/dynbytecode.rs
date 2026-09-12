@@ -36,6 +36,7 @@ impl DynOp {
             | Self::NewArray { .. }
             | Self::NewObject { .. }
             | Self::MakeClosure { .. }
+            | Self::MakeArrow { .. }
             | Self::RegExp { .. }
             | Self::Jump { .. }
             | Self::PushHandler { .. }
@@ -110,6 +111,7 @@ impl DynOp {
             | Self::NewObject { dst }
             | Self::NewObjectFromRegisters { dst, .. }
             | Self::MakeClosure { dst, .. }
+            | Self::MakeArrow { dst, .. }
             | Self::Unary { dst, .. }
             | Self::Binary { dst, .. }
             | Self::InstanceOf { dst, .. }
@@ -156,6 +158,7 @@ impl DynOp {
             | Self::NewObject { dst }
             | Self::NewObjectFromRegisters { dst, .. }
             | Self::MakeClosure { dst, .. }
+            | Self::MakeArrow { dst, .. }
             | Self::Unary { dst, .. }
             | Self::Binary { dst, .. }
             | Self::InstanceOf { dst, .. }
@@ -282,6 +285,10 @@ pub enum DynOp {
     MakeClosure {
         dst: Register,
         function: *const Function<'static>,
+    },
+    MakeArrow {
+        dst: Register,
+        function: *const ArrowFunctionExpression<'static>,
     },
     Unary {
         dst: Register,
@@ -433,6 +440,7 @@ define_dyn_op_metadata! {
     NewObject: Self::NewObject { .. } => "NewObject", Property,
     NewObjectFromRegisters: Self::NewObjectFromRegisters { .. } => "NewObjectFromRegisters", Property,
     MakeClosure: Self::MakeClosure { .. } => "MakeClosure", Closure,
+    MakeArrow: Self::MakeArrow { .. } => "MakeArrow", Closure,
     Unary: Self::Unary { .. } => "Unary", Arithmetic,
     Binary: Self::Binary { .. } => "Binary", Arithmetic,
     InstanceOf: Self::InstanceOf { .. } => "InstanceOf", Compare,
@@ -563,6 +571,42 @@ impl Compiler {
         compiler.collect_hoisted(&body.statements);
         for statement in &body.statements {
             compiler.statement(statement)?;
+        }
+        Ok(compiler.finish(function.span, false))
+    }
+
+    pub fn compile_arrow(
+        function: &ArrowFunctionExpression<'static>,
+        source_id: Option<usize>,
+    ) -> Result<DynCode, CompileGap> {
+        let params = function
+            .params
+            .items
+            .iter()
+            .map(|param| {
+                pattern_name(&param.pattern).ok_or(CompileGap {
+                    span: param.span,
+                    reason: "unsupported arrow parameter pattern",
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut compiler = Self {
+            ops: Vec::new(),
+            next_register: 0,
+            params,
+            local_bindings: Some(Vec::new()),
+            hoisted: Vec::new(),
+            controls: Vec::new(),
+            source_id,
+        };
+        if let ArrowFunctionBody::FunctionBody(body) = &function.body {
+            compiler.collect_hoisted(&body.statements);
+            for statement in &body.statements {
+                compiler.statement(statement)?;
+            }
+        } else if let Some(expression) = function.body.as_expression() {
+            let src = compiler.expression(expression)?;
+            compiler.emit(DynOp::Return { src: Some(src) }, function.span);
         }
         Ok(compiler.finish(function.span, false))
     }
@@ -704,6 +748,7 @@ impl Compiler {
             DoWhileStatement(item) => self.do_while_statement(item),
             ForStatement(item) => self.for_statement(item),
             ForInStatement(item) => self.for_in_statement(item),
+            ForOfStatement(item) => self.for_of_statement(item),
             SwitchStatement(item) => self.switch_statement(item),
             TryStatement(item) => self.try_statement(item),
             _ => Err(CompileGap {
@@ -718,22 +763,149 @@ impl Compiler {
         declaration: &VariableDeclaration<'static>,
     ) -> Result<(), CompileGap> {
         for declarator in &declaration.declarations {
-            let name = pattern_name(&declarator.id).ok_or(CompileGap {
-                span: declarator.span,
-                reason: "unsupported binding pattern",
-            })?;
-            if let Some(bindings) = &mut self.local_bindings
-                && !bindings.contains(&name)
-            {
-                bindings.push(name.clone());
-            }
             if let Some(value) = &declarator.init {
                 let src = self.expression(value)?;
-                self.emit(DynOp::DeclareName { name, src }, declarator.span);
+                self.bind_pattern(&declarator.id, src, declarator.span)?;
             } else if self.local_bindings.is_none() {
                 let src = self.literal(Literal::Undefined, declarator.span)?;
-                self.emit(DynOp::DeclareName { name, src }, declarator.span);
+                self.bind_pattern(&declarator.id, src, declarator.span)?;
             }
+        }
+        Ok(())
+    }
+
+    fn declare_binding(&mut self, name: String, src: Register, span: Span) {
+        if let Some(bindings) = &mut self.local_bindings
+            && !bindings.contains(&name)
+        {
+            bindings.push(name.clone());
+        }
+        self.emit(DynOp::DeclareName { name, src }, span);
+    }
+
+    fn bind_pattern(
+        &mut self,
+        pattern: &BindingPattern<'static>,
+        src: Register,
+        span: Span,
+    ) -> Result<(), CompileGap> {
+        match pattern {
+            BindingPattern::BindingIdentifier(identifier) => {
+                self.declare_binding(identifier.name.to_string(), src, span);
+                Ok(())
+            }
+            BindingPattern::AssignmentPattern(assignment) => {
+                let undefined = self.literal(Literal::Undefined, assignment.span)?;
+                let test = self.alloc()?;
+                self.emit(
+                    DynOp::Binary {
+                        dst: test,
+                        left: src,
+                        right: undefined,
+                        kind: Op::StrictEq,
+                    },
+                    assignment.span,
+                );
+                let use_source = self.emit(
+                    DynOp::JumpIfFalse {
+                        test,
+                        target: UNRESOLVED_TARGET,
+                    },
+                    assignment.span,
+                );
+                let selected = self.alloc()?;
+                let default_value = self.expression(&assignment.right)?;
+                self.emit(
+                    DynOp::Move {
+                        dst: selected,
+                        src: default_value,
+                    },
+                    assignment.span,
+                );
+                let done = self.emit(
+                    DynOp::Jump {
+                        target: UNRESOLVED_TARGET,
+                    },
+                    assignment.span,
+                );
+                self.patch(use_source, self.ops.len());
+                self.emit(DynOp::Move { dst: selected, src }, assignment.span);
+                self.patch(done, self.ops.len());
+                self.bind_pattern(&assignment.left, selected, span)
+            }
+            BindingPattern::ObjectPattern(object) => self.bind_object_pattern(object, src, span),
+            BindingPattern::ArrayPattern(array) => self.bind_array_pattern(array, src, span),
+        }
+    }
+
+    fn bind_object_pattern(
+        &mut self,
+        pattern: &ObjectPattern<'static>,
+        src: Register,
+        span: Span,
+    ) -> Result<(), CompileGap> {
+        if let Some(rest) = &pattern.rest {
+            return Err(CompileGap {
+                span: rest.span,
+                reason: "object rest binding stencil missing",
+            });
+        }
+        for property in &pattern.properties {
+            let key = match &property.key {
+                PropertyKey::StaticIdentifier(identifier) => identifier.name.to_string(),
+                PropertyKey::StringLiteral(value) => value.value.to_string(),
+                _ if !property.computed => {
+                    return Err(CompileGap {
+                        span: property.span,
+                        reason: "unsupported object binding key",
+                    });
+                }
+                _ => {
+                    return Err(CompileGap {
+                        span: property.span,
+                        reason: "computed object binding key stencil missing",
+                    });
+                }
+            };
+            let value = self.alloc()?;
+            self.emit(
+                DynOp::GetStatic {
+                    dst: value,
+                    object: src,
+                    key,
+                },
+                property.span,
+            );
+            self.bind_pattern(&property.value, value, span)?;
+        }
+        Ok(())
+    }
+
+    fn bind_array_pattern(
+        &mut self,
+        pattern: &ArrayPattern<'static>,
+        src: Register,
+        span: Span,
+    ) -> Result<(), CompileGap> {
+        if let Some(rest) = &pattern.rest {
+            return Err(CompileGap {
+                span: rest.span,
+                reason: "array rest binding stencil missing",
+            });
+        }
+        for (index, element) in pattern.elements.iter().enumerate() {
+            let Some(element) = element else { continue };
+            let key = self.literal(Literal::Number(index as f64), element.span())?;
+            let value = self.alloc()?;
+            self.emit(
+                DynOp::GetComputed {
+                    dst: value,
+                    object: src,
+                    key,
+                },
+                element.span(),
+            );
+            self.bind_pattern(element, value, span)?;
         }
         Ok(())
     }
@@ -902,6 +1074,88 @@ impl Compiler {
         Ok(())
     }
 
+    fn for_of_statement(&mut self, item: &ForOfStatement<'static>) -> Result<(), CompileGap> {
+        if item.r#await {
+            return Err(CompileGap {
+                span: item.span,
+                reason: "async for-of stencil missing",
+            });
+        }
+        let object = self.expression(&item.right)?;
+        let index = self.literal(Literal::Number(0.0), item.span)?;
+        let length = self.alloc()?;
+        self.emit(
+            DynOp::GetStatic {
+                dst: length,
+                object,
+                key: "length".to_owned(),
+            },
+            item.right.span(),
+        );
+        let top = self.ops.len();
+        let test = self.alloc()?;
+        self.emit(
+            DynOp::Binary {
+                dst: test,
+                left: index,
+                right: length,
+                kind: Op::Lt,
+            },
+            item.span,
+        );
+        let exit = self.emit(
+            DynOp::JumpIfFalse {
+                test,
+                target: UNRESOLVED_TARGET,
+            },
+            item.span,
+        );
+        let value = self.alloc()?;
+        self.emit(
+            DynOp::GetComputed {
+                dst: value,
+                object,
+                key: index,
+            },
+            item.span,
+        );
+        self.store_for_left(&item.left, value, item.span)?;
+        self.controls.push(Control {
+            breaks: Vec::new(),
+            continues: Vec::new(),
+        });
+        self.statement(&item.body)?;
+        let control = self.controls.pop().unwrap();
+        for jump in control.continues {
+            self.patch(jump, top);
+        }
+        let one = self.literal(Literal::Number(1.0), item.span)?;
+        let next = self.alloc()?;
+        self.emit(
+            DynOp::Binary {
+                dst: next,
+                left: index,
+                right: one,
+                kind: Op::Add,
+            },
+            item.span,
+        );
+        self.emit(
+            DynOp::Move {
+                dst: index,
+                src: next,
+            },
+            item.span,
+        );
+        self.emit(DynOp::Jump { target: top }, item.span);
+        let end = self.ops.len();
+        self.patch(exit, end);
+        for jump in control.breaks {
+            self.patch(jump, end);
+        }
+        Ok(())
+    }
+
     fn store_for_left(
         &mut self,
         left: &ForStatementLeft<'static>,
@@ -914,12 +1168,7 @@ impl Compiler {
                     span,
                     reason: "empty for-in declaration",
                 })?;
-                let name = pattern_name(&declarator.id).ok_or(CompileGap {
-                    span,
-                    reason: "unsupported for-in binding",
-                })?;
-                self.emit(DynOp::DeclareName { name, src }, span);
-                Ok(())
+                self.bind_pattern(&declarator.id, src, span)
             }
             _ => {
                 let target = left
@@ -1128,6 +1377,18 @@ impl Compiler {
                 self.emit(DynOp::MakeClosure { dst, function }, value.span);
                 Ok(dst)
             }
+            ArrowFunctionExpression(value) => {
+                let dst = self.alloc()?;
+                let function = unsafe {
+                    std::mem::transmute::<
+                        *const oxc_ast::ast::ArrowFunctionExpression<'_>,
+                        *const oxc_ast::ast::ArrowFunctionExpression<'static>,
+                    >(&**value as *const _)
+                };
+                self.emit(DynOp::MakeArrow { dst, function }, value.span);
+                Ok(dst)
+            }
+            TemplateLiteral(value) => self.template_literal(value),
             SequenceExpression(value) => {
                 let mut result = self.literal(Literal::Undefined, value.span)?;
                 for item in &value.expressions {
@@ -1183,6 +1444,54 @@ impl Compiler {
                 reason: "unsupported expression",
             }),
         }
+    }
+
+    fn template_literal(
+        &mut self,
+        value: &oxc_ast::ast::TemplateLiteral<'static>,
+    ) -> Result<Register, CompileGap> {
+        let first = value
+            .quasis
+            .first()
+            .and_then(|quasi| quasi.value.cooked.as_ref())
+            .map(|text| text.to_string())
+            .unwrap_or_default();
+        let mut result = self.literal(Literal::String(first), value.span)?;
+        for (index, expression) in value.expressions.iter().enumerate() {
+            let value_register = self.expression(expression)?;
+            let dst = self.alloc()?;
+            self.emit(
+                DynOp::Binary {
+                    dst,
+                    left: result,
+                    right: value_register,
+                    kind: Op::Add,
+                },
+                expression.span(),
+            );
+            result = dst;
+            if let Some(quasi) = value.quasis.get(index + 1) {
+                let text = quasi
+                    .value
+                    .cooked
+                    .as_ref()
+                    .map(|text| text.to_string())
+                    .unwrap_or_default();
+                let quasi_register = self.literal(Literal::String(text), quasi.span)?;
+                let dst = self.alloc()?;
+                self.emit(
+                    DynOp::Binary {
+                        dst,
+                        left: result,
+                        right: quasi_register,
+                        kind: Op::Add,
+                    },
+                    quasi.span,
+                );
+                result = dst;
+            }
+        }
+        Ok(result)
     }
 
     fn literal(&mut self, value: Literal, span: Span) -> Result<Register, CompileGap> {
@@ -1629,6 +1938,29 @@ impl Compiler {
             let callee = self.expression(&value.callee)?;
             (receiver, callee)
         };
+        if let [Argument::SpreadElement(spread)] = value.arguments.as_slice() {
+            let spread_value = self.expression(&spread.argument)?;
+            let apply = self.alloc()?;
+            self.emit(
+                DynOp::GetStatic {
+                    dst: apply,
+                    object: callee,
+                    key: "apply".to_owned(),
+                },
+                spread.span,
+            );
+            let dst = self.alloc()?;
+            self.emit(
+                DynOp::Call {
+                    dst,
+                    callee: apply,
+                    receiver: callee,
+                    args: vec![receiver, spread_value],
+                },
+                value.span,
+            );
+            return Ok(dst);
+        }
         let args = value
             .arguments
             .iter()

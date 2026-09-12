@@ -7,21 +7,82 @@ planner, raw values, builtins, and tests) is linked as the private
 target or executable entry point. The public runtime surface is
 `quench_runtime::vm_core`.
 
+## One-VM invariant
+
+`quench-runtime-core` is the authoritative JavaScript execution engine and is
+selected for every file-backed `quench-node` run. The legacy
+`quench-runtime/src/vm` implementation is migration residue: it must not be
+selected as a production fallback and is scheduled for removal after its Node
+host and WebAssembly boundaries are lowered into this core.
+
+The compatibility layers are intentionally preserved. `quench-node` owns Node
+compatibility APIs (argv, output, modules, timers, and exit handling), while
+`quench-runtime` owns JavaScript-facing semantic helpers. `quench-wasm` owns
+Wasm format loading and spec-suite adaptation. These layers pass host data into
+the core; they do not create a second VM.
+
+WebAssembly must enter this same core through a lowering-only frontend. A
+Wasm-specific interpreter, MIR executor, or native dispatch loop is not an
+acceptable implementation path.
+
+The Wasm lowering is still an active migration boundary: the existing
+`quench-runtime::instance` API remains compiled for compatibility tests until
+its typed module lowering is hosted by `quench-runtime-core`. It is not used by
+the JavaScript file runner, and this temporary boundary must be removed before
+the migration is declared complete.
+
 The source implementation was copied as-is, with only the package/library
 boundary and internal symbol prefix renamed to Quench-native names. Its AOT
 build script compiles the copied stencil catalog as part of the runtime build.
-`quench-node` remains the Node API compatibility host; it invokes the runtime
-core for the V8V7 driver through `QUENCH_USE_NATIVE_CORE=1` and retains the
-compatibility path for Node surface tests.
+`quench-node` remains the Node API compatibility host; file-backed execution
+now invokes the runtime core directly. The compatibility host path remains
+only for eval-mode and host-surface migration tests and is not a file-execution
+fallback.
+
+The stencil compiler now lowers common object/array destructuring, arrow
+functions, array `for-of`, and a single spread-only call through the core.
+Small `assert`, `buffer`, `util`, and `path` Node-compatible surfaces are also
+VM-owned, including Blob validation, Buffer allocation, signal exit-code
+conversion, and POSIX path operations. The core owns FIFO `process.nextTick`,
+`setTimeout`/`clearTimeout`, and `setImmediate` queues for file runs. These are
+incremental language slices, not a claim that the Node surface is complete;
+unsupported syntax remains an explicit migration error until its semantics are
+lowered.
 
 The 430 task documents remain under `crates/quench-runtime/tasks/` as the
 lossless migration ledger.
 
+## Compatibility gates
+
+The legacy executor is removable only when each boundary below has a core
+implementation and its existing oracle suite is green. This keeps the host and
+semantic layers stable while the execution core changes underneath them.
+
+| Boundary | Current entry point | Core migration gate |
+| --- | --- | --- |
+| Plain JavaScript files | `vm_core::run_source_with_argv_and_output_status` | stencil execution, output, argv, and exit status match the Node oracle |
+| CJS/Node modules | `vm_core::run_source_with_argv_and_output_status` + core `require` | `require`, module cache/identity, timers, and host effects run in the same core context |
+| `node -e` / eval | `eval_script_with_exec_argv` | eval and file execution share one core context contract |
+| Test262 harness | `quench-test262::runtime_host` | all realm, descriptor, identity, ordering, and error checks pass through the core |
+| WebAssembly | `quench-runtime::instance` | Wasm lowering, typed calls, memory/tables, traps, exceptions, and imports execute in the core |
+
+Until every row is green, deleting `crates/quench-runtime/src/vm` or the Wasm
+interpreter would be a compatibility regression, not a migration.
+
 Verification completed:
 
 - `cargo check -p quench-runtime`
-- `cargo test -p quench-runtime-core --lib` (161 tests)
-- production `quench-node` build and Node smoke test
+- `cargo test -p quench-runtime-core --lib` (170 tests)
+- `cargo test -p quench-node --lib` (18 tests)
+- `cargo test -p quench-wasm --lib` (16 tests)
+- production `quench-node` build and a core-backed Node smoke test
+- core-backed `tests/node-compat/stage-2235` (2/2 fixtures)
+- core-backed `tests/node-compat/stage-2650/buffer-tostring-range.js`
+- core-backed file timer smoke (`sync` before `timer`)
+- core-backed `process.nextTick` ordering smoke (`sync`, `tick`, then `timer`)
+- full core-backed `tests/node-compat` audit currently reports 13/863; the
+  remaining failures identify host-module and syntax migration work still
+  required before the compatibility-host path can be removed
 - canonical V8V7 exact driver, all eight fixtures valid
 
 The matched one-second/32-run V8V7 measurements (both thin-LTO builds) were

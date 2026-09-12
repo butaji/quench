@@ -2882,6 +2882,15 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             }
             put(frame, dst, closure);
         }
+        DynOp::MakeArrow { dst, function } => {
+            let environment = frame.environment.clone();
+            let node = unsafe { &**function };
+            let closure = vm(frame).make_arrow(node, environment);
+            if let Some(function) = closure.as_function_ref() {
+                vm(frame).compile_arrow_function(function, node)?;
+            }
+            put(frame, dst, closure);
+        }
         DynOp::Unary { dst, src, kind } => {
             let value = unary(*kind, get_ref(frame, *src));
             put(frame, dst, value);
@@ -4986,7 +4995,12 @@ fn build_aarch64(
         || code
             .ops
             .iter()
-            .any(|instruction| matches!(instruction.op, DynOp::MakeClosure { .. }));
+            .any(|instruction| {
+                matches!(
+                    instruction.op,
+                    DynOp::MakeClosure { .. } | DynOp::MakeArrow { .. }
+                )
+            });
     let call_recipe = FunctionCallRecipe {
         entry,
         guest_entry: unsafe { std::mem::transmute::<usize, DynEntry>(guest_entry) },
