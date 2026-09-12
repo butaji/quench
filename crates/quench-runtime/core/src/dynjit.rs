@@ -3099,7 +3099,8 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             strict,
         } => {
             let object = get(frame, object);
-            let key = get(frame, key).string();
+            let key_value = get(frame, key);
+            let key = unsafe { &mut *frame.vm }.to_property_key(key_value)?;
             let deleted = unsafe { &*frame.vm }.delete_prop(&object, &key);
             if *strict && !deleted {
                 return Err(JsError::Throw(super::type_error(
@@ -3533,6 +3534,11 @@ fn unary(vm: &mut super::Vm, kind: UnaryKind, value: &Value) -> JsResult<Value> 
                 "number"
             } else if value.is_string() {
                 "string"
+            } else if value
+                .as_object_ref()
+                .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
+            {
+                "symbol"
             } else {
                 "object"
             }
@@ -3554,6 +3560,17 @@ fn construct(
         return Err(JsError::Throw(super::type_error(
             unsafe { &mut *frame.vm },
             "not a constructor",
+        )));
+    }
+    if callee.as_function_ref().is_some_and(|function| {
+        matches!(
+            function.kind,
+            FunctionKind::Native(native) if native as *const () == super::native_symbol as *const ()
+        )
+    }) {
+        return Err(JsError::Throw(super::type_error(
+            unsafe { &mut *frame.vm },
+            "Symbol is not constructable",
         )));
     }
     let native = callee.as_function_ref().is_some_and(|function| {
