@@ -109,14 +109,15 @@ fn select_body_instruction(
         Opcode::LoadConst => load_constant(code, instruction, state)?,
         Opcode::Move => copy(instruction, state)?,
         Opcode::Add => add(instruction, state)?,
-        Opcode::Binary => binary(instruction, state)?,
+        opcode if opcode.is_binary_family() => binary(instruction, state)?,
         Opcode::InitLocal => init_next(instruction, state)?,
         Opcode::StoreLocal => store(instruction, state)?,
-        Opcode::Slow
-            if matches!(
-                code.cold_at(pc)?,
-                crate::ops::Op::MarkUninitialized { .. } | crate::ops::Op::MarkImmutable { .. }
-            ) => {}
+        opcode
+            if opcode.is_cold_marker()
+                && matches!(
+                    code.cold_at(pc)?,
+                    crate::ops::Op::MarkUninitialized { .. } | crate::ops::Op::MarkImmutable { .. }
+                ) => {}
         _ => return None,
     }
     Some(())
@@ -163,7 +164,7 @@ fn add(instruction: crate::ir::Instruction, state: &mut BodyState) -> Option<()>
 }
 
 fn binary(instruction: crate::ir::Instruction, state: &mut BodyState) -> Option<()> {
-    let operator = crate::ir::compact_binary_operator(instruction.flags)?;
+    let operator = instruction.opcode.binary_operator(instruction.flags)?;
     let left = *state.values.get(&instruction.b)?;
     let right = *state.values.get(&instruction.c)?;
     let value = match operator {

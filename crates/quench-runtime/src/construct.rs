@@ -61,13 +61,22 @@ fn collect_construct_arguments(
     args: &[u16],
     spreads: &[bool],
 ) -> Result<crate::completion::CallArguments, crate::execute::VmError> {
-    let mut arguments = crate::completion::CallArguments::with_capacity(args.len());
+    let mut arguments =
+        crate::completion::CallArguments::try_with_capacity(args.len()).map_err(|_| {
+            crate::value::error::throw_range_error("Unable to allocate construct arguments")
+        })?;
     for (index, spread) in args.iter().zip(spreads) {
         let value = crate::execute::read_register(registers, *index)?;
         if *spread {
-            arguments.extend(crate::collections::iterator::collect_iterable(value)?);
+            arguments
+                .try_extend(crate::collections::iterator::collect_iterable(value)?)
+                .map_err(|_| {
+                    crate::value::error::throw_range_error("Unable to allocate construct arguments")
+                })?;
         } else {
-            arguments.push(value);
+            arguments.try_push(value).map_err(|_| {
+                crate::value::error::throw_range_error("Unable to allocate construct arguments")
+            })?;
         }
     }
     Ok(arguments)

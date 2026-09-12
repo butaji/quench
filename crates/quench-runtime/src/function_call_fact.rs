@@ -122,7 +122,7 @@ pub(crate) fn integer_switch_callable(
     (kind.opcode == crate::ir::Opcode::LoadLocal
         && kind.b == first
         && is_undefined(code, initial)
-        && switch.opcode == crate::ir::Opcode::Slow
+        && switch.opcode.is_cold_marker()
         && has_undefined_tail(code, 3))
     .then_some(())?;
     let Op::Switch {
@@ -160,10 +160,7 @@ pub(crate) fn own_field_add_return(
     let parameter = u16::try_from(function.captures.len()).ok()?;
     (receiver.opcode == crate::ir::Opcode::LoadLocal
         && receiver.b == parameter
-        && matches!(
-            get.opcode,
-            crate::ir::Opcode::GetN | crate::ir::Opcode::GetNQuickened
-        )
+        && get.opcode.semantic_opcode() == crate::ir::Opcode::GetN
         && get.b == receiver.a
         && add.opcode == crate::ir::Opcode::AddConst
         && add.b == get.a

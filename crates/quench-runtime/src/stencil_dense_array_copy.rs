@@ -15,15 +15,43 @@ const LOOP_BACKEDGE: usize = 24;
 const LOOP_EXIT: usize = 25;
 
 const OPERATIONS: [Opcode; REGION_END] = [
-    Opcode::LoadConst, Opcode::LoadConst, Opcode::StoreLocal, Opcode::LoadConst,
-    Opcode::LoadLocal, Opcode::LoadLocal, Opcode::GetN, Opcode::Binary,
-    Opcode::JumpIfFalse, Opcode::LoadLocal, Opcode::Move, Opcode::LoadLocal,
-    Opcode::Move, Opcode::LoadLocal, Opcode::Slow, Opcode::LoadLocal,
-    Opcode::AGetI, Opcode::ASetI, Opcode::Move, Opcode::LoadLocal,
-    Opcode::LoadConst, Opcode::Binary, Opcode::StoreLocal, Opcode::Unary,
-    Opcode::Jump, Opcode::LoadLocal, Opcode::Slow, Opcode::LoadConst,
-    Opcode::AGetI, Opcode::LoadLocal, Opcode::Slow, Opcode::LoadLocal,
-    Opcode::GetN, Opcode::LoadConst, Opcode::Sub, Opcode::AGetI, Opcode::Add,
+    Opcode::LoadConst,
+    Opcode::LoadConst,
+    Opcode::StoreLocal,
+    Opcode::LoadConst,
+    Opcode::LoadLocal,
+    Opcode::LoadLocal,
+    Opcode::GetN,
+    Opcode::Binary,
+    Opcode::JumpIfFalse,
+    Opcode::LoadLocal,
+    Opcode::Move,
+    Opcode::LoadLocal,
+    Opcode::Move,
+    Opcode::LoadLocal,
+    Opcode::Slow,
+    Opcode::LoadLocal,
+    Opcode::AGetI,
+    Opcode::ASetI,
+    Opcode::Move,
+    Opcode::LoadLocal,
+    Opcode::LoadConst,
+    Opcode::Binary,
+    Opcode::StoreLocal,
+    Opcode::Unary,
+    Opcode::Jump,
+    Opcode::LoadLocal,
+    Opcode::Slow,
+    Opcode::LoadConst,
+    Opcode::AGetI,
+    Opcode::LoadLocal,
+    Opcode::Slow,
+    Opcode::LoadLocal,
+    Opcode::GetN,
+    Opcode::LoadConst,
+    Opcode::Sub,
+    Opcode::AGetI,
+    Opcode::Add,
     Opcode::Return,
 ];
 
@@ -61,10 +89,8 @@ pub(crate) enum DenseCopyOutcome {
 
 pub(crate) struct NativeDenseCopyPlan {
     selection: DenseCopySelection,
-    owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
     image: crate::stencil_region_layout::VerifiedRegionImage,
-    cache: crate::stencil_select::RenderedRegionCache,
-    installed: Option<crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>>,
+    physical: crate::stencil_installation::SharedPhysicalEntry<crate::stencil_arena::DispatchEntry>,
 }
 
 impl NativeDenseCopyPlan {
@@ -78,13 +104,13 @@ impl NativeDenseCopyPlan {
             crate::stencil_select::dense_numeric_copy_loop_region_key(),
         )?;
         (view.abi == crate::stencil_select::RegionAbi::ArrayCopyLoop
-            && view.executable && view.stencil.validate()).then_some(())?;
+            && view.executable
+            && view.stencil.validate())
+        .then_some(())?;
         Some(Self {
             selection,
-            owner,
             image: region_image(view),
-            cache: crate::stencil_select::RenderedRegionCache::new(),
-            installed: None,
+            physical: crate::stencil_installation::SharedPhysicalEntry::new(owner),
         })
     }
 
@@ -122,8 +148,16 @@ impl NativeDenseCopyPlan {
         let mut target_words = target.numeric_kernel_words_mut().ok_or_else(|| {
             NativeDispatchError::Physical("dense copy target backing changed".into())
         })?;
+        let source_backing = source.backing_identity();
+        let target_backing = target.backing_identity();
         let mut native = native_context(&source_words, &mut target_words, context);
         let status = self.invoke(&mut native)?;
+        if !source_backing.is_current(source) || !target_backing.is_current(target) {
+            return Err(NativeDispatchError::committed(
+                LOOP_BACKEDGE,
+                "dense copy backing generation changed during native execution",
+            ));
+        }
         let outcome = finish_native(status, &native, &target_words)?;
         if status == crate::vm::NATIVE_DISPATCH_INTERRUPT {
             context.clear_interrupt();
@@ -141,26 +175,26 @@ impl NativeDenseCopyPlan {
 
     fn invoke(&mut self, context: &mut NativeArrayCopyContext) -> Result<u64, NativeDispatchError> {
         let entry = self.entry()?;
-        let lease = crate::stencil_arena::SharedStencilSlab::acquire_owned(&self.owner, entry)
-            .map_err(|error| NativeDispatchError::Physical(format!("dense copy lease: {error:?}")))?;
-        lease.invoke(|call| call((context as *mut NativeArrayCopyContext).cast()))
+        self.physical
+            .invoke(entry, |call| {
+                call((context as *mut NativeArrayCopyContext).cast())
+            })
             .map_err(|error| NativeDispatchError::Physical(format!("dense copy invoke: {error:?}")))
     }
 
-    fn entry(&mut self) -> Result<crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>, NativeDispatchError> {
-        if let Some(entry) = self.installed {
-            if self.owner.borrow().entry_token_is_live(entry) {
-                return Ok(entry);
-            }
-            self.installed = None;
-        }
-        let address = self.owner.borrow_mut()
-            .publish_region_image_or_get(&mut self.cache, &self.image)
-            .map_err(|error| NativeDispatchError::Physical(format!("dense copy publish: {error:?}")))?;
-        let entry = self.owner.borrow().owned_array_copy_loop_entry(address)
-            .map_err(|error| NativeDispatchError::Physical(format!("dense copy entry: {error:?}")))?;
-        self.installed = Some(entry);
-        Ok(entry)
+    fn entry(
+        &mut self,
+    ) -> Result<
+        crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>,
+        NativeDispatchError,
+    > {
+        let image = &self.image;
+        self.physical
+            .entry(
+                |owner, cache| owner.borrow_mut().publish_region_image_or_get(cache, image),
+                |pool, address| pool.owned_array_copy_loop_entry(address),
+            )
+            .map_err(|error| NativeDispatchError::Physical(format!("dense copy entry: {error:?}")))
     }
 
     pub(crate) fn route() -> impl Iterator<Item = &'static str> {
@@ -169,7 +203,9 @@ impl NativeDenseCopyPlan {
 }
 
 fn copy_guards_hold(source: &crate::value::ArrayData, target: &crate::value::ArrayData) -> bool {
-    source.identity() != target.identity()
+    crate::locals::array_word_is_current(source)
+        && crate::locals::array_word_is_current(target)
+        && source.identity() != target.identity()
         && source.is_plain_dense_access()
         && target.is_plain_dense_access()
         && source.is_dense_numeric_data()
@@ -208,25 +244,34 @@ fn finish_native(
             "dense copy native loop returned incomplete progress",
         ));
     }
-    let first = target.first().ok_or_else(|| {
-        NativeDispatchError::committed(LOOP_EXIT, "dense copy target is empty")
-    })?;
-    Ok(DenseCopyOutcome::Completed(*first + target[target.len() - 1]))
+    let first = target
+        .first()
+        .ok_or_else(|| NativeDispatchError::committed(LOOP_EXIT, "dense copy target is empty"))?;
+    Ok(DenseCopyOutcome::Completed(
+        *first + target[target.len() - 1],
+    ))
 }
 
-fn region_image(view: crate::stencil_select::PhysicalStencilView) -> crate::stencil_region_layout::VerifiedRegionImage {
+fn region_image(
+    view: crate::stencil_select::PhysicalStencilView,
+) -> crate::stencil_region_layout::VerifiedRegionImage {
     let identity = crate::stencil_region_layout::RegionImageIdentity {
         key: view.key,
         cache_signature: byte_fingerprint(view.stencil.bytes),
         abi: view.abi,
     };
-    crate::stencil_region_layout::VerifiedRegionImage::from_composed(identity, view.stencil.bytes.to_vec())
+    crate::stencil_region_layout::VerifiedRegionImage::from_composed(
+        identity,
+        view.stencil.bytes.to_vec(),
+    )
 }
 
 fn byte_fingerprint(bytes: &[u8]) -> u64 {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x1000_0000_01b3;
-    bytes.iter().fold(OFFSET, |hash, byte| (hash ^ u64::from(*byte)).wrapping_mul(PRIME))
+    bytes.iter().fold(OFFSET, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(PRIME)
+    })
 }
 
 pub(crate) fn select_dense_copy(
@@ -250,10 +295,18 @@ pub(crate) fn select_dense_copy(
 }
 
 fn operation_window(entries: &[BaselineEntry]) -> Option<[Instruction; REGION_END]> {
-    let instructions: [Instruction; REGION_END] = entries.get(..REGION_END)?
-        .iter().map(|entry| entry.instruction).collect::<Vec<_>>().try_into().ok()?;
-    instructions.iter().zip(OPERATIONS)
-        .all(|(instruction, opcode)| instruction.opcode == opcode).then_some(instructions)
+    let instructions: [Instruction; REGION_END] = entries
+        .get(..REGION_END)?
+        .iter()
+        .map(|entry| entry.instruction)
+        .collect::<Vec<_>>()
+        .try_into()
+        .ok()?;
+    instructions
+        .iter()
+        .zip(OPERATIONS)
+        .all(|(instruction, opcode)| opcode.matches_physical_contract(instruction.opcode))
+        .then_some(instructions)
 }
 
 fn constants_match(code: CodeView<'_>, i: &[Instruction; REGION_END]) -> Option<()> {
@@ -264,7 +317,9 @@ fn constants_match(code: CodeView<'_>, i: &[Instruction; REGION_END]) -> Option<
 }
 
 fn number_constant(code: CodeView<'_>, instruction: Instruction, expected: f64) -> Option<()> {
-    let crate::ops::Constant::Number(value) = code.constant(instruction.b)? else { return None };
+    let crate::ops::Constant::Number(value) = code.constant(instruction.b)? else {
+        return None;
+    };
     (value.to_bits() == expected.to_bits()).then_some(())
 }
 
@@ -281,7 +336,12 @@ fn bindings_match(code: CodeView<'_>, i: &[Instruction; REGION_END]) -> Option<(
     tail_bindings_match(code, i, target)
 }
 
-fn body_bindings_match(code: CodeView<'_>, i: &[Instruction; REGION_END], source: u16, target: u16) -> Option<()> {
+fn body_bindings_match(
+    code: CodeView<'_>,
+    i: &[Instruction; REGION_END],
+    source: u16,
+    target: u16,
+) -> Option<()> {
     (i[9].b == target && i[13].b == source).then_some(())?;
     (i[10].b == i[9].a && i[12].b == i[10].a).then_some(())?;
     require_object(code, 14, i[13].a)?;
@@ -290,16 +350,48 @@ fn body_bindings_match(code: CodeView<'_>, i: &[Instruction; REGION_END], source
     (i[21].b == i[19].a && i[21].c == i[20].a && i[22].b == i[21].a).then_some(())
 }
 
-fn tail_bindings_match(code: CodeView<'_>, i: &[Instruction; REGION_END], target: u16) -> Option<()> {
+fn tail_bindings_match(
+    code: CodeView<'_>,
+    i: &[Instruction; REGION_END],
+    target: u16,
+) -> Option<()> {
     (i[25].b == target && i[28].b == i[25].a && i[28].c == i[27].a).then_some(())?;
     require_object(code, 26, i[25].a)?;
     (i[29].b == target && i[31].b == target && i[31].a == i[32].b).then_some(())?;
     require_object(code, 30, i[29].a)?;
-    (i[32].flags == crate::ir::GETN_LENGTH_FLAG && i[34].b == i[32].a && i[34].c == i[33].a).then_some(())?;
+    (i[32].flags == crate::ir::GETN_LENGTH_FLAG && i[34].b == i[32].a && i[34].c == i[33].a)
+        .then_some(())?;
     (i[35].b == i[29].a && i[35].c == i[34].a).then_some(())?;
     (i[36].b == i[28].a && i[36].c == i[35].a && i[37].a == i[36].a).then_some(())
 }
 
 fn require_object(code: CodeView<'_>, pc: usize, source: u16) -> Option<()> {
     matches!(code.cold_at(pc), Some(crate::ops::Op::RequireObjectCoercible { src }) if *src == source).then_some(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::copy_guards_hold;
+    use crate::value::{ArrayData, Value};
+    use std::rc::Rc;
+
+    #[test]
+    fn copy_entry_guards_reject_superseded_representative() {
+        crate::locals::reset_replacements();
+        let source = Rc::new(ArrayData::new(vec![Value::Number(1.0)]));
+        let target = ArrayData::new(vec![Value::Number(0.0), Value::Number(0.0)]);
+        assert!(copy_guards_hold(source.as_ref(), &target));
+
+        let mut replacement = source.as_ref().clone();
+        replacement.set_index(0, Value::Number(2.0));
+        let replacement = Rc::new(replacement);
+        crate::locals::replace_value(
+            &Value::Array(Rc::clone(&source)),
+            &Value::Array(Rc::clone(&replacement)),
+        );
+
+        assert!(!copy_guards_hold(source.as_ref(), &target));
+        assert!(copy_guards_hold(replacement.as_ref(), &target));
+        crate::locals::reset_replacements();
+    }
 }

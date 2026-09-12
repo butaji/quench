@@ -1,4 +1,4 @@
-//! Bounded facts for pure decrementing int32 recurrences.
+//! Guarded facts for pure decrementing int32 recurrences.
 
 use crate::{ir::Opcode, machine::CodeView};
 use std::{cell::RefCell, rc::Rc};
@@ -7,7 +7,6 @@ const BODY_LEN: usize = 24;
 const COUNTER_MACHINE_SLAB_BYTES: usize = 4096;
 const MAX_EXACT_JS_INTEGER: u128 = 9_007_199_254_740_991;
 const MAX_I32_MAGNITUDE: u128 = 1_u128 << 31;
-pub(super) const MAX_ITERATIONS: usize = 4096;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct I32CounterRecurrence {
@@ -54,7 +53,6 @@ pub(crate) fn execute_increasing(
     } else {
         0
     };
-    (iterations <= MAX_ITERATIONS).then_some(())?;
     increasing_step_is_exact(start, end, multiplier, addend).then_some(())?;
     let fact = I32CounterRecurrence {
         value_parameter: 0,
@@ -113,10 +111,8 @@ impl CounterLoopContext {
 }
 
 struct CounterMachine {
-    owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
     image: crate::stencil_region_layout::VerifiedRegionImage,
-    cache: crate::stencil_select::RenderedRegionCache,
-    installed: Option<crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>>,
+    physical: crate::stencil_installation::SharedPhysicalEntry<crate::stencil_arena::DispatchEntry>,
 }
 
 thread_local! {
@@ -133,46 +129,37 @@ impl CounterMachine {
         let site = crate::quickening::QuickeningSite::<4>::new(Opcode::Binary);
         let values = crate::stencil_fact::PatchValues::from_site(&site);
         let image = crate::stencil_region_layout::finalize_selected_leaf(view, &values).ok()?;
+        let owner = Rc::new(RefCell::new(
+            crate::stencil_arena::SharedStencilSlab::new(COUNTER_MACHINE_SLAB_BYTES).ok()?,
+        ));
         Some(Self {
-            owner: Rc::new(RefCell::new(
-                crate::stencil_arena::SharedStencilSlab::new(COUNTER_MACHINE_SLAB_BYTES).ok()?,
-            )),
             image,
-            cache: crate::stencil_select::RenderedRegionCache::new(),
-            installed: None,
+            physical: crate::stencil_installation::SharedPhysicalEntry::new(owner),
         })
     }
 
     fn invoke(&mut self, context: &mut CounterLoopContext) -> Option<u64> {
         let entry = self.entry()?;
-        let lease =
-            crate::stencil_arena::SharedStencilSlab::acquire_owned(&self.owner, entry).ok()?;
-        lease
-            .invoke(|call| call((context as *mut CounterLoopContext).cast()))
+        self.physical
+            .invoke(entry, |call| {
+                call((context as *mut CounterLoopContext).cast())
+            })
             .ok()
     }
 
     fn entry(
         &mut self,
     ) -> Option<crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>> {
-        if let Some(entry) = self
-            .installed
-            .filter(|entry| self.owner.borrow().entry_token_is_live(*entry))
-        {
-            return Some(entry);
-        }
-        let address = self
-            .owner
-            .borrow_mut()
-            .publish_region_image_or_get(&mut self.cache, &self.image)
-            .ok()?;
-        let entry = self
-            .owner
-            .borrow()
-            .owned_i32_counter_loop_entry(address)
-            .ok()?;
-        self.installed = Some(entry);
-        Some(entry)
+        self.physical
+            .entry(
+                |owner, cache| {
+                    owner
+                        .borrow_mut()
+                        .publish_region_image_or_get(cache, &self.image)
+                },
+                |pool, address| pool.owned_i32_counter_loop_entry(address),
+            )
+            .ok()
     }
 }
 
@@ -323,8 +310,7 @@ fn is_binary(
     lhs: u16,
     rhs: u16,
 ) -> Option<()> {
-    (instruction.opcode == Opcode::Binary
-        && crate::ir::compact_binary_operator(instruction.flags) == Some(operator)
+    (instruction.opcode.binary_operator(instruction.flags) == Some(operator)
         && instruction.b == lhs
         && instruction.c == rhs)
         .then_some(())
@@ -351,26 +337,31 @@ fn is_unary(
 }
 
 fn bounded_iterations(counter: i32, threshold: i32, decrement: i32) -> Option<usize> {
-    let mut counter = counter;
-    for count in 0..=MAX_ITERATIONS {
-        if counter <= threshold {
-            return Some(count);
-        }
-        counter = counter.checked_sub(decrement)?;
+    if counter <= threshold {
+        return Some(0);
     }
-    None
+    let distance = i64::from(counter) - i64::from(threshold);
+    let decrement = i64::from(decrement);
+    (decrement > 0).then_some(())?;
+    usize::try_from((distance + decrement - 1) / decrement).ok()
 }
 
 fn bounded_f64_iterations(counter: f64, threshold: i32, decrement: i32) -> Option<usize> {
     counter.is_finite().then_some(())?;
-    let mut counter = counter;
-    for count in 0..=MAX_ITERATIONS {
-        if counter <= f64::from(threshold) {
-            return Some(count);
-        }
-        counter -= f64::from(decrement);
+    let decrement = f64::from(decrement);
+    (decrement > 0.0).then_some(())?;
+    let mut current = counter;
+    let mut iterations = 0usize;
+    while current > f64::from(threshold) {
+        let next = current - decrement;
+        // At large magnitudes an integer decrement can round away entirely.
+        // The canonical loop would not make progress either, so reject this
+        // specialization rather than spinning in an uninterruptible helper.
+        (next != current).then_some(())?;
+        current = next;
+        iterations = iterations.checked_add(1)?;
     }
-    None
+    Some(iterations)
 }
 
 fn native_range_is_exact(

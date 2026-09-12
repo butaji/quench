@@ -1,12 +1,16 @@
 # Benchmark harness
 
-Fixtures and scoring are measurement-only; they never choose VM semantics.
-Use explicitly identified artifacts and separate diagnostic from scored runs.
+Fixtures and scoring are measurement-only; they never select VM behavior.
 
-- [Micros manual](micros/README.md): behavioral contrasts, timing, RSS and qualification.
-- [V8_v7](../docs/v8_v7.md): full-suite runner and interpretation.
-- [Legacy curriculum](../docs/deegen-micro-curriculum.md): mechanism probes.
-- [Performance lanes](../docs/performance-lanes.md): build and evidence rules.
+- [V8-v7](../docs/v8_v7.md): Rust runner, comparisons and limitations.
+- [Performance protocol](../docs/performance-lanes.md): artifact identity and acceptance.
+- [Micros manual](micros/README.md): semantic contrasts, timing, RSS and diagnostics.
+- [Benchmark independence](../docs/benchmark-integrity.md): production invariants.
 
-The active [task queue](../tasks/index.json) requires complete stencil
-infrastructure before returning to micros or benchmark-led tuning.
+Run measurements at meaningful milestones after the affected execution path is
+safe and correct. The [task queue](../tasks/index.json) records remaining work.
+
+The V8 runner accepts `--all`, `--runs`, `--timeout-ms`, `--node`, `--bun`,
+`--quench` and `--out`. `--out` uses create-new semantics and records source,
+artifact, Git and toolchain identity plus per-fixture uncertainty; it refuses
+tracing-enabled scoring environments.

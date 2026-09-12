@@ -29,11 +29,8 @@ pub(crate) fn object(values: &[Value]) -> Result<Value, VmError> {
         };
         (types.logical_len() > 0)
             .then(|| {
-                execute::to_js_string(&execute::get_property(
-                    &Value::Array(types.clone()),
-                    "0",
-                ))
-                .ok()
+                execute::to_js_string(&execute::get_property(&Value::Array(types.clone()), "0"))
+                    .ok()
             })
             .flatten()
     }) {
@@ -57,9 +54,9 @@ pub(crate) fn object(values: &[Value]) -> Result<Value, VmError> {
         .get(2)
         .and_then(|allowed| {
             matches!(allowed, Value::Array(_)).then(|| {
-                quench_runtime::execute::to_js_string(&
-                    quench_runtime::execute::get_property(allowed, "0"),
-                )
+                quench_runtime::execute::to_js_string(&quench_runtime::execute::get_property(
+                    allowed, "0",
+                ))
                 .ok()
             })
         })

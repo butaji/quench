@@ -7,6 +7,11 @@ pub(crate) fn reset_agent_object() {
 }
 
 fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &str) -> Value {
+    if capability.kind == crate::ops::HostCapabilityKind::GetGlobal && key == "evalScript" {
+        return Value::Builtin(Builtin::HostCapability(
+            crate::ops::HostCapabilityKind::EvalScript,
+        ));
+    }
     if capability.kind == crate::ops::HostCapabilityKind::GetGlobal && key == "agent" {
         return AGENT_OBJECT.with(|object| {
             if let Some(value) = object.borrow().as_ref() {
@@ -197,8 +202,12 @@ fn constructor_property(
             property => property,
         });
     }
+    let realm = match value {
+        Value::BoundFunction(bound) if crate::vm::is_intrinsic_bound(bound) => bound.realm,
+        _ => crate::vm::current_context_or_default().realm(),
+    };
     Some(match property {
-        Value::Builtin(target) => crate::vm::realm_intrinsic(target),
+        Value::Builtin(target) => crate::vm::realm_intrinsic_for(realm, target),
         property => property,
     })
 }

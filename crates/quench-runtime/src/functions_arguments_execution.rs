@@ -56,9 +56,40 @@ pub(crate) fn try_execute_specialized(
         function.code.code(),
     );
     if is_class_constructor(function) {
-        return Err(crate::value::error::throw_type_error(
-            "Class constructor cannot be invoked without 'new'",
-        ));
+        // A class constructor throws the TypeError of the realm in which the
+        // class was created.  Constructing the error through the current
+        // realm makes cross-realm `assert.throws(realm.global.TypeError, …)`
+        // fail even though the message and name are identical.
+        let realm = function
+            .properties
+            .borrow()
+            .iter()
+            .find_map(|(key, value)| {
+                (key == "\0realm")
+                    .then(|| crate::vm::realm_id_for_intrinsic_receiver(Some(value)))
+                    .flatten()
+            })
+            .or_else(|| crate::vm::realm_id_for_global_value(&function.captures.get(0)));
+        let error = realm
+            .and_then(|realm| {
+                crate::vm::with_realm(realm, || {
+                    crate::builtins::error(
+                        crate::ops::Builtin::TypeError,
+                        &[crate::value::Value::String(
+                            "Class constructor cannot be invoked without 'new'".to_string(),
+                        )],
+                    )
+                })
+            })
+            .unwrap_or_else(|| {
+                crate::builtins::error(
+                    crate::ops::Builtin::TypeError,
+                    &[crate::value::Value::String(
+                        "Class constructor cannot be invoked without 'new'".to_string(),
+                    )],
+                )
+            });
+        return Err(crate::execute::VmError::Thrown(error));
     }
     let receiver = crate::vm::bare_call_receiver(function, this_value);
     if matches!(function.kind, FunctionKind::Generator) {
@@ -131,7 +162,6 @@ fn try_execute_physical(
         record_counter_recurrence(function, native);
         return Ok(Some(crate::value::Value::Number(f64::from(value))));
     }
-    #[cfg(not(target_arch = "aarch64"))]
     if let Some(fact) = function.code.numeric_affine_named_loop() {
         match execute_numeric_affine_named_loop(function, arguments, &fact) {
             Ok(value) => {
@@ -386,8 +416,6 @@ pub(crate) fn take_affine_named_loop_hits() -> u64 {
     AFFINE_NAMED_LOOP_HITS.replace(0)
 }
 
-const MAX_PRECOMPILED_LOOP_ITERATIONS: i32 = 4096;
-
 #[derive(Clone, Copy)]
 enum AffineNamedLoopRejection {
     Parameter,
@@ -429,7 +457,7 @@ fn execute_numeric_affine_named_loop(
     guarded_loop_object(receiver).ok_or(AffineNamedLoopRejection::Object)?;
     let mut value = own_i32(receiver, &fact.seed_key).ok_or(AffineNamedLoopRejection::Seed)?;
     let end = own_i32(receiver, &fact.bound_key).ok_or(AffineNamedLoopRejection::Bound)?;
-    if !(0..=MAX_PRECOMPILED_LOOP_ITERATIONS).contains(&end) {
+    if end < 0 {
         return Err(AffineNamedLoopRejection::Range);
     }
     if end == 0 {
@@ -438,7 +466,12 @@ fn execute_numeric_affine_named_loop(
     let callee =
         own_function(receiver, &fact.method_key).ok_or(AffineNamedLoopRejection::Method)?;
     let affine = guarded_affine_callee(&callee).ok_or(AffineNamedLoopRejection::Callee)?;
+    let context = crate::vm::current_context_or_default();
     for _ in 0..end {
+        if unsafe { &*context.interrupt_flag() }.load(std::sync::atomic::Ordering::Acquire) {
+            context.clear_interrupt();
+            return Err(AffineNamedLoopRejection::Range);
+        }
         value = affine
             .execute(f64::from(value))
             .ok_or(AffineNamedLoopRejection::Callee)?;

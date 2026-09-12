@@ -366,6 +366,9 @@ pub fn is_callable(value: &Value) -> bool {
         return is_callable(&cell.borrow());
     }
     match value {
+        // Function.prototype is the one intrinsic prototype that is itself
+        // callable; invoking it accepts any arguments and returns undefined.
+        Value::Builtin(crate::ops::Builtin::FunctionPrototype) => true,
         Value::Builtin(
             crate::ops::Builtin::Math
             | crate::ops::Builtin::Json

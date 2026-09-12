@@ -1,16 +1,55 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "string", "value": "[\"array\",[[\"number\",\"351545329\"],[\"number\",\"91467762\"]]]" },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["numeric", "independent"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "GetN",
+    "StoreLocal",
+    "LoadLocal",
+    "GetN",
+    "AddConst",
+    "StoreLocal",
+    "LoadConst",
+    "LoadConst",
+    "StoreLocal",
+    "LoadConst",
+    "LoadLocal",
+    "LoadLocal",
+    "GetN",
+    "LessThan",
+    "JumpIfFalse",
+    "LoadLocal",
+    "LoadConst",
+    "Mul",
+    "LoadLocal",
+    "Add",
+    "LoadConst",
+    "BitwiseOr",
+    "StoreLocal",
+    "Move",
+    "LoadLocal",
+    "LoadConst",
+    "Mul",
+    "LoadLocal",
+    "Add",
+    "LoadConst",
+    "BitwiseOr",
+    "StoreLocal",
+    "Move",
+    "LoadLocal",
+    "LoadConst",
+    "NumericAdd",
+    "StoreLocal",
+    "Unary",
+    "Jump",
+    "LoadLocal",
+    "LoadLocal",
+    "MakeArray",
+    "Return"
+  ],
+  "result": {
+    "kind": "string",
+    "value": "[\"array\",[[\"number\",\"351545329\"],[\"number\",\"91467762\"]]]"
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "numeric_independent_region": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

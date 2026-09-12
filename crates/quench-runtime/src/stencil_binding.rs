@@ -195,7 +195,6 @@ mod tests {
     fn entry(instruction: crate::ir::Instruction) -> crate::machine::BaselineEntry {
         crate::machine::BaselineEntry {
             instruction,
-            handler: instruction.opcode.handler(),
             control: instruction.opcode.control_operands(instruction),
         }
     }

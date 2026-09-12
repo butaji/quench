@@ -1,16 +1,17 @@
 {
-  "schema": 1,
-  "warmup": 0,
-  "result": { "kind": "undefined" },
-  "plan": {
-    "execution_kind": "ordinary_fallback",
-    "operation_route": ["SetN", "AGetI"],
-    "fallback": true
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "LoadConst",
+    "LoadConst",
+    "LoadConst",
+    "MakeArray",
+    "Call",
+    "Return"
+  ],
+  "result": {
+    "kind": "undefined"
   },
-  "profile": {
-    "residual": { "SetN": 1, "AGetI": 1 },
-    "slow": { "ArraySetLength": 1 },
-    "stencils": { "dense_index_get": { "entries": 0, "fallbacks": 1 } },
-    "events": { "leaf_reject": 1 }
-  }
+  "schema": 3,
+  "warmup": 0
 }

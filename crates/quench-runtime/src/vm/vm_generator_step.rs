@@ -4,6 +4,10 @@ pub(crate) struct GeneratorStep {
     pub(crate) suspension: Option<crate::continuation::SuspensionPoint>,
 }
 
+/// Detached compatibility entry for generators that still receive a raw
+/// operation slice. It deliberately has no `CodeStore` identity; code-backed
+/// generator paths must use `execute_generator_code_step` so suspension and
+/// call continuations retain canonical ranges.
 pub(crate) fn execute_generator_step(
     ops: &[Op],
     registers: &mut crate::register_file::RegisterFile,
@@ -89,6 +93,16 @@ fn run_generator_code_steps(
             .filter(|value| !matches!(value, crate::completion::Completion::Normal))
         {
             if let crate::completion::Completion::Call(continuation) = completion {
+                // Generator code has a canonical code range, so preserve the
+                // same caller activation facts as ordinary completion drivers
+                // before consuming the nested call. The op-only compatibility
+                // entry below has no stable code identity and intentionally
+                // remains detached.
+                let continuation = continuation.with_caller(
+                    code.range().code,
+                    next_pc as u32,
+                    crate::machine::EnvironmentRef(0),
+                );
                 crate::vm::vm_ops::execute_call_continuation(registers, continuation)?;
                 next = next_pc;
                 continue;
@@ -104,6 +118,42 @@ fn run_generator_code_steps(
                     .then(|| direct_suspension(op, Some(code_resume(code.range(), next_pc))))
                     .flatten()
                 })
+            }).or_else(|| {
+                // Structured bodies have dedicated generator frames which
+                // resume their nested code. A raw nested yield point would
+                // skip that frame and lose destructuring/iterator results;
+                // only attach a scanned point for leaf body-bearing ops.
+                let op = code.cold(instruction)?;
+                let structured = matches!(
+                    op,
+                    Op::Branch { .. }
+                        | Op::Conditional { .. }
+                        | Op::Try { .. }
+                        | Op::IteratorBinding { .. }
+                        | Op::ForOf { .. }
+                        | Op::ForIn { .. }
+                        | Op::Loop { .. }
+                        | Op::With { .. }
+                        | Op::WithDispose { .. }
+                        | Op::PrivateScope { .. }
+                        | Op::StaticBlock { .. }
+                        | Op::Label { .. }
+                );
+                let nested = crate::continuation::nested_executed_point(op);
+                if structured {
+                    // Yield* needs an explicit delegate frame even when its
+                    // operation is wrapped by try/loop structure. Ordinary
+                    // nested Yield points use the structure-specific resume
+                    // machinery instead.
+                    nested.filter(|point| {
+                        matches!(
+                            point,
+                            crate::continuation::SuspensionPoint::YieldStar { .. }
+                        )
+                    })
+                } else {
+                    nested
+                }
             });
             return Ok(GeneratorStep {
                 completion,

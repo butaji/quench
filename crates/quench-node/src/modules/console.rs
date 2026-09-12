@@ -95,8 +95,20 @@ pub fn build_value() -> Value {
 
 fn bind_console_methods(mut module: Value) -> Value {
     for name in [
-        "dir", "time", "timeEnd", "timeLog", "trace", "assert", "clear", "count",
-        "countReset", "group", "groupEnd", "table", "dirxml", "groupCollapsed",
+        "dir",
+        "time",
+        "timeEnd",
+        "timeLog",
+        "trace",
+        "assert",
+        "clear",
+        "count",
+        "countReset",
+        "group",
+        "groupEnd",
+        "table",
+        "dirxml",
+        "groupCollapsed",
     ] {
         let Ok(method) = quench_runtime::execute::get_property_result(&module, name) else {
             continue;

@@ -1,16 +1,40 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "string", "value": "[\"number\",\"64\"]" },
-  "plan": {
-    "execution_kind": "portable_recipe",
-    "operation_route": ["collections", "set"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "GetN",
+    "Construct",
+    "StoreLocal",
+    "LoadConst",
+    "StoreLocal",
+    "LoadConst",
+    "LoadConst",
+    "StoreLocal",
+    "LoadConst",
+    "LoadLocal",
+    "LoadLocal",
+    "GetN",
+    "LessThan",
+    "JumpIfFalse",
+    "LoadLocal",
+    "GetN",
+    "LoadLocal",
+    "CallN",
+    "Move",
+    "LoadLocal",
+    "LoadConst",
+    "NumericAdd",
+    "StoreLocal",
+    "Unary",
+    "Jump",
+    "LoadConst",
+    "Loop",
+    "LoadLocal",
+    "Return"
+  ],
+  "result": {
+    "kind": "string",
+    "value": "[\"number\",\"64\"]"
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "collections_set_region": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

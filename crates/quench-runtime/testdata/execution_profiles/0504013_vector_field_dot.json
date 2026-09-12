@@ -1,16 +1,22 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "number", "value": 17 },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["GetNQuickened", "GetNQuickened", "Mul", "GetNQuickened", "GetNQuickened", "Mul", "Add", "GetNQuickened", "GetNQuickened", "Mul", "Add", "Return"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "LoadConst",
+    "LoadConst",
+    "LoadConst",
+    "MakeObject",
+    "LoadConst",
+    "LoadConst",
+    "LoadConst",
+    "MakeObject",
+    "Call",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": 17
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "guarded_vector3_dot_return": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

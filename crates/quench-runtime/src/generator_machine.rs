@@ -60,6 +60,7 @@ fn resume_generator_range(
     );
     let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
     let _with = crate::with_scope::FunctionGuard::install(&generator.function.with_captures);
+    let _locals = crate::locals::EnvironmentGuard::install(machine_environment(generator)?);
     let step = execute_generator_range(generator, range, completion)?;
     update_range_execution(generator, range, &step);
     state.suspension = step.suspension;
@@ -242,24 +243,51 @@ fn push_try_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(
             catch_slot,
             ..
         },
-        Op::Yield { src },
+        yield_op,
         suffix,
     )) = suspended_try(generator, state)
     else {
         return Ok(());
     };
-    let body_resume = range_after(body.range, suffix.len());
+    if !has_repeat_iterator(generator) && !matches!(yield_op, Op::Yield { .. }) {
+        return Ok(());
+    }
+    let (phase, branch_range, yield_dst) = {
+        let branches = [
+            (crate::machine::TryPhase::Body, body),
+            (crate::machine::TryPhase::Catch, handler.as_ref().unwrap_or(body)),
+            (crate::machine::TryPhase::Finally, finalizer.as_ref().unwrap_or(body)),
+        ];
+        let mut selected = None;
+        for (phase, branch) in branches {
+            let Some(code) = branch.code() else { continue };
+            if code
+                .cold_ops()
+                .any(|(_, candidate)| std::ptr::eq(candidate, yield_op))
+            {
+                let dst = match yield_op {
+                    Op::Yield { src } => *src,
+                    Op::YieldStar { dst, .. } => *dst,
+                    _ => return Ok(()),
+                };
+                selected = Some((phase, branch.range, dst));
+                break;
+            }
+        }
+        selected.ok_or(VmError::MissingReturn)?
+    };
+    let body_resume = range_after(branch_range, suffix.len());
     let resume = parent_resume_range(generator, state);
     try_push_frame(
         &mut generator.machine.borrow_mut(),
         crate::machine::Frame::Try {
-            phase: crate::machine::TryPhase::Body,
+            phase,
             body: body.range,
             handler: handler.as_ref().map(|body| body.range),
             finalizer: finalizer.as_ref().map(|body| body.range),
             body_resume,
             resume,
-            yield_dst: *src,
+            yield_dst,
             catch_slot: *catch_slot,
         },
     )

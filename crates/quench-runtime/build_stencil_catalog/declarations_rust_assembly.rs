@@ -183,7 +183,7 @@ rust_assembly_catalog! {
     },
     ReturnWord {
         name: "return_word", abi: ScalarWordBool, ops: ["Return"],
-        x86: &[], aarch64: &[],
+        x86: &X86_RETURN_WORD_BYTES, aarch64: &[],
         x86_holes: &[], aarch64_holes: &[],
         internal_abi: WordX0,
         composition: Whole

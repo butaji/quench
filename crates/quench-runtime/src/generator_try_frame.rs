@@ -48,9 +48,31 @@ fn resume_try_frame(
     if matches!(frame.phase, crate::machine::TryPhase::Finally) {
         return resume_finalizer_frame(generator, state, &frame, input);
     }
+    let nested_in_repeat_iterator = generator
+        .machine
+        .borrow()
+        .frames
+        .frames
+        .iter()
+        .rev()
+        .nth(1)
+        .is_some_and(|frame| matches!(frame, crate::machine::Frame::Iterator { repeat: true, .. }));
+    let try_contains_delegate = generator.machine.borrow().store.as_ref().is_some_and(|store| {
+        store.code(frame.body).is_some_and(code_view_contains_yield_star)
+            || frame
+                .handler
+                .and_then(|range| store.code(range))
+                .is_some_and(code_view_contains_yield_star)
+            || frame
+                .finalizer
+                .and_then(|range| store.code(range))
+                .is_some_and(code_view_contains_yield_star)
+    });
+    let nested_in_repeat_iterator = nested_in_repeat_iterator && !try_contains_delegate;
     let (completion, next) = match input {
         crate::completion::Completion::Normal
-            if matches!(
+            if !nested_in_repeat_iterator
+                && matches!(
                 frame.phase,
                 crate::machine::TryPhase::Body | crate::machine::TryPhase::Catch
             ) =>
@@ -172,12 +194,13 @@ fn push_nested_try_after_yield(
     };
     {
         let mut machine = generator.machine.borrow_mut();
-        let Some(crate::machine::Frame::Try { body_resume, .. }) = machine.frames.frames.last_mut()
-        else {
+        let Some(outer_offset) = machine.frames.top_offset() else {
             return Ok(false);
         };
-        *body_resume = outer_resume;
-        machine.frames.frames.push(crate::machine::Frame::Try {
+        if !matches!(machine.frames.frame_at(outer_offset), Some(crate::machine::Frame::Try { .. })) {
+            return Ok(false);
+        }
+        let nested = crate::machine::Frame::Try {
             phase: crate::machine::TryPhase::Body,
             body: body.range,
             handler: handler.as_ref().map(|body| body.range),
@@ -186,7 +209,16 @@ fn push_nested_try_after_yield(
             resume: inner_resume,
             yield_dst: *src,
             catch_slot: *catch_slot,
-        });
+        };
+        machine.try_push_frame(nested).map_err(|_| {
+            crate::value::error::throw_range_error("Unable to allocate generator frame")
+        })?;
+        let Some(crate::machine::Frame::Try { body_resume, .. }) =
+            machine.frames.frame_at_mut(outer_offset)
+        else {
+            return Err(VmError::MissingReturn);
+        };
+        *body_resume = outer_resume;
     }
     Ok(true)
 }
@@ -363,6 +395,28 @@ fn resume_after_try(
     range: crate::machine::CodeRange,
     completion: crate::completion::Completion,
 ) -> Result<crate::completion::Completion, VmError> {
+    // A try nested in a repeat iterator hands the suffix after the Try op to
+    // the iterator frame.  The structural Try frame may carry the enclosing
+    // range (when installed from a suspension path), but executing it here
+    // would run that suffix a second time before the iterator resumes.
+    let parent_repeat_has_delegate = if matches!(completion, crate::completion::Completion::Normal) {
+        let machine = generator.machine.borrow();
+        machine.frames.frames.last().is_some_and(|frame| {
+            let crate::machine::Frame::Iterator { body, repeat: true, .. } = frame else {
+                return false;
+            };
+            machine
+                .store
+                .as_ref()
+                .and_then(|store| store.code(*body))
+                .is_some_and(code_view_contains_yield_star)
+        })
+    } else {
+        false
+    };
+    if parent_repeat_has_delegate {
+        return Ok(completion);
+    }
     if matches!(
         generator.machine.borrow().frames.frames.last(),
         Some(crate::machine::Frame::Loop { .. })

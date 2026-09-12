@@ -68,9 +68,7 @@ pub(crate) fn get_global_named_property_result(
         return get_property_result(value, key);
     };
     if let Some((layout, slot)) = crate::machine::unpack_named_cache(cache.get()) {
-        if !object.has_replacement()
-            && object.semantic_layout_id() == layout
-            && slot == GLOBAL_STATIC_SLOT
+        if object.has_current_layout(layout) && slot == GLOBAL_STATIC_SLOT
         {
             crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
             return Ok(crate::vm::global_object_static_property(object, key));
@@ -95,7 +93,8 @@ pub(crate) fn get_global_named_property_result(
 }
 
 fn cacheable_global_static(object: &crate::value::ObjectData, key: &str) -> bool {
-    crate::globals::builtin(key).is_some()
+    !object.has_replacement()
+        && crate::globals::builtin(key).is_some()
         && object.physical_slot_for_name(key).is_none()
         && object
             .physical_slot_for_name(&crate::builtins::deleted_key(key))
@@ -133,6 +132,41 @@ pub(crate) enum NamedCachedPayload {
     Value(Value),
 }
 
+/// Probe the generic shape cache owned by a named operation site.  Own plain
+/// data is the only state represented here; inherited, accessor, virtual and
+/// global results remain in their specialized gateways because their guards
+/// include prototype or host dependencies rather than only receiver shape.
+/// A miss may install the proven own slot, but the caller still falls through
+/// to the complete property gateway for that access.
+#[inline(always)]
+pub(crate) fn get_named_site_cached_payload(
+    object: &crate::value::ObjectData,
+    key: &str,
+    site: &std::cell::RefCell<crate::quickening::QuickeningSite<4>>,
+) -> Option<NamedCachedPayload> {
+    if object.has_replacement() || object.is_dictionary() {
+        return None;
+    }
+    let shape = crate::identity::ShapeId(object.semantic_layout_id());
+    let property = crate::identity::property_key_id(key);
+    let mut site = site.borrow_mut();
+    if let Some(slot) = site.probe_shape(shape, property) {
+        if let Some(word) = cached_plain_own_word(object, key, shape.0, slot) {
+            return Some(NamedCachedPayload::Word(std::ptr::from_ref(word)));
+        }
+        site.invalidate_shape(shape);
+        return None;
+    }
+    let Some(slot) = proven_own_slot(object, key) else {
+        return None;
+    };
+    let Ok(slot) = u32::try_from(slot) else {
+        return None;
+    };
+    let _ = site.observe(shape, property, slot);
+    None
+}
+
 #[inline(always)]
 pub(crate) fn get_named_cached_payload(
     object: &crate::value::ObjectData,
@@ -153,7 +187,7 @@ pub(crate) fn get_named_cached_payload(
             crate::execution_trace::named_get_miss_reason("empty");
             return None;
         };
-        if layout != cached_layout {
+        if !object.has_current_layout(cached_layout) {
             crate::execution_trace::event(crate::execution_trace::Event::NamedGetLayoutMismatch);
             crate::execution_trace::named_get_miss_reason("layout");
             return None;
@@ -359,6 +393,7 @@ fn prototype_entry_hit(
     key: &str,
     entry: &PrototypeNamedCache,
 ) -> Option<NamedCachedPayload> {
+    receiver.has_current_layout(entry.receiver_layout).then_some(())?;
     let mut owners: [*const crate::value::ObjectData; 4] = [std::ptr::null(); 4];
     for (depth, link) in entry.links[..usize::from(entry.depth)]
         .iter()
@@ -375,7 +410,7 @@ fn prototype_entry_hit(
             .slot_word(link.prototype_slot as usize)?
             .object_or_null_ptr()??;
         if prototype != link.prototype.as_ptr()
-            || unsafe { &*prototype }.semantic_layout_id() != link.prototype_layout
+            || !unsafe { &*prototype }.has_current_layout(link.prototype_layout)
         {
             return None;
         }
@@ -393,13 +428,13 @@ fn prototype_entry_hit(
             layout,
             prototype_slot,
         } => {
-            (owner.semantic_layout_id() == layout).then_some(())?;
+            owner.has_current_layout(layout).then_some(())?;
             let prototype = owner.hot_properties().slot_word(prototype_slot as usize)?;
             prototype.object_or_null_ptr()?.is_none().then_some(())?;
             Some(NamedCachedPayload::Value(Value::Undefined))
         }
         PrototypeCacheTerminal::MissingObjectPrototype { layout, generation } => {
-            (owner.semantic_layout_id() == layout).then_some(())?;
+            owner.has_current_layout(layout).then_some(())?;
             (owner.hot_properties().position_rev("\0prototype").is_none()).then_some(())?;
             (crate::builtins::intrinsic_override_generation() == generation).then_some(())?;
             Some(NamedCachedPayload::Value(Value::Undefined))
@@ -479,6 +514,7 @@ fn prototype_entry_guard(
     key: &str,
     entry: &PrototypeNamedCache,
 ) -> Option<crate::native_property::GuardedPropertySlot> {
+    receiver.has_current_layout(entry.receiver_layout).then_some(())?;
     let mut retained = std::array::from_fn::<_, 4, _>(|_| None);
     let mut guards = [crate::native_property::PrototypeGuardLink::EMPTY; 4];
     for depth in 0..usize::from(entry.depth) {
@@ -495,7 +531,7 @@ fn prototype_entry_guard(
         let prototype = link.prototype.upgrade()?;
         prototype_owner_is_plain(&prototype).then_some(())?;
         let expected_word =
-            crate::tagged_value::TaggedValue::object_ptr(std::rc::Rc::as_ptr(&prototype) as usize)?
+            crate::native_core::value_word::TaggedValue::object_ptr(std::rc::Rc::as_ptr(&prototype) as usize)?
                 .bits();
         let layout = prototype.layout_guard().0;
         guards[depth] = crate::native_property::PrototypeGuardLink::new(
@@ -739,7 +775,10 @@ fn prototype_cache_index(cache: u64) -> Option<usize> {
 
 #[cfg(test)]
 mod named_prototype_cache_tests {
-    use super::{get_named_property_result, prototype_cache_index, PROTOTYPE_NAMED_CACHES};
+    use super::{
+        cacheable_immediate_prototype, get_named_property_result, prototype_cache_index,
+        prototype_entry_hit, PROTOTYPE_NAMED_CACHES,
+    };
     use crate::value::{BindingCell, ObjectData, Value};
     use std::{cell::Cell, rc::Rc};
 
@@ -809,6 +848,43 @@ mod named_prototype_cache_tests {
     }
 
     #[test]
+    fn prototype_cache_hit_rejects_superseded_receiver_layout() {
+        crate::locals::reset_replacements();
+        let Value::Object(receiver) = receiver(1.0) else {
+            unreachable!("receiver helper returns an object");
+        };
+        let entry = cacheable_immediate_prototype(&receiver, "method")
+            .expect("receiver should produce a prototype cache entry");
+        assert!(prototype_entry_hit(&receiver, "method", &entry).is_some());
+
+        let stale = Value::Object(Rc::clone(&receiver));
+        let replacement = Value::Object(Rc::new(ObjectData::new(vec![
+            ("marker".into(), Value::Number(2.0)),
+        ])));
+        crate::locals::replace_value(&stale, &replacement);
+        assert!(prototype_entry_hit(&receiver, "method", &entry).is_none());
+        crate::locals::reset_replacements();
+    }
+
+    #[test]
+    fn cache_installation_rejects_superseded_receiver() {
+        crate::locals::reset_replacements();
+        let receiver = Value::Object(Rc::new(ObjectData::new(vec![(
+            "field".into(),
+            Value::Number(7.0),
+        )])));
+        let replacement = Value::Object(Rc::new(ObjectData::new(vec![(
+            "field".into(),
+            Value::Number(8.0),
+        )])));
+        let stale = receiver.clone();
+        crate::locals::replace_value(&stale, &replacement);
+        assert!(super::cacheable_own_slot(&receiver, "field").is_none());
+        assert!(super::cacheable_own_slot_with_placeholder(&receiver, "field").is_none());
+        crate::locals::reset_replacements();
+    }
+
+    #[test]
     fn own_cache_does_not_admit_binding_cell_values() {
         let cell = BindingCell::new(Value::Number(7.0));
         let receiver = Value::Object(Rc::new(ObjectData::new(vec![(
@@ -828,7 +904,7 @@ fn cacheable_own_slot(value: &Value, key: &str) -> Option<u32> {
     let Value::Object(object) = value else {
         return None;
     };
-    if crate::vm::is_global_object(value) {
+    if object.has_replacement() || crate::vm::is_global_object(value) {
         return None;
     }
     let mut own = None;
@@ -864,8 +940,9 @@ fn cacheable_own_slot_with_placeholder(value: &Value, key: &str) -> Option<u32> 
     let Value::Object(object) = value else {
         return None;
     };
-    if object
-        .physical_slot_for_name(&crate::builtins::deleted_key(key))
+    if object.has_replacement()
+        || object
+            .physical_slot_for_name(&crate::builtins::deleted_key(key))
         .is_some()
     {
         return None;
@@ -891,6 +968,17 @@ pub(crate) fn get_property_with_receiver(
     key: &str,
     receiver: &Value,
 ) -> Result<Value, VmError> {
+    // Symbols use an encoded string representation internally, but their
+    // [[Prototype]] is Symbol.prototype rather than String.prototype.  Route
+    // primitive symbol reads through that intrinsic before the ordinary
+    // string-property path can expose a synthetic `length` or index.
+    if matches!(value, Value::String(text) if crate::conversion::is_symbol_string(text)) {
+        if key == "length" || crate::arrays::array_index(key).is_some() {
+            return Ok(Value::Undefined);
+        }
+        let prototype = crate::vm::realm_intrinsic(crate::ops::Builtin::SymbolPrototype);
+        return get_property_with_receiver(&prototype, key, receiver);
+    }
     if matches!(value, Value::Builtin(crate::ops::Builtin::RegExp))
         && crate::builtins::object::is_regexp_legacy_accessor(key)
     {
@@ -1217,7 +1305,7 @@ pub(crate) fn cached_plain_own_word<'a>(
     layout: u32,
     slot: u32,
 ) -> Option<&'a crate::register_file::SlotWord> {
-    (object.semantic_layout_id() == layout).then_some(())?;
+    object.has_current_layout(layout).then_some(())?;
     if object.has_deleted_key(key) {
         return None;
     }
@@ -1736,6 +1824,19 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
         return invoke_accessor(&property, receiver).unwrap_or(Value::Undefined);
     }
     if let Value::BoundFunction(bound) = &property {
+        // Typed-array property helpers materialize a temporary view while
+        // resolving inherited builtins.  Preserve the actual [[Get]]
+        // receiver for every builtin method, including Object.prototype
+        // methods reached through a typed-array instance (for example
+        // `receiver.hasOwnProperty(0)`).
+        if let Value::Builtin(builtin) = bound.target {
+            if crate::typed_array_ops::is_view(value)
+                && crate::typed_array_ops::is_view(&bound.receiver)
+                && !crate::builtins::same_value(Some(&bound.receiver), Some(receiver))
+            {
+                return bind_method(receiver, Value::Builtin(builtin));
+            }
+        }
         if matches!(
             bound.target,
             Value::Builtin(
@@ -1879,10 +1980,11 @@ fn is_accessor_builtin(builtin: Builtin) -> bool {
 #[cfg(test)]
 mod proven_own_data_tests {
     use super::{
-        get_named_cached_payload, get_named_property_result, proven_own_data, proven_own_slot,
+        get_named_cached_payload, get_named_property_result, get_named_site_cached_payload,
+        proven_own_data, proven_own_slot,
     };
-    use crate::value::{BindingCell, ObjectData, Value};
-    use std::rc::Rc;
+    use crate::{ir::Opcode, quickening::QuickeningSite, value::{BindingCell, ObjectData, Value}};
+    use std::{cell::RefCell, rc::Rc};
 
     fn object(entries: Vec<(String, Value)>) -> Value {
         Value::Object(Rc::new(ObjectData::new(entries)))
@@ -1952,5 +2054,43 @@ mod proven_own_data_tests {
             get_named_property_result(&value, "field", &cache).unwrap(),
             Value::Undefined
         );
+    }
+
+    #[test]
+    fn site_cache_owns_plain_named_method_slot_after_install() {
+        let receiver = Rc::new(ObjectData::new(vec![
+            ("method".into(), Value::Number(7.0)),
+        ]));
+        let site = RefCell::new(QuickeningSite::<4>::new(Opcode::CallN));
+
+        assert!(get_named_site_cached_payload(&receiver, "method", &site).is_none());
+        assert_eq!(site.borrow().cache_len(), 1);
+        assert!(matches!(
+            get_named_site_cached_payload(&receiver, "method", &site),
+            Some(super::NamedCachedPayload::Word(_))
+        ));
+    }
+
+    #[test]
+    fn site_cache_invalidates_plain_slot_when_descriptor_changes() {
+        let descriptor = Rc::new(ObjectData::new(Vec::new()));
+        let receiver = Rc::new(ObjectData::new(vec![
+            ("method".into(), Value::Number(7.0)),
+            (
+                crate::builtins::descriptor_key("method"),
+                Value::Object(Rc::clone(&descriptor)),
+            ),
+        ]));
+        let site = RefCell::new(QuickeningSite::<4>::new(Opcode::CallN));
+
+        assert!(get_named_site_cached_payload(&receiver, "method", &site).is_none());
+        assert_eq!(site.borrow().cache_len(), 1);
+        assert!(crate::execute::set_property_in_place(
+            &Value::Object(Rc::clone(&descriptor)),
+            "get",
+            Value::Undefined,
+        ));
+        assert!(get_named_site_cached_payload(&receiver, "method", &site).is_none());
+        assert_eq!(site.borrow().cache_len(), 0);
     }
 }

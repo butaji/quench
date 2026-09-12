@@ -245,7 +245,22 @@ fn set_name_value(key: &str, value: Value, strict: bool) -> Result<(), VmError> 
     if crate::builtins::descriptor_flag(&semantic_global, key, "writable") != Some(false) {
         let _ = crate::global_environment::store_global_binding(key, value.clone());
     }
-    let updated = crate::builtins::set_property(global.clone(), key, value);
+    // A sloppy assignment such as `retobj = this` can write the global object
+    // into one of its own properties.  The ordinary COW setter represents
+    // that cycle with a weak alias, but replacing the global during the same
+    // declaration batch can invalidate that alias before the next read.  The
+    // global owner is already identity-stable here, so publish this one
+    // self-reference in place and preserve the exact object identity.
+    let self_global = matches!(
+        (&global, &value),
+        (Value::Object(target), Value::Object(candidate)) if std::rc::Rc::ptr_eq(target, candidate)
+    );
+    let updated = if self_global {
+        crate::execute::set_property_in_place(&global, key, value.clone());
+        global.clone()
+    } else {
+        crate::builtins::set_property(global.clone(), key, value)
+    };
     crate::vm::synchronize_global_object(
         &mut crate::register_file::RegisterFile::new(),
         &global,
@@ -325,8 +340,12 @@ pub(crate) fn resolve_name(
         || immutable.is_some()
         || host_value.is_some()
         || host_binding.is_some();
-    let value = match host_value
-        .or(binding)
+    // A `with` object is the front of the object environment chain and must
+    // shadow host-provided globals (notably parseInt/eval/Math helpers).
+    // Host capabilities remain the fallback after dynamic and lexical
+    // bindings have had their chance to resolve.
+    let value = match binding
+        .or(host_value)
         .or(eval)
         .or_else(|| crate::locals::resolve_name(key))
         .or(immutable)

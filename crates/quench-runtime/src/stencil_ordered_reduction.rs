@@ -84,10 +84,8 @@ pub(crate) enum ReductionOutcome {
 
 pub(crate) struct NativeReductionPlan {
     selection: ReductionSelection,
-    owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
     image: crate::stencil_region_layout::VerifiedRegionImage,
-    cache: crate::stencil_select::RenderedRegionCache,
-    installed: Option<crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>>,
+    physical: crate::stencil_installation::SharedPhysicalEntry<crate::stencil_arena::DispatchEntry>,
 }
 
 impl NativeReductionPlan {
@@ -104,10 +102,8 @@ impl NativeReductionPlan {
         .then_some(())?;
         Some(Self {
             selection,
-            owner,
             image: region_image(view),
-            cache: crate::stencil_select::RenderedRegionCache::new(),
-            installed: None,
+            physical: crate::stencil_installation::SharedPhysicalEntry::new(owner),
         })
     }
 
@@ -166,7 +162,10 @@ impl NativeReductionPlan {
         environment: &crate::environment::Environment,
         context: &crate::vm::VmContext,
     ) -> Result<Option<ReductionOutcome>, NativeDispatchError> {
-        if !array.is_packed_data() || !array.is_dense_numeric_data() {
+        if !crate::locals::array_word_is_current(array)
+            || !array.is_packed_data()
+            || !array.is_dense_numeric_data()
+        {
             return Ok(None);
         }
         let words = array.numeric_kernel_words().ok_or_else(|| {
@@ -208,12 +207,10 @@ impl NativeReductionPlan {
 
     fn invoke(&mut self, context: &mut NativeReductionContext) -> Result<u64, NativeDispatchError> {
         let entry = self.entry()?;
-        let lease = crate::stencil_arena::SharedStencilSlab::acquire_owned(&self.owner, entry)
-            .map_err(|error| {
-                NativeDispatchError::Physical(format!("reduction lease: {error:?}"))
-            })?;
-        lease
-            .invoke(|call| call((context as *mut NativeReductionContext).cast()))
+        self.physical
+            .invoke(entry, |call| {
+                call((context as *mut NativeReductionContext).cast())
+            })
             .map_err(|error| NativeDispatchError::Physical(format!("reduction invoke: {error:?}")))
     }
 
@@ -223,28 +220,16 @@ impl NativeReductionPlan {
         crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>,
         NativeDispatchError,
     > {
-        if let Some(entry) = self.installed {
-            if self.owner.borrow().entry_token_is_live(entry) {
-                return Ok(entry);
-            }
-            self.installed = None;
-        }
-        let address = self
-            .owner
-            .borrow_mut()
-            .publish_region_image_or_get(&mut self.cache, &self.image)
-            .map_err(|error| {
-                NativeDispatchError::Physical(format!("reduction publish: {error:?}"))
-            })?;
-        let entry = self
-            .owner
-            .borrow()
-            .owned_array_reduction_loop_entry(address)
-            .map_err(|error| {
-                NativeDispatchError::Physical(format!("reduction entry: {error:?}"))
-            })?;
-        self.installed = Some(entry);
-        Ok(entry)
+        self.physical
+            .entry(
+                |owner, cache| {
+                    owner
+                        .borrow_mut()
+                        .publish_region_image_or_get(cache, &self.image)
+                },
+                |pool, address| pool.owned_array_reduction_loop_entry(address),
+            )
+            .map_err(|error| NativeDispatchError::Physical(format!("reduction entry: {error:?}")))
     }
 
     pub(crate) fn route() -> impl Iterator<Item = &'static str> {

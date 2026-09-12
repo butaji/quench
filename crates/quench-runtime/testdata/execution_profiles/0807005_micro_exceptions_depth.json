@@ -1,16 +1,24 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "string", "value": "[\"number\",\"2016\"]" },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["exceptions", "depth"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadConst",
+    "StoreLocal",
+    "MakeFunctionWithKind",
+    "SetFunctionName",
+    "LoadConst",
+    "SetN",
+    "StoreLocal",
+    "LoadConst",
+    "StoreLocal",
+    "LoadConst",
+    "Loop",
+    "LoadLocal",
+    "Return"
+  ],
+  "result": {
+    "kind": "string",
+    "value": "[\"number\",\"2016\"]"
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "exceptions_depth_region": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

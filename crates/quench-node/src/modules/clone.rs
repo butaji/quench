@@ -187,12 +187,13 @@ fn advanced_clone_inner(value: Value, seen: &mut HashMap<u64, Value>) -> Value {
             let start = view.byte_offset.min(source.len());
             let end = start.saturating_add(length).min(source.len());
             if end > start {
-                buffer.bytes.borrow_mut()[..end - start]
-                    .copy_from_slice(&source[start..end]);
+                buffer.bytes.borrow_mut()[..end - start].copy_from_slice(&source[start..end]);
             }
-            let cloned = Value::Uint8Array(Rc::new(
-                quench_runtime::value::Uint8ArrayData::new(Rc::new(buffer), 0, length),
-            ));
+            let cloned = Value::Uint8Array(Rc::new(quench_runtime::value::Uint8ArrayData::new(
+                Rc::new(buffer),
+                0,
+                length,
+            )));
             let prototype = if advanced_buffer_view(&value) {
                 crate::modules::buffer_proto::buffer_prototype()
             } else {

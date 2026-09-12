@@ -1,16 +1,25 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "number", "value": 41 },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["LoadLocalChecked", "Unary", "JumpIfFalse", "LoadLocalChecked", "JumpIfFalse", "Return"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "Unary",
+    "JumpIfFalse",
+    "LoadLocal",
+    "JumpIfFalse",
+    "LoadConst",
+    "Move",
+    "Jump",
+    "LoadConst",
+    "Move",
+    "Move",
+    "Jump",
+    "Move",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": 41
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "nullish_truthy_branch_return": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

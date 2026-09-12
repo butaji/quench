@@ -1,18 +1,14 @@
 {
-  "schema": 1,
-  "warmup": 2,
-  "result": { "kind": "undefined" },
-  "plan": {
-    "execution_kind": "ordinary_fallback",
-    "operation_route": ["GetN", "Return"],
-    "fallback": true
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "LoadLocal",
+    "Call",
+    "Return"
+  ],
+  "result": {
+    "kind": "undefined"
   },
-  "profile": {
-    "residual": { "GetN": 1 },
-    "slow": {},
-    "stencils": {
-      "property": { "entries": 0, "fallbacks": 1 }
-    },
-    "events": { "leaf_reject": 1 }
-  }
+  "schema": 3,
+  "warmup": 2
 }

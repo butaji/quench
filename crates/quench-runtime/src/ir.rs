@@ -6,6 +6,9 @@
 use crate::facts::{
     ControlFlow, OperationEffect, OperationGuard, OperationSpec, ResultShape, WordKind,
 };
+// Keep compact IR operands tied to the native execute word while semantic
+// values remain owned by `crate::value`.
+const _: () = assert!(crate::native_core::WORD_BYTES == std::mem::size_of::<u64>());
 use crate::ops::Constant;
 use std::collections::HashMap;
 
@@ -32,7 +35,22 @@ pub enum ControlOperands {
     Branch { condition: Register, target: u16 },
     Jump { target: u16 },
     Return { source: Register },
+    Throw { source: Register },
     Loop { a: u16, b: u16, c: u16 },
+}
+
+/// Generated payload families for the generic value/control Bridge. The
+/// opcode declaration owns this physical spelling; runtime admission only
+/// validates the instance payload and whether the selected artifact exists.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum GenericBridgePayload {
+    Plain,
+    InitLocal,
+    Move,
+    AddConst,
+    Increment,
+    Binary,
+    Unary,
 }
 
 /// Canonical register use/definition roles for the compact instruction.
@@ -106,18 +124,8 @@ impl RegisterFlow {
     }
 }
 
-/// Uniform signature for generated compact dispatch handlers.
-pub(crate) type CompactHandler =
-    for<'a> fn(
-        crate::machine::CodeView<'a>,
-        usize,
-        Instruction,
-        &mut crate::register_file::RegisterFile,
-        &crate::vm::VmContext,
-    ) -> Result<crate::vm::DispatchTransition, crate::vm::VmError>;
-
 macro_rules! vm_op {
-    ($($name:ident = $id:literal / $width:literal => [$($effect:ident),*] / $fallback:ident / $result:ident / $control:ident / [$($guard:ident),*] / $handler:ident $(/ $operator:ident)?),+ $(,)?) => {
+    ($($name:ident = $id:literal / $width:literal => [$($effect:ident),*] / $fallback:ident / $result:ident / $control:ident / [$($guard:ident),*] / $handler:ident $(/ $operator:ident)? $( @ $marker:ident)*),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
         #[repr(u8)]
         pub enum Opcode { $($name = $id),+ }
@@ -135,6 +143,21 @@ macro_rules! vm_op {
                 match value { $($id => Some(Self::$name),)+ _ => None }
             }
 
+            pub fn from_name(name: &str) -> Option<Self> {
+                match name { $(stringify!($name) => Some(Self::$name),)+ _ => None }
+            }
+
+            /// Decode a textual operation name to a typed cold-row spelling.
+            /// This is retained for diagnostics and legacy textual data; the
+            /// production lowering path uses generated `Op::cold_opcode`.
+            pub fn from_operation_name(name: &str) -> Option<Self> {
+                let opcode = match name {
+                    "Call" => Some(Self::CallSlow),
+                    name => Self::from_name(name),
+                }?;
+                opcode.is_typed_cold_marker().then_some(opcode)
+            }
+
             pub const fn operand_width(self) -> u8 {
                 self.spec().operand_width
             }
@@ -149,6 +172,21 @@ macro_rules! vm_op {
                     1 => operands[1] == 0 && operands[2] == 0,
                     2 => operands[2] == 0,
                     _ => true,
+                }
+            }
+
+            /// Validate an instruction's operand payload, including the one
+            /// physical Move spelling that uses all three words to describe
+            /// a proven local copy.  The ordinary opcode shape remains the
+            /// two-register Move contract; flags select this internal form.
+            pub const fn operands_are_canonical_with_flags(
+                self,
+                flags: u8,
+                operands: [u16; 3],
+            ) -> bool {
+                match self {
+                    Self::Move if flags == 1 => true,
+                    _ => self.operands_are_canonical(operands),
                 }
             }
 
@@ -221,12 +259,6 @@ macro_rules! vm_op {
                 self.spec().guarded_word_kind(guard)
             }
 
-            pub(crate) const fn handler(self) -> CompactHandler {
-                match self {
-                    $(Self::$name => crate::vm::$handler),+
-                }
-            }
-
             /// Generated direct dispatch for the interpreter hot loop.
             ///
             /// The same opcode facts still own the handler mapping; this
@@ -283,6 +315,71 @@ macro_rules! vm_op {
                 }
             }
 
+            /// Find the dedicated opcode for a binary operator from the same
+            /// generated catalog. Generic `Binary` remains the fallback when
+            /// no dedicated row is declared.
+            #[inline(always)]
+            pub const fn binary_opcode(operator: crate::ops::BinaryOp) -> Option<Self> {
+                Self::BINARY_OPCODE_BY_ID[operator.compact_id() as usize]
+            }
+
+            const fn binary_opcode_table() -> [Option<Self>; crate::ops::BinaryOp::COUNT as usize + 1] {
+                let mut table = [None; crate::ops::BinaryOp::COUNT as usize + 1];
+                $(vm_op!(@binary_assign table, $name $(/ $operator)?);)+
+                table
+            }
+
+            const BINARY_OPCODE_BY_ID:
+                [Option<Self>; crate::ops::BinaryOp::COUNT as usize + 1] =
+                Self::binary_opcode_table();
+
+            /// Decode the binary operator represented by a physical opcode.
+            /// Dedicated rows and the generic flagged row share this one
+            /// catalog-derived view; consumers must not repeat the mapping.
+            pub const fn binary_operator(self, flags: u8) -> Option<crate::ops::BinaryOp> {
+                match self {
+                    Self::Binary => compact_binary_operator(flags),
+                    Self::AddConst => None,
+                    _ => self.numeric_operator(),
+                }
+            }
+
+            /// Whether this opcode is a physical spelling of the generic
+            /// binary operation family. Dedicated arithmetic rows that have
+            /// their own ordinary dispatch arm stay out of this view; all
+            /// other catalog-derived binary rows can share Binary consumers.
+            pub const fn is_binary_family(self) -> bool {
+                matches!(self, Self::Binary) || self.numeric_operator().is_some()
+            }
+
+            /// Whether this opcode stores an out-of-line canonical operation
+            /// for the shared fallback handler. This is the explicit `@ cold`
+            /// fact in the canonical declaration; adding a cold row cannot
+            /// require a second hand-maintained opcode list.
+            pub const fn is_cold_marker(self) -> bool {
+                match self {
+                    $(Self::$name => vm_op!(@marker $($marker)*)),+
+                }
+            }
+
+            /// Whether the canonical declaration exposes this opcode to the
+            /// generic value/control bridge. This is a declaration marker,
+            /// not a second selector table: operand/flag and physical-artifact
+            /// checks remain instance-specific at the admission boundary.
+            pub const fn is_generic_bridge_candidate(self) -> bool {
+                self.spec().generic_bridge
+            }
+
+            /// Classify the instance payload consumed by the generic Bridge.
+            /// This is derived beside the canonical opcode declaration so
+            /// machine admission does not maintain a second opcode-family
+            /// table. Dedicated numeric rows share the binary artifact path.
+            pub const fn generic_bridge_payload(self) -> GenericBridgePayload {
+                match self {
+                    $(Self::$name => vm_op!(@payload Self::$name, $($marker)*)),+
+                }
+            }
+
         }
 
         const DISPATCH_TABLE: [u8; Opcode::COUNT as usize + 1] =
@@ -296,6 +393,7 @@ macro_rules! vm_op {
                 name: stringify!($name),
                 operand_width: $width,
                 effects: &[$(OperationEffect::$effect),*],
+                generic_bridge: vm_op!(@bridge $($marker)*),
                 fallback: stringify!($fallback),
                 result: ResultShape::$result,
                 control: ControlFlow::$control,
@@ -317,6 +415,45 @@ macro_rules! vm_op {
     (@last $last:literal) => { $last };
     (@operator $operator:ident) => { Some(crate::ops::BinaryOp::$operator) };
     (@operator) => { None };
+    (@binary_assign $table:ident, AddConst / $operator:ident) => {};
+    (@binary_assign $table:ident, $name:ident / $operator:ident) => {
+        $table[crate::ops::BinaryOp::$operator as usize] = Some(Self::$name);
+    };
+    (@binary_assign $table:ident, $name:ident) => {};
+    (@marker cold $($rest:ident)*) => { true };
+    (@marker $head:ident $($rest:ident)*) => { vm_op!(@marker $($rest)*) };
+    (@marker) => { false };
+    (@bridge bridge $($rest:ident)*) => { true };
+    (@bridge $head:ident $($rest:ident)*) => { vm_op!(@bridge $($rest)*) };
+    (@bridge) => { false };
+    (@payload $opcode:expr, bridge_init_local $($rest:ident)*) => {
+        GenericBridgePayload::InitLocal
+    };
+    (@payload $opcode:expr, bridge_move $($rest:ident)*) => {
+        GenericBridgePayload::Move
+    };
+    (@payload $opcode:expr, bridge_add_const $($rest:ident)*) => {
+        GenericBridgePayload::AddConst
+    };
+    (@payload $opcode:expr, bridge_increment $($rest:ident)*) => {
+        GenericBridgePayload::Increment
+    };
+    (@payload $opcode:expr, bridge_binary $($rest:ident)*) => {
+        GenericBridgePayload::Binary
+    };
+    (@payload $opcode:expr, bridge_unary $($rest:ident)*) => {
+        GenericBridgePayload::Unary
+    };
+    (@payload $opcode:expr, $head:ident $($rest:ident)*) => {
+        vm_op!(@payload $opcode, $($rest)*)
+    };
+    (@payload $opcode:expr,) => {
+        if $opcode.numeric_operator().is_some() {
+            GenericBridgePayload::Binary
+        } else {
+            GenericBridgePayload::Plain
+        }
+    };
     (@control Next, $instruction:ident) => { ControlOperands::Next };
     (@control Branch, $instruction:ident) => {
         ControlOperands::Branch { condition: $instruction.a, target: $instruction.b }
@@ -327,125 +464,198 @@ macro_rules! vm_op {
     (@control Return, $instruction:ident) => {
         ControlOperands::Return { source: $instruction.a }
     };
+    (@control Throw, $instruction:ident) => {
+        ControlOperands::Throw { source: $instruction.a }
+    };
     (@control Loop, $instruction:ident) => {
         ControlOperands::Loop { a: $instruction.a, b: $instruction.b, c: $instruction.c }
     };
 }
 
 vm_op! {
-    LoadConst = 1 / 2 => [Pure] / load_const / Value / Next / [] / run_load_const,
-    Move = 2 / 2 => [Pure] / move / Value / Next / [] / run_move,
-    Add = 3 / 3 => [MayThrow] / add / Value / Next / [Number] / run_arithmetic / Add,
-    AddConst = 4 / 3 => [MayThrow] / add_const / Value / Next / [Number] / run_compact_add_const / Add,
-    JumpIfFalse = 5 / 2 => [MayThrow, Control] / jump_if_false / None / Branch / [] / run_instruction_fallback,
-    Return = 6 / 1 => [Control] / return_value / Value / Return / [] / run_return,
-    Slow = 7 / 1 => [MayThrow, Observable] / slow / Value / Next / [] / run_instruction_fallback,
-    LoadLocal = 8 / 2 => [Pure] / load_local / Value / Next / [] / run_local,
-    Sub = 9 / 3 => [MayThrow] / subtract / Value / Next / [Number] / run_arithmetic / Subtract,
-    Mul = 10 / 3 => [MayThrow] / multiply / Value / Next / [Number] / run_arithmetic / Multiply,
-    Div = 11 / 3 => [MayThrow] / divide / Value / Next / [Number] / run_arithmetic / Divide,
+    LoadConst = 1 / 2 => [Pure] / load_const / Value / Next / [] / run_load_const @ bridge,
+    Move = 2 / 2 => [Pure] / move / Value / Next / [] / run_move @ bridge @ bridge_move,
+    Add = 3 / 3 => [MayThrow] / add / Value / Next / [Number] / run_arithmetic / Add @ bridge,
+    AddConst = 4 / 3 => [MayThrow] / add_const / Value / Next / [Number] / run_compact_add_const / Add @ bridge @ bridge_add_const,
+    JumpIfFalse = 5 / 2 => [MayThrow, Control] / jump_if_false / None / Branch / [] / run_instruction_fallback @ bridge,
+    Return = 6 / 1 => [Control] / return_value / Value / Return / [] / run_return @ bridge,
+    Slow = 7 / 1 => [MayThrow, Observable] / slow / Value / Next / [] / run_instruction_fallback @ cold,
+    LoadLocal = 8 / 2 => [Pure] / load_local / Value / Next / [] / run_local @ bridge,
+    Sub = 9 / 3 => [MayThrow] / subtract / Value / Next / [Number] / run_arithmetic / Subtract @ bridge,
+    Mul = 10 / 3 => [MayThrow] / multiply / Value / Next / [Number] / run_arithmetic / Multiply @ bridge,
+    Div = 11 / 3 => [MayThrow] / divide / Value / Next / [Number] / run_arithmetic / Divide @ bridge,
     GetProperty = 12 / 3 => [ReadHeap, MayThrow, Observable] / get_property / Value / Next / [Shape] / run_compact_get_property,
     Call = 13 / 3 => [ReadHeap, MayThrow, Observable] / call / Value / Next / [Callable] / run_compact_call,
-    Jump = 14 / 1 => [Control] / jump / None / Jump / [] / run_instruction_fallback,
-    IncI = 15 / 2 => [MayThrow] / increment_integer / Value / Next / [] / run_compact_numeric_update,
-    ForI = 16 / 3 => [Control] / for_integer / None / Loop / [] / run_instruction_fallback,
+    Jump = 14 / 1 => [Control] / jump / None / Jump / [] / run_instruction_fallback @ bridge,
+    IncI = 15 / 2 => [MayThrow] / increment_integer / Value / Next / [] / run_compact_numeric_update @ bridge @ bridge_increment,
+    ForI = 16 / 3 => [Control] / for_integer / None / Loop / [] / run_instruction_fallback @ cold,
     AGetI = 17 / 3 => [ReadHeap, MayThrow, Observable] / get_element / Value / Next / [Shape] / run_compact_get_index,
     ASetI = 18 / 3 => [WriteHeap, MayThrow, Observable] / set_element / None / Next / [Shape] / run_compact_set_index,
     AGetIInc = 19 / 3 => [ReadHeap, WriteHeap, MayThrow, Observable] / get_element_increment / Value / Next / [Shape] / run_compact_get_index_inc,
     GetN = 20 / 3 => [ReadHeap, MayThrow, Observable] / get_named / Value / Next / [Shape] / run_compact_get_named,
     SetN = 21 / 3 => [WriteHeap, MayThrow, Observable] / set_named / None / Next / [Shape] / run_compact_set_named,
     CallN = 22 / 3 => [ReadHeap, MayThrow, Observable] / call_named / Value / Next / [Shape, Callable] / run_compact_call_named,
-    UpdateLocal = 23 / 3 => [Pure] / update_local / Value / Next / [] / run_update_local,
-    LoadLocalChecked = 24 / 2 => [MayThrow] / load_local_checked / Value / Next / [] / run_load_local_checked,
-    Binary = 25 / 3 => [MayThrow] / binary / Value / Next / [] / run_binary_instruction,
-    StoreLocalChecked = 26 / 2 => [MayThrow] / store_local_checked / None / Next / [] / run_store_local_checked,
-    InitLocal = 27 / 2 => [Pure] / init_local / None / Next / [] / run_init_local,
-    StoreLocal = 28 / 2 => [Pure] / store_local / None / Next / [] / run_store_local,
+    UpdateLocal = 23 / 3 => [Pure] / update_local / Value / Next / [] / run_update_local @ bridge,
+    LoadLocalChecked = 24 / 2 => [MayThrow] / load_local_checked / Value / Next / [] / run_load_local_checked @ bridge,
+    Binary = 25 / 3 => [MayThrow] / binary / Value / Next / [] / run_binary_instruction @ bridge @ bridge_binary,
+    StoreLocalChecked = 26 / 2 => [MayThrow] / store_local_checked / None / Next / [] / run_store_local_checked @ bridge,
+    InitLocal = 27 / 2 => [Pure] / init_local / None / Next / [] / run_init_local @ bridge @ bridge_init_local,
+    StoreLocal = 28 / 2 => [Pure] / store_local / None / Next / [] / run_store_local @ bridge,
     GetPropertyQuickened = 29 / 3 => [ReadHeap, MayThrow, Observable] / get_property / Value / Next / [] / run_compact_get_property,
     GetNQuickened = 30 / 3 => [ReadHeap, MayThrow, Observable] / get_named / Value / Next / [] / run_compact_get_named,
     AGetIQuickened = 31 / 3 => [ReadHeap, MayThrow, Observable] / get_element / Value / Next / [] / run_compact_get_index,
-    Unary = 32 / 3 => [MayThrow] / unary / Value / Next / [] / run_unary_instruction,
+    Unary = 32 / 3 => [MayThrow] / unary / Value / Next / [] / run_unary_instruction @ bridge @ bridge_unary,
+    Remainder = 33 / 3 => [MayThrow] / remainder / Value / Next / [] / run_binary_instruction / Remainder @ bridge,
+    Exponentiate = 34 / 3 => [MayThrow] / exponentiate / Value / Next / [] / run_binary_instruction / Exponentiate @ bridge,
+    MarkUninitialized = 35 / 3 => [Pure] / mark_uninitialized / None / Next / [] / run_mark_uninitialized @ cold @ bridge,
+    MarkImmutable = 36 / 3 => [Pure] / mark_immutable / None / Next / [] / run_mark_immutable @ cold @ bridge,
+    RequireObjectCoercible = 37 / 3 => [MayThrow] / require_object_coercible / None / Next / [] / run_require_object_coercible @ cold @ bridge,
+    NumericAdd = 38 / 3 => [MayThrow] / numeric_add / Value / Next / [Number] / run_binary_instruction / NumericAdd @ bridge,
+    NumericSubtract = 39 / 3 => [MayThrow] / numeric_subtract / Value / Next / [Number] / run_binary_instruction / NumericSubtract @ bridge,
+    Equal = 40 / 3 => [MayThrow] / equal / Value / Next / [] / run_binary_instruction / Equal @ bridge,
+    NotEqual = 41 / 3 => [MayThrow] / not_equal / Value / Next / [] / run_binary_instruction / NotEqual @ bridge,
+    StrictEqual = 42 / 3 => [Pure] / strict_equal / Value / Next / [] / run_binary_instruction / StrictEqual @ bridge,
+    StrictNotEqual = 43 / 3 => [Pure] / strict_not_equal / Value / Next / [] / run_binary_instruction / StrictNotEqual @ bridge,
+    LessThan = 44 / 3 => [MayThrow] / less_than / Value / Next / [] / run_binary_instruction / LessThan @ bridge,
+    LessEqual = 45 / 3 => [MayThrow] / less_equal / Value / Next / [] / run_binary_instruction / LessEqual @ bridge,
+    GreaterThan = 46 / 3 => [MayThrow] / greater_than / Value / Next / [] / run_binary_instruction / GreaterThan @ bridge,
+    GreaterEqual = 47 / 3 => [MayThrow] / greater_equal / Value / Next / [] / run_binary_instruction / GreaterEqual @ bridge,
+    BitwiseOr = 48 / 3 => [MayThrow] / bitwise_or / Value / Next / [] / run_binary_instruction / BitwiseOr @ bridge,
+    BitwiseXor = 49 / 3 => [MayThrow] / bitwise_xor / Value / Next / [] / run_binary_instruction / BitwiseXor @ bridge,
+    BitwiseAnd = 50 / 3 => [MayThrow] / bitwise_and / Value / Next / [] / run_binary_instruction / BitwiseAnd @ bridge,
+    ShiftLeft = 51 / 3 => [MayThrow] / shift_left / Value / Next / [] / run_binary_instruction / ShiftLeft @ bridge,
+    ShiftRight = 52 / 3 => [MayThrow] / shift_right / Value / Next / [] / run_binary_instruction / ShiftRight @ bridge,
+    ShiftRightZeroFill = 53 / 3 => [MayThrow] / shift_right_zero_fill / Value / Next / [] / run_binary_instruction / ShiftRightZeroFill @ bridge,
+    Instanceof = 54 / 3 => [MayThrow] / instanceof / Value / Next / [] / run_binary_instruction / Instanceof @ bridge,
+    Loop = 55 / 1 => [MayThrow] / loop / None / Next / [] / run_instruction_fallback @ cold,
+    TailCall = 56 / 1 => [MayThrow] / tail_call / Value / Next / [] / run_instruction_fallback @ cold,
+    MakeArray = 57 / 1 => [Allocate, MayThrow] / make_array / Value / Next / [] / run_instruction_fallback @ cold,
+    MakeFunctionWithKind = 58 / 1 => [Allocate, MayThrow] / make_function / Value / Next / [] / run_instruction_fallback @ cold,
+    SetFunctionName = 59 / 1 => [MayThrow] / set_function_name / None / Next / [] / run_instruction_fallback @ cold,
+    MakeObject = 60 / 1 => [Allocate, MayThrow] / make_object / Value / Next / [] / run_instruction_fallback @ cold,
+    Construct = 61 / 1 => [Allocate, MayThrow] / construct / Value / Next / [] / run_instruction_fallback @ cold,
+    ForOf = 62 / 1 => [MayThrow] / for_of / None / Next / [] / run_instruction_fallback @ cold,
+    CallSlow = 63 / 1 => [MayThrow, Observable] / call_slow / Value / Next / [] / run_instruction_fallback @ cold,
+    Try = 64 / 1 => [MayThrow] / try / None / Next / [] / run_instruction_fallback @ cold,
+    Await = 65 / 1 => [MayThrow] / await / Value / Next / [] / run_instruction_fallback @ cold,
+    MakeBuiltin = 66 / 1 => [Allocate, MayThrow] / make_builtin / Value / Next / [] / run_instruction_fallback @ cold,
+    ValidateClassHeritage = 67 / 1 => [MayThrow] / validate_class_heritage / None / Next / [] / run_instruction_fallback @ cold,
+    GetClassPrototype = 68 / 1 => [MayThrow] / get_class_prototype / Value / Next / [] / run_instruction_fallback @ cold,
+    MakeFunction = 69 / 1 => [Allocate, MayThrow] / make_function / Value / Next / [] / run_instruction_fallback @ cold,
+    StaticBlock = 70 / 1 => [MayThrow] / static_block / None / Next / [] / run_instruction_fallback @ cold,
+    AppendInstanceField = 71 / 1 => [MayThrow] / append_instance_field / None / Next / [] / run_instruction_fallback @ cold,
+    PrivateScope = 72 / 1 => [MayThrow] / private_scope / None / Next / [] / run_instruction_fallback @ cold,
+    LoadParameter = 73 / 2 => [Pure] / load_parameter / Value / Next / [] / run_load_parameter @ bridge,
+    InitializeLocal = 74 / 1 => [Pure] / initialize_local / None / Next / [] / run_initialize_local @ bridge,
+    CheckInitialized = 75 / 1 => [MayThrow] / check_initialized / None / Next / [] / run_check_initialized @ bridge,
+    Throw = 76 / 1 => [MayThrow, Control] / throw_value / None / Throw / [] / run_throw @ bridge,
 }
 
-macro_rules! compact_binary_operators {
-    ($($operator:ident = $id:literal),+ $(,)?) => {
-        pub const fn compact_binary_id(operator: crate::ops::BinaryOp) -> u8 {
-            match operator { $(crate::ops::BinaryOp::$operator => $id),+ }
-        }
-
-        pub const fn compact_binary_operator(id: u8) -> Option<crate::ops::BinaryOp> {
-            match id { $($id => Some(crate::ops::BinaryOp::$operator),)+ _ => None }
-        }
-    };
+/// Compatibility names used by compact instruction consumers. The canonical
+/// operator declaration owns both directions; IR only exposes the typed view.
+#[inline(always)]
+pub const fn compact_binary_id(operator: crate::ops::BinaryOp) -> u8 {
+    operator.compact_id()
 }
 
-compact_binary_operators! {
-    Add = 0,
-    Subtract = 1,
-    Multiply = 2,
-    Divide = 3,
-    Remainder = 4,
-    Exponentiate = 5,
-    NumericAdd = 6,
-    NumericSubtract = 7,
-    Equal = 8,
-    NotEqual = 9,
-    StrictEqual = 10,
-    StrictNotEqual = 11,
-    LessThan = 12,
-    LessEqual = 13,
-    GreaterThan = 14,
-    GreaterEqual = 15,
-    BitwiseOr = 16,
-    BitwiseXor = 17,
-    BitwiseAnd = 18,
-    ShiftLeft = 19,
-    ShiftRight = 20,
-    ShiftRightZeroFill = 21,
-    Instanceof = 22,
+#[inline(always)]
+pub const fn compact_binary_operator(id: u8) -> Option<crate::ops::BinaryOp> {
+    crate::ops::BinaryOp::from_compact_id(id)
 }
 
-macro_rules! compact_unary_operators {
-    ($($operator:ident = $id:literal),+ $(,)?) => {
-        pub const fn compact_unary_id(operator: crate::ops::UnaryOp) -> u8 {
-            match operator { $(crate::ops::UnaryOp::$operator => $id),+ }
-        }
-
-        pub const fn compact_unary_operator(id: u8) -> Option<crate::ops::UnaryOp> {
-            match id { $($id => Some(crate::ops::UnaryOp::$operator),)+ _ => None }
-        }
-    };
+/// Compatibility names used by compact instruction consumers. The canonical
+/// unary operator declaration owns both directions.
+#[inline(always)]
+pub const fn compact_unary_id(operator: crate::ops::UnaryOp) -> u8 {
+    operator.compact_id()
 }
 
-compact_unary_operators! {
-    Plus = 0,
-    Minus = 1,
-    Not = 2,
-    BitwiseNot = 3,
-    Void = 4,
-    Typeof = 5,
-    ToString = 6,
-    ToNumeric = 7,
-    Delete = 8,
-    IsNullish = 9,
+#[inline(always)]
+pub const fn compact_unary_operator(id: u8) -> Option<crate::ops::UnaryOp> {
+    crate::ops::UnaryOp::from_compact_id(id)
 }
 
 impl Opcode {
     pub const fn is_compact(self) -> bool {
         (self as u8) <= Self::COUNT
     }
+    /// Whether dispatch enters a cold semantic handler, including typed cold
+    /// rows and the legacy generic gateway.
     pub const fn is_slow(self) -> bool {
-        matches!(self, Self::Slow)
+        self.is_cold_marker()
+    }
+
+    /// Cold operations with a dedicated typed spelling in the compact stream.
+    /// The generic `Slow` gateway remains available for operations that do not
+    /// have a declared opcode row (for example future host extensions).
+    pub const fn is_typed_cold_marker(self) -> bool {
+        self.is_cold_marker() && !matches!(self, Self::Slow)
+    }
+
+    /// Return the semantic opcode represented by a quickened physical alias.
+    /// Quickening changes only the guarded execution view; JSON/trace
+    /// contracts and fallback reasoning must continue to observe the same
+    /// canonical operation.
+    #[inline(always)]
+    pub const fn semantic_opcode(self) -> Self {
+        match self {
+            Self::GetPropertyQuickened => Self::GetProperty,
+            Self::GetNQuickened => Self::GetN,
+            Self::AGetIQuickened => Self::AGetI,
+            // `ForI` is the typed physical spelling of the canonical
+            // structured `Loop` operation. Keep execution-profile IR and
+            // semantic diagnostics on the operation name while the payload
+            // travels through the typed cold marker.
+            Self::ForI => Self::Loop,
+            _ => self,
+        }
+    }
+
+    /// Return the guarded physical alias for a quickenable semantic opcode.
+    /// Keeping both directions together prevents selectors and diagnostics
+    /// from carrying separate quickening maps.
+    #[inline(always)]
+    pub const fn quickened_opcode(self) -> Option<Self> {
+        match self {
+            Self::GetProperty => Some(Self::GetPropertyQuickened),
+            Self::GetN => Some(Self::GetNQuickened),
+            Self::AGetI => Some(Self::AGetIQuickened),
+            _ => None,
+        }
     }
 
     pub(crate) fn matches_physical_contract(self, actual: Self) -> bool {
         self == actual
-            || matches!(
-                (self, actual),
-                (Self::GetProperty, Self::GetPropertyQuickened)
-                    | (Self::GetN, Self::GetNQuickened)
-                    | (Self::AGetI, Self::AGetIQuickened)
-            )
+            || self == actual.semantic_opcode()
+            || (self == Self::Binary
+                && actual != Self::AddConst
+                && actual.numeric_operator().is_some())
+            || (self == Self::Slow && actual.is_typed_cold_marker())
+    }
+
+    /// Validate operand words after accepting a semantic alias.  Cold
+    /// markers carry their out-of-line operation index in the typed payload,
+    /// so the generic `Slow` declaration cannot apply its one-word shape to
+    /// those physical spellings.
+    pub(crate) fn operands_match_physical_contract(self, actual: Self, operands: [u16; 3]) -> bool {
+        self.matches_physical_contract(actual)
+            && ((self == Self::Slow && actual.is_typed_cold_marker())
+                || (self == actual && actual.is_typed_cold_marker())
+                || (self == actual.semantic_opcode() && actual.is_typed_cold_marker())
+                || actual.operands_are_canonical(operands))
+    }
+
+    pub(crate) fn operands_match_physical_contract_with_flags(
+        self,
+        actual: Self,
+        flags: u8,
+        operands: [u16; 3],
+    ) -> bool {
+        self.matches_physical_contract(actual)
+            && ((self == Self::Slow && actual.is_typed_cold_marker())
+                || (self == actual && actual.is_typed_cold_marker())
+                || (self == actual.semantic_opcode() && actual.is_typed_cold_marker())
+                || actual.operands_are_canonical_with_flags(flags, operands))
     }
 }
 
@@ -623,7 +833,10 @@ impl CompactInstructionBuilder {
         if width > 3 {
             return Err("operation declares too many operands");
         }
-        if !self.opcode.operands_are_canonical(self.operands) {
+        if !self
+            .opcode
+            .operands_are_canonical_with_flags(self.flags, self.operands)
+        {
             return Err("unused operand must be zero");
         }
         Ok(Instruction {
@@ -670,6 +883,9 @@ impl Instruction {
             c: target,
         }
     }
+    /// Build the generic flagged binary gateway for legacy/structured selector
+    /// inputs. Canonical `Op::Binary` lowering uses dedicated generated rows
+    /// through [`Opcode::binary_opcode`] instead.
     pub const fn binary_operator(
         dst: Register,
         operator: crate::ops::BinaryOp,
@@ -705,6 +921,42 @@ impl Instruction {
             flags: 0,
             a: dst,
             b: slot,
+            c: 0,
+        }
+    }
+    pub const fn load_parameter(dst: Register, slot: u16) -> Self {
+        Self {
+            opcode: Opcode::LoadParameter,
+            flags: 0,
+            a: dst,
+            b: slot,
+            c: 0,
+        }
+    }
+    pub const fn initialize_local(slot: u16) -> Self {
+        Self {
+            opcode: Opcode::InitializeLocal,
+            flags: 0,
+            a: slot,
+            b: 0,
+            c: 0,
+        }
+    }
+    pub const fn check_initialized(slot: u16) -> Self {
+        Self {
+            opcode: Opcode::CheckInitialized,
+            flags: 0,
+            a: slot,
+            b: 0,
+            c: 0,
+        }
+    }
+    pub const fn throw_(src: Register) -> Self {
+        Self {
+            opcode: Opcode::Throw,
+            flags: 0,
+            a: src,
+            b: 0,
             c: 0,
         }
     }
@@ -805,12 +1057,32 @@ impl Instruction {
         }
     }
 
+    pub const fn cold_marker(opcode: Opcode, slot: Register, flags: u8, index: u32) -> Self {
+        Self {
+            opcode,
+            flags,
+            a: slot,
+            b: index as u16,
+            c: (index >> 16) as u16,
+        }
+    }
+
     pub const fn cold_index(self) -> Option<u32> {
+        if !self.opcode.is_cold_marker() {
+            return None;
+        }
         if matches!(self.opcode, Opcode::Slow) {
             Some(self.a as u32 | (self.b as u32) << 16)
         } else {
-            None
+            Some(self.b as u32 | (self.c as u32) << 16)
         }
+    }
+
+    /// Whether this compact opcode carries an out-of-line canonical `Op`.
+    /// Typed cold markers and the legacy `Slow` gateway share the same lookup
+    /// contract; the opcode only chooses the mechanical dispatch family.
+    pub fn is_cold_marker(self) -> bool {
+        self.cold_index().is_some()
     }
 
     pub fn register_flow(self) -> RegisterFlow {
@@ -822,8 +1094,13 @@ impl Instruction {
                 complete: true,
             },
             Move if self.flags == 0 => RegisterFlow::unary(self.a, self.b),
-            Move | LoadLocal | LoadLocalChecked => RegisterFlow::define(self.a),
-            Add | Sub | Mul | Div | Binary => RegisterFlow::binary(self.a, self.b, self.c),
+            Move | LoadLocal | LoadLocalChecked | LoadParameter => RegisterFlow::define(self.a),
+            Add | Sub | Mul | Div | Binary | Remainder | Exponentiate | NumericAdd
+            | NumericSubtract | Equal | NotEqual | StrictEqual | StrictNotEqual | LessThan
+            | LessEqual | GreaterThan | GreaterEqual | BitwiseOr | BitwiseXor | BitwiseAnd
+            | ShiftLeft | ShiftRight | ShiftRightZeroFill | Instanceof => {
+                RegisterFlow::binary(self.a, self.b, self.c)
+            }
             AddConst | Unary | IncI => RegisterFlow::unary(self.a, self.b),
             JumpIfFalse | Return => RegisterFlow::store(self.a),
             Call | CallN => RegisterFlow {
@@ -856,7 +1133,15 @@ impl Instruction {
                 complete: true,
             },
             InitLocal | StoreLocal | StoreLocalChecked => RegisterFlow::store(self.b),
-            Jump => RegisterFlow::none(),
+            InitializeLocal | CheckInitialized => RegisterFlow::none(),
+            Throw => RegisterFlow::store(self.a),
+            Jump | MarkUninitialized | MarkImmutable => RegisterFlow::none(),
+            RequireObjectCoercible => RegisterFlow::store(self.a),
+            Loop | TailCall | MakeArray | MakeFunctionWithKind | SetFunctionName | MakeObject
+            | Construct | ForOf | CallSlow | Try | Await | MakeBuiltin => RegisterFlow::none(),
+            ValidateClassHeritage | GetClassPrototype => RegisterFlow::none(),
+            MakeFunction | StaticBlock | AppendInstanceField => RegisterFlow::none(),
+            PrivateScope => RegisterFlow::none(),
             Slow => RegisterFlow {
                 uses: [None; 3],
                 definition: None,
@@ -1094,6 +1379,49 @@ pub enum LoweredInstruction {
     Slow(crate::ops::Op),
 }
 
+/// The physical boundary selected for one canonical operation instance.
+///
+/// This is a diagnostic/selection view, not a second semantic operation set:
+/// `Compact` reaches the fixed-width stream (possibly after the encoder adds
+/// range-owned data such as a constant-pool ID), `TypedCold` carries the
+/// catalog-declared cold spelling, and `GenericSlow` preserves the original
+/// operation in the out-of-line semantic store.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LoweringBoundary {
+    Compact,
+    TypedCold(Opcode),
+    GenericSlow,
+}
+
+/// Classify the one operation boundary without discarding its canonical value.
+pub fn lowering_boundary(op: &crate::ops::Op) -> LoweringBoundary {
+    op.lowering_boundary()
+}
+
+/// Report whether an operation reaches the fixed-width stream after the
+/// encoder supplies any range-owned data it needs. `Const` is the one such
+/// operation whose pool ID cannot be known by this module alone; the
+/// `CodeArena` encoder materializes it as `LoadConst` from the canonical pool.
+/// Keeping that exception here makes the diagnostic boundary agree with the
+/// production encoder without adding a second operation representation.
+pub fn has_compact_boundary(op: &crate::ops::Op) -> bool {
+    matches!(op, crate::ops::Op::Const { .. }) || lower_compact(op).is_some()
+}
+
+/// Return the payload words owned by a typed cold marker. The cold-store index
+/// occupies the remaining words; keeping this small physical view beside the
+/// lowering boundary gives `CodeArena` one source for marker payload layout.
+#[inline(always)]
+pub fn cold_marker_payload(op: &crate::ops::Op) -> (Register, u8) {
+    use crate::ops::Op;
+    match op {
+        Op::MarkUninitialized { slot, shared } => (*slot, u8::from(*shared)),
+        Op::MarkImmutable { slot } => (*slot, 0),
+        Op::RequireObjectCoercible { src } => (*src, 0),
+        _ => (0, 0),
+    }
+}
+
 /// Classify an operation without introducing a second semantic representation.
 pub fn lower(op: &crate::ops::Op) -> LoweredInstruction {
     lower_compact(op)
@@ -1103,10 +1431,14 @@ pub fn lower(op: &crate::ops::Op) -> LoweredInstruction {
 
 /// Lossless lowering for the fixed-width subset of the canonical Op IR.
 pub fn lower_compact(op: &crate::ops::Op) -> Option<Instruction> {
-    use crate::ops::{BinaryOp, Op};
+    use crate::ops::Op;
     match op {
         Op::Move { dst, src } => Some(Instruction::move_(*dst, *src)),
         Op::LoadLocal { dst, slot } => Some(Instruction::load_local(*dst, *slot)),
+        Op::LoadParameter { dst, slot } => Some(Instruction::load_parameter(*dst, *slot)),
+        Op::InitializeLocal { slot } => Some(Instruction::initialize_local(*slot)),
+        Op::CheckInitialized { slot, .. } => Some(Instruction::check_initialized(*slot)),
+        Op::Throw { src } => Some(Instruction::throw_(*src)),
         Op::StoreLocal { slot, src } => Some(Instruction::store_local(*slot, *src)),
         Op::Unary { dst, operator, src } => {
             Some(Instruction::unary_operator(*dst, *operator, *src))
@@ -1119,43 +1451,21 @@ pub fn lower_compact(op: &crate::ops::Op) -> Option<Instruction> {
         } => Some(Instruction::load_local_checked(*dst, *slot)),
         Op::Binary {
             dst,
-            operator: BinaryOp::Add,
-            lhs,
-            rhs,
-        } => Some(Instruction::binary(Opcode::Add, *dst, *lhs, *rhs)),
-        Op::Binary {
-            dst,
-            operator: BinaryOp::Subtract,
-            lhs,
-            rhs,
-        } => Some(Instruction::binary(Opcode::Sub, *dst, *lhs, *rhs)),
-        Op::Binary {
-            dst,
-            operator: BinaryOp::Multiply,
-            lhs,
-            rhs,
-        } => Some(Instruction::binary(Opcode::Mul, *dst, *lhs, *rhs)),
-        Op::Binary {
-            dst,
-            operator: BinaryOp::Divide,
-            lhs,
-            rhs,
-        } => Some(Instruction::binary(Opcode::Div, *dst, *lhs, *rhs)),
-        Op::Binary {
-            dst,
             operator,
             lhs,
             rhs,
-        } => Some(Instruction::binary_operator(*dst, *operator, *lhs, *rhs)),
+        } => Opcode::binary_opcode(*operator)
+            .map(|opcode| Instruction::binary(opcode, *dst, *lhs, *rhs)),
         Op::GetPropertyDynamic { dst, object, key } => {
             Some(Instruction::binary(Opcode::AGetI, *dst, *object, *key))
         }
         Op::GetProperty { dst, object, key } => {
             Some(Instruction::get_named(*dst, *object, key == "length"))
         }
-        Op::ResolveName { dst, key } if crate::globals::builtin(key).is_some() => {
-            Some(Instruction::get_global_named(*dst))
-        }
+        // ResolveName is scope-sensitive: a `with` object (or direct eval)
+        // may shadow a global builtin.  It therefore must stay on the
+        // complete semantic path; lowering it to GetGlobalNamed would erase
+        // the dynamic environment and return the wrong function identity.
         Op::SetProperty {
             object,
             src,
@@ -1199,7 +1509,7 @@ pub fn lower_compact(op: &crate::ops::Op) -> Option<Instruction> {
                 args.len() as u8,
             ))
         }
-        _ => None,
+        _ => op.generated_lowering_fallback(),
     }
 }
 
@@ -1438,11 +1748,10 @@ impl Program {
             return Err("rare metadata is not aligned with instructions");
         }
         for instruction in &self.instructions {
-            if !instruction.opcode.operands_are_canonical([
-                instruction.a,
-                instruction.b,
-                instruction.c,
-            ]) {
+            if !instruction.opcode.operands_are_canonical_with_flags(
+                instruction.flags,
+                [instruction.a, instruction.b, instruction.c],
+            ) {
                 return Err("instruction has non-canonical unused operands");
             }
             match instruction.opcode {
@@ -1594,9 +1903,100 @@ mod tests {
 
     #[test]
     fn opcodes_remain_compact_byte_identifiers() {
-        assert_eq!(Opcode::COUNT, Opcode::Unary as u8);
+        assert_eq!(Opcode::COUNT, Opcode::Throw as u8);
         assert!(Opcode::AGetIQuickened.is_compact());
         assert!(Opcode::Slow.is_compact());
+    }
+
+    #[test]
+    fn opcode_names_round_trip_through_generated_catalog() {
+        for &opcode in Opcode::ALL {
+            assert_eq!(Opcode::from_name(opcode.name()), Some(opcode));
+        }
+        assert_eq!(Opcode::from_name("not_an_opcode"), None);
+    }
+
+    #[test]
+    fn binary_opcode_lookup_uses_declared_dedicated_rows() {
+        use crate::ops::BinaryOp;
+        assert_eq!(Opcode::binary_opcode(BinaryOp::Add), Some(Opcode::Add));
+        assert_eq!(
+            Opcode::binary_opcode(BinaryOp::Remainder),
+            Some(Opcode::Remainder)
+        );
+        assert_eq!(
+            Opcode::binary_opcode(BinaryOp::Exponentiate),
+            Some(Opcode::Exponentiate)
+        );
+        assert_eq!(Opcode::binary_opcode(BinaryOp::Equal), Some(Opcode::Equal));
+
+        let mut seen = [false; Opcode::COUNT as usize + 1];
+        let mut missing = Vec::new();
+        for operator in BinaryOp::ALL {
+            let Some(opcode) = Opcode::binary_opcode(*operator) else {
+                missing.push(*operator);
+                continue;
+            };
+            let index = opcode as usize;
+            assert!(!seen[index], "duplicate dedicated opcode for {operator:?}");
+            seen[index] = true;
+            if opcode != Opcode::AddConst {
+                assert_eq!(opcode.numeric_operator(), Some(*operator));
+            }
+        }
+        // Every declared operator currently has a dedicated semantic opcode.
+        // The generic `Binary` gateway remains for legacy/unknown decoding,
+        // but a newly added catalog operator must gain a row or make this
+        // audit fail rather than silently widening that gateway.
+        assert!(
+            missing.is_empty(),
+            "operators without dedicated rows: {missing:?}"
+        );
+    }
+
+    #[test]
+    fn physical_binary_operator_view_uses_one_catalog_mapping() {
+        use crate::ops::BinaryOp;
+        assert_eq!(Opcode::Add.binary_operator(0), Some(BinaryOp::Add));
+        assert_eq!(
+            Opcode::Binary.binary_operator(compact_binary_id(BinaryOp::LessThan)),
+            Some(BinaryOp::LessThan)
+        );
+        assert_eq!(Opcode::AddConst.binary_operator(0), None);
+        assert_eq!(Opcode::Return.binary_operator(0), None);
+        assert!(Opcode::Binary.is_binary_family());
+        for operator in BinaryOp::ALL {
+            let opcode = Opcode::binary_opcode(*operator).expect("dedicated row");
+            assert!(opcode.is_binary_family());
+        }
+        assert!(!Opcode::Return.is_binary_family());
+    }
+
+    #[test]
+    fn quickening_aliases_round_trip_through_one_opcode_mapping() {
+        for (semantic, quickened) in [
+            (Opcode::GetProperty, Opcode::GetPropertyQuickened),
+            (Opcode::GetN, Opcode::GetNQuickened),
+            (Opcode::AGetI, Opcode::AGetIQuickened),
+        ] {
+            assert_eq!(semantic.quickened_opcode(), Some(quickened));
+            assert_eq!(quickened.semantic_opcode(), semantic);
+            assert_eq!(semantic.semantic_opcode(), semantic);
+        }
+        assert_eq!(Opcode::Return.quickened_opcode(), None);
+        assert_eq!(Opcode::Return.semantic_opcode(), Opcode::Return);
+        assert_eq!(Opcode::ForI.semantic_opcode(), Opcode::Loop);
+    }
+
+    #[test]
+    fn binary_catalog_keeps_physical_hints_with_operator_identity() {
+        use crate::ops::BinaryOp;
+        assert_eq!(BinaryOp::Equal.region_name(), Some("compare_equal"));
+        assert_eq!(BinaryOp::StrictEqual.region_name(), Some("compare_equal"));
+        assert_eq!(BinaryOp::BitwiseAnd.region_name(), Some("bitwise_and"));
+        assert_eq!(BinaryOp::NumericAdd.region_name(), Some("increment"));
+        assert_eq!(BinaryOp::NumericSubtract.region_name(), Some("decrement"));
+        assert_eq!(BinaryOp::Instanceof.region_name(), None);
     }
 
     #[test]
@@ -1610,6 +2010,8 @@ mod tests {
         );
         assert_eq!(get_property.fallback, "get_property");
         assert_eq!(Opcode::GetProperty.fallback(), "get_property");
+        assert!(!Opcode::GetProperty.spec().generic_bridge);
+        assert!(Opcode::Add.spec().generic_bridge);
         assert_eq!(
             Opcode::GetProperty.result_shape(),
             crate::facts::ResultShape::Value
@@ -1632,6 +2034,14 @@ mod tests {
             Opcode::Return.control_operands(Instruction::ret(4)),
             ControlOperands::Return { source: 4 }
         );
+        assert_eq!(
+            Opcode::Throw.control_flow(),
+            crate::facts::ControlFlow::Throw
+        );
+        assert_eq!(
+            Opcode::Throw.control_operands(Instruction::throw_(4)),
+            ControlOperands::Throw { source: 4 }
+        );
         assert!(Opcode::GetProperty.has_guard(crate::facts::OperationGuard::Shape));
         assert!(!Opcode::Move.has_guard(crate::facts::OperationGuard::Shape));
         assert!(get_property
@@ -1639,6 +2049,19 @@ mod tests {
             .contains(&crate::facts::OperationEffect::MayThrow));
         assert!(get_property.is_observable());
         assert!(Opcode::GetProperty.has_effect(crate::facts::OperationEffect::ReadHeap));
+        for opcode in [
+            Opcode::MakeArray,
+            Opcode::MakeFunction,
+            Opcode::MakeFunctionWithKind,
+            Opcode::MakeObject,
+            Opcode::MakeBuiltin,
+            Opcode::Construct,
+        ] {
+            assert!(
+                opcode.has_effect(crate::facts::OperationEffect::Allocate),
+                "allocating opcode lost its allocation effect: {opcode:?}"
+            );
+        }
         assert!(!Opcode::Move.spec().is_observable());
         assert!(Opcode::Jump.spec().is_control());
         assert!(Opcode::GetProperty.is_quickenable());
@@ -1669,11 +2092,236 @@ mod tests {
     }
 
     #[test]
+    fn generated_bridge_markers_cannot_cross_heap_or_control_loop_boundaries() {
+        for opcode in Opcode::ALL.iter().copied() {
+            if !opcode.is_generic_bridge_candidate() {
+                continue;
+            }
+            for effect in [
+                crate::facts::OperationEffect::ReadHeap,
+                crate::facts::OperationEffect::WriteHeap,
+                crate::facts::OperationEffect::Allocate,
+                crate::facts::OperationEffect::Observable,
+            ] {
+                assert!(
+                    !opcode.has_effect(effect),
+                    "bridge marker on {opcode:?} crosses {effect:?}"
+                );
+            }
+            assert_ne!(
+                opcode.control_flow(),
+                crate::facts::ControlFlow::Loop,
+                "bridge marker on structured loop {opcode:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn generated_bridge_payload_families_cover_physical_aliases() {
+        assert_eq!(
+            Opcode::InitLocal.generic_bridge_payload(),
+            GenericBridgePayload::InitLocal
+        );
+        assert_eq!(
+            Opcode::Move.generic_bridge_payload(),
+            GenericBridgePayload::Move
+        );
+        assert_eq!(
+            Opcode::AddConst.generic_bridge_payload(),
+            GenericBridgePayload::AddConst
+        );
+        assert_eq!(
+            Opcode::IncI.generic_bridge_payload(),
+            GenericBridgePayload::Increment
+        );
+        for opcode in [
+            Opcode::Binary,
+            Opcode::Add,
+            Opcode::NumericAdd,
+            Opcode::Remainder,
+            Opcode::Instanceof,
+        ] {
+            assert_eq!(
+                opcode.generic_bridge_payload(),
+                GenericBridgePayload::Binary
+            );
+        }
+        assert_eq!(
+            Opcode::Unary.generic_bridge_payload(),
+            GenericBridgePayload::Unary
+        );
+        assert_eq!(
+            Opcode::Return.generic_bridge_payload(),
+            GenericBridgePayload::Plain
+        );
+    }
+
+    #[test]
     fn generated_builder_rejects_noncanonical_unused_operands() {
         assert_eq!(
             Opcode::Return.builder().operands(7, 1, 0).build(),
             Err("unused operand must be zero")
         );
+    }
+
+    #[test]
+    fn generated_builder_accepts_only_the_proven_local_move_spelling() {
+        assert_eq!(
+            Opcode::Move.builder().flags(1).operands(2, 17, 19).build(),
+            Ok(Instruction::move_local(2, 17, 19))
+        );
+        assert_eq!(
+            Opcode::Move.builder().flags(2).operands(2, 17, 19).build(),
+            Err("unused operand must be zero")
+        );
+    }
+
+    #[test]
+    fn generated_op_variant_view_is_exhaustive_and_unique() {
+        assert!(!crate::ops::Op::VARIANT_NAMES.is_empty());
+        let mut names = std::collections::BTreeSet::new();
+        for name in crate::ops::Op::VARIANT_NAMES {
+            assert!(
+                names.insert(*name),
+                "duplicate canonical Op variant: {name}"
+            );
+        }
+        assert_eq!(names.len(), crate::ops::Op::VARIANT_NAMES.len());
+    }
+
+    #[test]
+    fn generated_op_lowering_matrix_matches_variant_view_and_catalog() {
+        let rows = crate::ops::Op::LOWERING_MATRIX;
+        assert_eq!(rows.len(), crate::ops::Op::VARIANT_NAMES.len());
+        for (row, name) in rows.iter().zip(crate::ops::Op::VARIANT_NAMES) {
+            assert_eq!(row.name, *name);
+            if let Some(opcode) = row.physical_opcode {
+                let spec = row
+                    .operation_spec()
+                    .expect("physical matrix row must borrow catalog facts");
+                assert_eq!(spec.opcode, opcode as u8);
+                assert_eq!(spec.name, opcode.name());
+            }
+            if let Some(opcode) = row.typed_cold_opcode {
+                assert!(
+                    row.physical_opcode.is_some(),
+                    "typed cold row for {name} must have a physical family"
+                );
+                assert!(
+                    opcode.is_cold_marker(),
+                    "canonical {name} maps to non-cold opcode {opcode:?}"
+                );
+                assert!(
+                    crate::ir::Opcode::ALL.contains(&opcode),
+                    "canonical {name} maps outside the opcode catalog"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn generated_physical_opcode_view_preserves_declared_aliases() {
+        use crate::machine::FunctionCode;
+        use crate::ops::{Constant, Op};
+
+        assert_eq!(
+            Op::Const {
+                dst: 0,
+                value: Constant::Number(1.0),
+            }
+            .physical_opcode(),
+            Some(Opcode::LoadConst)
+        );
+        assert_eq!(
+            Op::Call {
+                dst: 0,
+                callee: 1,
+                receiver: None,
+                args: Vec::new(),
+                spreads: Vec::new(),
+            }
+            .physical_opcode(),
+            Some(Opcode::Call)
+        );
+        assert_eq!(
+            Op::Call {
+                dst: 0,
+                callee: 1,
+                receiver: None,
+                args: Vec::new(),
+                spreads: Vec::new(),
+            }
+            .cold_opcode(),
+            Some(Opcode::CallSlow)
+        );
+        let empty = || FunctionCode::from_ops(Vec::new());
+        assert_eq!(
+            Op::Loop {
+                label: None,
+                init: empty(),
+                test: empty(),
+                body: empty(),
+                update: empty(),
+                post_test: false,
+                dst: 0,
+                per_iteration: Vec::new(),
+            }
+            .physical_opcode(),
+            Some(Opcode::ForI)
+        );
+
+        let aliases = [
+            (
+                Op::LoadBinding {
+                    dst: 0,
+                    slot: 1,
+                    name: "x".into(),
+                    dynamic: false,
+                },
+                Opcode::LoadLocalChecked,
+            ),
+            (
+                Op::GetProperty {
+                    dst: 0,
+                    object: 1,
+                    key: "value".into(),
+                },
+                Opcode::GetN,
+            ),
+            (
+                Op::GetPropertyDynamic {
+                    dst: 0,
+                    object: 1,
+                    key: 2,
+                },
+                Opcode::AGetI,
+            ),
+            (
+                Op::SetProperty {
+                    object: 0,
+                    key: "value".into(),
+                    src: 1,
+                    strict: false,
+                },
+                Opcode::SetN,
+            ),
+            (
+                Op::SetPropertyDynamic {
+                    object: 0,
+                    key: 1,
+                    src: 2,
+                    strict: false,
+                },
+                Opcode::ASetI,
+            ),
+        ];
+        for (operation, expected) in aliases {
+            assert_eq!(operation.physical_opcode(), Some(expected));
+            assert_eq!(
+                lower_compact(&operation).map(|instruction| instruction.opcode),
+                Some(expected)
+            );
+        }
     }
 
     #[test]
@@ -1721,37 +2369,23 @@ mod tests {
 
     #[test]
     fn compact_binary_fact_table_round_trips_every_operator() {
-        use crate::ops::BinaryOp::*;
-        let operators = [
-            Add,
-            Subtract,
-            Multiply,
-            Divide,
-            Remainder,
-            Exponentiate,
-            NumericAdd,
-            NumericSubtract,
-            Equal,
-            NotEqual,
-            StrictEqual,
-            StrictNotEqual,
-            LessThan,
-            LessEqual,
-            GreaterThan,
-            GreaterEqual,
-            BitwiseOr,
-            BitwiseXor,
-            BitwiseAnd,
-            ShiftLeft,
-            ShiftRight,
-            ShiftRightZeroFill,
-            Instanceof,
-        ];
-        for operator in operators {
-            let id = compact_binary_id(operator);
-            assert_eq!(compact_binary_operator(id), Some(operator));
+        for operator in crate::ops::BinaryOp::ALL {
+            let id = compact_binary_id(*operator);
+            assert_eq!(compact_binary_operator(id), Some(*operator));
         }
-        assert_eq!(compact_binary_operator(operators.len() as u8), None);
+        assert_eq!(
+            compact_binary_operator(crate::ops::BinaryOp::COUNT + 1),
+            None
+        );
+    }
+
+    #[test]
+    fn compact_unary_fact_table_round_trips_every_operator() {
+        for operator in crate::ops::UnaryOp::ALL {
+            let id = compact_unary_id(*operator);
+            assert_eq!(compact_unary_operator(id), Some(*operator));
+        }
+        assert_eq!(compact_unary_operator(crate::ops::UnaryOp::COUNT + 1), None);
     }
     #[test]
     fn lowers_common_ops_to_fixed_width_instructions() {
@@ -1761,6 +2395,25 @@ mod tests {
             Some(Instruction::move_(1, 2))
         );
         assert_eq!(
+            lower_compact(&Op::LoadParameter { dst: 3, slot: 4 }),
+            Some(Instruction::load_parameter(3, 4))
+        );
+        assert_eq!(
+            lower_compact(&Op::InitializeLocal { slot: 5 }),
+            Some(Instruction::initialize_local(5))
+        );
+        assert_eq!(
+            lower_compact(&Op::CheckInitialized {
+                slot: 6,
+                name: "binding".into(),
+            }),
+            Some(Instruction::check_initialized(6))
+        );
+        assert_eq!(
+            lower_compact(&Op::Throw { src: 7 }),
+            Some(Instruction::throw_(7))
+        );
+        assert_eq!(
             lower_compact(&Op::Binary {
                 dst: 3,
                 operator: BinaryOp::Add,
@@ -1768,6 +2421,32 @@ mod tests {
                 rhs: 2
             }),
             Some(Instruction::binary(Opcode::Add, 3, 1, 2))
+        );
+        for (operator, opcode) in [
+            (BinaryOp::Subtract, Opcode::Sub),
+            (BinaryOp::Multiply, Opcode::Mul),
+            (BinaryOp::Divide, Opcode::Div),
+        ] {
+            assert_eq!(
+                lower_compact(&Op::Binary {
+                    dst: 3,
+                    operator,
+                    lhs: 1,
+                    rhs: 2,
+                }),
+                Some(Instruction::binary(opcode, 3, 1, 2)),
+                "{operator:?} must use its dedicated arithmetic opcode"
+            );
+        }
+        assert_eq!(
+            lower_compact(&Op::Binary {
+                dst: 3,
+                operator: BinaryOp::Remainder,
+                lhs: 1,
+                rhs: 2,
+            }),
+            Some(Instruction::binary(Opcode::Remainder, 3, 1, 2)),
+            "remainder uses its dedicated canonical opcode"
         );
         assert_eq!(
             lower_compact(&Op::SetPropertyDynamic {
@@ -1799,6 +2478,187 @@ mod tests {
             Some(Instruction::call_one_arg(0, 4, 1))
         );
     }
+
+    #[test]
+    fn lowering_boundary_names_compact_typed_and_generic_paths() {
+        use crate::ops::{BinaryOp, Op};
+        let move_op = Op::Move { dst: 1, src: 2 };
+        assert_eq!(lowering_boundary(&move_op), LoweringBoundary::Compact);
+        assert_eq!(move_op.lowering_boundary(), LoweringBoundary::Compact);
+        assert_eq!(move_op.generic_fallback_name(), None);
+        assert_eq!(
+            lowering_boundary(&Op::Const {
+                dst: 1,
+                value: Constant::Number(7.0),
+            }),
+            LoweringBoundary::Compact,
+            "range-owned constant IDs are materialized as LoadConst by CodeArena"
+        );
+        assert_eq!(
+            Op::ResolveName {
+                dst: 1,
+                key: "userDefinedBinding".into(),
+            }
+            .generated_lowering_fallback(),
+            None,
+            "generated residual arm must preserve generic fallback ownership"
+        );
+        assert_eq!(
+            lowering_boundary(&Op::MarkImmutable { slot: 1 }),
+            LoweringBoundary::TypedCold(Opcode::MarkImmutable)
+        );
+        assert_eq!(
+            lowering_boundary(&Op::Loop {
+                label: None,
+                init: crate::machine::FunctionCode::from_ops(Vec::new()),
+                test: crate::machine::FunctionCode::from_ops(Vec::new()),
+                body: crate::machine::FunctionCode::from_ops(Vec::new()),
+                update: crate::machine::FunctionCode::from_ops(Vec::new()),
+                post_test: false,
+                dst: 0,
+                per_iteration: Vec::new(),
+            }),
+            LoweringBoundary::TypedCold(Opcode::ForI)
+        );
+        assert_eq!(
+            lowering_boundary(&Op::Binary {
+                dst: 1,
+                operator: BinaryOp::Instanceof,
+                lhs: 2,
+                rhs: 3,
+            }),
+            LoweringBoundary::Compact
+        );
+        let generic = Op::ResolveName {
+            dst: 1,
+            key: "userDefinedBinding".into(),
+        };
+        assert_eq!(lowering_boundary(&generic), LoweringBoundary::GenericSlow);
+        assert_eq!(generic.generic_fallback_name(), Some("ResolveName"));
+    }
+
+    #[test]
+    fn generic_fallback_witnesses_preserve_residual_family_identity() {
+        use crate::machine::FunctionCode;
+        use crate::ops::Op;
+
+        // These representatives cover structured control, call, suspension,
+        // host and mutation families. Their out-of-line boundary must retain
+        // the original canonical operation instead of collapsing into an
+        // anonymous `Slow` case. Single-register throws have a compact row and
+        // are tested separately.
+        let residuals = vec![
+            Op::ParameterEnd,
+            Op::OptionalCall {
+                dst: 0,
+                callee: 1,
+                receiver: None,
+                guard_receiver: false,
+                args: vec![],
+                spreads: vec![],
+            },
+            Op::Branch {
+                condition: 0,
+                then_ops: FunctionCode::from_ops(vec![]),
+                else_ops: FunctionCode::from_ops(vec![]),
+            },
+            Op::Yield { src: 1 },
+            Op::MakeRest {
+                slot: 0,
+                arguments: 1,
+                skip: 0,
+            },
+            Op::SetPrototype {
+                object: 0,
+                prototype: 1,
+            },
+            Op::Eval {
+                dst: 0,
+                callee: 1,
+                source: 2,
+                strict: false,
+                global: false,
+                direct: true,
+                tail: false,
+                bindings: vec![],
+                reusable_var_names: vec![],
+                forbidden_var_names: vec![],
+            },
+            Op::ForIn {
+                label: None,
+                object: 0,
+                slot: 1,
+                body: FunctionCode::from_ops(vec![]),
+                per_iteration: false,
+                iteration_slots: vec![],
+                dst: 2,
+            },
+            Op::DynamicImport {
+                dst: 0,
+                specifier: 1,
+                options: None,
+                deferred: false,
+            },
+        ];
+
+        for op in residuals {
+            let name = op.variant_name();
+            assert_eq!(
+                lowering_boundary(&op),
+                LoweringBoundary::GenericSlow,
+                "residual {name} must have an explicit generic boundary"
+            );
+            assert_eq!(op.generic_fallback_name(), Some(name));
+            match lower(&op) {
+                LoweredInstruction::Slow(retained) => {
+                    assert_eq!(retained.variant_name(), name);
+                }
+                LoweredInstruction::Fast(_) => {
+                    panic!("residual {name} unexpectedly entered compact lowering")
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cold_marker_payload_uses_the_canonical_operation_fields() {
+        use crate::ops::Op;
+        assert_eq!(
+            cold_marker_payload(&Op::MarkUninitialized {
+                slot: 7,
+                shared: true,
+            }),
+            (7, 1)
+        );
+        assert_eq!(cold_marker_payload(&Op::MarkImmutable { slot: 9 }), (9, 0));
+        assert_eq!(
+            cold_marker_payload(&Op::RequireObjectCoercible { src: 11 }),
+            (11, 0)
+        );
+        assert_eq!(cold_marker_payload(&Op::Move { dst: 1, src: 2 }), (0, 0));
+    }
+
+    #[test]
+    fn binary_lowering_covers_the_entire_operator_catalog() {
+        use crate::ops::{BinaryOp, Op};
+        for &operator in BinaryOp::ALL {
+            let lowered = lower_compact(&Op::Binary {
+                dst: 3,
+                operator,
+                lhs: 1,
+                rhs: 2,
+            })
+            .expect("every binary operator has a fixed-width gateway");
+            let expected = Opcode::binary_opcode(operator)
+                .expect("the generated binary catalog must cover every operator");
+            assert_eq!(
+                lowered.opcode, expected,
+                "binary lowering must use the generated dedicated row for {operator:?}"
+            );
+            assert_eq!(expected.numeric_operator(), Some(operator));
+        }
+    }
+
     #[test]
     fn lowers_two_argument_method_window_without_operand_storage() {
         let op = crate::ops::Op::CallMethod {
@@ -1861,20 +2721,26 @@ mod tests {
     #[test]
     fn registers_are_compact_integer_ids() {
         assert!(Opcode::Slow.is_slow());
+        assert!(Opcode::Loop.is_slow());
+        assert!(Opcode::CallSlow.is_slow());
+        assert!(!Opcode::JumpIfFalse.is_slow());
+        assert!(!Opcode::Jump.is_slow());
+        assert!(Opcode::ForI.is_slow());
         assert!(!Opcode::Add.is_slow());
         assert_eq!(std::mem::size_of::<Register>(), 2);
         assert_eq!(MAX_REGISTER_ID, u16::MAX);
     }
     #[test]
-    fn proven_builtin_name_uses_compact_global_get() {
-        let instruction = lower_compact(&crate::ops::Op::ResolveName {
+    fn builtin_name_stays_dynamic_for_scope_correctness() {
+        // A name that happens to match a realm builtin is still observable
+        // through `with` and direct-eval scope objects. Keep the semantic
+        // ResolveName path so those dynamic bindings cannot be bypassed by a
+        // global GetN fast path.
+        assert!(lower_compact(&crate::ops::Op::ResolveName {
             dst: 7,
             key: "Math".to_string(),
         })
-        .expect("known global builtin is compact");
-        assert_eq!(instruction.opcode, Opcode::GetN);
-        assert_eq!(instruction.flags, GETN_GLOBAL_FLAG);
-        assert_eq!((instruction.a, instruction.b, instruction.c), (7, 0, 0));
+        .is_none());
 
         assert!(lower_compact(&crate::ops::Op::ResolveName {
             dst: 7,
@@ -2127,5 +2993,16 @@ mod tests {
         let slow = lower(&source);
         assert_eq!(slow, LoweredInstruction::Slow(source.clone()));
         assert!(matches!(slow, LoweredInstruction::Slow(op) if op == source));
+    }
+
+    #[test]
+    fn operation_name_catalog_resolves_only_typed_cold_rows() {
+        assert_eq!(Opcode::from_operation_name("Call"), Some(Opcode::CallSlow));
+        assert_eq!(
+            Opcode::from_operation_name("MarkImmutable"),
+            Some(Opcode::MarkImmutable)
+        );
+        assert_eq!(Opcode::from_operation_name("Move"), None);
+        assert_eq!(Opcode::from_operation_name("not_an_operation"), None);
     }
 }

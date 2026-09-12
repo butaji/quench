@@ -137,7 +137,9 @@ fn fingerprint(
     let schema = declarations
         .iter()
         .map(|item| {
-            let source = if target.starts_with("aarch64") {
+            let source = if target.starts_with("aarch64")
+                || (target.starts_with("x86_64") && item.name == "return_word")
+            {
                 super::rust_assembly_recipe(item)
                     .map(super::build_stencil_templates::assembly_source)
                     .or_else(|| {

@@ -1105,6 +1105,10 @@ fn with(
     } else {
         crate::conversion::to_number(&year_value)?
     };
+    // GetTemporalOverflowOption is deliberately after PrepareTemporalFields:
+    // field getters/conversions are observable, and a malformed replacement
+    // must win over a primitive options argument (the Temporal ordering).
+    let reject = overflow_reject(options)?;
     let month = month_code
         .as_deref()
         .map(|code| parse_component(code.trim_start_matches('M'), "Invalid monthCode"))
@@ -1123,7 +1127,6 @@ fn with(
     {
         return Err(crate::value::error::throw_type_error("Invalid fields"));
     }
-    let reject = overflow_reject(options)?;
     let month = if reject {
         month
     } else {

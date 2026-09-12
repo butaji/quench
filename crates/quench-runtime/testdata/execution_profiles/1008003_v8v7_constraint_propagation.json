@@ -1,16 +1,17 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "number", "value": 100 },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["shape_guard", "field_load", "number_mul_add", "field_store", "loop_backedge"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadConst",
+    "StoreLocal",
+    "LoadConst",
+    "Loop",
+    "LoadLocal",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": 100
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "monomorphic_constraint_propagation": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

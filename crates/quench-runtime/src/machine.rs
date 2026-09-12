@@ -63,8 +63,6 @@ fn invoke_f64x3_entry(
 
 const OPTIMIZATION_WARMUP_MULTIPLIER: u32 = 8;
 const BASELINE_RETIREMENT_THRESHOLD: u32 = 32;
-const EAGER_STRAIGHT_LINE_MAX_INSTRUCTIONS: usize =
-    crate::stencil_numeric_dag::MAX_DAG_INSTRUCTIONS;
 
 // Code stores are isolate-local and never shared across runtime threads. The
 // OnceLock is retained only for the construction cycle: nested FunctionCode
@@ -185,15 +183,25 @@ pub(crate) struct CatchRange {
     pub catch_slot: Option<u16>,
 }
 
+/// Immutable activation facts derived when a code store is frozen. Execution
+/// paths borrow this one record instead of independently recomputing frame
+/// width or the parameter boundary from bytecode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FunctionLayout {
+    pub register_count: u16,
+    pub frame_register_count: u16,
+    /// Parameter-end PC relative to the full code range, when present.
+    pub parameter_end: Option<usize>,
+}
+
 #[derive(Debug, Default)]
 pub struct CodeArena {
     instructions: Vec<crate::ir::Instruction>,
     cold: Vec<Op>,
     ranges: Vec<(u32, u32)>,
-    parameter_ends: Vec<Option<u32>>,
+    layouts: Vec<FunctionLayout>,
     constants: Vec<ConstantPool>,
     metadata: Vec<Vec<InstructionMeta>>,
-    register_counts: Vec<u16>,
     quickening_sites: Vec<Vec<crate::quickening::QuickeningSite<4>>>,
     operand_windows: Vec<Vec<Rc<[u16]>>>,
     catch_ranges: Vec<Vec<CatchRange>>,
@@ -364,9 +372,14 @@ impl FrameStack {
 
     pub fn with_capacity_and_limit(capacity: u16, limit: u16) -> Self {
         let capacity = usize::from(capacity.min(limit));
+        let mut frames = Vec::new();
+        // Initial capacity is only a hint.  Keep construction fallible and
+        // let the first push report the canonical exhaustion error if the
+        // reservation cannot be satisfied.
+        let _ = frames.try_reserve_exact(capacity);
         Self {
             base: 0,
-            frames: Vec::with_capacity(capacity),
+            frames,
             limit,
         }
     }
@@ -386,7 +399,9 @@ impl FrameStack {
             return false;
         };
         if target > self.frames.capacity() {
-            self.frames.reserve(target - self.frames.len());
+            if self.frames.try_reserve(target - self.frames.len()).is_err() {
+                return false;
+            }
         }
         true
     }
@@ -421,7 +436,13 @@ impl FrameStack {
                 .max(1)
                 .saturating_mul(2)
                 .min(usize::from(self.limit));
-            self.frames.reserve(next.saturating_sub(self.frames.len()));
+            if self
+                .frames
+                .try_reserve(next.saturating_sub(self.frames.len()))
+                .is_err()
+            {
+                return Err(frame);
+            }
         }
         self.frames.push(frame);
         Ok(())
@@ -486,8 +507,8 @@ impl CodeArena {
         frame_register_count: u16,
     ) -> CodeRange {
         let range = self.append_tree(body, store);
-        if let Some(width) = self.register_counts.get_mut(range.code.0 as usize) {
-            *width = frame_register_count;
+        if let Some(layout) = self.layouts.get_mut(range.code.0 as usize) {
+            layout.frame_register_count = frame_register_count;
         }
         range
     }
@@ -498,8 +519,8 @@ impl CodeArena {
         frame_register_count: u16,
     ) -> CodeRange {
         let range = self.append(body);
-        if let Some(width) = self.register_counts.get_mut(range.code.0 as usize) {
-            *width = frame_register_count;
+        if let Some(layout) = self.layouts.get_mut(range.code.0 as usize) {
+            layout.frame_register_count = frame_register_count;
         }
         range
     }
@@ -596,18 +617,7 @@ impl CodeArena {
             }
             let op = &body[cursor];
             let mut meta = metadata_for(op, source);
-            let instruction = match op {
-                Op::Const { dst, value } => crate::ir::Instruction::load_const(
-                    *dst,
-                    constants.id(value).expect("constant was collected"),
-                ),
-                Op::CallMethod { .. } | Op::Call { .. } => {
-                    lower_operand_window_call(op, &mut meta, &mut operand_windows)
-                        .or_else(|| crate::ir::lower_compact(op))
-                        .unwrap_or_else(|| self.push_cold(op))
-                }
-                _ => crate::ir::lower_compact(op).unwrap_or_else(|| self.push_cold(op)),
-            };
+            let instruction = self.lower_operation(op, &constants, &mut meta, &mut operand_windows);
             self.instructions.push(instruction);
             metadata.push(meta);
             cursor += 1;
@@ -629,16 +639,60 @@ impl CodeArena {
             .push(std::mem::take(&mut self.pending_catches));
         let end = self.instructions.len() as u32;
         self.ranges.push((start, end));
-        self.parameter_ends.push(parameter_end);
+        self.layouts.push(FunctionLayout {
+            register_count,
+            frame_register_count: register_count,
+            parameter_end: parameter_end.map(|end| end as usize),
+        });
         self.constants.push(constants);
-        self.register_counts.push(register_count);
         CodeRange { code, start, end }
     }
 
     fn push_cold(&mut self, op: &Op) -> crate::ir::Instruction {
         let index = self.cold.len() as u32;
         self.cold.push(op.clone());
-        crate::ir::Instruction::slow_at(index)
+        match crate::ir::lowering_boundary(op) {
+            crate::ir::LoweringBoundary::TypedCold(opcode) => {
+                let (slot, flags) = crate::ir::cold_marker_payload(op);
+                crate::ir::Instruction::cold_marker(opcode, slot, flags, index)
+            }
+            crate::ir::LoweringBoundary::GenericSlow => crate::ir::Instruction::slow_at(index),
+            crate::ir::LoweringBoundary::Compact => {
+                // `lower_operation` handles the compact case before reaching
+                // this function. Preserve the canonical operation as a safe
+                // semantic fallback if a future encoder path violates that
+                // ordering instead of turning a lowering bug into a process
+                // abort.
+                crate::ir::Instruction::slow_at(index)
+            }
+        }
+    }
+
+    /// Lower one canonical operation through the single physical boundary.
+    ///
+    /// Constant materialization, argument-window calls, fixed-width lowering
+    /// and typed/generic cold storage are shared by root and nested encoders;
+    /// keeping this decision here prevents the two encoding loops from drifting
+    /// into separate opcode maps.
+    fn lower_operation(
+        &mut self,
+        op: &Op,
+        constants: &ConstantPool,
+        metadata: &mut InstructionMeta,
+        operand_windows: &mut Vec<Rc<[u16]>>,
+    ) -> crate::ir::Instruction {
+        match op {
+            Op::Const { dst, value } => crate::ir::Instruction::load_const(
+                *dst,
+                constants.id(value).expect("constant was collected"),
+            ),
+            Op::CallMethod { .. } | Op::Call { .. } => {
+                lower_operand_window_call(op, metadata, operand_windows)
+                    .or_else(|| crate::ir::lower_compact(op))
+                    .unwrap_or_else(|| self.push_cold(op))
+            }
+            _ => crate::ir::lower_compact(op).unwrap_or_else(|| self.push_cold(op)),
+        }
     }
 
     fn emit_conditional(
@@ -738,18 +792,7 @@ impl CodeArena {
             }
             let op = &body[cursor];
             let mut meta = metadata_for(op, source);
-            let instruction = match op {
-                Op::Const { dst, value } => crate::ir::Instruction::load_const(
-                    *dst,
-                    constants.id(value).expect("constant was collected"),
-                ),
-                Op::CallMethod { .. } | Op::Call { .. } => {
-                    lower_operand_window_call(op, &mut meta, operand_windows)
-                        .or_else(|| crate::ir::lower_compact(op))
-                        .unwrap_or_else(|| self.push_cold(op))
-                }
-                _ => crate::ir::lower_compact(op).unwrap_or_else(|| self.push_cold(op)),
-            };
+            let instruction = self.lower_operation(op, constants, &mut meta, operand_windows);
             self.instructions.push(instruction);
             metadata.push(meta);
             cursor += 1;
@@ -1125,17 +1168,29 @@ impl CodeArena {
             &self.instructions,
             &self.cold,
             &self.ranges,
-            &self.register_counts,
+            &self.layouts,
         );
+        let layouts = self
+            .layouts
+            .into_iter()
+            .enumerate()
+            .map(|(code, mut layout)| {
+                layout.frame_register_count = frame_register_counts
+                    .get(code)
+                    .copied()
+                    .unwrap_or(layout.frame_register_count);
+                layout
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice()
+            .into();
         let mut store = Rc::new(CodeStore {
             instructions: self.instructions.into_boxed_slice().into(),
             cold: self.cold.into_boxed_slice().into(),
             ranges: self.ranges.into_boxed_slice().into(),
-            parameter_ends: self.parameter_ends.into_boxed_slice().into(),
             constants: self.constants.into_boxed_slice().into(),
             metadata: self.metadata.into_boxed_slice().into(),
-            register_counts: self.register_counts.into_boxed_slice().into(),
-            frame_register_counts: frame_register_counts.into_boxed_slice().into(),
+            layouts,
             quickening_sites: self
                 .quickening_sites
                 .into_iter()
@@ -1486,9 +1541,12 @@ fn derive_frame_register_counts(
     instructions: &[crate::ir::Instruction],
     cold: &[Op],
     ranges: &[(u32, u32)],
-    register_counts: &[u16],
+    layouts: &[FunctionLayout],
 ) -> Vec<u16> {
-    let mut widths = register_counts.to_vec();
+    let mut widths = layouts
+        .iter()
+        .map(|layout| layout.frame_register_count)
+        .collect::<Vec<_>>();
     for _ in 0..ranges.len() {
         let previous = widths.clone();
         for (code, &(start, end)) in ranges.iter().enumerate() {
@@ -1523,11 +1581,9 @@ pub struct CodeStore {
     instructions: Rc<[crate::ir::Instruction]>,
     cold: Rc<[Op]>,
     ranges: Rc<[(u32, u32)]>,
-    parameter_ends: Rc<[Option<u32>]>,
     constants: Rc<[ConstantPool]>,
     metadata: Rc<[Vec<InstructionMeta>]>,
-    register_counts: Rc<[u16]>,
-    frame_register_counts: Rc<[u16]>,
+    layouts: Rc<[FunctionLayout]>,
     quickening_sites: Rc<[Box<[std::cell::RefCell<crate::quickening::QuickeningSite<4>>]>]>,
     operand_windows: Rc<[Vec<Rc<[u16]>>]>,
     catch_ranges: Rc<[Vec<CatchRange>]>,
@@ -1564,11 +1620,16 @@ impl CodeStore {
     }
 
     pub fn register_count(&self, code: CodeId) -> Option<u16> {
-        self.register_counts.get(code.0 as usize).copied()
+        self.layout(code).map(|layout| layout.register_count)
     }
 
     pub fn frame_register_count(&self, code: CodeId) -> Option<u16> {
-        self.frame_register_counts.get(code.0 as usize).copied()
+        self.layout(code).map(|layout| layout.frame_register_count)
+    }
+
+    /// Return the single frozen activation record for a full code range.
+    pub fn layout(&self, code: CodeId) -> Option<FunctionLayout> {
+        self.layouts.get(code.0 as usize).copied()
     }
 }
 
@@ -1662,7 +1723,7 @@ enum BinarySemantic {
     },
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct CompareBranch {
     control: crate::stencil_cfg::RegionControlPlan,
     physical_key: Option<crate::stencil_fact::RegionKey>,
@@ -1720,110 +1781,59 @@ impl NativeBinaryPlan {
             return None;
         }
         let opcode = instruction.opcode;
-        let (key, semantic) = if opcode.numeric_operator().is_some() {
+        let (key, semantic) = if opcode == crate::ir::Opcode::IncI {
             (
-                crate::stencil_select::numeric_region_key(opcode)?,
+                if instruction.flags == 0 {
+                    crate::stencil_select::increment_region_key()
+                } else {
+                    crate::stencil_select::decrement_region_key()
+                },
                 BinarySemantic::Numeric {
                     returns_boolean: false,
                 },
             )
-        } else if opcode == crate::ir::Opcode::IncI {
-            (
-                crate::stencil_select::increment_region_key(),
-                BinarySemantic::Numeric {
-                    returns_boolean: false,
-                },
-            )
-        } else if opcode == crate::ir::Opcode::Binary {
-            let key = match crate::ir::compact_binary_operator(instruction.flags) {
-                Some(crate::ops::BinaryOp::Equal | crate::ops::BinaryOp::StrictEqual) => {
-                    crate::stencil_select::compare_equal_region_key()
-                }
-                Some(crate::ops::BinaryOp::NotEqual | crate::ops::BinaryOp::StrictNotEqual) => {
-                    crate::stencil_select::compare_not_equal_region_key()
-                }
-                Some(crate::ops::BinaryOp::BitwiseAnd) => {
+        } else if let Some(operator) = opcode
+            .numeric_operator()
+            .or_else(|| opcode.binary_operator(instruction.flags))
+        {
+            // Resolve both dedicated and legacy flagged spellings through the
+            // generated opcode catalog. `Binary(Add)` therefore shares the
+            // same physical row as `Add`, while unsupported operators stop at
+            // the absence of a generated artifact instead of growing another
+            // hand-maintained operator mapping.
+            let key = binary_leaf_region_key(opcode, instruction.flags, operator)?;
+            match operator {
+                crate::ops::BinaryOp::BitwiseAnd
+                | crate::ops::BinaryOp::BitwiseOr
+                | crate::ops::BinaryOp::BitwiseXor
+                | crate::ops::BinaryOp::ShiftLeft
+                | crate::ops::BinaryOp::ShiftRight
+                | crate::ops::BinaryOp::ShiftRightZeroFill => {
                     return Self::new_integer(
                         instruction,
                         policy,
-                        crate::stencil_select::bitwise_and_region_key(),
-                        crate::ops::BinaryOp::BitwiseAnd,
-                        false,
+                        key,
+                        operator,
+                        operator == crate::ops::BinaryOp::ShiftRightZeroFill,
                     )
                 }
-                Some(crate::ops::BinaryOp::BitwiseOr) => {
-                    return Self::new_integer(
-                        instruction,
-                        policy,
-                        crate::stencil_select::bitwise_or_region_key(),
-                        crate::ops::BinaryOp::BitwiseOr,
-                        false,
-                    )
-                }
-                Some(crate::ops::BinaryOp::BitwiseXor) => {
-                    return Self::new_integer(
-                        instruction,
-                        policy,
-                        crate::stencil_select::bitwise_xor_region_key(),
-                        crate::ops::BinaryOp::BitwiseXor,
-                        false,
-                    )
-                }
-                Some(crate::ops::BinaryOp::ShiftLeft) => {
-                    return Self::new_integer(
-                        instruction,
-                        policy,
-                        crate::stencil_select::shift_left_region_key(),
-                        crate::ops::BinaryOp::ShiftLeft,
-                        false,
-                    )
-                }
-                Some(crate::ops::BinaryOp::ShiftRight) => {
-                    return Self::new_integer(
-                        instruction,
-                        policy,
-                        crate::stencil_select::shift_right_region_key(),
-                        crate::ops::BinaryOp::ShiftRight,
-                        false,
-                    )
-                }
-                Some(crate::ops::BinaryOp::ShiftRightZeroFill) => {
-                    return Self::new_integer(
-                        instruction,
-                        policy,
-                        crate::stencil_select::shift_right_zero_region_key(),
-                        crate::ops::BinaryOp::ShiftRightZeroFill,
-                        true,
-                    )
-                }
-                Some(crate::ops::BinaryOp::LessThan) => {
-                    crate::stencil_select::compare_less_region_key()
-                }
-                Some(crate::ops::BinaryOp::LessEqual) => {
-                    crate::stencil_select::compare_less_equal_region_key()
-                }
-                Some(crate::ops::BinaryOp::GreaterThan) => {
-                    crate::stencil_select::compare_greater_region_key()
-                }
-                Some(crate::ops::BinaryOp::GreaterEqual) => {
-                    crate::stencil_select::compare_greater_equal_region_key()
-                }
-                _ => return None,
-            };
-            (
-                key,
-                BinarySemantic::Numeric {
-                    returns_boolean: true,
-                },
-            )
+                _ => (
+                    key,
+                    BinarySemantic::Numeric {
+                        returns_boolean: operator
+                            .region_name()
+                            .is_some_and(|name| name.starts_with("compare_")),
+                    },
+                ),
+            }
         } else {
             return None;
         };
-        let tagged_key = match instruction.flags {
-            flag if flag == crate::ir::compact_binary_id(crate::ops::BinaryOp::StrictEqual) => {
+        let tagged_key = match opcode.binary_operator(instruction.flags) {
+            Some(crate::ops::BinaryOp::StrictEqual) => {
                 Some(crate::stencil_select::compare_equal_word_region_key())
             }
-            flag if flag == crate::ir::compact_binary_id(crate::ops::BinaryOp::StrictNotEqual) => {
+            Some(crate::ops::BinaryOp::StrictNotEqual) => {
                 Some(crate::stencil_select::compare_not_equal_word_region_key())
             }
             _ => None,
@@ -1868,7 +1878,6 @@ impl NativeBinaryPlan {
         unsigned: bool,
     ) -> Option<Self> {
         if !policy.native_leaves
-            || instruction.opcode != crate::ir::Opcode::Binary
             || !crate::stencil_select::select_region(key).is_some_and(|record| {
                 record.executable
                     && record.abi
@@ -2456,6 +2465,7 @@ impl NativeBinaryPlan {
     {
         let branch = self
             .compare_branch
+            .as_ref()
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
         let key = branch
             .physical_key
@@ -2521,6 +2531,7 @@ impl NativeBinaryPlan {
                 view,
                 &self
                     .compare_branch
+                    .as_ref()
                     .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?
                     .control,
             )
@@ -2534,7 +2545,7 @@ impl NativeBinaryPlan {
     }
 
     pub(crate) fn compare_branch_next(&self, pc: usize, value: bool) -> Option<usize> {
-        let branch = self.compare_branch?;
+        let branch = self.compare_branch.as_ref()?;
         (pc == branch.control.start()).then_some(())?;
         let (false_pc, true_pc) = branch.control.terminal_conditional_exits()?;
         Some(if value { true_pc } else { false_pc })
@@ -2547,7 +2558,9 @@ impl NativeBinaryPlan {
 
     #[cfg(test)]
     pub(crate) fn compare_branch_span(&self) -> Option<usize> {
-        self.compare_branch.map(|branch| branch.control.span_len())
+        self.compare_branch
+            .as_ref()
+            .map(|branch| branch.control.span_len())
     }
 }
 
@@ -2764,7 +2777,7 @@ impl NativeTruthinessPlan {
     ) -> Result<bool, crate::stencil_arena::ArenaError> {
         let site = self.site.clone();
         let values = crate::stencil_fact::PatchValues::from_site(&site)
-            .with_constant_bits(crate::tagged_value::TaggedValue::bool(true).bits());
+            .with_constant_bits(crate::native_core::value_word::TaggedValue::bool(true).bits());
         if let Some(shared) = self.physical.storage.shared() {
             if let InstalledTruthinessEntry::WordShared(owned) = self.physical.installed() {
                 if let Ok(result) = invoke_shared_entry!(shared, owned, |entry| entry(value)) {
@@ -2906,8 +2919,8 @@ impl NativeTruthinessPlan {
         &mut self,
         bits: u64,
     ) -> Result<bool, crate::stencil_arena::ArenaError> {
-        use crate::tagged_value::DecodedValue;
-        match crate::tagged_value::TaggedValue::from_bits(bits).decode() {
+        use crate::native_core::value_word::DecodedValue;
+        match crate::native_core::value_word::TaggedValue::from_bits(bits).decode() {
             DecodedValue::Bool(_) | DecodedValue::Null | DecodedValue::Undefined => {
                 self.execute_word(bits)
             }
@@ -3256,6 +3269,38 @@ impl NativeLoadConstPlan {
 enum NativeUnaryKind {
     BitwiseNot,
     Negate,
+    Identity,
+}
+
+/// One physical contract for the numeric unary families.  Both typed-plan
+/// construction and generic Bridge admission consume this mapping so a new
+/// unary spelling cannot acquire a second, divergent selector.
+#[inline]
+fn unary_numeric_leaf_spec(
+    operator: crate::ops::UnaryOp,
+) -> Option<(
+    crate::stencil_fact::RegionKey,
+    NativeUnaryKind,
+    crate::stencil_select::RegionAbi,
+)> {
+    match operator {
+        crate::ops::UnaryOp::BitwiseNot => Some((
+            crate::stencil_select::bitwise_not_region_key(),
+            NativeUnaryKind::BitwiseNot,
+            crate::stencil_select::RegionAbi::ScalarI32,
+        )),
+        crate::ops::UnaryOp::Minus => Some((
+            crate::stencil_select::negate_region_key(),
+            NativeUnaryKind::Negate,
+            crate::stencil_select::RegionAbi::ScalarF64Unary,
+        )),
+        crate::ops::UnaryOp::Plus => Some((
+            crate::stencil_select::identity_region_key(),
+            NativeUnaryKind::Identity,
+            crate::stencil_select::RegionAbi::ScalarF64Unary,
+        )),
+        _ => None,
+    }
 }
 
 /// Typed unary leaves for exact numeric subsets. Other unary operators retain
@@ -3303,19 +3348,8 @@ impl NativeUnaryPlan {
         instruction: crate::ir::Instruction,
         policy: crate::stencil_policy::ExecutionPolicy,
     ) -> Option<Self> {
-        let (key, kind, abi) = match crate::ir::compact_unary_operator(instruction.flags) {
-            Some(crate::ops::UnaryOp::BitwiseNot) => (
-                crate::stencil_select::bitwise_not_region_key(),
-                NativeUnaryKind::BitwiseNot,
-                crate::stencil_select::RegionAbi::ScalarI32,
-            ),
-            Some(crate::ops::UnaryOp::Minus) => (
-                crate::stencil_select::negate_region_key(),
-                NativeUnaryKind::Negate,
-                crate::stencil_select::RegionAbi::ScalarF64Unary,
-            ),
-            _ => return None,
-        };
+        let operator = crate::ir::compact_unary_operator(instruction.flags)?;
+        let (key, kind, abi) = unary_numeric_leaf_spec(operator)?;
         (policy.native_leaves
             && instruction.opcode == crate::ir::Opcode::Unary
             && crate::stencil_select::select_region(key).is_some_and(|record| {
@@ -3337,6 +3371,11 @@ impl NativeUnaryPlan {
         {
             self.native_entry_count = self.native_entry_count.saturating_add(1);
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn native_entry_count(&self) -> u64 {
+        self.native_entry_count
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -3424,7 +3463,10 @@ impl NativeUnaryPlan {
     }
 
     pub(crate) fn execute(&mut self, value: f64) -> Result<f64, crate::stencil_arena::ArenaError> {
-        if self.kind == NativeUnaryKind::Negate {
+        if matches!(
+            self.kind,
+            NativeUnaryKind::Negate | NativeUnaryKind::Identity
+        ) {
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             return self.execute_number(value);
             #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -3830,7 +3872,7 @@ enum InstalledWordEntry {
     Local(usize),
     Shared(
         crate::stencil_arena::EntryToken<
-            extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64,
+            extern "C" fn(*const crate::native_core::value_word::TaggedValue) -> u64,
         >,
     ),
 }
@@ -3867,15 +3909,22 @@ impl NativeMovePlan {
             instruction.opcode,
             crate::ir::Opcode::Move
                 | crate::ir::Opcode::LoadLocal
+                | crate::ir::Opcode::LoadLocalChecked
+                | crate::ir::Opcode::LoadParameter
                 | crate::ir::Opcode::StoreLocal
+                | crate::ir::Opcode::StoreLocalChecked
                 | crate::ir::Opcode::SetN
         ) || instruction.flags != 0
         {
             return None;
         }
         let key = match instruction.opcode {
-            crate::ir::Opcode::LoadLocal => crate::stencil_select::load_local_region_key(),
-            crate::ir::Opcode::StoreLocal => crate::stencil_select::store_local_region_key(),
+            crate::ir::Opcode::LoadLocal
+            | crate::ir::Opcode::LoadLocalChecked
+            | crate::ir::Opcode::LoadParameter => crate::stencil_select::load_local_region_key(),
+            crate::ir::Opcode::StoreLocal | crate::ir::Opcode::StoreLocalChecked => {
+                crate::stencil_select::store_local_region_key()
+            }
             crate::ir::Opcode::SetN => crate::stencil_select::store_property_region_key(),
             _ => crate::stencil_select::move_region_key(),
         };
@@ -3925,7 +3974,7 @@ impl NativeMovePlan {
     #[inline]
     pub(crate) fn execute(
         &mut self,
-        source: *const crate::tagged_value::TaggedValue,
+        source: *const crate::native_core::value_word::TaggedValue,
     ) -> Result<u64, crate::stencil_arena::ArenaError> {
         if source.is_null() {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
@@ -3956,8 +4005,12 @@ impl NativeMovePlan {
             }
         }
         let key = match self.opcode {
-            crate::ir::Opcode::LoadLocal => crate::stencil_select::load_local_region_key(),
-            crate::ir::Opcode::StoreLocal => crate::stencil_select::store_local_region_key(),
+            crate::ir::Opcode::LoadLocal
+            | crate::ir::Opcode::LoadLocalChecked
+            | crate::ir::Opcode::LoadParameter => crate::stencil_select::load_local_region_key(),
+            crate::ir::Opcode::StoreLocal | crate::ir::Opcode::StoreLocalChecked => {
+                crate::stencil_select::store_local_region_key()
+            }
             crate::ir::Opcode::SetN => crate::stencil_select::store_property_region_key(),
             _ => crate::stencil_select::move_region_key(),
         };
@@ -4330,7 +4383,7 @@ impl NativePropertyPlan {
     ) -> Result<(), crate::stencil_arena::ArenaError> {
         if self.opcode != crate::ir::Opcode::SetN
             || !access.accepts_non_owning_store()
-            || crate::tagged_value::TaggedValue::from_bits(value).owns_rc()
+            || crate::native_core::value_word::TaggedValue::from_bits(value).owns_rc()
         {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
         }
@@ -4795,7 +4848,59 @@ pub(crate) struct NativeRegionPlan {
     site: crate::quickening::QuickeningSite<4>,
     key: crate::stencil_fact::RegionKey,
     operations: &'static [crate::ir::Opcode],
+    /// Runtime-derived operation view for the generic CFG bridge. The
+    /// generated dispatch artifact is operation-agnostic; this owned slice
+    /// keeps its semantic executor on the canonical opcode stream without
+    /// manufacturing a second static catalog row.
+    dynamic_operations: Option<Rc<[crate::ir::Opcode]>>,
     admitted_control: Option<crate::stencil_cfg::RegionControlPlan>,
+    /// Generated scalar leaves cached by canonical operation offset.  The
+    /// linear Bridge executor may consume a proven numeric binary interior,
+    /// while every surrounding operation remains on its canonical handler.
+    /// This is derived execution state, not a second operation representation.
+    binary_leaves: Vec<Option<NativeBinaryPlan>>,
+    /// Generated word-branch leaves keyed by canonical operation offset. A
+    /// branch leaf only transfers to CFG-verified successors; malformed or
+    /// non-Boolean physical results fall back to the canonical branch handler.
+    branch_leaves: Vec<Option<crate::stencil_word_composition::NativeWordBranchPlan>>,
+    /// Unconditional transfer leaves share the audited word-control image with
+    /// Boolean branches, using a constant true condition at invocation.
+    jump_leaves: Vec<Option<crate::stencil_word_composition::NativeWordBranchPlan>>,
+    /// Terminal tagged-word returns use the generated return ABI, while Rust
+    /// materializes ownership and the completion value at the boundary.
+    return_leaves: Vec<Option<crate::stencil_word_composition::NativeWordReturnPlan>>,
+    /// Immutable tagged constants can be materialized by their generated word
+    /// leaf while the surrounding block remains on canonical handlers.
+    constant_leaves: Vec<Option<NativeLoadConstPlan>>,
+    /// Pure register moves use the tagged-word leaf; ownership remains at the
+    /// canonical destination write boundary.
+    move_leaves: Vec<Option<NativeMovePlan>>,
+    /// Proven environment loads use the same tagged-word ABI as moves.
+    load_local_leaves: Vec<Option<NativeMovePlan>>,
+    /// Proven environment stores use the tagged-word ABI with an explicit
+    /// canonical ownership commit after the physical copy.
+    store_local_leaves: Vec<Option<NativeMovePlan>>,
+    /// Numeric unary leaves are consumed only for their proven Number/ToInt32
+    /// subsets; unsupported unary operators remain canonical.
+    unary_leaves: Vec<Option<NativeUnaryPlan>>,
+    /// Truthiness leaves handle proven numeric/tagged-word predicates before a
+    /// branch or logical-not reaches its canonical coercion boundary.
+    truthiness_leaves: Vec<Option<NativeTruthinessPlan>>,
+    /// Nullish predicates use the generated tagged-word comparison and retain
+    /// exact Null/Undefined semantics for every other value.
+    nullish_leaves: Vec<Option<NativeNullishPlan>>,
+    /// A proven direct numeric local update reuses the generated `IncI` leaf
+    /// while keeping the environment write as the ownership commit.
+    update_leaves: Vec<Option<NativeBinaryPlan>>,
+    /// Leaf construction and static candidate checks are immutable for the
+    /// lifetime of a region plan. Cache their result so resident execution
+    /// does not repeat setup scans or publication attempts.
+    leaves_initialized: bool,
+    has_cached_leaf: bool,
+    /// Cached CFG-derived exit materialization contract. Keeping this beside
+    /// the admitted control plan avoids rebuilding liveness at every entry.
+    live_out: Rc<[u16]>,
+    retired_operations: usize,
     /// Diagnostic witness set only by a direct machine-code entry. A region
     /// selected through the canonical Rust bridge is deliberately not counted
     /// as native execution.
@@ -4815,6 +4920,8 @@ fn validate_region_window(
     code: CodeView<'_>,
     pc: usize,
     view: crate::stencil_select::PhysicalStencilView,
+    operations: &[crate::ir::Opcode],
+    dynamic: bool,
 ) -> Result<(), NativeDispatchError> {
     let contract = view.contract();
     if !contract.executable
@@ -4828,46 +4935,75 @@ fn validate_region_window(
     }
     validate_physical_view(view.record, view.stencil).map_err(NativeDispatchError::Physical)?;
     let end = pc
-        .checked_add(contract.operations.len())
+        .checked_add(operations.len())
         .ok_or_else(|| NativeDispatchError::Physical("native region pc overflow".into()))?;
-    for (offset, expected) in contract.operations.iter().copied().enumerate() {
+    let code_end = code.len();
+    for (offset, expected) in operations.iter().copied().enumerate() {
         let window_pc = pc
             .checked_add(offset)
             .ok_or_else(|| NativeDispatchError::Physical("native region pc overflow".into()))?;
         let instruction = code.instruction(window_pc).ok_or_else(|| {
             NativeDispatchError::Physical("native region window is incomplete".into())
         })?;
-        if !expected.matches_physical_contract(instruction.opcode)
-            || !expected.operands_are_canonical([instruction.a, instruction.b, instruction.c])
+        let typed_cold_payload = instruction.opcode.is_typed_cold_marker()
+            && expected == instruction.opcode
+            && code.cold(instruction).is_some();
+        if (!dynamic
+            && !expected.operands_match_physical_contract_with_flags(
+                instruction.opcode,
+                instruction.flags,
+                [instruction.a, instruction.b, instruction.c],
+            ))
+            || (dynamic
+                && (!expected.matches_physical_contract(instruction.opcode)
+                    || (!typed_cold_payload
+                        && !instruction.opcode.operands_are_canonical_with_flags(
+                            instruction.flags,
+                            [instruction.a, instruction.b, instruction.c],
+                        ))))
         {
             return Err(NativeDispatchError::Physical(
                 "native region operation contract changed before publication".into(),
             ));
         }
+        if instruction.opcode.is_typed_cold_marker() && code.cold(instruction).is_none() {
+            return Err(NativeDispatchError::Physical(
+                "native region typed cold marker has no canonical payload".into(),
+            ));
+        }
         match expected.control_operands(instruction) {
             crate::ir::ControlOperands::Next => {}
-            crate::ir::ControlOperands::Return { .. } => {
-                if window_pc + 1 != end {
+            crate::ir::ControlOperands::Return { .. }
+            | crate::ir::ControlOperands::Throw { .. } => {
+                if !dynamic && window_pc + 1 != end {
                     return Err(NativeDispatchError::Physical(
-                        "native region returns before its declared boundary".into(),
+                        "native region exits before its declared boundary".into(),
                     ));
                 }
             }
             crate::ir::ControlOperands::Branch { target, .. }
             | crate::ir::ControlOperands::Jump { target } => {
                 let target = usize::from(target);
-                if target < pc || target > end {
+                let outside_dynamic_region = dynamic && target <= code_end;
+                if (!dynamic && (target < pc || target > end))
+                    || (dynamic && !outside_dynamic_region)
+                {
                     return Err(NativeDispatchError::Physical(
-                        "native region successor leaves its verified boundary".into(),
+                        "native region successor leaves its verified code range".into(),
                     ));
                 }
             }
             crate::ir::ControlOperands::Loop { .. } => {
-                // Structured loop operations are not currently emitted by a
-                // raw stencil.  They remain complete ordinary fallback.
-                return Err(NativeDispatchError::Physical(
-                    "structured loop opcode requires ordinary execution".into(),
-                ));
+                // A one-op Bridge region may remove only the generated
+                // dispatch trampoline around the canonical structured-loop
+                // gateway. Raw multi-op stencils still cannot own its state.
+                if view.abi != crate::stencil_select::RegionAbi::Bridge
+                    || view.record.operations.len() != 1
+                {
+                    return Err(NativeDispatchError::Physical(
+                        "structured loop opcode requires ordinary execution".into(),
+                    ));
+                }
             }
         }
     }
@@ -4877,17 +5013,18 @@ fn validate_region_window(
 fn validate_admitted_region_control(
     view: crate::stencil_select::PhysicalStencilView,
     pc: usize,
+    operations: &[crate::ir::Opcode],
     control: &crate::stencil_cfg::RegionControlPlan,
 ) -> Result<(), NativeDispatchError> {
     let expected_end = pc
-        .checked_add(view.record.operations.len())
+        .checked_add(operations.len())
         .ok_or_else(|| NativeDispatchError::Physical("native region pc overflow".into()))?;
     if control.start() != pc || control.end() != expected_end {
         return Err(NativeDispatchError::Physical(
             "native region control contract changed before entry".into(),
         ));
     }
-    if !control.matches_operations(view.record.operations) {
+    if !control.matches_operations(operations) {
         return Err(NativeDispatchError::Physical(
             "native region control shape disagrees with its operation facts".into(),
         ));
@@ -4965,23 +5102,7 @@ pub(crate) fn validate_physical_view(
     if cfg!(target_arch = "aarch64") && !stencil_has_data_holes(stencil) {
         crate::stencil_physical::validate_aarch64_instruction_stream(stencil.bytes)?;
     }
-    if matches!(
-        contract.abi,
-        crate::stencil_select::RegionAbi::ArrayKernel
-            | crate::stencil_select::RegionAbi::ArrayNumericLoop
-            | crate::stencil_select::RegionAbi::AffineI32Loop
-            | crate::stencil_select::RegionAbi::I32CounterLoop
-            | crate::stencil_select::RegionAbi::BooleanReductionLoop
-            | crate::stencil_select::RegionAbi::BranchRecurrenceLoop
-            | crate::stencil_select::RegionAbi::NestedXorLoop
-            | crate::stencil_select::RegionAbi::SwitchReductionLoop
-            | crate::stencil_select::RegionAbi::MatrixReductionLoop
-            | crate::stencil_select::RegionAbi::TypedLaneLoop
-            | crate::stencil_select::RegionAbi::TwoStateI32Loop
-            | crate::stencil_select::RegionAbi::NumericI32BitwiseLoop
-            | crate::stencil_select::RegionAbi::NumericI32PairLoop
-            | crate::stencil_select::RegionAbi::NumericF64MixedLoop
-    ) {
+    if contract.abi.is_raw_kernel() {
         crate::stencil_physical::validate_raw_instruction_stream(stencil.bytes)?;
         let actual = crate::stencil_physical::simd_clobber_mask(stencil.bytes);
         if actual & !abi.hardware_clobber_mask != 0 {
@@ -5017,23 +5138,7 @@ fn abi_pointer_hole_contract(abi: crate::stencil_select::RegionAbi) -> usize {
 }
 
 fn raw_region_declares_allocation(contract: crate::stencil_select::RegionContract) -> bool {
-    matches!(
-        contract.abi,
-        crate::stencil_select::RegionAbi::ArrayKernel
-            | crate::stencil_select::RegionAbi::ArrayNumericLoop
-            | crate::stencil_select::RegionAbi::AffineI32Loop
-            | crate::stencil_select::RegionAbi::I32CounterLoop
-            | crate::stencil_select::RegionAbi::BooleanReductionLoop
-            | crate::stencil_select::RegionAbi::BranchRecurrenceLoop
-            | crate::stencil_select::RegionAbi::NestedXorLoop
-            | crate::stencil_select::RegionAbi::SwitchReductionLoop
-            | crate::stencil_select::RegionAbi::MatrixReductionLoop
-            | crate::stencil_select::RegionAbi::TypedLaneLoop
-            | crate::stencil_select::RegionAbi::TwoStateI32Loop
-            | crate::stencil_select::RegionAbi::NumericI32BitwiseLoop
-            | crate::stencil_select::RegionAbi::NumericI32PairLoop
-            | crate::stencil_select::RegionAbi::NumericF64MixedLoop
-    ) && contract.has_effect(crate::facts::OperationEffect::Allocate)
+    contract.abi.is_raw_kernel() && contract.has_effect(crate::facts::OperationEffect::Allocate)
 }
 
 fn installed_region_entry(
@@ -5076,8 +5181,17 @@ impl NativeRegionPlan {
             .map_or("unknown_region", |record| record.name)
     }
 
-    pub(crate) const fn trace_operations(&self) -> &'static [crate::ir::Opcode] {
-        self.operations
+    pub(crate) fn trace_operations(&self) -> Rc<[crate::ir::Opcode]> {
+        self.dynamic_operations
+            .clone()
+            .unwrap_or_else(|| self.operations.into())
+    }
+
+    #[inline]
+    fn operation_slice(&self) -> &[crate::ir::Opcode] {
+        self.dynamic_operations
+            .as_deref()
+            .unwrap_or(self.operations)
     }
 
     fn prepare_entry(
@@ -5148,18 +5262,45 @@ impl NativeRegionPlan {
         )
     }
 
+    fn new_dynamic_with_arena(
+        policy: crate::stencil_policy::ExecutionPolicy,
+        arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
+        operations: Rc<[crate::ir::Opcode]>,
+        control: crate::stencil_cfg::RegionControlPlan,
+    ) -> Option<Self> {
+        let key = crate::stencil_select::dispatch_region_key();
+        let record = crate::stencil_select::select_region(key)?;
+        if record.abi != crate::stencil_select::RegionAbi::Bridge
+            || !policy.allows_region_abi(record.abi)
+        {
+            return None;
+        }
+        Self::new_inner_with_operations(key, true, arena, Some(control), Some(operations))
+    }
+
     fn new_inner(
         key: crate::stencil_fact::RegionKey,
         enabled: bool,
         arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
         admitted_control: Option<crate::stencil_cfg::RegionControlPlan>,
     ) -> Option<Self> {
+        Self::new_inner_with_operations(key, enabled, arena, admitted_control, None)
+    }
+
+    fn new_inner_with_operations(
+        key: crate::stencil_fact::RegionKey,
+        enabled: bool,
+        arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
+        admitted_control: Option<crate::stencil_cfg::RegionControlPlan>,
+        dynamic_operations: Option<Rc<[crate::ir::Opcode]>>,
+    ) -> Option<Self> {
         if !enabled {
             return None;
         }
         let view = crate::stencil_select::select_physical(key)?;
         let record = view.record;
-        if !record.executable
+        if !generic_region_context_abi(record.abi)
+            || !record.executable
             || record.operations.is_empty()
             || validate_physical_view(record, view.stencil).is_err()
             || !record.abi.accepts_region_context()
@@ -5169,6 +5310,52 @@ impl NativeRegionPlan {
         {
             return None;
         }
+        let live_out = admitted_control.as_ref().map_or_else(
+            || Rc::from(Vec::<u16>::new()),
+            |control| Rc::from(control.external_live_out().to_vec()),
+        );
+        let operation_len = dynamic_operations
+            .as_deref()
+            .map_or(record.operations.len(), <[crate::ir::Opcode]>::len);
+        if operation_len == 0 {
+            return None;
+        }
+        let mut binary_leaves = Vec::new();
+        binary_leaves.try_reserve(operation_len).ok()?;
+        binary_leaves.resize_with(operation_len, || None);
+        let mut branch_leaves = Vec::new();
+        branch_leaves.try_reserve(operation_len).ok()?;
+        branch_leaves.resize_with(operation_len, || None);
+        let mut jump_leaves = Vec::new();
+        jump_leaves.try_reserve(operation_len).ok()?;
+        jump_leaves.resize_with(operation_len, || None);
+        let mut return_leaves = Vec::new();
+        return_leaves.try_reserve(operation_len).ok()?;
+        return_leaves.resize_with(operation_len, || None);
+        let mut constant_leaves = Vec::new();
+        constant_leaves.try_reserve(operation_len).ok()?;
+        constant_leaves.resize_with(operation_len, || None);
+        let mut move_leaves = Vec::new();
+        move_leaves.try_reserve(operation_len).ok()?;
+        move_leaves.resize_with(operation_len, || None);
+        let mut load_local_leaves = Vec::new();
+        load_local_leaves.try_reserve(operation_len).ok()?;
+        load_local_leaves.resize_with(operation_len, || None);
+        let mut store_local_leaves = Vec::new();
+        store_local_leaves.try_reserve(operation_len).ok()?;
+        store_local_leaves.resize_with(operation_len, || None);
+        let mut unary_leaves = Vec::new();
+        unary_leaves.try_reserve(operation_len).ok()?;
+        unary_leaves.resize_with(operation_len, || None);
+        let mut truthiness_leaves = Vec::new();
+        truthiness_leaves.try_reserve(operation_len).ok()?;
+        truthiness_leaves.resize_with(operation_len, || None);
+        let mut nullish_leaves = Vec::new();
+        nullish_leaves.try_reserve(operation_len).ok()?;
+        nullish_leaves.resize_with(operation_len, || None);
+        let mut update_leaves = Vec::new();
+        update_leaves.try_reserve(operation_len).ok()?;
+        update_leaves.resize_with(operation_len, || None);
         Some(Self {
             physical: {
                 let mut physical = PhysicalInstallation::local(InstalledRegionEntry::Unpublished);
@@ -5178,7 +5365,24 @@ impl NativeRegionPlan {
             site: crate::quickening::QuickeningSite::new(record.operations[0]),
             key,
             operations: record.operations,
+            dynamic_operations,
             admitted_control,
+            binary_leaves,
+            branch_leaves,
+            jump_leaves,
+            return_leaves,
+            constant_leaves,
+            move_leaves,
+            load_local_leaves,
+            store_local_leaves,
+            unary_leaves,
+            truthiness_leaves,
+            nullish_leaves,
+            update_leaves,
+            leaves_initialized: false,
+            has_cached_leaf: false,
+            live_out,
+            retired_operations: 0,
             last_native_execution: false,
             #[cfg(test)]
             last_native_view: None,
@@ -5189,6 +5393,10 @@ impl NativeRegionPlan {
 
     pub(crate) fn last_native_execution(&self) -> bool {
         self.last_native_execution
+    }
+
+    pub(crate) fn retired_operations(&self) -> usize {
+        self.retired_operations
     }
 
     #[cfg(test)]
@@ -5207,7 +5415,7 @@ impl NativeRegionPlan {
     pub(crate) fn admitted_control_for_test(
         &self,
     ) -> Option<crate::stencil_cfg::RegionControlPlan> {
-        self.admitted_control
+        self.admitted_control.clone()
     }
 
     #[cfg(test)]
@@ -5218,6 +5426,114 @@ impl NativeRegionPlan {
     #[cfg(test)]
     pub(crate) fn physical_is_published_for_test(&self) -> bool {
         self.physical.installed().address().is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn branch_entry_count_for_test(&self) -> u64 {
+        self.branch_leaves
+            .iter()
+            .filter_map(|branch| branch.as_ref())
+            .map(crate::stencil_word_composition::NativeWordBranchPlan::native_entry_count)
+            .sum()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn jump_entry_count_for_test(&self) -> u64 {
+        self.jump_leaves
+            .iter()
+            .filter_map(|jump| jump.as_ref())
+            .map(crate::stencil_word_composition::NativeWordBranchPlan::native_entry_count)
+            .sum()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn return_entry_count_for_test(&self) -> u64 {
+        self.return_leaves
+            .iter()
+            .filter_map(|return_leaf| return_leaf.as_ref())
+            .map(crate::stencil_word_composition::NativeWordReturnPlan::native_entry_count)
+            .sum()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn constant_entry_count_for_test(&self) -> u64 {
+        self.constant_leaves
+            .iter()
+            .filter_map(|constant| constant.as_ref())
+            .map(NativeLoadConstPlan::native_entry_count)
+            .sum()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn binary_entry_count_for_test(&self) -> u64 {
+        self.binary_leaves
+            .iter()
+            .filter_map(|binary| binary.as_ref())
+            .map(NativeBinaryPlan::native_entry_count)
+            .sum()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn move_entry_count_for_test(&self) -> u64 {
+        self.move_leaves
+            .iter()
+            .filter_map(|movement| movement.as_ref())
+            .map(NativeMovePlan::native_entry_count)
+            .sum()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn load_local_entry_count_for_test(&self) -> u64 {
+        self.load_local_leaves
+            .iter()
+            .filter_map(|load| load.as_ref())
+            .map(NativeMovePlan::native_entry_count)
+            .sum()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn store_local_entry_count_for_test(&self) -> u64 {
+        self.store_local_leaves
+            .iter()
+            .filter_map(|store| store.as_ref())
+            .map(NativeMovePlan::native_entry_count)
+            .sum()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn unary_entry_count_for_test(&self) -> u64 {
+        self.unary_leaves
+            .iter()
+            .filter_map(|unary| unary.as_ref())
+            .map(NativeUnaryPlan::native_entry_count)
+            .sum()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn truthiness_entry_count_for_test(&self) -> u64 {
+        self.truthiness_leaves
+            .iter()
+            .filter_map(|truthiness| truthiness.as_ref())
+            .map(NativeTruthinessPlan::native_entry_count)
+            .sum()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn nullish_entry_count_for_test(&self) -> u64 {
+        self.nullish_leaves
+            .iter()
+            .filter_map(|nullish| nullish.as_ref())
+            .map(NativeNullishPlan::native_entry_count)
+            .sum()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn update_entry_count_for_test(&self) -> u64 {
+        self.update_leaves
+            .iter()
+            .filter_map(|update| update.as_ref())
+            .map(NativeBinaryPlan::native_entry_count)
+            .sum()
     }
 
     #[cfg(test)]
@@ -5237,6 +5553,7 @@ impl NativeRegionPlan {
         environment: Option<&crate::environment::Environment>,
     ) -> Result<crate::vm::DispatchTransition, NativeDispatchError> {
         self.last_native_execution = false;
+        self.retired_operations = 0;
         #[cfg(test)]
         {
             self.last_native_view = None;
@@ -5245,7 +5562,8 @@ impl NativeRegionPlan {
         let values = crate::stencil_fact::PatchValues::from_site(&site)
             .with_pointer_bits(crate::vm::native_region_bridge as *const () as usize);
         let key = self.key;
-        let operations = self.operations;
+        let dynamic_operations = self.dynamic_operations.clone();
+        let operations = dynamic_operations.as_deref().unwrap_or(self.operations);
         // Verify the complete immutable residual window before rendering or
         // publishing executable bytes.  A stale/quickened opcode is therefore
         // a cheap RejectBeforeEntry and cannot consume slab capacity or leave
@@ -5256,15 +5574,15 @@ impl NativeRegionPlan {
             ));
         };
         let record = view.record;
-        if record.operations != operations {
+        if !self.dynamic_operations.is_some() && record.operations != operations {
             return Err(NativeDispatchError::Physical(
                 "native fused region operation contract changed".into(),
             ));
         }
-        if let Some(control) = self.admitted_control {
-            validate_admitted_region_control(view, pc, &control)?;
+        if let Some(control) = self.admitted_control.as_ref() {
+            validate_admitted_region_control(view, pc, operations, control)?;
         }
-        validate_region_window(code, pc, view)?;
+        validate_region_window(code, pc, view, operations, dynamic_operations.is_some())?;
         if !record.executable
             || self
                 .physical
@@ -5280,6 +5598,7 @@ impl NativeRegionPlan {
         let arena = self.physical.storage.shared().ok_or_else(|| {
             NativeDispatchError::Physical("native fused region arena missing".into())
         })?;
+        let mut retired_operations = 0usize;
         let result = (|| {
             let record = view.record;
             let contract = record.contract();
@@ -5287,6 +5606,16 @@ impl NativeRegionPlan {
                 return Err(NativeDispatchError::Physical(
                     "native fused region has no legal external entry".into(),
                 ));
+            }
+            if let Some(result) = self.execute_region_with_leaves(
+                code,
+                pc,
+                registers,
+                context,
+                environment,
+                &mut retired_operations,
+            )? {
+                return Ok(result);
             }
             // The generated declaration carries the physical ABI.  Fail
             // closed if metadata and the selected invocation path disagree;
@@ -5299,6 +5628,10 @@ impl NativeRegionPlan {
             }
             let storage_kind = record.name;
             crate::execution_trace::stencil_storage(code, pc, storage_kind, &arena.borrow());
+            let resident_backedges = self
+                .admitted_control
+                .as_ref()
+                .is_some_and(|control| !control.internal_backedges().is_empty());
             let mut region = crate::vm::NativeRegionContext::new_with_environment(
                 code,
                 pc,
@@ -5307,25 +5640,13 @@ impl NativeRegionPlan {
                 registers,
                 context,
                 environment,
-            );
+            )
+            .with_resident_backedges(resident_backedges)
+            .with_control(self.admitted_control.clone().map(Rc::new))
+            .with_live_out(Rc::clone(&self.live_out))
+            .with_retired_counter(&mut retired_operations);
             #[cfg(not(target_arch = "aarch64"))]
-            if matches!(
-                record.abi,
-                crate::stencil_select::RegionAbi::ArrayKernel
-                    | crate::stencil_select::RegionAbi::ArrayNumericLoop
-                    | crate::stencil_select::RegionAbi::AffineI32Loop
-                    | crate::stencil_select::RegionAbi::I32CounterLoop
-                    | crate::stencil_select::RegionAbi::BooleanReductionLoop
-                    | crate::stencil_select::RegionAbi::BranchRecurrenceLoop
-                    | crate::stencil_select::RegionAbi::NestedXorLoop
-                    | crate::stencil_select::RegionAbi::SwitchReductionLoop
-                    | crate::stencil_select::RegionAbi::MatrixReductionLoop
-                    | crate::stencil_select::RegionAbi::TypedLaneLoop
-                    | crate::stencil_select::RegionAbi::TwoStateI32Loop
-                    | crate::stencil_select::RegionAbi::NumericI32BitwiseLoop
-                    | crate::stencil_select::RegionAbi::NumericI32PairLoop
-                    | crate::stencil_select::RegionAbi::NumericF64MixedLoop
-            ) {
+            if record.abi.is_raw_kernel() {
                 return crate::vm::execute_region_fallback(&mut region);
             }
             // The array block has a direct raw numeric entry on AArch64. Its
@@ -5538,6 +5859,7 @@ impl NativeRegionPlan {
             }
             region.finish(status)
         })();
+        self.retired_operations = retired_operations;
         let address = self.physical.installed().address();
         self.physical.apply_dispatch_outcome(
             &result,
@@ -5546,6 +5868,967 @@ impl NativeRegionPlan {
         );
         result
     }
+
+    /// Execute a Bridge region through canonical handlers while consuming
+    /// generated scalar leaves for proven numeric binary interiors. Forward
+    /// CFG edges and verified resident backedges are followed directly; all
+    /// other effects and completion state remain canonical. A leaf miss falls
+    /// back only for the current operation, so an already-committed prefix is
+    /// never replayed.
+    fn execute_region_with_leaves(
+        &mut self,
+        code: CodeView<'_>,
+        pc: usize,
+        registers: &mut crate::register_file::RegisterFile,
+        context: &crate::vm::VmContext,
+        environment: Option<&crate::environment::Environment>,
+        retired_operations: &mut usize,
+    ) -> Result<Option<crate::vm::DispatchTransition>, NativeDispatchError> {
+        let Some(record) = crate::stencil_select::select_region(self.key) else {
+            return Ok(None);
+        };
+        if record.abi != crate::stencil_select::RegionAbi::Bridge {
+            return Ok(None);
+        };
+        let dynamic_operations = self.dynamic_operations.as_deref();
+        let operations = dynamic_operations.unwrap_or(self.operations);
+        if let Some(control) = self.admitted_control.as_ref() {
+            if control.span_len() != operations.len() {
+                return Ok(None);
+            }
+        }
+        if self.binary_leaves.len() != operations.len()
+            || self.branch_leaves.len() != operations.len()
+            || self.jump_leaves.len() != operations.len()
+            || self.return_leaves.len() != operations.len()
+            || self.constant_leaves.len() != operations.len()
+            || self.move_leaves.len() != operations.len()
+            || self.load_local_leaves.len() != operations.len()
+            || self.store_local_leaves.len() != operations.len()
+            || self.unary_leaves.len() != operations.len()
+            || self.truthiness_leaves.len() != operations.len()
+            || self.nullish_leaves.len() != operations.len()
+            || self.update_leaves.len() != operations.len()
+        {
+            return Ok(None);
+        };
+
+        let initialize_leaves = !self.leaves_initialized;
+        let mut has_leaf = if initialize_leaves {
+            self.admitted_control
+                .as_ref()
+                .is_some_and(|control| !control.is_linear())
+        } else {
+            self.has_cached_leaf
+        };
+        if initialize_leaves {
+            for (offset, leaf) in self.binary_leaves.iter_mut().enumerate() {
+                let Some(instruction) =
+                    code.instruction(pc.checked_add(offset).unwrap_or(usize::MAX))
+                else {
+                    return Ok(None);
+                };
+                // `IncI` has distinct generated +1 and -1 artifacts.  Keep the
+                // opcode flag in the selected key and operand constant; never
+                // let one image erase the other's update direction.
+                let is_numeric_update = instruction.opcode == crate::ir::Opcode::IncI;
+                let operator = instruction
+                    .opcode
+                    .numeric_operator()
+                    .or_else(|| instruction.opcode.binary_operator(instruction.flags));
+                if operator.is_none() && !is_numeric_update {
+                    continue;
+                }
+                if self.dynamic_operations.is_none()
+                    && !is_numeric_update
+                    && matches!(
+                        operator,
+                        Some(
+                            crate::ops::BinaryOp::NumericAdd
+                                | crate::ops::BinaryOp::NumericSubtract,
+                        )
+                    )
+                {
+                    // Named numeric-chain recipes own their continuation contract
+                    // and keep these aliases on their canonical operation path.
+                    // An operation-agnostic dynamic Bridge has no such competing
+                    // representation: its generated increment/decrement leaf is
+                    // the exact NumericAdd/NumericSubtract (+/-1) semantics.
+                    continue;
+                }
+                if leaf.is_none() {
+                    let Some(shared) = self.physical.storage.shared() else {
+                        return Ok(None);
+                    };
+                    *leaf = NativeBinaryPlan::new_with_shared(
+                        instruction,
+                        crate::stencil_policy::current(),
+                        shared,
+                    );
+                }
+                if leaf.is_some() {
+                    has_leaf = true;
+                }
+            }
+            for (offset, leaf) in self.unary_leaves.iter_mut().enumerate() {
+                let Some(instruction) =
+                    code.instruction(pc.checked_add(offset).unwrap_or(usize::MAX))
+                else {
+                    return Ok(None);
+                };
+                if instruction.opcode != crate::ir::Opcode::Unary {
+                    continue;
+                }
+                if leaf.is_none() {
+                    let Some(shared) = self.physical.storage.shared() else {
+                        return Ok(None);
+                    };
+                    *leaf = NativeUnaryPlan::new_with_shared(
+                        instruction,
+                        crate::stencil_policy::current(),
+                        shared,
+                    );
+                }
+                if leaf.is_some() {
+                    has_leaf = true;
+                }
+            }
+            for (offset, leaf) in self.truthiness_leaves.iter_mut().enumerate() {
+                let Some(instruction) =
+                    code.instruction(pc.checked_add(offset).unwrap_or(usize::MAX))
+                else {
+                    return Ok(None);
+                };
+                let is_truthiness = instruction.opcode == crate::ir::Opcode::JumpIfFalse
+                    || (instruction.opcode == crate::ir::Opcode::Unary
+                        && instruction.flags
+                            == crate::ir::compact_unary_id(crate::ops::UnaryOp::Not));
+                if !is_truthiness {
+                    continue;
+                }
+                if leaf.is_none() {
+                    let Some(shared) = self.physical.storage.shared() else {
+                        return Ok(None);
+                    };
+                    *leaf = NativeTruthinessPlan::new_with_shared(
+                        instruction,
+                        crate::stencil_policy::current(),
+                        shared,
+                    );
+                }
+                if leaf.is_some() {
+                    has_leaf = true;
+                }
+            }
+            for (offset, leaf) in self.nullish_leaves.iter_mut().enumerate() {
+                let Some(instruction) =
+                    code.instruction(pc.checked_add(offset).unwrap_or(usize::MAX))
+                else {
+                    return Ok(None);
+                };
+                if instruction.opcode != crate::ir::Opcode::Unary
+                    || instruction.flags
+                        != crate::ir::compact_unary_id(crate::ops::UnaryOp::IsNullish)
+                {
+                    continue;
+                }
+                if leaf.is_none() {
+                    let Some(shared) = self.physical.storage.shared() else {
+                        return Ok(None);
+                    };
+                    *leaf = NativeNullishPlan::new_with_shared(
+                        instruction,
+                        crate::stencil_policy::current(),
+                        shared,
+                    );
+                }
+                if leaf.is_some() {
+                    has_leaf = true;
+                }
+            }
+            for (offset, leaf) in self.update_leaves.iter_mut().enumerate() {
+                let Some(instruction) =
+                    code.instruction(pc.checked_add(offset).unwrap_or(usize::MAX))
+                else {
+                    return Ok(None);
+                };
+                if instruction.opcode != crate::ir::Opcode::UpdateLocal {
+                    continue;
+                }
+                if leaf.is_none() {
+                    let Some(shared) = self.physical.storage.shared() else {
+                        return Ok(None);
+                    };
+                    let increment = crate::ir::Instruction::inc_i(
+                        instruction.b,
+                        instruction.a,
+                        instruction.flags != 0,
+                    );
+                    *leaf = NativeBinaryPlan::new_with_shared(
+                        increment,
+                        crate::stencil_policy::current(),
+                        shared,
+                    );
+                }
+                if leaf.is_some() {
+                    has_leaf = true;
+                }
+            }
+            for (offset, leaf) in self.return_leaves.iter_mut().enumerate() {
+                let Some(instruction) =
+                    code.instruction(pc.checked_add(offset).unwrap_or(usize::MAX))
+                else {
+                    return Ok(None);
+                };
+                if instruction.opcode != crate::ir::Opcode::Return {
+                    continue;
+                }
+                // Named physical rows already own their terminal return image;
+                // this leaf is specifically for operation-agnostic dynamic
+                // Bridge regions, where no fixed recipe owns the exit.
+                if self.dynamic_operations.is_none() {
+                    continue;
+                }
+                if leaf.is_none() {
+                    let Some(shared) = self.physical.storage.shared() else {
+                        return Ok(None);
+                    };
+                    *leaf = crate::stencil_word_composition::NativeWordReturnPlan::new(shared);
+                }
+                if leaf.is_some() {
+                    has_leaf = true;
+                }
+            }
+            // A linear region may be admitted solely for a tagged-word leaf. Keep
+            // the same bridge executor available for those paths; each leaf still
+            // performs its own representation/ownership proof and falls back to
+            // the canonical operation when that proof or publication misses.
+            if !has_leaf {
+                has_leaf = (0..operations.len()).any(|offset| {
+                    code.instruction(pc.saturating_add(offset))
+                        .is_some_and(|instruction| instruction.opcode.is_generic_bridge_candidate())
+                });
+            }
+            self.has_cached_leaf = has_leaf;
+            self.leaves_initialized = true;
+        }
+        if !has_leaf {
+            return Ok(None);
+        }
+
+        let current_environment = crate::locals::current();
+        let _frame_roots = crate::cycle_collector::protect_frame(registers, &current_environment);
+        let end = pc
+            .checked_add(operations.len())
+            .ok_or_else(|| NativeDispatchError::Physical("native region pc overflow".into()))?;
+        let mut offset = 0usize;
+        loop {
+            if offset >= operations.len() {
+                return Err(NativeDispatchError::Physical(
+                    "native region reached an empty continuation".into(),
+                ));
+            }
+            let operation_pc = pc
+                .checked_add(offset)
+                .ok_or_else(|| NativeDispatchError::Physical("native region pc overflow".into()))?;
+            let instruction = code.instruction(operation_pc).ok_or_else(|| {
+                NativeDispatchError::Physical("native region instruction missing".into())
+            })?;
+            let entry = BaselineEntry {
+                instruction,
+                control: instruction.opcode.control_operands(instruction),
+            };
+            // Count the operation before entering either the generated leaf
+            // or its canonical handler. A throwing handler is still a
+            // retired attempt, matching `execute_region_fallback` exactly.
+            *retired_operations = retired_operations.saturating_add(1);
+            let mut transition = None;
+            if instruction.opcode == crate::ir::Opcode::RequireObjectCoercible {
+                if let Some(bits) = registers.word_bits(usize::from(instruction.a)) {
+                    let non_nullish = !matches!(
+                        crate::native_core::value_word::TaggedValue::from_bits(bits).decode(),
+                        crate::native_core::value_word::DecodedValue::Null
+                            | crate::native_core::value_word::DecodedValue::Undefined
+                    );
+                    if non_nullish {
+                        // A successful check has no observable write. Nullish
+                        // values deliberately use the canonical throwing path.
+                        self.last_native_execution = true;
+                        transition = Some(Ok(crate::vm::DispatchTransition::next(
+                            operation_pc.saturating_add(1),
+                        )));
+                    }
+                }
+            }
+            if let Some(environment) = environment {
+                match instruction.opcode {
+                    crate::ir::Opcode::InitLocal
+                        if instruction.a != 0
+                            && !environment.is_deleted_slot(instruction.a)
+                            && (!environment.is_immutable_slot(instruction.a)
+                                || environment.is_uninitialized(instruction.a))
+                            && environment.copy_from_register(
+                                instruction.a,
+                                registers,
+                                instruction.b,
+                            ) =>
+                    {
+                        // `InitLocal` is the value-bearing declaration
+                        // transition. The environment performs the same
+                        // retain/release and TDZ publication as its
+                        // canonical handler; no generated leaf may bypass
+                        // that ownership boundary.
+                        self.last_native_execution = true;
+                        transition = Some(Ok(crate::vm::DispatchTransition::next(
+                            operation_pc.saturating_add(1),
+                        )));
+                    }
+                    crate::ir::Opcode::MarkUninitialized => {
+                        if instruction.flags != 0 {
+                            environment.mark_uninitialized_shared(instruction.a);
+                        } else {
+                            environment.mark_uninitialized(instruction.a);
+                        }
+                        self.last_native_execution = true;
+                        transition = Some(Ok(crate::vm::DispatchTransition::next(
+                            operation_pc.saturating_add(1),
+                        )));
+                    }
+                    crate::ir::Opcode::MarkImmutable => {
+                        environment.mark_immutable_slot(instruction.a);
+                        self.last_native_execution = true;
+                        transition = Some(Ok(crate::vm::DispatchTransition::next(
+                            operation_pc.saturating_add(1),
+                        )));
+                    }
+                    crate::ir::Opcode::CheckInitialized
+                        if !environment.is_uninitialized(instruction.a) =>
+                    {
+                        // A successful TDZ check is a pure metadata read. A
+                        // failing check remains on the canonical handler so
+                        // it can construct the exact ReferenceError.
+                        self.last_native_execution = true;
+                        transition = Some(Ok(crate::vm::DispatchTransition::next(
+                            operation_pc.saturating_add(1),
+                        )));
+                    }
+                    _ => {}
+                }
+            }
+            if instruction.opcode == crate::ir::Opcode::InitializeLocal {
+                if let Some(environment) = environment {
+                    // Initialization only mutates the TDZ state owned by the
+                    // active environment; no value representation crosses
+                    // the generated bridge boundary.
+                    environment.initialize(instruction.a);
+                    self.last_native_execution = true;
+                    transition = Some(Ok(crate::vm::DispatchTransition::next(
+                        operation_pc.saturating_add(1),
+                    )));
+                }
+            }
+            if instruction.opcode == crate::ir::Opcode::LoadConst {
+                if self.constant_leaves[offset].is_none() {
+                    if let Some(bits) = code
+                        .constant(instruction.b)
+                        .and_then(crate::machine::constant_word_bits)
+                    {
+                        if let Some(owner) = self.physical.storage.shared() {
+                            self.constant_leaves[offset] = NativeLoadConstPlan::new_with_shared(
+                                bits,
+                                crate::stencil_policy::current(),
+                                owner,
+                            );
+                        }
+                    }
+                }
+                if let Some(constant) = self.constant_leaves[offset].as_mut() {
+                    if let Ok(bits) = constant.execute() {
+                        if registers
+                            .write_tagged_bits(usize::from(instruction.a), bits)
+                            .is_some()
+                        {
+                            self.last_native_execution = true;
+                            transition = Some(Ok(crate::vm::DispatchTransition::next(
+                                operation_pc.saturating_add(1),
+                            )));
+                        }
+                    }
+                }
+            }
+            if transition.is_none()
+                && instruction.opcode == crate::ir::Opcode::Unary
+                && matches!(
+                    crate::ir::compact_unary_operator(instruction.flags),
+                    Some(crate::ops::UnaryOp::Void | crate::ops::UnaryOp::Delete)
+                )
+            {
+                let bits = match crate::ir::compact_unary_operator(instruction.flags) {
+                    Some(crate::ops::UnaryOp::Delete) => {
+                        crate::native_core::value_word::TaggedValue::bool(true).bits()
+                    }
+                    _ => crate::native_core::value_word::TaggedValue::undefined().bits(),
+                };
+                if self.constant_leaves[offset].is_none() {
+                    if let Some(owner) = self.physical.storage.shared() {
+                        self.constant_leaves[offset] = NativeLoadConstPlan::new_with_shared(
+                            bits,
+                            crate::stencil_policy::current(),
+                            owner,
+                        );
+                    }
+                }
+                if let Some(void) = self.constant_leaves[offset].as_mut() {
+                    if let Ok(bits) = void.execute() {
+                        if registers
+                            .write_tagged_bits(usize::from(instruction.a), bits)
+                            .is_some()
+                        {
+                            self.last_native_execution = true;
+                            transition = Some(Ok(crate::vm::DispatchTransition::next(
+                                operation_pc.saturating_add(1),
+                            )));
+                        }
+                    }
+                }
+            }
+            if transition.is_none()
+                && matches!(
+                    instruction.opcode,
+                    crate::ir::Opcode::LoadLocal
+                        | crate::ir::Opcode::LoadLocalChecked
+                        | crate::ir::Opcode::LoadParameter
+                )
+            {
+                if let Some(environment) = environment {
+                    if self.load_local_leaves[offset].is_none() {
+                        if let Some(owner) = self.physical.storage.shared() {
+                            self.load_local_leaves[offset] = NativeMovePlan::new_with_arena(
+                                instruction,
+                                crate::stencil_policy::current(),
+                                owner,
+                            );
+                        }
+                    }
+                    if let (Some(load), Some(source)) = (
+                        self.load_local_leaves[offset].as_mut(),
+                        environment.proven_word_ptr(instruction.b),
+                    ) {
+                        if let Ok(bits) = load.execute(source) {
+                            if registers
+                                .write_tagged_bits(usize::from(instruction.a), bits)
+                                .is_some()
+                            {
+                                self.last_native_execution = true;
+                                transition = Some(Ok(crate::vm::DispatchTransition::next(
+                                    operation_pc.saturating_add(1),
+                                )));
+                            }
+                        }
+                    }
+                }
+            }
+            if transition.is_none() && instruction.opcode == crate::ir::Opcode::Move {
+                if self.move_leaves[offset].is_none() {
+                    if let Some(owner) = self.physical.storage.shared() {
+                        // The local-move spelling shares the same physical
+                        // tagged-word copy, but its operands name environment
+                        // slots rather than register words. Keep the
+                        // generated plan's ABI-neutral Move fact at flags=0;
+                        // the environment commit below remains semantic.
+                        let physical_instruction = if instruction.flags == 1 {
+                            crate::ir::Instruction::move_(instruction.a, instruction.b)
+                        } else {
+                            instruction
+                        };
+                        self.move_leaves[offset] = NativeMovePlan::new_with_arena(
+                            physical_instruction,
+                            crate::stencil_policy::current(),
+                            owner,
+                        );
+                    }
+                }
+                if instruction.flags == 1 {
+                    if let Some(environment) = environment {
+                        let destination = usize::from(instruction.a);
+                        if destination < registers.len()
+                            && crate::locals::can_move_proven_local(
+                                environment,
+                                instruction.b,
+                                instruction.c,
+                            )
+                            && environment.can_store_proven_tagged_bits(instruction.c)
+                        {
+                            if let (Some(movement), Some(source)) = (
+                                self.move_leaves[offset].as_mut(),
+                                environment.proven_word_ptr(instruction.b),
+                            ) {
+                                if let Ok(bits) = movement.execute(source) {
+                                    // Commit the target slot before exposing
+                                    // the same owned word in the destination
+                                    // register. A failed commit therefore
+                                    // leaves no partially native prefix to
+                                    // replay through the canonical handler.
+                                    if environment.store_proven_tagged_bits(instruction.c, bits)
+                                        && registers.write_tagged_bits(destination, bits).is_some()
+                                    {
+                                        self.last_native_execution = true;
+                                        transition = Some(Ok(crate::vm::DispatchTransition::next(
+                                            operation_pc.saturating_add(1),
+                                        )));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if let (Some(movement), Some(source)) = (
+                    self.move_leaves[offset].as_mut(),
+                    registers.word_ptr(usize::from(instruction.b)),
+                ) {
+                    if let Ok(bits) = movement.execute(source) {
+                        if registers
+                            .write_tagged_bits(usize::from(instruction.a), bits)
+                            .is_some()
+                        {
+                            self.last_native_execution = true;
+                            transition = Some(Ok(crate::vm::DispatchTransition::next(
+                                operation_pc.saturating_add(1),
+                            )));
+                        }
+                    }
+                }
+            }
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            if transition.is_none()
+                && matches!(
+                    instruction.opcode,
+                    crate::ir::Opcode::StoreLocal | crate::ir::Opcode::StoreLocalChecked
+                )
+            {
+                if let Some(environment) = environment {
+                    if environment.can_store_proven_tagged_bits(instruction.a) {
+                        if self.store_local_leaves[offset].is_none() {
+                            if let Some(owner) = self.physical.storage.shared() {
+                                self.store_local_leaves[offset] = NativeMovePlan::new_with_arena(
+                                    instruction,
+                                    crate::stencil_policy::current(),
+                                    owner,
+                                );
+                            }
+                        }
+                        if let (Some(store), Some(source)) = (
+                            self.store_local_leaves[offset].as_mut(),
+                            registers.word_ptr(usize::from(instruction.b)),
+                        ) {
+                            if let Ok(bits) = store.execute(source) {
+                                if environment.store_proven_tagged_bits(instruction.a, bits) {
+                                    self.last_native_execution = true;
+                                    transition = Some(Ok(crate::vm::DispatchTransition::next(
+                                        operation_pc.saturating_add(1),
+                                    )));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if transition.is_none() && instruction.opcode == crate::ir::Opcode::Unary {
+                if let (Some(unary), Some(value)) = (
+                    self.unary_leaves[offset].as_mut(),
+                    registers.read_number(usize::from(instruction.b)),
+                ) {
+                    if let Ok(result) = unary.execute(value) {
+                        registers.write_number(usize::from(instruction.a), result);
+                        self.last_native_execution = true;
+                        transition = Some(Ok(crate::vm::DispatchTransition::next(
+                            operation_pc.saturating_add(1),
+                        )));
+                    }
+                }
+            }
+            if transition.is_none()
+                && instruction.opcode == crate::ir::Opcode::Unary
+                && instruction.flags == crate::ir::compact_unary_id(crate::ops::UnaryOp::Not)
+            {
+                if let (Some(truthiness), Some(bits)) = (
+                    self.truthiness_leaves[offset].as_mut(),
+                    registers.word_bits(usize::from(instruction.b)),
+                ) {
+                    let result = match crate::native_core::value_word::TaggedValue::from_bits(bits)
+                        .decode()
+                    {
+                        crate::native_core::value_word::DecodedValue::Number(value) => {
+                            truthiness.execute(value)
+                        }
+                        crate::native_core::value_word::DecodedValue::I31(value) => {
+                            truthiness.execute(f64::from(value))
+                        }
+                        _ => truthiness.execute_tagged_bits(bits),
+                    };
+                    if let Ok(value) = result {
+                        registers.write_boolean(usize::from(instruction.a), !value);
+                        self.last_native_execution = true;
+                        transition = Some(Ok(crate::vm::DispatchTransition::next(
+                            operation_pc.saturating_add(1),
+                        )));
+                    }
+                }
+            }
+            if transition.is_none()
+                && instruction.opcode == crate::ir::Opcode::Unary
+                && instruction.flags == crate::ir::compact_unary_id(crate::ops::UnaryOp::IsNullish)
+            {
+                if let (Some(nullish), Some(bits)) = (
+                    self.nullish_leaves[offset].as_mut(),
+                    registers.word_bits(usize::from(instruction.b)),
+                ) {
+                    if let Ok(value) = nullish.execute(bits) {
+                        registers.write_boolean(usize::from(instruction.a), value);
+                        self.last_native_execution = true;
+                        transition = Some(Ok(crate::vm::DispatchTransition::next(
+                            operation_pc.saturating_add(1),
+                        )));
+                    }
+                }
+            }
+            if transition.is_none() && instruction.opcode == crate::ir::Opcode::UpdateLocal {
+                if let Some(environment) = environment {
+                    let slot = instruction.c;
+                    if environment.can_store_proven_tagged_bits(slot) {
+                        if let Some(old) = environment.get_number(slot) {
+                            if self.update_leaves[offset].is_none() {
+                                if let Some(owner) = self.physical.storage.shared() {
+                                    let increment = crate::ir::Instruction::inc_i(
+                                        instruction.b,
+                                        instruction.a,
+                                        instruction.flags != 0,
+                                    );
+                                    self.update_leaves[offset] = NativeBinaryPlan::new_with_shared(
+                                        increment,
+                                        crate::stencil_policy::current(),
+                                        owner,
+                                    );
+                                }
+                            }
+                            if let Some(update) = self.update_leaves[offset].as_mut() {
+                                let delta = if instruction.flags != 0 { -1.0 } else { 1.0 };
+                                if let Ok(updated) = update.execute(old, delta) {
+                                    registers.write_number(usize::from(instruction.a), old);
+                                    let bits = crate::native_core::value_word::TaggedValue::number(
+                                        updated,
+                                    )
+                                    .bits();
+                                    if environment.store_proven_tagged_bits(slot, bits) {
+                                        registers.write_number(usize::from(instruction.b), updated);
+                                        self.last_native_execution = true;
+                                        transition = Some(Ok(crate::vm::DispatchTransition::next(
+                                            operation_pc.saturating_add(1),
+                                        )));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if transition.is_none() && instruction.opcode == crate::ir::Opcode::Return {
+                if let (Some(return_leaf), Some(bits)) = (
+                    self.return_leaves[offset].as_mut(),
+                    registers.word_bits(usize::from(instruction.a)),
+                ) {
+                    if let Some(bits) = return_leaf.execute(bits) {
+                        if let Some(value) = crate::register_file::own_tagged_bits(bits) {
+                            self.last_native_execution = true;
+                            transition = Some(Ok(crate::vm::DispatchTransition {
+                                next_pc: operation_pc.saturating_add(1),
+                                completion: Some(crate::completion::Completion::Return(value)),
+                                target: crate::vm::DispatchTarget::Exit,
+                            }));
+                        }
+                    }
+                }
+            }
+            if transition.is_none() && instruction.opcode == crate::ir::Opcode::Throw {
+                if let Some(value) = registers.read(usize::from(instruction.a)) {
+                    // Throw is a terminal control transfer. Rust owns the
+                    // value retain/release edge while the generated bridge
+                    // removes only the dispatch round-trip; construction of
+                    // the thrown value remains canonical.
+                    self.last_native_execution = true;
+                    transition = Some(Ok(crate::vm::DispatchTransition {
+                        next_pc: operation_pc.saturating_add(1),
+                        completion: Some(crate::completion::Completion::Throw(value)),
+                        target: crate::vm::DispatchTarget::Exit,
+                    }));
+                }
+            }
+            if instruction.opcode == crate::ir::Opcode::JumpIfFalse {
+                if self.branch_leaves[offset].is_none() {
+                    if let (Some(control), crate::ir::ControlOperands::Branch { target, .. }) =
+                        (self.admitted_control.as_ref(), entry.control)
+                    {
+                        let truthy_pc = operation_pc.saturating_add(1);
+                        let falsy_pc = usize::from(target);
+                        if control.edges().contains(&crate::stencil_cfg::RegionEdge {
+                            from: operation_pc,
+                            to: truthy_pc,
+                        }) && control.edges().contains(&crate::stencil_cfg::RegionEdge {
+                            from: operation_pc,
+                            to: falsy_pc,
+                        }) {
+                            if let Some(owner) = self.physical.storage.shared() {
+                                self.branch_leaves[offset] =
+                                    crate::stencil_word_composition::NativeWordBranchPlan::new_jump_from_instruction(
+                                        instruction,
+                                        operation_pc,
+                                        truthy_pc,
+                                        falsy_pc,
+                                        owner,
+                                    );
+                            }
+                        }
+                    }
+                }
+                if let (Some(branch), Some(condition_bits)) = (
+                    self.branch_leaves[offset].as_mut(),
+                    registers.word_bits(usize::from(instruction.a)),
+                ) {
+                    if let Some(selected_bits) =
+                        branch.execute(condition_bits, condition_bits, condition_bits)
+                    {
+                        if let crate::stencil_word_composition::NativeWordBranchContinuation::Jump {
+                            truthy_pc,
+                            falsy_pc,
+                        } = branch.continuation()
+                        {
+                            let target = match crate::native_core::value_word::TaggedValue::from_bits(
+                                selected_bits,
+                            )
+                            .decode()
+                            {
+                                crate::native_core::value_word::DecodedValue::Bool(true) => truthy_pc,
+                                crate::native_core::value_word::DecodedValue::Bool(false) => falsy_pc,
+                                _ => usize::MAX,
+                            };
+                            if target != usize::MAX {
+                                self.last_native_execution = true;
+                                transition = Some(Ok(crate::vm::DispatchTransition::next(target)));
+                            }
+                        }
+                    }
+                }
+                if transition.is_none() {
+                    if let (Some(truthiness), Some(bits)) = (
+                        self.truthiness_leaves[offset].as_mut(),
+                        registers.word_bits(usize::from(instruction.a)),
+                    ) {
+                        let result =
+                            match crate::native_core::value_word::TaggedValue::from_bits(bits)
+                                .decode()
+                            {
+                                crate::native_core::value_word::DecodedValue::Number(value) => {
+                                    truthiness.execute(value)
+                                }
+                                crate::native_core::value_word::DecodedValue::I31(value) => {
+                                    truthiness.execute(f64::from(value))
+                                }
+                                _ => truthiness.execute_tagged_bits(bits),
+                            };
+                        if let Ok(truthy) = result {
+                            let target = if truthy {
+                                operation_pc.saturating_add(1)
+                            } else {
+                                usize::from(instruction.b)
+                            };
+                            self.last_native_execution = true;
+                            transition = Some(Ok(crate::vm::DispatchTransition::next(target)));
+                        }
+                    }
+                }
+            }
+            if transition.is_none() && instruction.opcode == crate::ir::Opcode::Jump {
+                if self.jump_leaves[offset].is_none() {
+                    if let (Some(control), crate::ir::ControlOperands::Jump { target }) =
+                        (self.admitted_control.as_ref(), entry.control)
+                    {
+                        let target_pc = usize::from(target);
+                        if control.edges().contains(&crate::stencil_cfg::RegionEdge {
+                            from: operation_pc,
+                            to: target_pc,
+                        }) {
+                            if let Some(owner) = self.physical.storage.shared() {
+                                self.jump_leaves[offset] =
+                                    crate::stencil_word_composition::NativeWordBranchPlan::new_unconditional_from_instruction(
+                                        instruction,
+                                        target_pc,
+                                        owner,
+                                    );
+                            }
+                        }
+                    }
+                }
+                if let Some(jump) = self.jump_leaves[offset].as_mut() {
+                    let condition = crate::native_core::value_word::TaggedValue::bool(true).bits();
+                    if jump.execute(condition, condition, condition).is_some() {
+                        if let crate::stencil_word_composition::NativeWordBranchContinuation::Jump {
+                            truthy_pc,
+                            ..
+                        } = jump.continuation()
+                        {
+                            self.last_native_execution = true;
+                            transition = Some(Ok(crate::vm::DispatchTransition::next(truthy_pc)));
+                        }
+                    }
+                }
+            }
+            if transition.is_none() {
+                if let Some(leaf) = self.binary_leaves[offset].as_mut() {
+                    let operands = if instruction.opcode == crate::ir::Opcode::IncI {
+                        registers
+                            .read_number(usize::from(instruction.b))
+                            .map(|lhs| (lhs, if instruction.flags != 0 { -1.0 } else { 1.0 }))
+                    } else if matches!(
+                        instruction.opcode.binary_operator(instruction.flags),
+                        Some(
+                            crate::ops::BinaryOp::NumericAdd
+                                | crate::ops::BinaryOp::NumericSubtract
+                        )
+                    ) {
+                        // Numeric update opcodes are unary ToNumeric
+                        // operations despite their fixed three-word binary
+                        // encoding. Their RHS is intentionally dead, so do
+                        // not require it to be a Number before selecting the
+                        // generated +/-1 leaf.
+                        registers
+                            .read_number(usize::from(instruction.b))
+                            .map(|lhs| (lhs, 0.0))
+                    } else if instruction.opcode == crate::ir::Opcode::AddConst {
+                        // `AddConst` stores its right operand in the immutable
+                        // constant pool, not in register `c`.  The generated
+                        // leaf receives the decoded numeric constant as its
+                        // second scalar; constant-left forms remain rejected
+                        // by `NativeBinaryPlan::new` to preserve operand order
+                        // and signed-zero semantics.
+                        if instruction.add_const_is_left() {
+                            None
+                        } else {
+                            code.constant(instruction.c).and_then(|constant| {
+                                let crate::ops::Constant::Number(rhs) = constant else {
+                                    return None;
+                                };
+                                registers
+                                    .read_number(usize::from(instruction.b))
+                                    .map(|lhs| (lhs, *rhs))
+                            })
+                        }
+                    } else {
+                        registers.read_number_pair(
+                            usize::from(instruction.b),
+                            usize::from(instruction.c),
+                        )
+                    };
+                    if let Some((lhs, rhs)) = operands {
+                        if let Ok(value) = leaf.execute(lhs, rhs) {
+                            if leaf.returns_boolean() {
+                                registers.write_boolean(usize::from(instruction.a), value != 0.0);
+                            } else {
+                                registers.write_number(usize::from(instruction.a), value);
+                            }
+                            self.last_native_execution = true;
+                            #[cfg(test)]
+                            {
+                                self.last_native_view = leaf.last_native_view();
+                            }
+                            transition = Some(Ok(crate::vm::DispatchTransition::next(
+                                operation_pc.saturating_add(1),
+                            )));
+                        }
+                    }
+                }
+            }
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            if transition.is_none()
+                && matches!(
+                    instruction.opcode.binary_operator(instruction.flags),
+                    Some(crate::ops::BinaryOp::StrictEqual | crate::ops::BinaryOp::StrictNotEqual)
+                )
+            {
+                if let (Some(leaf), Some(lhs), Some(rhs)) = (
+                    self.binary_leaves[offset].as_mut(),
+                    registers.word_bits(usize::from(instruction.b)),
+                    registers.word_bits(usize::from(instruction.c)),
+                ) {
+                    let identity_operands =
+                        crate::vm::identity_word(lhs) && crate::vm::identity_word(rhs);
+                    if identity_operands {
+                        if let Ok(value) = leaf.execute_tagged(lhs, rhs) {
+                            registers.write_boolean(usize::from(instruction.a), value);
+                            self.last_native_execution = true;
+                            #[cfg(test)]
+                            {
+                                self.last_native_view = leaf.last_native_view();
+                            }
+                            transition = Some(Ok(crate::vm::DispatchTransition::next(
+                                operation_pc.saturating_add(1),
+                            )));
+                        }
+                    }
+                }
+            }
+            let transition = match transition {
+                Some(transition) => transition,
+                None => crate::vm::run_baseline_instruction(
+                    code,
+                    operation_pc,
+                    entry,
+                    registers,
+                    context,
+                )
+                .map_err(|error| NativeDispatchError::SemanticAt {
+                    pc: operation_pc,
+                    error,
+                }),
+            }?;
+            if transition.completion.as_ref().is_some_and(|completion| {
+                !matches!(completion, crate::completion::Completion::Normal)
+            }) {
+                return Ok(Some(transition));
+            }
+            let crate::vm::DispatchTarget::Callee(target_pc) = transition.target else {
+                return Ok(Some(transition));
+            };
+            if !(pc..end).contains(&target_pc) {
+                return Ok(Some(transition));
+            }
+            let target_offset = target_pc.saturating_sub(pc);
+            if let Some(control) = self.admitted_control.as_ref() {
+                if !control.permits_transfer(self.operation_slice(), offset, target_pc) {
+                    return Err(NativeDispatchError::Physical(
+                        "native region leaf transition disagrees with its admitted CFG".into(),
+                    ));
+                }
+                if target_offset <= offset {
+                    let is_backedge = control.has_internal_backedge(operation_pc, target_pc);
+                    if !is_backedge {
+                        return Ok(Some(transition));
+                    }
+                    let interrupt = context.interrupt_flag();
+                    let pending = !interrupt.is_null()
+                        && unsafe { &*interrupt }.load(std::sync::atomic::Ordering::Acquire);
+                    if pending {
+                        context.clear_interrupt();
+                        return Ok(Some(transition));
+                    }
+                }
+                offset = target_offset;
+            } else {
+                if target_pc != operation_pc.saturating_add(1) {
+                    return Ok(Some(transition));
+                }
+                offset = offset.saturating_add(1);
+            }
+        }
+    }
 }
 
 impl std::fmt::Debug for NativeRegionPlan {
@@ -5553,7 +6836,7 @@ impl std::fmt::Debug for NativeRegionPlan {
         formatter
             .debug_struct("NativeRegionPlan")
             .field("key", &self.key)
-            .field("operations", &self.operations)
+            .field("operations", &self.operation_slice())
             .field("used_bytes", &self.physical.storage.used())
             .finish()
     }
@@ -5565,6 +6848,10 @@ impl std::fmt::Debug for NativeRegionPlan {
 #[derive(Debug, Clone)]
 pub(crate) struct BaselinePlan {
     entries: Rc<[BaselineEntry]>,
+    /// One immutable CFG/liveness view shared by every admission and later
+    /// baseline control consumer. It is derived from canonical entries and is
+    /// never a second semantic instruction representation.
+    control: Rc<ControlFlowFacts>,
     osr_entries: Rc<[u32]>,
     /// Sparse physical admissions.  The fixed-width span index is the only
     /// per-PC storage; alternatives are retained as typed records in one
@@ -5584,12 +6871,12 @@ impl PartialEq for BaselinePlan {
 
 impl Eq for BaselinePlan {}
 
-/// One build-time-lowered baseline entry.  The instruction remains canonical;
-/// handler/control facts are the mechanical consequences cached beside it.
+/// One build-time-lowered baseline entry. The instruction remains canonical;
+/// control facts are cached beside it; opcode dispatch is derived from the
+/// generated catalog at execution so there is one handler authority.
 #[derive(Clone, Copy)]
 pub(crate) struct BaselineEntry {
     pub(crate) instruction: crate::ir::Instruction,
-    pub(crate) handler: crate::ir::CompactHandler,
     pub(crate) control: crate::ir::ControlOperands,
 }
 
@@ -5603,224 +6890,7 @@ impl std::fmt::Debug for BaselineEntry {
     }
 }
 
-#[derive(Clone)]
-enum NativeAdmission {
-    Binary(Rc<RefCell<NativeBinaryPlan>>),
-    LoadConst(Rc<RefCell<NativeLoadConstPlan>>),
-    Truthiness(Rc<RefCell<NativeTruthinessPlan>>),
-    Nullish(Rc<RefCell<NativeNullishPlan>>),
-    Unary(Rc<RefCell<NativeUnaryPlan>>),
-    AddChain(Rc<RefCell<NativeAddChainPlan>>),
-    LocalBinary(Rc<RefCell<crate::stencil_fusion::NativeLocalBinaryPlan>>),
-    LocalPredicate(Rc<RefCell<crate::stencil_fusion::NativeLocalPredicatePlan>>),
-    LocalProperty(Rc<RefCell<crate::stencil_fusion::NativeLocalPropertyPlan>>),
-    NumericDag(Rc<RefCell<crate::stencil_numeric_dag::NativeNumericDagPlan>>),
-    NumberClassify(Rc<RefCell<crate::stencil_number_classify::NativeNumberClassifyPlan>>),
-    NullishTruthy(Rc<RefCell<crate::stencil_nullish_truthy::NativeNullishTruthyPlan>>),
-    MissingProperty(Rc<RefCell<crate::stencil_missing_property::NativeMissingPropertyPlan>>),
-    DenseFill(Rc<RefCell<crate::stencil_dense_array_fill::NativeDenseFillPlan>>),
-    IntegerLoop(Rc<RefCell<crate::stencil_numeric_integer_loop::NativeIntegerLoopPlan>>),
-    FloatingLoop(Rc<RefCell<crate::stencil_numeric_floating_loop::NativeFloatingLoopPlan>>),
-    BitwiseLoop(Rc<RefCell<crate::stencil_numeric_bitwise_loop::NativeBitwiseLoopPlan>>),
-    IndependentLoop(
-        Rc<RefCell<crate::stencil_numeric_independent_loop::NativeIndependentLoopPlan>>,
-    ),
-    MixedLoop(Rc<RefCell<crate::stencil_numeric_mixed_loop::NativeMixedLoopPlan>>),
-    DenseUpdate(Rc<RefCell<crate::stencil_dense_array_update::NativeDenseUpdatePlan>>),
-    DenseCopy(Rc<RefCell<crate::stencil_dense_array_copy::NativeDenseCopyPlan>>),
-    Reduction(Rc<RefCell<crate::stencil_ordered_reduction::NativeReductionPlan>>),
-    I32Pattern(Rc<RefCell<crate::stencil_i32_pattern::NativeI32PatternPlan>>),
-    LocalAffineSum(Rc<RefCell<crate::stencil_local_affine_sum::NativeLocalAffineSumPlan>>),
-    LocalRecursiveSum(Rc<RefCell<crate::stencil_local_recursive_sum::NativeLocalRecursiveSumPlan>>),
-    CallReturn(Rc<RefCell<crate::stencil_call_return::NativeCallReturnPlan>>),
-    ForwardCall(Rc<RefCell<crate::stencil_forward_call::NativeForwardCallPlan>>),
-    ForwardPair(Rc<RefCell<crate::stencil_forward_call::NativeForwardPairPlan>>),
-    FreshObjectCall(Rc<RefCell<crate::stencil_fresh_object_call::NativeFreshObjectCallPlan>>),
-    MethodCall(Rc<RefCell<crate::stencil_method_call::NativeMethodCallPlan>>),
-    PropertyPair(Rc<RefCell<crate::stencil_property_pair::NativePropertyPairPlan>>),
-    PropertyReturnCall(
-        Rc<RefCell<crate::stencil_property_return_call::NativePropertyReturnCallPlan>>,
-    ),
-    PropertyStoreCall(Rc<RefCell<crate::stencil_property_store_call::NativePropertyStoreCallPlan>>),
-    PrototypeCall(Rc<RefCell<crate::stencil_prototype_call::NativePrototypeCallPlan>>),
-    StringConcat(Rc<RefCell<crate::stencil_string_concat::StringConcatPlan>>),
-    StringBuiltin(Rc<RefCell<crate::stencil_string_builtin::StringBuiltinPlan>>),
-    PropertyNumeric(Rc<RefCell<crate::stencil_property_numeric::PropertyNumericPlan>>),
-    Move(Rc<RefCell<NativeMovePlan>>),
-    LoadLocal(Rc<RefCell<NativeMovePlan>>),
-    StoreLocal(Rc<RefCell<NativeMovePlan>>),
-    StoreProperty(Rc<RefCell<NativePropertyPlan>>),
-    Property(Rc<RefCell<NativePropertyPlan>>),
-    Dispatch(Rc<RefCell<NativeDispatchPlan>>),
-    Region(Rc<RefCell<NativeRegionPlan>>),
-}
-
-impl AdmissionEntry for NativeAdmission {
-    fn retained_metadata_bytes(&self) -> usize {
-        use crate::stencil_admission_budget::shared_value_bytes;
-        match self {
-            Self::Binary(_) => shared_value_bytes::<RefCell<NativeBinaryPlan>>(),
-            Self::LoadConst(_) => shared_value_bytes::<RefCell<NativeLoadConstPlan>>(),
-            Self::Truthiness(_) => shared_value_bytes::<RefCell<NativeTruthinessPlan>>(),
-            Self::Nullish(_) => shared_value_bytes::<RefCell<NativeNullishPlan>>(),
-            Self::Unary(_) => shared_value_bytes::<RefCell<NativeUnaryPlan>>(),
-            Self::AddChain(_) => shared_value_bytes::<RefCell<NativeAddChainPlan>>(),
-            Self::LocalBinary(_) => {
-                shared_value_bytes::<RefCell<crate::stencil_fusion::NativeLocalBinaryPlan>>()
-            }
-            Self::LocalPredicate(_) => {
-                shared_value_bytes::<RefCell<crate::stencil_fusion::NativeLocalPredicatePlan>>()
-            }
-            Self::LocalProperty(_) => {
-                shared_value_bytes::<RefCell<crate::stencil_fusion::NativeLocalPropertyPlan>>()
-            }
-            Self::NumericDag(_) => {
-                shared_value_bytes::<RefCell<crate::stencil_numeric_dag::NativeNumericDagPlan>>()
-            }
-            Self::NumberClassify(_) => shared_value_bytes::<
-                RefCell<crate::stencil_number_classify::NativeNumberClassifyPlan>,
-            >(),
-            Self::NullishTruthy(_) => shared_value_bytes::<
-                RefCell<crate::stencil_nullish_truthy::NativeNullishTruthyPlan>,
-            >(),
-            Self::MissingProperty(_) => shared_value_bytes::<
-                RefCell<crate::stencil_missing_property::NativeMissingPropertyPlan>,
-            >(),
-            Self::DenseFill(_) => shared_value_bytes::<
-                RefCell<crate::stencil_dense_array_fill::NativeDenseFillPlan>,
-            >(),
-            Self::IntegerLoop(_) => shared_value_bytes::<
-                RefCell<crate::stencil_numeric_integer_loop::NativeIntegerLoopPlan>,
-            >(),
-            Self::FloatingLoop(_) => shared_value_bytes::<
-                RefCell<crate::stencil_numeric_floating_loop::NativeFloatingLoopPlan>,
-            >(),
-            Self::BitwiseLoop(_) => shared_value_bytes::<
-                RefCell<crate::stencil_numeric_bitwise_loop::NativeBitwiseLoopPlan>,
-            >(),
-            Self::IndependentLoop(_) => shared_value_bytes::<
-                RefCell<crate::stencil_numeric_independent_loop::NativeIndependentLoopPlan>,
-            >(),
-            Self::MixedLoop(_) => shared_value_bytes::<
-                RefCell<crate::stencil_numeric_mixed_loop::NativeMixedLoopPlan>,
-            >(),
-            Self::DenseUpdate(_) => shared_value_bytes::<
-                RefCell<crate::stencil_dense_array_update::NativeDenseUpdatePlan>,
-            >(),
-            Self::DenseCopy(_) => shared_value_bytes::<
-                RefCell<crate::stencil_dense_array_copy::NativeDenseCopyPlan>,
-            >(),
-            Self::Reduction(_) => shared_value_bytes::<
-                RefCell<crate::stencil_ordered_reduction::NativeReductionPlan>,
-            >(),
-            Self::I32Pattern(_) => {
-                shared_value_bytes::<RefCell<crate::stencil_i32_pattern::NativeI32PatternPlan>>()
-            }
-            Self::LocalAffineSum(_) => shared_value_bytes::<
-                RefCell<crate::stencil_local_affine_sum::NativeLocalAffineSumPlan>,
-            >(),
-            Self::LocalRecursiveSum(_) => shared_value_bytes::<
-                RefCell<crate::stencil_local_recursive_sum::NativeLocalRecursiveSumPlan>,
-            >(),
-            Self::CallReturn(_) => {
-                shared_value_bytes::<RefCell<crate::stencil_call_return::NativeCallReturnPlan>>()
-            }
-            Self::ForwardCall(_) => {
-                shared_value_bytes::<RefCell<crate::stencil_forward_call::NativeForwardCallPlan>>()
-            }
-            Self::ForwardPair(_) => {
-                shared_value_bytes::<RefCell<crate::stencil_forward_call::NativeForwardPairPlan>>()
-            }
-            Self::FreshObjectCall(_) => shared_value_bytes::<
-                RefCell<crate::stencil_fresh_object_call::NativeFreshObjectCallPlan>,
-            >(),
-            Self::MethodCall(_) => {
-                shared_value_bytes::<RefCell<crate::stencil_method_call::NativeMethodCallPlan>>()
-            }
-            Self::PropertyPair(_) => shared_value_bytes::<
-                RefCell<crate::stencil_property_pair::NativePropertyPairPlan>,
-            >(),
-            Self::PropertyReturnCall(_) => shared_value_bytes::<
-                RefCell<crate::stencil_property_return_call::NativePropertyReturnCallPlan>,
-            >(),
-            Self::PropertyStoreCall(_) => shared_value_bytes::<
-                RefCell<crate::stencil_property_store_call::NativePropertyStoreCallPlan>,
-            >(),
-            Self::PrototypeCall(_) => shared_value_bytes::<
-                RefCell<crate::stencil_prototype_call::NativePrototypeCallPlan>,
-            >(),
-            Self::StringConcat(_) => {
-                shared_value_bytes::<RefCell<crate::stencil_string_concat::StringConcatPlan>>()
-            }
-            Self::StringBuiltin(_) => {
-                shared_value_bytes::<RefCell<crate::stencil_string_builtin::StringBuiltinPlan>>()
-            }
-            Self::PropertyNumeric(_) => shared_value_bytes::<
-                RefCell<crate::stencil_property_numeric::PropertyNumericPlan>,
-            >(),
-            Self::Move(_) | Self::LoadLocal(_) | Self::StoreLocal(_) => {
-                shared_value_bytes::<RefCell<NativeMovePlan>>()
-            }
-            Self::StoreProperty(_) | Self::Property(_) => {
-                shared_value_bytes::<RefCell<NativePropertyPlan>>()
-            }
-            Self::Dispatch(_) => shared_value_bytes::<RefCell<NativeDispatchPlan>>(),
-            Self::Region(_) => shared_value_bytes::<RefCell<NativeRegionPlan>>(),
-        }
-    }
-}
-
-impl std::fmt::Debug for NativeAdmission {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let name = match self {
-            Self::Binary(_) => "binary",
-            Self::LoadConst(_) => "load_const",
-            Self::Truthiness(_) => "truthiness",
-            Self::Nullish(_) => "nullish",
-            Self::Unary(_) => "unary",
-            Self::AddChain(_) => "add_chain",
-            Self::LocalBinary(_) => "local_binary",
-            Self::LocalPredicate(_) => "local_predicate",
-            Self::LocalProperty(_) => "local_property",
-            Self::NumericDag(_) => "numeric_dag",
-            Self::NumberClassify(_) => "number_classify",
-            Self::NullishTruthy(_) => "nullish_truthy",
-            Self::MissingProperty(_) => "missing_property",
-            Self::DenseFill(_) => "dense_fill",
-            Self::IntegerLoop(_) => "integer_loop",
-            Self::FloatingLoop(_) => "floating_loop",
-            Self::BitwiseLoop(_) => "bitwise_loop",
-            Self::IndependentLoop(_) => "independent_loop",
-            Self::MixedLoop(_) => "mixed_loop",
-            Self::DenseUpdate(_) => "dense_update",
-            Self::DenseCopy(_) => "dense_copy",
-            Self::Reduction(_) => "reduction",
-            Self::I32Pattern(_) => "i32_pattern",
-            Self::LocalAffineSum(_) => "local_affine_sum",
-            Self::LocalRecursiveSum(_) => "local_recursive_sum",
-            Self::CallReturn(_) => "call_return",
-            Self::ForwardCall(_) => "forward_call",
-            Self::ForwardPair(_) => "forward_pair",
-            Self::FreshObjectCall(_) => "fresh_object_call",
-            Self::MethodCall(_) => "method_call",
-            Self::PropertyPair(_) => "property_pair",
-            Self::PropertyReturnCall(_) => "property_return_call",
-            Self::PropertyStoreCall(_) => "property_store_call",
-            Self::PrototypeCall(_) => "prototype_call",
-            Self::StringConcat(_) => "string_concat",
-            Self::StringBuiltin(_) => "string_builtin",
-            Self::PropertyNumeric(_) => "property_numeric",
-            Self::Move(_) => "move",
-            Self::LoadLocal(_) => "load_local",
-            Self::StoreLocal(_) => "store_local",
-            Self::StoreProperty(_) => "store_property",
-            Self::Property(_) => "property",
-            Self::Dispatch(_) => "dispatch",
-            Self::Region(_) => "region",
-        };
-        formatter.write_str(name)
-    }
-}
+include!("machine_native_admission.rs");
 
 macro_rules! native_admission {
     ($variant:ident, $plan:expr) => {
@@ -5831,10 +6901,14 @@ macro_rules! native_admission {
 macro_rules! typed_admission_accessors {
     ($handle:ident, $public:ident, $variant:ident, $ty:ty) => {
         fn $handle(&self, pc: usize) -> Option<&Rc<RefCell<$ty>>> {
-            self.native_handle(pc, |admission| match admission {
-                NativeAdmission::$variant(plan) => Some(plan),
-                _ => None,
-            })
+            self.native_handle(
+                pc,
+                NativeAdmissionKind::$variant as u8,
+                |admission| match admission {
+                    NativeAdmission::$variant(plan) => Some(plan),
+                    _ => None,
+                },
+            )
         }
 
         pub(crate) fn $public(&self, pc: usize) -> Option<&RefCell<$ty>> {
@@ -5846,10 +6920,13 @@ macro_rules! typed_admission_accessors {
 macro_rules! optimizing_admission_accessors {
     ($name:ident, $variant:ident, $ty:ty) => {
         pub(crate) fn $name(&self) -> Option<&RefCell<$ty>> {
-            self.native_handle(|admission| match admission {
-                NativeAdmission::$variant(plan) => Some(plan),
-                _ => None,
-            })
+            self.native_handle(
+                NativeAdmissionKind::$variant as u8,
+                |admission| match admission {
+                    NativeAdmission::$variant(plan) => Some(plan),
+                    _ => None,
+                },
+            )
         }
     };
 }
@@ -5879,7 +6956,7 @@ fn region_admission_control(
     let control = cfg.region_plan(entries, start, contract.operations)?;
     (record.bindings_match_entries(entries, start)
         && control.matches_operations(contract.operations)
-        && region_outputs_cover_exit(entries, cfg, start, record))
+        && region_outputs_cover_exit_with_control(entries, cfg, start, record, &control))
     .then_some(control)
 }
 
@@ -5893,11 +6970,25 @@ fn region_admission_matches(
     region_admission_control(entries, cfg, start, record).is_some()
 }
 
+#[cfg(test)]
 fn region_outputs_cover_exit(
     entries: &[BaselineEntry],
     cfg: &ControlFlowFacts,
     start: usize,
     record: &crate::stencil_select::RegionRecord,
+) -> bool {
+    let Some(control) = cfg.region_plan(entries, start, record.operations) else {
+        return false;
+    };
+    region_outputs_cover_exit_with_control(entries, cfg, start, record, &control)
+}
+
+fn region_outputs_cover_exit_with_control(
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    start: usize,
+    record: &crate::stencil_select::RegionRecord,
+    control: &crate::stencil_cfg::RegionControlPlan,
 ) -> bool {
     if record.outputs.is_empty() {
         let abi = record.abi.contract();
@@ -5905,14 +6996,11 @@ fn region_outputs_cover_exit(
             return true;
         }
     }
-    let Some(end) = start.checked_add(record.operations.len()) else {
-        return false;
-    };
-    if end == entries.len() {
+    let live = cfg.region_live_out(control);
+    if live.is_empty() {
         return true;
     }
-    cfg.live_in_at(end)
-        .is_some_and(|live| record.outputs_cover_live_definitions(entries, start, live))
+    record.outputs_cover_live_definitions(entries, start, &live)
 }
 
 type SharedStencilPool = Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>;
@@ -5981,8 +7069,8 @@ pub(crate) fn compare_branch(
     pc: usize,
     comparison: crate::ir::Instruction,
 ) -> Option<CompareBranch> {
-    for offset in 1..crate::stencil_plan::MAX_BLOCK_VALUES {
-        let branch_pc = pc.checked_add(offset)?;
+    let scan_end = cfg.straight_line_scan_end(pc)?;
+    for branch_pc in pc.checked_add(1)?..scan_end {
         let entry = entries.get(branch_pc)?;
         if entry.instruction.opcode == crate::ir::Opcode::JumpIfFalse {
             return compare_branch_at(entries, cfg, pc, branch_pc, comparison, entry.instruction);
@@ -6012,7 +7100,7 @@ fn compare_branch_at(
         return None;
     }
     let end = branch_pc.checked_add(1)?;
-    let physical_key = comparison_branch_key(comparison.flags);
+    let physical_key = comparison_branch_key(comparison);
     let control = cfg.region_control(start, end)?;
     let (planned_false, planned_true) = control.terminal_conditional_exits()?;
     (planned_false == false_target && planned_true == end).then_some(CompareBranch {
@@ -6021,19 +7109,11 @@ fn compare_branch_at(
     })
 }
 
-fn comparison_branch_key(flags: u8) -> Option<crate::stencil_fact::RegionKey> {
-    use crate::ops::BinaryOp::*;
-    match crate::ir::compact_binary_operator(flags)? {
-        Equal | StrictEqual => Some(crate::stencil_select::compare_equal_branch_region_key()),
-        NotEqual | StrictNotEqual => {
-            Some(crate::stencil_select::compare_not_equal_branch_region_key())
-        }
-        LessThan => Some(crate::stencil_select::compare_less_branch_region_key()),
-        LessEqual => Some(crate::stencil_select::compare_less_equal_branch_region_key()),
-        GreaterThan => Some(crate::stencil_select::compare_greater_branch_region_key()),
-        GreaterEqual => Some(crate::stencil_select::compare_greater_equal_branch_region_key()),
-        _ => None,
-    }
+fn comparison_branch_key(
+    comparison: crate::ir::Instruction,
+) -> Option<crate::stencil_fact::RegionKey> {
+    let operator = comparison.opcode.binary_operator(comparison.flags)?;
+    crate::stencil_select::binary_branch_region_key(operator)
 }
 
 fn dead_pure_definition(entry: &BaselineEntry, live_after: &BTreeSet<u16>) -> bool {
@@ -6128,6 +7208,46 @@ fn add_chain_admission(
         .map(|plan| NativeAdmission::AddChain(Rc::new(RefCell::new(plan))))
 }
 
+fn binary_series_admission(
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    let plan = crate::stencil_region_builder::NativeBinarySeriesPlan::new(
+        entries,
+        pc,
+        policy,
+        Rc::clone(arena),
+        cfg.live_in(),
+    )?;
+    cfg.region_control(pc, pc.checked_add(plan.binary_span())?)?;
+    Some(NativeAdmission::BinarySeries(Rc::new(RefCell::new(plan))))
+}
+
+fn constant_binary_series_admission(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    let plan = crate::stencil_region_builder::NativeConstantBinarySeriesPlan::new(
+        code,
+        entries,
+        pc,
+        policy,
+        Rc::clone(arena),
+        cfg.live_in(),
+    )?;
+    cfg.region_control(pc, pc.checked_add(plan.span())?)?;
+    Some(NativeAdmission::ConstantBinarySeries(Rc::new(
+        RefCell::new(plan),
+    )))
+}
+
 fn local_binary_admission(
     code: CodeView<'_>,
     entries: &[BaselineEntry],
@@ -6137,9 +7257,54 @@ fn local_binary_admission(
     arena: &SharedStencilPool,
 ) -> Option<NativeAdmission> {
     let selection = select_local_numeric(code, entries, cfg, pc)?;
+    // Structured operations carry register windows in their cold payload, so
+    // the compact flow cannot prove producers immediately before them dead.
+    // Keep the canonical sequence intact at that boundary.
+    let end = pc.checked_add(usize::from(selection.span))?;
+    if straight_line_reaches_implicit_consumer(entries, end) {
+        return None;
+    }
     let plan =
         crate::stencil_fusion::NativeLocalBinaryPlan::new(selection, policy, Rc::clone(arena))?;
     Some(NativeAdmission::LocalBinary(Rc::new(RefCell::new(plan))))
+}
+
+/// Structured operations consume register windows encoded in their cold
+/// payload rather than in `Instruction::register_flow`. A value cover that
+/// skips producers immediately before one of these operations cannot prove
+/// those implicit operands are dead, so it must leave the canonical sequence
+/// intact. The explicit call/binary forms remain eligible.
+fn implicit_register_consumer(opcode: crate::ir::Opcode) -> bool {
+    matches!(
+        opcode,
+        crate::ir::Opcode::TailCall
+            | crate::ir::Opcode::MakeArray
+            | crate::ir::Opcode::MakeFunctionWithKind
+            | crate::ir::Opcode::SetFunctionName
+            | crate::ir::Opcode::MakeObject
+            | crate::ir::Opcode::Construct
+            | crate::ir::Opcode::ForOf
+            | crate::ir::Opcode::CallSlow
+            | crate::ir::Opcode::Try
+            | crate::ir::Opcode::Await
+            | crate::ir::Opcode::MakeBuiltin
+    )
+}
+
+fn straight_line_reaches_implicit_consumer(entries: &[BaselineEntry], start: usize) -> bool {
+    for entry in entries.iter().skip(start) {
+        let opcode = entry.instruction.opcode;
+        if implicit_register_consumer(opcode) {
+            return true;
+        }
+        if !matches!(
+            opcode.control_operands(entry.instruction),
+            crate::ir::ControlOperands::Next
+        ) {
+            break;
+        }
+    }
+    false
 }
 
 fn numeric_dag_admission(
@@ -6417,6 +7582,7 @@ fn call_return_admission(
     policy: crate::stencil_policy::ExecutionPolicy,
     arena: &SharedStencilPool,
 ) -> Option<NativeAdmission> {
+    policy.local_fusions.full().then_some(())?;
     let selection = crate::stencil_call_return::select_call_return(entries, cfg, pc)?;
     let plan =
         crate::stencil_call_return::NativeCallReturnPlan::new(selection, policy, Rc::clone(arena))?;
@@ -6431,7 +7597,7 @@ fn forward_call_admission(
     policy: crate::stencil_policy::ExecutionPolicy,
     arena: &SharedStencilPool,
 ) -> Option<NativeAdmission> {
-    policy.local_fusions.numeric().then_some(())?;
+    policy.local_fusions.full().then_some(())?;
     let selection = crate::stencil_forward_call::select_forward_call(code, entries, cfg, pc)?;
     let plan =
         crate::stencil_forward_call::NativeForwardCallPlan::new(selection, Rc::clone(arena))?;
@@ -6446,7 +7612,7 @@ fn forward_pair_admission(
     policy: crate::stencil_policy::ExecutionPolicy,
     arena: &SharedStencilPool,
 ) -> Option<NativeAdmission> {
-    policy.local_fusions.numeric().then_some(())?;
+    policy.local_fusions.full().then_some(())?;
     let selection = crate::stencil_forward_call::select_forward_pair(code, entries, cfg, pc)?;
     let plan =
         crate::stencil_forward_call::NativeForwardPairPlan::new(selection, Rc::clone(arena))?;
@@ -6460,7 +7626,7 @@ fn fresh_object_call_admission(
     pc: usize,
     policy: crate::stencil_policy::ExecutionPolicy,
 ) -> Option<NativeAdmission> {
-    policy.local_fusions.numeric().then_some(())?;
+    policy.local_fusions.full().then_some(())?;
     let selection =
         crate::stencil_fresh_object_call::select_fresh_object_call(code, entries, cfg, pc)?;
     let plan = crate::stencil_fresh_object_call::NativeFreshObjectCallPlan::new(selection);
@@ -6477,7 +7643,7 @@ fn method_call_admission(
     policy: crate::stencil_policy::ExecutionPolicy,
     arena: &SharedStencilPool,
 ) -> Option<NativeAdmission> {
-    policy.local_fusions.numeric().then_some(())?;
+    policy.local_fusions.full().then_some(())?;
     let selection = crate::stencil_method_call::select_method_call(code, entries, cfg, pc)?;
     let plan =
         crate::stencil_method_call::NativeMethodCallPlan::new(selection, policy, Rc::clone(arena))?;
@@ -6491,7 +7657,7 @@ fn property_pair_admission(
     pc: usize,
     policy: crate::stencil_policy::ExecutionPolicy,
 ) -> Option<NativeAdmission> {
-    policy.local_fusions.numeric().then_some(())?;
+    policy.local_fusions.full().then_some(())?;
     let selection = crate::stencil_property_pair::select_property_pair(code, entries, cfg, pc)?;
     let plan = crate::stencil_property_pair::NativePropertyPairPlan::new(selection);
     Some(NativeAdmission::PropertyPair(Rc::new(RefCell::new(plan))))
@@ -6503,7 +7669,7 @@ fn property_return_call_admission(
     pc: usize,
     policy: crate::stencil_policy::ExecutionPolicy,
 ) -> Option<NativeAdmission> {
-    policy.local_fusions.any().then_some(())?;
+    policy.local_fusions.full().then_some(())?;
     let selection =
         crate::stencil_property_return_call::select_property_return_call(entries, cfg, pc)?;
     let plan = crate::stencil_property_return_call::NativePropertyReturnCallPlan::new(selection);
@@ -6519,7 +7685,7 @@ fn property_store_call_admission(
     pc: usize,
     policy: crate::stencil_policy::ExecutionPolicy,
 ) -> Option<NativeAdmission> {
-    policy.local_fusions.numeric().then_some(())?;
+    policy.local_fusions.full().then_some(())?;
     let selection =
         crate::stencil_property_store_call::select_property_store_call(code, entries, cfg, pc)?;
     let plan = crate::stencil_property_store_call::NativePropertyStoreCallPlan::new(selection);
@@ -6534,7 +7700,7 @@ fn prototype_call_admission(
     pc: usize,
     policy: crate::stencil_policy::ExecutionPolicy,
 ) -> Option<NativeAdmission> {
-    policy.local_fusions.numeric().then_some(())?;
+    policy.local_fusions.full().then_some(())?;
     let selection = crate::stencil_prototype_call::select_single_argument_call(entries, cfg, pc)?;
     let plan = crate::stencil_prototype_call::NativePrototypeCallPlan::new(selection);
     Some(NativeAdmission::PrototypeCall(Rc::new(RefCell::new(plan))))
@@ -6547,7 +7713,7 @@ fn string_concat_admission(
     pc: usize,
     policy: crate::stencil_policy::ExecutionPolicy,
 ) -> Option<NativeAdmission> {
-    policy.local_fusions.any().then_some(())?;
+    policy.local_fusions.full().then_some(())?;
     let plan = crate::stencil_string_concat::select_string_concat(code, entries, cfg, pc)?;
     Some(NativeAdmission::StringConcat(Rc::new(RefCell::new(plan))))
 }
@@ -6559,7 +7725,7 @@ fn string_builtin_admission(
     pc: usize,
     policy: crate::stencil_policy::ExecutionPolicy,
 ) -> Option<NativeAdmission> {
-    policy.local_fusions.any().then_some(())?;
+    policy.local_fusions.full().then_some(())?;
     let plan = crate::stencil_string_builtin::select_string_builtin(code, entries, cfg, pc)?;
     Some(NativeAdmission::StringBuiltin(Rc::new(RefCell::new(plan))))
 }
@@ -6604,8 +7770,8 @@ fn local_predicate_admission(
 ) -> Option<NativeAdmission> {
     let load = entries.get(pc)?.instruction;
     let mut predicate = None;
-    for offset in 1..crate::stencil_plan::MAX_BLOCK_VALUES {
-        let branch_pc = pc.checked_add(offset)?;
+    let scan_end = cfg.straight_line_scan_end(pc)?;
+    for branch_pc in pc.checked_add(1)?..scan_end {
         let entry = entries.get(branch_pc)?;
         if entry.instruction.opcode == crate::ir::Opcode::JumpIfFalse {
             let control = cfg.region_control(pc, branch_pc.checked_add(1)?)?;
@@ -6639,6 +7805,328 @@ fn local_predicate_admission(
         }
     }
     None
+}
+
+/// Admit the smallest boolean control region whose two arms each materialize
+/// a constant and return it.  The generated branch only accepts tagged bools;
+/// every other condition remains on the canonical JumpIfFalse handler.
+fn constant_branch_admission(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    policy.native_leaves.then_some(())?;
+    let branch = entries.get(pc)?.instruction;
+    (branch.opcode == crate::ir::Opcode::JumpIfFalse
+        && branch.flags == 0
+        && branch
+            .opcode
+            .operands_are_canonical([branch.a, branch.b, branch.c]))
+    .then_some(())?;
+    let true_pc = pc.checked_add(1)?;
+    let false_pc = usize::from(branch.b);
+    // A compare producer has a stronger fused branch plan that owns both the
+    // comparison and its truthiness boundary.  Do not let the more general
+    // constant-arm selector steal that site merely because the two return
+    // arms happen to be separated in the source CFG.
+    if branch_condition_has_compare_plan(entries, cfg, pc, branch.a) {
+        return None;
+    }
+    // The generated image materializes both arms beside the branch, so the
+    // source false arm may be separated by unreachable padding.  Derive the
+    // verified source span from its actual target instead of assuming the
+    // historical five-op layout.  Reject overlap with the true arm: otherwise
+    // one arm could enter the other's Return through an accidental fallthrough.
+    let true_arm_end = pc.checked_add(3)?;
+    (false_pc >= true_arm_end).then_some(())?;
+    let end = false_pc.checked_add(2)?;
+    let control = cfg.region_control(pc, end)?;
+    // Returns terminate each arm rather than the whole contiguous span, so
+    // `region_plan` (which models one terminal return) is intentionally not
+    // used here.  Validate only the reachable arm rows and require the CFG to
+    // contain exactly the branch's two source successors.  Any padding in the
+    // gap remains unreachable and therefore cannot be skipped semantic work.
+    let expected_edges = [
+        crate::stencil_cfg::RegionEdge {
+            from: pc,
+            to: true_pc,
+        },
+        crate::stencil_cfg::RegionEdge {
+            from: pc,
+            to: false_pc,
+        },
+    ];
+    let source_edges = control.edges().iter().filter(|edge| edge.from == pc);
+    (source_edges.clone().count() == expected_edges.len()
+        && expected_edges
+            .iter()
+            .all(|edge| control.edges().contains(edge)))
+    .then_some(())?;
+    let arm_operations = [
+        (true_pc, crate::ir::Opcode::LoadConst),
+        (true_pc.checked_add(1)?, crate::ir::Opcode::Return),
+        (false_pc, crate::ir::Opcode::LoadConst),
+        (false_pc.checked_add(1)?, crate::ir::Opcode::Return),
+    ];
+    arm_operations
+        .iter()
+        .all(|(arm_pc, expected)| {
+            entries.get(*arm_pc).is_some_and(|entry| {
+                expected.operands_match_physical_contract(
+                    entry.instruction.opcode,
+                    [
+                        entry.instruction.a,
+                        entry.instruction.b,
+                        entry.instruction.c,
+                    ],
+                )
+            })
+        })
+        .then_some(())?;
+    let plan = crate::stencil_word_composition::NativeWordConstantBranchPlan::new(
+        code,
+        entries,
+        pc,
+        true_pc,
+        false_pc,
+        Rc::clone(arena),
+    )?;
+    Some(NativeAdmission::ConstantBranch(Rc::new(RefCell::new(plan))))
+}
+
+fn branch_condition_has_compare_plan(
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    branch_pc: usize,
+    condition: u16,
+) -> bool {
+    for producer_pc in (0..branch_pc).rev() {
+        let Some(entry) = entries.get(producer_pc) else {
+            return false;
+        };
+        if entry.instruction.register_flow().definition == Some(condition) {
+            return compare_branch(entries, cfg, producer_pc, entry.instruction).is_some();
+        }
+        if !matches!(
+            entry.instruction.opcode.control_flow(),
+            crate::facts::ControlFlow::Next
+        ) {
+            break;
+        }
+    }
+    false
+}
+
+/// Admit generated boolean control after trying the value-producing witnesses.
+/// Return and move-join arms retain their selected-value continuations; a
+/// proven Boolean condition can otherwise use a branch-only image and leave
+/// both successor bodies to canonical execution. Unknown truthiness remains
+/// with the ordinary coercion leaf.
+fn word_branch_admission(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    policy.native_leaves.then_some(())?;
+    let branch = entries.get(pc)?.instruction;
+    (branch.opcode == crate::ir::Opcode::JumpIfFalse
+        && branch.flags == 0
+        && branch
+            .opcode
+            .operands_are_canonical([branch.a, branch.b, branch.c]))
+    .then_some(())?;
+    let true_pc = pc.checked_add(1)?;
+    let false_pc = usize::from(branch.b);
+    if false_pc > pc.checked_add(2)? {
+        if let Some(true_jump) = true_pc
+            .checked_add(1)
+            .and_then(|next| entries.get(next))
+            .map(|entry| entry.instruction)
+        {
+            let join_pc = usize::from(true_jump.a);
+            let control = join_pc
+                .checked_add(1)
+                .and_then(|end| cfg.region_control(pc, end));
+            let source_shape = control.as_ref().is_some_and(|control| {
+                control
+                    .edges()
+                    .iter()
+                    .all(|edge| edge.from >= pc && edge.to <= join_pc)
+            });
+            let destination = entries.get(true_pc).map(|entry| entry.instruction.a);
+            let live_join = destination
+                .zip(cfg.live_in_at(join_pc))
+                .is_some_and(|(destination, live)| live.contains(&destination));
+            if source_shape && live_join {
+                if let Some(plan) =
+                    crate::stencil_word_composition::NativeWordBranchPlan::new_move_join(
+                        entries,
+                        pc,
+                        true_pc,
+                        false_pc,
+                        join_pc,
+                        Rc::clone(arena),
+                    )
+                {
+                    return Some(NativeAdmission::WordBranch(Rc::new(RefCell::new(plan))));
+                }
+            }
+        }
+    }
+    if false_pc == pc.checked_add(2)? {
+        let operations = [
+            crate::ir::Opcode::JumpIfFalse,
+            crate::ir::Opcode::Return,
+            crate::ir::Opcode::Return,
+        ];
+        // Each branch arm terminates independently, so the shared region-plan
+        // predicate (which models one terminal return at the span end) is too
+        // strict here. Validate the CFG window and every physical operand row
+        // directly, as the constant-arm witness does.
+        if let Some(control) = pc
+            .checked_add(operations.len())
+            .and_then(|end| cfg.region_control(pc, end))
+        {
+            let rows_valid = entries
+                .get(pc..pc.checked_add(operations.len())?)?
+                .iter()
+                .zip(operations)
+                .all(|(entry, expected)| {
+                    expected.operands_match_physical_contract(
+                        entry.instruction.opcode,
+                        [
+                            entry.instruction.a,
+                            entry.instruction.b,
+                            entry.instruction.c,
+                        ],
+                    )
+                });
+            if rows_valid {
+                if let Some(plan) = crate::stencil_word_composition::NativeWordBranchPlan::new(
+                    entries,
+                    pc,
+                    true_pc,
+                    false_pc,
+                    control,
+                    Rc::clone(arena),
+                ) {
+                    return Some(NativeAdmission::WordBranch(Rc::new(RefCell::new(plan))));
+                }
+            }
+        }
+    }
+
+    // A branch-only image removes the canonical branch dispatch while leaving
+    // both successors and all arm effects in the ordinary driver.  Admit it
+    // only when dataflow proves the condition is Boolean; otherwise the
+    // existing truthiness leaf must retain ownership of Number/object/string
+    // coercion.
+    // A compare producer already owns a stronger fused branch plan, including
+    // its non-number fallback accounting; do not replace that boundary with a
+    // generic branch cover.
+    if branch_condition_has_compare_plan(entries, cfg, pc, branch.a) {
+        return None;
+    }
+    if !boolean_condition_is_proven(code, entries, pc, branch.a) {
+        return None;
+    }
+    let control = cfg.region_control(pc, pc.checked_add(1)?)?;
+    let expected = [
+        crate::stencil_cfg::RegionEdge {
+            from: pc,
+            to: true_pc,
+        },
+        crate::stencil_cfg::RegionEdge {
+            from: pc,
+            to: false_pc,
+        },
+    ];
+    (expected.iter().all(|edge| control.edges().contains(edge))
+        && control
+            .edges()
+            .iter()
+            .filter(|edge| edge.from == pc)
+            .count()
+            == expected.len())
+    .then_some(())?;
+    let plan = crate::stencil_word_composition::NativeWordBranchPlan::new_jump(
+        entries,
+        pc,
+        true_pc,
+        false_pc,
+        Rc::clone(arena),
+    )?;
+    Some(NativeAdmission::WordBranch(Rc::new(RefCell::new(plan))))
+}
+
+fn boolean_condition_is_proven(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    branch_pc: usize,
+    condition: u16,
+) -> bool {
+    for producer_pc in (0..branch_pc).rev() {
+        let Some(instruction) = entries.get(producer_pc).map(|entry| entry.instruction) else {
+            return false;
+        };
+        if instruction.register_flow().definition != Some(condition) {
+            continue;
+        }
+        // A definition before another control edge may have alternate
+        // reaching definitions at this branch.  Keep this proof local to one
+        // straight-line path until CFG liveness/value facts can provide a
+        // joined type proof; guessing from source order would make the native
+        // branch unsound at joins.
+        if (producer_pc + 1..branch_pc).any(|pc| {
+            entries.get(pc).is_none_or(|entry| {
+                entry.instruction.opcode.control_flow() != crate::facts::ControlFlow::Next
+            })
+        }) {
+            return false;
+        }
+        return match instruction.opcode {
+            crate::ir::Opcode::LoadConst => code
+                .constant_at(producer_pc)
+                .is_some_and(|(_, constant)| matches!(constant, crate::ops::Constant::Boolean(_))),
+            crate::ir::Opcode::Unary => matches!(
+                instruction.flags,
+                flag if flag == crate::ir::compact_unary_id(crate::ops::UnaryOp::Not)
+                    || flag == crate::ir::compact_unary_id(crate::ops::UnaryOp::IsNullish)
+            ),
+            crate::ir::Opcode::Binary
+            | crate::ir::Opcode::Equal
+            | crate::ir::Opcode::NotEqual
+            | crate::ir::Opcode::StrictEqual
+            | crate::ir::Opcode::StrictNotEqual
+            | crate::ir::Opcode::LessThan
+            | crate::ir::Opcode::LessEqual
+            | crate::ir::Opcode::GreaterThan
+            | crate::ir::Opcode::GreaterEqual => instruction
+                .opcode
+                .binary_operator(instruction.flags)
+                .is_some_and(|operator| {
+                    matches!(
+                        operator,
+                        crate::ops::BinaryOp::Equal
+                            | crate::ops::BinaryOp::NotEqual
+                            | crate::ops::BinaryOp::StrictEqual
+                            | crate::ops::BinaryOp::StrictNotEqual
+                            | crate::ops::BinaryOp::LessThan
+                            | crate::ops::BinaryOp::LessEqual
+                            | crate::ops::BinaryOp::GreaterThan
+                            | crate::ops::BinaryOp::GreaterEqual
+                    )
+                }),
+            _ => false,
+        };
+    }
+    false
 }
 
 fn is_nullish_predicate(instruction: crate::ir::Instruction, source: u16) -> bool {
@@ -6761,7 +8249,11 @@ fn select_value_window<T: crate::stencil_plan::RankedSelection>(
 ) -> Option<T> {
     let mut graph = crate::stencil_plan::BlockValueGraph::new();
     let mut best: Option<T> = None;
-    for offset in 0..crate::stencil_plan::MAX_BLOCK_VALUES {
+    // The CFG owns the scan boundary. The value graph may still reject a
+    // candidate when its explicit representation budget is exhausted, but a
+    // source-length prefix must not hide a later operation before control.
+    let scan_end = cfg.straight_line_scan_end(pc)?;
+    for offset in 0..scan_end.saturating_sub(pc) {
         let Some((operation_pc, operation, end)) =
             extend_value_window(code, entries, pc, offset, &mut graph)
         else {
@@ -6830,16 +8322,224 @@ fn region_admission(
     policy: crate::stencil_policy::ExecutionPolicy,
     arena: &SharedStencilPool,
 ) -> Option<NativeAdmission> {
-    let (record, control) = crate::stencil_select::region_records()
+    region_admission_inner(None, entries, cfg, pc, policy, arena)
+}
+
+fn region_admission_with_code(
+    code: CodeView<'_>,
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    region_admission_inner(Some(code), entries, cfg, pc, policy, arena)
+}
+
+fn region_admission_inner(
+    code: Option<CodeView<'_>>,
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    let static_candidate = crate::stencil_select::region_records()
         .iter()
         .filter_map(|record| {
-            (record.executable && record.abi.accepts_region_context()).then_some(())?;
+            (record.executable
+                && record.abi.accepts_region_context()
+                && generic_region_context_abi(record.abi))
+            .then_some(())?;
             let control = region_admission_control(entries, cfg, pc, record)?;
             Some((record, control))
         })
-        .max_by_key(|(record, _)| crate::stencil_select::admission_rank(record))?;
-    NativeRegionPlan::new_with_arena(record.key, policy, Rc::clone(arena), control)
+        .max_by_key(|(record, _)| crate::stencil_select::admission_rank(record));
+    if let Some((record, control)) = static_candidate {
+        return NativeRegionPlan::new_with_arena(record.key, policy, Rc::clone(arena), control)
+            .map(|plan| NativeAdmission::Region(Rc::new(RefCell::new(plan))));
+    }
+    generic_cfg_region_admission_inner(code, entries, cfg, pc, policy, arena)
+}
+
+/// Admit an arbitrary CFG prefix through the operation-agnostic generated
+/// dispatch bridge when no more specific physical row covers the entry. The
+/// canonical opcode slice and CFG plan are owned by this admission; the
+/// dispatch stencil contributes only the audited helper boundary, while the
+/// region executor consumes any available generated leaves and falls back per
+/// operation without replaying committed effects.
+fn generic_cfg_region_admission(
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    generic_cfg_region_admission_inner(None, entries, cfg, pc, policy, arena)
+}
+
+fn generic_cfg_region_admission_inner(
+    code: Option<CodeView<'_>>,
+    entries: &[BaselineEntry],
+    cfg: &ControlFlowFacts,
+    pc: usize,
+    policy: crate::stencil_policy::ExecutionPolicy,
+    arena: &SharedStencilPool,
+) -> Option<NativeAdmission> {
+    policy
+        .allows_region_abi(crate::stencil_select::RegionAbi::Bridge)
+        .then_some(())?;
+    let dispatch =
+        crate::stencil_select::select_region(crate::stencil_select::dispatch_region_key())?;
+    if !dispatch.executable
+        || dispatch.abi != crate::stencil_select::RegionAbi::Bridge
+        || !dispatch.abi.accepts_region_context()
+    {
+        return None;
+    }
+    // Keep the generic value/control region contiguous, but use the shared
+    // CFG-derived endpoint instead of rescanning the suffix at every PC. A
+    // later heap/observable operation must not poison a proven pure prefix:
+    // task 091 owns that boundary, while this task can still publish the
+    // prefix and hand its exact external successor back to the ordinary
+    // driver.
+    let prefix_end = cfg.pure_control_prefix_end(pc)?;
+    if prefix_end <= pc {
+        return None;
+    }
+    let candidate = entries.get(pc..prefix_end)?;
+    let mut operations = Vec::new();
+    operations.try_reserve(candidate.len()).ok()?;
+    operations.extend(candidate.iter().map(|entry| entry.instruction.opcode));
+    // A generic region must have at least one operation that can either
+    // execute through a generated leaf or transfer through the physical word
+    // control image. This predicate consumes the complete instruction fact,
+    // including generic operator/unary flags and range-owned constants; an
+    // opcode-only list would falsely admit unsupported `Binary`/`Remainder`,
+    // string/BigInt `LoadConst`, or non-number `AddConst` operands and publish
+    // a region that immediately falls back. Pure helper-only prefixes remain
+    // on the ordinary driver until task 091 supplies their transition
+    // contract.
+    if !candidate.iter().any(|entry| {
+        code.map_or_else(
+            || generic_bridge_candidate(entry.instruction),
+            |code| generic_bridge_candidate_at(code, entry.instruction),
+        )
+    }) {
+        return None;
+    }
+    // The prefix calculation above is derived from operation effects, so a
+    // newly declared helper opcode cannot silently inherit a native region.
+    let control = cfg.region_plan_with_terminal_exits(entries, pc, &operations)?;
+    let operations: Rc<[crate::ir::Opcode]> = operations.into();
+    NativeRegionPlan::new_dynamic_with_arena(policy, Rc::clone(arena), operations, control)
         .map(|plan| NativeAdmission::Region(Rc::new(RefCell::new(plan))))
+}
+
+/// Resolve the one generated scalar region for a binary instruction.
+///
+/// Dedicated opcodes and legacy flagged `Binary` spellings both pass through
+/// the canonical opcode table first. The physical-region tables then decide
+/// whether an executable artifact exists; no operator-specific fallback map
+/// belongs in the runtime admission path.
+#[inline]
+fn binary_leaf_region_key(
+    opcode: crate::ir::Opcode,
+    flags: u8,
+    operator: crate::ops::BinaryOp,
+) -> Option<crate::stencil_fact::RegionKey> {
+    crate::stencil_select::numeric_region_key(opcode)
+        .or_else(|| {
+            crate::ir::Opcode::binary_opcode(operator)
+                .and_then(crate::stencil_select::numeric_region_key)
+        })
+        .or_else(|| crate::stencil_select::binary_region_key(operator))
+        .filter(|_| {
+            opcode != crate::ir::Opcode::AddConst || flags & crate::ir::ADD_CONST_LEFT_FLAG == 0
+        })
+}
+
+/// Return whether one canonical instruction has a generic Bridge consumer.
+/// This is deliberately derived from the instruction, not only its opcode:
+/// generic `Binary` and `Unary` rows carry their physical operator in flags.
+/// Unsupported variants remain ordinary canonical operations and cannot make
+/// an otherwise helper-only prefix look like a native candidate.
+fn generic_bridge_candidate(instruction: crate::ir::Instruction) -> bool {
+    // Eligibility is declared beside the canonical opcode facts. The
+    // remaining match handles only instance-dependent payloads (flags and
+    // physical leaf availability), so adding an opcode cannot silently grow
+    // this bridge through a second runtime coverage list.
+    if !instruction.opcode.is_generic_bridge_candidate() {
+        return false;
+    }
+    // The Bridge is a value/control executor. Keep the generated effect and
+    // structured-loop boundary ahead of the instance payload matcher so a
+    // newly catalogued effect cannot become native by inheriting a convenience
+    // arm below.
+    if !instruction.opcode.spec().generic_bridge_safe() {
+        return false;
+    }
+    match instruction.opcode.generic_bridge_payload() {
+        crate::ir::GenericBridgePayload::InitLocal => instruction.a != 0,
+        crate::ir::GenericBridgePayload::Move => matches!(instruction.flags, 0 | 1),
+        crate::ir::GenericBridgePayload::AddConst => !instruction.add_const_is_left(),
+        // `IncI` uses the direction-specific generated increment/decrement
+        // rows selected by `NativeBinaryPlan`; the key is not a numeric
+        // operator spelling in the catalog.
+        crate::ir::GenericBridgePayload::Increment => true,
+        crate::ir::GenericBridgePayload::Binary => instruction
+            .opcode
+            .numeric_operator()
+            .or_else(|| instruction.opcode.binary_operator(instruction.flags))
+            .is_some_and(|operator| {
+                binary_leaf_region_key(instruction.opcode, instruction.flags, operator).is_some()
+            }),
+        crate::ir::GenericBridgePayload::Unary => {
+            match crate::ir::compact_unary_operator(instruction.flags) {
+                Some(operator) if unary_numeric_leaf_spec(operator).is_some() => true,
+                Some(
+                    crate::ops::UnaryOp::Not
+                    | crate::ops::UnaryOp::IsNullish
+                    | crate::ops::UnaryOp::Void
+                    | crate::ops::UnaryOp::Delete,
+                ) => true,
+                _ => false,
+            }
+        }
+        crate::ir::GenericBridgePayload::Plain => true,
+    }
+}
+
+/// Refine the opcode fact with immutable range-owned operands that are not
+/// encoded in the fixed-width instruction itself.  A right-sided numeric
+/// `AddConst` can consume its generated scalar leaf; a non-number constant
+/// must not publish a bridge merely to fall through to the canonical helper.
+fn generic_bridge_candidate_at(code: CodeView<'_>, instruction: crate::ir::Instruction) -> bool {
+    generic_bridge_candidate(instruction)
+        && match instruction.opcode {
+            crate::ir::Opcode::AddConst => matches!(
+                code.constant(instruction.c),
+                Some(crate::ops::Constant::Number(_))
+            ),
+            crate::ir::Opcode::LoadConst => code
+                .constant(instruction.b)
+                .is_some_and(|constant| constant_word_bits(constant).is_some()),
+            _ => true,
+        }
+}
+
+/// Return only region ABIs that have a complete `NativeRegionContext`
+/// execution path. Typed loop ABIs are selected and invoked by their owning
+/// plans; admitting them here would publish a valid-looking region and then
+/// hit the AArch64 "typed entry required" rejection instead of taking the
+/// exact canonical fallback.
+fn generic_region_context_abi(abi: crate::stencil_select::RegionAbi) -> bool {
+    abi.accepts_generic_context()
+}
+
+#[cfg(test)]
+fn generic_region_context_abi_for_test(abi: crate::stencil_select::RegionAbi) -> bool {
+    generic_region_context_abi(abi)
 }
 
 fn baseline_entries(code: CodeView<'_>) -> Rc<[BaselineEntry]> {
@@ -6848,7 +8548,6 @@ fn baseline_entries(code: CodeView<'_>) -> Rc<[BaselineEntry]> {
             let instruction = code.instruction(pc)?;
             Some(BaselineEntry {
                 instruction,
-                handler: instruction.opcode.handler(),
                 control: instruction.opcode.control_operands(instruction),
             })
         })
@@ -6856,178 +8555,44 @@ fn baseline_entries(code: CodeView<'_>) -> Rc<[BaselineEntry]> {
         .into()
 }
 
-fn baseline_osr_entries(code: CodeView<'_>) -> Rc<[u32]> {
-    (0..code.len())
-        .filter_map(|pc| {
-            let instruction = code.instruction(pc)?;
-            is_osr_candidate(pc, instruction).then_some(pc as u32)
-        })
+fn baseline_osr_entries(entries: &[BaselineEntry], cfg: &ControlFlowFacts) -> Rc<[u32]> {
+    (0..entries.len())
+        .filter(|pc| cfg.has_backedge_at(*pc))
+        .map(|pc| pc as u32)
         .collect::<Vec<_>>()
         .into()
 }
 
 fn eager_straight_line_candidate(code: CodeView<'_>) -> bool {
-    if eager_call_return_candidate(code)
-        || eager_method_call_candidate(code)
-        || eager_property_pair_candidate(code)
-        || eager_property_store_call_candidate(code)
-        || eager_prototype_call_candidate(code)
-        || crate::stencil_fresh_object_call::eager_candidate(code)
-        || eager_string_concat_call_candidate(code)
-        || eager_string_case_candidate(code)
-        || eager_string_search_candidate(code)
-    {
+    // The fresh-object recipe is an explicit migration cover: it crosses an
+    // allocation boundary only after its own escape/ownership proof. All
+    // other eager admission is derived from canonical effects and control
+    // facts below; no fixture-shaped opcode sequence is an admission key.
+    if crate::stencil_fresh_object_call::eager_candidate(code) {
         return true;
     }
     use crate::facts::ControlFlow;
-    for pc in 0..code.len().min(EAGER_STRAIGHT_LINE_MAX_INSTRUCTIONS) {
+    // Admission is already bounded by the explicit metadata/arena budgets in
+    // `stencil_admission`; do not reuse a numeric-DAG window here.  A
+    // straight-line body may be longer than one DAG selection and should be
+    // eligible when every instruction is proven safe.  The loop remains
+    // finite because it walks the immutable code range and rejects any
+    // control flow other than its terminal Return.
+    for pc in 0..code.len() {
         let Some(instruction) = code.instruction(pc) else {
             return false;
         };
-        if instruction.opcode.control_flow() == ControlFlow::Return {
+        if matches!(
+            instruction.opcode.control_flow(),
+            ControlFlow::Return | ControlFlow::Throw
+        ) {
             return pc > 0;
-        }
-        if instruction.opcode == crate::ir::Opcode::Call
-            && instruction.flags == 2
-            && code
-                .operand_window_at(pc)
-                .is_some_and(|window| window.len() == 2)
-        {
-            continue;
         }
         if !eager_operation_candidate(instruction) {
             return false;
         }
     }
     false
-}
-
-fn eager_property_pair_candidate(code: CodeView<'_>) -> bool {
-    use crate::ir::Opcode::{Add, Call, LoadLocal, Return};
-    let expected = [
-        LoadLocal, LoadLocal, Call, LoadLocal, LoadLocal, Call, Add, Return,
-    ];
-    expected
-        .iter()
-        .enumerate()
-        .all(|(pc, opcode)| code.instruction(pc).is_some_and(|op| op.opcode == *opcode))
-}
-
-fn eager_property_store_call_candidate(code: CodeView<'_>) -> bool {
-    use crate::ir::Opcode::{Call, LoadConst, LoadLocal, Return};
-    let expected = [LoadLocal, LoadLocal, LoadConst, Call, Return];
-    expected
-        .iter()
-        .enumerate()
-        .all(|(pc, opcode)| code.instruction(pc).is_some_and(|op| op.opcode == *opcode))
-}
-
-fn eager_prototype_call_candidate(code: CodeView<'_>) -> bool {
-    use crate::ir::Opcode::{Call, LoadLocal, Return};
-    let expected = [LoadLocal, LoadLocal, Call, Return];
-    expected
-        .iter()
-        .enumerate()
-        .all(|(pc, opcode)| code.instruction(pc).is_some_and(|op| op.opcode == *opcode))
-}
-
-fn eager_method_call_candidate(code: CodeView<'_>) -> bool {
-    let expected = [
-        crate::ir::Opcode::LoadLocal,
-        crate::ir::Opcode::GetN,
-        crate::ir::Opcode::LoadConst,
-        crate::ir::Opcode::CallN,
-        crate::ir::Opcode::Return,
-    ];
-    expected
-        .iter()
-        .enumerate()
-        .all(|(pc, opcode)| code.instruction(pc).is_some_and(|op| op.opcode == *opcode))
-}
-
-fn eager_string_case_candidate(code: CodeView<'_>) -> bool {
-    let expected = [
-        crate::ir::Opcode::LoadLocal,
-        crate::ir::Opcode::GetN,
-        crate::ir::Opcode::CallN,
-        crate::ir::Opcode::GetN,
-        crate::ir::Opcode::Return,
-    ];
-    (0..expected.len()).all(|pc| {
-        code.instruction(pc)
-            .is_some_and(|op| op.opcode == expected[pc])
-    })
-}
-
-fn eager_string_search_candidate(code: CodeView<'_>) -> bool {
-    let group = [
-        crate::ir::Opcode::LoadLocal,
-        crate::ir::Opcode::GetN,
-        crate::ir::Opcode::GetN,
-        crate::ir::Opcode::LoadConst,
-        crate::ir::Opcode::CallN,
-    ];
-    let groups = (0..3).all(|index| {
-        group.iter().enumerate().all(|(offset, expected)| {
-            code.instruction(index * group.len() + offset)
-                .is_some_and(|instruction| instruction.opcode == *expected)
-        })
-    });
-    groups
-        && code
-            .instruction(15)
-            .is_some_and(|op| op.opcode == crate::ir::Opcode::Slow)
-        && code
-            .instruction(16)
-            .is_some_and(|op| op.opcode == crate::ir::Opcode::Return)
-}
-
-fn eager_string_concat_call_candidate(code: CodeView<'_>) -> bool {
-    let Some(load) = code.instruction(0) else {
-        return false;
-    };
-    let Some(a) = code.instruction(1) else {
-        return false;
-    };
-    let Some(b) = code.instruction(2) else {
-        return false;
-    };
-    let Some(c) = code.instruction(3) else {
-        return false;
-    };
-    let Some(call) = code.instruction(4) else {
-        return false;
-    };
-    let Some(ret) = code.instruction(5) else {
-        return false;
-    };
-    load.opcode == crate::ir::Opcode::LoadLocal
-        && [a, b, c]
-            .iter()
-            .all(|instruction| instruction.opcode == crate::ir::Opcode::LoadConst)
-        && call.opcode == crate::ir::Opcode::Call
-        && call.b == load.a
-        && code.operand_window_at(4) == Some([a.a, b.a, c.a].as_slice())
-        && ret.opcode == crate::ir::Opcode::Return
-        && ret.a == call.a
-}
-
-fn eager_call_return_candidate(code: CodeView<'_>) -> bool {
-    let Some(load) = code.instruction(0) else {
-        return false;
-    };
-    let Some(call) = code.instruction(1) else {
-        return false;
-    };
-    let Some(ret) = code.instruction(2) else {
-        return false;
-    };
-    load.opcode == crate::ir::Opcode::LoadLocal
-        && call.opcode == crate::ir::Opcode::Call
-        && call.flags == 0
-        && call.b == load.a
-        && ret.opcode == crate::ir::Opcode::Return
-        && ret.a == call.a
 }
 
 fn eager_operation_candidate(instruction: crate::ir::Instruction) -> bool {
@@ -7041,9 +8606,27 @@ fn eager_operation_candidate(instruction: crate::ir::Instruction) -> bool {
     if instruction.opcode.has_effect(OperationEffect::WriteHeap) {
         return false;
     }
+    // Allocation is a semantic boundary even when the opcode has no direct
+    // heap-write bit. Keep eager straight-line selection focused on values
+    // that can remain within the baseline bridge; allocating cold operations
+    // retain their canonical gateway until an ownership-aware tier handles
+    // them.
+    if instruction.opcode.has_effect(OperationEffect::Allocate) {
+        return false;
+    }
     let effect_free = !instruction.opcode.has_effect(OperationEffect::Observable)
         && !instruction.opcode.has_effect(OperationEffect::ReadHeap);
-    effect_free || instruction.opcode == crate::ir::Opcode::GetN
+    if effect_free {
+        return true;
+    }
+    // Eager compilation may include a canonical helper boundary. The helper
+    // remains the semantic owner; this predicate only decides whether it is
+    // worth building the shared baseline facts now. Allocation and heap-write
+    // rows were rejected above, so reads/calls/observable cold payloads retain
+    // their exact fallback while still avoiding opcode-sequence admission
+    // keys.
+    instruction.opcode.has_effect(OperationEffect::Observable)
+        || instruction.opcode.has_effect(OperationEffect::ReadHeap)
 }
 
 fn collect_admissions_at(
@@ -7131,7 +8714,12 @@ fn collect_admissions_at(
     builder.push_optional(pc, string_concat_admission(code, entries, cfg, pc, policy));
     builder.push_optional(pc, string_builtin_admission(code, entries, cfg, pc, policy));
     collect_numeric_admissions(builder, entries, cfg, pc, entry, code, policy, arena);
+    builder.push_optional(
+        pc,
+        constant_binary_series_admission(code, entries, cfg, pc, policy, arena),
+    );
     builder.push_optional(pc, add_chain_admission(entries, cfg, pc, policy, arena));
+    builder.push_optional(pc, binary_series_admission(entries, cfg, pc, policy, arena));
     builder.push_optional(
         pc,
         numeric_dag_admission(code, entries, cfg, pc, policy, arena),
@@ -7164,8 +8752,19 @@ fn collect_admissions_at(
         pc,
         local_predicate_admission(code, entries, cfg, pc, policy, arena),
     );
+    builder.push_optional(
+        pc,
+        word_branch_admission(code, entries, cfg, pc, policy, arena),
+    );
+    builder.push_optional(
+        pc,
+        constant_branch_admission(code, entries, cfg, pc, policy, arena),
+    );
     collect_memory_admissions(builder, entries, cfg, pc, entry.instruction, policy, arena);
-    builder.push_optional(pc, region_admission(entries, cfg, pc, policy, arena));
+    builder.push_optional(
+        pc,
+        region_admission_with_code(code, entries, cfg, pc, policy, arena),
+    );
 }
 
 fn build_admissions(
@@ -7175,18 +8774,19 @@ fn build_admissions(
 ) -> (
     Option<Rc<AdmissionStorage<NativeAdmission>>>,
     SharedStencilPool,
+    Rc<ControlFlowFacts>,
 ) {
     let arena = Rc::new(RefCell::new(
         crate::stencil_arena::SharedStencilSlab::new(4096)
             .expect("compile-time region slab capacity is valid"),
     ));
-    if !policy.allows_admission() {
-        return (None, arena);
-    }
     let operand_windows = (0..entries.len())
         .map(|pc| code.operand_window_at(pc))
         .collect::<Vec<_>>();
-    let cfg = ControlFlowFacts::new(entries, &operand_windows);
+    let cfg = Rc::new(ControlFlowFacts::new(entries, &operand_windows));
+    if !policy.allows_admission() {
+        return (None, arena, cfg);
+    }
     let mut builder = AdmissionBuilder::new(entries.len());
     for pc in 0..entries.len() {
         if builder.exhausted() {
@@ -7194,7 +8794,7 @@ fn build_admissions(
         }
         collect_admissions_at(&mut builder, code, entries, &cfg, pc, policy, &arena);
     }
-    (builder.finish().map(Rc::new), arena)
+    (builder.finish().map(Rc::new), arena, cfg)
 }
 
 impl BaselinePlan {
@@ -7219,28 +8819,45 @@ impl BaselinePlan {
 
     fn compile(code: CodeView<'_>, policy: crate::stencil_policy::ExecutionPolicy) -> Self {
         let entries = baseline_entries(code);
-        let osr_entries = baseline_osr_entries(code);
-        let (admission, shared_region_arena) = build_admissions(code, &entries, policy);
+        let (admission, shared_region_arena, control) = build_admissions(code, &entries, policy);
+        let osr_entries = baseline_osr_entries(&entries, &control);
         Self {
             entries,
+            control,
             osr_entries,
             admission,
             shared_region_arena,
         }
     }
 
-    pub(crate) fn instruction(&self, pc: usize) -> Option<crate::ir::Instruction> {
-        self.entries.get(pc).map(|entry| entry.instruction)
-    }
-
     pub(crate) fn entry(&self, pc: usize) -> Option<BaselineEntry> {
         self.entries.get(pc).copied()
     }
 
-    fn admissions_at(&self, pc: usize) -> &[NativeAdmission] {
+    pub(crate) fn control_facts(&self) -> &ControlFlowFacts {
+        &self.control
+    }
+
+    /// Expose CFG-derived loop state to baseline emitters without creating a
+    /// second loop analysis or copying it into each admission record.
+    pub(crate) fn induction_candidates(
+        &self,
+        start: usize,
+        end: usize,
+    ) -> Option<Vec<crate::stencil_cfg::InductionCandidate>> {
+        let plan = self.control.region_control(start, end)?;
+        Some(self.control.induction_candidates(&self.entries, &plan))
+    }
+
+    #[inline(always)]
+    pub(crate) fn has_admission_at(&self, pc: usize) -> bool {
         self.admission
             .as_deref()
-            .map_or(&[], |storage| storage.entries_at(pc))
+            .is_some_and(|storage| storage.has_entry_at(pc))
+    }
+
+    pub(crate) fn osr_backedge_target_at(&self, pc: usize) -> Option<usize> {
+        self.control.backedge_target_at(pc)
     }
 
     fn has_eager_return_entry(&self) -> bool {
@@ -7268,12 +8885,15 @@ impl BaselinePlan {
         let prototype_call = self.prototype_call_at(0).is_some();
         let string_concat = self.string_concat_at(0).is_some();
         let string_builtin = self.string_builtin_at(0).is_some();
+        let constant_binary_series = self.native_constant_binary_series_at(0).is_some();
+        let binary_series = self.native_binary_series_at(0).is_some();
         let numeric = self
             .native_local_binary_at(0)
             .is_some_and(|plan| plan.borrow().selection().returns);
         let property = self
             .native_local_property_at(0)
             .is_some_and(|plan| plan.borrow().returns());
+        let word_branch = self.native_word_branch_at(0).is_some();
         dag || classify
             || nullish_truthy
             || missing_property
@@ -7297,16 +8917,23 @@ impl BaselinePlan {
             || prototype_call
             || string_concat
             || string_builtin
+            || constant_binary_series
+            || binary_series
             || numeric
             || property
+            || word_branch
     }
 
     fn native_handle<T>(
         &self,
         pc: usize,
+        kind: u8,
         select: impl Fn(&NativeAdmission) -> Option<&Rc<RefCell<T>>>,
     ) -> Option<&Rc<RefCell<T>>> {
-        self.admissions_at(pc).iter().find_map(select)
+        self.admission
+            .as_deref()
+            .and_then(|storage| storage.entry_of_kind(pc, kind))
+            .and_then(select)
     }
 
     typed_admission_accessors!(binary_handle_at, native_binary_at, Binary, NativeBinaryPlan);
@@ -7327,6 +8954,18 @@ impl BaselinePlan {
         native_local_predicate_at,
         LocalPredicate,
         crate::stencil_fusion::NativeLocalPredicatePlan
+    );
+    typed_admission_accessors!(
+        constant_branch_handle_at,
+        native_constant_branch_at,
+        ConstantBranch,
+        crate::stencil_word_composition::NativeWordConstantBranchPlan
+    );
+    typed_admission_accessors!(
+        word_branch_handle_at,
+        native_word_branch_at,
+        WordBranch,
+        crate::stencil_word_composition::NativeWordBranchPlan
     );
     typed_admission_accessors!(
         local_property_handle_at,
@@ -7521,6 +9160,18 @@ impl BaselinePlan {
         AddChain,
         NativeAddChainPlan
     );
+    typed_admission_accessors!(
+        binary_series_handle_at,
+        native_binary_series_at,
+        BinarySeries,
+        crate::stencil_region_builder::NativeBinarySeriesPlan
+    );
+    typed_admission_accessors!(
+        constant_binary_series_handle_at,
+        native_constant_binary_series_at,
+        ConstantBinarySeries,
+        crate::stencil_region_builder::NativeConstantBinarySeriesPlan
+    );
     typed_admission_accessors!(move_handle_at, native_move_at, Move, NativeMovePlan);
     typed_admission_accessors!(
         load_local_handle_at,
@@ -7565,7 +9216,7 @@ impl BaselinePlan {
 
 /// Rust-native optimizing dispatch plan. This is a physical execution view,
 /// not a second semantic IR: every entry retains the canonical instruction,
-/// handler, and control facts while caching already-admitted leaves. Any
+/// generated dispatch/control facts while caching already-admitted leaves. Any
 /// unsupported operation still goes through the complete baseline handler.
 #[derive(Clone)]
 pub(crate) struct OptimizingPlan {
@@ -7582,20 +9233,44 @@ pub(crate) struct OptimizingEntry<'a> {
 impl OptimizingEntry<'_> {
     fn native_handle<T>(
         &self,
+        kind: u8,
         select: impl Fn(&NativeAdmission) -> Option<&Rc<RefCell<T>>>,
     ) -> Option<&RefCell<T>> {
-        self.admissions.iter().find_map(select).map(Rc::as_ref)
+        crate::stencil_admission::first_index_of_kind(self.admissions, kind)
+            .and_then(|index| self.admissions.get(index))
+            .and_then(select)
+            .map(Rc::as_ref)
     }
 
     optimizing_admission_accessors!(native_binary, Binary, NativeBinaryPlan);
     optimizing_admission_accessors!(native_load_const, LoadConst, NativeLoadConstPlan);
     optimizing_admission_accessors!(native_truthiness, Truthiness, NativeTruthinessPlan);
     optimizing_admission_accessors!(native_nullish, Nullish, NativeNullishPlan);
+    optimizing_admission_accessors!(
+        native_constant_branch,
+        ConstantBranch,
+        crate::stencil_word_composition::NativeWordConstantBranchPlan
+    );
+    optimizing_admission_accessors!(
+        native_word_branch,
+        WordBranch,
+        crate::stencil_word_composition::NativeWordBranchPlan
+    );
     optimizing_admission_accessors!(native_unary, Unary, NativeUnaryPlan);
     optimizing_admission_accessors!(
         native_local_binary,
         LocalBinary,
         crate::stencil_fusion::NativeLocalBinaryPlan
+    );
+    optimizing_admission_accessors!(
+        native_binary_series,
+        BinarySeries,
+        crate::stencil_region_builder::NativeBinarySeriesPlan
+    );
+    optimizing_admission_accessors!(
+        native_constant_binary_series,
+        ConstantBinarySeries,
+        crate::stencil_region_builder::NativeConstantBinarySeriesPlan
     );
     optimizing_admission_accessors!(
         native_local_predicate,
@@ -7855,19 +9530,41 @@ impl<'a> CodeView<'a> {
         self.range.end.saturating_sub(self.range.start) as usize
     }
 
+    pub fn layout(self) -> FunctionLayout {
+        let mut layout = self
+            .store
+            .layout(self.range.code)
+            .unwrap_or(FunctionLayout {
+                register_count: 0,
+                frame_register_count: 0,
+                parameter_end: None,
+            });
+        layout.parameter_end = layout
+            .parameter_end
+            .and_then(|end| {
+                self.store
+                    .ranges
+                    .get(self.range.code.0 as usize)
+                    .and_then(|(start, _)| (*start as usize).checked_add(end))
+            })
+            .filter(|absolute| {
+                *absolute >= self.range.start as usize && *absolute <= self.range.end as usize
+            })
+            .map(|absolute| absolute.saturating_sub(self.range.start as usize));
+        layout
+    }
+
     /// Number of register slots referenced by this lowered range. The count
     /// is derived once while freezing the immutable code store, so call entry
     /// does not scan instructions or size frames from bytecode length.
     pub fn register_count(self) -> u16 {
-        self.store.register_count(self.range.code).unwrap_or(0)
+        self.layout().register_count
     }
 
     /// Register width of the logical activation, including structured
     /// fragments that execute in this frame but excluding nested functions.
     pub fn frame_register_count(self) -> u16 {
-        self.store
-            .frame_register_count(self.range.code)
-            .unwrap_or_else(|| self.register_count())
+        self.layout().frame_register_count
     }
 
     pub fn is_empty(self) -> bool {
@@ -7884,16 +9581,7 @@ impl<'a> CodeView<'a> {
     }
 
     pub fn parameter_end(self) -> Option<usize> {
-        let (code_start, _) = self.store.ranges.get(self.range.code.0 as usize)?;
-        let absolute = code_start.checked_add(
-            self.store
-                .parameter_ends
-                .get(self.range.code.0 as usize)?
-                .as_ref()
-                .copied()?,
-        )?;
-        (absolute >= self.range.start && absolute <= self.range.end)
-            .then(|| absolute.saturating_sub(self.range.start) as usize)
+        self.layout().parameter_end
     }
 
     #[inline]
@@ -7984,14 +9672,7 @@ impl<'a> CodeView<'a> {
     #[inline]
     pub fn binary_at(self, pc: usize) -> Option<(u16, crate::ops::BinaryOp, u16, u16)> {
         let instruction = self.instruction(pc)?;
-        let operator = match instruction.opcode {
-            crate::ir::Opcode::Add => crate::ops::BinaryOp::Add,
-            crate::ir::Opcode::Sub => crate::ops::BinaryOp::Subtract,
-            crate::ir::Opcode::Mul => crate::ops::BinaryOp::Multiply,
-            crate::ir::Opcode::Div => crate::ops::BinaryOp::Divide,
-            crate::ir::Opcode::Binary => crate::ir::compact_binary_operator(instruction.flags)?,
-            _ => return None,
-        };
+        let operator = instruction.opcode.binary_operator(instruction.flags)?;
         Some((instruction.a, operator, instruction.b, instruction.c))
     }
 
@@ -8487,15 +10168,28 @@ impl FunctionCode {
     /// is the OSR admission edge: it only installs a plan, while the next
     /// dispatch transfers to the same body with the current registers intact.
     pub(crate) fn retire_at(&self, pc: usize) -> TierTransition {
+        let Some(instruction) = self.code().and_then(|code| code.instruction(pc)) else {
+            return TierTransition::Cold;
+        };
+        self.retire_at_instruction(pc, instruction)
+    }
+
+    /// Retire one operation when the caller already owns its immutable
+    /// instruction. The dispatch loop has decoded this instruction to execute
+    /// it, so re-reading the code store here only adds a hot-path lookup and
+    /// cannot change the admission decision.
+    #[inline(always)]
+    pub(crate) fn retire_at_instruction(
+        &self,
+        pc: usize,
+        instruction: crate::ir::Instruction,
+    ) -> TierTransition {
         let should_compile = {
             let mut state = self.tier.borrow_mut();
             state.retired = state.retired.saturating_add(1);
             state.tier == ExecutionTier::Interpreter
                 && state.retired >= u64::from(state.threshold)
-                && self
-                    .code()
-                    .and_then(|code| code.instruction(pc))
-                    .is_some_and(|instruction| is_osr_candidate(pc, instruction))
+                && is_osr_candidate(pc, instruction)
         };
         if !should_compile {
             return if self.tier() == ExecutionTier::Baseline {
@@ -8525,6 +10219,11 @@ impl FunctionCode {
             .is_some_and(|plan| plan.is_osr_entry(pc))
     }
 
+    pub(crate) fn osr_backedge_target_at(&self, pc: usize) -> Option<usize> {
+        self.baseline_plan()
+            .and_then(|plan| plan.osr_backedge_target_at(pc))
+    }
+
     pub(crate) fn record_osr_transfer(&self) {
         let mut state = self.tier.borrow_mut();
         state.osr_transfers = state.osr_transfers.saturating_add(1);
@@ -8551,8 +10250,14 @@ impl FunctionCode {
 
     /// Return the immutable width of this logical activation. Structured
     /// fragments share it; nested function literals own independent frames.
+    pub(crate) fn layout(&self) -> Option<FunctionLayout> {
+        self.code().map(CodeView::layout)
+    }
+
     pub(crate) fn required_register_count(&self) -> u16 {
-        self.code().map(CodeView::frame_register_count).unwrap_or(0)
+        self.layout()
+            .map(|layout| layout.frame_register_count)
+            .unwrap_or(0)
     }
 
     #[cfg(test)]
@@ -8933,6 +10638,34 @@ impl Machine {
             call_frames: Vec::new(),
         }
     }
+    /// Create an activation from the immutable function layout. Callers do
+    /// not supply a second frame-width fact; the frozen code store is the
+    /// authority for the logical register window.
+    pub fn with_function_from_layout(function: &FunctionCode, environment: EnvironmentRef) -> Self {
+        let register_count = function
+            .layout()
+            .map(|layout| layout.frame_register_count)
+            .unwrap_or(0)
+            .max(4);
+        let mut machine =
+            Self::with_register_count(function.code_id(), environment, register_count);
+        machine.store = function.store();
+        machine
+    }
+
+    /// Create an explicitly detached activation for a host-owned operation
+    /// slice that has no immutable `CodeStore` range. Detached machines are
+    /// intentionally outside the canonical function-layout contract; callers
+    /// must provide the already-sized register window and must not retain
+    /// continuations that point back into code id `0`.
+    pub fn detached(environment: EnvironmentRef, register_count: u16) -> Self {
+        Self::with_register_count(CodeId(0), environment, register_count)
+    }
+
+    /// Compatibility escape hatch for a machine backed by an externally
+    /// managed register window. Normal function activations use
+    /// [`Machine::with_function_from_layout`]; this constructor remains for
+    /// embedders that already own a register window.
     pub fn with_function(
         function: &FunctionCode,
         environment: EnvironmentRef,
@@ -9035,20 +10768,27 @@ impl Machine {
         arguments: Vec<Value>,
         destination: u16,
         guards: crate::completion::ContinuationGuards,
-    ) {
-        let continuation = crate::completion::CallContinuation {
+    ) -> Result<(), crate::execute::VmError> {
+        let continuation = crate::completion::CallContinuation::new(
             callee,
             receiver,
-            arguments: arguments.into(),
-            caller_code: self.code,
-            caller_pc: self.pc,
-            caller_registers: self.take_registers(),
-            caller_environment: self.environment,
+            arguments.into(),
             destination,
-            guards,
-        };
-        self.push_call_frame(continuation);
+            self.take_registers(),
+        )
+        .with_caller(self.code, self.pc, self.environment)
+        .with_guards(guards);
+        if let Err(continuation) = self.try_push_call_frame(continuation) {
+            // The continuation owns the caller register window after
+            // `take_registers`; return it before mapping allocation failure
+            // to the canonical VM error.
+            self.restore_registers(continuation.caller_registers);
+            return Err(crate::value::error::throw_range_error(
+                "Unable to allocate call continuation",
+            ));
+        }
         self.environment_data = None;
+        Ok(())
     }
 
     /// Restore the most recently suspended caller and deliver its result.
@@ -9065,8 +10805,7 @@ impl Machine {
         let valid_source = self
             .store
             .as_ref()
-            .and_then(|store| store.range_len(continuation.caller_code))
-            .is_some_and(|len| continuation.caller_pc < len);
+            .is_some_and(|store| continuation.has_valid_caller_address(store));
         if !valid_source {
             return None;
         }
@@ -9078,10 +10817,21 @@ impl Machine {
         crate::execute::write_value(&mut self.registers.values, continuation.destination, value);
         Some(continuation)
     }
-    /// Save a caller continuation while a non-tail call executes.
+    /// Fallible caller-frame publication used at VM boundaries. The frame is
+    /// returned intact when reservation fails so the caller can map exhaustion
+    /// to the canonical VM error without losing roots or register state.
     #[inline]
-    pub(crate) fn push_call_frame(&mut self, frame: crate::completion::CallContinuation) {
+    pub(crate) fn try_push_call_frame(
+        &mut self,
+        frame: crate::completion::CallContinuation,
+    ) -> Result<(), crate::completion::CallContinuation> {
+        if self.call_frames.len() == self.call_frames.capacity() {
+            if self.call_frames.try_reserve(1).is_err() {
+                return Err(frame);
+            }
+        }
         self.call_frames.push(frame);
+        Ok(())
     }
 
     /// Resume the most recently suspended caller.
@@ -9287,12 +11037,10 @@ mod tests {
         let entries = [
             super::BaselineEntry {
                 instruction: crate::ir::Instruction::load_local(3, u16::MAX),
-                handler: crate::ir::Opcode::LoadLocal.handler(),
                 control: crate::ir::ControlOperands::Next,
             },
             super::BaselineEntry {
                 instruction: crate::ir::Instruction::ret(4),
-                handler: crate::ir::Opcode::Return.handler(),
                 control: crate::ir::ControlOperands::Return { source: 4 },
             },
         ];
@@ -9345,6 +11093,90 @@ mod tests {
         let cfg = super::ControlFlowFacts::new(&entries, &windows);
         assert_eq!(code.frame_register_count(), 28);
         assert!(cfg.live_out()[0].contains(&27));
+    }
+
+    #[test]
+    fn function_activation_uses_frozen_frame_width() {
+        let function = super::FunctionCode::from_ops(vec![
+            super::Op::LoadLocal { dst: 7, slot: 0 },
+            super::Op::Return { src: 7 },
+        ]);
+        let expected = function.required_register_count().max(4);
+        let machine =
+            super::Machine::with_function_from_layout(&function, super::EnvironmentRef(0));
+        assert_eq!(
+            function
+                .store()
+                .expect("frozen function store")
+                .layout(function.code_id()),
+            function.layout()
+        );
+        assert_eq!(
+            function
+                .layout()
+                .expect("frozen function layout")
+                .frame_register_count,
+            function.required_register_count()
+        );
+        assert_eq!(machine.register_count(), expected);
+        assert!(machine.register_count() >= function.required_register_count());
+    }
+
+    #[test]
+    fn generated_op_names_account_for_every_typed_cold_row() {
+        let names = super::Op::VARIANT_NAMES;
+        let mut seen = std::collections::HashSet::new();
+        for name in names {
+            assert!(seen.insert(*name), "duplicate canonical Op variant: {name}");
+            if let Some(opcode) = crate::ir::Opcode::from_operation_name(name) {
+                assert!(opcode.is_typed_cold_marker());
+            }
+        }
+
+        for opcode in crate::ir::Opcode::ALL
+            .iter()
+            .copied()
+            .filter(|opcode| opcode.is_typed_cold_marker())
+        {
+            let represented = names.contains(&opcode.name())
+                || (opcode == crate::ir::Opcode::CallSlow && names.contains(&"Call"))
+                || (opcode == crate::ir::Opcode::ForI && names.contains(&"Loop"));
+            assert!(represented, "typed cold row lacks canonical Op: {opcode:?}");
+        }
+    }
+
+    #[test]
+    fn generated_cold_opcode_match_handles_alias_and_non_cold_fallback() {
+        assert_eq!(
+            super::Op::MarkImmutable { slot: 0 }.cold_opcode(),
+            Some(crate::ir::Opcode::MarkImmutable)
+        );
+        assert_eq!(
+            super::Op::Call {
+                dst: 0,
+                callee: 1,
+                receiver: None,
+                args: Vec::new(),
+                spreads: Vec::new(),
+            }
+            .cold_opcode(),
+            Some(crate::ir::Opcode::CallSlow)
+        );
+        assert_eq!(
+            super::Op::Loop {
+                label: None,
+                init: super::FunctionCode::from_ops(Vec::new()),
+                test: super::FunctionCode::from_ops(Vec::new()),
+                body: super::FunctionCode::from_ops(Vec::new()),
+                update: super::FunctionCode::from_ops(Vec::new()),
+                post_test: false,
+                dst: 0,
+                per_iteration: Vec::new(),
+            }
+            .cold_opcode(),
+            Some(crate::ir::Opcode::ForI)
+        );
+        assert_eq!(super::Op::Move { dst: 0, src: 1 }.cold_opcode(), None);
     }
 
     #[test]
@@ -9619,7 +11451,6 @@ mod tests {
             }];
         let entry = |instruction: crate::ir::Instruction| super::BaselineEntry {
             instruction,
-            handler: instruction.opcode.handler(),
             control: instruction.opcode.control_operands(instruction),
         };
         let entries = [
@@ -9676,6 +11507,89 @@ mod tests {
             Some(crate::ir::Instruction::move_(1, 2))
         );
         assert!(code.cold_at(0).is_none());
+    }
+
+    #[test]
+    fn parameter_load_is_compact_and_lossless() {
+        let mut arena = super::CodeArena::new();
+        let range = arena.append_slice(&[super::Op::LoadParameter { dst: 1, slot: 2 }]);
+        let store = arena.freeze();
+        let code = store.code(range).expect("compact code range");
+        assert_eq!(
+            code.instruction(0),
+            Some(crate::ir::Instruction::load_parameter(1, 2))
+        );
+        assert!(code.cold_at(0).is_none());
+    }
+
+    #[test]
+    fn standalone_local_initialization_is_compact_and_lossless() {
+        let mut arena = super::CodeArena::new();
+        let range = arena.append_slice(&[super::Op::InitializeLocal { slot: 2 }]);
+        let store = arena.freeze();
+        let code = store.code(range).expect("compact code range");
+        assert_eq!(
+            code.instruction(0),
+            Some(crate::ir::Instruction::initialize_local(2))
+        );
+        assert!(code.cold_at(0).is_none());
+    }
+
+    #[test]
+    fn standalone_check_initialization_is_compact_and_lossless() {
+        let mut arena = super::CodeArena::new();
+        let range = arena.append_slice(&[super::Op::CheckInitialized {
+            slot: 2,
+            name: "value".into(),
+        }]);
+        let store = arena.freeze();
+        let code = store.code(range).expect("compact code range");
+        assert_eq!(
+            code.instruction(0),
+            Some(crate::ir::Instruction::check_initialized(2))
+        );
+        assert!(code.cold_at(0).is_none());
+    }
+
+    #[test]
+    fn throw_is_compact_and_lossless() {
+        let mut arena = super::CodeArena::new();
+        let range = arena.append_slice(&[super::Op::Throw { src: 3 }]);
+        let store = arena.freeze();
+        let code = store.code(range).expect("compact code range");
+        assert_eq!(code.instruction(0), Some(crate::ir::Instruction::throw_(3)));
+        assert!(code.cold_at(0).is_none());
+    }
+
+    #[test]
+    fn cold_encoder_follows_the_canonical_lowering_boundary() {
+        let mut arena = super::CodeArena::new();
+        let range = arena.append_slice(&[
+            super::Op::MarkImmutable { slot: 3 },
+            super::Op::ResolveName {
+                dst: 1,
+                key: "userDefinedBinding".into(),
+            },
+        ]);
+        let store = arena.freeze();
+        let code = store.code(range).expect("compact code range");
+
+        assert_eq!(
+            code.instruction(0).map(|instruction| instruction.opcode),
+            Some(crate::ir::Opcode::MarkImmutable)
+        );
+        assert!(matches!(
+            code.cold_at(0),
+            Some(super::Op::MarkImmutable { slot: 3 })
+        ));
+        assert_eq!(
+            code.instruction(1).map(|instruction| instruction.opcode),
+            Some(crate::ir::Opcode::Slow)
+        );
+        assert!(matches!(
+            code.cold_at(1),
+            Some(super::Op::ResolveName { key, .. }) if key == "userDefinedBinding"
+        ));
     }
 
     #[test]
@@ -10071,6 +11985,16 @@ mod tests {
         assert_eq!(machine.register_count(), 5);
         assert!(machine.current_frame().is_none());
         assert!(machine.constants().is_none());
+        assert!(machine.state_is_valid());
+    }
+
+    #[test]
+    fn detached_machine_marks_host_slice_boundary() {
+        let machine = Machine::detached(EnvironmentRef(3), 5);
+        assert_eq!(machine.code_id(), super::CodeId(0));
+        assert_eq!(machine.register_count(), 5);
+        assert!(machine.store.is_none());
+        assert!(machine.call_frames.is_empty());
         assert!(machine.state_is_valid());
     }
     #[test]

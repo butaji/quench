@@ -91,7 +91,14 @@ pub(crate) fn build_registers(
     // than from instruction count. Four spare slots cover tiny residual
     // fragments; writes still grow the file safely if an unknown slow path
     // materializes an additional temporary.
-    let register_count = usize::from(function.code.required_register_count()).max(4);
+    let register_count = usize::from(
+        function
+            .code
+            .layout()
+            .map(|layout| layout.frame_register_count)
+            .unwrap_or(0),
+    )
+    .max(4);
     (
         crate::register_file::RegisterFile::with_undefined(register_count),
         environment,
