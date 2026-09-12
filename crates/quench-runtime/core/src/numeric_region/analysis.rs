@@ -800,6 +800,7 @@ fn op_reads_register(op: &DynOp, register: Register) -> bool {
         | DynOp::StoreName { src, .. }
         | DynOp::StoreLocal { src, .. }
         | DynOp::Unary { src, .. }
+        | DynOp::Update { src, .. }
         | DynOp::Throw { src } => *src == register,
         DynOp::Move { src, .. } => *src == register,
         DynOp::Binary { left, right, .. }

@@ -54,6 +54,7 @@ impl DynOp {
             | Self::StoreName { src, .. }
             | Self::StoreLocal { src, .. }
             | Self::Unary { src, .. }
+            | Self::Update { src, .. }
             | Self::Throw { src } => read(*src),
             Self::Move { src, .. } => read(*src),
             Self::Binary { left, right, .. }
@@ -114,6 +115,7 @@ impl DynOp {
             | Self::MakeArrow { dst, .. }
             | Self::Unary { dst, .. }
             | Self::Binary { dst, .. }
+            | Self::Update { dst, .. }
             | Self::InstanceOf { dst, .. }
             | Self::In { dst, .. }
             | Self::GetStatic { dst, .. }
@@ -161,6 +163,7 @@ impl DynOp {
             | Self::MakeArrow { dst, .. }
             | Self::Unary { dst, .. }
             | Self::Binary { dst, .. }
+            | Self::Update { dst, .. }
             | Self::InstanceOf { dst, .. }
             | Self::In { dst, .. }
             | Self::GetStatic { dst, .. }
@@ -300,6 +303,11 @@ pub enum DynOp {
         left: Register,
         right: Register,
         kind: Op,
+    },
+    Update {
+        dst: Register,
+        src: Register,
+        increment: bool,
     },
     InstanceOf {
         dst: Register,
@@ -452,6 +460,7 @@ define_dyn_op_metadata! {
     MakeArrow: Self::MakeArrow { .. } => "MakeArrow", Closure,
     Unary: Self::Unary { .. } => "Unary", Arithmetic,
     Binary: Self::Binary { .. } => "Binary", Arithmetic,
+    Update: Self::Update { .. } => "Update", Arithmetic,
     InstanceOf: Self::InstanceOf { .. } => "InstanceOf", Compare,
     In: Self::In { .. } => "In", Property,
     GetStatic: Self::GetStatic { .. } => "GetStatic", Property,
@@ -2000,19 +2009,12 @@ impl Compiler {
     ) -> Result<Register, CompileGap> {
         let target = self.lvalue(&value.argument)?;
         let old = self.load(&target, value.span)?;
-        let one = self.literal(Literal::Number(1.0), value.span)?;
         let updated = self.alloc()?;
-        let kind = if value.operator == oxc_syntax::operator::UpdateOperator::Increment {
-            Op::Add
-        } else {
-            Op::Sub
-        };
         self.emit(
-            DynOp::Binary {
+            DynOp::Update {
                 dst: updated,
-                left: old,
-                right: one,
-                kind,
+                src: old,
+                increment: value.operator == oxc_syntax::operator::UpdateOperator::Increment,
             },
             value.span,
         );

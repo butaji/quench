@@ -116,10 +116,10 @@ Verification completed:
   property model, and preserving computed accessor kinds through stencil
   lowering; the remaining failures are mostly arrays, proxies, and
   unsupported stencil features
-- the stencil BigInt stage now reaches 76/77 after deriving one marker-based
-  conversion path, native metadata, computed Symbol keys, wrapper prototypes,
-  and radix formatting; remaining failures are numeric edge errors and
-  prototype/accessor details
+- the stencil BigInt stage now reaches 77/77 after deriving one marker-based
+  conversion path, preserving BigInt update/operator semantics, routing
+  computed keys through `ToPropertyKey`, and honoring wrapper/string coercion;
+  this stage is fully green
 - the stencil Boolean stage now reaches 51/51 after projecting the constructor
   onto `globalThis` and carrying strict-mode deletion through generated
   bytecode; this stage is fully green
