@@ -7320,7 +7320,19 @@ fn native_error(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(o)
 }
 fn native_object_to_string(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    Ok(Value::string_value(this.display()))
+    let tag = if this.as_function_ref().is_some() {
+        "Function"
+    } else if this
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().array.is_some())
+    {
+        "Array"
+    } else if this.as_regexp_ref().is_some() {
+        "RegExp"
+    } else {
+        return Ok(Value::string_value(this.display()));
+    };
+    Ok(Value::string_value(format!("[object {tag}]")))
 }
 fn native_object_get_own_property_descriptor(
     vm: &mut Vm,
