@@ -7867,7 +7867,7 @@ impl Vm {
                         }
                     }
                 };
-                self.write_lvalue(target, value.clone());
+                self.write_lvalue(target, value.clone())?;
                 Ok(value)
             }
             UpdateExpression(v) => {
@@ -8163,12 +8163,26 @@ impl Vm {
             LValue::Prop(o, k) => self.get_prop(o, k),
         }
     }
-    fn write_lvalue(&self, target: LValue, v: Value) {
+    fn write_lvalue(&mut self, target: LValue, v: Value) -> JsResult<()> {
         match target {
-            LValue::Var(e, name) if self.readonly_global_binding(&e, &name) => {}
+            LValue::Var(e, name) if self.readonly_global_binding(&e, &name) => {
+                if self.strict_mode {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "Assignment to read-only global binding",
+                    )));
+                }
+            }
             LValue::Var(e, name) => Environment::set(&e, &name, v),
-            LValue::Prop(o, k) => self.set_prop(&o, &k, v),
+            LValue::Prop(o, k) => {
+                if self.strict_mode {
+                    self.set_prop_with_accessors(&o, &k, v)?;
+                } else {
+                    self.set_prop(&o, &k, v);
+                }
+            }
         }
+        Ok(())
     }
 
     fn readonly_global_binding(&self, environment: &Env, name: &str) -> bool {
@@ -8230,15 +8244,23 @@ impl Vm {
             SimpleAssignmentTarget::StaticMemberExpression(m) => {
                 let o = self.eval_expr(&m.object, e)?;
                 let k = m.property.name.to_string();
-                self.set_prop(&o, &k, v);
-                Ok(())
+                if self.strict_mode {
+                    self.set_prop_with_accessors(&o, &k, v)
+                } else {
+                    self.set_prop(&o, &k, v);
+                    Ok(())
+                }
             }
             SimpleAssignmentTarget::ComputedMemberExpression(m) => {
                 let o = self.eval_expr(&m.object, e.clone())?;
                 let key_value = self.eval_expr(&m.expression, e)?;
                 let k = self.to_property_key(key_value)?;
-                self.set_prop(&o, &k, v);
-                Ok(())
+                if self.strict_mode {
+                    self.set_prop_with_accessors(&o, &k, v)
+                } else {
+                    self.set_prop(&o, &k, v);
+                    Ok(())
+                }
             }
             _ => Err(JsError::Message("target unsupported".into())),
         }
@@ -17096,6 +17118,20 @@ pub fn run_source_with_argv_and_output_status(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strict_assignment_to_global_undefined_throws() {
+        let mut vm = Vm::new();
+        vm.install_process(Vec::new(), Vec::new());
+        let result = vm.run_source_text(
+            Path::new("<strict-undefined>"),
+            "\"use strict\"; var global = this; global[\"undefined\"] = 5;",
+        );
+        assert!(
+            result.is_err(),
+            "strict assignment must reject read-only global"
+        );
+    }
 
     #[test]
     fn number_constructor_exposes_standard_constants() {

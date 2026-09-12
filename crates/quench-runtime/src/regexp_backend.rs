@@ -365,11 +365,15 @@ fn compiled_source_is_safe(source: &str) -> bool {
             // The byte regexp backend accepts a narrower identity-escape
             // language than ECMAScript. Route legacy identity escapes to the
             // repository matcher instead of changing the matched value.
+            // Decimal escapes are backreferences in ECMAScript (or legacy
+            // octal escapes), neither of which the byte backend implements
+            // with the required capture semantics.
+            if byte.is_ascii_digit() {
+                return false;
+            }
             if !matches!(
                 byte,
-                b'0'..=b'9'
-                    | b'b'
-                    | b'B'
+                b'b' | b'B'
                     | b'd'
                     | b'D'
                     | b'f'
@@ -1905,6 +1909,16 @@ mod tests {
         let matched = regex.find_from("abc", 0).next().unwrap();
         assert_eq!(matched.range, 0..1);
         assert_eq!(matched.captures, vec![Some(0..3)]);
+    }
+    #[test]
+    fn backreference_can_backtrack_a_captured_repeat() {
+        let regex = Regex::with_flags(r"^(a+)\1*,\1+$", Flags::default()).unwrap();
+        let matched = regex
+            .find_from("aaaaaaaaaa,aaaaaaaaaaaaaaa", 0)
+            .next()
+            .expect("backreference pattern should match");
+        assert_eq!(matched.range, 0..26);
+        assert_eq!(matched.captures, vec![Some(0..5)]);
     }
     #[test]
     fn duplicate_group_properties_pattern_matches() {
