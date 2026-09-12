@@ -4598,6 +4598,46 @@ impl Vm {
             let proto = Value::Object(function.as_function_ref().expect("constructor function").prototype.clone());
             self.set_prop(&proto, "constructor", self.builtin(constructor));
         }
+        let object_prototype_for_errors = self
+            .builtin(BuiltinId::ObjectConstructor)
+            .as_function_ref()
+            .expect("Object constructor")
+            .prototype
+            .clone();
+        let error_names = [
+            (BuiltinId::ErrorConstructor, "Error"),
+            (BuiltinId::EvalErrorConstructor, "EvalError"),
+            (BuiltinId::RangeErrorConstructor, "RangeError"),
+            (BuiltinId::ReferenceErrorConstructor, "ReferenceError"),
+            (BuiltinId::SyntaxErrorConstructor, "SyntaxError"),
+            (BuiltinId::TypeErrorConstructor, "TypeError"),
+            (BuiltinId::URIErrorConstructor, "URIError"),
+            (BuiltinId::AggregateErrorConstructor, "AggregateError"),
+        ];
+        let error_prototype = self
+            .builtin(BuiltinId::ErrorConstructor)
+            .as_function_ref()
+            .expect("Error constructor")
+            .prototype
+            .clone();
+        error_prototype.borrow_mut().prototype = Some(object_prototype_for_errors);
+        for (constructor, name) in error_names {
+            let function = self.builtin(constructor);
+            let prototype = function.as_function_ref().expect("error constructor").prototype.clone();
+            self.set_prop(&Value::Object(prototype.clone()), "constructor", function);
+            self.set_prop(&Value::Object(prototype.clone()), "name", Value::string_value(name));
+            self.set_prop(&Value::Object(prototype.clone()), "message", Value::string_value(""));
+            let prototype_value = Value::Object(prototype.clone());
+            if let Some(object) = prototype_value.as_object_ref() {
+                let mut object = object.borrow_mut();
+                object.attributes.insert("constructor".into(), PropertyAttributes { writable: true, enumerable: false, configurable: true });
+                object.attributes.insert("name".into(), PropertyAttributes { writable: true, enumerable: false, configurable: true });
+                object.attributes.insert("message".into(), PropertyAttributes { writable: true, enumerable: false, configurable: true });
+            }
+            if constructor != BuiltinId::ErrorConstructor {
+                prototype.borrow_mut().prototype = Some(error_prototype.clone());
+            }
+        }
         let function_prototype = self
             .builtin(BuiltinId::FunctionConstructor)
             .as_function_ref()
@@ -4737,7 +4777,8 @@ impl Vm {
         let global_this = self.object(None);
         for name in [
             "process", "console", "Math", "Symbol", "Object", "Array", "String", "Number", "Date", "RegExp",
-            "Error", "assert", "Buffer", "Blob", "JSON", "setTimeout", "clearTimeout",
+            "Error", "EvalError", "RangeError", "ReferenceError", "SyntaxError", "TypeError", "URIError", "AggregateError",
+            "assert", "Buffer", "Blob", "JSON", "setTimeout", "clearTimeout",
         ] {
             if let Some(value) = Environment::get(&self.global, name) {
                 self.set_prop(&global_this, name, value);
@@ -8586,18 +8627,41 @@ fn compile_regex(pattern: &str, insensitive: bool) -> JsResult<Regex> {
     };
     Regex::new(&source).map_err(|e| JsError::Message(format!("regex parse error: {e}")))
 }
-fn native_error(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    let o = vm.object(None);
-    vm.set_prop(
-        &o,
-        "message",
-        a.first().cloned().unwrap_or(Value::Undefined),
-    );
+fn native_error(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
+    let o = if this.is_object() { this } else { vm.object(None) };
+    vm.set_prop(&o, "\0error", Value::Bool(true));
+    if let Some(message) = a.first() {
+        vm.set_prop(&o, "message", message.clone());
+        if let Some(object) = o.as_object_ref() {
+            object.borrow_mut().attributes.insert(
+                "message".into(),
+                PropertyAttributes { writable: true, enumerable: false, configurable: true },
+            );
+        }
+    }
+    if let Some(cause) = a
+        .get(1)
+        .and_then(Value::as_object_ref)
+        .and_then(|object| object.borrow().props.get("cause").cloned())
+    {
+        vm.set_prop(&o, "cause", cause);
+        if let Some(object) = o.as_object_ref() {
+            object.borrow_mut().attributes.insert(
+                "cause".into(),
+                PropertyAttributes { writable: true, enumerable: false, configurable: true },
+            );
+        }
+    }
     Ok(o)
 }
 fn native_object_to_string(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     let tag = if this.as_function_ref().is_some() {
         "Function"
+    } else if this
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.contains_key("\0error"))
+    {
+        "Error"
     } else if let Some(wrapper) = this
         .as_object_ref()
         .and_then(|object| object.borrow().props.get("\0wrapper").cloned())
@@ -8612,7 +8676,7 @@ fn native_object_to_string(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Val
     } else if this.as_regexp_ref().is_some() {
         "RegExp"
     } else {
-        return Ok(Value::string_value(this.display()));
+        "Object"
     };
     Ok(Value::string_value(format!("[object {tag}]")))
 }
@@ -8763,6 +8827,22 @@ fn native_object_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
             .unwrap_or(Value::Null));
     }
     if target.as_function().is_some() {
+        if target.as_function_ref().is_some_and(|function| {
+            matches!(
+                function.kind,
+                FunctionKind::Builtin(
+                    BuiltinId::EvalErrorConstructor
+                        | BuiltinId::RangeErrorConstructor
+                        | BuiltinId::ReferenceErrorConstructor
+                        | BuiltinId::SyntaxErrorConstructor
+                        | BuiltinId::TypeErrorConstructor
+                        | BuiltinId::URIErrorConstructor
+                        | BuiltinId::AggregateErrorConstructor
+                )
+            )
+        }) {
+            return Ok(vm.builtin(BuiltinId::ErrorConstructor));
+        }
         let function_prototype = vm
             .builtin(BuiltinId::FunctionConstructor)
             .as_function_ref()
