@@ -1428,9 +1428,10 @@ impl Compiler {
                 Literal::String(format!("\0bigint:{}", value.value)),
                 value.span,
             ),
-            StringLiteral(value) => {
-                self.literal(Literal::String(value.value.to_string()), value.span)
-            }
+            StringLiteral(value) => self.literal(
+                Literal::String(super::string_literal_value(value)),
+                value.span,
+            ),
             Identifier(value) => {
                 let dst = self.alloc()?;
                 self.emit(
