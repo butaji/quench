@@ -11638,7 +11638,8 @@ fn native_object_has_own_property(vm: &mut Vm, this: Value, args: &[Value]) -> J
             let object = object.borrow();
             if let Some(array) = &object.array {
                 key == "length"
-                    || array_index_key(&key).is_some_and(|index| index < array.len())
+                    || array_index_key(&key)
+                        .is_some_and(|index| index < array.len() && !array.holes[index])
                     || object.props.contains_key(&key)
                     || object.props.contains_key(&accessor_slot("get", &key))
                     || object.props.contains_key(&accessor_slot("set", &key))
