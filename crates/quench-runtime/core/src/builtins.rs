@@ -627,7 +627,7 @@ fn builtin_length(id: BuiltinId) -> usize {
         BuiltinId::StringMatch => 1,
         BuiltinId::StringConcat => 1,
         BuiltinId::StringReplaceAll => 2,
-        BuiltinId::StringPadStart | BuiltinId::StringPadEnd => 2,
+        BuiltinId::StringPadStart | BuiltinId::StringPadEnd => 1,
         BuiltinId::StringMatchAll | BuiltinId::StringSearch | BuiltinId::RegExpMatchAll => 1,
         BuiltinId::StringLocaleCompare => 1,
         BuiltinId::ArrayAt => 1,
