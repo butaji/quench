@@ -1757,6 +1757,23 @@ impl Environment {
         self.values.push(v);
         self.publish_access();
     }
+    fn reserve(&mut self, names: impl IntoIterator<Item = String>) {
+        let missing = names
+            .into_iter()
+            .filter(|name| !self.names.contains_key(name))
+            .collect::<Vec<_>>();
+        if missing.is_empty() {
+            return;
+        }
+        let mut next_names = self.names.as_ref().clone();
+        let start = self.values.len();
+        for (offset, name) in missing.into_iter().enumerate() {
+            next_names.insert(name, start + offset);
+        }
+        self.names = Rc::new(next_names);
+        self.values.resize(self.names.len(), Value::Undefined);
+        self.publish_access();
+    }
     fn contains_local(&self, k: &str) -> bool {
         self.names.contains_key(k)
     }
@@ -7103,6 +7120,7 @@ impl Vm {
                 ) {
                     Ok(code) => code,
                     Err(_) => {
+                        reserve_script_bindings(&environment, statements);
                         return self
                             .exec_stmts(statements, environment.clone())
                             .map(|signal| match signal {
@@ -7117,6 +7135,7 @@ impl Vm {
                     dynjit::DynJitCode::build(code, &mut arena, instrumented_kernels)
                 };
                 let Some(image) = image else {
+                    reserve_script_bindings(&environment, statements);
                     return self
                         .exec_stmts(statements, environment.clone())
                         .map(|signal| match signal {
@@ -8017,6 +8036,18 @@ fn pattern_name<'a>(p: &BindingPattern<'a>) -> Option<String> {
         BindingPattern::AssignmentPattern(a) => pattern_name(&a.left),
         _ => None,
     }
+}
+
+fn reserve_script_bindings(environment: &Env, statements: &[Statement<'_>]) {
+    let names = statements
+        .iter()
+        .filter_map(|statement| match statement {
+            Statement::VariableDeclaration(declaration) => Some(declaration),
+            _ => None,
+        })
+        .flat_map(|declaration| declaration.declarations.iter())
+        .filter_map(|declarator| pattern_name(&declarator.id));
+    environment.borrow_mut().reserve(names);
 }
 fn catch_name<'a>(p: &CatchParameter<'a>) -> Option<String> {
     pattern_name(&p.pattern)
