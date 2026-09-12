@@ -440,9 +440,6 @@ fn builtin_length(id: BuiltinId) -> usize {
         BuiltinId::NumberToLocaleString => 0,
         BuiltinId::NumberValueOf => 0,
         BuiltinId::ParseInt
-        | BuiltinId::ParseFloat
-        | BuiltinId::IsNaN
-        | BuiltinId::IsFinite
         | BuiltinId::DecodeURI
         | BuiltinId::DecodeURIComponent
         | BuiltinId::EncodeURI
@@ -456,6 +453,7 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::AssertThrows
         | BuiltinId::SetTimeout
         | BuiltinId::SetImmediate => 2,
+        BuiltinId::ParseFloat | BuiltinId::IsNaN | BuiltinId::IsFinite => 1,
         BuiltinId::ArraySplice => 2,
         BuiltinId::ArrayFlatMap => 1,
         BuiltinId::MathFloor
