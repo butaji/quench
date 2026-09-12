@@ -8576,6 +8576,29 @@ fn bigint_bits(vm: &mut Vm, value: &Value) -> JsResult<u32> {
             "cannot convert a BigInt value to an index",
         )));
     }
+    if value
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
+    {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "cannot convert a Symbol value to an index",
+        )));
+    }
+    if value
+        .as_object_ref()
+        .and_then(|object| object.borrow().props.get("\0primitive").cloned())
+        .is_some_and(|primitive| {
+            primitive
+                .as_object_ref()
+                .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
+        })
+    {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "cannot convert a Symbol value to an index",
+        )));
+    }
     let primitive = if value.is_object() || value.is_function() {
         to_primitive_for_binary(vm, value, false)?
     } else {
@@ -13047,6 +13070,8 @@ fn native_object_property_is_enumerable(
                     | "MAX_SAFE_INTEGER"
                     | "MIN_SAFE_INTEGER"
                     | "EPSILON"
+                    | "asIntN"
+                    | "asUintN"
             )
     } else {
         target.as_object_ref().is_some_and(|object| {
