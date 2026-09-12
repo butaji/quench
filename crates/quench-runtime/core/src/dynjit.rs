@@ -3083,7 +3083,7 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             strict,
         } => {
             let object = get(frame, object);
-            let deleted = delete_property(&object, &key);
+            let deleted = unsafe { &*frame.vm }.delete_prop(&object, &key);
             if *strict && !deleted {
                 return Err(JsError::Throw(super::type_error(
                     unsafe { &mut *frame.vm },
@@ -3100,7 +3100,7 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
         } => {
             let object = get(frame, object);
             let key = get(frame, key).string();
-            let deleted = delete_property(&object, &key);
+            let deleted = unsafe { &*frame.vm }.delete_prop(&object, &key);
             if *strict && !deleted {
                 return Err(JsError::Throw(super::type_error(
                     unsafe { &mut *frame.vm },
@@ -3697,83 +3697,7 @@ fn construct(
 }
 
 fn enumerable_keys(value: &Value) -> Vec<String> {
-    let Some(object) = value.as_object_ref() else {
-        return Vec::new();
-    };
-    let object = object.borrow();
-    let mut keys = object
-        .array
-        .as_ref()
-        .map(|array| {
-            (0..array.len())
-                .filter(|index| !array.holes[*index])
-                .map(|index| index.to_string())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    keys.extend(
-        object
-            .props
-            .keys()
-            .filter(|key| {
-                !key.starts_with('\0')
-                    && object
-                        .attributes
-                        .get(*key)
-                        .is_none_or(|attributes| attributes.enumerable)
-            })
-            .cloned(),
-    );
-    keys
-}
-
-fn delete_property(value: &Value, key: &str) -> bool {
-    if let Some(object) = value.as_object_ref() {
-        let mut object = object.borrow_mut();
-        if object
-            .attributes
-            .get(key)
-            .is_some_and(|attributes| !attributes.configurable)
-        {
-            return false;
-        }
-        if let Some(array) = &mut object.array
-            && let Some(index) = super::array_index_key(key)
-            && array.delete(index)
-        {
-            return true;
-        }
-        object.props.shift_remove(key);
-        object.attributes.remove(key);
-        return true;
-    } else if let Some(function) = value.as_function_ref() {
-        // Ordinary callable objects expose a non-configurable own
-        // `prototype` property.  It is stored out-of-line on FunctionValue,
-        // so handle the descriptor here before touching the user property
-        // map.
-        if key == "prototype" {
-            return false;
-        }
-        if matches!(
-            function.kind,
-            super::FunctionKind::Builtin(super::BuiltinId::NumberConstructor)
-        ) && matches!(
-            key,
-            "NaN"
-                | "POSITIVE_INFINITY"
-                | "NEGATIVE_INFINITY"
-                | "MAX_VALUE"
-                | "MIN_VALUE"
-                | "MAX_SAFE_INTEGER"
-                | "MIN_SAFE_INTEGER"
-                | "EPSILON"
-        ) {
-            return false;
-        }
-        function.props.borrow_mut().shift_remove(key);
-        return true;
-    }
-    true
+    super::object_own_enumerable_keys(value)
 }
 
 fn op_name(op: &DynOp) -> &'static str {
