@@ -7582,6 +7582,7 @@ impl Vm {
                 Ok(o)
             }
             FunctionExpression(v) => Ok(self.make_user(v, e)),
+            ArrowFunctionExpression(v) => Ok(self.make_arrow(v, e)),
             ParenthesizedExpression(v) => self.eval_expr(&v.expression, e),
             SequenceExpression(v) => {
                 let mut z = Value::Undefined;
@@ -8717,10 +8718,14 @@ fn array_like_target(vm: &mut Vm, value: &Value) -> JsResult<Value> {
 }
 
 fn array_like_value(vm: &mut Vm, value: &Value, index: usize) -> JsResult<Option<Value>> {
-    if let Some(object) = value.as_object_ref()
-        && let Some(array) = &object.borrow().array
-        && (index >= array.len() || array.holes[index])
-    {
+    let dense_hole = value.as_object_ref().is_some_and(|object| {
+        let object = object.borrow();
+        object
+            .array
+            .as_ref()
+            .is_some_and(|array| index >= array.len() || array.holes[index])
+    });
+    if dense_hole && !vm.has_property(value, &index.to_string()) {
         return Ok(None);
     }
     if value.is_string() {
@@ -8742,10 +8747,11 @@ fn array_callback(
     value: Value,
     index: usize,
     array: Value,
+    this_arg: Value,
 ) -> JsResult<Value> {
     vm.call_arguments(
         callback,
-        Value::Undefined,
+        this_arg,
         &[value, Value::Number(index as f64), array][..],
     )
 }
@@ -8757,7 +8763,14 @@ fn native_array_for_each(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
     let length = array_like_length(vm, &target)?;
     for index in 0..length {
         if let Some(value) = array_like_value(vm, &target, index)? {
-            array_callback(vm, callback, value, index, target.clone())?;
+            array_callback(
+                vm,
+                callback,
+                value,
+                index,
+                target.clone(),
+                args.get(1).cloned().unwrap_or(Value::Undefined),
+            )?;
         }
     }
     Ok(Value::Undefined)
@@ -8779,7 +8792,14 @@ fn native_array_map(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value>
     }
     for index in 0..length {
         if let Some(value) = array_like_value(vm, &target, index)? {
-            let mapped = array_callback(vm, callback, value, index, target.clone())?;
+            let mapped = array_callback(
+                vm,
+                callback,
+                value,
+                index,
+                target.clone(),
+                args.get(1).cloned().unwrap_or(Value::Undefined),
+            )?;
             vm.set_prop(&result, &index.to_string(), mapped);
         }
     }
@@ -8794,7 +8814,15 @@ fn native_array_filter(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
     let length = array_like_length(vm, &target)?;
     for index in 0..length {
         if let Some(value) = array_like_value(vm, &target, index)? {
-            let keep = array_callback(vm, callback, value.clone(), index, target.clone())?.truthy();
+            let keep = array_callback(
+                vm,
+                callback,
+                value.clone(),
+                index,
+                target.clone(),
+                args.get(1).cloned().unwrap_or(Value::Undefined),
+            )?
+            .truthy();
             if keep {
                 filtered.push(value);
             }
@@ -8810,7 +8838,15 @@ fn native_array_some(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value
     let length = array_like_length(vm, &target)?;
     for index in 0..length {
         if let Some(value) = array_like_value(vm, &target, index)?
-            && array_callback(vm, callback, value, index, target.clone())?.truthy()
+            && array_callback(
+                vm,
+                callback,
+                value,
+                index,
+                target.clone(),
+                args.get(1).cloned().unwrap_or(Value::Undefined),
+            )?
+            .truthy()
         {
             return Ok(Value::Bool(true));
         }
@@ -8825,7 +8861,15 @@ fn native_array_every(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Valu
     let length = array_like_length(vm, &target)?;
     for index in 0..length {
         if let Some(value) = array_like_value(vm, &target, index)?
-            && !array_callback(vm, callback, value, index, target.clone())?.truthy()
+            && !array_callback(
+                vm,
+                callback,
+                value,
+                index,
+                target.clone(),
+                args.get(1).cloned().unwrap_or(Value::Undefined),
+            )?
+            .truthy()
         {
             return Ok(Value::Bool(false));
         }
@@ -8988,18 +9032,42 @@ fn native_array_to_spliced(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
 }
 
 fn native_array_with(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    let mut values = array_values(&this);
-    let index = args.first().map(Value::number).unwrap_or(0.0).trunc() as isize;
-    let index = if index < 0 {
-        values.len() as isize + index
+    let target = array_like_target(vm, &this)?;
+    let length_value = vm.get_prop_with_accessors(&target, "length")?;
+    let length_number = to_number_with_vm(vm, &length_value)?;
+    if length_number.is_finite() && length_number > u32::MAX as f64 {
+        return Err(JsError::Throw(range_error(
+            vm,
+            "array length exceeds the array index limit",
+        )));
+    }
+    let length = length_number
+        .max(0.0)
+        .trunc()
+        .min(MAX_MATERIALIZED_ARRAY_LENGTH as f64) as usize;
+    let index = to_integer_or_infinity(vm, args.first().unwrap_or(&Value::Undefined))?;
+    let index = if index == 0.0 {
+        0.0
+    } else if index.is_sign_negative() {
+        length as f64 + index
     } else {
         index
     };
-    if index < 0 || index as usize >= values.len() {
+    if !index.is_finite() || index < 0.0 || index >= length as f64 {
         return Err(JsError::Throw(range_error(vm, "array index out of range")));
     }
-    values[index as usize] = args.get(1).cloned().unwrap_or(Value::Undefined);
-    Ok(vm.array_from_values(values))
+    let index = index as usize;
+    let result = vm.array();
+    for position in 0..length {
+        let value = if position == index {
+            args.get(1).cloned().unwrap_or(Value::Undefined)
+        } else {
+            array_like_value(vm, &target, position)?.unwrap_or(Value::Undefined)
+        };
+        vm.set_prop(&result, &position.to_string(), value);
+    }
+    vm.set_prop_with_accessors(&result, "length", Value::Number(length as f64))?;
+    Ok(result)
 }
 fn array_reduce_impl(vm: &mut Vm, this: Value, args: &[Value], reverse: bool) -> JsResult<Value> {
     let Some(callback) = args.first().filter(|value| value.is_function()) else {
@@ -9007,37 +9075,27 @@ fn array_reduce_impl(vm: &mut Vm, this: Value, args: &[Value], reverse: bool) ->
     };
     let target = array_like_target(vm, &this)?;
     let length = array_like_length(vm, &target)?;
-    let mut indexed = Vec::new();
-    for index in 0..length {
-        if let Some(value) = array_like_value(vm, &target, index)? {
-            indexed.push((index, value));
-        }
-    }
-    let mut iter = if reverse {
-        Box::new(indexed.into_iter().rev()) as Box<dyn Iterator<Item = (usize, Value)>>
+    let indices = if reverse {
+        (0..length).rev().collect::<Vec<_>>()
     } else {
-        Box::new(indexed.into_iter())
+        (0..length).collect::<Vec<_>>()
     };
-    let mut accumulator = if let Some(initial) = args.get(1) {
-        initial.clone()
-    } else {
-        iter.next()
-            .map(|(_, value)| value)
-            .ok_or_else(|| JsError::Throw(type_error(vm, "reduce of empty array")))?
-    };
-    for (index, value) in iter {
-        accumulator = vm.call_arguments(
+    let mut accumulator = args.get(1).cloned();
+    for index in indices {
+        let Some(value) = array_like_value(vm, &target, index)? else {
+            continue;
+        };
+        let Some(previous) = accumulator.take() else {
+            accumulator = Some(value);
+            continue;
+        };
+        accumulator = Some(vm.call_arguments(
             callback,
             Value::Undefined,
-            &[
-                accumulator,
-                value,
-                Value::Number(index as f64),
-                target.clone(),
-            ][..],
-        )?;
+            &[previous, value, Value::Number(index as f64), target.clone()][..],
+        )?);
     }
-    Ok(accumulator)
+    accumulator.ok_or_else(|| JsError::Throw(type_error(vm, "reduce of empty array")))
 }
 fn native_array_reduce(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     array_reduce_impl(vm, this, args, false)
@@ -9050,7 +9108,16 @@ fn native_array_find(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value
         return Err(JsError::Throw(type_error(vm, "callback is not a function")));
     };
     for (index, value) in array_values(&this).into_iter().enumerate() {
-        if array_callback(vm, callback, value.clone(), index, this.clone())?.truthy() {
+        if array_callback(
+            vm,
+            callback,
+            value.clone(),
+            index,
+            this.clone(),
+            args.get(1).cloned().unwrap_or(Value::Undefined),
+        )?
+        .truthy()
+        {
             return Ok(value);
         }
     }
@@ -9061,7 +9128,16 @@ fn native_array_find_index(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
         return Err(JsError::Throw(type_error(vm, "callback is not a function")));
     };
     for (index, value) in array_values(&this).into_iter().enumerate() {
-        if array_callback(vm, callback, value, index, this.clone())?.truthy() {
+        if array_callback(
+            vm,
+            callback,
+            value,
+            index,
+            this.clone(),
+            args.get(1).cloned().unwrap_or(Value::Undefined),
+        )?
+        .truthy()
+        {
             return Ok(Value::Number(index as f64));
         }
     }
@@ -9190,7 +9266,14 @@ fn native_array_flat_map(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
     };
     let mut output = Vec::new();
     for (index, value) in array_values(&this).into_iter().enumerate() {
-        let mapped = array_callback(vm, callback, value, index, this.clone())?;
+        let mapped = array_callback(
+            vm,
+            callback,
+            value,
+            index,
+            this.clone(),
+            args.get(1).cloned().unwrap_or(Value::Undefined),
+        )?;
         if let Some(object) = mapped.as_object_ref()
             && let Some(array) = object.borrow().array.as_ref()
         {
