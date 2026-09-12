@@ -5649,11 +5649,10 @@ impl Vm {
             }
             NewExpression(v) => {
                 let c = self.eval_expr(&v.callee, e.clone())?;
-                let o = if let Some(function) = c.as_function() {
-                    self.object(Some(function.prototype.clone()))
-                } else {
-                    self.object(None)
+                let Some(function) = c.as_function() else {
+                    return Err(JsError::Message("TypeError: not a constructor".into()));
                 };
+                let o = self.object(Some(function.prototype.clone()));
                 let args = self.eval_args(&v.arguments, e)?;
                 let r = self.call(c.clone(), o.clone(), args)?;
                 let native = c.as_function().is_some_and(|function| {
@@ -6404,6 +6403,9 @@ fn native_number_to_string(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<
     }
     Ok(Value::string_value(n.to_string()))
 }
+fn native_boolean(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    Ok(Value::Bool(a.first().is_some_and(Value::truthy)))
+}
 fn native_is_nan(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(Value::Bool(
         a.first().map(|v| v.number().is_nan()).unwrap_or(true),
@@ -7147,6 +7149,17 @@ mod tests {
         vm.run_source_text(Path::new("<eval-test>"), "var value = 40; eval('value = value + 2');")
             .expect("eval executes");
         assert_eq!(Environment::get(&vm.global, "value").and_then(|v| v.as_number()), Some(42.0));
+    }
+
+    #[test]
+    fn boolean_constructor_is_vm_owned() {
+        let mut vm = Vm::new();
+        vm.install_process(Vec::new(), Vec::new());
+        vm.run_source_text(
+            Path::new("<boolean-test>"),
+            "var boxed = new Boolean(1); if (boxed !== true) throw new Error('boolean');",
+        )
+        .expect("boolean and constructor semantics execute");
     }
 
     #[test]

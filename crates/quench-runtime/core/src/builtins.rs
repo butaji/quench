@@ -125,6 +125,7 @@ builtin_catalog! {
     ArrayConstructor, Global, "Array", native_array, Generic, MAY_ALLOCATE;
     StringConstructor, Global, "String", native_string, Generic, MAY_ALLOCATE;
     NumberConstructor, Global, "Number", native_number, Generic, PURE;
+    BooleanConstructor, Global, "Boolean", native_boolean, Generic, PURE;
     DateConstructor, Global, "Date", native_date, Generic, PURE;
     RegExpConstructor, Global, "RegExp", native_regexp, Generic, MAY_ALLOCATE;
     ErrorConstructor, Global, "Error", native_error, Generic, MAY_ALLOCATE;
