@@ -6,6 +6,7 @@ pub(crate) type NativeSemantic = fn(&mut Vm, Value, &[Value]) -> JsResult<Value>
 pub(crate) enum BuiltinOwner {
     Global,
     Math,
+    Reflect,
     Console,
     ArrayPrototype,
     StringPrototype,
@@ -133,7 +134,9 @@ builtin_catalog! {
     MathImul, Math, "imul", native_math_imul, BinaryNumber, PURE;
     MathFround, Math, "fround", native_math_fround, UnaryNumber, PURE;
     MathF16Round, Math, "f16round", native_math_f16round, UnaryNumber, PURE;
+    MathSumPrecise, Math, "sumPrecise", native_math_sum_precise, Generic, MAY_ALLOCATE;
     MathRandom, Math, "random", native_random, Generic, PURE;
+    ReflectConstruct, Reflect, "construct", native_reflect_construct, Generic, MAY_ALLOCATE;
     ObjectConstructor, Global, "Object", native_object, Generic, MAY_ALLOCATE;
     ObjectGetOwnPropertyDescriptor, ObjectConstructor, "getOwnPropertyDescriptor", native_object_get_own_property_descriptor, Generic, MAY_ALLOCATE;
     ObjectGetPrototypeOf, ObjectConstructor, "getPrototypeOf", native_object_get_prototype_of, Generic, PURE;
@@ -328,7 +331,9 @@ fn builtin_length(id: BuiltinId) -> usize {
         BuiltinId::ObjectDefineProperties => 2,
         BuiltinId::ObjectFromEntries => 1,
         BuiltinId::ObjectSetPrototypeOf => 2,
+        BuiltinId::ReflectConstruct => 2,
         BuiltinId::MathAtan2 => 2,
+        BuiltinId::MathSumPrecise => 1,
         BuiltinId::ParseInt
         | BuiltinId::ParseFloat
         | BuiltinId::IsNaN

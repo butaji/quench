@@ -3418,6 +3418,12 @@ fn construct(
     call_ic: Option<&CallIcSite>,
 ) -> JsResult<()> {
     let callee = get(frame, callee);
+    if !super::constructable(&callee) {
+        return Err(JsError::Throw(super::type_error(
+            unsafe { &mut *frame.vm },
+            "not a constructor",
+        )));
+    }
     let native = callee.as_function_ref().is_some_and(|function| {
         matches!(
             function.kind,

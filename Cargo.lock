@@ -2779,6 +2779,8 @@ name = "quench-runtime-core"
 version = "0.1.0"
 dependencies = [
  "indexmap",
+ "num-bigint 0.4.8",
+ "num-traits",
  "object 0.37.3",
  "oxc_allocator 0.149.0",
  "oxc_ast 0.149.0",
