@@ -6396,6 +6396,45 @@ fn native_math_round(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
         a.first().map(Value::number).unwrap_or(f64::NAN).round(),
     ))
 }
+fn native_math_trunc(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    Ok(Value::Number(a.first().map(Value::number).unwrap_or(f64::NAN).trunc()))
+}
+fn native_math_sign(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    let n = a.first().map(Value::number).unwrap_or(f64::NAN);
+    Ok(Value::Number(if n.is_nan() { f64::NAN } else if n == 0.0 { n } else if n < 0.0 { -1.0 } else { 1.0 }))
+}
+fn native_math_sin(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    Ok(Value::Number(a.first().map(Value::number).unwrap_or(f64::NAN).sin()))
+}
+fn native_math_cos(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    Ok(Value::Number(a.first().map(Value::number).unwrap_or(f64::NAN).cos()))
+}
+fn native_math_tan(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    Ok(Value::Number(a.first().map(Value::number).unwrap_or(f64::NAN).tan()))
+}
+fn native_math_exp(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    Ok(Value::Number(a.first().map(Value::number).unwrap_or(f64::NAN).exp()))
+}
+fn native_math_log10(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    Ok(Value::Number(a.first().map(Value::number).unwrap_or(f64::NAN).log10()))
+}
+fn native_math_log2(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    Ok(Value::Number(a.first().map(Value::number).unwrap_or(f64::NAN).log2()))
+}
+fn native_math_hypot(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    Ok(Value::Number(a.iter().map(Value::number).fold(0.0, f64::hypot)))
+}
+fn native_math_clz32(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    Ok(Value::Number((a.first().map(Value::number).unwrap_or(0.0) as u32).leading_zeros() as f64))
+}
+fn native_math_imul(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    let left = a.first().map(Value::number).unwrap_or(0.0) as u32;
+    let right = a.get(1).map(Value::number).unwrap_or(0.0) as u32;
+    Ok(Value::Number((left.wrapping_mul(right) as i32) as f64))
+}
+fn native_math_fround(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    Ok(Value::Number((a.first().map(Value::number).unwrap_or(f64::NAN) as f32) as f64))
+}
 fn native_math_log(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     let value = a.first().cloned().unwrap_or(Value::Undefined);
     let value = if value.is_object() {
