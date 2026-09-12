@@ -2975,15 +2975,15 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
         }
         DynOp::SetComputed { object, key, src } => {
             let value = get(frame, src);
-            let object = get_ref(frame, *object);
+            let object = get_ref(frame, *object).clone();
             if object.is_null() || object.is_undefined() {
                 return Err(JsError::Message(format!(
                     "cannot write computed property of {}",
                     object.display()
                 )));
             }
-            let key = get_ref(frame, *key);
-            unsafe { &*frame.vm }.set_computed_prop(object, key, value);
+            let key = get_ref(frame, *key).clone();
+            unsafe { &mut *frame.vm }.set_computed_prop(&object, &key, value)?;
         }
         DynOp::DeleteStatic { dst, object, key } => {
             let object = get(frame, object);
@@ -3496,6 +3496,9 @@ fn construct(
             _ => "Object",
         };
         vm(frame).set_prop(&object, "\0wrapper", Value::string_value(wrapper));
+        if matches!(callee.as_function_ref().map(|function| &function.kind), Some(FunctionKind::Builtin(BuiltinId::StringConstructor))) {
+            super::initialize_string_wrapper(vm(frame), &object, &result);
+        }
     }
     let returns_object = result.is_object() || result.is_function() || result.is_regexp();
     put(
@@ -3517,10 +3520,23 @@ fn enumerable_keys(value: &Value) -> Vec<String> {
         return Vec::new();
     };
     let object = object.borrow();
-    let mut keys = (0..object.array.as_ref().map_or(0, ArrayStorage::len))
-        .map(|index| index.to_string())
-        .collect::<Vec<_>>();
-    keys.extend(object.props.keys().cloned());
+    let mut keys = object
+        .array
+        .as_ref()
+        .map(|array| {
+            (0..array.len())
+                .filter(|index| !array.holes[*index])
+                .map(|index| index.to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    keys.extend(object.props.keys().filter(|key| {
+        !key.starts_with('\0')
+            && object
+                .attributes
+                .get(*key)
+                .is_none_or(|attributes| attributes.enumerable)
+    }).cloned());
     keys
 }
 
