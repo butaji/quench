@@ -10800,12 +10800,16 @@ fn native_string_includes(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<
         .transpose()?
         .unwrap_or(0.0)
         .max(0.0) as usize;
-    Ok(Value::Bool(
-        source.char_indices().nth(position).map_or_else(
-            || position >= source.chars().count(),
-            |(offset, _)| source[offset..].contains(&search),
-        ),
-    ))
+    let length = source.chars().count();
+    Ok(Value::Bool(if position > length {
+        search.is_empty()
+    } else {
+        source
+            .chars()
+            .skip(position)
+            .collect::<String>()
+            .contains(&search)
+    }))
 }
 
 fn native_string_starts_with(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
