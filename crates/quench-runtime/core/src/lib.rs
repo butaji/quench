@@ -5544,7 +5544,11 @@ impl Vm {
                 | "valueOf"
                 | "hasOwnProperty"
                 | "propertyIsEnumerable"
-                | "isPrototypeOf" => self.builtin_property(BuiltinOwner::ObjectPrototype, k),
+                | "isPrototypeOf"
+                | "__defineGetter__"
+                | "__defineSetter__"
+                | "__lookupGetter__"
+                | "__lookupSetter__" => self.builtin_property(BuiltinOwner::ObjectPrototype, k),
                 "call" | "apply" | "bind" => {
                     self.builtin_property(BuiltinOwner::FunctionPrototype, k)
                 }
@@ -5603,6 +5607,10 @@ impl Vm {
                     | "hasOwnProperty"
                     | "propertyIsEnumerable"
                     | "isPrototypeOf"
+                    | "__defineGetter__"
+                    | "__defineSetter__"
+                    | "__lookupGetter__"
+                    | "__lookupSetter__"
             ) {
                 let value = self.function_prop(f, k);
                 if value.is_undefined() {
@@ -11589,6 +11597,28 @@ fn native_object_set_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
             "setPrototypeOf target is not an object",
         )));
     };
+    {
+        let current = object.borrow().prototype.clone();
+        if current.as_ref().map(|value| value.as_ptr())
+            == handle.as_ref().map(|value| value.as_ptr())
+        {
+            return Ok(target.clone());
+        }
+        if !object.borrow().extensible {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "cannot set prototype of a non-extensible object",
+            )));
+        }
+    }
+    let target_ptr = target.as_object().expect("object receiver handle").as_ptr();
+    let mut current = handle.clone();
+    while let Some(candidate) = current {
+        if candidate.as_ptr() == target_ptr {
+            return Err(JsError::Throw(type_error(vm, "prototype cycle")));
+        }
+        current = candidate.borrow().prototype.clone();
+    }
     object.borrow_mut().prototype = handle;
     vm.invalidate_prototype_membership();
     Ok(target.clone())
@@ -11710,14 +11740,141 @@ fn target_property_readonly(target: &Value, key: &str) -> bool {
     }
     false
 }
-fn native_object_value_of(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    if let Some(object) = this.as_object_ref()
-        && let Some(primitive) = object.borrow().props.get("\0primitive")
-    {
-        return Ok(primitive.clone());
+fn native_object_value_of(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if this.is_null() || this.is_undefined() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Object.prototype.valueOf called on null or undefined",
+        )));
     }
-    Ok(this)
+    if this.is_object_like() {
+        return Ok(this);
+    }
+    // ToObject is observable here: valueOf called with a primitive returns a
+    // fresh wrapper object, rather than leaking the primitive itself.
+    native_object(vm, Value::Undefined, std::slice::from_ref(&this))
 }
+
+fn native_object_define_legacy_accessor(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+    field: &'static str,
+) -> JsResult<Value> {
+    if !this.is_object_like() {
+        return Err(JsError::Throw(type_error(vm, "Object receiver required")));
+    }
+    let accessor = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if !accessor.is_function() {
+        return Err(JsError::Throw(type_error(vm, "Accessor must be callable")));
+    }
+    let key = vm.to_property_key(args.first().cloned().unwrap_or(Value::Undefined))?;
+    if let Some(object) = this.as_object_ref() {
+        let object = object.borrow();
+        let exists = object.props.contains_key(&key)
+            || has_accessor_slots(&object.props, &key)
+            || object.attributes.contains_key(&key);
+        if exists
+            && object
+                .attributes
+                .get(&key)
+                .is_some_and(|attributes| !attributes.configurable)
+        {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "cannot redefine a non-configurable property",
+            )));
+        }
+        if !exists && !object.extensible {
+            return Err(JsError::Throw(type_error(vm, "object is not extensible")));
+        }
+    }
+    let (mut getter, mut setter) = (None, None);
+    if let Some(object) = this.as_object_ref() {
+        let object = object.borrow();
+        getter = object.props.get(&accessor_slot("get", &key)).cloned();
+        setter = object.props.get(&accessor_slot("set", &key)).cloned();
+    } else if let Some(regexp) = this.as_regexp_ref() {
+        let regexp = regexp.borrow();
+        getter = regexp.props.get(&accessor_slot("get", &key)).cloned();
+        setter = regexp.props.get(&accessor_slot("set", &key)).cloned();
+    }
+    if field == "get" {
+        getter = Some(accessor);
+    } else {
+        setter = Some(accessor);
+    }
+    vm.define_accessor_slot(
+        &this,
+        &key,
+        getter,
+        setter,
+        PropertyAttributes {
+            writable: false,
+            enumerable: true,
+            configurable: true,
+        },
+    );
+    Ok(Value::Undefined)
+}
+
+fn native_object_define_getter(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    native_object_define_legacy_accessor(vm, this, args, "get")
+}
+
+fn native_object_define_setter(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    native_object_define_legacy_accessor(vm, this, args, "set")
+}
+
+fn native_object_lookup_legacy_accessor(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+    field: &'static str,
+) -> JsResult<Value> {
+    if !this.is_object_like() {
+        return Err(JsError::Throw(type_error(vm, "Object receiver required")));
+    }
+    let key = vm.to_property_key(args.first().cloned().unwrap_or(Value::Undefined))?;
+    let mut current = this.as_object();
+    while let Some(object) = current {
+        let borrowed = object.borrow();
+        if borrowed.props.contains_key(&key) {
+            return Ok(Value::Undefined);
+        }
+        let slot = accessor_slot(field, &key);
+        if has_accessor_slots(&borrowed.props, &key) {
+            return Ok(borrowed
+                .props
+                .get(&slot)
+                .cloned()
+                .unwrap_or(Value::Undefined));
+        }
+        current = borrowed.prototype.clone();
+    }
+    if let Some(regexp) = this.as_regexp_ref() {
+        let borrowed = regexp.borrow();
+        if borrowed.props.contains_key(&accessor_slot("get", &key))
+            || borrowed.props.contains_key(&accessor_slot("set", &key))
+        {
+            return Ok(borrowed
+                .props
+                .get(&accessor_slot(field, &key))
+                .cloned()
+                .unwrap_or(Value::Undefined));
+        }
+    }
+    Ok(Value::Undefined)
+}
+
+fn native_object_lookup_getter(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    native_object_lookup_legacy_accessor(vm, this, args, "get")
+}
+
+fn native_object_lookup_setter(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    native_object_lookup_legacy_accessor(vm, this, args, "set")
+}
+
 fn native_object_has_own_property(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let key = args.first().map(Value::string).unwrap_or_default();
     let error_stack = key == "stack"
