@@ -3536,6 +3536,19 @@ fn unary(vm: &mut super::Vm, kind: UnaryKind, value: &Value) -> JsResult<Value> 
             UnaryKind::Void => Value::Undefined,
         });
     }
+    if matches!(
+        kind,
+        UnaryKind::Plus | UnaryKind::Negate | UnaryKind::BitNot
+    ) && (value.is_object() || value.is_function())
+    {
+        let number = super::to_number_with_vm(vm, value)?;
+        return Ok(match kind {
+            UnaryKind::Plus => Value::Number(number),
+            UnaryKind::Negate => Value::Number(-number),
+            UnaryKind::BitNot => Value::Number(!i32_js(number) as f64),
+            _ => unreachable!(),
+        });
+    }
     Ok(match kind {
         UnaryKind::Plus => Value::Number(value.number()),
         UnaryKind::Negate => Value::Number(-value.number()),
