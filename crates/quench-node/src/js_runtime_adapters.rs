@@ -1,13 +1,3 @@
-// Keep host bootstrap data declarative: each binding is represented once and
-// lowered to the immutable builder chain used by the runtime context.
-macro_rules! with_host_values {
-    ($context:expr; $( $name:expr => $value:expr ),+ $(,)?) => {{
-        let mut context = $context;
-        $( context = context.with_host_value($name, $value); )+
-        context
-    }};
-}
-
 impl JsRuntime for QuenchRuntime {
     fn execute(
         &self,
@@ -259,7 +249,7 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
         // Bootstrap's compatibility loader is JavaScript, but native-owned
         // modules retain an explicit Rust require capability so their public
         // entry points do not accidentally resolve to a legacy polyfill.
-        let context = with_host_values!(context;
+        let context = crate::with_host_values!(context;
             "__quenchNativeRequire" => quench_runtime::host_api::capability_function(
                 HostCapabilityKind::Custom(CapabilityName::Require),
             ),
@@ -307,7 +297,7 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
             "queueMicrotask" => capability_function(HostCapabilityKind::Custom(CapabilityName::QueueMicrotask)),
             "Buffer" => buffer_module(),
         );
-        let context = with_host_values!(context;
+        let context = crate::with_host_values!(context;
             "__quench_fs_access" => capability_function(HostCapabilityKind::Custom(CapabilityName::FsAccess)),
             "__quench_fs_write_bytes" => capability_function(HostCapabilityKind::Custom(CapabilityName::FsWriteBytes)),
             "__quench_fs_append_bytes" => capability_function(HostCapabilityKind::Custom(CapabilityName::FsAppendBytes)),

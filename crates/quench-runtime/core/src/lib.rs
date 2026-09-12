@@ -1364,6 +1364,27 @@ impl PropertyAttributes {
     };
 }
 
+/// Attach a descriptor policy to the canonical property storage for a value.
+///
+/// Functions and ordinary objects expose the same observable property model,
+/// even though their backing storage is different for callability reasons.
+/// Keeping that distinction in one helper lets declaration macros describe
+/// only semantic facts (name, value, attributes) instead of repeating storage
+/// plumbing at every intrinsic installation site.
+fn set_property_attributes(target: &Value, key: &str, attributes: PropertyAttributes) {
+    if let Some(object) = target.as_object_ref() {
+        object
+            .borrow_mut()
+            .attributes
+            .insert(key.to_owned(), attributes);
+    } else if let Some(function) = target.as_function_ref() {
+        function
+            .attributes
+            .borrow_mut()
+            .insert(key.to_owned(), attributes);
+    }
+}
+
 /// Install a group of data properties from one declaration table.
 ///
 /// Intrinsic installation used to repeat the same three operations (write the
@@ -1375,17 +1396,7 @@ macro_rules! install_data_properties {
         let target = $target;
         $(
             $vm.set_prop(&target, $key, $value);
-            if let Some(object) = target.as_object_ref() {
-                object
-                    .borrow_mut()
-                    .attributes
-                    .insert($key.to_string(), $attributes);
-            } else if let Some(function) = target.as_function_ref() {
-                function
-                    .attributes
-                    .borrow_mut()
-                    .insert($key.to_string(), $attributes);
-            }
+            set_property_attributes(&target, $key, $attributes);
         )+
     }};
 }
@@ -1401,12 +1412,7 @@ macro_rules! install_global_aliases {
         $(
             if let Some(value) = Environment::get(environment, $name) {
                 $vm.set_prop(&target, $name, value);
-                if let Some(object) = target.as_object_ref() {
-                    object
-                        .borrow_mut()
-                        .attributes
-                        .insert($name.into(), global_alias_attributes($name));
-                }
+                set_property_attributes(&target, $name, global_alias_attributes($name));
             }
         )+
     }};
@@ -4923,17 +4929,7 @@ impl Vm {
         );
         for ((name, _), value) in well_known.into_iter().zip(well_known_values) {
             self.set_prop(&symbol, name, value);
-            if let Some(object) = symbol.as_object_ref() {
-                object
-                    .borrow_mut()
-                    .attributes
-                    .insert(name.into(), PropertyAttributes::BUILTIN_CONSTANT);
-            } else if let Some(function) = symbol.as_function_ref() {
-                function
-                    .attributes
-                    .borrow_mut()
-                    .insert(name.into(), PropertyAttributes::BUILTIN_CONSTANT);
-            }
+            set_property_attributes(&symbol, name, PropertyAttributes::BUILTIN_CONSTANT);
         }
         if let Some(symbol_prototype) = symbol
             .as_function_ref()

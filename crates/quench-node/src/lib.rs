@@ -32,6 +32,21 @@ pub use registry::{NodeSpec, NodeSymbol};
 
 use quench_runtime::value::Value;
 
+/// Lower a declarative host-value table into the immutable context chain.
+///
+/// Host bootstrap has the same data shape whether it is installing the
+/// process realm or a per-module adapter. Keeping one macro at the crate
+/// boundary makes the binding table the single source of truth while still
+/// allowing each call site to choose its own starting context expression.
+#[macro_export]
+macro_rules! with_host_values {
+    ($context:expr; $( $name:expr => $value:expr ),+ $(,)?) => {{
+        let mut context = $context;
+        $( context = context.with_host_value($name, $value); )+
+        context
+    }};
+}
+
 /// Canonical Node API surface entry. Returned by `install`.
 pub struct NodeRealm {
     pub node_value: Value,
