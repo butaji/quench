@@ -6077,7 +6077,7 @@ impl Vm {
             }
             return match k {
                 "valueOf" | "toString" => self.builtin_property(BuiltinOwner::BooleanPrototype, k),
-                _ => object_prototype_method(self, k),
+                _ => self.builtin_property(BuiltinOwner::ObjectPrototype, k),
             };
         }
         if let Some(string) = o.as_string() {
@@ -6093,9 +6093,9 @@ impl Vm {
                 if let Some(value) = self.prototype_property(BuiltinOwner::StringPrototype, k) {
                     return value;
                 }
-                let method = string_method(self, k);
+                let method = self.builtin_property(BuiltinOwner::StringPrototype, k);
                 if method.is_undefined() {
-                    object_prototype_method(self, k)
+                    self.builtin_property(BuiltinOwner::ObjectPrototype, k)
                 } else {
                     method
                 }
@@ -6111,9 +6111,9 @@ impl Vm {
             if let Some(value) = self.prototype_property(BuiltinOwner::NumberPrototype, k) {
                 return value;
             }
-            let method = number_method(self, k);
+            let method = self.builtin_property(BuiltinOwner::NumberPrototype, k);
             return if method.is_undefined() {
-                object_prototype_method(self, k)
+                self.builtin_property(BuiltinOwner::ObjectPrototype, k)
             } else {
                 method
             };
@@ -8735,19 +8735,6 @@ fn native_unescape(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     Ok(Value::string_value(output))
 }
 
-fn array_method(vm: &Vm, name: &str) -> Option<Value> {
-    let value = vm.builtin_property(BuiltinOwner::ArrayPrototype, name);
-    (!value.is_undefined()).then_some(value)
-}
-fn string_method(vm: &Vm, name: &str) -> Value {
-    vm.builtin_property(BuiltinOwner::StringPrototype, name)
-}
-fn object_prototype_method(vm: &Vm, name: &str) -> Value {
-    vm.builtin_property(BuiltinOwner::ObjectPrototype, name)
-}
-fn number_method(vm: &Vm, name: &str) -> Value {
-    vm.builtin_property(BuiltinOwner::NumberPrototype, name)
-}
 fn array_this(this: Value) -> Option<ObjectHandle> {
     if let Some(o) = this.as_object() {
         if o.borrow().array.is_some() {
