@@ -17,6 +17,18 @@ use quench_runtime::vm::{Host, OutputSink, VmContext};
 
 use crate::registry::{CapId, NodeSpec};
 
+/// Lower a declarative host-value table into an immutable context chain.
+///
+/// Host bootstrap has many values whose order is observable but whose wiring
+/// is mechanical. Keeping the names and value expressions as data makes that
+/// ordering explicit while avoiding a second hand-written builder for every
+/// entry.
+macro_rules! with_host_values {
+    ($context:ident; $( $name:expr => $value:expr ),+ $(,)?) => {
+        $( $context = $context.with_host_value($name, $value); )+
+    };
+}
+
 pub fn scheduler_capability(kind: u16) -> Value {
     host_api::capability_function(HostCapabilityRef {
         realm: RealmId::ROOT,
@@ -457,67 +469,28 @@ pub fn install_with_argv_and_title_and_exec_argv(
     if let Some((_, process)) = bindings.iter().find(|(name, _)| name == "process") {
         host.state.borrow_mut().process_module = Some(process.clone());
     }
-    let mut context = VmContext::with_output_sink(sink)
-        .with_host(host.clone())
-        .with_host_value("Error".to_string(), error_ctor);
+    let mut context = VmContext::with_output_sink(sink).with_host(host.clone());
     // Bootstrap globals derive the public process surface from these
     // canonical argv facts. Keep them identical to the host state so
     // script arguments survive the shared bootstrap path.
-    context = context
-        .with_host_value(
-            "__quench_argv".to_string(),
-            host_api::array(argv.iter().cloned().map(Value::String).collect()),
-        )
-        .with_host_value(
-            "__quench_allowed_node_environment_flags".to_string(),
-            crate::modules::process::allowed_node_environment_flags(),
-        )
-        .with_host_value(
-            "__quench_error_stack_trace_limit".to_string(),
-            Value::Number(10.0),
-        )
-        .with_host_value(
-            "__quench_exec_path".to_string(),
-            Value::String(exec_path.clone()),
-        )
+    with_host_values!(context;
+        "Error".to_string() => error_ctor,
+        "__quench_argv".to_string() => host_api::array(argv.iter().cloned().map(Value::String).collect()),
+        "__quench_allowed_node_environment_flags".to_string() => crate::modules::process::allowed_node_environment_flags(),
+        "__quench_error_stack_trace_limit".to_string() => Value::Number(10.0),
+        "__quench_exec_path".to_string() => Value::String(exec_path.clone()),
         // Keep fork's observable process/channel state in the Rust host. The
         // bootstrap module only forwards the public call to this capability.
-        .with_host_value(
-            "__quench_cp_fork".to_string(),
-            crate::host::capability(crate::registry::SPEC_CP_FORK),
-        )
-        .with_host_value(
-            "__quench_cp_spawn_sync".to_string(),
-            crate::host::capability(crate::registry::SPEC_CP_SPAWNSYNC),
-        )
-        .with_host_value(
-            "__nodeInternalUtil".to_string(),
-            crate::modules::require::internal_util_module(),
-        )
-        .with_host_value(
-            "__quenchHttp2Binding".to_string(),
-            crate::modules::http2_util::binding(),
-        )
-        .with_host_value(
-            "__quench_vm_run_in_context".to_string(),
-            crate::host::capability(crate::registry::SPEC_VM_RUN_IN_CONTEXT),
-        )
-        .with_host_value(
-            "__quench_vm_run_in_new_context".to_string(),
-            crate::host::capability(crate::registry::SPEC_VM_RUN_IN_NEW_CONTEXT),
-        )
-        .with_host_value(
-            "__quench_vm_run_in_this_context".to_string(),
-            crate::host::capability(crate::registry::SPEC_VM_RUN_IN_THIS_CONTEXT),
-        )
-        .with_host_value(
-            "__nodeInternalJsStreamSocket".to_string(),
-            crate::host::capability(crate::registry::SPEC_INTERNAL_JS_STREAM),
-        )
-        .with_host_value(
-            "__quench_cluster_close_worker".to_string(),
-            crate::host::capability(crate::registry::SPEC_CLUSTER_CLOSE_WORKER_NET),
-        );
+        "__quench_cp_fork".to_string() => crate::host::capability(crate::registry::SPEC_CP_FORK),
+        "__quench_cp_spawn_sync".to_string() => crate::host::capability(crate::registry::SPEC_CP_SPAWNSYNC),
+        "__nodeInternalUtil".to_string() => crate::modules::require::internal_util_module(),
+        "__quenchHttp2Binding".to_string() => crate::modules::http2_util::binding(),
+        "__quench_vm_run_in_context".to_string() => crate::host::capability(crate::registry::SPEC_VM_RUN_IN_CONTEXT),
+        "__quench_vm_run_in_new_context".to_string() => crate::host::capability(crate::registry::SPEC_VM_RUN_IN_NEW_CONTEXT),
+        "__quench_vm_run_in_this_context".to_string() => crate::host::capability(crate::registry::SPEC_VM_RUN_IN_THIS_CONTEXT),
+        "__nodeInternalJsStreamSocket".to_string() => crate::host::capability(crate::registry::SPEC_INTERNAL_JS_STREAM),
+        "__quench_cluster_close_worker".to_string() => crate::host::capability(crate::registry::SPEC_CLUSTER_CLOSE_WORKER_NET),
+    );
     for (name, value) in bindings {
         context = context.with_host_value(name, value);
     }
