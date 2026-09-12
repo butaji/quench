@@ -16,6 +16,7 @@ pub(crate) enum BuiltinOwner {
     Assert,
     Process,
     StringConstructor,
+    ObjectConstructor,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,6 +117,7 @@ builtin_catalog! {
     MathFround, Math, "fround", native_math_fround, UnaryNumber, PURE;
     MathRandom, Math, "random", native_random, Generic, PURE;
     ObjectConstructor, Global, "Object", native_object, Generic, MAY_ALLOCATE;
+    ObjectGetOwnPropertyDescriptor, ObjectConstructor, "getOwnPropertyDescriptor", native_object_get_own_property_descriptor, Generic, MAY_ALLOCATE;
     ArrayConstructor, Global, "Array", native_array, Generic, MAY_ALLOCATE;
     StringConstructor, Global, "String", native_string, Generic, MAY_ALLOCATE;
     NumberConstructor, Global, "Number", native_number, Generic, PURE;

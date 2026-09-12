@@ -4331,6 +4331,10 @@ impl Vm {
                     let string = self.builtin(BuiltinId::StringConstructor);
                     self.set_prop(&string, recipe.key, value);
                 }
+                BuiltinOwner::ObjectConstructor => {
+                    let object = self.builtin(BuiltinId::ObjectConstructor);
+                    self.set_prop(&object, recipe.key, value);
+                }
                 _ => {}
             }
         }
@@ -6920,6 +6924,27 @@ fn native_error(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
 }
 fn native_object_to_string(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     Ok(Value::string_value(this.display()))
+}
+fn native_object_get_own_property_descriptor(
+    vm: &mut Vm,
+    _: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    let Some(target) = args.first() else {
+        return Err(JsError::Message("TypeError: descriptor target is undefined".into()));
+    };
+    let key = args.get(1).map(Value::string).unwrap_or_default();
+    let value = vm.get_prop(target, &key);
+    if value.is_undefined() {
+        return Ok(Value::Undefined);
+    }
+    let descriptor = vm.object(None);
+    vm.set_prop(&descriptor, "value", value);
+    let function_metadata = target.as_function().is_some() && matches!(key.as_str(), "name" | "length");
+    vm.set_prop(&descriptor, "writable", Value::Bool(!function_metadata));
+    vm.set_prop(&descriptor, "enumerable", Value::Bool(false));
+    vm.set_prop(&descriptor, "configurable", Value::Bool(true));
+    Ok(descriptor)
 }
 fn native_object_value_of(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     Ok(this)
