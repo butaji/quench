@@ -430,6 +430,9 @@ impl Value {
         }
         self.as_string().map_or(f64::NAN, |value| {
             let text = value.trim();
+            if let Some(digits) = text.strip_prefix('\0').and_then(|text| text.strip_prefix("bigint:")) {
+                return digits.parse::<f64>().unwrap_or(f64::NAN);
+            }
             if matches!(text, "Infinity" | "+Infinity") {
                 return f64::INFINITY;
             }
@@ -7196,6 +7199,9 @@ fn to_number_with_vm(vm: &mut Vm, value: &Value) -> JsResult<f64> {
     }
     if let Some(string) = value.as_string() {
         let text = string.trim();
+        if let Some(digits) = text.strip_prefix('\0').and_then(|text| text.strip_prefix("bigint:")) {
+            return Ok(digits.parse::<f64>().unwrap_or(f64::NAN));
+        }
         if text.is_empty() {
             return Ok(0.0);
         }

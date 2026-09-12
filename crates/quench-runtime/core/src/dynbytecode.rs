@@ -1345,6 +1345,13 @@ impl Compiler {
             BooleanLiteral(value) => self.literal(Literal::Bool(value.value), value.span),
             NullLiteral(value) => self.literal(Literal::Null, value.span),
             NumericLiteral(value) => self.literal(Literal::Number(value.value), value.span),
+            // BigInt lowering currently enters the shared numeric stencil as
+            // an f64 value; arithmetic and Number conversion therefore use the
+            // same operation path rather than a second VM representation.
+            BigIntLiteral(value) => self.literal(
+                Literal::Number(value.value.parse::<f64>().unwrap_or(f64::NAN)),
+                value.span,
+            ),
             StringLiteral(value) => {
                 self.literal(Literal::String(value.value.to_string()), value.span)
             }
