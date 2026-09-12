@@ -3413,6 +3413,16 @@ fn construct(
             FunctionKind::Builtin(_) | FunctionKind::Native(_)
         )
     });
+    let wrapper_constructor = callee.as_function_ref().is_some_and(|function| {
+        matches!(
+            function.kind,
+            FunctionKind::Builtin(
+                BuiltinId::BooleanConstructor
+                    | BuiltinId::NumberConstructor
+                    | BuiltinId::StringConstructor
+            )
+        )
+    });
     // Native constructor semantics allocate their own result. The generic receiver
     // would be immediately discarded, so keep the construction kernel allocation-free.
     let constructor_shape = callee.as_function_ref().and_then(|function| {
@@ -3422,7 +3432,13 @@ fn construct(
             .as_ref()
             .and_then(|code| code.constructor_shape())
     });
-    let object = if native {
+    let object = if wrapper_constructor {
+        let prototype = callee
+            .as_function_ref()
+            .map(|function| Some(function.prototype))
+            .unwrap_or(None);
+        vm(frame).object(prototype)
+    } else if native {
         Value::Undefined
     } else if let Some(function) = callee.as_function_ref() {
         let prototype = Some(function.prototype);
@@ -3446,11 +3462,23 @@ fn construct(
         &arguments,
         call_ic,
     )?;
+    if wrapper_constructor {
+        vm(frame).set_prop(&object, "\0primitive", result.clone());
+        let wrapper = match callee.as_function_ref().map(|function| &function.kind) {
+            Some(FunctionKind::Builtin(BuiltinId::BooleanConstructor)) => "Boolean",
+            Some(FunctionKind::Builtin(BuiltinId::NumberConstructor)) => "Number",
+            Some(FunctionKind::Builtin(BuiltinId::StringConstructor)) => "String",
+            _ => "Object",
+        };
+        vm(frame).set_prop(&object, "\0wrapper", Value::string_value(wrapper));
+    }
     let returns_object = result.is_object() || result.is_function() || result.is_regexp();
     put(
         frame,
         dst,
-        if native || returns_object {
+        if wrapper_constructor {
+            object
+        } else if native || returns_object {
             result
         } else {
             object

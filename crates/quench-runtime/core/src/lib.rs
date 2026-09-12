@@ -4676,6 +4676,7 @@ impl Vm {
                             | BuiltinId::ArrayConstructor
                             | BuiltinId::StringConstructor
                             | BuiltinId::NumberConstructor
+                            | BuiltinId::BooleanConstructor
                             | BuiltinId::DateConstructor
                             | BuiltinId::RegExpConstructor
                             | BuiltinId::ErrorConstructor
@@ -4774,6 +4775,41 @@ impl Vm {
             } else {
                 function.props.borrow_mut().insert(k.into(), v);
             }
+        }
+    }
+    fn delete_prop(&self, o: &Value, k: &str) -> bool {
+        if let Some(object) = o.as_object_ref() {
+            let mut object = object.borrow_mut();
+            if let Some(array) = &mut object.array {
+                if let Ok(index) = k.parse::<usize>() {
+                    if index < array.len() {
+                        array.set(index, Value::Undefined);
+                    }
+                }
+                return true;
+            }
+            object.props.shift_remove(k);
+            return true;
+        }
+        if let Some(function) = o.as_function_ref() {
+            if k != "prototype" {
+                function.props.borrow_mut().shift_remove(k);
+            }
+        }
+        true
+    }
+    fn delete_expression<'a>(&mut self, x: &Expression<'a>, e: Env) -> JsResult<Value> {
+        match x {
+            Expression::StaticMemberExpression(member) => {
+                let object = self.eval_expr(&member.object, e)?;
+                Ok(Value::Bool(self.delete_prop(&object, member.property.name.as_str())))
+            }
+            Expression::ComputedMemberExpression(member) => {
+                let object = self.eval_expr(&member.object, e.clone())?;
+                let key = self.eval_expr(&member.expression, e)?.string();
+                Ok(Value::Bool(self.delete_prop(&object, &key)))
+            }
+            _ => Ok(Value::Bool(true)),
         }
     }
     fn set_computed_prop(&self, object: &Value, key: &Value, value: Value) {
@@ -5516,6 +5552,9 @@ impl Vm {
                 Ok(z)
             }
             UnaryExpression(v) => {
+                if v.operator == oxc_syntax::operator::UnaryOperator::Delete {
+                    return self.delete_expression(&v.argument, e);
+                }
                 let z = self.eval_expr(&v.argument, e)?;
                 use oxc_syntax::operator::UnaryOperator::*;
                 Ok(match v.operator {
@@ -5540,7 +5579,7 @@ impl Vm {
                         .into(),
                     )),
                     Void => Value::Undefined,
-                    Delete => Value::Bool(true),
+                    Delete => unreachable!("delete handled before operand evaluation"),
                 })
             }
             BinaryExpression(v) => {
@@ -7217,9 +7256,11 @@ mod tests {
         vm.install_process(Vec::new(), Vec::new());
         vm.run_source_text(
             Path::new("<boolean-test>"),
-            "var boxed = new Boolean(1); if (typeof boxed !== 'object') throw new Error('boolean');",
+            "var boxed = new Boolean(1); if (typeof boxed !== 'object') throw new Error('boolean'); delete Boolean.prototype.toString; result = boxed.toString();",
         )
         .expect("boolean and constructor semantics execute");
+        let result = Environment::get(&vm.global, "result").expect("toString result");
+        assert_eq!(result.string(), "[object Boolean]");
     }
 
     #[test]
