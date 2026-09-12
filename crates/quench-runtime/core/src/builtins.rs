@@ -452,6 +452,7 @@ fn builtin_length(id: BuiltinId) -> usize {
         BuiltinId::ParseFloat
         | BuiltinId::IsNaN
         | BuiltinId::IsFinite
+        | BuiltinId::Eval
         | BuiltinId::DecodeURI
         | BuiltinId::DecodeURIComponent
         | BuiltinId::EncodeURI
