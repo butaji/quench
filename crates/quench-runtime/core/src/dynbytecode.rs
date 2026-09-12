@@ -1345,11 +1345,11 @@ impl Compiler {
             BooleanLiteral(value) => self.literal(Literal::Bool(value.value), value.span),
             NullLiteral(value) => self.literal(Literal::Null, value.span),
             NumericLiteral(value) => self.literal(Literal::Number(value.value), value.span),
-            // BigInt lowering currently enters the shared numeric stencil as
-            // an f64 value; arithmetic and Number conversion therefore use the
-            // same operation path rather than a second VM representation.
+            // Keep the source kind explicit at the semantic boundary. Generic
+            // numeric operations consume this marker through `Value::number`,
+            // while APIs that reject BigInt can still observe the type.
             BigIntLiteral(value) => self.literal(
-                Literal::Number(value.value.parse::<f64>().unwrap_or(f64::NAN)),
+                Literal::String(format!("\0bigint:{}", value.value)),
                 value.span,
             ),
             StringLiteral(value) => {
