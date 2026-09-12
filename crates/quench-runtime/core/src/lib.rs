@@ -5962,6 +5962,20 @@ impl Vm {
                 if let Some(v) = object.props.get(k) {
                     return v.clone();
                 }
+                if let Some(wrapper) = object.props.get("\0wrapper").and_then(Value::as_string) {
+                    let owner = match wrapper.as_str() {
+                        "String" => Some(BuiltinOwner::StringPrototype),
+                        "Number" => Some(BuiltinOwner::NumberPrototype),
+                        "Boolean" => Some(BuiltinOwner::BooleanPrototype),
+                        _ => None,
+                    };
+                    if let Some(owner) = owner {
+                        let method = self.builtin_property(owner, k);
+                        if !method.is_undefined() {
+                            return method;
+                        }
+                    }
+                }
                 if k == "stack" && object.props.contains_key("\0error") {
                     let error_prototype = self
                         .builtin(BuiltinId::ErrorConstructor)
@@ -9327,6 +9341,7 @@ fn native_string_substring(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
         .clamp(0.0, length) as usize;
     let end = args
         .get(1)
+        .filter(|value| !value.is_undefined())
         .map(|value| to_integer_or_infinity(vm, value))
         .transpose()?
         .unwrap_or(length)
@@ -9358,6 +9373,7 @@ fn native_string_slice(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
         .unwrap_or(0.0);
     let end = args
         .get(1)
+        .filter(|value| !value.is_undefined())
         .map(|value| to_integer_or_infinity(vm, value))
         .transpose()?
         .unwrap_or(length);
@@ -10884,45 +10900,26 @@ fn native_string_last_index_of(vm: &mut Vm, this: Value, args: &[Value]) -> JsRe
 fn string_index_search(vm: &mut Vm, this: Value, args: &[Value], reverse: bool) -> JsResult<Value> {
     let source = string_receiver(vm, &this, if reverse { "lastIndexOf" } else { "indexOf" })?;
     let search_value = args.first().cloned().unwrap_or(Value::Undefined);
-    if is_symbol_carrier(&search_value) {
-        return Err(JsError::Throw(type_error(
-            vm,
-            "cannot convert a Symbol to a string",
-        )));
-    }
-    let search = to_string_with_vm(vm, &search_value)?;
+    let search = string_argument(vm, &search_value)?;
     let source_units = source.encode_utf16().collect::<Vec<_>>();
     let search_units = search.encode_utf16().collect::<Vec<_>>();
     if search_units.is_empty() {
-        let position = args
-            .get(1)
-            .map(|value| to_integer_or_infinity(vm, value))
-            .transpose()?
-            .unwrap_or(if reverse {
-                source_units.len() as f64
-            } else {
-                0.0
-            });
+        let position = string_search_position(vm, args.get(1), reverse, source_units.len())?;
         return Ok(Value::Number(
             position.clamp(0.0, source_units.len() as f64),
         ));
     }
-    let limit = args
-        .get(1)
-        .map(|value| to_integer_or_infinity(vm, value))
-        .transpose()?
-        .unwrap_or(if reverse {
-            source_units.len() as f64
-        } else {
-            0.0
-        });
+    let limit = string_search_position(vm, args.get(1), reverse, source_units.len())?;
     let limit = if reverse {
         limit.min(source_units.len() as f64) as usize
     } else {
         limit.max(0.0) as usize
     };
     let found = if reverse {
-        source_units[..limit.min(source_units.len())]
+        let end = limit
+            .saturating_add(search_units.len())
+            .min(source_units.len());
+        source_units[..end]
             .windows(search_units.len())
             .rposition(|window| window == search_units)
     } else {
@@ -10935,6 +10932,22 @@ fn string_index_search(vm: &mut Vm, this: Value, args: &[Value], reverse: bool) 
             .map(|index| index + limit)
     };
     Ok(Value::Number(found.map_or(-1.0, |index| index as f64)))
+}
+
+fn string_search_position(
+    vm: &mut Vm,
+    value: Option<&Value>,
+    reverse: bool,
+    length: usize,
+) -> JsResult<f64> {
+    let Some(value) = value.filter(|value| !value.is_undefined()) else {
+        return Ok(if reverse { length as f64 } else { 0.0 });
+    };
+    let number = to_number_with_vm(vm, value)?;
+    if number.is_nan() {
+        return Ok(if reverse { length as f64 } else { 0.0 });
+    }
+    Ok(to_integer_or_infinity(vm, &Value::Number(number))?)
 }
 
 fn string_receiver(vm: &mut Vm, this: &Value, method: &str) -> JsResult<String> {
