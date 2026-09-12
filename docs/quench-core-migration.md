@@ -100,6 +100,13 @@ Verification completed:
   inheritance, constructor metadata, sparse-array holes, and `Object.assign`
   descriptor guards and reached 514/3,411; the remaining failures are recorded as missing semantics,
   not a fallback to the legacy VM
+- the String stage was rerun after restoring historical conversion behavior,
+  array `toString`, ordinary-object prototypes, and boxed-string own properties
+  and reached 287/1,223; the remaining failures include UTF-16 surrogate,
+  Symbol, and unsupported-stencil cases
+- historical commits advertising “100% Test262” used `test262/skip.rs` to skip
+  entire built-in families (including Object, Array, String, TypedArray, and
+  Promise); those results are not equivalent to executing the full corpus
 - canonical V8V7 exact driver, all eight fixtures valid
 - focused stencil probes now cover `Array.from`/`Array.of`/`Array.isArray`,
   `Object.preventExtensions` + `defineProperty`, bound function calls, and

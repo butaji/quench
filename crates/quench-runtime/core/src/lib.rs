@@ -4313,11 +4313,29 @@ impl Vm {
         Value::Object(self.allocate_object(object))
     }
 
+    fn default_object_prototype(&self) -> Option<ObjectHandle> {
+        self.builtin_functions
+            .get(BuiltinId::ObjectConstructor as usize)
+            .and_then(Value::as_function_ref)
+            .map(|function| function.prototype.clone())
+    }
+
     fn object(&self, proto: Option<ObjectHandle>) -> Value {
-        self.object_value(Object::ordinary(proto))
+        self.object_value(Object::ordinary(proto.or_else(|| self.default_object_prototype())))
+    }
+    fn ordinary_object(&self) -> Value {
+        let proto = self
+            .builtin(BuiltinId::ObjectConstructor)
+            .as_function_ref()
+            .map(|function| function.prototype.clone());
+        self.object(proto)
     }
     fn object_with_shape(&self, proto: Option<ObjectHandle>, shape: ShapeRef) -> Value {
-        self.object_with_shape_values(proto, shape, vec![Value::Undefined; shape.slots.len()])
+        self.object_with_shape_values(
+            proto.or_else(|| self.default_object_prototype()),
+            shape,
+            vec![Value::Undefined; shape.slots.len()],
+        )
     }
     fn object_with_shape_values(
         &self,
@@ -4327,7 +4345,7 @@ impl Vm {
     ) -> Value {
         self.object_value(Object {
             props: PropertyStorage::with_shape_values(shape, values),
-            prototype: proto,
+            prototype: proto.or_else(|| self.default_object_prototype()),
             dense_access: DenseArrayAccess::EMPTY,
             array: None,
             extensible: true,
@@ -4784,9 +4802,6 @@ impl Vm {
                     if let Some(i) = array_index_key(k) {
                         return a.get(i).cloned().unwrap_or(Value::Undefined);
                     }
-                    if let Some(v) = array_method(self, k) {
-                        return v;
-                    }
                 }
                 if let Some(v) = object.props.get(k) {
                     return v.clone();
@@ -4987,7 +5002,8 @@ impl Vm {
             _ => Ok(Value::Bool(true)),
         }
     }
-    fn set_computed_prop(&self, object: &Value, key: &Value, value: Value) {
+    fn set_computed_prop(&mut self, object: &Value, key: &Value, value: Value) -> JsResult<()> {
+        let key_string = self.to_property_key(key.clone())?;
         if let Some(index) = dense_array_index(key)
             && let Some(object) = object.as_object_ref()
         {
@@ -4997,10 +5013,11 @@ impl Vm {
                     array.resize(index + 1, Value::Undefined);
                 }
                 array.set(index, value);
-                return;
+                return Ok(());
             }
         }
-        self.set_prop(object, &key.string(), value);
+        self.set_prop(object, &key_string, value);
+        Ok(())
     }
     fn call(&mut self, c: Value, t: Value, a: Vec<Value>) -> JsResult<Value> {
         self.call_arguments(&c, t, a.as_slice())
@@ -5712,7 +5729,7 @@ impl Vm {
                 Ok(a)
             }
             ObjectExpression(v) => {
-                let o = self.object(None);
+                let o = self.ordinary_object();
                 for p in &v.properties {
                     if let ObjectPropertyKind::ObjectProperty(p) = p {
                         let k = prop_key(&p.key);
@@ -5927,7 +5944,7 @@ impl Vm {
                     )
                 );
                 if wrapped {
-                    self.set_prop(&o, "\0primitive", r);
+                    self.set_prop(&o, "\0primitive", r.clone());
                     let wrapper = match function.kind {
                         FunctionKind::Builtin(BuiltinId::BooleanConstructor) => "Boolean",
                         FunctionKind::Builtin(BuiltinId::NumberConstructor) => "Number",
@@ -5935,6 +5952,9 @@ impl Vm {
                         _ => "Object",
                     };
                     self.set_prop(&o, "\0wrapper", Value::string_value(wrapper));
+                    if matches!(function.kind, FunctionKind::Builtin(BuiltinId::StringConstructor)) {
+                        initialize_string_wrapper(self, &o, &r);
+                    }
                     Ok(o)
                 } else if native {
                     if error_constructor && let Some(_) = r.as_object_ref() {
@@ -6481,6 +6501,9 @@ fn native_array_join(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value>
             .join(&sep)
             .into(),
     )))
+}
+fn native_array_to_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    native_array_join(vm, this, &[])
 }
 fn native_array_concat(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let mut out = match array_this(this) {
@@ -7549,25 +7572,29 @@ fn native_object(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     vm.set_prop(&object, "\0primitive", value.clone());
     vm.set_prop(&object, "\0wrapper", Value::string_value(wrapper));
     if wrapper == "String" {
-        let text = value.string();
-        vm.set_prop(&object, "length", Value::Number(text.chars().count() as f64));
-        if let Some(handle) = object.as_object_ref() {
-            let mut object = handle.borrow_mut();
-            object.attributes.insert(
-                "length".into(),
-                PropertyAttributes { writable: false, enumerable: false, configurable: false },
-            );
-            for (index, ch) in text.chars().enumerate() {
-                let key = index.to_string();
-                object.props.insert(&key, Value::string_value(ch.to_string()));
-                object.attributes.insert(
-                    key,
-                    PropertyAttributes { writable: false, enumerable: true, configurable: false },
-                );
-            }
-        }
+        initialize_string_wrapper(vm, &object, value);
     }
     Ok(object)
+}
+
+fn initialize_string_wrapper(vm: &mut Vm, object: &Value, value: &Value) {
+    let text = value.string();
+    vm.set_prop(object, "length", Value::Number(text.chars().count() as f64));
+    if let Some(handle) = object.as_object_ref() {
+        let mut object = handle.borrow_mut();
+        object.attributes.insert(
+            "length".into(),
+            PropertyAttributes { writable: false, enumerable: false, configurable: false },
+        );
+        for (index, ch) in text.chars().enumerate() {
+            let key = index.to_string();
+            object.props.insert(&key, Value::string_value(ch.to_string()));
+            object.attributes.insert(
+                key,
+                PropertyAttributes { writable: false, enumerable: true, configurable: false },
+            );
+        }
+    }
 }
 fn native_array(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     let o = vm.array();
@@ -7609,10 +7636,77 @@ fn native_array_from(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
 fn native_array_of(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(vm.array_from_values(a.to_vec()))
 }
-fn native_string(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    Ok(Value::string_value(
-        a.first().map(Value::string).unwrap_or_default(),
-    ))
+fn native_string(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    let value = a.first().cloned().unwrap_or(Value::Undefined);
+    Ok(Value::string_value(if a.is_empty() {
+        String::new()
+    } else {
+        to_string_with_vm(vm, &value)?
+    }))
+}
+
+fn js_number_to_string(number: f64) -> String {
+    if number.is_nan() {
+        return "NaN".into();
+    }
+    if number == 0.0 {
+        return "0".into();
+    }
+    if number == f64::INFINITY {
+        return "Infinity".into();
+    }
+    if number == f64::NEG_INFINITY {
+        return "-Infinity".into();
+    }
+    let absolute = number.abs();
+    if absolute >= 1e21 || absolute < 1e-6 {
+        let mut scientific = format!("{number:e}");
+        if let Some((mantissa, exponent)) = scientific.split_once('e') {
+            let mantissa = mantissa.trim_end_matches('0').trim_end_matches('.');
+            let exponent = exponent.parse::<i32>().unwrap_or(0);
+            scientific = format!("{mantissa}e{exponent:+}");
+        }
+        scientific
+    } else {
+        number.to_string()
+    }
+}
+
+fn to_string_with_vm(vm: &mut Vm, value: &Value) -> JsResult<String> {
+    if let Some(number) = value.as_number() {
+        return Ok(js_number_to_string(number));
+    }
+    if value.is_undefined() {
+        return Ok("undefined".into());
+    }
+    if value.is_null() {
+        return Ok("null".into());
+    }
+    if let Some(boolean) = value.as_bool() {
+        return Ok(if boolean { "true" } else { "false" }.into());
+    }
+    if let Some(string) = value.as_string() {
+        return Ok(string.to_string());
+    }
+    if let Some(object) = value.as_object_ref()
+        && let Some(primitive) = object.borrow().props.get("\0primitive")
+    {
+        return to_string_with_vm(vm, primitive);
+    }
+    if value.is_object() || value.is_function() {
+        for method_name in ["toString", "valueOf"] {
+            let method = vm.get_prop(value, method_name);
+            if !method.is_function() {
+                continue;
+            }
+            let result = vm.call_arguments(&method, value.clone(), &[] as &[Value])?;
+            if !result.is_object() && !result.is_function() {
+                return to_string_with_vm(vm, &result);
+            }
+        }
+        return Err(JsError::Throw(type_error(vm, "cannot convert object to string")));
+    }
+    Ok(value.string())
 }
 fn native_number(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(Value::Number(a.first().map(Value::number).unwrap_or(0.0)))
@@ -7826,7 +7920,9 @@ fn native_object_get_own_property_names(vm: &mut Vm, _: Value, args: &[Value]) -
 }
 fn native_object_create(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let prototype = args.first().and_then(Value::as_object);
-    Ok(vm.object(prototype))
+    // `Object.create(null)` must retain a null prototype; `Vm::object` creates
+    // ordinary objects with the default Object.prototype for language literals.
+    Ok(vm.object_value(Object::ordinary(prototype)))
 }
 fn native_object_assign(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let Some(target_value) = args.first() else {
@@ -9614,9 +9710,9 @@ mod tests {
 
     #[test]
     fn computed_numeric_keys_use_dense_array_slots_without_string_round_trip() {
-        let vm = Vm::new();
+        let mut vm = Vm::new();
         let array = vm.array();
-        vm.set_computed_prop(&array, &Value::Number(2.0), Value::Number(42.0));
+        vm.set_computed_prop(&array, &Value::Number(2.0), Value::Number(42.0)).expect("numeric key");
         assert_eq!(
             vm.get_computed_prop(&array, &Value::Number(2.0))
                 .as_number(),
@@ -9624,7 +9720,7 @@ mod tests {
         );
         assert_eq!(vm.get_prop(&array, "length").as_number(), Some(3.0));
 
-        vm.set_computed_prop(&array, &Value::Number(1.5), Value::Number(7.0));
+        vm.set_computed_prop(&array, &Value::Number(1.5), Value::Number(7.0)).expect("non-index key");
         assert_eq!(
             vm.get_computed_prop(&array, &Value::Number(1.5))
                 .as_number(),

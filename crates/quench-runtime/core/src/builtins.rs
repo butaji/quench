@@ -169,6 +169,7 @@ builtin_catalog! {
     ArrayUnshift, ArrayPrototype, "unshift", native_array_unshift, Generic, MAY_MUTATE;
     ArraySlice, ArrayPrototype, "slice", native_array_slice, Generic, MAY_ALLOCATE;
     ArrayJoin, ArrayPrototype, "join", native_array_join, Generic, MAY_ALLOCATE;
+    ArrayToString, ArrayPrototype, "toString", native_array_to_string, Generic, MAY_ALLOCATE;
     ArrayConcat, ArrayPrototype, "concat", native_array_concat, Generic, MAY_ALLOCATE;
     ArrayForEach, ArrayPrototype, "forEach", native_array_for_each, Generic, MAY_CALL_JS;
     ArrayMap, ArrayPrototype, "map", native_array_map, Generic, MAY_ALLOCATE;
@@ -312,6 +313,7 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::ArrayUnshift
         | BuiltinId::ArraySlice
         | BuiltinId::ArrayJoin
+        | BuiltinId::ArrayToString
         | BuiltinId::ArrayConcat
         | BuiltinId::ArrayForEach
         | BuiltinId::ArrayMap
