@@ -4994,6 +4994,20 @@ impl Vm {
                 prototype.borrow_mut().prototype = Some(error_prototype.clone());
             }
         }
+        let error_constructor = self.builtin(BuiltinId::ErrorConstructor);
+        let is_error = self.native_named(native_error_is_error, "isError", 1);
+        self.mark_nonconstructable(&is_error);
+        self.set_prop(&error_constructor, "isError", is_error);
+        if let Some(object) = error_constructor.as_object_ref() {
+            object.borrow_mut().attributes.insert(
+                "isError".into(),
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
+        }
         let function_prototype = self
             .builtin(BuiltinId::FunctionConstructor)
             .as_function_ref()
@@ -5868,7 +5882,25 @@ impl Vm {
                 return code.call(self, env.clone(), t, a);
             }
             match &f.kind {
-                FunctionKind::Builtin(id) => self.call_native_semantic(id.recipe().semantic, t, a),
+                FunctionKind::Builtin(id) => {
+                    let error_constructor = matches!(
+                        id,
+                        BuiltinId::ErrorConstructor
+                            | BuiltinId::TypeErrorConstructor
+                            | BuiltinId::RangeErrorConstructor
+                            | BuiltinId::URIErrorConstructor
+                            | BuiltinId::SyntaxErrorConstructor
+                            | BuiltinId::ReferenceErrorConstructor
+                            | BuiltinId::EvalErrorConstructor
+                            | BuiltinId::AggregateErrorConstructor
+                    );
+                    let receiver = if error_constructor && !t.is_object() {
+                        self.object(Some(f.prototype.clone()))
+                    } else {
+                        t
+                    };
+                    self.call_native_semantic(id.recipe().semantic, receiver, a)
+                }
                 FunctionKind::Native(native) => self.call_native_semantic(*native, t, a),
                 FunctionKind::Bound {
                     target,
@@ -9776,6 +9808,14 @@ fn native_error(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
         }
     }
     Ok(o)
+}
+fn native_error_is_error(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let is_error = args.first().is_some_and(|value| {
+        value
+            .as_object_ref()
+            .is_some_and(|object| object.borrow().props.contains_key("\0error"))
+    });
+    Ok(Value::Bool(is_error))
 }
 fn native_error_to_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     let Some(object) = this.as_object_ref() else {
