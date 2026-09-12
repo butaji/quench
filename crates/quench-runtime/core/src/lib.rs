@@ -1245,6 +1245,20 @@ struct Object {
     array: Option<ArrayStorage>,
     extensible: bool,
     builtin_prototype: bool,
+    attributes: HashMap<String, PropertyAttributes>,
+}
+#[derive(Clone, Copy)]
+struct PropertyAttributes {
+    writable: bool,
+    enumerable: bool,
+    configurable: bool,
+}
+impl PropertyAttributes {
+    const DEFAULT: Self = Self {
+        writable: true,
+        enumerable: true,
+        configurable: true,
+    };
 }
 impl Object {
     fn ordinary(proto: Option<ObjectHandle>) -> Self {
@@ -1255,6 +1269,7 @@ impl Object {
             array: None,
             extensible: true,
             builtin_prototype: false,
+            attributes: HashMap::new(),
         }
     }
 
@@ -1266,6 +1281,7 @@ impl Object {
             array: Some(ArrayStorage::from_values(values)),
             extensible: true,
             builtin_prototype: false,
+            attributes: HashMap::new(),
         };
         object.publish_dense_access();
         object
@@ -4296,6 +4312,7 @@ impl Vm {
             array: None,
             extensible: true,
             builtin_prototype: false,
+            attributes: HashMap::new(),
         })
     }
     fn array(&self) -> Value {
@@ -4817,9 +4834,20 @@ impl Vm {
     fn set_prop(&self, o: &Value, k: &str, v: Value) {
         if let Some(object) = o.as_object_ref() {
             let mut object = object.borrow_mut();
+            if object
+                .attributes
+                .get(k)
+                .is_some_and(|attributes| !attributes.writable)
+            {
+                return;
+            }
             if let Some(array) = &mut object.array {
                 if k == "length" {
                     array.resize(v.number().max(0.0) as usize, Value::Undefined);
+                    object.attributes.entry(k.into()).or_insert(PropertyAttributes {
+                        enumerable: false,
+                        ..PropertyAttributes::DEFAULT
+                    });
                     return;
                 }
                 if let Ok(index) = k.parse::<usize>() {
@@ -4827,10 +4855,12 @@ impl Vm {
                         array.resize(index + 1, Value::Undefined)
                     }
                     array.set(index, v);
+                    object.attributes.entry(k.into()).or_insert(PropertyAttributes::DEFAULT);
                     return;
                 }
             }
             object.props.insert(k, v);
+            object.attributes.entry(k.into()).or_insert(PropertyAttributes::DEFAULT);
             return;
         }
         if let Some(function) = o.as_function_ref() {
@@ -4840,6 +4870,9 @@ impl Vm {
                     self.invalidate_prototype_membership();
                 }
             } else {
+                if matches!(k, "name" | "length") && function.props.borrow().contains_key(k) {
+                    return;
+                }
                 function.props.borrow_mut().insert(k.into(), v);
             }
         }
@@ -4847,6 +4880,13 @@ impl Vm {
     fn delete_prop(&self, o: &Value, k: &str) -> bool {
         if let Some(object) = o.as_object_ref() {
             let mut object = object.borrow_mut();
+            if object
+                .attributes
+                .get(k)
+                .is_some_and(|attributes| !attributes.configurable)
+            {
+                return false;
+            }
             if let Some(array) = &mut object.array {
                 if let Ok(index) = k.parse::<usize>() {
                     if index < array.len() {
@@ -4856,6 +4896,7 @@ impl Vm {
                 return true;
             }
             object.props.shift_remove(k);
+            object.attributes.remove(k);
             return true;
         }
         if let Some(function) = o.as_function_ref() {
@@ -7505,12 +7546,20 @@ fn native_object_get_own_property_descriptor(
     let descriptor = vm.object(None);
     vm.set_prop(&descriptor, "value", value);
     let function_metadata = target.as_function().is_some() && matches!(key.as_str(), "name" | "length");
-    vm.set_prop(&descriptor, "writable", Value::Bool(!function_metadata));
-    let enumerable = target
+    let attributes = target
         .as_object_ref()
-        .is_some_and(|object| !object.borrow().builtin_prototype);
-    vm.set_prop(&descriptor, "enumerable", Value::Bool(enumerable));
-    vm.set_prop(&descriptor, "configurable", Value::Bool(true));
+        .and_then(|object| object.borrow().attributes.get(&key).copied())
+        .unwrap_or(PropertyAttributes {
+            writable: !function_metadata,
+            enumerable: !function_metadata
+                && !target
+                    .as_object_ref()
+                    .is_some_and(|object| object.borrow().builtin_prototype),
+            configurable: true,
+        });
+    vm.set_prop(&descriptor, "writable", Value::Bool(attributes.writable));
+    vm.set_prop(&descriptor, "enumerable", Value::Bool(attributes.enumerable));
+    vm.set_prop(&descriptor, "configurable", Value::Bool(attributes.configurable));
     Ok(descriptor)
 }
 fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
@@ -7529,8 +7578,30 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
         }
     }
     let value = vm.get_prop(&descriptor, "value");
-    if !value.is_undefined() {
+    let has_value = descriptor.as_object_ref().is_some_and(|object| {
+        object.borrow().props.contains_key("value")
+    });
+    if has_value {
         vm.set_prop(target, &key, value);
+    }
+    if let Some(object) = target.as_object_ref() {
+        let mut object = object.borrow_mut();
+        let current = object
+            .attributes
+            .get(&key)
+            .copied()
+            .unwrap_or(PropertyAttributes::DEFAULT);
+        let writable = vm.get_prop(&descriptor, "writable");
+        let enumerable = vm.get_prop(&descriptor, "enumerable");
+        let configurable = vm.get_prop(&descriptor, "configurable");
+        object.attributes.insert(
+            key,
+            PropertyAttributes {
+                writable: if writable.is_undefined() { current.writable } else { writable.truthy() },
+                enumerable: if enumerable.is_undefined() { current.enumerable } else { enumerable.truthy() },
+                configurable: if configurable.is_undefined() { current.configurable } else { configurable.truthy() },
+            },
+        );
     }
     Ok(target.clone())
 }
@@ -8963,6 +9034,7 @@ mod tests {
             array: None,
             extensible: true,
             builtin_prototype: false,
+            attributes: HashMap::new(),
         }));
         object
             .as_object()
