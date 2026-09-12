@@ -6215,6 +6215,17 @@ impl Vm {
     fn has_property(&self, value: &Value, key: &str) -> bool {
         if let Some(object) = value.as_object() {
             let borrowed = object.borrow();
+            if let Some(array) = &borrowed.array {
+                if key == "length" {
+                    return true;
+                }
+                if let Some(index) = array_index_key(key)
+                    && index < array.len()
+                    && !array.holes[index]
+                {
+                    return true;
+                }
+            }
             if borrowed.props.contains_key(key)
                 || borrowed.props.contains_key(&accessor_slot("get", key))
                 || borrowed.props.contains_key(&accessor_slot("set", key))
@@ -8556,6 +8567,46 @@ fn array_values(this: &Value) -> Vec<Value> {
         })
         .collect()
 }
+
+fn array_like_length(vm: &mut Vm, value: &Value) -> JsResult<usize> {
+    if value.is_null() || value.is_undefined() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "array method called on null or undefined",
+        )));
+    }
+    let length = if value.is_string() {
+        value.string().encode_utf16().count() as f64
+    } else {
+        let length_value = vm.get_prop_with_accessors(value, "length")?;
+        to_number_with_vm(vm, &length_value)?
+    };
+    Ok(length
+        .max(0.0)
+        .trunc()
+        .min(MAX_MATERIALIZED_ARRAY_LENGTH as f64) as usize)
+}
+
+fn array_like_value(vm: &mut Vm, value: &Value, index: usize) -> JsResult<Option<Value>> {
+    if let Some(object) = value.as_object_ref()
+        && let Some(array) = &object.borrow().array
+        && (index >= array.len() || array.holes[index])
+    {
+        return Ok(None);
+    }
+    if value.is_string() {
+        let key = index.to_string();
+        if index >= value.string().encode_utf16().count() {
+            return Ok(None);
+        }
+        return Ok(Some(vm.get_prop_with_accessors(value, &key)?));
+    }
+    if !vm.has_property(value, &index.to_string()) {
+        return Ok(None);
+    }
+    Ok(Some(vm.get_prop_with_accessors(value, &index.to_string())?))
+}
+
 fn array_callback(
     vm: &mut Vm,
     callback: &Value,
@@ -8573,8 +8624,11 @@ fn native_array_for_each(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
     let Some(callback) = args.first().filter(|value| value.is_function()) else {
         return Err(JsError::Throw(type_error(vm, "callback is not a function")));
     };
-    for (index, value) in array_values(&this).into_iter().enumerate() {
-        array_callback(vm, callback, value, index, this.clone())?;
+    let length = array_like_length(vm, &this)?;
+    for index in 0..length {
+        if let Some(value) = array_like_value(vm, &this, index)? {
+            array_callback(vm, callback, value, index, this.clone())?;
+        }
     }
     Ok(Value::Undefined)
 }
@@ -8582,23 +8636,36 @@ fn native_array_map(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value>
     let Some(callback) = args.first().filter(|value| value.is_function()) else {
         return Err(JsError::Throw(type_error(vm, "callback is not a function")));
     };
-    let values = array_values(&this);
-    let mut mapped = Vec::with_capacity(values.len());
-    for (index, value) in values.into_iter().enumerate() {
-        mapped.push(array_callback(vm, callback, value, index, this.clone())?);
+    let length = array_like_length(vm, &this)?;
+    let result = vm.array();
+    if let Some(object) = result.as_object_ref() {
+        object
+            .borrow_mut()
+            .array
+            .as_mut()
+            .expect("array storage")
+            .resize(length, Value::Undefined);
     }
-    Ok(vm.array_from_values(mapped))
+    for index in 0..length {
+        if let Some(value) = array_like_value(vm, &this, index)? {
+            let mapped = array_callback(vm, callback, value, index, this.clone())?;
+            vm.set_prop(&result, &index.to_string(), mapped);
+        }
+    }
+    Ok(result)
 }
 fn native_array_filter(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let Some(callback) = args.first().filter(|value| value.is_function()) else {
         return Err(JsError::Throw(type_error(vm, "callback is not a function")));
     };
-    let values = array_values(&this);
     let mut filtered = Vec::new();
-    for (index, value) in values.into_iter().enumerate() {
-        let keep = array_callback(vm, callback, value.clone(), index, this.clone())?.truthy();
-        if keep {
-            filtered.push(value);
+    let length = array_like_length(vm, &this)?;
+    for index in 0..length {
+        if let Some(value) = array_like_value(vm, &this, index)? {
+            let keep = array_callback(vm, callback, value.clone(), index, this.clone())?.truthy();
+            if keep {
+                filtered.push(value);
+            }
         }
     }
     Ok(vm.array_from_values(filtered))
@@ -8607,8 +8674,11 @@ fn native_array_some(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value
     let Some(callback) = args.first().filter(|value| value.is_function()) else {
         return Err(JsError::Throw(type_error(vm, "callback is not a function")));
     };
-    for (index, value) in array_values(&this).into_iter().enumerate() {
-        if array_callback(vm, callback, value, index, this.clone())?.truthy() {
+    let length = array_like_length(vm, &this)?;
+    for index in 0..length {
+        if let Some(value) = array_like_value(vm, &this, index)?
+            && array_callback(vm, callback, value, index, this.clone())?.truthy()
+        {
             return Ok(Value::Bool(true));
         }
     }
@@ -8618,8 +8688,11 @@ fn native_array_every(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Valu
     let Some(callback) = args.first().filter(|value| value.is_function()) else {
         return Err(JsError::Throw(type_error(vm, "callback is not a function")));
     };
-    for (index, value) in array_values(&this).into_iter().enumerate() {
-        if !array_callback(vm, callback, value, index, this.clone())?.truthy() {
+    let length = array_like_length(vm, &this)?;
+    for index in 0..length {
+        if let Some(value) = array_like_value(vm, &this, index)?
+            && !array_callback(vm, callback, value, index, this.clone())?.truthy()
+        {
             return Ok(Value::Bool(false));
         }
     }
@@ -8778,8 +8851,13 @@ fn array_reduce_impl(vm: &mut Vm, this: Value, args: &[Value], reverse: bool) ->
     let Some(callback) = args.first().filter(|value| value.is_function()) else {
         return Err(JsError::Throw(type_error(vm, "callback is not a function")));
     };
-    let values = array_values(&this);
-    let indexed = values.into_iter().enumerate().collect::<Vec<_>>();
+    let length = array_like_length(vm, &this)?;
+    let mut indexed = Vec::new();
+    for index in 0..length {
+        if let Some(value) = array_like_value(vm, &this, index)? {
+            indexed.push((index, value));
+        }
+    }
     let mut iter = if reverse {
         Box::new(indexed.into_iter().rev()) as Box<dyn Iterator<Item = (usize, Value)>>
     } else {
