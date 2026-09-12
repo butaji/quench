@@ -8777,57 +8777,86 @@ fn string_this(this: Value) -> String {
     this.string()
 }
 
-fn native_string_substring(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    let s = string_this(this);
-    let a = args.first().map(Value::number).unwrap_or(0.0).max(0.0) as usize;
-    let b = args
-        .get(1)
-        .map(Value::number)
-        .unwrap_or(s.len() as f64)
-        .max(0.0) as usize;
-    let (a, b) = (a.min(b), b.max(a));
-    Ok(Value::string_value(
-        s.chars().skip(a).take(b - a).collect::<String>(),
-    ))
-}
-fn native_string_slice(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    let s = string_this(this);
-    let start = args.first().map(Value::number).unwrap_or(0.0).max(0.0) as usize;
+fn native_string_substring(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let source = string_receiver(vm, &this, "substring")?;
+    let units = source.encode_utf16().collect::<Vec<_>>();
+    let length = units.len() as f64;
+    let start = args
+        .first()
+        .map(|value| to_integer_or_infinity(vm, value))
+        .transpose()?
+        .unwrap_or(0.0)
+        .clamp(0.0, length) as usize;
     let end = args
         .get(1)
-        .map(Value::number)
-        .unwrap_or(s.len() as f64)
-        .max(0.0) as usize;
-    Ok(Value::string_value(
-        s.chars()
-            .skip(start)
-            .take(end.saturating_sub(start))
-            .collect::<String>(),
-    ))
+        .map(|value| to_integer_or_infinity(vm, value))
+        .transpose()?
+        .unwrap_or(length)
+        .clamp(0.0, length) as usize;
+    let (start, end) = if start <= end {
+        (start, end)
+    } else {
+        (end, start)
+    };
+    Ok(Value::string_value(String::from_utf16_lossy(
+        &units[start..end],
+    )))
 }
-fn native_string_char_code_at(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    let string = string_this(this);
+fn native_string_slice(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let source = string_receiver(vm, &this, "slice")?;
+    let units = source.encode_utf16().collect::<Vec<_>>();
+    let length = units.len() as f64;
+    let normalize = |value: f64| {
+        if value < 0.0 {
+            (length + value).max(0.0) as usize
+        } else {
+            value.min(length) as usize
+        }
+    };
+    let start = args
+        .first()
+        .map(|value| to_integer_or_infinity(vm, value))
+        .transpose()?
+        .unwrap_or(0.0);
+    let end = args
+        .get(1)
+        .map(|value| to_integer_or_infinity(vm, value))
+        .transpose()?
+        .unwrap_or(length);
+    let start = normalize(start);
+    let end = normalize(end);
+    Ok(Value::string_value(if end > start {
+        String::from_utf16_lossy(&units[start..end])
+    } else {
+        String::new()
+    }))
+}
+fn native_string_char_code_at(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let source = string_receiver(vm, &this, "charCodeAt")?;
     let index = args
         .first()
-        .map(Value::number)
-        .unwrap_or(DEFAULT_STRING_INDEX) as usize;
-    Ok(Value::Number(
-        string
-            .chars()
-            .nth(index)
-            .map(|character| character as u32 as f64)
-            .unwrap_or(f64::NAN),
-    ))
+        .map(|value| to_integer_or_infinity(vm, value))
+        .transpose()?
+        .unwrap_or(0.0);
+    let unit = index
+        .is_finite()
+        .then_some(index as usize)
+        .and_then(|index| source.encode_utf16().nth(index));
+    Ok(Value::Number(unit.map_or(f64::NAN, f64::from)))
 }
-fn native_string_char_at(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    let string = string_this(this);
+fn native_string_char_at(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let source = string_receiver(vm, &this, "charAt")?;
     let index = args
         .first()
-        .map(Value::number)
-        .unwrap_or(DEFAULT_STRING_INDEX) as usize;
-    Ok(Value::string_value(
-        string.chars().nth(index).unwrap_or('\0').to_string(),
-    ))
+        .map(|value| to_integer_or_infinity(vm, value))
+        .transpose()?
+        .unwrap_or(0.0);
+    let value = index
+        .is_finite()
+        .then_some(index as usize)
+        .and_then(|index| source.encode_utf16().nth(index))
+        .map_or_else(String::new, |unit| String::from_utf16_lossy(&[unit]));
+    Ok(Value::string_value(value))
 }
 fn native_string_substr(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     if this.is_null()
@@ -9745,21 +9774,67 @@ fn native_string_search(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Va
     };
     Ok(Value::Number(index))
 }
-fn native_string_index_of(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    Ok(Value::Number(
-        string_this(this)
-            .find(&args.first().map(Value::string).unwrap_or_default())
-            .map(|x| x as f64)
-            .unwrap_or(-1.0),
-    ))
+fn native_string_index_of(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    string_index_search(vm, this, args, false)
 }
-fn native_string_last_index_of(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    Ok(Value::Number(
-        string_this(this)
-            .rfind(&args.first().map(Value::string).unwrap_or_default())
-            .map(|x| x as f64)
-            .unwrap_or(-1.0),
-    ))
+fn native_string_last_index_of(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    string_index_search(vm, this, args, true)
+}
+
+fn string_index_search(vm: &mut Vm, this: Value, args: &[Value], reverse: bool) -> JsResult<Value> {
+    let source = string_receiver(vm, &this, if reverse { "lastIndexOf" } else { "indexOf" })?;
+    let search_value = args.first().cloned().unwrap_or(Value::Undefined);
+    if is_symbol_carrier(&search_value) {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "cannot convert a Symbol to a string",
+        )));
+    }
+    let search = to_string_with_vm(vm, &search_value)?;
+    let source_units = source.encode_utf16().collect::<Vec<_>>();
+    let search_units = search.encode_utf16().collect::<Vec<_>>();
+    if search_units.is_empty() {
+        let position = args
+            .get(1)
+            .map(|value| to_integer_or_infinity(vm, value))
+            .transpose()?
+            .unwrap_or(if reverse {
+                source_units.len() as f64
+            } else {
+                0.0
+            });
+        return Ok(Value::Number(
+            position.clamp(0.0, source_units.len() as f64),
+        ));
+    }
+    let limit = args
+        .get(1)
+        .map(|value| to_integer_or_infinity(vm, value))
+        .transpose()?
+        .unwrap_or(if reverse {
+            source_units.len() as f64
+        } else {
+            0.0
+        });
+    let limit = if reverse {
+        limit.min(source_units.len() as f64) as usize
+    } else {
+        limit.max(0.0) as usize
+    };
+    let found = if reverse {
+        source_units[..limit.min(source_units.len())]
+            .windows(search_units.len())
+            .rposition(|window| window == search_units)
+    } else {
+        source_units
+            .get(limit.min(source_units.len())..)
+            .and_then(|tail| {
+                tail.windows(search_units.len())
+                    .position(|window| window == search_units)
+            })
+            .map(|index| index + limit)
+    };
+    Ok(Value::Number(found.map_or(-1.0, |index| index as f64)))
 }
 
 fn string_receiver(vm: &mut Vm, this: &Value, method: &str) -> JsResult<String> {
