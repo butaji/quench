@@ -761,6 +761,7 @@ impl PropertyStorage {
 #[derive(Clone)]
 struct ArrayStorage {
     values: Vec<Value>,
+    holes: Vec<bool>,
     non_number_count: usize,
     backing_version: u64,
 }
@@ -792,12 +793,14 @@ impl ArrayStorage {
     }
 
     fn from_values(values: Vec<Value>) -> Self {
+        let length = values.len();
         let non_number_count = values
             .iter()
             .filter(|value| value.as_number().is_none())
             .count();
         Self {
             values,
+            holes: vec![false; length],
             non_number_count,
             backing_version: 0,
         }
@@ -816,7 +819,7 @@ impl ArrayStorage {
     }
 
     fn get(&self, index: usize) -> Option<&Value> {
-        self.values.get(index)
+        self.values.get(index).filter(|_| !self.holes[index])
     }
 
     fn iter(&self) -> impl Iterator<Item = &Value> {
@@ -824,7 +827,11 @@ impl ArrayStorage {
     }
 
     fn to_vec(&self) -> Vec<Value> {
-        self.values.clone()
+        self.values
+            .iter()
+            .enumerate()
+            .map(|(index, value)| if self.holes[index] { Value::Undefined } else { value.clone() })
+            .collect()
     }
 
     fn set(&mut self, index: usize, value: Value) {
@@ -839,6 +846,7 @@ impl ArrayStorage {
             _ => {}
         }
         Value::overwrite(&mut self.values[index], value);
+        self.holes[index] = false;
     }
 
     fn resize(&mut self, new_len: usize, fill: Value) {
@@ -852,6 +860,7 @@ impl ArrayStorage {
         } else if new_len > old_len {
             let fill_is_number = fill.as_number().is_some();
             self.values.resize(new_len, fill);
+            self.holes.resize(new_len, true);
             if !fill_is_number {
                 self.non_number_count += new_len - old_len;
             }
@@ -864,6 +873,7 @@ impl ArrayStorage {
     fn push(&mut self, value: Value) {
         let index = self.values.len();
         self.values.push(Value::Undefined);
+        self.holes.push(false);
         self.non_number_count += 1;
         self.backing_version = self.backing_version.wrapping_add(1);
         self.set(index, value);
@@ -871,6 +881,7 @@ impl ArrayStorage {
 
     fn pop(&mut self) -> Option<Value> {
         let value = self.values.pop()?;
+        self.holes.pop();
         if value.as_number().is_none() {
             self.non_number_count -= 1;
         }
@@ -880,6 +891,7 @@ impl ArrayStorage {
 
     fn remove(&mut self, index: usize) -> Value {
         let value = self.values.remove(index);
+        self.holes.remove(index);
         if value.as_number().is_none() {
             self.non_number_count -= 1;
         }
@@ -892,6 +904,7 @@ impl ArrayStorage {
             self.non_number_count += 1;
         }
         self.values.insert(index, value);
+        self.holes.insert(index, false);
         self.backing_version = self.backing_version.wrapping_add(1);
     }
 
@@ -906,6 +919,7 @@ impl ArrayStorage {
             return false;
         }
         self.set(index, Value::Undefined);
+        self.holes[index] = true;
         true
     }
 }
@@ -4767,7 +4781,7 @@ impl Vm {
                     if k == "length" {
                         return Value::Number(a.len() as f64);
                     }
-                    if let Ok(i) = k.parse::<usize>() {
+                    if let Some(i) = array_index_key(k) {
                         return a.get(i).cloned().unwrap_or(Value::Undefined);
                     }
                     if let Some(v) = array_method(self, k) {
@@ -4900,7 +4914,7 @@ impl Vm {
                     });
                     return;
                 }
-                if let Ok(index) = k.parse::<usize>() {
+                if let Some(index) = array_index_key(k) {
                     if array.len() <= index {
                         array.resize(index + 1, Value::Undefined)
                     }
@@ -4940,7 +4954,7 @@ impl Vm {
                 return false;
             }
             if let Some(array) = &mut object.array {
-                if let Ok(index) = k.parse::<usize>() {
+                if let Some(index) = array_index_key(k) {
                     if index < array.len() {
                         array.set(index, Value::Undefined);
                     }
@@ -4966,7 +4980,8 @@ impl Vm {
             }
             Expression::ComputedMemberExpression(member) => {
                 let object = self.eval_expr(&member.object, e.clone())?;
-                let key = self.eval_expr(&member.expression, e)?.string();
+                let key_value = self.eval_expr(&member.expression, e)?;
+                let key = self.to_property_key(key_value)?;
                 Ok(Value::Bool(self.delete_prop(&object, &key)))
             }
             _ => Ok(Value::Bool(true)),
@@ -5859,7 +5874,8 @@ impl Vm {
             }
             ComputedMemberExpression(m) => {
                 let o = self.eval_expr(&m.object, e.clone())?;
-                let k = self.eval_expr(&m.expression, e)?.string();
+                let key_value = self.eval_expr(&m.expression, e)?;
+                let k = self.to_property_key(key_value)?;
                 Ok(self.get_prop(&o, &k))
             }
             CallExpression(v) => {
@@ -5964,10 +5980,12 @@ impl Vm {
                 let obj = self.eval_expr(&x.object, e)?;
                 Ok((obj, x.property.name.to_string()))
             }
-            MemberExpression::ComputedMemberExpression(x) => Ok((
-                self.eval_expr(&x.object, e.clone())?,
-                self.eval_expr(&x.expression, e)?.string(),
-            )),
+            MemberExpression::ComputedMemberExpression(x) => {
+                let object = self.eval_expr(&x.object, e.clone())?;
+                let key_value = self.eval_expr(&x.expression, e)?;
+                let key = self.to_property_key(key_value)?;
+                Ok((object, key))
+            }
             _ => Err(JsError::Message("unsupported member".into())),
         }
     }
@@ -5992,7 +6010,10 @@ impl Vm {
             )),
             SimpleAssignmentTarget::ComputedMemberExpression(m) => Ok(LValue::Prop(
                 self.eval_expr(&m.object, e.clone())?,
-                self.eval_expr(&m.expression, e)?.string(),
+                {
+                    let key_value = self.eval_expr(&m.expression, e)?;
+                    self.to_property_key(key_value)?
+                },
             )),
             _ => Err(JsError::Message("target unsupported".into())),
         }
@@ -6025,7 +6046,8 @@ impl Vm {
             }
             SimpleAssignmentTarget::ComputedMemberExpression(m) => {
                 let o = self.eval_expr(&m.object, e.clone())?;
-                let k = self.eval_expr(&m.expression, e)?.string();
+                let key_value = self.eval_expr(&m.expression, e)?;
+                let k = self.to_property_key(key_value)?;
                 Ok(self.get_prop(&o, &k))
             }
             _ => Err(JsError::Message("target unsupported".into())),
@@ -6057,12 +6079,32 @@ impl Vm {
             }
             SimpleAssignmentTarget::ComputedMemberExpression(m) => {
                 let o = self.eval_expr(&m.object, e.clone())?;
-                let k = self.eval_expr(&m.expression, e)?.string();
+                let key_value = self.eval_expr(&m.expression, e)?;
+                let k = self.to_property_key(key_value)?;
                 self.set_prop(&o, &k, v);
                 Ok(())
             }
             _ => Err(JsError::Message("target unsupported".into())),
         }
+    }
+}
+
+impl Vm {
+    fn to_property_key(&mut self, value: Value) -> JsResult<String> {
+        if !value.is_object() && !value.is_function() {
+            return Ok(value.string());
+        }
+        for method_name in ["toString", "valueOf"] {
+            let method = self.get_prop(&value, method_name);
+            if !method.is_function() {
+                continue;
+            }
+            let primitive = self.call_arguments(&method, value.clone(), &[] as &[Value])?;
+            if !primitive.is_object() && !primitive.is_function() {
+                return Ok(primitive.string());
+            }
+        }
+        Err(JsError::Throw(type_error(self, "cannot convert object to property key")))
     }
 }
 
@@ -6073,6 +6115,15 @@ pub(crate) fn dense_array_index(key: &Value) -> Option<usize> {
     }
     let index = number as u64;
     (index <= MAX_JS_ARRAY_INDEX).then_some(index as usize)
+}
+
+// Keep the dense representation bounded. Larger canonical array-index names
+// remain ordinary properties, avoiding multi-gigabyte materialization for
+// sparse-array probes while preserving normal dense-array behavior.
+fn array_index_key(key: &str) -> Option<usize> {
+    const MAX_DENSE_INDEX: usize = 1 << 20;
+    let index = key.parse::<usize>().ok()?;
+    (index < MAX_DENSE_INDEX && (index as u64) <= MAX_JS_ARRAY_INDEX).then_some(index)
 }
 
 fn pattern_name<'a>(p: &BindingPattern<'a>) -> Option<String> {
@@ -6643,6 +6694,7 @@ fn native_array_splice(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
     let mut object = object_handle.borrow_mut();
     if let Some(array) = object.array.as_mut() {
         array.values = values;
+        array.holes = vec![false; array.values.len()];
         object.publish_dense_access();
     } else {
         let numeric_keys = object
@@ -6669,6 +6721,7 @@ fn native_array_reverse(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value>
         let mut object = object.borrow_mut();
         if let Some(array) = object.array.as_mut() {
             array.values.reverse();
+            array.holes.reverse();
             object.publish_dense_access();
         }
     }
@@ -6705,6 +6758,7 @@ fn native_array_sort(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value
     let mut object = object.borrow_mut();
     if let Some(array) = object.array.as_mut() {
         array.values = values;
+        array.holes = vec![false; array.values.len()];
         object.publish_dense_access();
     } else {
         for (index, value) in values.iter().cloned().enumerate() {
@@ -7494,6 +7548,25 @@ fn native_object(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let object = vm.object(Some(function.as_function_ref().expect("wrapper constructor").prototype.clone()));
     vm.set_prop(&object, "\0primitive", value.clone());
     vm.set_prop(&object, "\0wrapper", Value::string_value(wrapper));
+    if wrapper == "String" {
+        let text = value.string();
+        vm.set_prop(&object, "length", Value::Number(text.chars().count() as f64));
+        if let Some(handle) = object.as_object_ref() {
+            let mut object = handle.borrow_mut();
+            object.attributes.insert(
+                "length".into(),
+                PropertyAttributes { writable: false, enumerable: false, configurable: false },
+            );
+            for (index, ch) in text.chars().enumerate() {
+                let key = index.to_string();
+                object.props.insert(&key, Value::string_value(ch.to_string()));
+                object.attributes.insert(
+                    key,
+                    PropertyAttributes { writable: false, enumerable: true, configurable: false },
+                );
+            }
+        }
+    }
     Ok(object)
 }
 fn native_array(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
@@ -7620,8 +7693,8 @@ fn native_object_get_own_property_descriptor(
         let object = object.borrow();
         if key == "length" && object.array.is_some() {
             Some(Value::Number(object.array.as_ref().unwrap().len() as f64))
-        } else if let Some(index) = key.parse::<usize>().ok() {
-            object.array.as_ref().and_then(|array| array.values.get(index).cloned())
+        } else if let Some(index) = array_index_key(&key) {
+            object.array.as_ref().and_then(|array| array.get(index).cloned())
         } else {
             object.props.get(&key).cloned()
         }
@@ -7632,12 +7705,16 @@ fn native_object_get_own_property_descriptor(
     let descriptor = vm.object(None);
     vm.set_prop(&descriptor, "value", value);
     let function_metadata = target.as_function().is_some() && matches!(key.as_str(), "name" | "length");
+    let builtin_function = target
+        .as_function_ref()
+        .is_some_and(|function| matches!(function.kind, FunctionKind::Builtin(_)));
     let attributes = target
         .as_object_ref()
         .and_then(|object| object.borrow().attributes.get(&key).copied())
         .unwrap_or(PropertyAttributes {
             writable: !function_metadata,
             enumerable: !function_metadata
+                && !builtin_function
                 && !target
                     .as_object_ref()
                     .is_some_and(|object| object.borrow().builtin_prototype),
@@ -7657,7 +7734,7 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
     if let Some(object) = target.as_object_ref() {
         let object = object.borrow();
         let present = object.array.as_ref().is_some_and(|array| {
-            key == "length" || key.parse::<usize>().ok().is_some_and(|index| index < array.len())
+            key == "length" || array_index_key(&key).is_some_and(|index| index < array.len())
         }) || object.props.contains_key(&key);
         if !present && !object.extensible {
             return Err(JsError::Throw(type_error(vm, "object is not extensible")));
@@ -7734,7 +7811,10 @@ fn native_object_keys(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> 
         .map(|object| {
             let object = object.borrow();
             if let Some(array) = &object.array {
-                return (0..array.len()).map(|index| Value::string_value(index.to_string())).collect();
+                return (0..array.len())
+                    .filter(|index| !array.holes[*index])
+                    .map(|index| Value::string_value(index.to_string()))
+                    .collect();
             }
             object.props.keys().map(Value::string_value).collect()
         })
@@ -7765,25 +7845,68 @@ fn native_object_assign(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value
             let object = object.borrow();
             if let Some(array) = &object.array {
                 for (index, value) in array.values.iter().cloned().enumerate() {
-                    vm.set_prop(&target, &index.to_string(), value);
+                    if array.holes[index] {
+                        continue;
+                    }
+                    let key = index.to_string();
+                    if target_property_readonly(&target, &key) {
+                        return Err(JsError::Throw(type_error(vm, "cannot assign to read-only property")));
+                    }
+                    vm.set_prop(&target, &key, value);
                 }
             }
             for (key, value) in object.props.iter() {
-                if !key.starts_with('\0') {
+                let enumerable = object
+                    .attributes
+                    .get(key)
+                    .map_or(!object.builtin_prototype, |attrs| attrs.enumerable);
+                if enumerable && !key.starts_with('\0') {
+                    if target_property_readonly(&target, key) {
+                        return Err(JsError::Throw(type_error(vm, "cannot assign to read-only property")));
+                    }
                     vm.set_prop(&target, key, value.clone());
                 }
             }
         } else if let Some(function) = source.as_function_ref() {
             for (key, value) in function.props.borrow().iter() {
+                let enumerable = !matches!(function.kind, FunctionKind::Builtin(_))
+                    && !matches!(key.as_str(), "name" | "length");
+                if !enumerable {
+                    continue;
+                }
+                if target_property_readonly(&target, key) {
+                    return Err(JsError::Throw(type_error(vm, "cannot assign to read-only property")));
+                }
                 vm.set_prop(&target, key, value.clone());
             }
         } else if source.is_string() {
             for (index, value) in source.string().chars().map(|ch| Value::string_value(ch.to_string())).enumerate() {
-                vm.set_prop(&target, &index.to_string(), value);
+                let key = index.to_string();
+                if target_property_readonly(&target, &key) {
+                    return Err(JsError::Throw(type_error(vm, "cannot assign to read-only property")));
+                }
+                vm.set_prop(&target, &key, value);
             }
         }
     }
     Ok(target)
+}
+
+fn target_property_readonly(target: &Value, key: &str) -> bool {
+    if let Some(object) = target.as_object_ref() {
+        let object = object.borrow();
+        return object
+            .attributes
+            .get(key)
+            .is_some_and(|attributes| !attributes.writable);
+    }
+    if let Some(_function) = target.as_function_ref() {
+        if matches!(key, "name" | "length") {
+            return true;
+        }
+        return false;
+    }
+    false
 }
 fn native_object_value_of(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     if let Some(object) = this.as_object_ref()
@@ -7803,10 +7926,7 @@ fn native_object_has_own_property(_: &mut Vm, this: Value, args: &[Value]) -> Js
             let object = object.borrow();
             if let Some(array) = &object.array {
                 key == "length"
-                    || key
-                        .parse::<usize>()
-                        .ok()
-                        .is_some_and(|index| index < array.len())
+                    || array_index_key(&key).is_some_and(|index| index < array.len())
             } else {
                 object.props.contains_key(&key)
             }
@@ -7830,7 +7950,7 @@ fn native_object_property_is_enumerable(
             let object = object.borrow();
             object.props.contains_key(&key)
                 || (object.array.as_ref().is_some_and(|array| {
-                    key.parse::<usize>().ok().is_some_and(|index| index < array.len())
+                    array_index_key(&key).is_some_and(|index| index < array.len())
                 }))
         })
     };
