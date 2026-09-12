@@ -9995,6 +9995,9 @@ fn format_bigint_radix(mut value: BigInt, radix: u32) -> String {
 }
 
 fn string_symbol_method(vm: &mut Vm, value: &Value, name: &str) -> JsResult<Option<Value>> {
+    if !value.is_object_like() && !value.is_regexp() {
+        return Ok(None);
+    }
     let key = vm.well_known_symbol_key(name);
     let method = vm.get_prop_with_accessors(value, &key)?;
     if method.is_undefined() || method.is_null() {
