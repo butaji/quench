@@ -40,7 +40,7 @@ pub enum QuickeningDecision {
 
 /// Result of the generic inline-cache key/state phase.  The cache never owns
 /// the effectful operation: callers receive the state and must apply it using
-/// the complete semantic path.  This mirrors the Deegen split
+/// the complete semantic path. This keeps the quickening split local to the
 /// `lambda_i: key -> state` / `lambda_e: (input, state) -> output` without
 /// introducing a second representation of JavaScript values.
 #[derive(Debug, Clone, PartialEq)]
