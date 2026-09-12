@@ -110,6 +110,13 @@ builtin_catalog! {
     DateConstructor, Global, "Date", native_date, Generic, PURE;
     RegExpConstructor, Global, "RegExp", native_regexp, Generic, MAY_ALLOCATE;
     ErrorConstructor, Global, "Error", native_error, Generic, MAY_ALLOCATE;
+    TypeErrorConstructor, Global, "TypeError", native_error, Generic, MAY_ALLOCATE;
+    RangeErrorConstructor, Global, "RangeError", native_error, Generic, MAY_ALLOCATE;
+    URIErrorConstructor, Global, "URIError", native_error, Generic, MAY_ALLOCATE;
+    SyntaxErrorConstructor, Global, "SyntaxError", native_error, Generic, MAY_ALLOCATE;
+    ReferenceErrorConstructor, Global, "ReferenceError", native_error, Generic, MAY_ALLOCATE;
+    EvalErrorConstructor, Global, "EvalError", native_error, Generic, MAY_ALLOCATE;
+    AggregateErrorConstructor, Global, "AggregateError", native_error, Generic, MAY_ALLOCATE;
     Alert, Global, "alert", native_noop, Generic, EFFECTFUL;
     Print, Global, "print", native_print, Generic, EFFECTFUL;
     Load, Global, "load", native_load, Generic, EFFECTFUL;
