@@ -1856,6 +1856,7 @@ fn opcode_counts_json(counts: &[u64; DynOpcode::COUNT]) -> String {
 
 struct FunctionValue<'a> {
     kind: FunctionKind<'a>,
+    strict: bool,
     prototype: ObjectHandle,
     props: Rc<RefCell<IndexMap<String, Value>>>,
     dyn_jit: RefCell<Option<Rc<dynjit::DynJitCode>>>,
@@ -4131,6 +4132,7 @@ struct Vm {
     jit_stats_enabled: bool,
     block_stats_enabled: bool,
     instruction_budget: Option<u64>,
+    strict_mode: bool,
     output: Option<Box<dyn FnMut(&str)>>,
     timers: VecDeque<Timer>,
     next_ticks: VecDeque<Timer>,
@@ -4170,6 +4172,7 @@ impl Vm {
             instruction_budget: env::var(INSTRUCTION_BUDGET_ENV)
                 .ok()
                 .and_then(|value| value.parse().ok()),
+            strict_mode: false,
             output: None,
             timers: VecDeque::new(),
             next_ticks: VecDeque::new(),
@@ -4362,6 +4365,7 @@ impl Vm {
     fn native(&self, f: fn(&mut Vm, Value, &[Value]) -> JsResult<Value>) -> Value {
         Value::Function(Rc::new(FunctionValue {
             kind: FunctionKind::Native(f),
+            strict: false,
             prototype: self.allocate_object(Object::ordinary(None)),
             props: Rc::new(RefCell::new(IndexMap::new())),
             dyn_jit: RefCell::new(None),
@@ -4515,6 +4519,23 @@ impl Vm {
             let proto = Value::Object(function.as_function_ref().expect("constructor function").prototype.clone());
             self.set_prop(&proto, "constructor", self.builtin(constructor));
         }
+        let function_prototype = self
+            .builtin(BuiltinId::FunctionConstructor)
+            .as_function_ref()
+            .expect("Function constructor")
+            .prototype
+            .clone();
+        let function_prototype_value = Value::Object(function_prototype.clone());
+        self.set_prop(&function_prototype_value, "name", Value::string_value(""));
+        self.set_prop(&function_prototype_value, "length", Value::Number(0.0));
+        function_prototype.borrow_mut().attributes.insert(
+            "name".into(),
+            PropertyAttributes { writable: false, enumerable: false, configurable: true },
+        );
+        function_prototype.borrow_mut().attributes.insert(
+            "length".into(),
+            PropertyAttributes { writable: false, enumerable: false, configurable: true },
+        );
         let object_prototype = self
             .builtin(BuiltinId::ObjectConstructor)
             .as_function_ref()
@@ -4883,6 +4904,29 @@ impl Vm {
             return number_method(self, k);
         }
         Value::Undefined
+    }
+
+    /// ES5 restricted function properties.  The old VM made this check at
+    /// the property-resolution boundary; keeping it here lets both the
+    /// interpreter and stencil lowering share the same semantic predicate.
+    pub(crate) fn restricted_function_property(&self, value: &Value, key: &str) -> bool {
+        if !matches!(key, "caller" | "arguments") {
+            return false;
+        }
+        let Some(function) = value.as_function_ref() else {
+            return false;
+        };
+        if function.strict {
+            return true;
+        }
+        match &function.kind {
+            FunctionKind::Arrow { .. } | FunctionKind::Bound { .. } => true,
+            FunctionKind::User { node, .. } => node
+                .body
+                .as_ref()
+                .is_some_and(|body| body.directives.iter().any(|d| d.directive.as_str() == "use strict")),
+            FunctionKind::Builtin(_) | FunctionKind::Native(_) => false,
+        }
     }
     fn get_computed_prop(&self, object: &Value, key: &Value) -> Value {
         if let Some(index) = dense_array_index(key)
@@ -5385,6 +5429,12 @@ impl Vm {
         if let Some(e) = r.diagnostics.first() {
             return Err(JsError::Message(format!("parse error: {e:?}")));
         }
+        let previous_strict_mode = self.strict_mode;
+        self.strict_mode = r
+            .program
+            .directives
+            .iter()
+            .any(|directive| directive.directive.as_str() == "use strict");
         self.source_stack.push(p.to_path_buf());
         self.source_ids.push(source_id);
         let out = if self.jit_mode == JitMode::Stencil {
@@ -5433,6 +5483,7 @@ impl Vm {
         };
         self.source_stack.pop();
         self.source_ids.pop();
+        self.strict_mode = previous_strict_mode;
         out
     }
 
@@ -5676,13 +5727,27 @@ impl Vm {
     }
     fn make_user<'a>(&self, n: &'a Function<'a>, e: Env) -> Value {
         let p = self.allocate_object(Object::ordinary(None));
+        let length = n
+            .params
+            .items
+            .iter()
+            .take_while(|parameter| !parameter.pattern.is_assignment_pattern())
+            .count();
+        let name = n.id.as_ref().map_or("", |id| id.name.as_str());
         let f = FunctionValue {
             kind: FunctionKind::User {
                 node: unsafe { std::mem::transmute(n) },
                 env: e,
             },
+            strict: self.strict_mode
+                || n.body.as_ref().is_some_and(|body| {
+                    body.directives.iter().any(|d| d.directive.as_str() == "use strict")
+                }),
             prototype: p,
-            props: Rc::new(RefCell::new(IndexMap::new())),
+            props: Rc::new(RefCell::new(IndexMap::from([
+                ("name".into(), Value::string_value(name)),
+                ("length".into(), Value::Number(length as f64)),
+            ]))),
             dyn_jit: RefCell::new(None),
             numeric_jit: RefCell::new(None),
             source_id: self.source_ids.last().copied(),
@@ -5693,13 +5758,23 @@ impl Vm {
     }
     fn make_arrow<'a>(&self, n: &'a ArrowFunctionExpression<'a>, e: Env) -> Value {
         let p = self.allocate_object(Object::ordinary(None));
+        let length = n
+            .params
+            .items
+            .iter()
+            .take_while(|parameter| !parameter.pattern.is_assignment_pattern())
+            .count();
         let f = FunctionValue {
             kind: FunctionKind::Arrow {
                 node: unsafe { std::mem::transmute(n) },
                 env: e,
             },
+            strict: self.strict_mode,
             prototype: p,
-            props: Rc::new(RefCell::new(IndexMap::new())),
+            props: Rc::new(RefCell::new(IndexMap::from([
+                ("name".into(), Value::string_value("")),
+                ("length".into(), Value::Number(length as f64)),
+            ]))),
             dyn_jit: RefCell::new(None),
             numeric_jit: RefCell::new(None),
             source_id: self.source_ids.last().copied(),
@@ -7197,6 +7272,14 @@ fn type_error(vm: &Vm, message: &str) -> Value {
     vm.set_prop(&error, "name", Value::string_value("TypeError"));
     error
 }
+fn syntax_error(vm: &Vm, message: &str) -> Value {
+    let error = assertion_error(vm, message);
+    if let Some(constructor) = Environment::get(&vm.global, "SyntaxError") {
+        vm.set_prop(&error, "constructor", constructor);
+    }
+    vm.set_prop(&error, "name", Value::string_value("SyntaxError"));
+    error
+}
 fn native_assert(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     if args.first().is_none_or(Value::truthy) {
         return Ok(Value::Undefined);
@@ -7711,11 +7794,65 @@ fn to_string_with_vm(vm: &mut Vm, value: &Value) -> JsResult<String> {
 fn native_number(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(Value::Number(a.first().map(Value::number).unwrap_or(0.0)))
 }
-fn native_function_constructor(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
-    // Dynamic source compilation is intentionally handled by the same VM
-    // parser; until parameter/body source closures are exposed here, return a
-    // callable VM-owned function for compatibility with Function.prototype use.
-    Ok(vm.native(native_noop))
+fn native_function_constructor(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    // Reuse the same OXC parser and stencil compiler used for ordinary source
+    // rather than introducing a second dynamic-function execution path.
+    let body = args.last().map(|value| to_string_with_vm(vm, value)).transpose()?.unwrap_or_default();
+    let parameters = if args.len() > 1 {
+        let mut parameters = Vec::with_capacity(args.len() - 1);
+        for value in &args[..args.len() - 1] {
+            parameters.push(to_string_with_vm(vm, value)?);
+        }
+        parameters.join(",")
+    } else {
+        String::new()
+    };
+    let source = format!("function anonymous({parameters}) {{{body}\n}}");
+    // The dynamic Function grammar applies strict-mode early errors after
+    // concatenating the parameter strings and body.  Keep this check beside
+    // source construction so the stencil path observes the same errors as
+    // the historical reducer (not merely whatever the parser happens to
+    // accept in sloppy mode).
+    if dynamic_function_strict_early_error(&parameters, &body) {
+        return Err(JsError::Throw(syntax_error(vm, "invalid strict Function constructor source")));
+    }
+    let source: &'static str = Box::leak(source.into_boxed_str());
+    let allocator: &'static Allocator = Box::leak(Box::new(Allocator::default()));
+    let parsed = Parser::new(allocator, source, SourceType::default()).parse();
+    if !parsed.diagnostics.is_empty() {
+        return Err(JsError::Throw(syntax_error(vm, "invalid Function constructor source")));
+    }
+    let Some(Statement::FunctionDeclaration(function)) = parsed.program.body.first() else {
+        return Err(JsError::Throw(syntax_error(vm, "invalid Function constructor source")));
+    };
+    Ok(vm.make_user(function, vm.global.clone()))
+}
+
+fn dynamic_function_strict_early_error(parameters: &str, body: &str) -> bool {
+    let strict = body
+        .trim_start()
+        .strip_prefix("\"use strict\"")
+        .or_else(|| body.trim_start().strip_prefix("'use strict'"))
+        .is_some_and(|rest| rest.trim_start().starts_with(';') || rest.trim_start().starts_with('\n'));
+    if !strict {
+        return false;
+    }
+    let mut names = std::collections::HashSet::new();
+    for parameter in parameters.split(',') {
+        let name = parameter
+            .trim()
+            .trim_start_matches("...")
+            .split_once('=')
+            .map_or(parameter.trim(), |(name, _)| name.trim());
+        if matches!(name, "eval" | "arguments") || !name.is_empty() && !names.insert(name) {
+            return true;
+        }
+    }
+    // `with` is forbidden in a strict function body. This conservative token
+    // check covers the dynamic-constructor source forms while leaving strings
+    // and property names to the parser/reducer.
+    body.split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .any(|token| token == "with")
 }
 fn native_date(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Ok(Value::Number(
@@ -8093,29 +8230,53 @@ fn native_inherits_from(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Va
     Ok(Value::Undefined)
 }
 fn native_function_call(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if !this.is_function() {
+        return Err(JsError::Throw(type_error(vm, "Function.prototype.call called on non-callable")));
+    }
     let this_arg = args.first().cloned().unwrap_or(Value::Undefined);
     vm.call_arguments(&this, this_arg, &args[1.min(args.len())..])
 }
 fn native_function_apply(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if !this.is_function() {
+        return Err(JsError::Throw(type_error(vm, "Function.prototype.apply called on non-callable")));
+    }
     let this_arg = args.first().cloned().unwrap_or(Value::Undefined);
-    let call_args = args
-        .get(1)
-        .and_then(Value::as_object)
-        .and_then(|object| object.borrow().array.as_ref().map(ArrayStorage::to_vec))
-        .unwrap_or_default();
+    let call_args = if args.get(1).is_none_or(|value| value.is_null() || value.is_undefined()) {
+        Vec::new()
+    } else {
+        args[1]
+            .as_object()
+            .and_then(|object| object.borrow().array.as_ref().map(ArrayStorage::to_vec))
+            .ok_or_else(|| JsError::Throw(type_error(vm, "Function.prototype.apply arguments is not object")))?
+    };
     vm.call(this, this_arg, call_args)
 }
 fn native_function_bind(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if !this.is_function() {
+        return Err(JsError::Throw(type_error(vm, "Function.prototype.bind called on non-callable")));
+    }
     let this_arg = args.first().cloned().unwrap_or(Value::Undefined);
     let bound_args = args.get(1..).unwrap_or_default().to_vec();
+    let bound_length = bound_args.len();
+    let target_length = this
+        .as_function_ref()
+        .and_then(|function| function.props.borrow().get("length").and_then(Value::as_number))
+        .unwrap_or(0.0);
     let function = FunctionValue {
         kind: FunctionKind::Bound {
-            target: this,
+            target: this.clone(),
             this_arg,
             args: bound_args,
         },
+        strict: true,
         prototype: vm.allocate_object(Object::ordinary(None)),
-        props: Rc::new(RefCell::new(IndexMap::new())),
+        props: Rc::new(RefCell::new(IndexMap::from([
+            ("name".into(), Value::string_value("bound ")),
+            (
+                "length".into(),
+                Value::Number((target_length - bound_length as f64).max(0.0)),
+            ),
+        ]))),
         dyn_jit: RefCell::new(None),
         numeric_jit: RefCell::new(None),
         source_id: None,
@@ -8585,6 +8746,7 @@ mod tests {
         assert_value_clone_drop(
             Rc::new(FunctionValue {
                 kind: FunctionKind::Native(native_noop),
+                strict: false,
                 prototype: test_object(Object::ordinary(None)),
                 props: Rc::new(RefCell::new(IndexMap::new())),
                 dyn_jit: RefCell::new(None),
@@ -8608,6 +8770,7 @@ mod tests {
         assert_owned_raw_round_trip(
             Rc::new(FunctionValue {
                 kind: FunctionKind::Native(native_noop),
+                strict: false,
                 prototype: test_object(Object::ordinary(None)),
                 props: Rc::new(RefCell::new(IndexMap::new())),
                 dyn_jit: RefCell::new(None),

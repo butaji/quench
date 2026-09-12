@@ -2935,6 +2935,12 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
                         object.display()
                     )));
                 }
+                if unsafe { &*frame.vm }.restricted_function_property(object, key) {
+                    return Err(JsError::Throw(super::type_error(
+                        unsafe { &mut *frame.vm },
+                        "'caller' and 'arguments' are unavailable on this function",
+                    )));
+                }
                 property_ic()
                     .and_then(|cache| get_static_cached(object, key, cache))
                     .unwrap_or_else(|| unsafe { &*frame.vm }.get_prop(object, key))
@@ -2951,6 +2957,13 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
                     )));
                 }
                 let key = get_ref(frame, *key);
+                let key_string = key.string();
+                if unsafe { &*frame.vm }.restricted_function_property(object, &key_string) {
+                    return Err(JsError::Throw(super::type_error(
+                        unsafe { &mut *frame.vm },
+                        "'caller' and 'arguments' are unavailable on this function",
+                    )));
+                }
                 unsafe { &*frame.vm }.get_computed_prop(object, key)
             };
             put(frame, dst, value);
@@ -2987,14 +3000,12 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
         }
         DynOp::DeleteStatic { dst, object, key } => {
             let object = get(frame, object);
-            delete_property(&object, &key);
-            put(frame, dst, Value::Bool(true));
+            put(frame, dst, Value::Bool(delete_property(&object, &key)));
         }
         DynOp::DeleteComputed { dst, object, key } => {
             let object = get(frame, object);
             let key = get(frame, key).string();
-            delete_property(&object, &key);
-            put(frame, dst, Value::Bool(true));
+            put(frame, dst, Value::Bool(delete_property(&object, &key)));
         }
         DynOp::Call {
             dst,
@@ -3540,19 +3551,30 @@ fn enumerable_keys(value: &Value) -> Vec<String> {
     keys
 }
 
-fn delete_property(value: &Value, key: &str) {
+fn delete_property(value: &Value, key: &str) -> bool {
     if let Some(object) = value.as_object_ref() {
         let mut object = object.borrow_mut();
+        if object
+            .attributes
+            .get(key)
+            .is_some_and(|attributes| !attributes.configurable)
+        {
+            return false;
+        }
         if let Some(array) = &mut object.array
-            && let Ok(index) = key.parse::<usize>()
+            && let Some(index) = super::array_index_key(key)
             && array.delete(index)
         {
-            return;
+            return true;
         }
         object.props.shift_remove(key);
+        object.attributes.remove(key);
+        return true;
     } else if let Some(function) = value.as_function_ref() {
         function.props.borrow_mut().shift_remove(key);
+        return true;
     }
+    true
 }
 
 fn op_name(op: &DynOp) -> &'static str {
