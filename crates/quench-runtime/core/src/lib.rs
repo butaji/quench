@@ -11542,6 +11542,12 @@ fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     for (name, builtin) in [
         ("TypeError", BuiltinId::TypeErrorConstructor),
         ("Object", BuiltinId::ObjectConstructor),
+        ("Boolean", BuiltinId::BooleanConstructor),
+        ("Number", BuiltinId::NumberConstructor),
+        ("String", BuiltinId::StringConstructor),
+        ("Array", BuiltinId::ArrayConstructor),
+        ("RegExp", BuiltinId::RegExpConstructor),
+        ("Date", BuiltinId::DateConstructor),
     ] {
         vm.set_prop(&global, name, vm.builtin(builtin));
     }
