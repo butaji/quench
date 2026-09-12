@@ -18,6 +18,8 @@ pub(crate) enum BuiltinOwner {
     Process,
     StringConstructor,
     ObjectConstructor,
+    ArrayConstructor,
+    FunctionConstructor,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,7 +125,14 @@ builtin_catalog! {
     ObjectKeys, ObjectConstructor, "keys", native_object_keys, Generic, MAY_ALLOCATE;
     ObjectGetOwnPropertyNames, ObjectConstructor, "getOwnPropertyNames", native_object_get_own_property_names, Generic, MAY_ALLOCATE;
     ObjectCreate, ObjectConstructor, "create", native_object_create, Generic, MAY_ALLOCATE;
+    ObjectDefineProperty, ObjectConstructor, "defineProperty", native_object_define_property, Generic, MAY_MUTATE;
+    ObjectPreventExtensions, ObjectConstructor, "preventExtensions", native_object_prevent_extensions, Generic, MAY_MUTATE;
+    ObjectIsExtensible, ObjectConstructor, "isExtensible", native_object_is_extensible, Generic, PURE;
     ArrayConstructor, Global, "Array", native_array, Generic, MAY_ALLOCATE;
+    ArrayIsArray, ArrayConstructor, "isArray", native_array_is_array, Generic, PURE;
+    ArrayFrom, ArrayConstructor, "from", native_array_from, Generic, MAY_ALLOCATE;
+    ArrayOf, ArrayConstructor, "of", native_array_of, Generic, MAY_ALLOCATE;
+    FunctionConstructor, Global, "Function", native_function_constructor, Generic, MAY_ALLOCATE;
     StringConstructor, Global, "String", native_string, Generic, MAY_ALLOCATE;
     NumberConstructor, Global, "Number", native_number, Generic, PURE;
     BooleanConstructor, Global, "Boolean", native_boolean, Generic, PURE;
@@ -182,8 +191,11 @@ builtin_catalog! {
     ObjectInheritsFrom, ObjectPrototype, "inheritsFrom", native_inherits_from, Generic, MAY_MUTATE;
     ObjectToString, ObjectPrototype, "toString", native_object_to_string, Generic, MAY_ALLOCATE;
     ObjectValueOf, ObjectPrototype, "valueOf", native_object_value_of, Generic, PURE;
+    ObjectHasOwnProperty, ObjectPrototype, "hasOwnProperty", native_object_has_own_property, Generic, PURE;
+    ObjectPropertyIsEnumerable, ObjectPrototype, "propertyIsEnumerable", native_object_property_is_enumerable, Generic, PURE;
     FunctionCall, FunctionPrototype, "call", native_function_call, Generic, MAY_CALL_JS;
     FunctionApply, FunctionPrototype, "apply", native_function_apply, Generic, MAY_CALL_JS;
+    FunctionBind, FunctionPrototype, "bind", native_function_bind, Generic, MAY_ALLOCATE;
 }
 
 pub(crate) fn instantiate(vm: &Vm) -> Box<[Value]> {
@@ -212,6 +224,30 @@ pub(crate) fn instantiate(vm: &Vm) -> Box<[Value]> {
 
 fn builtin_length(id: BuiltinId) -> usize {
     match id {
+        BuiltinId::ObjectDefineProperty => 3,
+        BuiltinId::ObjectGetOwnPropertyDescriptor
+        | BuiltinId::ObjectGetPrototypeOf
+        | BuiltinId::ObjectKeys
+        | BuiltinId::ObjectGetOwnPropertyNames
+        | BuiltinId::ObjectPreventExtensions
+        | BuiltinId::ObjectIsExtensible
+        | BuiltinId::ObjectConstructor
+        | BuiltinId::ArrayIsArray
+        | BuiltinId::ArrayFrom
+        | BuiltinId::ArrayConstructor
+        | BuiltinId::StringConstructor
+        | BuiltinId::NumberConstructor
+        | BuiltinId::BooleanConstructor
+        | BuiltinId::ErrorConstructor
+        | BuiltinId::TypeErrorConstructor
+        | BuiltinId::RangeErrorConstructor
+        | BuiltinId::URIErrorConstructor
+        | BuiltinId::SyntaxErrorConstructor
+        | BuiltinId::ReferenceErrorConstructor
+        | BuiltinId::EvalErrorConstructor
+        | BuiltinId::AggregateErrorConstructor => 1,
+        BuiltinId::FunctionConstructor | BuiltinId::FunctionBind => 1,
+        BuiltinId::ObjectCreate => 2,
         BuiltinId::ParseInt
         | BuiltinId::ParseFloat
         | BuiltinId::IsNaN
