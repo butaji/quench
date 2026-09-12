@@ -9986,7 +9986,7 @@ fn native_regexp_string_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> 
     if exec.is_function() {
         let match_value = vm.call_arguments(
             &exec,
-            regexp_value,
+            regexp_value.clone(),
             &[Value::string_value(source.clone())][..],
         )?;
         if match_value.is_null() {
@@ -10005,11 +10005,22 @@ fn native_regexp_string_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> 
             .get_prop(&match_value, "index")
             .as_number()
             .unwrap_or(index as f64) as usize;
-        let match_len = vm
-            .get_prop(&match_value, "0")
-            .as_string()
-            .map_or(0, |value| value.encode_utf16().count());
-        let next_index = match_index.saturating_add(match_len.max(1));
+        let match_zero = vm.get_prop_with_accessors(&match_value, "0")?;
+        let match_text = to_string_with_vm(vm, &match_zero)?;
+        let match_len = match_text.encode_utf16().count();
+        let mut empty_match_next = None;
+        if global && match_len == 0 {
+            // Empty global matches advance from the RegExp's observable
+            // lastIndex property; resolving it through accessors preserves
+            // user-defined getter errors before advancing the iterator.
+            let last_index_value = vm.get_prop_with_accessors(&regexp_value, "lastIndex")?;
+            let this_index = to_number_with_vm(vm, &last_index_value)?.max(0.0).trunc() as usize;
+            let next = this_index.saturating_add(1);
+            vm.set_prop_with_accessors(&regexp_value, "lastIndex", Value::Number(next as f64))?;
+            empty_match_next = Some(next);
+        }
+        let next_index =
+            empty_match_next.unwrap_or_else(|| match_index.saturating_add(match_len.max(1)));
         vm.set_prop(
             &this,
             REGEXP_ITERATOR_INDEX,
