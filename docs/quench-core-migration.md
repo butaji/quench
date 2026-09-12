@@ -119,7 +119,7 @@ Verification completed:
   predicates from one Rust macro, sharing exact number formatting helpers,
   preserving error prototypes, and validating constructor/radix behavior; the
   three remaining cases require BigInt or Realm lowering
-- the stencil NativeErrors stage now reaches 84/94 after deriving shared
+- the stencil NativeErrors stage now reaches 86/94 after deriving shared
   error prototypes, constructor identity, and non-enumerable message/cause
   properties; the remaining cases require Realm or coercion lowering
 - the stencil Math stage now reaches 325/327 after deriving unary and binary
