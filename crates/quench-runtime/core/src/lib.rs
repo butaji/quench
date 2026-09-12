@@ -4817,6 +4817,11 @@ impl Vm {
         if let Some(value) = self.throw_type_error.borrow().clone() {
             return value;
         }
+        let value = self.new_throw_type_error();
+        *self.throw_type_error.borrow_mut() = Some(value.clone());
+        value
+    }
+    fn new_throw_type_error(&self) -> Value {
         let value = self.native(native_throw_type_error);
         // CreateBuiltinFunction installs `length` before `name`; preserve that
         // observable insertion order for this intrinsic.
@@ -4837,7 +4842,6 @@ impl Vm {
                 );
             }
         }
-        *self.throw_type_error.borrow_mut() = Some(value.clone());
         value
     }
     fn builtin(&self, id: BuiltinId) -> Value {
@@ -7283,6 +7287,25 @@ impl Vm {
         Ok(())
     }
     fn make_user<'a>(&self, n: &'a Function<'a>, e: Env) -> Value {
+        // A non-simple parameter list creates an unmapped arguments object,
+        // even in sloppy code.  Preserve that fact on the function's lexical
+        // environment so every execution tier can derive the same accessor
+        // policy without duplicating AST checks in the call machinery.
+        let e = if n.params.items.iter().any(|parameter| {
+            parameter.initializer.is_some()
+                || !matches!(parameter.pattern, BindingPattern::BindingIdentifier(_))
+        }) || n.params.rest.is_some()
+        {
+            let environment = Environment::new(Some(e));
+            Environment::set(
+                &environment,
+                dynbytecode::NON_SIMPLE_ARGUMENTS_ENV_NAME,
+                Value::Bool(true),
+            );
+            environment
+        } else {
+            e
+        };
         let p = self.allocate_object(Object::ordinary(None));
         let length = n
             .params
@@ -10343,6 +10366,13 @@ fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     // execution environment for this compatibility boundary.
     let global = vm.object(None);
     let symbol = vm.native_named(native_symbol, "Symbol", 0);
+    let function = vm.native_named(native_function_constructor, "Function", 1);
+    let throw_type_error = vm.new_throw_type_error();
+    vm.set_prop(
+        &global,
+        dynbytecode::THROW_TYPE_ERROR_PROP,
+        throw_type_error.clone(),
+    );
     let parent_symbol = Environment::get(&vm.global, "Symbol");
     let symbol_for = vm.native_named(native_symbol_for, "for", 1);
     let symbol_key_for = vm.native_named(native_symbol_key_for, "keyFor", 1);
@@ -10376,12 +10406,17 @@ fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     }
     vm.set_prop(&global, "Symbol", symbol);
     for (name, builtin) in [
-        ("Function", BuiltinId::FunctionConstructor),
         ("TypeError", BuiltinId::TypeErrorConstructor),
         ("Object", BuiltinId::ObjectConstructor),
     ] {
         vm.set_prop(&global, name, vm.builtin(builtin));
     }
+    vm.set_prop(
+        &function,
+        dynbytecode::THROW_TYPE_ERROR_PROP,
+        throw_type_error,
+    );
+    vm.set_prop(&global, "Function", function);
     vm.set_prop(&global, "globalThis", global.clone());
     vm.set_prop(&realm, "global", global);
     Ok(realm)
@@ -11226,7 +11261,8 @@ define_number_predicates! {
     },
 }
 
-fn native_function_constructor(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+fn native_function_constructor(vm: &mut Vm, receiver: Value, args: &[Value]) -> JsResult<Value> {
+    let receiver_thrower = vm.get_prop(&receiver, dynbytecode::THROW_TYPE_ERROR_PROP);
     // Reuse the same OXC parser and stencil compiler used for ordinary source
     // rather than introducing a second dynamic-function execution path.
     let body = args
@@ -11270,7 +11306,19 @@ fn native_function_constructor(vm: &mut Vm, _: Value, args: &[Value]) -> JsResul
             "invalid Function constructor source",
         )));
     };
-    Ok(vm.make_user(function, vm.global.clone()))
+    let thrower = receiver_thrower;
+    let environment = if thrower.is_undefined() {
+        vm.global.clone()
+    } else {
+        let environment = Environment::new(Some(vm.global.clone()));
+        Environment::set(
+            &environment,
+            dynbytecode::THROW_TYPE_ERROR_ENV_NAME,
+            thrower,
+        );
+        environment
+    };
+    Ok(vm.make_user(function, environment))
 }
 
 fn dynamic_function_strict_early_error(parameters: &str, body: &str) -> bool {

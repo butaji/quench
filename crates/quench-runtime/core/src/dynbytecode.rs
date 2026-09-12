@@ -4,6 +4,9 @@ pub type Register = u16;
 const UNRESOLVED_TARGET: usize = usize::MAX;
 pub(crate) const THIS_BINDING_NAME: &str = "this";
 pub(crate) const ARGUMENTS_BINDING_NAME: &str = "arguments";
+pub(crate) const THROW_TYPE_ERROR_ENV_NAME: &str = "\0realm-throw-type-error";
+pub(crate) const THROW_TYPE_ERROR_PROP: &str = "\0realm-throw-type-error";
+pub(crate) const NON_SIMPLE_ARGUMENTS_ENV_NAME: &str = "\0non-simple-arguments";
 
 #[derive(Clone)]
 pub enum Literal {
