@@ -4173,11 +4173,6 @@ fn to_primitive_for_binary(vm: &mut Vm, value: &Value, string_hint: bool) -> JsR
     if !value.is_object() && !value.is_function() {
         return Ok(value.clone());
     }
-    if let Some(object) = value.as_object_ref()
-        && let Some(primitive) = object.borrow().props.get("\0primitive").cloned()
-    {
-        return Ok(primitive);
-    }
     let methods = if string_hint {
         ["toString", "valueOf"]
     } else {
@@ -4200,7 +4195,7 @@ fn to_primitive_for_binary(vm: &mut Vm, value: &Value, string_hint: bool) -> JsR
 }
 
 fn binary_with_vm(vm: &mut Vm, op: Op, left: &Value, right: &Value) -> JsResult<Value> {
-    if !matches!(op, Op::Add) {
+    if !matches!(op, Op::Add | Op::Eq | Op::Ne) {
         return Ok(exec_op_ref(op, left, right));
     }
     // Addition uses the ordinary/default hint; primitive result types decide
@@ -4214,6 +4209,9 @@ fn binary_with_vm(vm: &mut Vm, op: Op, left: &Value, right: &Value) -> JsResult<
             to_string_with_vm(vm, &left)?,
             to_string_with_vm(vm, &right)?
         )));
+    }
+    if matches!(op, Op::Eq | Op::Ne) {
+        return Ok(exec_op_ref(op, &left, &right));
     }
     if is_bigint_marker(&left) || is_bigint_marker(&right) {
         return Ok(exec_numeric_op(op, left.number(), right.number()));
@@ -6007,8 +6005,9 @@ impl Vm {
         for stmt in b {
             if let Statement::FunctionDeclaration(f) = stmt {
                 if let Some(id) = &f.id {
-                    e.borrow_mut()
-                        .declare(id.name.as_str(), self.make_user(f, e.clone()));
+                    let closure = self.make_user(f, e.clone());
+                    e.borrow_mut().declare(id.name.as_str(), closure.clone());
+                    self.sync_global_binding(&e, id.name.as_str(), closure);
                 }
             }
         }
@@ -6189,8 +6188,9 @@ impl Vm {
             }
             Declaration::FunctionDeclaration(f) => {
                 if let Some(i) = &f.id {
-                    e.borrow_mut()
-                        .declare(i.name.as_str(), self.make_user(f, e.clone()));
+                    let closure = self.make_user(f, e.clone());
+                    e.borrow_mut().declare(i.name.as_str(), closure.clone());
+                    self.sync_global_binding(&e, i.name.as_str(), closure);
                 }
                 Ok(Signal::Normal(Value::Undefined))
             }
@@ -6202,15 +6202,26 @@ impl Vm {
             if let Some(n) = pattern_name(&d.id) {
                 if let Some(init) = &d.init {
                     let x = self.eval_expr(init, e.clone())?;
-                    e.borrow_mut().declare(&n, x);
+                    e.borrow_mut().declare(&n, x.clone());
+                    self.sync_global_binding(&e, &n, x);
                 } else if !e.borrow().contains_local(&n) {
                     e.borrow_mut().declare(&n, Value::Undefined);
+                    self.sync_global_binding(&e, &n, Value::Undefined);
                 }
             } else {
                 return Err(JsError::Message("destructuring unsupported".into()));
             }
         }
         Ok(())
+    }
+
+    fn sync_global_binding(&self, environment: &Env, name: &str, value: Value) {
+        if !Rc::ptr_eq(environment, &self.global) {
+            return;
+        }
+        if let Some(global_this) = Environment::get(&self.global, "globalThis") {
+            self.set_prop(&global_this, name, value);
+        }
     }
     fn assign_for_left<'a>(&mut self, l: &ForStatementLeft<'a>, v: Value, e: Env) -> JsResult<()> {
         match l {
@@ -8991,7 +9002,8 @@ fn native_string(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(Value::string_value(if a.is_empty() {
         String::new()
     } else {
-        to_string_with_vm(vm, &value)?
+        let primitive = to_primitive_for_binary(vm, &value, true)?;
+        to_string_with_vm(vm, &primitive)?
     }))
 }
 
