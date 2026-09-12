@@ -4278,7 +4278,19 @@ fn to_primitive_for_binary(vm: &mut Vm, value: &Value, string_hint: bool) -> JsR
 }
 
 fn binary_with_vm(vm: &mut Vm, op: Op, left: &Value, right: &Value) -> JsResult<Value> {
-    if !matches!(op, Op::Add | Op::Eq | Op::Ne) {
+    // Strict equality never performs ToPrimitive: object identity is
+    // observable and must remain a direct comparison even when the operands
+    // carry boxed numeric or BigInt payloads.
+    if matches!(op, Op::StrictEq | Op::StrictNe) {
+        return Ok(exec_op_ref(op, left, right));
+    }
+    let needs_primitive = left.is_object()
+        || left.is_function()
+        || right.is_object()
+        || right.is_function()
+        || is_bigint_marker(left)
+        || is_bigint_marker(right);
+    if !matches!(op, Op::Add | Op::Eq | Op::Ne) && !needs_primitive {
         return Ok(exec_op_ref(op, left, right));
     }
     // Addition uses the ordinary/default hint; primitive result types decide
@@ -4315,7 +4327,13 @@ fn binary_with_vm(vm: &mut Vm, op: Op, left: &Value, right: &Value) -> JsResult<
                 !equal
             }));
         }
-        return Ok(exec_numeric_op(op, left.number(), right.number()));
+        if matches!(op, Op::Lt | Op::Le | Op::Gt | Op::Ge) {
+            return Ok(exec_numeric_op(op, left.number(), right.number()));
+        }
+        return Err(JsError::Throw(type_error(
+            vm,
+            "cannot mix BigInt and other types",
+        )));
     }
     let left = to_number_with_vm(vm, &left)?;
     let right = to_number_with_vm(vm, &right)?;
@@ -6942,6 +6960,18 @@ impl Vm {
             }
             UpdateExpression(v) => {
                 let old = self.eval_simple_target(&v.argument, e.clone())?;
+                if is_bigint_marker(&old) {
+                    let value = parse_bigint_text(old.as_string().map_or("", String::as_str))
+                        .map_err(|_| JsError::Throw(type_error(self, "invalid BigInt value")))?;
+                    let one = BigInt::from(1u8);
+                    let next = if v.operator == oxc_syntax::operator::UpdateOperator::Increment {
+                        bigint_marker(value + one)
+                    } else {
+                        bigint_marker(value - one)
+                    };
+                    self.assign_simple_target(&v.argument, next.clone(), e)?;
+                    return Ok(if v.prefix { next } else { old });
+                }
                 let n = if v.operator == oxc_syntax::operator::UpdateOperator::Increment {
                     old.number() + 1.0
                 } else {
@@ -7186,7 +7216,7 @@ impl Vm {
 impl Vm {
     fn to_property_key(&mut self, value: Value) -> JsResult<String> {
         if !value.is_object() && !value.is_function() {
-            return Ok(value.string());
+            return to_string_with_vm(self, &value);
         }
         for method_name in ["toString", "valueOf"] {
             let method = self.get_prop_with_accessors(&value, method_name)?;
@@ -7195,7 +7225,7 @@ impl Vm {
             }
             let primitive = self.call_arguments(&method, value.clone(), &[] as &[Value])?;
             if !primitive.is_object() && !primitive.is_function() {
-                return Ok(primitive.string());
+                return to_string_with_vm(self, &primitive);
             }
         }
         Err(JsError::Throw(type_error(
@@ -8012,13 +8042,12 @@ fn native_string_lower(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> 
 fn native_string_upper(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     Ok(Value::string_value(string_this(this).to_uppercase()))
 }
-fn native_string_concat(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    Ok(Value::string_value(
-        std::iter::once(string_this(this))
-            .chain(args.iter().map(|x| x.string()))
-            .collect::<Vec<_>>()
-            .concat(),
-    ))
+fn native_string_concat(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let mut result = string_this(this);
+    for value in args {
+        result.push_str(&to_string_with_vm(vm, value)?);
+    }
+    Ok(Value::string_value(result))
 }
 fn to_number_with_vm(vm: &mut Vm, value: &Value) -> JsResult<f64> {
     if let Some(number) = value.as_number() {
@@ -9829,11 +9858,6 @@ fn to_string_with_vm(vm: &mut Vm, value: &Value) -> JsResult<String> {
         }
         return Ok(string.to_string());
     }
-    if let Some(object) = value.as_object_ref()
-        && let Some(primitive) = object.borrow().props.get("\0primitive")
-    {
-        return to_string_with_vm(vm, primitive);
-    }
     if value
         .as_object_ref()
         .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
@@ -9844,27 +9868,36 @@ fn to_string_with_vm(vm: &mut Vm, value: &Value) -> JsResult<String> {
         )));
     }
     if value.is_object() || value.is_function() {
-        for method_name in ["toString", "valueOf"] {
-            let method = vm.get_prop(value, method_name);
-            if !method.is_function() {
-                continue;
-            }
-            let result = vm.call_arguments(&method, value.clone(), &[] as &[Value])?;
-            if !result.is_object() && !result.is_function() {
-                return to_string_with_vm(vm, &result);
-            }
-        }
-        return Err(JsError::Throw(type_error(
-            vm,
-            "cannot convert object to string",
-        )));
+        let primitive = to_primitive_for_binary(vm, value, true)?;
+        return to_string_with_vm(vm, &primitive);
     }
     Ok(value.string())
 }
 fn native_number(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     let number = match a.first() {
         None => 0.0,
-        Some(value) => to_number_with_vm(vm, value)?,
+        Some(value) => {
+            let primitive = if value.is_object() || value.is_function() {
+                to_primitive_for_binary(vm, value, false)?
+            } else {
+                value.clone()
+            };
+            if is_bigint_marker(&primitive) {
+                let bigint = parse_bigint_text(primitive.as_string().map_or("", String::as_str))
+                    .map_err(|_| {
+                        JsError::Throw(type_error(vm, "cannot convert value to Number"))
+                    })?;
+                bigint.to_f64().unwrap_or_else(|| {
+                    if bigint.sign() == Sign::Minus {
+                        f64::NEG_INFINITY
+                    } else {
+                        f64::INFINITY
+                    }
+                })
+            } else {
+                to_number_with_vm(vm, &primitive)?
+            }
+        }
     };
     Ok(Value::Number(number))
 }
@@ -9964,7 +9997,16 @@ fn dynamic_function_strict_early_error(parameters: &str, body: &str) -> bool {
     body.split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
         .any(|token| token == "with")
 }
-fn native_date(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
+fn native_date(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    if let Some(value) = args.first() {
+        let primitive = to_primitive_for_binary(vm, value, false)?;
+        if is_bigint_marker(&primitive) {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "cannot convert a BigInt value to a number",
+            )));
+        }
+    }
     let date = vm.object(None);
     vm.set_prop(
         &date,
