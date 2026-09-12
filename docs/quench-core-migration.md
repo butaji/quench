@@ -63,7 +63,7 @@ semantic layers stable while the execution core changes underneath them.
 | Plain JavaScript files | `vm_core::run_source_with_argv_and_output_status` | stencil execution, output, argv, and exit status match the Node oracle |
 | CJS/Node modules | `vm_core::run_source_with_argv_and_output_status` + core `require` | `require`, module cache/identity, timers, and host effects run in the same core context |
 | `node -e` / eval | `eval_script_with_exec_argv` | eval and file execution share one core context contract |
-| Test262 harness | `quench-test262::runtime_host` | all realm, descriptor, identity, ordering, and error checks pass through the core |
+| Test262 harness | `quench-test262::runtime_host` (compatibility) or `QUENCH_TEST262_ENGINE=stencil` | all realm, descriptor, identity, ordering, and error checks pass through the selected core |
 | WebAssembly | `quench-runtime::instance` | Wasm lowering, typed calls, memory/tables, traps, exceptions, and imports execute in the core |
 
 Until every row is green, deleting `crates/quench-runtime/src/vm` or the Wasm
@@ -83,6 +83,13 @@ Verification completed:
 - full core-backed `tests/node-compat` audit currently reports 13/863; the
   remaining failures identify host-module and syntax migration work still
   required before the compatibility-host path can be removed
+- full compatibility-host Test262 stage sweep (stages 0..113) ran 51,653/51,900
+  fixtures successfully; 247 failures remain in Atomics, TypedArray, and one
+  Intl fallback case
+- full stencil-host Test262 stage sweep (stages 0..113), invoked with
+  `QUENCH_TEST262_ENGINE=stencil`, ran 2,746/51,900 fixtures successfully;
+  49,154 failures are explicit missing-stencil or missing-built-in diagnostics,
+  proving the corpus reaches the new VM without silently falling back
 - canonical V8V7 exact driver, all eight fixtures valid
 
 The matched one-second/32-run V8V7 measurements (both thin-LTO builds) were
