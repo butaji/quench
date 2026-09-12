@@ -7695,6 +7695,16 @@ impl Vm {
                 }
             }
             RegExpLiteral(v) => {
+                let source = v
+                    .raw
+                    .as_ref()
+                    .and_then(|raw| {
+                        let raw = raw.as_str();
+                        raw.strip_prefix('/')
+                            .and_then(|body| body.rfind('/').map(|end| &body[..end]))
+                    })
+                    .unwrap_or(v.regex.pattern.text.as_str())
+                    .to_string();
                 let flags = [
                     (oxc_ast::ast::RegExpFlags::D, 'd'),
                     (oxc_ast::ast::RegExpFlags::G, 'g'),
@@ -7709,12 +7719,12 @@ impl Vm {
                 .filter_map(|(flag, character)| v.regex.flags.contains(flag).then_some(character))
                 .collect::<String>();
                 let kernel = Rc::new(compile_regex(
-                    v.regex.pattern.text.as_str(),
+                    &source,
                     v.regex.flags.contains(oxc_ast::ast::RegExpFlags::I),
                 )?);
                 let mut regexp =
                     RegExpValue::new(kernel, v.regex.flags.contains(oxc_ast::ast::RegExpFlags::G));
-                regexp.source = v.regex.pattern.text.to_string();
+                regexp.source = source;
                 regexp.flags = flags;
                 Ok(Value::RegExp(Rc::new(RefCell::new(regexp))))
             }
@@ -8926,37 +8936,43 @@ define_string_html_methods! {
 }
 
 fn native_string_trim_left(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    if this.is_null() || this.is_undefined() {
+    if this.is_null() || this.is_undefined() || is_symbol_carrier(&this) {
         return Err(JsError::Throw(type_error(
             vm,
             "String.prototype.trimLeft called on null or undefined",
         )));
     }
     Ok(Value::string_value(
-        to_string_with_vm(vm, &this)?.trim_start(),
+        to_string_with_vm(vm, &this)?.trim_start_matches(js_whitespace),
     ))
 }
 
 fn native_string_trim(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    if this.is_null() || this.is_undefined() {
+    if this.is_null() || this.is_undefined() || is_symbol_carrier(&this) {
         return Err(JsError::Throw(type_error(
             vm,
             "String.prototype.trim called on null or undefined",
         )));
     }
-    Ok(Value::string_value(to_string_with_vm(vm, &this)?.trim()))
+    Ok(Value::string_value(
+        to_string_with_vm(vm, &this)?.trim_matches(js_whitespace),
+    ))
 }
 
 fn native_string_trim_right(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    if this.is_null() || this.is_undefined() {
+    if this.is_null() || this.is_undefined() || is_symbol_carrier(&this) {
         return Err(JsError::Throw(type_error(
             vm,
             "String.prototype.trimRight called on null or undefined",
         )));
     }
     Ok(Value::string_value(
-        to_string_with_vm(vm, &this)?.trim_end(),
+        to_string_with_vm(vm, &this)?.trim_end_matches(js_whitespace),
     ))
+}
+
+fn js_whitespace(character: char) -> bool {
+    character.is_whitespace() || character == '\u{FEFF}'
 }
 fn native_string_lower(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     Ok(Value::string_value(string_this(this).to_lowercase()))
@@ -11544,6 +11560,15 @@ fn to_string_with_vm(vm: &mut Vm, value: &Value) -> JsResult<String> {
         }
         return Ok(string.to_string());
     }
+    if let Some(regexp) = value.as_regexp_ref() {
+        let regexp = regexp.borrow();
+        let source = if regexp.source.is_empty() {
+            "(?:)"
+        } else {
+            regexp.source.as_str()
+        };
+        return Ok(format!("/{source}/{}", regexp.flags));
+    }
     if value
         .as_object_ref()
         .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
@@ -12238,8 +12263,28 @@ define_date_utc_setters! {
 }
 
 fn native_regexp(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    let p = a.first().map(Value::string).unwrap_or_default();
-    let flags = a.get(1).map(Value::string).unwrap_or_default();
+    let (p, inherited_flags) = match a.first() {
+        Some(value) if value.as_regexp().is_some() => {
+            let regexp = value.as_regexp().expect("checked RegExp value");
+            let regexp = regexp.borrow();
+            (regexp.source.clone(), Some(regexp.flags.clone()))
+        }
+        Some(value) => (to_string_with_vm(vm, value)?, None),
+        None => (String::new(), None),
+    };
+    if inherited_flags.is_some() && a.get(1).is_some_and(|value| !value.is_undefined()) {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "cannot supply flags when constructing from a RegExp",
+        )));
+    }
+    let flags = a
+        .get(1)
+        .filter(|value| !value.is_undefined())
+        .map(|value| to_string_with_vm(vm, value))
+        .transpose()?
+        .or(inherited_flags)
+        .unwrap_or_default();
     validate_regexp_flags(vm, &flags)?;
     let kernel = Rc::new(compile_regex(&p, flags.contains('i'))?);
     let mut regexp = RegExpValue::new(kernel, flags.contains('g'));
