@@ -169,6 +169,13 @@ builtin_catalog! {
     ArraySlice, ArrayPrototype, "slice", native_array_slice, Generic, MAY_ALLOCATE;
     ArrayJoin, ArrayPrototype, "join", native_array_join, Generic, MAY_ALLOCATE;
     ArrayConcat, ArrayPrototype, "concat", native_array_concat, Generic, MAY_ALLOCATE;
+    ArrayForEach, ArrayPrototype, "forEach", native_array_for_each, Generic, MAY_CALL_JS;
+    ArrayMap, ArrayPrototype, "map", native_array_map, Generic, MAY_ALLOCATE;
+    ArrayFilter, ArrayPrototype, "filter", native_array_filter, Generic, MAY_ALLOCATE;
+    ArraySome, ArrayPrototype, "some", native_array_some, Generic, MAY_CALL_JS;
+    ArrayEvery, ArrayPrototype, "every", native_array_every, Generic, MAY_CALL_JS;
+    ArrayIndexOf, ArrayPrototype, "indexOf", native_array_index_of, Generic, PURE;
+    ArrayIncludes, ArrayPrototype, "includes", native_array_includes, Generic, PURE;
     StringSubstring, StringPrototype, "substring", native_string_substring, Generic, MAY_ALLOCATE;
     StringSlice, StringPrototype, "slice", native_string_slice, Generic, MAY_ALLOCATE;
     StringCharCodeAt, StringPrototype, "charCodeAt", native_string_char_code_at, Generic, PURE;
@@ -291,6 +298,13 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::ArraySlice
         | BuiltinId::ArrayJoin
         | BuiltinId::ArrayConcat
+        | BuiltinId::ArrayForEach
+        | BuiltinId::ArrayMap
+        | BuiltinId::ArrayFilter
+        | BuiltinId::ArraySome
+        | BuiltinId::ArrayEvery
+        | BuiltinId::ArrayIndexOf
+        | BuiltinId::ArrayIncludes
         | BuiltinId::StringSubstring
         | BuiltinId::StringSlice
         | BuiltinId::StringCharCodeAt
