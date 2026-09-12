@@ -4621,6 +4621,11 @@ impl Vm {
             .prototype
             .clone();
         error_prototype.borrow_mut().prototype = Some(object_prototype_for_errors);
+        self.set_prop(
+            &Value::Object(error_prototype.clone()),
+            "toString",
+            self.native(native_error_to_string),
+        );
         for (constructor, name) in error_names {
             let function = self.builtin(constructor);
             let prototype = function.as_function_ref().expect("error constructor").prototype.clone();
@@ -8489,6 +8494,12 @@ fn to_string_with_vm(vm: &mut Vm, value: &Value) -> JsResult<String> {
     {
         return to_string_with_vm(vm, primitive);
     }
+    if value
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
+    {
+        return Err(JsError::Throw(type_error(vm, "cannot convert a Symbol value to a string")));
+    }
     if value.is_object() || value.is_function() {
         for method_name in ["toString", "valueOf"] {
             let method = vm.get_prop(value, method_name);
@@ -8631,7 +8642,8 @@ fn native_error(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
     let o = if this.is_object() { this } else { vm.object(None) };
     vm.set_prop(&o, "\0error", Value::Bool(true));
     if let Some(message) = a.first() {
-        vm.set_prop(&o, "message", message.clone());
+        let message = Value::string_value(to_string_with_vm(vm, message)?);
+        vm.set_prop(&o, "message", message);
         if let Some(object) = o.as_object_ref() {
             object.borrow_mut().attributes.insert(
                 "message".into(),
@@ -8653,6 +8665,20 @@ fn native_error(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
         }
     }
     Ok(o)
+}
+fn native_error_to_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let Some(object) = this.as_object_ref() else {
+        return Err(JsError::Throw(type_error(vm, "Error.prototype.toString called on incompatible receiver")));
+    };
+    let name = to_string_with_vm(vm, &vm.get_prop(&this, "name"))?;
+    let message = to_string_with_vm(vm, &vm.get_prop(&this, "message"))?;
+    let _ = object;
+    Ok(Value::string_value(match (name.is_empty(), message.is_empty()) {
+        (true, true) => String::new(),
+        (true, false) => message,
+        (false, true) => name,
+        (false, false) => format!("{name}: {message}"),
+    }))
 }
 fn native_object_to_string(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     let tag = if this.as_function_ref().is_some() {
