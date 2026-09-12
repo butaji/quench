@@ -2150,6 +2150,9 @@ impl RegExpValue {
     }
 
     fn capture_values_at(&mut self, subject: &str, start: usize) -> Option<Vec<Value>> {
+        if start > subject.len() || !subject.is_char_boundary(start) {
+            return None;
+        }
         if self.capture_locations.is_none() {
             self.capture_locations = Some(self.regex.capture_locations());
         }
@@ -10438,6 +10441,22 @@ fn string_symbol_method(vm: &mut Vm, value: &Value, name: &str) -> JsResult<Opti
     Ok(Some(method))
 }
 
+/// Dispatch one of the String protocol hooks with its original receiver.
+///
+/// String methods differ in *when* they perform receiver coercion, so the
+/// caller still controls ordering. Once dispatch is reached, however, the
+/// lookup/call shape is identical; keeping it as a single form prevents the
+/// protocol receiver from accidentally being replaced by the coerced string.
+macro_rules! call_string_protocol {
+    ($vm:expr, $target:expr, $name:literal, $arguments:expr) => {{
+        if let Some(method) = string_symbol_method($vm, &$target, $name)? {
+            Some($vm.call_arguments(&method, $target.clone(), $arguments)?)
+        } else {
+            None
+        }
+    }};
+}
+
 fn string_is_regexp(vm: &mut Vm, value: &Value) -> JsResult<bool> {
     if !value.is_object_like() {
         return Ok(false);
@@ -10615,16 +10634,16 @@ fn replacement_text(
 }
 
 fn native_string_replace(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    if let Some(search) = args.first().filter(|value| value.as_regexp().is_none())
-        && let Some(method) = string_symbol_method(vm, search, "replace")?
-    {
-        let s = string_receiver(vm, &this, "replace")?;
-        let replacement = args.get(1).cloned().unwrap_or(Value::Undefined);
-        return vm.call_arguments(
-            &method,
-            search.clone(),
-            &[Value::string_value(s), replacement][..],
-        );
+    if let Some(search) = args.first().filter(|value| value.as_regexp().is_none()) {
+        if let Some(method) = string_symbol_method(vm, search, "replace")? {
+            let s = string_receiver(vm, &this, "replace")?;
+            let replacement = args.get(1).cloned().unwrap_or(Value::Undefined);
+            return vm.call_arguments(
+                &method,
+                search.clone(),
+                &[Value::string_value(s), replacement][..],
+            );
+        }
     }
     let s = string_receiver(vm, &this, "replace")?;
     if let Some(r) = args.first().and_then(Value::as_regexp) {
@@ -10716,9 +10735,16 @@ fn native_string_replace_all(vm: &mut Vm, this: Value, args: &[Value]) -> JsResu
                 )));
             }
         }
-        if let Some(method) = string_symbol_method(vm, search, "replace")? {
-            let replacement = args.get(1).cloned().unwrap_or(Value::Undefined);
-            return vm.call_arguments(&method, search.clone(), &[this.clone(), replacement][..]);
+        if let Some(result) = call_string_protocol!(
+            vm,
+            search,
+            "replace",
+            &[
+                this.clone(),
+                args.get(1).cloned().unwrap_or(Value::Undefined)
+            ][..]
+        ) {
+            return Ok(result);
         }
     }
     let s = string_receiver(vm, &this, "replaceAll")?;
@@ -10769,11 +10795,18 @@ fn native_string_replace_all(vm: &mut Vm, this: Value, args: &[Value]) -> JsResu
 }
 fn native_string_split(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     if let Some(separator) = args.first()
-        && let Some(method) = string_symbol_method(vm, separator, "split")?
+        && let Some(result) = call_string_protocol!(
+            vm,
+            separator,
+            "split",
+            &{
+                let mut protocol_args = vec![this.clone()];
+                protocol_args.extend(args.iter().skip(1).cloned());
+                protocol_args
+            }[..]
+        )
     {
-        let mut protocol_args = vec![this.clone()];
-        protocol_args.extend(args.iter().skip(1).cloned());
-        return vm.call_arguments(&method, separator.clone(), protocol_args.as_slice());
+        return Ok(result);
     }
     let s = string_receiver(vm, &this, "split")?;
     let split_limit = string_split_limit(vm, args)?;
@@ -10882,9 +10915,10 @@ fn utf16_index(source: &str, byte_index: usize) -> usize {
 fn native_string_match(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let s = string_receiver(vm, &this, "match")?;
     if let Some(regexp) = args.first()
-        && let Some(method) = string_symbol_method(vm, regexp, "match")?
+        && let Some(result) =
+            call_string_protocol!(vm, regexp, "match", &[Value::string_value(s.clone())][..])
     {
-        return vm.call_arguments(&method, regexp.clone(), &[Value::string_value(s)][..]);
+        return Ok(result);
     }
     let regexp = if let Some(r) = args.first().and_then(Value::as_regexp) {
         r
@@ -11230,9 +11264,10 @@ fn native_regexp_string_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> 
 fn native_string_search(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let s = string_receiver(vm, &this, "search")?;
     if let Some(regexp) = args.first()
-        && let Some(method) = string_symbol_method(vm, regexp, "search")?
+        && let Some(result) =
+            call_string_protocol!(vm, regexp, "search", &[Value::string_value(s.clone())][..])
     {
-        return vm.call_arguments(&method, regexp.clone(), &[Value::string_value(s)][..]);
+        return Ok(result);
     }
     let pattern = args
         .first()
