@@ -10444,10 +10444,34 @@ fn native_object_get_own_property_descriptors(
     Ok(result)
 }
 fn native_object_create(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
-    let prototype = args.first().and_then(Value::as_object);
+    let prototype_value = args.first().cloned().unwrap_or(Value::Undefined);
+    let prototype = if prototype_value.is_null() {
+        None
+    } else if prototype_value.is_object() || prototype_value.is_function() {
+        prototype_value.as_object()
+    } else {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Object prototype may only be an Object or null",
+        )));
+    };
     // `Object.create(null)` must retain a null prototype; `Vm::object` creates
     // ordinary objects with the default Object.prototype for language literals.
-    Ok(vm.object_value(Object::ordinary(prototype)))
+    let object = vm.object_value(Object::ordinary(prototype));
+    if let Some(descriptors) = args.get(1) {
+        if !descriptors.is_object() && !descriptors.is_function() {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "Object property descriptors must be an object",
+            )));
+        }
+        native_object_define_properties(
+            vm,
+            Value::Undefined,
+            &[object.clone(), descriptors.clone()],
+        )?;
+    }
+    Ok(object)
 }
 fn native_object_assign(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let Some(target_value) = args.first() else {
