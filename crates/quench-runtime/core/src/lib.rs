@@ -8039,6 +8039,15 @@ fn native_eval(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     else {
         return Ok(a.first().cloned().unwrap_or(Value::Undefined));
     };
+    // Eval has no private environment.  Reject private-member syntax at the
+    // declaration-instantiation boundary, before the stencil compiler reports
+    // it as a generic unsupported expression.
+    if source.as_bytes().windows(2).any(|pair| pair == b".#") {
+        return Err(JsError::Throw(syntax_error(
+            vm,
+            "invalid private identifier in eval",
+        )));
+    }
     let path = vm
         .source_stack
         .last()
