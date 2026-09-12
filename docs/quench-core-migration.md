@@ -118,7 +118,8 @@ Verification completed:
 - the stencil Number stage now reaches 338/340 after deriving numeric
   predicates from one Rust macro, sharing exact number formatting helpers,
   preserving error prototypes, and validating constructor/radix behavior; the
-  three remaining cases require BigInt or Realm lowering
+  two remaining cases require Realm lowering and a BigInt type guard in
+  `toFixed`
 - the stencil NativeErrors stage now reaches 86/94 after deriving shared
   error prototypes, constructor identity, and non-enumerable message/cause
   properties; the remaining cases require Realm or coercion lowering
