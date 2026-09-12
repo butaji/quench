@@ -559,10 +559,6 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::ArrayReduceRight
         | BuiltinId::ArrayFind
         | BuiltinId::ArrayFindIndex
-        | BuiltinId::StringSubstring
-        | BuiltinId::StringSlice
-        | BuiltinId::StringCharCodeAt
-        | BuiltinId::StringCharAt
         | BuiltinId::StringToLowerCase
         | BuiltinId::StringToUpperCase
         | BuiltinId::StringToString
@@ -584,8 +580,6 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::StringTrimEnd
         | BuiltinId::StringTrimLeft
         | BuiltinId::StringTrimRight
-        | BuiltinId::StringIndexOf
-        | BuiltinId::StringLastIndexOf
         | BuiltinId::StringAt
         | BuiltinId::StringCodePointAt
         | BuiltinId::StringIncludes
@@ -601,6 +595,9 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::ObjectToLocaleString
         | BuiltinId::ObjectValueOf => 0,
         BuiltinId::StringSubstr => 2,
+        BuiltinId::StringSubstring | BuiltinId::StringSlice => 2,
+        BuiltinId::StringCharCodeAt | BuiltinId::StringCharAt => 1,
+        BuiltinId::StringIndexOf | BuiltinId::StringLastIndexOf => 1,
         BuiltinId::StringReplaceAll => 2,
         BuiltinId::StringPadStart | BuiltinId::StringPadEnd => 2,
         BuiltinId::StringMatchAll | BuiltinId::StringSearch => 1,
