@@ -7091,8 +7091,10 @@ impl Vm {
             this
         };
         e.borrow_mut().declare("this", this);
-        let av = self.object_value(Object::array(self.default_object_prototype(), args.clone()));
+        let av = self.object_value(Object::array(self.array_proto, args.clone()));
         self.set_prop(&av, "\0wrapper", Value::string_value("Arguments"));
+        self.set_prop(&av, "toString", self.native(native_object_to_string));
+        set_property_attributes(&av, "toString", PropertyAttributes::BUILTIN_METHOD);
         e.borrow_mut().declare("arguments", av);
         for (i, p) in n.params.items.iter().enumerate() {
             if let Some(name) = pattern_name(&p.pattern) {

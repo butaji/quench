@@ -2345,8 +2345,21 @@ fn arguments_value<A: CallArguments + ?Sized>(
     strict: bool,
     environment: Option<&Env>,
 ) -> Value {
-    let value = vm.object_value(Object::array(None, args.materialize()));
+    let value = vm.object_value(Object::array(
+        vm.default_object_prototype().or(vm.array_proto),
+        args.materialize(),
+    ));
     vm.set_prop(&value, "\0wrapper", Value::string_value("Arguments"));
+    vm.set_prop(
+        &value,
+        "toString",
+        vm.native(super::native_object_to_string),
+    );
+    super::set_property_attributes(
+        &value,
+        "toString",
+        super::PropertyAttributes::BUILTIN_METHOD,
+    );
     let restricted = strict
         || environment.is_some_and(|environment| {
             Environment::get(environment, NON_SIMPLE_ARGUMENTS_ENV_NAME)
