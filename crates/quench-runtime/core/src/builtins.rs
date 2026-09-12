@@ -562,7 +562,6 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::StringToLowerCase
         | BuiltinId::StringToUpperCase
         | BuiltinId::StringToString
-        | BuiltinId::StringConcat
         | BuiltinId::StringBig
         | BuiltinId::StringBlink
         | BuiltinId::StringBold
@@ -598,6 +597,7 @@ fn builtin_length(id: BuiltinId) -> usize {
         BuiltinId::StringReplace => 2,
         BuiltinId::StringSplit => 2,
         BuiltinId::StringMatch => 1,
+        BuiltinId::StringConcat => 1,
         BuiltinId::StringReplaceAll => 2,
         BuiltinId::StringPadStart | BuiltinId::StringPadEnd => 2,
         BuiltinId::StringMatchAll | BuiltinId::StringSearch => 1,
