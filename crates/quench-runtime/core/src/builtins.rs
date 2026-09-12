@@ -261,6 +261,10 @@ builtin_catalog! {
     RegExpCompile, RegExpPrototype, "compile", native_regexp_compile, Generic, MAY_MUTATE;
     RegExpToString, RegExpPrototype, "toString", native_regexp_to_string, Generic, MAY_ALLOCATE;
     RegExpMatchAll, RegExpPrototype, "Symbol(Symbol.matchAll)", native_regexp_match_all, Generic, MAY_ALLOCATE;
+    RegExpSymbolMatch, RegExpPrototype, "Symbol(Symbol.match)", native_regexp_symbol_match, Generic, MAY_ALLOCATE;
+    RegExpSymbolSearch, RegExpPrototype, "Symbol(Symbol.search)", native_regexp_symbol_search, Generic, MAY_ALLOCATE;
+    RegExpSymbolReplace, RegExpPrototype, "Symbol(Symbol.replace)", native_regexp_symbol_replace, Generic, MAY_ALLOCATE;
+    RegExpSymbolSplit, RegExpPrototype, "Symbol(Symbol.split)", native_regexp_symbol_split, Generic, MAY_ALLOCATE;
     ErrorConstructor, Global, "Error", native_error, Generic, MAY_ALLOCATE;
     TypeErrorConstructor, Global, "TypeError", native_error, Generic, MAY_ALLOCATE;
     RangeErrorConstructor, Global, "RangeError", native_error, Generic, MAY_ALLOCATE;

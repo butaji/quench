@@ -10692,8 +10692,17 @@ fn regexp_method(vm: &Vm, _regexp: &RefCell<RegExpValue>, name: &str) -> Value {
     // Symbol property keys are canonical VM atoms rather than their source
     // spelling. Resolve the well-known matchAll key before consulting the
     // declarative builtin catalog.
-    if name == vm.well_known_symbol_key("matchAll") || name == "Symbol.matchAll" {
-        return vm.builtin(BuiltinId::RegExpMatchAll);
+    for (symbol_name, builtin) in [
+        ("match", BuiltinId::RegExpSymbolMatch),
+        ("search", BuiltinId::RegExpSymbolSearch),
+        ("replace", BuiltinId::RegExpSymbolReplace),
+        ("split", BuiltinId::RegExpSymbolSplit),
+        ("matchAll", BuiltinId::RegExpMatchAll),
+    ] {
+        if name == vm.well_known_symbol_key(symbol_name) || name == format!("Symbol.{symbol_name}")
+        {
+            return vm.builtin(builtin);
+        }
     }
     if name == "exec" {
         if let Some(prototype) = vm
@@ -10756,6 +10765,117 @@ fn native_regexp_match_all(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
     };
     let source = args.first().map(Value::string).unwrap_or_default();
     Ok(make_regexp_string_iterator(vm, regexp, source))
+}
+
+fn native_regexp_symbol_match(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(regexp) = this.as_regexp() else {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "RegExp @@match called on non-RegExp",
+        )));
+    };
+    let source = args.first().map(Value::string).unwrap_or_default();
+    let mut regexp = regexp.borrow_mut();
+    if regexp.global {
+        return Ok(vm.array_from_values(
+            regexp
+                .regex
+                .find_iter(&source)
+                .map(|m| Value::string_value(m.as_str()))
+                .collect(),
+        ));
+    }
+    let Some(values) = regexp.capture_values(&source) else {
+        return Ok(Value::Null);
+    };
+    let result = vm.array_from_values(values);
+    let index = regexp
+        .capture_locations
+        .as_ref()
+        .and_then(|locations| locations.get(0))
+        .map_or(0, |(start, _)| start);
+    vm.set_prop(&result, "index", Value::Number(index as f64));
+    vm.set_prop(&result, "input", Value::string_value(source));
+    Ok(result)
+}
+
+fn native_regexp_symbol_search(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(regexp) = this.as_regexp() else {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "RegExp @@search called on non-RegExp",
+        )));
+    };
+    let source = args.first().map(Value::string).unwrap_or_default();
+    Ok(Value::Number(
+        regexp
+            .borrow()
+            .regex
+            .find(&source)
+            .map_or(-1.0, |m| m.start() as f64),
+    ))
+}
+
+fn native_regexp_symbol_replace(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(regexp) = this.as_regexp() else {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "RegExp @@replace called on non-RegExp",
+        )));
+    };
+    let source = args.first().map(Value::string).unwrap_or_default();
+    let replacement = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let regexp = regexp.borrow();
+    if replacement.is_function() {
+        let mut out = String::new();
+        let mut last = 0;
+        for found in regexp.regex.find_iter(&source) {
+            out.push_str(&source[last..found.start()]);
+            let value = vm.call_arguments(
+                &replacement,
+                Value::Undefined,
+                &[
+                    Value::string_value(found.as_str()),
+                    Value::Number(found.start() as f64),
+                    Value::string_value(source.clone()),
+                ][..],
+            )?;
+            out.push_str(&to_string_with_vm(vm, &value)?);
+            last = found.end();
+            if !regexp.global {
+                break;
+            }
+        }
+        out.push_str(&source[last..]);
+        return Ok(Value::string_value(out));
+    }
+    let replacement = to_string_with_vm(vm, &replacement)?;
+    let replaced = if regexp.global {
+        regexp.regex.replace_all(&source, replacement.as_str())
+    } else {
+        regexp.regex.replace(&source, replacement.as_str())
+    };
+    Ok(Value::string_value(replaced.to_string()))
+}
+
+fn native_regexp_symbol_split(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(regexp) = this.as_regexp() else {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "RegExp @@split called on non-RegExp",
+        )));
+    };
+    let source = args.first().map(Value::string).unwrap_or_default();
+    let mut parts = regexp
+        .borrow()
+        .regex
+        .split(&source)
+        .map(Value::string_value)
+        .collect::<Vec<_>>();
+    if let Some(limit) = args.get(1).map(Value::number) {
+        parts.truncate(limit.max(0.0) as usize);
+    }
+    Ok(vm.array_from_values(parts))
 }
 
 fn native_regexp_exec(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
