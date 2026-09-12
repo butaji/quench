@@ -109,6 +109,8 @@ pub struct TestMetadata {
     pub negative_type: Option<String>,
     /// Whether the host permits the main agent to block in Atomics.wait.
     pub can_block: bool,
+    /// Feature gates declared by the test frontmatter.
+    pub features: Vec<String>,
 }
 
 impl TestMetadata {
@@ -133,6 +135,9 @@ impl TestMetadata {
                 in_negative = false;
             } else if trimmed.starts_with("includes:") {
                 metadata.includes = list_after_colon(trimmed);
+                in_negative = false;
+            } else if trimmed.starts_with("features:") {
+                metadata.features = list_after_colon(trimmed);
                 in_negative = false;
             } else if trimmed == "negative:" {
                 in_negative = true;
