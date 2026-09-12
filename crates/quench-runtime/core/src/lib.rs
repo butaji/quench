@@ -15869,7 +15869,7 @@ fn native_object_assign(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value
             // Snapshot enumerable keys first, then perform Get for each key so
             // accessors and mutations observe the same order as ECMAScript's
             // [[OwnPropertyKeys]]/Get/Set sequence.
-            for key in object_own_enumerable_keys(source) {
+            for key in object_own_enumerable_keys_with_symbols(source) {
                 let value = vm.get_prop_with_accessors(source, &key)?;
                 vm.set_prop_with_accessors(&target, &key, value)?;
             }
@@ -15898,6 +15898,14 @@ fn native_object_assign(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value
 }
 
 fn object_own_enumerable_keys(target: &Value) -> Vec<String> {
+    object_own_enumerable_keys_mode(target, false)
+}
+
+fn object_own_enumerable_keys_with_symbols(target: &Value) -> Vec<String> {
+    object_own_enumerable_keys_mode(target, true)
+}
+
+fn object_own_enumerable_keys_mode(target: &Value, include_symbols: bool) -> Vec<String> {
     if let Some(object) = target.as_object_ref() {
         let object = object.borrow();
         let mut keys = object
@@ -15924,7 +15932,7 @@ fn object_own_enumerable_keys(target: &Value) -> Vec<String> {
             {
                 continue;
             }
-            if is_symbol_key(key) {
+            if is_symbol_key(key) && !include_symbols {
                 continue;
             }
             if !seen.insert(key.to_owned()) {
@@ -15944,7 +15952,7 @@ fn object_own_enumerable_keys(target: &Value) -> Vec<String> {
                 .keys()
                 .filter(|key| {
                     (!key.starts_with('\0') || is_symbol_key(key))
-                        && !is_symbol_key(key)
+                        && (!is_symbol_key(key) || include_symbols)
                         && !object.props.contains_key(*key)
                         && !has_accessor_slots(&object.props, key)
                 })
@@ -15965,7 +15973,7 @@ fn object_own_enumerable_keys(target: &Value) -> Vec<String> {
             .keys()
             .filter(|key| {
                 (!key.starts_with('\0') || is_symbol_key(key))
-                    && !is_symbol_key(key)
+                    && (!is_symbol_key(key) || include_symbols)
                     && regexp
                         .attributes
                         .get(*key)
