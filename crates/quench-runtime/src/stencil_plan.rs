@@ -374,10 +374,33 @@ pub(crate) fn numeric_operation(instruction: Instruction) -> Option<crate::ops::
         ShiftRightZeroFill, Subtract,
     };
     let operator = match instruction.opcode {
-        Opcode::Add | Opcode::Sub | Opcode::Mul | Opcode::Div if instruction.flags == 0 => {
+        Opcode::Add
+        | Opcode::Sub
+        | Opcode::Mul
+        | Opcode::Div
+        | Opcode::Remainder
+        | Opcode::Exponentiate
+        | Opcode::NumericAdd
+        | Opcode::NumericSubtract
+        | Opcode::Equal
+        | Opcode::NotEqual
+        | Opcode::StrictEqual
+        | Opcode::StrictNotEqual
+        | Opcode::LessThan
+        | Opcode::LessEqual
+        | Opcode::GreaterThan
+        | Opcode::GreaterEqual
+        | Opcode::BitwiseOr
+        | Opcode::BitwiseXor
+        | Opcode::BitwiseAnd
+        | Opcode::ShiftLeft
+        | Opcode::ShiftRight
+        | Opcode::ShiftRightZeroFill
+            if instruction.flags == 0 =>
+        {
             instruction.opcode.numeric_operator()?
         }
-        Opcode::Binary => crate::ir::compact_binary_operator(instruction.flags)?,
+        Opcode::Binary => instruction.opcode.binary_operator(instruction.flags)?,
         _ => return None,
     };
     matches!(

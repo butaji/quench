@@ -138,10 +138,7 @@ fn operation_window<const N: usize>(
     instructions
         .iter()
         .zip(operations)
-        .all(|(actual, expected)| {
-            actual.opcode == *expected
-                || (*expected == Opcode::GetN && actual.opcode == Opcode::GetNQuickened)
-        })
+        .all(|(actual, expected)| expected.matches_physical_contract(actual.opcode))
         .then_some(instructions)
 }
 
@@ -349,9 +346,7 @@ fn predictable_body(
 }
 
 fn binary(op: Instruction, expected: crate::ops::BinaryOp, left: u16, right: u16) -> Option<()> {
-    (crate::ir::compact_binary_operator(op.flags) == Some(expected)
-        && op.b == left
-        && op.c == right)
+    (op.opcode.binary_operator(op.flags) == Some(expected) && op.b == left && op.c == right)
         .then_some(())
 }
 

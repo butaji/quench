@@ -1292,6 +1292,15 @@ impl ObjectData {
         id
     }
 
+    /// Validate a cached shape against the current representative. A layout
+    /// id alone describes property names, not whether this object has been
+    /// superseded by a replacement; native and inline-cache consumers need
+    /// both facts at their boundary.
+    #[inline]
+    pub(crate) fn has_current_layout(&self, layout: u32) -> bool {
+        !self.has_replacement() && self.semantic_layout_id() == layout
+    }
+
     #[inline]
     pub(crate) fn layout_guard(&self) -> (*const u32, u32) {
         let layout = self.semantic_layout_id();
@@ -1313,7 +1322,7 @@ impl ObjectData {
         slot: u32,
         key: &str,
     ) -> Option<crate::native_property::GuardedPropertySlot> {
-        (self.semantic_layout_id() == layout).then_some(())?;
+        self.has_current_layout(layout).then_some(())?;
         self.cache_plain_metadata_state()?;
         let slot = usize::try_from(slot).ok()?;
         self.properties
@@ -1876,6 +1885,22 @@ mod object_identity_tests {
         let before = object.semantic_layout_id();
         object.push((PropertyName::from("y"), Value::Undefined));
         assert_ne!(before, object.semantic_layout_id());
+    }
+
+    #[test]
+    fn replacement_representative_is_part_of_the_layout_guard() {
+        crate::locals::reset_replacements();
+        let old = std::rc::Rc::new(ObjectData::new(Vec::new()));
+        let latest = std::rc::Rc::new(ObjectData::new(Vec::new()));
+        let old_layout = old.semantic_layout_id();
+        let latest_layout = latest.semantic_layout_id();
+        crate::locals::replace_value(
+            &Value::Object(std::rc::Rc::clone(&old)),
+            &Value::Object(std::rc::Rc::clone(&latest)),
+        );
+        assert!(!old.has_current_layout(old_layout));
+        assert!(latest.has_current_layout(latest_layout));
+        crate::locals::reset_replacements();
     }
 
     #[test]

@@ -109,7 +109,7 @@ impl<const CAPACITY: usize> ValueGraph<CAPACITY> {
     }
 
     pub(crate) fn push_i32_binary(&mut self, instruction: Instruction) -> bool {
-        let Some(operator) = crate::ir::compact_binary_operator(instruction.flags) else {
+        let Some(operator) = instruction.opcode.binary_operator(instruction.flags) else {
             return false;
         };
         if !is_i32_operator(operator) {

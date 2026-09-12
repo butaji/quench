@@ -20,7 +20,6 @@ mod host_jobs;
 pub mod instance;
 pub mod interp;
 pub mod layer;
-pub mod mir;
 pub mod native;
 mod native_control;
 mod native_property;
@@ -147,10 +146,10 @@ pub mod stencil_arena;
 #[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
 mod stencil_arithmetic_integration_tests;
 mod stencil_binding;
-mod stencil_branch_recurrence;
 #[cfg(test)]
 mod stencil_bitwise_fusion_tests;
 mod stencil_boolean_reduction;
+mod stencil_branch_recurrence;
 #[cfg(test)]
 mod stencil_bridge_tests;
 mod stencil_cache;
@@ -160,9 +159,9 @@ mod stencil_cfg;
 mod stencil_compare_branch_tests;
 #[cfg(test)]
 mod stencil_control_composition_tests;
-mod stencil_counted_loop;
 mod stencil_counted_function;
 mod stencil_counted_i32_recurrence;
+mod stencil_counted_loop;
 mod stencil_dense_array_copy;
 mod stencil_dense_array_fill;
 mod stencil_dense_array_update;
@@ -182,13 +181,11 @@ pub mod stencil_lifecycle;
 mod stencil_local_affine_sum;
 mod stencil_local_recursive_sum;
 mod stencil_matrix_reduction;
-mod stencil_typed_lane;
-mod stencil_two_state_i32;
 mod stencil_method_call;
 mod stencil_missing_property;
-mod stencil_nested_xor;
 #[cfg(test)]
 mod stencil_move_integration_tests;
+mod stencil_nested_xor;
 mod stencil_nullish_truthy;
 mod stencil_number_classify;
 mod stencil_numeric_arguments_selection;
@@ -228,6 +225,8 @@ mod stencil_switch_reduction;
 mod stencil_test_support;
 #[cfg(test)]
 mod stencil_truthiness_fusion_tests;
+mod stencil_two_state_i32;
+mod stencil_typed_lane;
 mod stencil_value_cover;
 mod stencil_value_graph;
 mod stencil_word_composition;
@@ -236,10 +235,10 @@ mod test_execution_profile;
 
 #[cfg(test)]
 mod architecture_invariants;
+pub mod native_core;
 mod strings;
 mod super_scope;
 mod switch;
-pub mod tagged_value;
 mod templates;
 mod temporal;
 mod transparent;

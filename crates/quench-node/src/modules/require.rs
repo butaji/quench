@@ -3344,8 +3344,14 @@ pub(crate) fn http2_module_value() -> Value {
     };
     crate::host::namespace_object_from_pairs(vec![
         ("connect".into(), connect),
-        ("Http2ServerRequest".into(), constructor("Http2ServerRequest")),
-        ("Http2ServerResponse".into(), constructor("Http2ServerResponse")),
+        (
+            "Http2ServerRequest".into(),
+            constructor("Http2ServerRequest"),
+        ),
+        (
+            "Http2ServerResponse".into(),
+            constructor("Http2ServerResponse"),
+        ),
         (
             "sensitiveHeaders".into(),
             crate::modules::http2_util::sensitive_headers(),
@@ -3377,13 +3383,7 @@ pub(crate) fn http2_module_value() -> Value {
 fn internal_crypto_util_module() -> Value {
     let digest = crate::host::namespace_object_from_pairs(
         [
-            "SHA-1",
-            "SHA-256",
-            "SHA-384",
-            "SHA-512",
-            "SHA3-256",
-            "SHA3-384",
-            "SHA3-512",
+            "SHA-1", "SHA-256", "SHA-384", "SHA-512", "SHA3-256", "SHA3-384", "SHA3-512",
         ]
         .into_iter()
         .map(|name| (name.to_string(), Value::Boolean(true)))
@@ -3407,10 +3407,24 @@ fn internal_crypto_util_module() -> Value {
     );
     let generate_key = crate::host::namespace_object_from_pairs(
         [
-            "AES-CBC", "AES-CTR", "AES-GCM", "AES-KW", "AES-OCB",
-            "ChaCha20-Poly1305", "ECDH", "ECDSA", "Ed25519", "Ed448",
-            "HMAC", "KMAC128", "KMAC256",
-            "RSA-OAEP", "RSA-PSS", "RSASSA-PKCS1-v1_5", "X25519", "X448",
+            "AES-CBC",
+            "AES-CTR",
+            "AES-GCM",
+            "AES-KW",
+            "AES-OCB",
+            "ChaCha20-Poly1305",
+            "ECDH",
+            "ECDSA",
+            "Ed25519",
+            "Ed448",
+            "HMAC",
+            "KMAC128",
+            "KMAC256",
+            "RSA-OAEP",
+            "RSA-PSS",
+            "RSASSA-PKCS1-v1_5",
+            "X25519",
+            "X448",
         ]
         .into_iter()
         .map(|name| (name.to_string(), Value::Null))

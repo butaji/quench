@@ -57,7 +57,6 @@ fn baseline_entries(instructions: &[crate::ir::Instruction]) -> Vec<crate::machi
         .copied()
         .map(|instruction| crate::machine::BaselineEntry {
             instruction,
-            handler: instruction.opcode.handler(),
             control: instruction.opcode.control_operands(instruction),
         })
         .collect()
@@ -97,6 +96,26 @@ fn compare_branch_rejects_malformed_or_out_of_range_control() {
         let cfg = crate::stencil_cfg::ControlFlowFacts::new(&entries, &[None; 3]);
         assert!(crate::machine::compare_branch(&entries, &cfg, 0, compare).is_none());
     }
+}
+
+#[test]
+fn compare_branch_scan_uses_cfg_boundary_beyond_value_window() {
+    let compare = crate::ir::Instruction::binary_operator(2, crate::ops::BinaryOp::LessThan, 0, 1);
+    let mut instructions = vec![compare];
+    // Keep the intermediate definitions pure and dead while deliberately
+    // exceeding the former MAX_BLOCK_VALUES scan window.
+    for destination in 3..12 {
+        instructions.push(crate::ir::Instruction::load_const(destination, 0));
+    }
+    let branch_pc = instructions.len();
+    instructions.push(crate::ir::Instruction::jump_if_false(
+        2,
+        u16::try_from(branch_pc + 1).expect("test branch target fits"),
+    ));
+    instructions.push(crate::ir::Instruction::ret(2));
+    let entries = baseline_entries(&instructions);
+    let cfg = crate::stencil_cfg::ControlFlowFacts::new(&entries, &vec![None; entries.len()]);
+    assert!(crate::machine::compare_branch(&entries, &cfg, 0, compare).is_some());
 }
 
 #[test]

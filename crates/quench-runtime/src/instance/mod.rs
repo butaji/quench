@@ -13,9 +13,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::fast::Fast;
-use crate::hir::{Export, FuncSig, HeapKind, HirModule, Kind, RefType, Ty};
+use crate::hir::{Export, FuncSig, HeapKind, HirFunc, HirModule, Kind, RefType, Ty};
 use crate::interp;
-use crate::mir::MirFunc;
 use crate::native::{Native, RefVal};
 use crate::slot::Slot;
 use crate::unwind::{Failure, Trap};
@@ -48,7 +47,7 @@ impl InvokeError {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Func {
-    Code(MirFunc),
+    Code(HirFunc),
     Host(FuncSig),
     Unsupported,
     Import { instance: Instance, index: u32 },

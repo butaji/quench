@@ -80,7 +80,17 @@ fn resume_delegate_frame(
         return Ok(None);
     };
     let input = crate::execute::read_register(&registers(generator), destination)?;
-    let result = delegate(&iterator, input, resume.clone())?;
+    let result = match delegate(&iterator, input, resume.clone()) {
+        Ok(result) => result,
+        Err(crate::execute::VmError::Thrown(value)) => {
+            // An abrupt completion from the delegated iterator is fed back
+            // into the enclosing try/catch/finally frame; it must not escape
+            // the generator activation as a host error.
+            generator.machine.borrow_mut().pop_frame();
+            return Ok(Some(crate::completion::Completion::Throw(value)));
+        }
+        Err(error) => return Err(error),
+    };
     match result {
         crate::collections::iterator::DelegationResult::Ongoing { value, passthrough } => {
             let output = if passthrough { value } else { iterator_result(value, false) };
@@ -90,7 +100,12 @@ fn resume_delegate_frame(
         crate::collections::iterator::DelegationResult::Done(value) => {
             crate::execute::write_value(&mut registers_mut(generator), destination, value);
             generator.machine.borrow_mut().pop_frame();
-            Ok(Some(crate::completion::Completion::Normal))
+            if matches!(resume, crate::completion::Completion::Return(_)) {
+                let value = crate::execute::read_register(&registers(generator), destination)?;
+                Ok(Some(crate::completion::Completion::Return(value)))
+            } else {
+                Ok(Some(crate::completion::Completion::Normal))
+            }
         }
     }
 }

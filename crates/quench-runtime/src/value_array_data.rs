@@ -28,6 +28,41 @@ pub(crate) enum SparseOwnIndexFact {
     Number,
     Other,
 }
+
+/// Stable owner plus backing generation used by native views. The owner keeps
+/// JavaScript identity distinct from a replacement; the generation changes
+/// only when the dense representation or its structural extent changes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ArrayBackingIdentity {
+    pub(crate) owner: u64,
+    pub(crate) generation: u64,
+    pub(crate) kind: ArrayKind,
+}
+
+impl ArrayBackingIdentity {
+    /// Check the complete ownership stamp at a native boundary. Consumers
+    /// must compare the owner, generation and element kind together; a
+    /// generation-only check can pair a stale view with a widened backing.
+    /// Replacement resolution is part of the same proof: a backing can remain
+    /// structurally unchanged while its array identity has been superseded.
+    #[inline]
+    pub(crate) fn is_current(self, array: &ArrayData) -> bool {
+        array.backing_identity() == self && crate::locals::array_word_is_current(array)
+    }
+}
+
+/// Canonical ownership record for an ordinary array.  JavaScript identity is
+/// stable across representation changes and replacement resolution; the
+/// backing generation is the derived invalidation stamp for native views.
+/// Keeping both facts together prevents a consumer from accidentally pairing
+/// an owner from one array with a generation from another.
+#[derive(Debug, Clone)]
+struct ArrayOwnership {
+    identity: u64,
+    backing_generation: std::cell::Cell<u64>,
+    element_kind: std::cell::Cell<ArrayKind>,
+}
+
 impl ArrayKind {
     #[inline]
     pub fn is_packed(self) -> bool {
@@ -40,10 +75,9 @@ impl ArrayKind {
 
 #[derive(Debug, Clone)]
 pub struct ArrayData {
-    identity: u64,
+    ownership: ArrayOwnership,
     values: DenseElements,
     length: std::cell::Cell<usize>,
-    kind: std::cell::Cell<ArrayKind>,
     properties: RefCell<Vec<(String, Value)>>,
     descriptors: Vec<(String, Value)>,
     arguments: bool,
@@ -58,7 +92,7 @@ impl PartialEq for ArrayData {
     fn eq(&self, other: &Self) -> bool {
         self.values == other.values
             && self.length.get() == other.length.get()
-            && self.kind == other.kind
+            && self.ownership.element_kind.get() == other.ownership.element_kind.get()
             && self.properties == other.properties
             && self.descriptors == other.descriptors
             && self.arguments == other.arguments
@@ -94,6 +128,19 @@ impl DenseElements {
             )));
         }
         Self::Values(Rc::new(RefCell::new(values)))
+    }
+
+    fn set_shared(&self, index: usize, value: Value) {
+        match self {
+            Self::Numbers(values) => {
+                if let Value::Number(number) = value {
+                    values.borrow()[index].set(number);
+                } else {
+                    panic!("packed numeric array received non-number");
+                }
+            }
+            Self::Values(values) => values.borrow_mut()[index] = value,
+        }
     }
 
     fn len(&self) -> usize {
@@ -294,8 +341,11 @@ impl ArrayData {
         let length = values.len();
         let kind = classify_kind(&values);
         Self {
-            identity: next_array_identity(),
-            kind: std::cell::Cell::new(kind),
+            ownership: ArrayOwnership {
+                identity: next_array_identity(),
+                backing_generation: std::cell::Cell::new(1),
+                element_kind: std::cell::Cell::new(kind),
+            },
             values: DenseElements::from_values(values),
             length: std::cell::Cell::new(length),
             properties: RefCell::new(Vec::new()),
@@ -310,7 +360,43 @@ impl ArrayData {
     }
 
     pub(crate) fn identity(&self) -> u64 {
-        self.identity
+        self.ownership.identity
+    }
+
+    /// Return the owner/generation fact for views into this array's dense
+    /// backing. Value-only numeric stores retain the generation; structural
+    /// growth, truncation, holes and representation changes bump it.
+    #[inline]
+    pub(crate) fn backing_identity(&self) -> ArrayBackingIdentity {
+        ArrayBackingIdentity {
+            owner: self.ownership.identity,
+            generation: self.ownership.backing_generation.get(),
+            kind: self.ownership.element_kind.get(),
+        }
+    }
+
+    #[inline]
+    fn bump_backing_generation(&self) {
+        self.ownership
+            .backing_generation
+            .set(
+                self.ownership
+                    .backing_generation
+                    .get()
+                    .wrapping_add(1)
+                    .max(1),
+            );
+    }
+
+    #[inline]
+    fn update_element_kind(&self, candidate: ArrayKind) -> bool {
+        let previous = self.ownership.element_kind.get();
+        let next = monotonic_kind(previous, candidate);
+        if next == previous {
+            return false;
+        }
+        self.ownership.element_kind.set(next);
+        true
     }
 
     pub(crate) fn new_arguments(values: Vec<Value>, strict: bool) -> Self {
@@ -327,7 +413,7 @@ impl ArrayData {
         data
     }
     pub(crate) fn kind(&self) -> ArrayKind {
-        self.kind.get()
+        self.ownership.element_kind.get()
     }
 
     pub(crate) fn is_arguments(&self) -> bool {
@@ -346,12 +432,16 @@ impl ArrayData {
     /// length or element cache is permitted.
     #[inline]
     pub(crate) fn hot_storage(&self) -> (Vec<Value>, usize, ArrayKind) {
-        (self.values.snapshot(), self.logical_len(), self.kind.get())
+        (
+            self.values.snapshot(),
+            self.logical_len(),
+            self.ownership.element_kind.get(),
+        )
     }
 
     #[inline]
     pub(crate) fn is_packed(&self) -> bool {
-        self.kind.get().is_packed()
+        self.ownership.element_kind.get().is_packed()
     }
 
     pub fn packed_values(&self) -> Option<Vec<Value>> {
@@ -364,7 +454,7 @@ impl ArrayData {
                 // Packed ordinary arrays have no separate hole/descriptor
                 // state. Their shared dense store is authoritative so a
                 // value-only append remains visible through all references.
-                if self.kind.get().is_packed()
+                if self.ownership.element_kind.get().is_packed()
                     && self.deleted.is_empty()
                     && self.properties.borrow().is_empty()
                     && self.descriptors.is_empty()
@@ -404,7 +494,7 @@ impl ArrayData {
 
     #[inline]
     pub(crate) fn is_holey(&self) -> bool {
-        matches!(self.kind.get(), ArrayKind::Holey)
+        matches!(self.ownership.element_kind.get(), ArrayKind::Holey)
     }
     /// Header-resident logical length; does not traverse element storage.
     #[inline]
@@ -453,16 +543,16 @@ impl ArrayData {
 
     #[inline]
     pub(crate) fn is_sparse(&self) -> bool {
-        matches!(self.kind.get(), ArrayKind::Sparse)
+        matches!(self.ownership.element_kind.get(), ArrayKind::Sparse)
     }
     pub(crate) fn is_dense(&self) -> bool {
-        !matches!(self.kind.get(), ArrayKind::Sparse)
+        !matches!(self.ownership.element_kind.get(), ArrayKind::Sparse)
     }
 
     #[inline]
     pub(crate) fn is_numeric_packed(&self) -> bool {
         matches!(
-            self.kind.get(),
+            self.ownership.element_kind.get(),
             ArrayKind::PackedLimb28 | ArrayKind::PackedInt | ArrayKind::PackedDouble
         )
     }
@@ -557,6 +647,8 @@ impl ArrayData {
     }
 
     pub fn set_length(&mut self, length: usize) {
+        let previous_length = self.length.get();
+        let previous_physical = self.values.len();
         if let Some(live) = &self.argument_live {
             let mut live = live.borrow_mut();
             live.values.truncate(length);
@@ -574,19 +666,29 @@ impl ArrayData {
             self.descriptors.retain(|(key, _)| keep_index(key, length));
         }
         self.length.set(length);
-        self.kind.set(monotonic_kind(
-            self.kind.get(),
-            self.values.kind_with_holes(&self.deleted, length),
-        ));
+        self.update_element_kind(self.values.kind_with_holes(&self.deleted, length));
+        if previous_length != self.length.get() || previous_physical != self.values.len() {
+            self.bump_backing_generation();
+        }
     }
 
     pub fn set_index(&mut self, index: usize, value: Value) {
+        let value_store_stable = index < self.values.len()
+            && matches!(
+                (&self.values, &value),
+                (DenseElements::Values(_), _)
+                    | (DenseElements::Numbers(_), Value::Number(_))
+            );
+        let structure_stable = value_store_stable
+            && index < self.length.get()
+            && self.deleted.get(index) != Some(&true);
         let written_number_kind = match &value {
             Value::Number(number) => Some(number_kind(*number)),
             _ => None,
         };
         if self.is_sparse() && index >= self.values.len() {
             self.set_sparse_index(index, value);
+            self.bump_backing_generation();
             return;
         }
         if index == self.length.get()
@@ -599,10 +701,12 @@ impl ArrayData {
             && matches!(&value, Value::Number(number) if self.values.append_number(*number))
         {
             self.length.set(self.length.get() + 1);
+            self.bump_backing_generation();
             return;
         }
         if index > self.values.len() {
             self.set_sparse_index(index, value);
+            self.bump_backing_generation();
             return;
         }
         if let Some(live) = &self.argument_live {
@@ -623,6 +727,9 @@ impl ArrayData {
         }
         if !appended_number {
             self.values.set(index, value);
+            if !structure_stable {
+                self.bump_backing_generation();
+            }
         }
         if self.deleted.len() <= index {
             self.deleted.resize(index.saturating_add(1), false);
@@ -630,7 +737,10 @@ impl ArrayData {
         self.deleted[index] = false;
         self.length
             .set(self.length.get().max(index.saturating_add(1)));
-        let previous_kind = self.kind.get();
+        if appended_number {
+            self.bump_backing_generation();
+        }
+        let previous_kind = self.ownership.element_kind.get();
         let candidate = if previous_kind.is_packed()
             && self.deleted.is_empty()
             && self.length.get() == self.values.len()
@@ -653,7 +763,10 @@ impl ArrayData {
             self.values
                 .kind_with_holes(&self.deleted, self.length.get())
         };
-        self.kind.set(monotonic_kind(self.kind.get(), candidate));
+        let kind_changed = self.update_element_kind(candidate);
+        if structure_stable && kind_changed {
+            self.bump_backing_generation();
+        }
     }
 
     /// Grow dense storage geometrically so sequential appends do not
@@ -686,7 +799,7 @@ impl ArrayData {
             live.length = live.length.max(length);
         }
         self.length.set(self.length.get().max(length));
-        self.kind.set(ArrayKind::Sparse);
+        self.ownership.element_kind.set(ArrayKind::Sparse);
     }
     pub(crate) fn append_live(&self, values: &[Value]) {
         let Some(live) = &self.argument_live else {
@@ -720,11 +833,19 @@ impl ArrayData {
         }
         self.length
             .set(self.length.get().saturating_add(values.len()));
+        if !values.is_empty() {
+            self.bump_backing_generation();
+        }
     }
 
     pub(crate) fn values_mut(&mut self) -> &mut [Value] {
-        self.kind
-            .set(monotonic_kind(self.kind.get(), ArrayKind::PackedValue));
+        self.ownership
+            .element_kind
+            .set(monotonic_kind(
+                self.ownership.element_kind.get(),
+                ArrayKind::PackedValue,
+            ));
+        self.bump_backing_generation();
         self.values.materialize_values()
     }
 
@@ -813,14 +934,18 @@ impl ArrayData {
     /// kind is the canonical proof that every word is an exact limb; callers
     /// therefore execute load/ALU/store without per-element float checks.
     pub(crate) fn limb28_kernel_words(&self) -> Option<std::cell::Ref<'_, [f64]>> {
-        (self.kind.get() == ArrayKind::PackedLimb28 && self.is_packed_ordinary()).then_some(())?;
+        (self.ownership.element_kind.get() == ArrayKind::PackedLimb28
+            && self.is_packed_ordinary())
+        .then_some(())?;
         self.numeric_kernel_words()
     }
 
     /// Mutable limb view for kernels whose stores are proven masked to 28
     /// bits. General mutable numeric views widen the kind before returning.
     pub(crate) fn limb28_kernel_words_mut(&self) -> Option<std::cell::RefMut<'_, [f64]>> {
-        (self.kind.get() == ArrayKind::PackedLimb28 && self.is_packed_ordinary()).then_some(())?;
+        (self.ownership.element_kind.get() == ArrayKind::PackedLimb28
+            && self.is_packed_ordinary())
+        .then_some(())?;
         let DenseElements::Numbers(values) = &self.values else {
             return None;
         };
@@ -835,8 +960,8 @@ impl ArrayData {
 
     #[inline]
     fn widen_mutable_numeric_kind(&self) {
-        if self.kind.get() == ArrayKind::PackedLimb28 {
-            self.kind.set(ArrayKind::PackedInt);
+        if self.update_element_kind(ArrayKind::PackedInt) {
+            self.bump_backing_generation();
         }
     }
 
@@ -879,13 +1004,14 @@ impl ArrayData {
         if !self.values.detach_numbers() {
             return false;
         }
+        self.bump_backing_generation();
         for number in tail.drain(..) {
             if !self.values.append_number(number) {
                 return false;
             }
         }
         self.properties.borrow_mut().clear();
-        self.kind.set(
+        self.ownership.element_kind.set(
             self.values
                 .kind_with_holes(&self.deleted, self.length.get()),
         );
@@ -941,8 +1067,10 @@ impl ArrayData {
         }
         self.deleted.clear();
         self.length.set(end);
-        self.kind
+        self.ownership
+            .element_kind
             .set(self.values.kind_with_holes(&self.deleted, end));
+        self.bump_backing_generation();
     }
 
     pub(crate) fn fill_numeric_range(&mut self, start: usize, end: usize, first: f64) {
@@ -957,10 +1085,11 @@ impl ArrayData {
             self.deleted.resize(end, false);
             self.deleted[start..end].fill(false);
             self.length.set(self.length.get().max(end));
-            self.kind.set(
+            self.ownership.element_kind.set(
                 self.values
                     .kind_with_holes(&self.deleted, self.length.get()),
             );
+            self.bump_backing_generation();
             return;
         }
         for index in start..end {
@@ -1000,10 +1129,11 @@ impl ArrayData {
         self.deleted.resize(end, false);
         self.deleted[start..end].fill(false);
         self.length.set(self.length.get().max(end));
-        self.kind.set(
+        self.ownership.element_kind.set(
             self.values
                 .kind_with_holes(&self.deleted, self.length.get()),
         );
+        self.bump_backing_generation();
     }
 
     /// Mutate an existing packed numeric slot through shared JS array
@@ -1029,8 +1159,9 @@ impl ArrayData {
             // would clone the whole ArrayData on every indexed assignment.
             && self.values.set_existing_numeric_value(index, number);
         if stored {
-            self.kind
-                .set(monotonic_kind(self.kind.get(), number_kind(number)));
+            if self.update_element_kind(number_kind(number)) {
+                self.bump_backing_generation();
+            }
         }
         stored
     }
@@ -1042,8 +1173,9 @@ impl ArrayData {
             && self.deleted.get(index) != Some(&true)
             && self.values.set_existing_number(index, number);
         if stored {
-            self.kind
-                .set(monotonic_kind(self.kind.get(), number_kind(number)));
+            if self.update_element_kind(number_kind(number)) {
+                self.bump_backing_generation();
+            }
         }
         stored
     }
@@ -1055,8 +1187,9 @@ impl ArrayData {
         let stored = self.has_plain_dense_index(index)
             && self.values.set_existing_number(index, number);
         if stored {
-            self.kind
-                .set(monotonic_kind(self.kind.get(), number_kind(number)));
+            if self.update_element_kind(number_kind(number)) {
+                self.bump_backing_generation();
+            }
         }
         stored
     }
@@ -1100,8 +1233,9 @@ impl ArrayData {
             }
         };
         if stored {
-            array.kind
-                .set(monotonic_kind(array.kind.get(), number_kind(number)));
+            if array.update_element_kind(number_kind(number)) {
+                array.bump_backing_generation();
+            }
         }
         stored
     }
@@ -1133,8 +1267,11 @@ impl ArrayData {
                 return false;
             }
             self.length.set(self.length.get() + 1);
-            self.kind
-                .set(monotonic_kind(self.kind.get(), number_kind(number)));
+            self.ownership.element_kind.set(monotonic_kind(
+                self.ownership.element_kind.get(),
+                number_kind(number),
+            ));
+            self.bump_backing_generation();
             return true;
         }
         let rejected = index != self.physical_len() || index >= self.logical_len() || !plain;
@@ -1147,7 +1284,8 @@ impl ArrayData {
         let derived = self
             .values
             .kind_with_holes(&self.deleted, self.length.get());
-        self.kind.set(derived);
+        self.ownership.element_kind.set(derived);
+        self.bump_backing_generation();
         true
     }
 
@@ -1213,15 +1351,16 @@ impl ArrayData {
         }));
         self.length
             .set(self.length.get().saturating_add(values.len()));
-        self.kind.set(monotonic_kind(
-            self.kind.get(),
-            values.iter().fold(self.kind.get(), |kind, value| {
+        self.ownership.element_kind.set(monotonic_kind(
+            self.ownership.element_kind.get(),
+            values.iter().fold(self.ownership.element_kind.get(), |kind, value| {
                 let Value::Number(number) = value else {
                     unreachable!()
                 };
                 monotonic_kind(kind, number_kind(*number))
             }),
         ));
+        self.bump_backing_generation();
         true
     }
 
@@ -1236,6 +1375,7 @@ impl ArrayData {
         current.borrow_mut().extend_from_slice(values);
         self.length
             .set(self.length.get().saturating_add(values.len()));
+        self.bump_backing_generation();
         true
     }
 
@@ -1347,6 +1487,42 @@ impl ArrayData {
             .collect();
         for (offset, value) in source.into_iter().enumerate() {
             self.values.set(dst + offset, value);
+        }
+        true
+    }
+
+    /// In-place variant for ordinary packed arrays. Dense element storage is
+    /// already interior-mutable, so this preserves the receiver's identity
+    /// and all aliases while avoiding a replacement object.
+    pub(crate) fn copy_dense_within_shared(&self, src: usize, dst: usize, len: usize) -> bool {
+        let Some(src_end) = src.checked_add(len) else {
+            return false;
+        };
+        let Some(dst_end) = dst.checked_add(len) else {
+            return false;
+        };
+        if src_end > self.values.len() || dst_end > self.values.len() {
+            return false;
+        }
+        if self
+            .deleted
+            .get(src..src_end)
+            .is_some_and(|range| range.iter().any(|&hole| hole))
+            || self
+                .deleted
+                .get(dst..dst_end)
+                .is_some_and(|range| range.iter().any(|&hole| hole))
+        {
+            return false;
+        }
+        let source: Vec<Value> = (src..src_end)
+            .filter_map(|index| self.values.value_at(index))
+            .collect();
+        if source.len() != len {
+            return false;
+        }
+        for (offset, value) in source.into_iter().enumerate() {
+            self.values.set_shared(dst + offset, value);
         }
         true
     }
@@ -1507,7 +1683,8 @@ impl ArrayData {
                 self.deleted.resize(index.saturating_add(1), false);
             }
             self.deleted[index] = true;
-            self.kind.set(ArrayKind::Holey);
+            self.update_element_kind(ArrayKind::Holey);
+            self.bump_backing_generation();
             if let Some(live) = &self.argument_live {
                 let mut live = live.borrow_mut();
                 if live.deleted.len() <= index {
@@ -1865,6 +2042,80 @@ mod array_data_tests {
         // returning an owned Value, while storage remains unchanged.
         assert_eq!(data.get_index(1), Some(Value::Number(2.5)));
         assert_eq!(data.storage_capacity(), capacity);
+    }
+
+    #[test]
+    fn backing_identity_tracks_structure_not_numeric_value_stores() {
+        let mut data = ArrayData::new(vec![Value::Number(1.0), Value::Number(2.0)]);
+        let initial = data.backing_identity();
+        assert!(initial.is_current(&data));
+
+        assert!(data.set_existing_f64(0, 9.0));
+        assert!(initial.is_current(&data));
+
+        data.set_index(2, Value::Number(3.0));
+        let grown = data.backing_identity();
+        assert!(!initial.is_current(&data));
+        assert_eq!(grown.owner, initial.owner);
+        assert_ne!(grown.generation, initial.generation);
+
+        data.set_length(1);
+        assert_ne!(data.backing_identity().generation, grown.generation);
+
+        let mut sparse = ArrayData::new(vec![Value::Number(1.0)]);
+        let sparse_before = sparse.backing_identity();
+        sparse.set_index(3, Value::Number(4.0));
+        assert_eq!(sparse.backing_identity().owner, sparse_before.owner);
+        assert_ne!(sparse.backing_identity().generation, sparse_before.generation);
+    }
+
+    #[test]
+    fn backing_identity_rejects_superseded_array_representatives() {
+        crate::locals::reset_replacements();
+        let original = std::rc::Rc::new(ArrayData::new(vec![Value::Number(1.0)]));
+        let stamp = original.backing_identity();
+        let mut changed = original.as_ref().clone();
+        changed.set_index(0, Value::Number(2.0));
+        let latest = std::rc::Rc::new(changed);
+        crate::locals::replace_value(
+            &Value::Array(std::rc::Rc::clone(&original)),
+            &Value::Array(std::rc::Rc::clone(&latest)),
+        );
+
+        assert!(!stamp.is_current(original.as_ref()));
+        assert!(latest.backing_identity().is_current(latest.as_ref()));
+        crate::locals::reset_replacements();
+    }
+
+    #[test]
+    fn cloned_array_keeps_js_owner_but_has_independent_backing_stamp() {
+        let original = ArrayData::new(vec![Value::Number(1.0)]);
+        let before = original.backing_identity();
+        let mut clone = original.clone();
+
+        // Clone is used by replacement/COW paths: it remains the same
+        // JavaScript identity, while its structural edits must invalidate
+        // only views into the cloned backing.
+        clone.set_length(3);
+        let after = clone.backing_identity();
+        assert_eq!(after.owner, before.owner);
+        assert_ne!(after.generation, before.generation);
+        assert_ne!(clone.kind(), original.kind());
+        assert_eq!(original.backing_identity(), before);
+    }
+
+    #[test]
+    fn kind_widening_and_deletion_invalidate_native_stamp() {
+        let mut data = ArrayData::new(vec![Value::Number(1.0)]);
+        let before = data.backing_identity();
+        data.set_index(0, Value::Number(1.5));
+        assert_eq!(data.kind(), ArrayKind::PackedDouble);
+        assert!(!before.is_current(&data));
+        assert_ne!(data.backing_identity().generation, before.generation);
+
+        let before_delete = data.backing_identity();
+        data.delete_property("0");
+        assert_ne!(data.backing_identity().generation, before_delete.generation);
     }
 
     #[test]

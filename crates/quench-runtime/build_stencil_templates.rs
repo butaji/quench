@@ -1160,7 +1160,7 @@ fn nullish_word_source(name: &str) -> String {
 
 fn return_word_source(name: &str) -> String {
     format!(
-        "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_{name}\nq_{name}:\n  ret\nq_{name}_end:\n\"#);\n"
+        "#![no_std]\nuse core::arch::global_asm;\n#[cfg(target_arch = \"aarch64\")]\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_{name}\nq_{name}:\n  ret\nq_{name}_end:\n\"#);\n#[cfg(target_arch = \"x86_64\")]\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_{name}\nq_{name}:\n  mov rax, rdi\n  ret\nq_{name}_end:\n\"#);\n"
     )
 }
 
@@ -1215,11 +1215,11 @@ pub(crate) fn assembly_source(recipe: super::RustAssemblyRecipe) -> String {
         TruthyWord => truthy_word_source(recipe.name()),
     }
 }
-#[path = "build_stencil_templates/matrix_reduction.rs"]
-mod matrix_reduction;
-#[path = "build_stencil_templates/typed_lane.rs"]
-mod typed_lane;
-#[path = "build_stencil_templates/two_state_i32.rs"]
-mod two_state_i32;
 #[path = "build_stencil_templates/counted_i32_recurrence.rs"]
 mod counted_i32_recurrence;
+#[path = "build_stencil_templates/matrix_reduction.rs"]
+mod matrix_reduction;
+#[path = "build_stencil_templates/two_state_i32.rs"]
+mod two_state_i32;
+#[path = "build_stencil_templates/typed_lane.rs"]
+mod typed_lane;

@@ -42,7 +42,9 @@ pub(crate) fn integrity_apply(
     frozen: bool,
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     let Some(target) = target else {
-        return Err(crate::value::error::throw_type_error("Object expected"));
+        // Object.freeze/seal are intentionally no-throwing for omitted or
+        // primitive arguments; an omitted argument is simply undefined.
+        return Ok(crate::value::Value::Undefined);
     };
     if matches!(target, crate::value::Value::Proxy(_)) {
         return proxy_integrity_apply(target, frozen);

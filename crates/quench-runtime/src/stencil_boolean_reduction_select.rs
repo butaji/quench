@@ -99,14 +99,14 @@ fn select_atom_instruction(
                 Symbol::Constant(number(code, instruction.b)?),
             );
         }
-        Opcode::Binary => select_atom_binary(instruction, values)?,
+        opcode if opcode.is_binary_family() => select_atom_binary(instruction, values)?,
         Opcode::InitLocal => {
             let Symbol::Predicate(atom) = values.get(&instruction.b)? else {
                 return None;
             };
             predicates.push((instruction.a, *atom));
         }
-        Opcode::Slow if atom_marker(code, pc, predicates) => {}
+        opcode if opcode.is_cold_marker() && atom_marker(code, pc, predicates) => {}
         _ => return None,
     }
     Some(())
@@ -126,7 +126,7 @@ fn select_atom_binary(
     instruction: crate::ir::Instruction,
     values: &mut BTreeMap<u16, Symbol>,
 ) -> Option<()> {
-    let operator = crate::ir::compact_binary_operator(instruction.flags)?;
+    let operator = instruction.opcode.binary_operator(instruction.flags)?;
     let left = values.get(&instruction.b)?.clone();
     let right = values.get(&instruction.c)?.clone();
     let result = match (operator, left, right) {
@@ -222,14 +222,14 @@ fn simulate_instruction(
 ) -> Option<usize> {
     let next = pc + 1;
     match instruction.opcode {
-        Opcode::Slow if marker(code, pc, Some([left_slot, right_slot])) => {}
+        opcode if opcode.is_cold_marker() && marker(code, pc, Some([left_slot, right_slot])) => {}
         Opcode::LoadLocal | Opcode::LoadLocalChecked => {
             simulate_load(instruction, left_slot, right_slot, left, right, values)
         }
         Opcode::LoadConst => simulate_constant(code, instruction, values)?,
         Opcode::Move => simulate_move(instruction, values)?,
         Opcode::Unary => simulate_unary(instruction, values)?,
-        Opcode::Binary => simulate_increment(instruction, values)?,
+        opcode if opcode.is_binary_family() => simulate_increment(instruction, values)?,
         Opcode::StoreLocal => simulate_store(instruction, values, incremented)?,
         Opcode::JumpIfFalse => return simulate_branch(instruction, next, values),
         Opcode::Jump => return Some(usize::from(instruction.a)),
@@ -297,7 +297,7 @@ fn simulate_increment(
     instruction: crate::ir::Instruction,
     values: &mut BTreeMap<u16, FlowValue>,
 ) -> Option<()> {
-    (crate::ir::compact_binary_operator(instruction.flags)? == crate::ops::BinaryOp::NumericAdd)
+    (instruction.opcode.binary_operator(instruction.flags)? == crate::ops::BinaryOp::NumericAdd)
         .then_some(())?;
     let slot = match (values.get(&instruction.b)?, values.get(&instruction.c)?) {
         (FlowValue::Local(slot), FlowValue::One) | (FlowValue::One, FlowValue::Local(slot)) => {

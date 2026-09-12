@@ -58,9 +58,20 @@ pub(crate) fn find(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
+    find_with_length(receiver, arguments, None)
+}
+
+pub(crate) fn find_with_length(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    internal_length: Option<usize>,
+) -> Result<Value, crate::execute::VmError> {
     let receiver = expect_array_like(receiver, "Array.prototype.find")?;
     let callback = arguments.first();
-    let length = crate::builtins::map_length(&receiver)?;
+    let length = match internal_length {
+        Some(length) => length,
+        None => crate::builtins::map_length(&receiver)?,
+    };
     let callback = callback.ok_or_else(crate::vm::not_callable)?;
     if !crate::conversion::is_callable(callback) {
         return Err(crate::vm::not_callable());
@@ -85,9 +96,20 @@ pub(crate) fn find_index(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
+    find_index_with_length(receiver, arguments, None)
+}
+
+pub(crate) fn find_index_with_length(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    internal_length: Option<usize>,
+) -> Result<Value, crate::execute::VmError> {
     let receiver = expect_array_like(receiver, "Array.prototype.findIndex")?;
     let callback = arguments.first();
-    let length = crate::builtins::map_length(&receiver)?;
+    let length = match internal_length {
+        Some(length) => length,
+        None => crate::builtins::map_length(&receiver)?,
+    };
     let callback = callback.ok_or_else(crate::vm::not_callable)?;
     if !crate::conversion::is_callable(callback) {
         return Err(crate::vm::not_callable());

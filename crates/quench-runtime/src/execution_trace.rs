@@ -336,8 +336,16 @@ impl Counters {
 #[cfg(feature = "execution-trace")]
 fn lane_profile(counters: &Counters, compact_total: u64, slow_total: u64) -> serde_json::Value {
     let leaf_total = counters.leaf_compact.iter().sum::<u64>();
-    let compact_slow = counters.compact[crate::ir::Opcode::Slow as usize];
-    let leaf_slow = counters.leaf_compact[crate::ir::Opcode::Slow as usize];
+    let compact_slow = crate::ir::Opcode::ALL
+        .iter()
+        .filter(|opcode| opcode.is_cold_marker())
+        .map(|opcode| counters.compact[*opcode as usize])
+        .sum::<u64>();
+    let leaf_slow = crate::ir::Opcode::ALL
+        .iter()
+        .filter(|opcode| opcode.is_cold_marker())
+        .map(|opcode| counters.leaf_compact[*opcode as usize])
+        .sum::<u64>();
     let l2 = compact_total.saturating_sub(compact_slow) + leaf_total.saturating_sub(leaf_slow);
     let l3 = slow_total + leaf_slow;
     let vm_total = l2 + l3;
@@ -1299,32 +1307,7 @@ pub(crate) fn slow(op: &crate::ops::Op) -> DecodeGuard {
 
 #[cfg(feature = "execution-trace")]
 fn binary_name(operator: crate::ops::BinaryOp) -> &'static str {
-    use crate::ops::BinaryOp::*;
-    match operator {
-        Add => "Add",
-        Subtract => "Subtract",
-        Multiply => "Multiply",
-        Divide => "Divide",
-        Remainder => "Remainder",
-        Exponentiate => "Exponentiate",
-        NumericAdd => "NumericAdd",
-        NumericSubtract => "NumericSubtract",
-        Equal => "Equal",
-        NotEqual => "NotEqual",
-        StrictEqual => "StrictEqual",
-        StrictNotEqual => "StrictNotEqual",
-        LessThan => "LessThan",
-        LessEqual => "LessEqual",
-        GreaterThan => "GreaterThan",
-        GreaterEqual => "GreaterEqual",
-        BitwiseOr => "BitwiseOr",
-        BitwiseXor => "BitwiseXor",
-        BitwiseAnd => "BitwiseAnd",
-        ShiftLeft => "ShiftLeft",
-        ShiftRight => "ShiftRight",
-        ShiftRightZeroFill => "ShiftRightZeroFill",
-        Instanceof => "Instanceof",
-    }
+    operator.name()
 }
 
 #[cfg(feature = "execution-trace")]
@@ -1523,7 +1506,7 @@ fn decode_site_for_opcode(opcode: crate::ir::Opcode, leaf: bool) -> DecodeSite {
         crate::ir::Opcode::GetN => DecodeSite::GetN,
         crate::ir::Opcode::SetN => DecodeSite::SetN,
         crate::ir::Opcode::Move => DecodeSite::Move,
-        crate::ir::Opcode::LoadLocal => DecodeSite::Load,
+        crate::ir::Opcode::LoadLocal | crate::ir::Opcode::LoadParameter => DecodeSite::Load,
         crate::ir::Opcode::LoadLocalChecked => DecodeSite::LoadChecked,
         crate::ir::Opcode::CallN => DecodeSite::Call,
         _ => DecodeSite::Other,

@@ -1,18 +1,11 @@
 # Runtime map
 
-- `quench-runtime` owns language execution and JavaScript semantics.
-  JS reduction/compact execution uses `reduce`, `ir`, `machine` and `vm`;
-  shared typed execution also has `hir`, `mir` and `interp`.
-- `quench-node` owns Node APIs and host effects.
-- `quench-wasm` decodes/validates Wasm and adapts spec scripts to the runtime.
-- Native, Fast and Dynamic describe execution/representation facts, not separate
-  languages or permission to introduce alternate semantics.
-- Do not describe all current storage as one tracing collector: the runtime
-  contains both GC machinery and JS reference-cycle collection. Respect the
-  actual ownership/rooting contract of each value.
-- Desired architecture and verified implementation are distinct.
-  [Repository rules](AGENTS.md) apply throughout.
+- `crates/quench-runtime`: JavaScript reduction, canonical operations, compact execution, values, ownership and native execution.
+- `crates/quench-node`: Node APIs, process effects, module registration and host integration.
+- `crates/quench-wasm`: Wasm decoding/validation and adaptation to shared runtime execution.
+- `crates/quench-test262`, `crates/quench-node-test`, `crates/quench-wasm-test`: test discovery, execution and classification.
+- `quench-bench`: measurement fixtures and runners; never a production input.
 
-Active work: [task queue](tasks/index.json).
-Implementation contract: [stencil specification](docs/stencil-jit-implementation-spec.md).
-Manuals and verification: [documentation index](docs/README.md).
+[Architecture](docs/architecture.md) describes current mechanisms and shared contracts.
+[Tasks](tasks/index.json) define remaining work.
+[Docs](docs/README.md) index the implementation and measurement manuals.

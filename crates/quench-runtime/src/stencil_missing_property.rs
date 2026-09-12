@@ -14,10 +14,8 @@ pub(crate) struct MissingPropertySelection {
 
 pub(crate) struct NativeMissingPropertyPlan {
     selection: MissingPropertySelection,
-    owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
     view: crate::stencil_select::PhysicalStencilView,
-    cache: crate::stencil_select::RenderedRegionCache,
-    installed: Option<crate::stencil_arena::EntryToken<extern "C" fn() -> u64>>,
+    physical: crate::stencil_installation::SharedPhysicalEntry<extern "C" fn() -> u64>,
 }
 
 #[derive(Clone, Copy)]
@@ -40,10 +38,8 @@ impl NativeMissingPropertyPlan {
         )?;
         view.generated.then_some(Self {
             selection,
-            owner,
+            physical: crate::stencil_installation::SharedPhysicalEntry::new(Rc::clone(&owner)),
             view,
-            cache: crate::stencil_select::RenderedRegionCache::new(),
-            installed: None,
         })
     }
 
@@ -78,39 +74,27 @@ impl NativeMissingPropertyPlan {
         let Some(entry) = self.entry() else {
             return MissingPropertyExecution::GuardMiss;
         };
-        let Ok(lease) = crate::stencil_arena::SharedStencilSlab::acquire_owned(&self.owner, entry)
-        else {
-            return MissingPropertyExecution::GuardMiss;
-        };
-        lease
-            .invoke(|call| call())
+        self.physical
+            .invoke(entry, |call| call())
             .map(MissingPropertyExecution::Completed)
             .unwrap_or(MissingPropertyExecution::GuardMiss)
     }
 
     fn entry(&mut self) -> Option<crate::stencil_arena::EntryToken<extern "C" fn() -> u64>> {
-        if let Some(entry) = self
-            .installed
-            .filter(|entry| self.owner.borrow().entry_token_is_live(*entry))
-        {
-            return Some(entry);
-        }
-        self.installed = None;
         let site = crate::quickening::QuickeningSite::<4>::new(Opcode::GetN);
         let values = crate::stencil_fact::PatchValues::from_site(&site);
-        let address = self
-            .owner
-            .borrow_mut()
-            .render_physical_view_or_get(&mut self.cache, self.view, &values)
-            .ok()?;
-        self.owner.borrow_mut().make_executable(address).ok()?;
-        let entry = self
-            .owner
-            .borrow()
-            .owned_constant_word_entry(address)
-            .ok()?;
-        self.installed = Some(entry);
-        Some(entry)
+        self.physical
+            .entry(
+                |owner, cache| {
+                    let address = owner
+                        .borrow_mut()
+                        .render_physical_view_or_get(cache, self.view, &values)?;
+                    owner.borrow_mut().make_executable(address)?;
+                    Ok(address)
+                },
+                |pool, address| pool.owned_constant_word_entry(address),
+            )
+            .ok()
     }
 }
 

@@ -1,16 +1,23 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "number", "value": 3812 },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["branch_predict"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "MarkUninitialized",
+    "MarkUninitialized",
+    "MarkUninitialized",
+    "LoadConst",
+    "InitLocal",
+    "MarkUninitialized",
+    "LoadConst",
+    "InitLocal",
+    "LoadConst",
+    "Loop",
+    "LoadLocalChecked",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": 3812
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "branch_predict_region": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

@@ -86,20 +86,20 @@ where
                 );
                 Some(())
             }
-            Opcode::Binary => self.binary(instruction),
+            opcode if opcode.is_binary_family() => self.binary(instruction),
             Opcode::Return => {
                 if let Some(returned) = self.locals.get(&instruction.a) {
                     self.returned = Some(*returned);
                 }
                 Some(())
             }
-            Opcode::Slow => self.slow(code, pc),
+            opcode if opcode.is_cold_marker() => self.slow(code, pc),
             _ => None,
         }
     }
 
     fn binary(&mut self, instruction: crate::ir::Instruction) -> Option<()> {
-        let operator = crate::ir::compact_binary_operator(instruction.flags)?;
+        let operator = instruction.opcode.binary_operator(instruction.flags)?;
         (operator == crate::ops::BinaryOp::ShiftRightZeroFill).then_some(())?;
         let source = self.locals.get(&instruction.b).copied()?;
         let shift = self.constants.get(&instruction.c)?;

@@ -1,16 +1,15 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "string", "value": "398648" },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["labeled_nesting"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "TailCall",
+    "LoadConst",
+    "Return"
+  ],
+  "result": {
+    "kind": "string",
+    "value": "398648"
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "labeled_nesting_region": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

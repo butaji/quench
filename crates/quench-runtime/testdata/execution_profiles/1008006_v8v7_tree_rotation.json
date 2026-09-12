@@ -1,16 +1,44 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "number", "value": 213 },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["shape_guard", "pointer_field_load", "ordered_pointer_stores", "liveout_return"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "LoadConst",
+    "LoadLocal",
+    "LoadConst",
+    "LoadLocal",
+    "LoadConst",
+    "LoadConst",
+    "LoadConst",
+    "Construct",
+    "LoadConst",
+    "Construct",
+    "LoadConst",
+    "Construct",
+    "StoreLocal",
+    "LoadLocal",
+    "LoadLocal",
+    "Call",
+    "StoreLocal",
+    "LoadLocal",
+    "GetN",
+    "LoadConst",
+    "Mul",
+    "LoadLocal",
+    "GetN",
+    "GetN",
+    "LoadConst",
+    "Mul",
+    "Add",
+    "LoadLocal",
+    "GetN",
+    "GetN",
+    "Add",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": 213
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "guarded_tree_rotation": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

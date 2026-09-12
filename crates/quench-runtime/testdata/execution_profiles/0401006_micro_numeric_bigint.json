@@ -1,16 +1,20 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "string", "value": "[\"bigint\",\"351545329\"]" },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["numeric", "bigint"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "GetN",
+    "LoadLocal",
+    "GetN",
+    "Call",
+    "StoreLocal",
+    "LoadConst",
+    "Loop",
+    "LoadLocal",
+    "Return"
+  ],
+  "result": {
+    "kind": "string",
+    "value": "[\"bigint\",\"351545329\"]"
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "numeric_bigint_region": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }
