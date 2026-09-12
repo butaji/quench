@@ -8579,13 +8579,15 @@ fn to_number_with_vm(vm: &mut Vm, value: &Value) -> JsResult<f64> {
             .as_object_ref()
             .and_then(|object| object.borrow().props.get("\0primitive").cloned())
         {
-            if is_bigint_marker(&primitive) {
-                return Err(JsError::Throw(type_error(
-                    vm,
-                    "cannot convert a BigInt value to a number",
-                )));
+            if !is_symbol_carrier(&primitive) {
+                if is_bigint_marker(&primitive) {
+                    return Err(JsError::Throw(type_error(
+                        vm,
+                        "cannot convert a BigInt value to a number",
+                    )));
+                }
+                return to_number_with_vm(vm, &primitive);
             }
-            return to_number_with_vm(vm, &primitive);
         }
         if value
             .as_object_ref()
