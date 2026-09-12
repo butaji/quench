@@ -6770,6 +6770,12 @@ impl Vm {
             return call_ic.call(self, t, a);
         }
         if let Some(f) = c.as_function_ref() {
+            let t = match &f.kind {
+                FunctionKind::User { .. } if !f.strict && (t.is_null() || t.is_undefined()) => {
+                    Environment::get(&self.global, "globalThis").unwrap_or(Value::Undefined)
+                }
+                _ => t,
+            };
             if self.jit_mode == JitMode::Stencil
                 && matches!(
                     f.kind,
@@ -7068,6 +7074,19 @@ impl Vm {
             self.source_ids.push(source_id);
         }
         let e = Environment::new(Some(outer));
+        let strict = n.body.as_ref().is_some_and(|body| {
+            body.directives
+                .iter()
+                .any(|directive| directive.directive.as_str() == "use strict")
+        });
+        // Ordinary (non-strict) calls substitute the global object for a
+        // nullish this value. Keep this normalization at the shared call
+        // boundary so stencil and interpreter execution agree.
+        let this = if !strict && (this.is_null() || this.is_undefined()) {
+            Environment::get(&self.global, "globalThis").unwrap_or(Value::Undefined)
+        } else {
+            this
+        };
         e.borrow_mut().declare("this", this);
         let av = self.object_value(Object::array(None, args.clone()));
         self.set_prop(&av, "\0wrapper", Value::string_value("Arguments"));
@@ -14423,6 +14442,7 @@ fn native_regexp(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
             let regexp = regexp.borrow();
             (regexp.source.clone(), Some(regexp.flags.clone()))
         }
+        Some(value) if value.is_undefined() => (String::new(), None),
         Some(value) => (to_string_with_vm(vm, value)?, None),
         None => (String::new(), None),
     };
