@@ -2336,7 +2336,9 @@ fn finish_direct_call(
 }
 
 fn arguments_value<A: CallArguments + ?Sized>(vm: &Vm, args: &A) -> Value {
-    vm.object_value(Object::array(None, args.materialize()))
+    let value = vm.object_value(Object::array(None, args.materialize()));
+    vm.set_prop(&value, "\0wrapper", Value::string_value("Arguments"));
+    value
 }
 
 unsafe extern "C" fn validate_numeric_region(frame: *mut DynFrame, pc: usize) -> usize {
