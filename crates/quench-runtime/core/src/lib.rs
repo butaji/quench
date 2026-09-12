@@ -8471,6 +8471,12 @@ fn bigint_bits(vm: &mut Vm, value: &Value) -> JsResult<u32> {
             "cannot convert a BigInt value to an index",
         )));
     }
+    if primitive.is_object_like() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "cannot convert object to primitive value",
+        )));
+    }
     let number = to_number_with_vm(vm, &primitive)?;
     if number.is_nan() {
         return Ok(0);
@@ -10161,15 +10167,6 @@ fn dynamic_function_strict_early_error(parameters: &str, body: &str) -> bool {
         .any(|token| token == "with")
 }
 fn native_date(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    if let Some(value) = args.first() {
-        let primitive = to_primitive_for_binary(vm, value, false)?;
-        if is_bigint_marker(&primitive) {
-            return Err(JsError::Throw(type_error(
-                vm,
-                "cannot convert a BigInt value to a number",
-            )));
-        }
-    }
     // `new Date(...)` supplies the freshly allocated receiver. Preserve it so
     // prototype identity and `instanceof Date` remain observable to descriptor
     // getters; a plain `Date(...)` call still receives a VM-owned object.
@@ -10223,7 +10220,20 @@ fn time_clip(value: f64) -> f64 {
 }
 
 fn date_argument_to_millis(vm: &mut Vm, value: &Value) -> JsResult<f64> {
-    let primitive = to_primitive_for_binary(vm, value, false)?;
+    let primitive = if value.is_object() || value.is_function() {
+        let exotic = vm.get_prop_with_accessors(value, "Symbol(Symbol.toPrimitive)")?;
+        if exotic.is_function() {
+            vm.call_arguments(
+                &exotic,
+                value.clone(),
+                &[Value::string_value("default")][..],
+            )?
+        } else {
+            to_primitive_for_binary(vm, value, false)?
+        }
+    } else {
+        value.clone()
+    };
     if is_bigint_marker(&primitive) {
         return Err(JsError::Throw(type_error(
             vm,
