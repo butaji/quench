@@ -17,18 +17,6 @@ use quench_runtime::vm::{Host, OutputSink, VmContext};
 
 use crate::registry::{CapId, NodeSpec};
 
-/// Lower a declarative host-value table into an immutable context chain.
-///
-/// Host bootstrap has many values whose order is observable but whose wiring
-/// is mechanical. Keeping the names and value expressions as data makes that
-/// ordering explicit while avoiding a second hand-written builder for every
-/// entry.
-macro_rules! with_host_values {
-    ($context:ident; $( $name:expr => $value:expr ),+ $(,)?) => {
-        $( $context = $context.with_host_value($name, $value); )+
-    };
-}
-
 pub fn scheduler_capability(kind: u16) -> Value {
     host_api::capability_function(HostCapabilityRef {
         realm: RealmId::ROOT,
@@ -473,7 +461,7 @@ pub fn install_with_argv_and_title_and_exec_argv(
     // Bootstrap globals derive the public process surface from these
     // canonical argv facts. Keep them identical to the host state so
     // script arguments survive the shared bootstrap path.
-    with_host_values!(context;
+    context = crate::with_host_values!(context;
         "Error".to_string() => error_ctor,
         "__quench_argv".to_string() => host_api::array(argv.iter().cloned().map(Value::String).collect()),
         "__quench_allowed_node_environment_flags".to_string() => crate::modules::process::allowed_node_environment_flags(),
