@@ -3318,7 +3318,12 @@ impl BcCompiler {
                 let SimpleAssignmentTarget::AssignmentTargetIdentifier(i) = target else {
                     return None;
                 };
-                let dst = self.local(i.name.as_str());
+                // Numeric JIT code has no environment access.  Only mutate a
+                // register that was proven local (a parameter or an explicit
+                // declaration); unresolved assignments must fall back to the
+                // shared dynamic VM so captured/global bindings remain
+                // observable.
+                let dst = self.reg(i.name.as_str())?;
                 let rhs = self.compile_expr(&a.right)?;
                 use oxc_syntax::operator::AssignmentOperator::*;
                 match a.operator {
@@ -14979,6 +14984,21 @@ mod tests {
         let bc = BcCompiler::compile_function(f).expect("numeric function should lower");
         assert_eq!(bc.run(&[3.0, 4.0]), 11.0);
         assert!(bc.code.iter().all(|i| i.op.native_supported()));
+    }
+
+    #[test]
+    fn numeric_compiler_rejects_unresolved_assignment() {
+        let allocator = Allocator::default();
+        let source = "function f() { called += 1; return 42; }";
+        let parsed = Parser::new(&allocator, source, SourceType::default()).parse();
+        let function = match &parsed.program.body[0] {
+            Statement::FunctionDeclaration(function) => function,
+            _ => panic!("expected function"),
+        };
+        assert!(
+            BcCompiler::compile_function(function).is_none(),
+            "numeric JIT must not turn a captured/global assignment into a local"
+        );
     }
 
     #[test]
