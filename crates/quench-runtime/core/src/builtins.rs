@@ -328,6 +328,7 @@ builtin_catalog! {
     StringMatch, StringPrototype, "match", native_string_match, Generic, MAY_ALLOCATE;
     StringMatchAll, StringPrototype, "matchAll", native_string_match_all, Generic, MAY_ALLOCATE;
     StringSearch, StringPrototype, "search", native_string_search, Generic, MAY_ALLOCATE;
+    StringIterator, StringPrototype, "Symbol(Symbol.iterator)", native_string_iterator, Generic, MAY_ALLOCATE;
     StringAnchor, StringPrototype, "anchor", native_string_anchor, Generic, MAY_ALLOCATE;
     StringBig, StringPrototype, "big", native_string_big, Generic, MAY_ALLOCATE;
     StringBlink, StringPrototype, "blink", native_string_blink, Generic, MAY_ALLOCATE;
@@ -393,12 +394,21 @@ pub(crate) fn instantiate(vm: &Vm) -> Box<[Value]> {
         .iter()
         .copied()
         .map(|id| {
+            let name = id
+                .recipe()
+                .key
+                .strip_prefix("Symbol(Symbol.")
+                .and_then(|name| name.strip_suffix(')'))
+                .map_or_else(
+                    || id.recipe().key.to_owned(),
+                    |name| format!("[Symbol.{name}]"),
+                );
             let function = Rc::new(FunctionValue {
                 kind: FunctionKind::Builtin(id),
                 strict: false,
                 prototype: vm.allocate_object(Object::ordinary(None)),
                 props: Rc::new(RefCell::new(IndexMap::from([
-                    ("name".to_string(), Value::string_value(id.recipe().key)),
+                    ("name".to_string(), Value::string_value(name)),
                     (
                         "length".to_string(),
                         Value::Number(builtin_length(id) as f64),
