@@ -225,6 +225,7 @@ pub(crate) fn instantiate(vm: &Vm) -> Box<[Value]> {
         .map(|id| {
             let function = Rc::new(FunctionValue {
                 kind: FunctionKind::Builtin(id),
+                strict: false,
                 prototype: vm.allocate_object(Object::ordinary(None)),
                 props: Rc::new(RefCell::new(IndexMap::from([
                     ("name".to_string(), Value::string_value(id.recipe().key)),
@@ -266,7 +267,8 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::ReferenceErrorConstructor
         | BuiltinId::EvalErrorConstructor
         | BuiltinId::AggregateErrorConstructor => 1,
-        BuiltinId::FunctionConstructor | BuiltinId::FunctionBind => 1,
+        BuiltinId::FunctionConstructor | BuiltinId::FunctionBind | BuiltinId::FunctionCall => 1,
+        BuiltinId::FunctionApply => 2,
         BuiltinId::ObjectCreate => 2,
         BuiltinId::ObjectAssign => 2,
         BuiltinId::ParseInt
@@ -349,8 +351,7 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::ObjectToLocaleString
         | BuiltinId::ObjectIsPrototypeOf
         | BuiltinId::ObjectValueOf
-        | BuiltinId::FunctionCall
-        | BuiltinId::FunctionApply => 1,
+        => 1,
         _ => 0,
     }
 }
