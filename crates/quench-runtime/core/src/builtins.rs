@@ -10,6 +10,7 @@ pub(crate) enum BuiltinOwner {
     ArrayPrototype,
     StringPrototype,
     NumberPrototype,
+    BooleanPrototype,
     RegExpPrototype,
     ObjectPrototype,
     FunctionPrototype,
@@ -126,6 +127,8 @@ builtin_catalog! {
     StringConstructor, Global, "String", native_string, Generic, MAY_ALLOCATE;
     NumberConstructor, Global, "Number", native_number, Generic, PURE;
     BooleanConstructor, Global, "Boolean", native_boolean, Generic, PURE;
+    BooleanValueOf, BooleanPrototype, "valueOf", native_boolean_value_of, Generic, PURE;
+    BooleanToString, BooleanPrototype, "toString", native_boolean_to_string, Generic, PURE;
     DateConstructor, Global, "Date", native_date, Generic, PURE;
     RegExpConstructor, Global, "RegExp", native_regexp, Generic, MAY_ALLOCATE;
     ErrorConstructor, Global, "Error", native_error, Generic, MAY_ALLOCATE;
