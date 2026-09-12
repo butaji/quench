@@ -3970,6 +3970,12 @@ fn eq_strict(a: &Value, b: &Value) -> bool {
     }
     false
 }
+fn eq_same_value_zero(a: &Value, b: &Value) -> bool {
+    if let (Some(left), Some(right)) = (a.as_number(), b.as_number()) {
+        return (left.is_nan() && right.is_nan()) || left == right;
+    }
+    eq_strict(a, b)
+}
 fn loose_eq(a: &Value, b: &Value) -> bool {
     if eq_strict(a, b) {
         return true;
@@ -4434,6 +4440,12 @@ impl Vm {
             && let Some(array) = array_value.as_function()
         {
             self.array_proto = Some(array.prototype.clone());
+            let prototype = array.prototype;
+            let mut object = prototype.borrow_mut();
+            if object.array.is_none() {
+                object.array = Some(ArrayStorage::new());
+                object.publish_dense_access();
+            }
         }
     }
 
@@ -6347,6 +6359,94 @@ fn native_array_concat(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
     }
     Ok(vm.object_value(Object::array(None, out)))
 }
+fn array_values(this: &Value) -> Vec<Value> {
+    this.as_object_ref()
+        .and_then(|object| object.borrow().array.as_ref().map(ArrayStorage::to_vec))
+        .unwrap_or_default()
+}
+fn array_callback(vm: &mut Vm, callback: &Value, value: Value, index: usize, array: Value) -> JsResult<Value> {
+    vm.call_arguments(
+        callback,
+        Value::Undefined,
+        &[value, Value::Number(index as f64), array][..],
+    )
+}
+fn native_array_for_each(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(callback) = args.first().filter(|value| value.is_function()) else {
+        return Err(JsError::Throw(type_error(vm, "callback is not a function")));
+    };
+    for (index, value) in array_values(&this).into_iter().enumerate() {
+        array_callback(vm, callback, value, index, this.clone())?;
+    }
+    Ok(Value::Undefined)
+}
+fn native_array_map(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(callback) = args.first().filter(|value| value.is_function()) else {
+        return Err(JsError::Throw(type_error(vm, "callback is not a function")));
+    };
+    let values = array_values(&this);
+    let mut mapped = Vec::with_capacity(values.len());
+    for (index, value) in values.into_iter().enumerate() {
+        mapped.push(array_callback(vm, callback, value, index, this.clone())?);
+    }
+    Ok(vm.array_from_values(mapped))
+}
+fn native_array_filter(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(callback) = args.first().filter(|value| value.is_function()) else {
+        return Err(JsError::Throw(type_error(vm, "callback is not a function")));
+    };
+    let values = array_values(&this);
+    let mut filtered = Vec::new();
+    for (index, value) in values.into_iter().enumerate() {
+        let keep = array_callback(vm, callback, value.clone(), index, this.clone())?.truthy();
+        if keep {
+            filtered.push(value);
+        }
+    }
+    Ok(vm.array_from_values(filtered))
+}
+fn native_array_some(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(callback) = args.first().filter(|value| value.is_function()) else {
+        return Err(JsError::Throw(type_error(vm, "callback is not a function")));
+    };
+    for (index, value) in array_values(&this).into_iter().enumerate() {
+        if array_callback(vm, callback, value, index, this.clone())?.truthy() {
+            return Ok(Value::Bool(true));
+        }
+    }
+    Ok(Value::Bool(false))
+}
+fn native_array_every(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(callback) = args.first().filter(|value| value.is_function()) else {
+        return Err(JsError::Throw(type_error(vm, "callback is not a function")));
+    };
+    for (index, value) in array_values(&this).into_iter().enumerate() {
+        if !array_callback(vm, callback, value, index, this.clone())?.truthy() {
+            return Ok(Value::Bool(false));
+        }
+    }
+    Ok(Value::Bool(true))
+}
+fn native_array_index_of(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let needle = args.first().cloned().unwrap_or(Value::Undefined);
+    let start = args.get(1).map(Value::number).unwrap_or(0.0).max(0.0) as usize;
+    for (index, value) in array_values(&this).into_iter().enumerate().skip(start) {
+        if eq_strict(&value, &needle) {
+            return Ok(Value::Number(index as f64));
+        }
+    }
+    Ok(Value::Number(-1.0))
+}
+fn native_array_includes(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let needle = args.first().cloned().unwrap_or(Value::Undefined);
+    let start = args.get(1).map(Value::number).unwrap_or(0.0).max(0.0) as usize;
+    Ok(Value::Bool(
+        array_values(&this)
+            .into_iter()
+            .skip(start)
+            .any(|value| eq_same_value_zero(&value, &needle)),
+    ))
+}
 fn string_this(this: Value) -> String {
     this.string()
 }
@@ -7503,11 +7603,14 @@ mod tests {
         vm.install_process(Vec::new(), Vec::new());
         vm.run_source_text(
             Path::new("<array-builtins>"),
-            "var a = Array.from('ab'); var b = Array.of(1, 2); var bound = Function.prototype.call.bind(Array.prototype.join); result = bound([1, 2], '-');",
+            "var a = Array.from('ab'); var b = Array.of(1, 2); var mapped = b.map(function (x) { return x + 1; }); var filtered = mapped.filter(function (x) { return x > 2; }); var bound = Function.prototype.call.bind(Array.prototype.join); result = [bound([1, 2], '-'), mapped[1], filtered.length];",
         )
         .expect("array helpers and errors execute");
         let result = Environment::get(&vm.global, "result").expect("result");
-        assert_eq!(result.string(), "1-2");
+        let values = result.as_object().expect("result array").borrow().array.clone().expect("array").values;
+        assert_eq!(values[0].string(), "1-2");
+        assert_eq!(values[1].as_number(), Some(3.0));
+        assert_eq!(values[2].as_number(), Some(1.0));
     }
 
     #[test]
