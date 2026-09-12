@@ -13513,11 +13513,14 @@ fn native_regexp_compile(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
         )));
     };
     let pattern = args.first().cloned().unwrap_or(Value::Undefined);
-    let flags = if let Some(flags) = args.get(1) {
+    let flags = if let Some(flags) = args.get(1).filter(|value| !value.is_undefined()) {
         to_string_with_vm(vm, flags)?
+    } else if let Some(other) = pattern.as_regexp() {
+        other.borrow().flags.clone()
     } else {
-        regexp.borrow().flags.clone()
+        String::new()
     };
+    let flags = canonical_regexp_flags(&flags);
     validate_regexp_flags(vm, &flags)?;
     let source = if pattern.is_undefined() {
         String::new()
@@ -13552,6 +13555,13 @@ fn native_regexp_compile(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
     regexp.last_index = 0;
     regexp.props.insert("lastIndex".into(), Value::Number(0.0));
     Ok(this)
+}
+
+fn canonical_regexp_flags(flags: &str) -> String {
+    "dgimsuvy"
+        .chars()
+        .filter(|flag| flags.contains(*flag))
+        .collect()
 }
 fn compile_regex(pattern: &str, insensitive: bool) -> JsResult<Regex> {
     let normalized = pattern
