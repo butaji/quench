@@ -92,6 +92,12 @@ fn typed_array_enumerable_keys(value: &Value) -> Option<Vec<String>> {
             }
         }
         for key in names {
+            // Typed-array metadata (for example the Float16 marker and
+            // prototype slot) is an internal slot, never an observable own
+            // property during enumeration.
+            if key.starts_with('\0') || key == "constructor" {
+                continue;
+            }
             let enumerable = meta
                 .descriptor(&key)
                 .and_then(|descriptor| match descriptor {
@@ -645,6 +651,7 @@ fn typed_array_own_keys(value: &Value, symbols: bool) -> Vec<String> {
         );
         let extras: Vec<String> = ordered(&names[..], false)
             .into_iter()
+            .filter(|key| !key.starts_with('\0') && key != "constructor")
             .filter(|key| !crate::conversion::is_symbol_string(key))
             .filter(|key| !keys.iter().any(|current| current == key))
             .collect();
