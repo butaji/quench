@@ -26,11 +26,25 @@ pub(crate) const BOUND_REGION_END: usize = 33;
 pub(crate) const BOUND_LOOP_BACKEDGE: usize = 28;
 pub(crate) const ARGUMENTS_REGION_END: usize = 39;
 pub(crate) const ARGUMENTS_LOOP_BACKEDGE: usize = 34;
+/// Current canonical lowering for a local integer recurrence. The loop starts
+/// with its seed/index initialization and re-enters at the bound test.
+pub(crate) const LOCAL_REGION_END: usize = 29;
+pub(crate) const LOCAL_LOOP_HEADER: usize = 6;
+pub(crate) const LOCAL_LOOP_BACKEDGE: usize = 24;
+pub(crate) const LOCAL_LOOP_EXIT: usize = 25;
+/// Loop-header view used when OSR enters the local recurrence after its
+/// initialization prefix has already committed.  The span starts at the
+/// bound test and ends at the canonical value/undefined returns.
+pub(crate) const LOCAL_BODY_REGION_END: usize = 23;
+pub(crate) const LOCAL_BODY_LOOP_BACKEDGE: usize = 18;
+pub(crate) const LOCAL_BODY_LOOP_EXIT: usize = 19;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum IntegerRecurrence {
     Index,
     Constant(i32),
+    LocalConstant(i32),
+    LocalConstantBody(i32),
     NamedCallee(std::rc::Rc<str>),
     DirectCallee(std::rc::Rc<str>),
     EquivalentCallees([std::rc::Rc<str>; 2]),
@@ -56,6 +70,8 @@ impl IntegerRecurrence {
         match self {
             Self::Index => crate::stencil_select::numeric_integer_loop_region_key(),
             Self::Constant(_)
+            | Self::LocalConstant(_)
+            | Self::LocalConstantBody(_)
             | Self::NamedCallee(_)
             | Self::DirectCallee(_)
             | Self::EquivalentCallees(_)
@@ -69,6 +85,8 @@ impl IntegerRecurrence {
         match self {
             Self::Index => Some((multiplier, 0)),
             Self::Constant(value) => Some((multiplier, *value)),
+            Self::LocalConstant(value) => Some((multiplier, *value)),
+            Self::LocalConstantBody(value) => Some((multiplier, *value)),
             Self::ReceiverConstant(value) => Some((multiplier, *value)),
             Self::ArgumentConstants(value) => Some((multiplier, *value)),
             Self::NamedCallee(_)
@@ -78,10 +96,12 @@ impl IntegerRecurrence {
         }
     }
 
-    const fn backedge(&self) -> usize {
+    const fn backedge_offset(&self) -> usize {
         match self {
             Self::Index => INDEX_LOOP_BACKEDGE,
             Self::Constant(_) => CONSTANT_LOOP_BACKEDGE,
+            Self::LocalConstant(_) => LOCAL_LOOP_BACKEDGE,
+            Self::LocalConstantBody(_) => LOCAL_BODY_LOOP_BACKEDGE,
             Self::NamedCallee(_) => NAMED_LOOP_BACKEDGE,
             Self::DirectCallee(_) => DIRECT_LOOP_BACKEDGE,
             Self::EquivalentCallees(_) => POLYMORPHIC_LOOP_BACKEDGE,
@@ -91,22 +111,26 @@ impl IntegerRecurrence {
         }
     }
 
-    const fn loop_header(&self) -> usize {
+    const fn loop_header_offset(&self) -> usize {
         match self {
             Self::DirectCallee(_) => DIRECT_LOOP_HEADER,
             Self::Index | Self::Constant(_) | Self::NamedCallee(_) | Self::EquivalentCallees(_) => {
                 LOOP_HEADER
             }
+            Self::LocalConstant(_) => LOCAL_LOOP_HEADER,
+            Self::LocalConstantBody(_) => 0,
             Self::ReceiverConstant(_) => 12,
             Self::BoundCallee(_) => 13,
             Self::ArgumentConstants(_) => 14,
         }
     }
 
-    const fn region_end(&self) -> usize {
+    const fn region_end_offset(&self) -> usize {
         match self {
             Self::Index => INDEX_REGION_END,
             Self::Constant(_) => CONSTANT_REGION_END,
+            Self::LocalConstant(_) => LOCAL_REGION_END,
+            Self::LocalConstantBody(_) => LOCAL_BODY_REGION_END,
             Self::NamedCallee(_) => NAMED_REGION_END,
             Self::DirectCallee(_) => DIRECT_REGION_END,
             Self::EquivalentCallees(_) => POLYMORPHIC_REGION_END,
@@ -120,6 +144,7 @@ impl IntegerRecurrence {
         match self {
             Self::Index => IntegerLoopProfile::Numeric,
             Self::Constant(_) => IntegerLoopProfile::Affine,
+            Self::LocalConstant(_) | Self::LocalConstantBody(_) => IntegerLoopProfile::Affine,
             Self::NamedCallee(_) => IntegerLoopProfile::CallsInline,
             Self::DirectCallee(_) => IntegerLoopProfile::CallsDirect,
             Self::EquivalentCallees(_) => IntegerLoopProfile::CallsChanging,
@@ -139,9 +164,41 @@ pub(crate) struct IntegerLoopSelection {
     pub(crate) bound_pc: usize,
     pub(crate) multiplier: i32,
     pub(crate) recurrence: IntegerRecurrence,
+    pub(crate) loop_header_pc: usize,
+    pub(crate) backedge_pc: usize,
+    pub(crate) region_end_pc: usize,
+}
+
+impl IntegerLoopSelection {
+    pub(crate) fn at(
+        start: usize,
+        state_slot: u16,
+        value_slot: u16,
+        index_slot: u16,
+        seed_offset: usize,
+        bound_offset: usize,
+        multiplier: i32,
+        recurrence: IntegerRecurrence,
+    ) -> Option<Self> {
+        Some(Self {
+            state_slot,
+            value_slot,
+            index_slot,
+            seed_pc: start.checked_add(seed_offset)?,
+            bound_pc: start.checked_add(bound_offset)?,
+            multiplier,
+            loop_header_pc: start.checked_add(recurrence.loop_header_offset())?,
+            backedge_pc: start.checked_add(recurrence.backedge_offset())?,
+            region_end_pc: start.checked_add(recurrence.region_end_offset())?,
+            recurrence,
+        })
+    }
 }
 
 struct IntegerLoopInputs {
+    /// The committed induction value at entry. Full-loop admission starts at
+    /// zero; the loop-header OSR view carries the live local index forward.
+    index: usize,
     seed: i32,
     end: usize,
     multiplier: i32,
@@ -178,10 +235,8 @@ pub(crate) struct NativeIntegerLoopPlan {
 }
 
 struct AffineMachinePlan {
-    owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
     image: crate::stencil_region_layout::VerifiedRegionImage,
-    cache: crate::stencil_select::RenderedRegionCache,
-    installed: Option<crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>>,
+    physical: crate::stencil_installation::SharedPhysicalEntry<crate::stencil_arena::DispatchEntry>,
 }
 
 impl NativeIntegerLoopPlan {
@@ -205,7 +260,7 @@ impl NativeIntegerLoopPlan {
             return Ok(None);
         };
         let mut context = IntegerLoopContext {
-            index: 0,
+            index: inputs.index,
             end: inputs.end,
             value: inputs.seed,
             multiplier: inputs.multiplier,
@@ -222,6 +277,37 @@ impl NativeIntegerLoopPlan {
         code: CodeView<'_>,
         environment: &crate::environment::Environment,
     ) -> Option<IntegerLoopInputs> {
+        if let IntegerRecurrence::LocalConstant(addend)
+        | IntegerRecurrence::LocalConstantBody(addend) = &self.selection.recurrence
+        {
+            let addend = *addend;
+            let index = Self::initial_index(
+                &self.selection.recurrence,
+                self.selection.index_slot,
+                environment,
+            )?;
+            let seed = crate::stencil_numeric_integer_selection::exact_i32(
+                environment.get_number(self.selection.value_slot)?,
+            )?;
+            let end = environment.with_proven_object(self.selection.state_slot, |object| {
+                crate::vm::cached_own_property_number(code, self.selection.bound_pc, object)
+                    .and_then(crate::stencil_numeric_integer_selection::exact_bound)
+            })??;
+            (index <= end).then_some(())?;
+            crate::stencil_numeric_integer_selection::exact_for_all_iterations(
+                seed,
+                self.selection.multiplier,
+                addend,
+                end,
+            )?;
+            return Some(IntegerLoopInputs {
+                index,
+                seed,
+                end,
+                multiplier: self.selection.multiplier,
+                addend,
+            });
+        }
         environment
             .with_proven_object(self.selection.state_slot, |object| {
                 let seed =
@@ -233,6 +319,7 @@ impl NativeIntegerLoopPlan {
                 let (multiplier, addend) = self.formula(object)?;
                 exact_for_all_iterations(seed, multiplier, addend, end)?;
                 Some(IntegerLoopInputs {
+                    index: 0,
                     seed,
                     end,
                     multiplier,
@@ -240,6 +327,19 @@ impl NativeIntegerLoopPlan {
                 })
             })
             .flatten()
+    }
+
+    fn initial_index(
+        recurrence: &IntegerRecurrence,
+        index_slot: u16,
+        environment: &crate::environment::Environment,
+    ) -> Option<usize> {
+        if matches!(recurrence, IntegerRecurrence::LocalConstantBody(_)) {
+            return crate::stencil_numeric_integer_selection::exact_bound(
+                environment.get_number(index_slot)?,
+            );
+        }
+        Some(0)
     }
 
     fn formula(&self, object: &crate::value::ObjectData) -> Option<(i32, i32)> {
@@ -264,6 +364,8 @@ impl NativeIntegerLoopPlan {
             }
             IntegerRecurrence::Index
             | IntegerRecurrence::Constant(_)
+            | IntegerRecurrence::LocalConstant(_)
+            | IntegerRecurrence::LocalConstantBody(_)
             | IntegerRecurrence::ReceiverConstant(_)
             | IntegerRecurrence::ArgumentConstants(_) => None,
         }
@@ -284,21 +386,17 @@ impl AffineMachinePlan {
         let values = crate::stencil_fact::PatchValues::from_site(&site);
         let image = crate::stencil_region_layout::finalize_selected_leaf(view, &values).ok()?;
         Some(Self {
-            owner,
             image,
-            cache: crate::stencil_select::RenderedRegionCache::new(),
-            installed: None,
+            physical: crate::stencil_installation::SharedPhysicalEntry::new(owner),
         })
     }
 
     fn invoke(&mut self, context: &mut IntegerLoopContext) -> Result<u64, NativeDispatchError> {
         let entry = self.entry()?;
-        let lease = crate::stencil_arena::SharedStencilSlab::acquire_owned(&self.owner, entry)
-            .map_err(|error| {
-                NativeDispatchError::Physical(format!("integer loop lease: {error:?}"))
-            })?;
-        lease
-            .invoke(|call| call((context as *mut IntegerLoopContext).cast()))
+        self.physical
+            .invoke(entry, |call| {
+                call((context as *mut IntegerLoopContext).cast())
+            })
             .map_err(|error| {
                 NativeDispatchError::Physical(format!("integer loop invoke: {error:?}"))
             })
@@ -310,29 +408,18 @@ impl AffineMachinePlan {
         crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>,
         NativeDispatchError,
     > {
-        if let Some(entry) = self
-            .installed
-            .filter(|entry| self.owner.borrow().entry_token_is_live(*entry))
-        {
-            return Ok(entry);
-        }
-        self.installed = None;
-        let address = self
-            .owner
-            .borrow_mut()
-            .publish_region_image_or_get(&mut self.cache, &self.image)
-            .map_err(|error| {
-                NativeDispatchError::Physical(format!("integer loop publish: {error:?}"))
-            })?;
-        let entry = self
-            .owner
-            .borrow()
-            .owned_affine_i32_loop_entry(address)
+        self.physical
+            .entry(
+                |owner, cache| {
+                    owner
+                        .borrow_mut()
+                        .publish_region_image_or_get(cache, &self.image)
+                },
+                |pool, address| pool.owned_affine_i32_loop_entry(address),
+            )
             .map_err(|error| {
                 NativeDispatchError::Physical(format!("integer loop entry: {error:?}"))
-            })?;
-        self.installed = Some(entry);
-        Ok(entry)
+            })
     }
 }
 
@@ -348,19 +435,19 @@ impl NativeIntegerLoopPlan {
             vm.clear_interrupt();
             self.commit(&context, environment);
             return Ok(IntegerLoopOutcome::Resume {
-                pc: self.selection.recurrence.loop_header(),
+                pc: self.selection.loop_header_pc,
                 profile: self.selection.recurrence.profile(),
             });
         }
         if status != crate::vm::NATIVE_DISPATCH_OK || context.index != context.end {
             return Err(NativeDispatchError::committed(
-                self.selection.recurrence.backedge(),
+                self.selection.backedge_pc,
                 "integer recurrence returned incomplete progress",
             ));
         }
         Ok(IntegerLoopOutcome::Completed {
             value: context.value,
-            next: self.selection.recurrence.region_end(),
+            next: self.selection.region_end_pc,
             profile: self.selection.recurrence.profile(),
         })
     }
@@ -450,6 +537,44 @@ fn own_function(
     let pointer = crate::vm::proven_own_word(object, key)?.function_ptr()?;
     unsafe { Rc::increment_strong_count(pointer) };
     Some(unsafe { Rc::from_raw(pointer) })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{IntegerLoopSelection, IntegerRecurrence, NativeIntegerLoopPlan};
+
+    #[test]
+    fn selection_offsets_are_derived_from_cfg_start() {
+        let selection = IntegerLoopSelection::at(17, 2, 3, 4, 1, 9, 33, IntegerRecurrence::Index)
+            .expect("relative recipe offsets fit the code range");
+        assert_eq!(selection.seed_pc, 18);
+        assert_eq!(selection.bound_pc, 26);
+        assert_eq!(selection.loop_header_pc, 24);
+        assert_eq!(selection.backedge_pc, 43);
+        assert_eq!(selection.region_end_pc, 48);
+    }
+
+    #[test]
+    fn osr_loop_header_uses_live_index_and_full_entry_starts_at_zero() {
+        let environment = crate::environment::Environment::new();
+        environment.set(12, crate::value::Value::Number(3.0));
+        assert_eq!(
+            NativeIntegerLoopPlan::initial_index(
+                &IntegerRecurrence::LocalConstantBody(7),
+                12,
+                &environment,
+            ),
+            Some(3)
+        );
+        assert_eq!(
+            NativeIntegerLoopPlan::initial_index(
+                &IntegerRecurrence::LocalConstant(7),
+                12,
+                &environment,
+            ),
+            Some(0)
+        );
+    }
 }
 
 pub(crate) use crate::stencil_numeric_integer_selection::select_integer_loop;

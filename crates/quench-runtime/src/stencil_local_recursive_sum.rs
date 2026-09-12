@@ -1,4 +1,4 @@
-//! Bounded counted sum over a nonescaping tail-recursive increment function.
+//! Counted sum over a nonescaping tail-recursive increment function.
 
 use crate::ir::{Instruction, Opcode};
 use crate::machine::{BaselineEntry, CodeView};
@@ -7,8 +7,6 @@ use crate::ops::{BinaryOp, FunctionKind, Op, UnaryOp};
 pub(crate) const REGION_END: usize = 36;
 const LOOP_HEADER: usize = 13;
 const LOOP_EXIT: usize = 32;
-const MAX_ITERATIONS: usize = 4096;
-const MAX_DEPTH: i32 = 4096;
 const MAX_EXACT_INTEGER: i128 = 1_i128 << 53;
 
 #[derive(Clone, Copy)]
@@ -36,13 +34,10 @@ impl NativeLocalRecursiveSumPlan {
         environment: &crate::environment::Environment,
         context: &crate::vm::VmContext,
     ) -> Option<f64> {
-        let interrupted =
-            unsafe { &*context.interrupt_flag() }.load(std::sync::atomic::Ordering::Relaxed);
-        (!interrupted).then_some(())?;
         let object = environment.retain_proven_object(self.selection.state_slot)?;
         let end = guarded_bound(code, self.selection.bound_pc, &object)?;
         exact_series(end, self.selection.depth)?;
-        Some(execute_recursive_sum(end, self.selection.depth))
+        execute_recursive_sum(end, self.selection.depth, context)
     }
 
     pub(crate) const fn profile_name(&self) -> &'static str {
@@ -63,12 +58,16 @@ impl NativeLocalRecursiveSumPlan {
 }
 
 #[inline(never)]
-extern "C" fn execute_recursive_sum(end: usize, depth: i32) -> f64 {
+fn execute_recursive_sum(end: usize, depth: i32, context: &crate::vm::VmContext) -> Option<f64> {
     let mut result = 0.0;
     for index in 0..end {
+        if unsafe { &*context.interrupt_flag() }.load(std::sync::atomic::Ordering::Acquire) {
+            context.clear_interrupt();
+            return None;
+        }
         result += index as f64 + f64::from(depth);
     }
-    result
+    Some(result)
 }
 
 pub(crate) fn select_local_recursive_sum(
@@ -252,10 +251,7 @@ fn operation_window(entries: &[BaselineEntry]) -> Option<[Instruction; REGION_EN
     values
         .iter()
         .zip(expected)
-        .all(|(actual, expected)| {
-            actual.opcode == expected
-                || (expected == Opcode::GetN && actual.opcode == Opcode::GetNQuickened)
-        })
+        .all(|(actual, expected)| expected.matches_physical_contract(actual.opcode))
         .then_some(values)
 }
 
@@ -266,14 +262,12 @@ fn named_get(
     object: u16,
     name: &str,
 ) -> Option<()> {
-    (matches!(op.opcode, Opcode::GetN | Opcode::GetNQuickened) && op.b == object).then_some(())?;
+    (op.opcode.semantic_opcode() == Opcode::GetN && op.b == object).then_some(())?;
     (code.metadata_at(pc)?.name.as_deref() == Some(name)).then_some(())
 }
 
 fn binary(op: Instruction, operator: BinaryOp, left: u16, right: u16) -> Option<()> {
-    (crate::ir::compact_binary_operator(op.flags) == Some(operator)
-        && op.b == left
-        && op.c == right)
+    (op.opcode.binary_operator(op.flags) == Some(operator) && op.b == left && op.c == right)
         .then_some(())
 }
 
@@ -294,10 +288,8 @@ fn number_i32(code: CodeView<'_>, op: Instruction) -> Option<i32> {
         return None;
     };
     let integer = *value as i32;
-    (op.opcode == Opcode::LoadConst
-        && f64::from(integer) == *value
-        && (0..=MAX_DEPTH).contains(&integer))
-    .then_some(integer)
+    (op.opcode == Opcode::LoadConst && f64::from(integer) == *value && integer >= 0)
+        .then_some(integer)
 }
 
 fn undefined(code: CodeView<'_>, op: Instruction) -> Option<()> {
@@ -314,9 +306,7 @@ fn guarded_bound(
     let value = crate::vm::cached_own_property_number(code, pc, object)?;
     let integer = value as i32;
     (f64::from(integer) == value).then_some(())?;
-    usize::try_from(integer)
-        .ok()
-        .filter(|count| *count <= MAX_ITERATIONS)
+    usize::try_from(integer).ok()
 }
 
 fn exact_series(end: usize, depth: i32) -> Option<()> {

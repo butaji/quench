@@ -6,8 +6,8 @@ The corpus compares JavaScript behavior and resource outcomes. Prerequisites
 describe evidence needed to interpret a result, not mandatory implementation
 steps. A collector, JIT, inline cache, or allocation may legitimately not exist
 or disappear through optimization. Diagnostic availability never changes the
-qualification verdict. Runtime optimization and adding runtime instrumentation
-are outside this delivery's scope.
+qualification verdict. The harness measures existing artifacts; runtime changes
+are tracked in [the task queue](../../tasks/index.json).
 
 ## ADR 2 — Separate measured outcomes from explanations
 
@@ -24,8 +24,8 @@ An edition freezes source and protocol hashes. Qualification runs all scenarios
 and all gates; an aggregate cannot conceal a loss. Legacy workloads remain
 unchanged and explicitly lack reserved variants. Every run is preserved in a
 new artifact path. Finite qualification covers declared inputs, not all possible
-JavaScript or complete production readiness. This implementation does not add CI
-configuration or act on the VM based on findings.
+JavaScript or complete production readiness. The harness does not change VM
+policy based on its findings.
 
 ## Terms
 

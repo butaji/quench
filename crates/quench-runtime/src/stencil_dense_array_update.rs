@@ -83,10 +83,8 @@ pub(crate) enum DenseUpdateOutcome {
 
 pub(crate) struct NativeDenseUpdatePlan {
     selection: DenseUpdateSelection,
-    owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
     image: crate::stencil_region_layout::VerifiedRegionImage,
-    cache: crate::stencil_select::RenderedRegionCache,
-    installed: Option<crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>>,
+    physical: crate::stencil_installation::SharedPhysicalEntry<crate::stencil_arena::DispatchEntry>,
 }
 
 impl NativeDenseUpdatePlan {
@@ -105,10 +103,8 @@ impl NativeDenseUpdatePlan {
         .then_some(())?;
         Some(Self {
             selection,
-            owner,
             image: region_image(view),
-            cache: crate::stencil_select::RenderedRegionCache::new(),
-            installed: None,
+            physical: crate::stencil_installation::SharedPhysicalEntry::new(owner),
         })
     }
 
@@ -137,14 +133,27 @@ impl NativeDenseUpdatePlan {
         environment: &crate::environment::Environment,
         context: &crate::vm::VmContext,
     ) -> Result<Option<DenseUpdateOutcome>, NativeDispatchError> {
+        // Replacement resolution is part of the native-entry proof. Do not
+        // acquire a mutable backing view from a superseded representative;
+        // the post-call stamp remains the guard for re-entrant mutation.
+        if !crate::locals::array_word_is_current(array) {
+            return Ok(None);
+        }
         if !array.is_plain_dense_access() || array.len() != REDUCTION_ELEMENTS {
             return Ok(None);
         }
         let mut words = array.numeric_kernel_words_mut().ok_or_else(|| {
             NativeDispatchError::Physical("dense update backing changed before entry".into())
         })?;
+        let backing = array.backing_identity();
         let mut native = self.native_context(&mut words, delta, context);
         let status = self.invoke(&mut native)?;
+        if !backing.is_current(array) {
+            return Err(NativeDispatchError::committed(
+                LOOP_BACKEDGE,
+                "dense update backing generation changed during native execution",
+            ));
+        }
         let outcome = finish_native(status, &mut native, &words)?;
         if status == crate::vm::NATIVE_DISPATCH_INTERRUPT {
             context.clear_interrupt();
@@ -197,12 +206,10 @@ impl NativeDenseUpdatePlan {
         context: &mut crate::vm::NativeArrayLoopContext,
     ) -> Result<u64, NativeDispatchError> {
         let entry = self.entry()?;
-        let lease = crate::stencil_arena::SharedStencilSlab::acquire_owned(&self.owner, entry)
-            .map_err(|error| {
-                NativeDispatchError::Physical(format!("dense update lease: {error:?}"))
-            })?;
-        lease
-            .invoke(|call| call((context as *mut crate::vm::NativeArrayLoopContext).cast()))
+        self.physical
+            .invoke(entry, |call| {
+                call((context as *mut crate::vm::NativeArrayLoopContext).cast())
+            })
             .map_err(|error| {
                 NativeDispatchError::Physical(format!("dense update invoke: {error:?}"))
             })
@@ -214,28 +221,15 @@ impl NativeDenseUpdatePlan {
         crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>,
         NativeDispatchError,
     > {
-        if let Some(entry) = self.installed {
-            if self.owner.borrow().entry_token_is_live(entry) {
-                return Ok(entry);
-            }
-            self.installed = None;
-        }
-        let address = self
-            .owner
-            .borrow_mut()
-            .publish_region_image_or_get(&mut self.cache, &self.image)
-            .map_err(|error| {
-                NativeDispatchError::Physical(format!("dense update publish: {error:?}"))
-            })?;
-        let entry = self
-            .owner
-            .borrow()
-            .owned_array_numeric_loop_entry(address)
+        let image = &self.image;
+        self.physical
+            .entry(
+                |owner, cache| owner.borrow_mut().publish_region_image_or_get(cache, image),
+                |pool, address| pool.owned_array_numeric_loop_entry(address),
+            )
             .map_err(|error| {
                 NativeDispatchError::Physical(format!("dense update entry: {error:?}"))
-            })?;
-        self.installed = Some(entry);
-        Ok(entry)
+            })
     }
 }
 
@@ -317,7 +311,7 @@ fn operation_window(entries: &[BaselineEntry]) -> Option<[Instruction; REGION_EN
     instructions
         .iter()
         .zip(OPERATIONS)
-        .all(|(instruction, opcode)| instruction.opcode == opcode)
+        .all(|(instruction, opcode)| opcode.matches_physical_contract(instruction.opcode))
         .then_some(instructions)
 }
 

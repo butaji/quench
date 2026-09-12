@@ -1,5 +1,15 @@
 use crate::{execute::VmError, ops::Builtin, value::Value};
 
+fn is_float16_view(view: &crate::value::Uint16ArrayData) -> bool {
+    view.meta.property("\0float16_array").is_some()
+        || view.meta.prototype().is_some_and(|prototype| {
+            matches!(
+                crate::execute::get_property(&prototype, "\0float16_constructor"),
+                Value::Boolean(true)
+            )
+        })
+}
+
 macro_rules! set_number_view {
     ($target:expr, $key:expr, $value:expr, $variant:ident, $convert:expr) => {
         if let Value::$variant(view) = $target {
@@ -181,6 +191,17 @@ fn set_unsigned_property(
     value: &Value,
 ) -> Option<Result<Value, VmError>> {
     set_number_view!(target, key, value, Uint8Array, crate::construct::to_uint8);
+    if let Value::Uint16Array(view) = target {
+        if is_float16_view(view) {
+            let index = typed_array_index(key)?;
+            let number = match crate::conversion::to_number(value) {
+                Ok(number) => number,
+                Err(error) => return Some(Err(error)),
+            };
+            view.set(index, crate::value::float64_to_float16(number));
+            return Some(Ok(target.clone()));
+        }
+    }
     set_number_view!(target, key, value, Uint16Array, crate::construct::to_uint16);
     set_number_view!(target, key, value, Uint32Array, crate::construct::to_uint32);
     None
@@ -527,7 +548,12 @@ fn fill(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError>
         }
         Value::Uint16Array(view) => {
             for index in start..end {
-                view.set(index, crate::construct::to_uint16(number));
+                let encoded = if is_float16_view(view) {
+                    crate::value::float64_to_float16(number)
+                } else {
+                    crate::construct::to_uint16(number)
+                };
+                view.set(index, encoded);
             }
         }
         Value::Uint32Array(view) => {

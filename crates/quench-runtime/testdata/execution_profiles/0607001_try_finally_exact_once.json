@@ -1,16 +1,15 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "number", "value": 105 },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["Try", "Throw", "Catch", "Finally", "Return"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "LoadConst",
+    "Call",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": 105
   },
-  "profile": {
-    "residual": {},
-    "slow": { "TryBoundary": 1 },
-    "stencils": { "try_catch_finally_region": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

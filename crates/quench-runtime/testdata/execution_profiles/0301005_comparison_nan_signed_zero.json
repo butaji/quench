@@ -1,16 +1,44 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "number", "value": 1 },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["numeric", "classify_branch"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "LoadLocal",
+    "StrictNotEqual",
+    "LoadConst",
+    "JumpIfFalse",
+    "LoadConst",
+    "Return",
+    "LoadLocal",
+    "LoadConst",
+    "StrictEqual",
+    "JumpIfFalse",
+    "LoadConst",
+    "LoadLocal",
+    "Div",
+    "LoadConst",
+    "Unary",
+    "StrictEqual",
+    "Move",
+    "Jump",
+    "Move",
+    "LoadConst",
+    "JumpIfFalse",
+    "LoadConst",
+    "Return",
+    "LoadLocal",
+    "LoadConst",
+    "LessThan",
+    "LoadConst",
+    "JumpIfFalse",
+    "LoadConst",
+    "Return",
+    "LoadConst",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": 1
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "number_classify_branch_return": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

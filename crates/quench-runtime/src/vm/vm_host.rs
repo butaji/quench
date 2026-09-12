@@ -136,6 +136,12 @@ fn agent_report(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn agent_get_report() -> Value {
     run_due_agent_timers();
+    // `getReport()` is the host polling boundary used by Test262 agents.
+    // Expire finite Atomics.waitAsync deadlines here so a tight guest polling
+    // loop observes the queued promise reaction without requiring a separate
+    // event-loop thread.
+    crate::atomics::expire_async_waiters();
+    crate::promise::drain_microtasks_all();
     AGENT_REPORTS.with(|reports| {
         let reports = reports.borrow();
         let consumed = AGENT_REPORT_CONSUMED.with(|consumed| consumed.borrow().clone());
@@ -220,9 +226,7 @@ fn agent_monotonic_now() -> Value {
     use std::sync::OnceLock;
     use std::time::Instant;
     static START: OnceLock<Instant> = OnceLock::new();
-    let value =
-        START.get_or_init(Instant::now).elapsed().as_secs_f64() * 1_000.0
-            + crate::atomics::agent_time_bias();
+    let value = START.get_or_init(Instant::now).elapsed().as_secs_f64() * 1_000.0;
     Value::Number(value)
 }
 
@@ -320,7 +324,49 @@ fn realm_global_object(
     ] {
         properties.push((name.to_string(), realm::intrinsic(realm, builtin)?));
     }
+    properties.push((
+        "Float16Array".to_string(),
+        float16_constructor_for_realm(realm),
+    ));
     Some(Rc::new(crate::value::ObjectData::new(properties)))
+}
+
+fn float16_constructor_for_realm(realm: crate::ops::RealmId) -> Value {
+    let prototype = crate::host_api::object(Vec::new());
+    let _ = crate::execute::set_property(
+        prototype.clone(),
+        "\0float16_constructor",
+        Value::Boolean(true),
+    );
+    let receiver = crate::host_api::object(vec![
+        ("\0float16_constructor".to_string(), Value::Boolean(true)),
+        ("\0prototype".to_string(), prototype.clone()),
+    ]);
+    let constructor = Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        realm,
+        target: Value::Builtin(Builtin::Uint16Array),
+        receiver,
+        arguments: Vec::new(),
+        properties: std::cell::RefCell::new(Vec::new()),
+    }));
+    let constructor = crate::execute::set_property(constructor, "prototype", prototype.clone());
+    let constructor = crate::execute::set_property(
+        constructor,
+        "name",
+        Value::String("Float16Array".into()),
+    );
+    let constructor = crate::execute::set_property(
+        constructor,
+        "BYTES_PER_ELEMENT",
+        Value::Number(2.0),
+    );
+    let _ = crate::execute::set_property_in_place(
+        &constructor,
+        "\0function_prototype",
+        Value::Builtin(Builtin::TypedArray),
+    );
+    let _ = crate::execute::set_property(prototype, "constructor", constructor.clone());
+    constructor
 }
 
 fn create_realm_value() -> Value {

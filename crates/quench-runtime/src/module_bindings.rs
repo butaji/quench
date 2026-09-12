@@ -166,7 +166,19 @@ fn unwrap_cells(value: &Value) -> Value {
 }
 
 pub fn drain_jobs() {
-    crate::promise::drain_microtasks_all();
+    loop {
+        crate::atomics::expire_async_waiters();
+        crate::promise::drain_microtasks_all();
+        if !crate::promise::has_pending_jobs() {
+            let Some(wait) = crate::atomics::next_async_wait_duration() else {
+                break;
+            };
+            // Async Atomics waits are host jobs, not promise reactions. Sleep
+            // only until the next finite deadline (or a short poll interval)
+            // so expiry queues the reaction without a busy loop.
+            std::thread::sleep(wait.min(std::time::Duration::from_millis(1)));
+        }
+    }
 }
 
 pub fn reset_module_jobs() {

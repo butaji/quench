@@ -1,16 +1,15 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "number", "value": 120 },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["Binary", "JumpIfFalse", "SubConst", "Call", "Mul", "Return"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "LoadConst",
+    "Call",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": 120
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "recursive_numeric_call": { "entries": 5, "fallbacks": 0 } },
-    "events": { "leaf_hit": 5 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

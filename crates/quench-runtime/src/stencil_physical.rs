@@ -47,11 +47,15 @@ mod aarch64 {
     pub(super) const SUB_W_SHIFTED: P = P::new(0x7FE0_0000, 0x4B00_0000);
     pub(super) const MUL_W: P = P::new(0xFFE0_FC00, 0x1B00_7C00);
     pub(super) const SIGNED_DIVIDE_W: P = P::new(0xFFE0_FC00, 0x1AC0_0C00);
+    pub(super) const UNSIGNED_DIVIDE_X: P = P::new(0xFFE0_FC00, 0x9AC0_0800);
     pub(super) const MULTIPLY_SUBTRACT_W: P = P::new(0xFFE0_8000, 0x1B00_8000);
+    pub(super) const MULTIPLY_SUBTRACT_X: P = P::new(0xFFE0_8000, 0x9B00_8000);
     pub(super) const MULTIPLY_ADD_W: P = P::new(0xFFE0_8000, 0x1B00_0000);
     pub(super) const ADD_X_IMMEDIATE: P = P::new(0xFFC0_0000, 0x9100_0000);
     pub(super) const ADD_W_IMMEDIATE: P = P::new(0x7FC0_0000, 0x1100_0000);
     pub(super) const MOVE_W_IMMEDIATE: P = P::new(0xFF80_0000, 0x5280_0000);
+    pub(super) const MOVE_X_IMMEDIATE: P = P::new(0xFF80_0000, 0xD280_0000);
+    pub(super) const MOVEK_X_IMMEDIATE: P = P::new(0xFF80_0000, 0xF280_0000);
     pub(super) const FP_ADD: P = P::new(0xFF20_FC00, 0x1E20_2800);
     pub(super) const FP_SUB: P = P::new(0xFF20_FC00, 0x1E20_3800);
     pub(super) const FP_MOVE: P = P::new(0xFF20_FC00, 0x1E20_4000);
@@ -59,11 +63,23 @@ mod aarch64 {
     pub(super) const FP_DIV: P = P::new(0xFF20_FC00, 0x1E20_1800);
     pub(super) const FP_IMMEDIATE: P = P::new(0xFF20_1FE0, 0x1E20_1000);
     pub(super) const FP_COMPARE: P = P::new(0xFF20_FC00, 0x1E20_2000);
+    /// Scalar FP conditional select (`fcsel dD, dN, dM, cond`).  The
+    /// condition field and all register fields are operands, not opcode
+    /// identity bits; retaining the broad encoding mask accepts only the
+    /// scalar-double FCSEL family.
+    pub(super) const FP_CONDITIONAL_SELECT: P = P::new(0xFF20_0C00, 0x1E20_0C00);
     pub(super) const FP_TO_UNSIGNED_X: P = P::new(0xFFFF_FC00, 0x9E79_0000);
+    /// Move the raw bits of a scalar double into a GPR (`fmov xD, dN`).
+    /// This is distinct from numeric conversion and therefore has its own
+    /// destination-register effect in the ABI audit.
+    pub(super) const FP_TO_X: P = P::new(0xFFFF_FC00, 0x9E66_0000);
     pub(super) const UNSIGNED_W_TO_FP: P = P::new(0xFFFF_FC00, 0x1E63_0000);
+    pub(super) const UNSIGNED_X_TO_FP: P = P::new(0xFFFF_FC00, 0x9E63_0000);
     pub(super) const SIGNED_W_TO_FP: P = P::new(0xFFFF_FC00, 0x1E62_0000);
     pub(super) const LOAD_LITERAL_X: P = P::new(0xFF00_0000, 0x5800_0000);
     pub(super) const CONDITIONAL_SELECT: P = P::new(0xFFE0_07E0, 0x1A80_07E0);
+    pub(super) const CONDITIONAL_SELECT_W: P = P::new(0x7FE0_0C00, 0x1A80_0000);
+    pub(super) const CONDITIONAL_SELECT_X: P = P::new(0x7FE0_0C00, 0x1A80_0000 | 0x8000_0000);
     pub(super) const CONDITIONAL_INCREMENT: P = P::new(0x7FE0_0C00, 0x1A80_0400);
     pub(super) const AND_W: P = P::new(0xFF00_0000, 0x0A00_0000);
     pub(super) const AND_W_IMMEDIATE: P = P::new(0x7F80_0000, 0x1200_0000);
@@ -75,6 +91,11 @@ mod aarch64 {
     pub(super) const COMPARE_X: P = P::new(0xFFE0_FC1F, 0xEB00_001F);
     pub(super) const COMPARE_W: P = P::new(0xFFE0_FC1F, 0x6B00_001F);
     pub(super) const COMPARE_W_IMMEDIATE: P = P::new(0xFFC0_001F, 0x7100_001F);
+    pub(super) const COMPARE_X_IMMEDIATE: P = P::new(0xFFC0_001F, 0xF100_001F);
+    /// Conditional compare with an immediate (`ccmp xN, #imm, #nzcv, cond`).
+    /// All predicate/immediate fields remain variable; only the instruction
+    /// family and width are admitted here.
+    pub(super) const CONDITIONAL_COMPARE_IMMEDIATE: P = P::new(0x7FE0_0C00, 0x7A40_0800);
     pub(super) const SIGN_EXTEND_W_TO_X: P = P::new(0xFFFF_FC00, 0x9340_7C00);
     pub(super) const MULTIPLY_ADD_X: P = P::new(0xFFE0_8000, 0x9B00_0000);
 }
@@ -150,11 +171,18 @@ pub(crate) fn simd_clobber_mask(bytes: &[u8]) -> u16 {
                     || aarch64::FP_SUB.matches(encoded)
                     || aarch64::FP_MUL.matches(encoded)
                     || aarch64::FP_DIV.matches(encoded);
+                let fp_conditional_select = aarch64::FP_CONDITIONAL_SELECT.matches(encoded);
                 let fp_move = aarch64::FP_MOVE.matches(encoded);
                 let fp_immediate = aarch64::FP_IMMEDIATE.matches(encoded);
                 let integer_to_fp = aarch64::UNSIGNED_W_TO_FP.matches(encoded)
+                    || aarch64::UNSIGNED_X_TO_FP.matches(encoded)
                     || aarch64::SIGNED_W_TO_FP.matches(encoded);
-                (fp_load || fp_arith || fp_move || fp_immediate || integer_to_fp)
+                (fp_load
+                    || fp_arith
+                    || fp_conditional_select
+                    || fp_move
+                    || fp_immediate
+                    || integer_to_fp)
                     .then_some((encoded & 0x1f) as u16)
             })
             .fold(0u16, |mask, register| {
@@ -187,22 +215,29 @@ pub(crate) fn gpr_clobber_mask(bytes: &[u8]) -> u16 {
                     || aarch64::SUB_W_SHIFTED.matches(encoded)
                     || aarch64::MUL_W.matches(encoded)
                     || aarch64::SIGNED_DIVIDE_W.matches(encoded)
+                    || aarch64::UNSIGNED_DIVIDE_X.matches(encoded)
                     || aarch64::MULTIPLY_SUBTRACT_W.matches(encoded)
+                    || aarch64::MULTIPLY_SUBTRACT_X.matches(encoded)
                     || aarch64::MULTIPLY_ADD_W.matches(encoded)
                     || aarch64::MULTIPLY_ADD_X.matches(encoded)
                     || aarch64::ADD_X_IMMEDIATE.matches(encoded)
                     || aarch64::ADD_W_IMMEDIATE.matches(encoded)
                     || aarch64::MOVE_W_IMMEDIATE.matches(encoded)
+                    || aarch64::MOVE_X_IMMEDIATE.matches(encoded)
+                    || aarch64::MOVEK_X_IMMEDIATE.matches(encoded)
                     || aarch64::LOAD_BYTE.matches(encoded);
                 let writes_rt = writes_rt
                     || aarch64::FP_TO_UNSIGNED_X.matches(encoded)
+                    || aarch64::FP_TO_X.matches(encoded)
                     || aarch64::SIGN_EXTEND_W_TO_X.matches(encoded);
                 let writes_rt = writes_rt || aarch64::AND_W_IMMEDIATE.matches(encoded);
                 let writes_rt = writes_rt
                     || aarch64::AND_W.matches(encoded)
                     || aarch64::OR_W.matches(encoded)
                     || aarch64::XOR_W.matches(encoded);
-                let conditional_select = aarch64::CONDITIONAL_INCREMENT.matches(encoded);
+                let conditional_select = aarch64::CONDITIONAL_INCREMENT.matches(encoded)
+                    || aarch64::CONDITIONAL_SELECT_W.matches(encoded)
+                    || aarch64::CONDITIONAL_SELECT_X.matches(encoded);
                 (writes_rt || conditional_select).then_some((encoded & 0x1f) as u16)
             })
             .fold(0u16, |mask, register| {
@@ -319,11 +354,15 @@ fn known_aarch64_instruction(encoded: u32) -> bool {
         aarch64::SUB_W_SHIFTED,
         aarch64::MUL_W,
         aarch64::SIGNED_DIVIDE_W,
+        aarch64::UNSIGNED_DIVIDE_X,
         aarch64::MULTIPLY_SUBTRACT_W,
+        aarch64::MULTIPLY_SUBTRACT_X,
         aarch64::MULTIPLY_ADD_W,
         aarch64::ADD_X_IMMEDIATE,
         aarch64::ADD_W_IMMEDIATE,
         aarch64::MOVE_W_IMMEDIATE,
+        aarch64::MOVE_X_IMMEDIATE,
+        aarch64::MOVEK_X_IMMEDIATE,
         aarch64::DIRECT_BRANCH,
         aarch64::CONDITIONAL_BRANCH,
         aarch64::COMPARE_BRANCH_ZERO,
@@ -338,10 +377,15 @@ fn known_aarch64_instruction(encoded: u32) -> bool {
         aarch64::INDIRECT_BRANCH,
         aarch64::INDIRECT_CALL,
         aarch64::FP_COMPARE,
+        aarch64::FP_CONDITIONAL_SELECT,
         aarch64::FP_TO_UNSIGNED_X,
+        aarch64::FP_TO_X,
         aarch64::UNSIGNED_W_TO_FP,
+        aarch64::UNSIGNED_X_TO_FP,
         aarch64::SIGNED_W_TO_FP,
         aarch64::CONDITIONAL_SELECT,
+        aarch64::CONDITIONAL_SELECT_W,
+        aarch64::CONDITIONAL_SELECT_X,
         aarch64::CONDITIONAL_INCREMENT,
         aarch64::AND_W,
         aarch64::AND_W_IMMEDIATE,
@@ -353,6 +397,8 @@ fn known_aarch64_instruction(encoded: u32) -> bool {
         aarch64::COMPARE_X,
         aarch64::COMPARE_W,
         aarch64::COMPARE_W_IMMEDIATE,
+        aarch64::COMPARE_X_IMMEDIATE,
+        aarch64::CONDITIONAL_COMPARE_IMMEDIATE,
         aarch64::SIGN_EXTEND_W_TO_X,
         aarch64::MULTIPLY_ADD_X,
     ];
@@ -396,5 +442,30 @@ mod tests {
             .flat_map(u32::to_le_bytes)
             .collect::<Vec<_>>();
         assert!(contains_interrupt_checkpoint(&bytes));
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn validator_accepts_emitted_scalar_m4_forms() {
+        // These encodings occur in generated numeric/word artifacts. Keep
+        // the decoder vocabulary tied to actual emitted instructions rather
+        // than broadening it to an entire ISA class.
+        let words = [
+            0x1E62_4C62, // fcsel d2, d3, d2, mi
+            0x9E66_0008, // fmov x8, d0
+            0xFA40_0904, // ccmp x8, #0, #4, eq
+            0xD280_0029, // mov x9, #1
+            0xF2C8_0009, // movk x9, #0x4000, lsl #32
+            0x9A8B_0189, // csel x9, x12, x11, eq
+            0x9AC3_0824, // udiv x4, x1, x3
+            0x9B03_8484, // msub x4, x4, x3, x1
+            0x9E63_0084, // ucvtf d4, x4
+            0xF100_009F, // cmp x4, #0
+        ];
+        let bytes = words
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect::<Vec<_>>();
+        validate_aarch64_instruction_stream(&bytes).expect("emitted scalar forms are recognized");
     }
 }

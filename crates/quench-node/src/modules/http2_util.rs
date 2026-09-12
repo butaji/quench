@@ -121,7 +121,14 @@ fn packed_settings(values: &[Value]) -> Result<Value, VmError> {
     }
 
     let mut entries = Vec::new();
-    push_numeric_setting(settings, "headerTableSize", 1, 0.0, u32::MAX as f64, &mut entries)?;
+    push_numeric_setting(
+        settings,
+        "headerTableSize",
+        1,
+        0.0,
+        u32::MAX as f64,
+        &mut entries,
+    )?;
     push_boolean_setting(settings, "enablePush", 2, &mut entries)?;
     push_numeric_setting(
         settings,
@@ -314,7 +321,11 @@ fn unpacked_settings(values: &[Value]) -> Result<Value, VmError> {
             3 => set_number(&mut result, "maxConcurrentStreams", value),
             4 => {
                 if validate && value > 2_147_483_647 {
-                    return invalid_setting("initialWindowSize", &Value::Number(value as f64), false);
+                    return invalid_setting(
+                        "initialWindowSize",
+                        &Value::Number(value as f64),
+                        false,
+                    );
                 }
                 set_number(&mut result, "initialWindowSize", value)
             }
@@ -373,22 +384,18 @@ fn typed_array_elements(value: &Value) -> Option<Vec<u8>> {
     };
     Some(
         (0..length)
-            .filter_map(|index| match quench_runtime::to_number(&execute::get_property(
-                value,
-                &index.to_string(),
-            )) {
-                Ok(number) if number.is_finite() => Some(number as u8),
-                _ => None,
+            .filter_map(|index| {
+                match quench_runtime::to_number(&execute::get_property(value, &index.to_string())) {
+                    Ok(number) if number.is_finite() => Some(number as u8),
+                    _ => None,
+                }
             })
             .collect(),
     )
 }
 
 pub fn binding() -> Value {
-    let session = host_api::bound_builtin(
-        quench_runtime::ops::Builtin::Object,
-        Value::Undefined,
-    );
+    let session = host_api::bound_builtin(quench_runtime::ops::Builtin::Object, Value::Undefined);
     let error_string = host_api::bound_capability_with_arguments(
         crate::host::capability_ref(crate::registry::SPEC_INTERNAL_HTTP2_UTIL),
         vec![Value::String("errorString".into())],
@@ -787,8 +794,8 @@ mod tests {
         assert_eq!(
             bytes(&packed),
             vec![
-                0, 1, 0, 0, 16, 0, 0, 2, 0, 0, 0, 1, 0, 3, 255, 255, 255, 255, 0, 4,
-                0, 64, 0, 0, 0, 5, 0, 0, 64, 0, 0, 6, 0, 0, 255, 255, 0, 8, 0, 0, 0, 0,
+                0, 1, 0, 0, 16, 0, 0, 2, 0, 0, 0, 1, 0, 3, 255, 255, 255, 255, 0, 4, 0, 64, 0, 0,
+                0, 5, 0, 0, 64, 0, 0, 6, 0, 0, 255, 255, 0, 8, 0, 0, 0, 0,
             ]
         );
     }

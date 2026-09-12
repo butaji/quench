@@ -24,10 +24,7 @@ fn own_field_return(function: &crate::value::FunctionValue) -> Option<OwnFieldRe
     let parameter = u16::try_from(function.captures.len()).ok()?;
     (load.opcode == crate::ir::Opcode::LoadLocal
         && load.b == parameter
-        && matches!(
-            get.opcode,
-            crate::ir::Opcode::GetN | crate::ir::Opcode::GetNQuickened
-        )
+        && get.opcode.semantic_opcode() == crate::ir::Opcode::GetN
         && get.b == load.a
         && ret == crate::ir::Instruction::ret(get.a)
         && undefined_tail(code))

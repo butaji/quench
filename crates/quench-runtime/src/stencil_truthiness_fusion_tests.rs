@@ -6,7 +6,6 @@ use std::collections::BTreeSet;
 fn baseline_entry(instruction: crate::ir::Instruction) -> crate::machine::BaselineEntry {
     crate::machine::BaselineEntry {
         instruction,
-        handler: instruction.opcode.handler(),
         control: instruction.opcode.control_operands(instruction),
     }
 }
@@ -30,7 +29,7 @@ fn truthiness_selection_skips_only_dead_values() {
             None,
             instructions[2],
             live,
-            control,
+            control.clone(),
             discarded,
         )
     };

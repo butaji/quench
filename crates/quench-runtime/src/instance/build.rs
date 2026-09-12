@@ -6,7 +6,6 @@ use std::rc::Rc;
 use super::const_eval;
 use super::{registry, Func, Global, Inner, Instance, InvokeError, Memory, ResolvedImport, Table};
 use crate::hir::{ConstExpr, Export, HirElem, HirMemory, HirModule, HirTable};
-use crate::mir;
 use crate::native::{Native, RefVal};
 use crate::slot::Slot;
 use crate::unwind::{Failure, Trap};
@@ -37,7 +36,7 @@ pub fn from_hir_imports(
         }
     }
     funcs.extend(module.funcs.into_vec().into_iter().map(|func| match func {
-        Some(func) => Func::Code(mir::specialise(func)),
+        Some(func) => Func::Code(func),
         None => Func::Unsupported,
     }));
     for ty in module.memories.iter() {

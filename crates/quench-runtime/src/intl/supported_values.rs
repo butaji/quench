@@ -92,10 +92,27 @@ pub(crate) const NUMBERING_SYSTEMS: &[&str] = &[
 ];
 
 pub(crate) fn supported_time_zones() -> Vec<Value> {
-    chrono_tz::TZ_VARIANTS
+    let mut names = chrono_tz::TZ_VARIANTS
         .iter()
-        .map(|timezone| Value::String(timezone.name().to_string()))
-        .collect()
+        .filter(|timezone| {
+            !matches!(
+                timezone.name(),
+                "Etc/GMT"
+                    | "Etc/GMT+0"
+                    | "Etc/GMT-0"
+                    | "Etc/GMT0"
+                    | "Etc/Greenwich"
+                    | "Etc/UCT"
+                    | "Etc/UTC"
+                    | "Etc/Universal"
+                    | "Etc/Zulu"
+            )
+        })
+        .map(|timezone| crate::temporal::timezone_primary_name(timezone.name()).to_string())
+        .collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    names.into_iter().map(Value::String).collect()
 }
 
 pub(crate) const UNITS: &[&str] = &[

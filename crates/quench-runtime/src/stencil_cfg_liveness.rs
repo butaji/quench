@@ -1,4 +1,4 @@
-//! Bounded register-liveness fixed point over canonical CFG successors.
+//! Register-liveness fixed point over canonical CFG successors.
 
 use super::{BaselineEntry, Successors};
 use std::collections::BTreeSet;
@@ -8,12 +8,76 @@ pub(super) fn register_liveness(
     operand_windows: &[Option<&[u16]>],
     successors: &[Successors],
 ) -> Vec<BTreeSet<u16>> {
-    bounded_register_liveness(
-        entries,
-        operand_windows,
-        successors,
-        entries.len().saturating_mul(2).saturating_add(1),
-    )
+    fixed_point_register_liveness(entries, operand_windows, successors)
+}
+
+/// Compute the exact monotone liveness fixed point without tying convergence
+/// to source size. The old round cap (`2 * instruction_count + 1`) was only a
+/// heuristic: long diamonds and loop nests could exhaust it and pessimistically
+/// mark every register live, which then prevented otherwise valid native
+/// regions. A worklist visits a node again only when one of its successor facts
+/// changes, so the only termination bound is the finite register/edge lattice.
+fn fixed_point_register_liveness(
+    entries: &[BaselineEntry],
+    operand_windows: &[Option<&[u16]>],
+    successors: &[Successors],
+) -> Vec<BTreeSet<u16>> {
+    let conservative = conservative_registers(entries, operand_windows);
+    let mut live_in = vec![BTreeSet::new(); entries.len()];
+    let mut live_out = live_in.clone();
+    let mut predecessors = match predecessor_table(successors) {
+        Some(predecessors) => predecessors,
+        None => return vec![conservative; entries.len()],
+    };
+    let mut worklist = Vec::new();
+    if worklist.try_reserve(entries.len()).is_err() {
+        return vec![conservative; entries.len()];
+    }
+    worklist.extend(0..entries.len());
+    let mut queued = vec![true; entries.len()];
+    while let Some(pc) = worklist.pop() {
+        queued[pc] = false;
+        let output = successor_input_union(&successors[pc], &live_in);
+        let flow = entries[pc].instruction.register_flow();
+        let input = live_input(
+            &output,
+            flow,
+            operand_windows.get(pc).copied().flatten(),
+            &conservative,
+        );
+        if live_out[pc] == output && live_in[pc] == input {
+            continue;
+        }
+        live_out[pc] = output;
+        live_in[pc] = input;
+        let Some(incoming) = predecessors.get(pc) else {
+            return vec![conservative; entries.len()];
+        };
+        // A predecessor is enqueued when this node changes. The queued bit is
+        // only scheduler state, not another liveness fact; it prevents a
+        // high-fan-in loop from accumulating redundant visits.
+        for &predecessor in incoming {
+            if !queued[predecessor] {
+                queued[predecessor] = true;
+                worklist.push(predecessor);
+            }
+        }
+    }
+    live_out
+}
+
+fn predecessor_table(successors: &[Successors]) -> Option<Vec<Vec<usize>>> {
+    let mut predecessors = Vec::new();
+    predecessors.try_reserve(successors.len()).ok()?;
+    predecessors.resize_with(successors.len(), Vec::new);
+    for (pc, edges) in successors.iter().enumerate() {
+        for successor in edges.iter() {
+            let incoming = predecessors.get_mut(successor)?;
+            incoming.try_reserve(1).ok()?;
+            incoming.push(pc);
+        }
+    }
+    Some(predecessors)
 }
 
 pub(super) fn live_inputs(

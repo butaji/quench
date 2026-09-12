@@ -120,7 +120,10 @@ fn ordinary_source_reaches_fused_unsigned_shift_and_store() {
         };
         let selection = native.borrow().selection();
         if selection.result.store_slot.is_none()
-            || crate::ir::compact_binary_operator(selection.operation.flags)
+            || selection
+                .operation
+                .opcode
+                .binary_operator(selection.operation.flags)
                 != Some(BinaryOp::ShiftRightZeroFill)
         {
             return;

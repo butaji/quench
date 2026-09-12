@@ -1,16 +1,20 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "string", "value": "A2 BB21" },
-  "plan": {
-    "execution_kind": "portable_recipe",
-    "operation_route": ["compiled_regexp_plan", "capture_workspace", "replacement_callback_boundary", "string_builder"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadConst",
+    "GetN",
+    "MakeBuiltin",
+    "LoadConst",
+    "LoadConst",
+    "Construct",
+    "MakeFunctionWithKind",
+    "CallN",
+    "Return"
+  ],
+  "result": {
+    "kind": "string",
+    "value": "A2 BB21"
   },
-  "profile": {
-    "residual": {},
-    "slow": { "replacement_callback": 2 },
-    "stencils": { "compiled_capture_replace": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

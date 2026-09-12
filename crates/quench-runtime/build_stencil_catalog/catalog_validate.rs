@@ -1,3 +1,22 @@
+macro_rules! canonical_physical_alias_rows {
+    ($($canonical:ident => $physical:ident),+ $(,)?) => {
+        const CANONICAL_PHYSICAL_ALIASES: &[(&str, &str)] = &[
+            $( (stringify!($canonical), stringify!($physical)), )+
+        ];
+    };
+}
+
+macro_rules! canonical_cold_alias_rows {
+    ($($canonical:ident => $cold:ident),+ $(,)?) => {
+        const CANONICAL_COLD_ALIASES: &[(&str, &str)] = &[
+            $( (stringify!($canonical), stringify!($cold)), )+
+        ];
+    };
+}
+
+with_canonical_physical_alias_catalog!(canonical_physical_alias_rows);
+with_canonical_cold_alias_catalog!(canonical_cold_alias_rows);
+
 fn validate_catalog_declaration(declaration: &RegionDeclaration) {
     let byte_len = declaration
         .x86_bytes
@@ -86,6 +105,16 @@ fn validate_stencil_declarations(declarations: &[RegionDeclaration]) {
         .map(|path| fs::read_to_string(path).expect("read stencil selector module"))
         .collect::<String>();
     let ir = fs::read_to_string("src/ir.rs").expect("read canonical opcode declaration");
+    let opcode_names = extract_opcode_names(&ir);
+    let dispatch = declarations
+        .iter()
+        .find(|declaration| declaration.name == "dispatch")
+        .expect("dispatch stencil declaration");
+    assert_eq!(
+        dispatch.operations,
+        opcode_names.as_slice(),
+        "dispatch stencil must cover the canonical opcode catalog exactly"
+    );
     for required in ["RegionKey", "HoleKind", "PatchValues", "BoxingFact"] {
         assert!(facts.contains(required), "stencil facts missing {required}");
     }
@@ -113,23 +142,291 @@ fn validate_stencil_declarations(declarations: &[RegionDeclaration]) {
         }
     }
     println!("cargo:rerun-if-changed=src/stencil_fact.rs");
+    println!("cargo:rerun-if-changed=src/ir.rs");
     for path in selector_paths {
         println!("cargo:rerun-if-changed={path}");
     }
 }
 
+fn extract_opcode_names(source: &str) -> Vec<&str> {
+    extract_opcode_rows(source)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect()
+}
+
+fn extract_cold_opcode_names(source: &str) -> Vec<&str> {
+    extract_opcode_rows(source)
+        .into_iter()
+        .filter_map(|(name, cold)| cold.then_some(name))
+        .collect()
+}
+
+fn extract_opcode_rows(source: &str) -> Vec<(&str, bool)> {
+    let body = source
+        .rsplit_once("vm_op! {")
+        .and_then(|(_, body)| body.split_once("\n}"))
+        .map(|(body, _)| body)
+        .expect("canonical vm_op catalog");
+    body.lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            let end = line.find(" = ")?;
+            let name = &line[..end];
+            (!name.is_empty()
+                && name
+                    .chars()
+                    .next()
+                    .is_some_and(|value| value.is_ascii_uppercase()))
+            .then_some((name, line.contains("@ cold")))
+        })
+        .collect()
+}
+
+fn canonical_physical_opcode<'a>(name: &str, opcode_names: &'a [&'a str]) -> Option<&'a str> {
+    CANONICAL_PHYSICAL_ALIASES
+        .iter()
+        .find_map(|(canonical, physical)| (*canonical == name).then_some(*physical))
+        .or_else(|| opcode_names.iter().copied().find(|opcode| *opcode == name))
+}
+
+fn canonical_typed_cold_opcode<'a>(
+    name: &str,
+    physical_opcode: Option<&'a str>,
+    cold_opcodes: &[&'a str],
+) -> Option<&'a str> {
+    CANONICAL_COLD_ALIASES
+        .iter()
+        .find_map(|(canonical, cold)| (*canonical == name).then_some(*cold))
+        .or_else(|| physical_opcode.filter(|opcode| cold_opcodes.iter().any(|cold| cold == opcode)))
+}
+
 fn generate_op_names() {
     let source = fs::read_to_string("src/ops_op.rs").expect("read canonical Op declaration");
     let variants = extract_op_variants(&source);
-    assert!(variants.len() >= 90, "incomplete Op variant extraction");
+    assert!(!variants.is_empty(), "incomplete Op variant extraction");
+    let ir = fs::read_to_string("src/ir.rs").expect("read canonical opcode declaration");
+    let opcode_names = extract_opcode_names(&ir);
+    let cold_opcodes = extract_cold_opcode_names(&ir);
+    for (canonical, physical) in CANONICAL_PHYSICAL_ALIASES {
+        assert!(
+            variants.iter().any(|(name, _, _)| name == canonical),
+            "physical alias names unknown canonical operation {canonical}"
+        );
+        assert!(
+            opcode_names.iter().any(|name| name == physical),
+            "physical alias {canonical} names unknown opcode {physical}"
+        );
+    }
+    for (canonical, cold) in CANONICAL_COLD_ALIASES {
+        assert!(
+            variants.iter().any(|(name, _, _)| name == canonical),
+            "cold alias names unknown canonical operation {canonical}"
+        );
+        assert!(
+            cold_opcodes.iter().any(|name| name == cold),
+            "cold alias {canonical} names non-cold opcode {cold}"
+        );
+    }
+    // Every typed cold opcode must have one canonical operation spelling (or
+    // one of the two intentional physical aliases). Keep this relationship
+    // in the generated matrix instead of allowing orphaned physical rows.
+    for opcode in &cold_opcodes {
+        // `Slow` is the shared physical gateway for canonical variants that
+        // have no dedicated typed row; `Loop` is the physical spelling whose
+        // semantic structured operation maps to the `ForI` gateway. Both are
+        // intentional aliases without a one-to-one matrix row.
+        if matches!(*opcode, "Slow" | "Loop") {
+            continue;
+        }
+        let represented = variants.iter().any(|(name, _, _)| match *name {
+            "Call" => *opcode == "CallSlow",
+            "Loop" => *opcode == "ForI",
+            name => name == *opcode,
+        });
+        assert!(
+            represented,
+            "typed cold opcode {opcode} has no canonical Op matrix row"
+        );
+    }
+    let physical_opcodes = variants
+        .iter()
+        .map(|(name, _, _)| canonical_physical_opcode(name, &opcode_names))
+        .collect::<Vec<_>>();
     let arms = variants
         .iter()
         .map(op_name_arm)
         .collect::<Vec<_>>()
         .join("\n");
-    let generated = format!(
-        "impl Op {{\n    pub const fn variant_name(&self) -> &'static str {{\n        match self {{\n{arms}\n        }}\n    }}\n}}\n"
+    let matrix_rows = variants
+        .iter()
+        .zip(physical_opcodes.iter())
+        .map(|((name, _, cfg), physical_opcode)| {
+            let typed_cold_opcode = canonical_typed_cold_opcode(
+                name,
+                *physical_opcode,
+                &cold_opcodes,
+            );
+            let cfg = cfg.map_or(String::new(), |cfg| format!("        {cfg}\n"));
+            let physical_opcode = physical_opcode.map_or_else(
+                || "None".to_owned(),
+                |opcode| format!("Some(crate::ir::Opcode::{opcode})"),
+            );
+            let typed_cold_opcode = typed_cold_opcode.map_or_else(
+                || "None".to_owned(),
+                |opcode| format!("Some(crate::ir::Opcode::{opcode})"),
+            );
+            format!(
+                "{cfg}        CanonicalOpLowering {{ name: {name:?}, physical_opcode: {physical_opcode}, typed_cold_opcode: {typed_cold_opcode} }},"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let names = variants
+        .iter()
+        .map(|(_, declaration, cfg)| {
+            let name = declaration
+                .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+                .next()
+                .expect("variant name");
+            let cfg = cfg.map_or(String::new(), |cfg| format!("        {cfg}\n"));
+            format!("{cfg}        \"{name}\",")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let cold_arms = variants
+        .iter()
+        .zip(physical_opcodes.iter())
+        .map(|((name, declaration, cfg), physical_opcode)| {
+            let physical_opcode = canonical_typed_cold_opcode(
+                name,
+                *physical_opcode,
+                &cold_opcodes,
+            );
+            let cfg = cfg.map_or(String::new(), |cfg| format!("        {cfg}\n"));
+            let result = physical_opcode.map_or_else(
+                || "None".to_owned(),
+                |opcode| format!("Some(crate::ir::Opcode::{opcode})"),
+            );
+            format!(
+                "{cfg}            Self::{pattern} => {result},",
+                pattern = op_pattern(name, declaration),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let physical_arms = variants
+        .iter()
+        .zip(physical_opcodes.iter())
+        .map(|((name, declaration, cfg), physical_opcode)| {
+            let cfg = cfg.map_or(String::new(), |cfg| format!("        {cfg}\n"));
+            let result = physical_opcode.map_or_else(
+                || "None".to_owned(),
+                |opcode| format!("Some(crate::ir::Opcode::{opcode})"),
+            );
+            format!(
+                "{cfg}            Self::{pattern} => {result},",
+                pattern = op_pattern(name, declaration),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let fallback_arms = variants
+        .iter()
+        .map(|(name, declaration, cfg)| {
+            let cfg = cfg.map_or(String::new(), |cfg| format!("        {cfg}\n"));
+            format!(
+                "{cfg}            Self::{pattern} => None,",
+                pattern = op_pattern(name, declaration),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut generated = format!(
+        "#[derive(Clone, Copy, Debug, Eq, PartialEq)]\n\
+pub struct CanonicalOpLowering {{\n    pub name: &'static str,\n    pub physical_opcode: Option<crate::ir::Opcode>,\n    pub typed_cold_opcode: Option<crate::ir::Opcode>,\n}}\n\n\
+impl Op {{\n    /// Exhaustive names of the canonical operation variants.  This view is\n    generated from the enum declaration so coverage audits cannot silently\n    omit a newly added operation.\n    pub const VARIANT_NAMES: &'static [&'static str] = &[\n{names}\n    ];\n\n    /// One generated row for every canonical operation variant.  `None`\n    means the instance is compact-lowered or uses its named generic\n    fallback; operation-specific fields decide which at lowering time.\n    /// The table is derived from `Op` and the physical opcode catalog, so it\n    cannot become a second hand-maintained coverage list.\n    pub const LOWERING_MATRIX: &'static [CanonicalOpLowering] = &[\n{matrix_rows}\n    ];\n\n    pub const fn variant_name(&self) -> &'static str {{\n        match self {{\n{arms}\n        }}\n    }}\n\n    /// Resolve a canonical operation to its generated typed cold opcode.\n    /// Every variant has an explicit arm. `None` means that the operation has\n    /// no typed cold spelling; its ordinary compact lowering or named generic\n    /// semantic fallback owns the next boundary. `Call`/`CallSlow` and\n    /// `Loop`/`ForI` are intentional physical-name aliases in the\n    /// declaration. Keeping these arms exhaustive makes a\n    /// new variant visible to this physical lowering audit instead of silently\n    /// entering a wildcard branch.\n    pub const fn cold_opcode(&self) -> Option<crate::ir::Opcode> {{\n        match self {{\n{cold_arms}\n        }}\n    }}\n}}\n",
+        names = names,
+        matrix_rows = matrix_rows,
+        arms = arms,
+        cold_arms = cold_arms,
     );
+    // The format string uses line continuations; normalize the generated
+    // documentation and insert the shared catalog view below.
+    generated = generated
+        .replace(
+            "}\n\nimpl Op {",
+            "}\n\nimpl CanonicalOpLowering {\n    /// Borrow shared operand/effect/control facts for this physical row.\n    pub const fn operation_spec(self) -> Option<&'static crate::facts::OperationSpec> {\n        match self.physical_opcode {\n            Some(opcode) => Some(opcode.spec()),\n            None => None,\n        }\n    }\n}\n\nimpl Op {",
+        )
+        .replace(
+            "\n    generated from the enum declaration",
+            "\n    /// generated from the enum declaration",
+        )
+        .replace(
+            "\n    omit a newly added operation.",
+            "\n    /// omit a newly added operation.",
+        )
+        .replace(
+            "\n    means the instance is compact-lowered",
+            "\n    /// means the instance is compact-lowered",
+        )
+        .replace(
+            "\n    fallback; operation-specific fields decide",
+            "\n    /// fallback; operation-specific fields decide",
+        )
+        .replace(
+            "\n    cannot become a second hand-maintained coverage list.",
+            "\n    /// cannot become a second hand-maintained coverage list.",
+        );
+    let closing = generated
+        .rfind("}\n")
+        .expect("generated Op impl closing brace");
+    let boundary_methods = r#"
+    /// Resolve the generated physical opcode for this canonical operation.
+    /// This exhaustive view is consumed by diagnostics and selectors that
+    /// need the physical spelling without re-parsing the operation variant.
+    pub const fn physical_opcode(&self) -> Option<crate::ir::Opcode> {
+        match self {
+__PHYSICAL_ARMS__
+        }
+    }
+
+    /// Classify the physical boundary for this canonical operation instance.
+    /// Compact lowering remains the fixed-width path (with range-owned data
+    /// supplied by the encoder), typed cold rows retain their generated opcode,
+    /// and every generic fallback is named by the canonical variant itself.
+    /// This view is derived from the existing lowering authority; it is not a
+    /// second semantic operation set.
+    pub fn lowering_boundary(&self) -> crate::ir::LoweringBoundary {
+        if crate::ir::has_compact_boundary(self) {
+            crate::ir::LoweringBoundary::Compact
+        } else if let Some(opcode) = self.cold_opcode() {
+            crate::ir::LoweringBoundary::TypedCold(opcode)
+        } else {
+            crate::ir::LoweringBoundary::GenericSlow
+        }
+    }
+
+    /// Return the canonical name used to account for a generic slow boundary.
+    /// A compact or typed-cold instance has no generic fallback witness.
+    pub fn generic_fallback_name(&self) -> Option<&'static str> {
+        matches!(self.lowering_boundary(), crate::ir::LoweringBoundary::GenericSlow)
+            .then_some(self.variant_name())
+    }
+
+    /// Exhaustive structural fallback used by the fixed-width lowering match.
+    /// Operation-specific conditions are evaluated by that match; this
+    /// generated view guarantees that its residual boundary cannot fall
+    /// through an unaccounted enum variant.
+    pub const fn generated_lowering_fallback(&self) -> Option<crate::ir::Instruction> {
+        match self {
+__FALLBACK_ARMS__
+        }
+    }
+"#
+    .replace("__PHYSICAL_ARMS__", &physical_arms)
+    .replace("__FALLBACK_ARMS__", &fallback_arms);
+    generated.insert_str(closing, &boundary_methods);
     let output = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
     fs::write(output.join("op_variant_name.rs"), generated).expect("write Op names");
     println!("cargo:rerun-if-changed=src/ops_op.rs");
@@ -170,6 +467,17 @@ fn extract_op_variants(source: &str) -> Vec<(&str, &str, Option<&str>)> {
         }
     }
     variants
+}
+
+fn op_pattern(name: &str, declaration: &str) -> String {
+    let declaration = declaration.trim();
+    if declaration.starts_with(&format!("{name} {{")) {
+        format!("{name} {{ .. }}")
+    } else if declaration.starts_with(&format!("{name}(")) {
+        format!("{name}(..)")
+    } else {
+        name.to_owned()
+    }
 }
 
 fn op_name_arm((name, declaration, cfg): &(&str, &str, Option<&str>)) -> String {

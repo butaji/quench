@@ -77,7 +77,7 @@ fn select_top(
         }
         Opcode::LoadLocal | Opcode::LoadLocalChecked => *returned = Some(instruction.b),
         Opcode::Return => {}
-        Opcode::Slow => select_top_slow(code, pc, selected)?,
+        opcode if opcode.is_cold_marker() => select_top_slow(code, pc, selected)?,
         _ => return None,
     }
     Some(())
@@ -178,7 +178,7 @@ fn select_nested_body(
                     Some(crate::ops::Constant::Undefined)
                 ) => {}
             Opcode::Move => {}
-            Opcode::Slow if selected.is_none() => {
+            opcode if opcode.is_cold_marker() && selected.is_none() => {
                 selected = Some(select_level(code.cold_at(pc)?, depth, loops)?)
             }
             _ => return None,
@@ -220,7 +220,7 @@ fn terminal_instruction(
         Opcode::Add => add(instruction, values)?,
         Opcode::StoreLocal => store(instruction, values, update)?,
         Opcode::Move => copy(instruction, values)?,
-        Opcode::Slow if admissible_binding_boundary(code.cold_at(pc)?) => {}
+        opcode if opcode.is_cold_marker() && admissible_binding_boundary(code.cold_at(pc)?) => {}
         _ => return None,
     }
     Some(())

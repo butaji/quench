@@ -445,13 +445,32 @@ pub(crate) fn array_to_locale_string(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
+    array_to_locale_string_with_length(receiver, arguments, None)
+}
+
+pub(crate) fn array_to_locale_string_typed(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let length = receiver.and_then(crate::typed_array_ops::logical_len);
+    array_to_locale_string_with_length(receiver, arguments, length)
+}
+
+fn array_to_locale_string_with_length(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    internal_length: Option<usize>,
+) -> Result<Value, VmError> {
     let Some(receiver) = receiver else {
         return Err(crate::value::error::throw_type_error(
             "called on null or undefined",
         ));
     };
     let object = crate::construct::to_object(receiver)?;
-    let length = crate::builtins::map_length(&object)?;
+    let length = match internal_length {
+        Some(length) => length,
+        None => crate::builtins::map_length(&object)?,
+    };
     let invoke_arguments = vec![
         arguments.first().cloned().unwrap_or(Value::Undefined),
         arguments.get(1).cloned().unwrap_or(Value::Undefined),

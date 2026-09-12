@@ -16,6 +16,7 @@ struct CatalogParts {
     operations: String,
     keys: String,
     numeric_keys: String,
+    binary_keys: String,
     continuation_keys: String,
     links: String,
 }
@@ -31,6 +32,7 @@ impl CatalogParts {
             operations: render_operations(declarations),
             keys: render_keys(declarations),
             numeric_keys: render_numeric_keys(declarations),
+            binary_keys: render_binary_keys(declarations),
             continuation_keys: render_continuation_keys(declarations),
             links: render_links(declarations),
         }
@@ -137,7 +139,7 @@ const FALLTHROUGH_TAIL: crate::stencil_fact::Stencil = crate::stencil_fact::Sten
     holes: FALLTHROUGH_TAIL_HOLES,
 };
 const EXECUTABLE: bool = cfg!(any(target_arch = "x86_64", target_arch = "aarch64"));
-const DISPATCH_EXECUTABLE: bool = cfg!(target_arch = "x86_64");
+const DISPATCH_EXECUTABLE: bool = cfg!(any(target_arch = "x86_64", target_arch = "aarch64"));
 "#,
     );
     generated.push_str(&composition_tail_declarations());
@@ -153,6 +155,8 @@ const DISPATCH_EXECUTABLE: bool = cfg!(target_arch = "x86_64");
     generated.push_str(&parts.keys);
     generated.push('\n');
     generated.push_str(&parts.links);
+    generated.push('\n');
+    generated.push_str(&parts.binary_keys);
     generated.push_str("\nstatic NUMERIC_REGION_KEYS: &[(crate::ir::Opcode, crate::stencil_fact::RegionKey)] = &[\n");
     generated.push_str(&parts.numeric_keys);
     generated.push_str(
@@ -355,112 +359,112 @@ fn abi_contract_fields(abi: DeclAbi) -> (&'static str, bool, &'static str) {
         | DeclAbi::ScalarU32 => (
             abi_variant_name(abi),
             false,
-            "context_words: 0, preserves_vm_registers: true, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, root_materialization_required: false",
+            "context_words: 0, preserves_vm_registers: true, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: false, raw_kernel: false, root_materialization_required: false",
         ),
         DeclAbi::Bridge => (
             "Bridge",
             true,
-            "context_words: 1, preserves_vm_registers: false, may_call_helper: true, interruptible_backedge: false, hardware_clobber_mask: 0xffff, hardware_gpr_clobber_mask: 0xffff, live_out_mask: 0xffff, root_materialization_required: true",
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: true, interruptible_backedge: false, hardware_clobber_mask: 0xffff, hardware_gpr_clobber_mask: 0xffff, live_out_mask: 0xffff, generic_context: true, raw_kernel: false, root_materialization_required: true",
         ),
         DeclAbi::ArrayKernel => (
             "ArrayKernel",
             true,
-            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0x0003, hardware_gpr_clobber_mask: 0x001f, live_out_mask: 1, root_materialization_required: false",
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0x0003, hardware_gpr_clobber_mask: 0x001f, live_out_mask: 1, generic_context: true, raw_kernel: true, root_materialization_required: false",
         ),
         DeclAbi::ArrayNumericLoop => (
             "ArrayNumericLoop",
             true,
-            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x0007, hardware_gpr_clobber_mask: 0x007f, live_out_mask: 0x0003, root_materialization_required: false",
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x0007, hardware_gpr_clobber_mask: 0x007f, live_out_mask: 0x0003, generic_context: true, raw_kernel: true, root_materialization_required: false",
         ),
         DeclAbi::ArrayCopyLoop => (
             "ArrayCopyLoop",
             true,
-            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x0001, hardware_gpr_clobber_mask: 0x00ff, live_out_mask: 0x0001, root_materialization_required: false",
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x0001, hardware_gpr_clobber_mask: 0x00ff, live_out_mask: 0x0001, generic_context: false, raw_kernel: true, root_materialization_required: false",
         ),
         DeclAbi::ArrayReductionLoop => (
             "ArrayReductionLoop",
             true,
-            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x000f, hardware_gpr_clobber_mask: 0x003f, live_out_mask: 0x0003, root_materialization_required: false",
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x000f, hardware_gpr_clobber_mask: 0x003f, live_out_mask: 0x0003, generic_context: false, raw_kernel: true, root_materialization_required: false",
         ),
         DeclAbi::AffineI32Loop => (
             "AffineI32Loop",
             true,
-            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0x00ff, live_out_mask: 0x0003, root_materialization_required: false",
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0x00ff, live_out_mask: 0x0003, generic_context: true, raw_kernel: true, root_materialization_required: false",
         ),
         DeclAbi::I32CounterLoop => (
             "I32CounterLoop",
             true,
-            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0x03ff, live_out_mask: 0x0007, root_materialization_required: false",
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0x03ff, live_out_mask: 0x0007, generic_context: false, raw_kernel: true, root_materialization_required: false",
         ),
         DeclAbi::BooleanReductionLoop => (
             "BooleanReductionLoop",
             true,
-            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0x0fff, live_out_mask: 0x0007, root_materialization_required: false",
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0x0fff, live_out_mask: 0x0007, generic_context: false, raw_kernel: true, root_materialization_required: false",
         ),
         DeclAbi::BranchRecurrenceLoop => (
             "BranchRecurrenceLoop",
             true,
-            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x001f, hardware_gpr_clobber_mask: 0x0fff, live_out_mask: 0x000f, root_materialization_required: false",
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x001f, hardware_gpr_clobber_mask: 0x0fff, live_out_mask: 0x000f, generic_context: false, raw_kernel: true, root_materialization_required: false",
         ),
         DeclAbi::NestedXorLoop => (
             "NestedXorLoop",
             true,
-            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0x0fff, live_out_mask: 0x000f, root_materialization_required: false",
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0x0fff, live_out_mask: 0x000f, generic_context: false, raw_kernel: true, root_materialization_required: false",
         ),
         DeclAbi::SwitchReductionLoop => (
             "SwitchReductionLoop",
             true,
-            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0xffff, live_out_mask: 0x001f, root_materialization_required: false",
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0xffff, live_out_mask: 0x001f, generic_context: false, raw_kernel: true, root_materialization_required: false",
         ),
         DeclAbi::MatrixReductionLoop => (
             "MatrixReductionLoop",
             true,
-            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x0007, hardware_gpr_clobber_mask: 0xffff, live_out_mask: 0x001f, root_materialization_required: false",
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x0007, hardware_gpr_clobber_mask: 0xffff, live_out_mask: 0x001f, generic_context: false, raw_kernel: true, root_materialization_required: false",
         ),
         DeclAbi::TypedLaneLoop => (
             "TypedLaneLoop",
             true,
-            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x0003, hardware_gpr_clobber_mask: 0x01ff, live_out_mask: 0x0003, root_materialization_required: false",
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x0003, hardware_gpr_clobber_mask: 0x01ff, live_out_mask: 0x0003, generic_context: false, raw_kernel: true, root_materialization_required: false",
         ),
         DeclAbi::TwoStateI32Loop => (
             "TwoStateI32Loop",
             true,
-            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x0000, hardware_gpr_clobber_mask: 0x0fff, live_out_mask: 0x0000, root_materialization_required: false",
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x0000, hardware_gpr_clobber_mask: 0x0fff, live_out_mask: 0x0000, generic_context: false, raw_kernel: true, root_materialization_required: false",
         ),
         DeclAbi::NumericF64Loop => (
             "NumericF64Loop",
             true,
-            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x001f, hardware_gpr_clobber_mask: 0x007f, live_out_mask: 0x0003, root_materialization_required: false",
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x001f, hardware_gpr_clobber_mask: 0x007f, live_out_mask: 0x0003, generic_context: false, raw_kernel: true, root_materialization_required: false",
         ),
         DeclAbi::NumericI32BitwiseLoop => (
             "NumericI32BitwiseLoop",
             true,
-            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0x00ff, live_out_mask: 0x0003, root_materialization_required: false",
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0x00ff, live_out_mask: 0x0003, generic_context: false, raw_kernel: true, root_materialization_required: false",
         ),
         DeclAbi::NumericI32PairLoop => (
             "NumericI32PairLoop",
             true,
-            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0x00ff, live_out_mask: 0x0007, root_materialization_required: false",
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0x00ff, live_out_mask: 0x0007, generic_context: false, raw_kernel: true, root_materialization_required: false",
         ),
         DeclAbi::NumericF64MixedLoop => (
             "NumericF64MixedLoop",
             true,
-            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x000f, hardware_gpr_clobber_mask: 0x00ff, live_out_mask: 0x0003, root_materialization_required: false",
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x000f, hardware_gpr_clobber_mask: 0x00ff, live_out_mask: 0x0003, generic_context: false, raw_kernel: true, root_materialization_required: false",
         ),
         DeclAbi::CompareBranch => (
             "CompareBranch",
             true,
-            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0x0003, hardware_gpr_clobber_mask: 0x0007, live_out_mask: 0x0003, root_materialization_required: false",
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0x0003, hardware_gpr_clobber_mask: 0x0007, live_out_mask: 0x0003, generic_context: false, raw_kernel: false, root_materialization_required: false",
         ),
         DeclAbi::PropertyGuard => (
             "PropertyGuard",
             true,
-            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0x000f, live_out_mask: 1, root_materialization_required: false",
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0x000f, live_out_mask: 1, generic_context: false, raw_kernel: false, root_materialization_required: false",
         ),
         DeclAbi::PropertyWriteGuard => (
             "PropertyWriteGuard",
             true,
-            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0x000f, live_out_mask: 0, root_materialization_required: false",
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0x000f, live_out_mask: 0, generic_context: false, raw_kernel: false, root_materialization_required: false",
         ),
     }
 }

@@ -1,11 +1,19 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "number", "value": 123456789 },
-  "plan": { "execution_kind": "native_machine_code", "operation_route": ["counted_region", "i32_ushr_xor_imul"], "fallback": false },
-  "profile": {
-    "residual": {}, "slow": {},
-    "stencils": { "counted_i32_recurrence": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "contract": "optimized",
+  "ir": [
+    "MarkUninitialized",
+    "MarkUninitialized",
+    "LoadConst",
+    "InitLocal",
+    "LoadConst",
+    "Loop",
+    "LoadLocalChecked",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": 123456789
+  },
+  "schema": 3,
+  "warmup": 1
 }

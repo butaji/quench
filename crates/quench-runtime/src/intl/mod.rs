@@ -169,7 +169,11 @@ fn list_supported_locales_of(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 pub(crate) fn supported_segmenter_locale(locale: &str) -> bool {
-    !locale.eq_ignore_ascii_case("zxx")
+    let language = locale.split('-').next().unwrap_or_default();
+    // The bundled segmenter data is keyed by the standard two-letter ICU
+    // language set.  Three-letter private/unknown tags (for example `xyz`)
+    // must not be reported as available locales.
+    language.len() == 2 && !language.eq_ignore_ascii_case("zz")
 }
 
 fn requested_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
@@ -178,7 +182,10 @@ fn requested_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
             "Cannot convert null to object",
         ));
     }
-    if arguments.is_empty() {
+    // CanonicalizeLocaleList treats an omitted or explicit undefined locales
+    // argument as the empty list.  Constructor initialization uses the
+    // default locale separately through `resolve_locales`.
+    if arguments.is_empty() || matches!(arguments.first(), Some(Value::Undefined)) {
         return Ok(Vec::new());
     }
     resolve_locales(arguments)

@@ -1,16 +1,19 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "number", "value": 429 },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["nested_count"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "MarkUninitialized",
+    "MarkUninitialized",
+    "LoadConst",
+    "InitLocal",
+    "LoadConst",
+    "Loop",
+    "LoadLocalChecked",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": 429
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "nested_count_region": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

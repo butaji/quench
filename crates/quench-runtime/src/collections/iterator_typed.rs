@@ -44,7 +44,34 @@ pub(crate) fn typed_values(value: Value) -> Result<Vec<Value>, crate::execute::V
         Value::Int32Array(data) => number_values!(data),
         Value::Uint8Array(data) => number_values!(data),
         Value::Uint8ClampedArray(data) => number_values!(data),
-        Value::Uint16Array(data) => number_values!(data),
+        Value::Uint16Array(data) => {
+            let length = checked_length(
+                data.length,
+                data.byte_offset,
+                data.byte_length(),
+                data.logical_len(),
+                &data.buffer,
+            )?;
+            collect_typed(length, |index| {
+                data.get(index).map(|value| {
+                    if data.meta.property("\0float16_array").is_some()
+                        || data.meta.prototype().is_some_and(|prototype| {
+                            matches!(
+                                crate::execute::get_property(
+                                    &prototype,
+                                    "\0float16_constructor"
+                                ),
+                                Value::Boolean(true)
+                            )
+                        })
+                    {
+                        Value::Number(crate::value::float16_to_float64(value))
+                    } else {
+                        Value::Number(value.into())
+                    }
+                })
+            })
+        }
         Value::Uint32Array(data) => number_values!(data),
         Value::BigInt64Array(data) => bigint_values!(data),
         Value::BigUint64Array(data) => bigint_values!(data),

@@ -13,6 +13,7 @@ fn from_code_point(arguments: &[Value]) -> Result<Value, crate::execute::VmError
 pub(crate) fn from_code_point_array(
     array: &crate::value::ArrayData,
 ) -> Option<Result<Value, crate::execute::VmError>> {
+    crate::locals::array_word_is_current(array).then_some(())?;
     let numbers = array.numeric_kernel_words()?;
     let mut units = Vec::with_capacity(numbers.len());
     let result = numbers

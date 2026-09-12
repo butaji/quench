@@ -33,7 +33,7 @@ fn live_descriptor(descriptor: &Value, live: Option<Value>) -> Value {
     Value::Object(Rc::new(ObjectData::from_shared_properties(properties)))
 }
 
-fn public_descriptor(descriptor: &Value) -> Value {
+pub(crate) fn public_descriptor(descriptor: &Value) -> Value {
     let Value::Object(properties) = descriptor else {
         return descriptor.clone();
     };

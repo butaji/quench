@@ -94,11 +94,29 @@ fn is_constructor(value: &crate::value::Value) -> bool {
         crate::value::Value::BindingCell(cell) => is_constructor(&cell.load()),
         crate::value::Value::Function(function) => crate::functions::is_constructible(function),
         crate::value::Value::BoundFunction(bound) => {
+            if matches!(
+                bound.target,
+                crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(
+                    crate::ops::HostCapabilityKind::IsHTMLDDA
+                ))
+            ) {
+                return false;
+            }
             is_constructor(&bound.target)
                 || crate::value::is_object(&crate::execute::get_property(value, "prototype"))
         }
         crate::value::Value::Builtin(builtin) => {
-            crate::builtin_meta::constructor_name(*builtin).is_some()
+            if matches!(
+                builtin,
+                crate::ops::Builtin::HostCapability(crate::ops::HostCapabilityKind::IsHTMLDDA)
+            ) {
+                return false;
+            }
+            // %TypedArray% is abstract when directly constructed, but it is
+            // still a constructor for IsConstructor/heritage validation:
+            // user classes and the typed-array shell legitimately extend it.
+            matches!(builtin, crate::ops::Builtin::TypedArray)
+                || crate::builtin_meta::constructor_name(*builtin).is_some()
                 || matches!(builtin, crate::ops::Builtin::HostCapability(_))
         }
         crate::value::Value::Proxy(proxy) => {

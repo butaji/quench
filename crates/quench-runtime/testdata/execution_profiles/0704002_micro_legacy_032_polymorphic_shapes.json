@@ -1,16 +1,32 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "string", "value": "547970" },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["polymorphic_shapes"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "MarkUninitialized",
+    "MarkImmutable",
+    "MarkUninitialized",
+    "MarkUninitialized",
+    "GetN",
+    "GetN",
+    "LoadConst",
+    "MakeObject",
+    "MakeFunctionWithKind",
+    "CallN",
+    "InitLocal",
+    "MarkImmutable",
+    "MarkUninitialized",
+    "LoadConst",
+    "InitLocal",
+    "MarkUninitialized",
+    "LoadLocalChecked",
+    "LoadConst",
+    "ForOf",
+    "LoadLocalChecked",
+    "Return"
+  ],
+  "result": {
+    "kind": "string",
+    "value": "547970"
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "polymorphic_shapes_region": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

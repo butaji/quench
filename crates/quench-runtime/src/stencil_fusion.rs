@@ -28,7 +28,7 @@ impl LocalNumericExecution {
     ) -> Option<LocalNumericCommit> {
         registers.word_ptr(usize::from(self.result.register))?;
         if let Some(slot) = self.result.store_slot {
-            let bits = crate::tagged_value::TaggedValue::number(self.value).bits();
+            let bits = crate::native_core::value_word::TaggedValue::number(self.value).bits();
             environment
                 .store_proven_tagged_bits(slot, bits)
                 .then_some(())?;

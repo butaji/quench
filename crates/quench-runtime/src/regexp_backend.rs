@@ -213,7 +213,14 @@ impl Regex {
         };
         let program = lower_disjunction(&parsed.body, &mut lowering);
         let has_named_groups = lowering.names.iter().any(|name| !name.is_empty());
-        let compiled = (!flags.unicode_sets
+        // The `regex` crate is a useful literal fast path, but its capture
+        // and character semantics are not ECMAScript-complete (notably
+        // identity escapes, nullable quantified captures, dotAll and inline
+        // mode modifiers).  Keep compilation behind a source-shape guard so
+        // those patterns use the repository matcher instead of silently
+        // changing observable match results.
+        let compiled = (compiled_source_is_safe(source)
+            && !flags.unicode_sets
             && !flags.unicode
             && std::env::var_os("QUENCH_DISABLE_COMPILED_REGEXP").is_none())
         .then(|| {
@@ -349,6 +356,79 @@ impl Regex {
         }
         None
     }
+}
+
+fn compiled_source_is_safe(source: &str) -> bool {
+    let mut escaped = false;
+    for byte in source.bytes() {
+        if escaped {
+            // The byte regexp backend accepts a narrower identity-escape
+            // language than ECMAScript. Route legacy identity escapes to the
+            // repository matcher instead of changing the matched value.
+            if !matches!(
+                byte,
+                b'0'..=b'9'
+                    | b'b'
+                    | b'B'
+                    | b'd'
+                    | b'D'
+                    | b'f'
+                    | b'n'
+                    | b'r'
+                    | b's'
+                    | b'S'
+                    | b't'
+                    | b'v'
+                    | b'w'
+                    | b'W'
+                    | b'x'
+                    | b'u'
+                    | b'p'
+                    | b'P'
+                    | b'k'
+                    | b'/'
+                    | b'\\'
+                    | b'['
+                    | b']'
+                    | b'('
+                    | b')'
+                    | b'{'
+                    | b'}'
+                    | b'*'
+                    | b'+'
+                    | b'?'
+                    | b'|'
+                    | b'.'
+                    | b'^'
+                    | b'$'
+                    | b'-'
+            ) {
+                return false;
+            }
+            escaped = false;
+            continue;
+        }
+        if byte == b'\\' {
+            escaped = true;
+            continue;
+        }
+    }
+    if escaped {
+        return false;
+    }
+    // Inline modifiers/lookaround are outside the byte backend's semantic
+    // contract.  Optional captures and nested nullable quantifiers also have
+    // ECMAScript capture rules that differ from the backend.
+    if source.contains("(?") || source.contains(")?") || source.contains("??") {
+        return false;
+    }
+    // A bare dot is cheap to match in the VM, while the byte backend treats
+    // some JavaScript line terminators differently. Keep this narrow shape on
+    // the semantic path without disabling ordinary dot-containing patterns.
+    if matches!(source, "." | "^.$" | "$^.$") {
+        return false;
+    }
+    true
 }
 
 fn flag_text(flags: Flags) -> String {

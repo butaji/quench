@@ -45,7 +45,7 @@ fn executable_primitive_constant_returns_patched_tagged_word() {
     let view = crate::stencil_select::select_physical(key).expect("constant declaration");
     let site = QuickeningSite::<2>::new(Opcode::LoadConst);
     let values = PatchValues::from_site(&site)
-        .with_constant_bits(crate::tagged_value::TaggedValue::number(42.5).bits());
+        .with_constant_bits(crate::native_core::value_word::TaggedValue::number(42.5).bits());
     let mut arena = StencilArena::new(4096).unwrap();
     let mut cache = RenderedRegionCache::new();
     let address = arena
@@ -55,7 +55,7 @@ fn executable_primitive_constant_returns_patched_tagged_word() {
     let entry = arena.constant_word_entry(address).unwrap();
     assert_eq!(
         entry(),
-        crate::tagged_value::TaggedValue::number(42.5).bits()
+        crate::native_core::value_word::TaggedValue::number(42.5).bits()
     );
     #[cfg(quench_generated_stencil_artifacts)]
     {
@@ -116,23 +116,23 @@ fn executable_tagged_truthiness_matches_primitive_tags() {
     let view = crate::stencil_select::select_physical(key).expect("word truthiness row");
     let site = QuickeningSite::<2>::new(Opcode::JumpIfFalse);
     let values = PatchValues::from_site(&site)
-        .with_constant_bits(crate::tagged_value::TaggedValue::bool(true).bits());
+        .with_constant_bits(crate::native_core::value_word::TaggedValue::bool(true).bits());
     let mut arena = StencilArena::new(4096).unwrap();
     let mut cache = RenderedRegionCache::new();
     let address = render_selected(&mut arena, &mut cache, key, &values);
     arena.make_executable().unwrap();
     let entry = arena.word_bool_entry(address).unwrap();
-    assert!(entry(crate::tagged_value::TaggedValue::bool(true).bits()) != 0);
+    assert!(entry(crate::native_core::value_word::TaggedValue::bool(true).bits()) != 0);
     assert_eq!(
-        entry(crate::tagged_value::TaggedValue::bool(false).bits()) != 0,
+        entry(crate::native_core::value_word::TaggedValue::bool(false).bits()) != 0,
         false
     );
     assert_eq!(
-        entry(crate::tagged_value::TaggedValue::null().bits()) != 0,
+        entry(crate::native_core::value_word::TaggedValue::null().bits()) != 0,
         false
     );
     assert_eq!(
-        entry(crate::tagged_value::TaggedValue::undefined().bits()) != 0,
+        entry(crate::native_core::value_word::TaggedValue::undefined().bits()) != 0,
         false
     );
     #[cfg(quench_generated_stencil_artifacts)]
@@ -155,19 +155,22 @@ fn executable_nullish_word_uses_verified_literal_hole() {
     let view = crate::stencil_select::select_physical(key).expect("nullish word row");
     let site = QuickeningSite::<2>::new(Opcode::Unary);
     let values = PatchValues::from_site(&site)
-        .with_constant_bits(crate::tagged_value::TaggedValue::undefined().bits());
+        .with_constant_bits(crate::native_core::value_word::TaggedValue::undefined().bits());
     let mut arena = StencilArena::new(4096).unwrap();
     let mut cache = RenderedRegionCache::new();
     let address = render_selected(&mut arena, &mut cache, key, &values);
     arena.make_executable().unwrap();
     let entry = arena.word_bool_entry(address).unwrap();
-    assert_ne!(entry(crate::tagged_value::TaggedValue::null().bits()), 0);
     assert_ne!(
-        entry(crate::tagged_value::TaggedValue::undefined().bits()),
+        entry(crate::native_core::value_word::TaggedValue::null().bits()),
+        0
+    );
+    assert_ne!(
+        entry(crate::native_core::value_word::TaggedValue::undefined().bits()),
         0
     );
     assert_eq!(
-        entry(crate::tagged_value::TaggedValue::bool(false).bits()),
+        entry(crate::native_core::value_word::TaggedValue::bool(false).bits()),
         0
     );
     #[cfg(quench_generated_stencil_artifacts)]
@@ -195,7 +198,7 @@ fn executable_tagged_pointer_truthiness_is_true() {
     let address = render_selected(&mut arena, &mut cache, key, &values);
     arena.make_executable().unwrap();
     let entry = arena.word_bool_entry(address).unwrap();
-    let pointer = crate::tagged_value::TaggedValue::object_ptr(0x1000).unwrap();
+    let pointer = crate::native_core::value_word::TaggedValue::object_ptr(0x1000).unwrap();
     assert_ne!(entry(pointer.bits()), 0);
     #[cfg(quench_generated_stencil_artifacts)]
     assert!(view.generated);
@@ -227,9 +230,9 @@ fn executable_tagged_identity_equality_matches_non_numeric_values() {
     let address = render_selected(&mut arena, &mut cache, key, &values);
     arena.make_executable().unwrap();
     let entry = arena.word_pair_bool_entry(address).unwrap();
-    let true_bits = crate::tagged_value::TaggedValue::bool(true).bits();
-    let false_bits = crate::tagged_value::TaggedValue::bool(false).bits();
-    let null_bits = crate::tagged_value::TaggedValue::null().bits();
+    let true_bits = crate::native_core::value_word::TaggedValue::bool(true).bits();
+    let false_bits = crate::native_core::value_word::TaggedValue::bool(false).bits();
+    let null_bits = crate::native_core::value_word::TaggedValue::null().bits();
     assert!(entry(true_bits, true_bits) != 0);
     assert!(entry(true_bits, false_bits) == 0);
     assert!(entry(null_bits, null_bits) != 0);
@@ -404,7 +407,7 @@ fn executable_property_leaf_guards_layout_and_loads_tagged_word() {
     let status = entry(&mut context);
     assert_eq!(
         context.result(status),
-        Some(crate::tagged_value::TaggedValue::number(42.5).bits())
+        Some(crate::native_core::value_word::TaggedValue::number(42.5).bits())
     );
 }
 
@@ -431,7 +434,7 @@ fn executable_property_write_has_distinct_abi_and_commits_word() {
     let access = object
         .guarded_plain_slot(object.semantic_layout_id(), 0, "value")
         .expect("plain slot");
-    let bits = crate::tagged_value::TaggedValue::number(7.5).bits();
+    let bits = crate::native_core::value_word::TaggedValue::number(7.5).bits();
     let mut context = crate::native_property::NativePropertyWriteContext::new(access, bits);
     let entry = arena
         .property_write_guard_entry(address)

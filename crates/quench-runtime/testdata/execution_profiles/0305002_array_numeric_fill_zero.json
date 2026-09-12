@@ -1,16 +1,45 @@
 {
-  "schema": 1,
-  "warmup": 4,
-  "result": { "kind": "nan" },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["ASetI", "AddConst", "Jump", "AGetI", "Return"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadConst",
+    "LoadConst",
+    "StoreLocal",
+    "LoadConst",
+    "LoadLocal",
+    "LoadLocal",
+    "GetN",
+    "LessThan",
+    "JumpIfFalse",
+    "LoadLocal",
+    "Move",
+    "LoadLocal",
+    "Move",
+    "LoadLocal",
+    "ASetI",
+    "Move",
+    "LoadLocal",
+    "LoadConst",
+    "NumericAdd",
+    "StoreLocal",
+    "Unary",
+    "Jump",
+    "LoadLocal",
+    "RequireObjectCoercible",
+    "LoadConst",
+    "AGetI",
+    "LoadLocal",
+    "RequireObjectCoercible",
+    "LoadLocal",
+    "GetN",
+    "LoadConst",
+    "Sub",
+    "AGetI",
+    "Add",
+    "Return"
+  ],
+  "result": {
+    "kind": "nan"
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "dense_numeric_fill_loop": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 4
 }

@@ -106,10 +106,8 @@ impl NumericDagSelection {
 
 pub(crate) struct NativeNumericDagPlan {
     selection: NumericDagSelection,
-    owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
     image: crate::stencil_region_layout::VerifiedRegionImage,
-    cache: crate::stencil_select::RenderedRegionCache,
-    installed: Option<crate::stencil_arena::EntryToken<extern "C" fn(f64, f64, f64) -> f64>>,
+    physical: crate::stencil_installation::SharedPhysicalEntry<extern "C" fn(f64, f64, f64) -> f64>,
 }
 
 impl NativeNumericDagPlan {
@@ -122,10 +120,8 @@ impl NativeNumericDagPlan {
         let image = render_aarch64(selection)?;
         Some(Self {
             selection,
-            owner,
+            physical: crate::stencil_installation::SharedPhysicalEntry::new(Rc::clone(&owner)),
             image,
-            cache: crate::stencil_select::RenderedRegionCache::new(),
-            installed: None,
         })
     }
 
@@ -140,28 +136,24 @@ impl NativeNumericDagPlan {
     pub(crate) fn execute(&mut self, environment: &crate::environment::Environment) -> Option<f64> {
         let [first, second, third] = self.selection.inputs(environment)?;
         let entry = self.entry()?;
-        let lease =
-            crate::stencil_arena::SharedStencilSlab::acquire_owned(&self.owner, entry).ok()?;
-        lease.invoke(|call| call(first, second, third)).ok()
+        self.physical
+            .invoke(entry, |call| call(first, second, third))
+            .ok()
     }
 
     fn entry(
         &mut self,
     ) -> Option<crate::stencil_arena::EntryToken<extern "C" fn(f64, f64, f64) -> f64>> {
-        if let Some(entry) = self.installed {
-            if self.owner.borrow().entry_token_is_live(entry) {
-                return Some(entry);
-            }
-            self.installed = None;
-        }
-        let address = self
-            .owner
-            .borrow_mut()
-            .publish_region_image_or_get(&mut self.cache, &self.image)
-            .ok()?;
-        let entry = self.owner.borrow().owned_f64x3_entry(address).ok()?;
-        self.installed = Some(entry);
-        Some(entry)
+        self.physical
+            .entry(
+                |owner, cache| {
+                    owner
+                        .borrow_mut()
+                        .publish_region_image_or_get(cache, &self.image)
+                },
+                |pool, address| pool.owned_f64x3_entry(address),
+            )
+            .ok()
     }
 }
 
@@ -435,13 +427,7 @@ fn selection_opcodes(selection: NumericDagSelection) -> Vec<Opcode> {
 }
 
 fn opcode_for(operator: BinaryOp) -> Option<Opcode> {
-    match operator {
-        BinaryOp::Add => Some(Opcode::Add),
-        BinaryOp::Subtract => Some(Opcode::Sub),
-        BinaryOp::Multiply => Some(Opcode::Mul),
-        BinaryOp::Divide => Some(Opcode::Div),
-        _ => None,
-    }
+    Opcode::binary_opcode(operator)
 }
 
 fn byte_fingerprint(bytes: &[u8]) -> u64 {

@@ -138,7 +138,7 @@ fn select_prefix(
         Opcode::Mul => multiply(instruction, values)?,
         Opcode::Add => add(instruction, values)?,
         Opcode::AddConst => add_constant(code, instruction, values)?,
-        Opcode::Binary => binary(instruction, values)?,
+        opcode if opcode.is_binary_family() => binary(instruction, values)?,
         Opcode::StoreLocal => store_state(instruction, values, state)?,
         Opcode::Move => {
             values.insert(instruction.a, values.get(&instruction.b)?.clone());
@@ -225,7 +225,7 @@ fn add_constant(
 }
 
 fn binary(instruction: crate::ir::Instruction, values: &mut BTreeMap<u16, Numeric>) -> Option<()> {
-    let operator = crate::ir::compact_binary_operator(instruction.flags)?;
+    let operator = instruction.opcode.binary_operator(instruction.flags)?;
     let left = values.get(&instruction.b)?.clone();
     let right = values.get(&instruction.c)?.clone();
     let value = match (operator, left, right) {

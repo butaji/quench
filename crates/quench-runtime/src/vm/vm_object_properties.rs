@@ -83,7 +83,8 @@ pub(crate) fn object_property(
         // Global replacements preserve semantic identity while changing the
         // Rc representative. Async callbacks can retain that representative;
         // classify it by identity so virtual host globals remain visible.
-        || crate::vm::is_global_object(&Value::Object(properties.clone()));
+        || crate::vm::is_global_object(&Value::Object(properties.clone()))
+        || properties.is_script_global_view();
     if is_global {
         if let Some(value) = crate::vm::current_context_or_default().host_value(key) {
             if crate::vm::current_context_or_default().host_value_is_persistent(key) {
@@ -100,6 +101,17 @@ pub(crate) fn object_property(
     }
     if let Some(value) = direct_object_property(&properties, key) {
         return value;
+    }
+    // Host capabilities are virtual bindings rather than ordinary global
+    // properties.  Global declaration instantiation may replace the global
+    // object with a script-global view, so recover the capability after
+    // checking real own properties (which must continue to shadow it).
+    if is_global {
+        if let Some(binding) = crate::vm::current_context_or_default().host_binding(key) {
+            return Value::HostCapability(Rc::new(crate::value::HostCapabilityValue::new(
+                binding,
+            )));
+        }
     }
     let inherited = object_prototype_property(receiver, &properties, key);
     if !matches!(inherited, Value::Undefined) {

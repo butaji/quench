@@ -175,7 +175,7 @@ fn get_property_value_typed_tail(value: &Value, key: &str) -> Value {
             return result;
         }
     }
-    match value {
+    let property = match value {
         Float64Array(view) => float64_array_property(view, key),
         Float32Array(view) => float32_array_property(view, key),
         Int8Array(view) => int8_array_property(view, key),
@@ -188,7 +188,29 @@ fn get_property_value_typed_tail(value: &Value, key: &str) -> Value {
         BigInt64Array(_) | BigUint64Array(_) => vm_typed_bigint::property(value, key),
         DataView(view) => data_view_property(view, key),
         _ => get_property_value_tail(value, key),
+    };
+    rebind_typed_array_method(value, property)
+}
+
+/// Typed-array property helpers receive the view payload by reference, so the
+/// historical fast path constructed a temporary `Rc` around a cloned payload
+/// before binding a method. That made the method's receiver observably differ
+/// from the original object even though it shared the backing buffer. Rebind
+/// only generated typed-array methods to the original identity; ordinary own
+/// callable properties keep their exact value.
+fn rebind_typed_array_method(value: &Value, property: Value) -> Value {
+    let Value::BoundFunction(bound) = &property else {
+        return property;
+    };
+    let Value::Builtin(builtin) = bound.target else {
+        return property;
+    };
+    if !crate::typed_array_ops::is_view(value)
+        || !crate::typed_array_ops::is_view(&bound.receiver)
+    {
+        return property;
     }
+    crate::vm::bind_method(value, Value::Builtin(builtin))
 }
 
 fn get_property_value_tail(value: &Value, key: &str) -> Value {

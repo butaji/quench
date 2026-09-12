@@ -467,6 +467,11 @@ fn fresh_context() -> VmContext {
             quench_runtime::ops::HostCapabilityKind::IsHTMLDDA,
         ],
     )
+    // The runtime stores Float16 views in the canonical Uint16 backing type
+    // with an explicit marker.  Expose the corresponding constructor in the
+    // conformance realm so tests that probe the standardized Float16 surface
+    // exercise those semantics instead of observing an absent global.
+    .with_host_value("Float16Array", float16_constructor())
     .with_can_block(TEST_CAN_BLOCK.with(Cell::get));
     context.with_host_capability(
         "$262",
@@ -475,6 +480,56 @@ fn fresh_context() -> VmContext {
             kind: quench_runtime::ops::HostCapabilityKind::GetGlobal,
         },
     )
+}
+
+fn float16_constructor() -> quench_runtime::value::Value {
+    let prototype = quench_runtime::host_api::object(Vec::new());
+    let _ = quench_runtime::execute::set_property(
+        prototype.clone(),
+        "\0float16_constructor",
+        quench_runtime::value::Value::Boolean(true),
+    );
+    let receiver = quench_runtime::host_api::object(vec![
+        (
+            "\0float16_constructor".to_string(),
+            quench_runtime::value::Value::Boolean(true),
+        ),
+        ("\0prototype".to_string(), prototype.clone()),
+    ]);
+    let constructor = quench_runtime::host_api::bound_builtin(
+        quench_runtime::ops::Builtin::Uint16Array,
+        receiver,
+    );
+    let constructor = quench_runtime::execute::set_property(
+        constructor,
+        "prototype",
+        prototype.clone(),
+    );
+    let constructor = quench_runtime::execute::set_property(
+        constructor,
+        "name",
+        quench_runtime::value::Value::String("Float16Array".into()),
+    );
+    let constructor = quench_runtime::execute::set_property(
+        constructor,
+        "BYTES_PER_ELEMENT",
+        quench_runtime::value::Value::Number(2.0),
+    );
+    // Object.getPrototypeOf(Float16Array) is %TypedArray%, just like the
+    // native typed-array constructors.  Bound functions otherwise inherit
+    // Function.prototype, which makes the shell's shared-constructor class
+    // declaration reject its heritage value.
+    let _ = quench_runtime::execute::set_property_in_place(
+        &constructor,
+        "\0function_prototype",
+        quench_runtime::value::Value::Builtin(quench_runtime::ops::Builtin::TypedArray),
+    );
+    let _ = quench_runtime::execute::set_property(
+        prototype,
+        "constructor",
+        constructor.clone(),
+    );
+    constructor
 }
 fn host_context() -> VmContext {
     quench_runtime::vm::current_context().as_ref().clone()

@@ -32,37 +32,67 @@ impl CallArguments {
     }
 
     pub fn with_capacity(capacity: usize) -> Self {
+        Self::try_with_capacity(capacity).expect("call argument capacity allocation")
+    }
+
+    /// Fallible capacity reservation used by VM call boundaries. A spread or
+    /// host-provided argument list is guest-observable input, so exhaustion
+    /// must become a canonical VM error rather than a Rust allocation panic.
+    pub fn try_with_capacity(capacity: usize) -> Result<Self, ()> {
         if capacity <= INLINE_CALL_ARGUMENTS {
-            Self::new()
+            Ok(Self::new())
         } else {
-            Self {
-                storage: CallArgumentStorage::Heap(Vec::with_capacity(capacity)),
-            }
+            let mut values = Vec::new();
+            values.try_reserve(capacity).map_err(|_| ())?;
+            Ok(Self {
+                storage: CallArgumentStorage::Heap(values),
+            })
         }
     }
 
     pub fn push(&mut self, value: Value) {
+        self.try_push(value)
+            .expect("call argument storage allocation");
+    }
+
+    pub fn try_push(&mut self, value: Value) -> Result<(), ()> {
         match &mut self.storage {
             CallArgumentStorage::Inline { values, len } if *len < INLINE_CALL_ARGUMENTS => {
                 values[*len].write(value);
                 *len += 1;
+                Ok(())
             }
             CallArgumentStorage::Inline { values, len } => {
-                let mut heap = Vec::with_capacity((*len + 1).max(INLINE_CALL_ARGUMENTS + 1));
+                let mut heap = Vec::new();
+                heap.try_reserve((*len + 1).max(INLINE_CALL_ARGUMENTS + 1))
+                    .map_err(|_| ())?;
                 for value in values.iter_mut().take(*len) {
                     heap.push(unsafe { value.assume_init_read() });
                 }
                 heap.push(value);
                 self.storage = CallArgumentStorage::Heap(heap);
+                Ok(())
             }
-            CallArgumentStorage::Heap(values) => values.push(value),
+            CallArgumentStorage::Heap(values) => {
+                if values.len() == values.capacity() {
+                    values.try_reserve(1).map_err(|_| ())?;
+                }
+                values.push(value);
+                Ok(())
+            }
         }
     }
 
     pub fn extend(&mut self, values: impl IntoIterator<Item = Value>) {
+        self.try_extend(values)
+            .expect("call argument storage allocation");
+    }
+
+    pub fn try_extend(&mut self, values: impl IntoIterator<Item = Value>) -> Result<(), ()> {
         for value in values {
-            self.push(value);
+            self.try_push(value)?;
         }
+        Ok(())
     }
 
     pub fn into_vec(self) -> Vec<Value> {
@@ -164,6 +194,85 @@ pub struct CallContinuation {
     pub caller_environment: crate::identity::EnvironmentRef,
     pub destination: u16,
     pub guards: ContinuationGuards,
+}
+
+impl CallContinuation {
+    /// Create a detached continuation before the caller's code, PC and
+    /// environment are attached by the active execution driver. Keeping this
+    /// neutral state in one constructor prevents each tier from inventing a
+    /// different synthetic return address or guard payload.
+    pub fn new(
+        callee: Value,
+        receiver: Value,
+        arguments: CallArguments,
+        destination: u16,
+        caller_registers: crate::register_file::RegisterFile,
+    ) -> Self {
+        Self {
+            callee,
+            receiver,
+            arguments,
+            caller_code: crate::identity::CodeId(0),
+            caller_pc: 0,
+            caller_registers,
+            caller_environment: crate::identity::EnvironmentRef(0),
+            destination,
+            guards: ContinuationGuards::default(),
+        }
+    }
+
+    /// Attach the canonical caller activation facts at the call boundary.
+    #[inline]
+    pub fn with_caller(
+        mut self,
+        code: crate::identity::CodeId,
+        pc: u32,
+        environment: crate::identity::EnvironmentRef,
+    ) -> Self {
+        self.caller_code = code;
+        self.caller_pc = pc;
+        self.caller_environment = environment;
+        self
+    }
+
+    #[inline]
+    pub fn with_guards(mut self, guards: ContinuationGuards) -> Self {
+        self.guards = guards;
+        self
+    }
+
+    /// Validate the compact caller address against the immutable code store
+    /// before a tier or helper transition resumes it.
+    #[inline]
+    pub(crate) fn has_valid_caller_address(&self, store: &crate::machine::CodeStore) -> bool {
+        store
+            .range_len(self.caller_code)
+            .is_some_and(|length| self.caller_pc < length)
+    }
+
+    /// Restore the caller's register window at a tier boundary. The
+    /// continuation owns this window while the callee runs; consumers must
+    /// not reconstruct it from a callee frame or clone a second activation.
+    #[inline]
+    pub(crate) fn restore_caller_registers(
+        self,
+        registers: &mut crate::register_file::RegisterFile,
+    ) {
+        *registers = self.caller_registers;
+    }
+
+    /// Complete a call transition by restoring the canonical caller window
+    /// and writing the result at its recorded destination.
+    #[inline]
+    pub(crate) fn deliver_to_caller(
+        self,
+        registers: &mut crate::register_file::RegisterFile,
+        value: Value,
+    ) {
+        let destination = self.destination;
+        self.restore_caller_registers(registers);
+        crate::execute::write_value(registers, destination, value);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -352,7 +461,7 @@ fn visit_tail_call_values(call: &TailCallRequest, visit: &mut impl FnMut(&Value)
 
 #[cfg(test)]
 mod call_argument_tests {
-    use super::CallArguments;
+    use super::{CallArguments, CallContinuation, ContinuationGuards};
     use crate::value::Value;
 
     #[test]
@@ -375,5 +484,44 @@ mod call_argument_tests {
         let arguments: CallArguments = values.clone().into();
         assert_eq!(arguments.as_slice(), values.as_slice());
         assert_eq!(arguments.clone().into_vec(), values);
+    }
+
+    #[test]
+    fn continuation_constructor_has_one_detached_state() {
+        let continuation = CallContinuation::new(
+            Value::Undefined,
+            Value::Undefined,
+            CallArguments::default(),
+            3,
+            crate::register_file::RegisterFile::with_undefined(4),
+        )
+        .with_caller(
+            crate::identity::CodeId(9),
+            11,
+            crate::identity::EnvironmentRef(13),
+        )
+        .with_guards(ContinuationGuards::new(17));
+        assert_eq!(continuation.caller_code, crate::identity::CodeId(9));
+        assert_eq!(continuation.caller_pc, 11);
+        assert_eq!(
+            continuation.caller_environment,
+            crate::identity::EnvironmentRef(13)
+        );
+        assert_eq!(continuation.destination, 3);
+        assert_eq!(continuation.guards.flags, 17);
+    }
+
+    #[test]
+    fn continuation_delivery_restores_window_before_destination_write() {
+        let mut caller = crate::register_file::RegisterFile::with_undefined(4);
+        let continuation = CallContinuation::new(
+            Value::Undefined,
+            Value::Undefined,
+            CallArguments::default(),
+            2,
+            crate::register_file::RegisterFile::with_undefined(4),
+        );
+        continuation.deliver_to_caller(&mut caller, Value::Number(42.0));
+        assert_eq!(caller.read(2), Some(Value::Number(42.0)));
     }
 }

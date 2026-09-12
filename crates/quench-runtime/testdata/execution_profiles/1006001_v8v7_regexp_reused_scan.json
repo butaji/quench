@@ -1,16 +1,17 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "number", "value": 363 },
-  "plan": {
-    "execution_kind": "portable_recipe",
-    "operation_route": ["compiled_regexp_plan", "reused_capture_workspace", "global_exec_loop", "last_index_update"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadConst",
+    "StoreLocal",
+    "LoadConst",
+    "Loop",
+    "LoadLocal",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": 363
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "compiled_regexp_scan": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

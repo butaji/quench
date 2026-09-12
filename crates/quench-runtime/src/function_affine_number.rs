@@ -124,10 +124,8 @@ fn nonnegative_false_target(code: CodeView<'_>, parameter: u16) -> Option<usize>
     matches!(code.constant(zero.b), Some(Constant::Number(value)) if *value == 0.0).then_some(())?;
     (zero.opcode == Opcode::LoadConst && compare.b == load.a && compare.c == zero.a)
         .then_some(())?;
-    (compare.opcode == Opcode::Binary
-        && crate::ir::compact_binary_operator(compare.flags)
-            == Some(crate::ops::BinaryOp::LessThan))
-    .then_some(())?;
+    (compare.opcode.binary_operator(compare.flags) == Some(crate::ops::BinaryOp::LessThan))
+        .then_some(())?;
     matches!(code.constant(scratch.b), Some(Constant::Undefined)).then_some(())?;
     (scratch.opcode == Opcode::LoadConst
         && branch.opcode == Opcode::JumpIfFalse

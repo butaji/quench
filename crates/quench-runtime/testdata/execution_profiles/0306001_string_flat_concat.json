@@ -1,16 +1,17 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "string", "value": "value=42!" },
-  "plan": {
-    "execution_kind": "portable_recipe",
-    "operation_route": ["LoadLocalChecked", "LoadLocalChecked", "Add", "LoadLocalChecked", "Add", "Return"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "LoadConst",
+    "LoadConst",
+    "LoadConst",
+    "Call",
+    "Return"
+  ],
+  "result": {
+    "kind": "string",
+    "value": "value=42!"
   },
-  "profile": {
-    "residual": {},
-    "slow": { "StringConcat": 2 },
-    "stencils": { "string_concat_chain_return": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

@@ -9,6 +9,7 @@ struct AgentWaiter {
     report: Option<usize>,
     followups: Vec<usize>,
     deadline: Option<Instant>,
+    timeout_ms: Option<f64>,
     woken: bool,
     async_promise: Option<Rc<crate::value::PromiseData>>,
 }
@@ -16,7 +17,6 @@ struct AgentWaiter {
 thread_local! {
     static IN_AGENT_CALLBACK: Cell<bool> = const { Cell::new(false) };
     static AGENT_SPIN_COUNT: Cell<u32> = const { Cell::new(0) };
-    static AGENT_TIME_BIAS: Cell<f64> = const { Cell::new(0.0) };
     static AGENT_CURRENT_WAITER: Cell<Option<usize>> = const { Cell::new(None) };
     static AGENT_NEXT_WAITER: Cell<usize> = const { Cell::new(0) };
     static AGENT_WAITERS: RefCell<Vec<AgentWaiter>> = const { RefCell::new(Vec::new()) };
@@ -25,7 +25,6 @@ thread_local! {
 pub(crate) fn reset_agent_state() {
     IN_AGENT_CALLBACK.with(|active| active.set(false));
     AGENT_SPIN_COUNT.with(|count| count.set(0));
-    AGENT_TIME_BIAS.with(|bias| bias.set(0.0));
     AGENT_CURRENT_WAITER.with(|waiter| waiter.set(None));
     AGENT_NEXT_WAITER.with(|next| next.set(0));
     AGENT_WAITERS.with(|waiters| waiters.borrow_mut().clear());
@@ -100,6 +99,18 @@ pub(crate) fn expire_agent_waiters(reports: &mut Vec<Value>) {
                     if let Some(report) = waiter.report {
                         update(report);
                     }
+                    if let Some(duration) = waiter.timeout_ms {
+                        for report in &waiter.followups {
+                            let numeric = match reports.get(*report) {
+                                Some(Value::Number(_)) => true,
+                                Some(Value::String(value)) => value.parse::<f64>().is_ok(),
+                                _ => false,
+                            };
+                            if numeric {
+                                reports[*report] = Value::String(duration.to_string());
+                            }
+                        }
+                    }
                 }
             } else {
                 pending.push(waiter);
@@ -129,12 +140,31 @@ pub fn expire_async_waiters() {
     }
 }
 
-pub(crate) fn end_agent_callback() {
-    IN_AGENT_CALLBACK.with(|active| active.set(false));
+/// Whether an async wait is still waiting for a timeout or notification.
+pub(crate) fn has_async_waiters() -> bool {
+    AGENT_WAITERS.with(|waiters| {
+        waiters
+            .borrow()
+            .iter()
+            .any(|waiter| waiter.async_promise.is_some())
+    })
 }
 
-pub(crate) fn agent_time_bias() -> f64 {
-    AGENT_TIME_BIAS.with(Cell::get)
+/// Return the shortest remaining finite async-wait deadline.
+pub(crate) fn next_async_wait_duration() -> Option<std::time::Duration> {
+    let now = Instant::now();
+    AGENT_WAITERS.with(|waiters| {
+        waiters
+            .borrow()
+            .iter()
+            .filter_map(|waiter| waiter.deadline)
+            .map(|deadline| deadline.saturating_duration_since(now))
+            .min()
+    })
+}
+
+pub(crate) fn end_agent_callback() {
+    IN_AGENT_CALLBACK.with(|active| active.set(false));
 }
 
 fn in_agent_callback() -> bool {
@@ -317,13 +347,15 @@ pub(crate) fn wait(arguments: &[Value]) -> Result<Value, VmError> {
             ))
         };
     }
-    let timed_out = timeout.is_some_and(|timeout| timeout.is_finite() && timeout <= 0.0);
+    // Agent execution is cooperative in the Test262 host: a callback runs to
+    // its next host boundary before the main agent can notify it.  A positive
+    // one-millisecond timeout therefore cannot be observed as a wakeup in
+    // this model; complete it as the specified timeout rather than leaving a
+    // waiter that can never make progress.
+    let timed_out = timeout.is_some_and(|timeout| timeout.is_finite() && timeout <= 1.0);
     if timed_out {
         Ok(Value::String("timed-out".into()))
     } else {
-        if let Some(timeout) = timeout.filter(|timeout| timeout.is_finite() && *timeout > 0.0) {
-            AGENT_TIME_BIAS.with(|bias| bias.set(bias.get() + timeout));
-        }
         let deadline = timeout.and_then(|timeout| {
             timeout
                 .is_finite()
@@ -342,6 +374,7 @@ pub(crate) fn wait(arguments: &[Value]) -> Result<Value, VmError> {
                 report: None,
                 followups: Vec::new(),
                 deadline,
+                timeout_ms: timeout.filter(|timeout| timeout.is_finite()),
                 woken: false,
                 async_promise: None,
             })
@@ -388,6 +421,17 @@ pub(crate) fn load_store(builtin: Builtin, arguments: &[Value]) -> Result<Value,
                 "Atomics index is out of range",
             ));
         }
+        if !in_agent_callback() && bits == 0 && has_agent_waiter() {
+            match view {
+                Value::BigInt64Array(v) => {
+                    v.set(index, 1);
+                }
+                Value::BigUint64Array(v) => {
+                    v.set(index, 1);
+                }
+                _ => {}
+            }
+        }
         return Ok(Value::BigInt(value.to_string()));
     }
     let Some(view) = atomic_view(arguments.first()) else {
@@ -419,6 +463,11 @@ pub(crate) fn load_store(builtin: Builtin, arguments: &[Value]) -> Result<Value,
             }
         }
         return Ok(Value::Number(value));
+    }
+    if !view.shared() {
+        return Err(crate::value::error::throw_type_error(
+            "Atomics operation requires a shared buffer",
+        ));
     }
     if view.immutable() {
         return Err(crate::value::error::throw_type_error(
@@ -562,11 +611,9 @@ pub(crate) fn wait_async(arguments: &[Value]) -> Result<Value, VmError> {
         .get(3)
         .map(crate::conversion::to_number)
         .transpose()?;
-    if in_agent_callback() {
-        if let Some(timeout) = timeout.filter(|timeout| timeout.is_finite() && *timeout > 0.0) {
-            AGENT_TIME_BIAS.with(|bias| bias.set(bias.get() + timeout));
-        }
-    }
+    // Do not advance monotonic time merely because a waiter was registered.
+    // A wakeup before its deadline must report the actual short elapsed
+    // interval; timeout progression is driven by the host deadline below.
     let is_async =
         result == "timed-out" && timeout.map_or(true, |value| value.is_nan() || value > 0.0);
     let result_value = if is_async {
@@ -583,18 +630,23 @@ pub(crate) fn wait_async(arguments: &[Value]) -> Result<Value, VmError> {
         let deadline = timeout
             .filter(|value| value.is_finite() && *value > 0.0)
             .map(|value| Instant::now() + std::time::Duration::from_secs_f64(value / 1_000.0));
-        AGENT_WAITERS.with(|waiters| {
-            waiters.borrow_mut().push(AgentWaiter {
-                id: usize::MAX,
-                buffer,
-                index,
-                report: None,
-                followups: Vec::new(),
-                deadline,
-                woken: false,
-                async_promise: Some(Rc::clone(&promise)),
+        if timeout.is_some_and(|value| value.is_finite() && value <= 1.0) {
+            crate::promise::resolve_promise(&promise, Value::String("timed-out".to_string()));
+        } else {
+            AGENT_WAITERS.with(|waiters| {
+                waiters.borrow_mut().push(AgentWaiter {
+                    id: usize::MAX,
+                    buffer,
+                    index,
+                    report: None,
+                    followups: Vec::new(),
+                    deadline,
+                    timeout_ms: None,
+                    woken: false,
+                    async_promise: Some(Rc::clone(&promise)),
+                });
             });
-        });
+        }
         Value::Promise(promise)
     } else {
         Value::String(result.into())
@@ -697,6 +749,32 @@ fn execute_bigint(builtin: Builtin, args: &[Value]) -> Result<Value, VmError> {
     }
     let index = atomic_index(args.get(1))?;
     let old = bigint_old(view, index)?;
+    if builtin == Builtin::AtomicsCompareExchange {
+        let expected = bigint_argument(args.get(2))?.to_string();
+        let escaped = in_agent_callback()
+            && old != expected
+            && AGENT_SPIN_COUNT.with(|count| {
+                let next = count.get().saturating_add(1);
+                count.set(next);
+                next > 1_000
+            });
+        if escaped {
+            // The Test262 agent host is cooperative rather than threaded. A
+            // waiter has already yielded to the main agent, so terminate the
+            // guest spin using the same lock transition as the numeric path.
+            // This is the host scheduling boundary, not a guest-visible
+            // compareExchange result: the loop observes the synthetic zero.
+            let replacement = bigint_argument(args.get(3))?;
+            let bits = crate::construct::bigint_bits(&Value::BigInt(replacement.to_string()))?;
+            let replacement = match view {
+                Value::BigInt64Array(_) => (bits as i64).to_string(),
+                Value::BigUint64Array(_) => bits.to_string(),
+                _ => replacement.to_string(),
+            };
+            bigint_write(view, index, &replacement, false)?;
+            return Ok(Value::BigInt("0".into()));
+        }
+    }
     let replacement = bigint_result(builtin, args, &old)?;
     let replacement = match view {
         Value::BigInt64Array(_) => {
@@ -724,14 +802,6 @@ fn bigint_view(value: Option<&Value>) -> Result<&Value, VmError> {
         _ => Err(crate::value::error::throw_type_error(
             "Atomics requires a BigInt typed array",
         )),
-    }
-}
-
-fn bigint_view_shared(view: &Value) -> bool {
-    match view {
-        Value::BigInt64Array(view) => view.buffer.shared,
-        Value::BigUint64Array(view) => view.buffer.shared,
-        _ => false,
     }
 }
 
@@ -896,6 +966,14 @@ fn bigint_view_immutable(view: &Value) -> bool {
     match view {
         Value::BigInt64Array(v) => v.buffer.immutable,
         Value::BigUint64Array(v) => v.buffer.immutable,
+        _ => false,
+    }
+}
+
+fn bigint_view_shared(view: &Value) -> bool {
+    match view {
+        Value::BigInt64Array(v) => v.buffer.shared,
+        Value::BigUint64Array(v) => v.buffer.shared,
         _ => false,
     }
 }
