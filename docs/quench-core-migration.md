@@ -132,6 +132,10 @@ Verification completed:
 - the stencil Object stage reached 1,135/3,411 after deriving integrity helpers,
   fixing descriptor borrow ordering, and keeping huge array lengths metadata
   backed; the remaining failures are unsupported stencil features
+- the stencil BigInt stage now reaches 51/77 after deriving one marker-based
+  conversion path, native metadata, computed Symbol keys, wrapper prototypes,
+  and radix formatting; remaining failures are numeric edge errors and
+  prototype/accessor details
 - historical commits advertising “100% Test262” used `test262/skip.rs` to skip
   entire built-in families (including Object, Array, String, TypedArray, and
   Promise); those results are not equivalent to executing the full corpus
