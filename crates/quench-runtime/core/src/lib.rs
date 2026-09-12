@@ -388,11 +388,7 @@ impl Value {
             return value.to_string();
         }
         if let Some(value) = self.as_number() {
-            return if value.is_nan() {
-                "NaN".into()
-            } else {
-                value.to_string()
-            };
+            return js_number_to_string(value);
         }
         if let Some(value) = self.as_string() {
             return value.to_string();
@@ -7316,7 +7312,7 @@ impl Vm {
 
 impl Vm {
     fn to_property_key(&mut self, value: Value) -> JsResult<String> {
-        if !value.is_object() && !value.is_function() {
+        if !value.is_object_like() {
             return to_string_with_vm(self, &value);
         }
         for method_name in ["toString", "valueOf"] {
