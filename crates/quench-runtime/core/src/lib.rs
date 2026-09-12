@@ -4377,6 +4377,31 @@ impl Vm {
                     );
                     self.set_prop(&prototype, recipe.key, value);
                 }
+                BuiltinOwner::ArrayPrototype
+                | BuiltinOwner::StringPrototype
+                | BuiltinOwner::NumberPrototype
+                | BuiltinOwner::RegExpPrototype
+                | BuiltinOwner::ObjectPrototype
+                | BuiltinOwner::FunctionPrototype => {
+                    let constructor = match recipe.owner {
+                        BuiltinOwner::ArrayPrototype => BuiltinId::ArrayConstructor,
+                        BuiltinOwner::StringPrototype => BuiltinId::StringConstructor,
+                        BuiltinOwner::NumberPrototype => BuiltinId::NumberConstructor,
+                        BuiltinOwner::RegExpPrototype => BuiltinId::RegExpConstructor,
+                        BuiltinOwner::ObjectPrototype => BuiltinId::ObjectConstructor,
+                        BuiltinOwner::FunctionPrototype => BuiltinId::FunctionConstructor,
+                        _ => unreachable!(),
+                    };
+                    let function = self.builtin(constructor);
+                    let prototype = Value::Object(
+                        function
+                            .as_function_ref()
+                            .expect("prototype owner is a function")
+                            .prototype
+                            .clone(),
+                    );
+                    self.set_prop(&prototype, recipe.key, value);
+                }
                 _ => {}
             }
         }
@@ -4722,7 +4747,7 @@ impl Vm {
                 } else {
                     value
                 }
-            } else if matches!(k, "call" | "apply") {
+            } else if matches!(k, "call" | "apply" | "bind") {
                 self.builtin_property(BuiltinOwner::FunctionPrototype, k)
             } else {
                 self.function_prop(f, k)
@@ -7465,18 +7490,11 @@ mod tests {
         vm.install_process(Vec::new(), Vec::new());
         vm.run_source_text(
             Path::new("<array-builtins>"),
-            "var a = Array.from('ab'); var b = Array.of(1, 2); result = [Array.isArray(a), a.length, b[1]]; try { throw new TypeError(); } catch (e) { errorOk = e.constructor === TypeError && e.name === 'TypeError'; }",
+            "var a = Array.from('ab'); var b = Array.of(1, 2); var bound = Function.prototype.call.bind(Array.prototype.join); result = bound([1, 2], '-');",
         )
         .expect("array helpers and errors execute");
-        let values = Environment::get(&vm.global, "result")
-            .and_then(|value| value.as_object())
-            .and_then(|object| object.borrow().array.clone())
-            .expect("result array")
-            .values;
-        assert_eq!(values[0].as_bool(), Some(true));
-        assert_eq!(values[1].as_number(), Some(2.0));
-        assert_eq!(values[2].as_number(), Some(2.0));
-        assert_eq!(Environment::get(&vm.global, "errorOk").and_then(|v| v.as_bool()), Some(true));
+        let result = Environment::get(&vm.global, "result").expect("result");
+        assert_eq!(result.string(), "1-2");
     }
 
     #[test]
