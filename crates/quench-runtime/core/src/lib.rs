@@ -1346,6 +1346,39 @@ impl PropertyAttributes {
         enumerable: true,
         configurable: true,
     };
+
+    const BUILTIN_METHOD: Self = Self {
+        writable: true,
+        enumerable: false,
+        configurable: true,
+    };
+
+    const BUILTIN_CONSTANT: Self = Self {
+        writable: false,
+        enumerable: false,
+        configurable: false,
+    };
+}
+
+/// Install a group of data properties from one declaration table.
+///
+/// Intrinsic installation used to repeat the same three operations (write the
+/// value, borrow the object, then write its descriptor) at every call site.
+/// Keeping that shape in a macro makes the declaration the source of truth and
+/// leaves unusual installation behavior visible in the surrounding code.
+macro_rules! install_data_properties {
+    ($vm:expr, $target:expr, $( $key:expr => $value:expr, $attributes:expr );+ $(;)?) => {{
+        let target = $target;
+        $(
+            $vm.set_prop(&target, $key, $value);
+            if let Some(object) = target.as_object_ref() {
+                object
+                    .borrow_mut()
+                    .attributes
+                    .insert($key.to_string(), $attributes);
+            }
+        )+
+    }};
 }
 
 fn accessor_slot(kind: &str, key: &str) -> String {
@@ -4646,28 +4679,18 @@ impl Vm {
         if let Some(object) = m.as_object_ref() {
             object.borrow_mut().builtin_prototype = true;
         }
-        for (n, v) in [
-            ("E", std::f64::consts::E),
-            ("PI", std::f64::consts::PI),
-            ("LN10", std::f64::consts::LN_10),
-            ("LN2", std::f64::consts::LN_2),
-            ("LOG10E", std::f64::consts::LOG10_E),
-            ("LOG2E", std::f64::consts::LOG2_E),
-            ("SQRT1_2", std::f64::consts::FRAC_1_SQRT_2),
-            ("SQRT2", std::f64::consts::SQRT_2),
-        ] {
-            self.set_prop(&m, n, Value::Number(v));
-            if let Some(object) = m.as_object_ref() {
-                object.borrow_mut().attributes.insert(
-                    n.into(),
-                    PropertyAttributes {
-                        writable: false,
-                        enumerable: false,
-                        configurable: false,
-                    },
-                );
-            }
-        }
+        install_data_properties!(
+            self,
+            m.clone(),
+            "E" => Value::Number(std::f64::consts::E), PropertyAttributes::BUILTIN_CONSTANT;
+            "PI" => Value::Number(std::f64::consts::PI), PropertyAttributes::BUILTIN_CONSTANT;
+            "LN10" => Value::Number(std::f64::consts::LN_10), PropertyAttributes::BUILTIN_CONSTANT;
+            "LN2" => Value::Number(std::f64::consts::LN_2), PropertyAttributes::BUILTIN_CONSTANT;
+            "LOG10E" => Value::Number(std::f64::consts::LOG10_E), PropertyAttributes::BUILTIN_CONSTANT;
+            "LOG2E" => Value::Number(std::f64::consts::LOG2_E), PropertyAttributes::BUILTIN_CONSTANT;
+            "SQRT1_2" => Value::Number(std::f64::consts::FRAC_1_SQRT_2), PropertyAttributes::BUILTIN_CONSTANT;
+            "SQRT2" => Value::Number(std::f64::consts::SQRT_2), PropertyAttributes::BUILTIN_CONSTANT;
+        );
         Environment::set(&g, "Math", m.clone());
         // Symbols are represented as property-key atoms by the current core;
         // expose the well-known tag through the same canonical key path until
@@ -4704,7 +4727,6 @@ impl Vm {
             .as_function_ref()
             .map(|function| function.prototype.clone());
         let bigint_prototype_value = Value::Object(bigint_prototype);
-        self.set_prop(&bigint_prototype_value, "constructor", bigint.clone());
         let bigint_to_string = self.native_named(native_bigint_to_string, "toString", 0);
         let bigint_to_locale_string =
             self.native_named(native_bigint_to_string, "toLocaleString", 0);
@@ -4716,46 +4738,24 @@ impl Vm {
         ] {
             self.mark_nonconstructable(method);
         }
-        self.set_prop(&bigint_prototype_value, "toString", bigint_to_string);
-        self.set_prop(
-            &bigint_prototype_value,
-            "toLocaleString",
-            bigint_to_locale_string,
+        install_data_properties!(
+            self,
+            bigint_prototype_value,
+            "constructor" => bigint.clone(), PropertyAttributes::BUILTIN_METHOD;
+            "toString" => bigint_to_string, PropertyAttributes::BUILTIN_METHOD;
+            "toLocaleString" => bigint_to_locale_string, PropertyAttributes::BUILTIN_METHOD;
+            "valueOf" => bigint_value_of, PropertyAttributes::BUILTIN_METHOD;
+            "Symbol(Symbol.toStringTag)" => Value::string_value("BigInt"), PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            };
+            "Symbol.toStringTag" => Value::string_value("BigInt"), PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            };
         );
-        self.set_prop(&bigint_prototype_value, "valueOf", bigint_value_of);
-        self.set_prop(
-            &bigint_prototype_value,
-            "Symbol(Symbol.toStringTag)",
-            Value::string_value("BigInt"),
-        );
-        self.set_prop(
-            &bigint_prototype_value,
-            "Symbol.toStringTag",
-            Value::string_value("BigInt"),
-        );
-        if let Some(object) = bigint_prototype_value.as_object_ref() {
-            let mut object = object.borrow_mut();
-            for key in ["constructor", "toString", "toLocaleString", "valueOf"] {
-                object.attributes.insert(
-                    key.to_string(),
-                    PropertyAttributes {
-                        writable: true,
-                        enumerable: false,
-                        configurable: true,
-                    },
-                );
-            }
-            for key in ["Symbol(Symbol.toStringTag)", "Symbol.toStringTag"] {
-                object.attributes.insert(
-                    key.to_string(),
-                    PropertyAttributes {
-                        writable: false,
-                        enumerable: false,
-                        configurable: true,
-                    },
-                );
-            }
-        }
         if let Some(object) = bigint.as_object_ref() {
             let mut object = object.borrow_mut();
             for key in ["asIntN", "asUintN"] {
