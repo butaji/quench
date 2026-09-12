@@ -2090,6 +2090,8 @@ struct RegExpValue {
     regex: Rc<RegExpKernel>,
     capture_locations: Option<CaptureLocations>,
     global: bool,
+    source: String,
+    flags: String,
     last_index: usize,
     props: IndexMap<String, Value>,
     attributes: HashMap<String, PropertyAttributes>,
@@ -2097,13 +2099,26 @@ struct RegExpValue {
 
 impl RegExpValue {
     fn new(regex: Rc<RegExpKernel>, global: bool) -> Self {
+        let mut props = IndexMap::new();
+        props.insert("lastIndex".into(), Value::Number(0.0));
+        let mut attributes = HashMap::new();
+        attributes.insert(
+            "lastIndex".into(),
+            PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: false,
+            },
+        );
         Self {
             regex,
             capture_locations: None,
             global,
+            source: String::new(),
+            flags: if global { "g".into() } else { String::new() },
             last_index: 0,
-            props: IndexMap::new(),
-            attributes: HashMap::new(),
+            props,
+            attributes,
         }
     }
 
@@ -7673,14 +7688,28 @@ impl Vm {
                 }
             }
             RegExpLiteral(v) => {
+                let flags = [
+                    (oxc_ast::ast::RegExpFlags::D, 'd'),
+                    (oxc_ast::ast::RegExpFlags::G, 'g'),
+                    (oxc_ast::ast::RegExpFlags::I, 'i'),
+                    (oxc_ast::ast::RegExpFlags::M, 'm'),
+                    (oxc_ast::ast::RegExpFlags::S, 's'),
+                    (oxc_ast::ast::RegExpFlags::U, 'u'),
+                    (oxc_ast::ast::RegExpFlags::V, 'v'),
+                    (oxc_ast::ast::RegExpFlags::Y, 'y'),
+                ]
+                .into_iter()
+                .filter_map(|(flag, character)| v.regex.flags.contains(flag).then_some(character))
+                .collect::<String>();
                 let kernel = Rc::new(compile_regex(
                     v.regex.pattern.text.as_str(),
                     v.regex.flags.contains(oxc_ast::ast::RegExpFlags::I),
                 )?);
-                Ok(Value::RegExp(Rc::new(RefCell::new(RegExpValue::new(
-                    kernel,
-                    v.regex.flags.contains(oxc_ast::ast::RegExpFlags::G),
-                )))))
+                let mut regexp =
+                    RegExpValue::new(kernel, v.regex.flags.contains(oxc_ast::ast::RegExpFlags::G));
+                regexp.source = v.regex.pattern.text.to_string();
+                regexp.flags = flags;
+                Ok(Value::RegExp(Rc::new(RefCell::new(regexp))))
             }
             _ => Err(JsError::Message("unsupported expression".into())),
         }
@@ -9539,7 +9568,23 @@ fn native_string_last_index_of(_: &mut Vm, this: Value, args: &[Value]) -> JsRes
     ))
 }
 fn regexp_method(vm: &Vm, _regexp: &RefCell<RegExpValue>, name: &str) -> Value {
-    vm.builtin_property(BuiltinOwner::RegExpPrototype, name)
+    let regexp = _regexp.borrow();
+    match name {
+        "source" => Value::string_value(if regexp.source.is_empty() {
+            "(?:)".into()
+        } else {
+            regexp.source.clone()
+        }),
+        "flags" => Value::string_value(regexp.flags.clone()),
+        "global" => Value::Bool(regexp.flags.contains('g')),
+        "ignoreCase" => Value::Bool(regexp.flags.contains('i')),
+        "multiline" => Value::Bool(regexp.flags.contains('m')),
+        "dotAll" => Value::Bool(regexp.flags.contains('s')),
+        "unicode" | "unicodeSets" => Value::Bool(regexp.flags.contains('u')),
+        "sticky" => Value::Bool(regexp.flags.contains('y')),
+        "hasIndices" => Value::Bool(regexp.flags.contains('d')),
+        _ => vm.builtin_property(BuiltinOwner::RegExpPrototype, name),
+    }
 }
 fn native_regexp_test(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let Some(r) = this.as_regexp() else {
@@ -9549,6 +9594,23 @@ fn native_regexp_test(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value
         &args.first().map(Value::string).unwrap_or_default(),
     )))
 }
+
+fn native_regexp_to_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let Some(regexp) = this.as_regexp() else {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "RegExp.prototype.toString called on non-RegExp",
+        )));
+    };
+    let regexp = regexp.borrow();
+    let source = if regexp.source.is_empty() {
+        "(?:)"
+    } else {
+        regexp.source.as_str()
+    };
+    Ok(Value::string_value(format!("/{source}/{}", regexp.flags)))
+}
+
 fn native_regexp_exec(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let Some(r) = this.as_regexp() else {
         return Ok(Value::Null);
@@ -12098,14 +12160,77 @@ define_date_utc_setters! {
     native_date_set_utc_milliseconds => "milliseconds",
 }
 
-fn native_regexp(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+fn native_regexp(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     let p = a.first().map(Value::string).unwrap_or_default();
     let flags = a.get(1).map(Value::string).unwrap_or_default();
+    validate_regexp_flags(vm, &flags)?;
     let kernel = Rc::new(compile_regex(&p, flags.contains('i'))?);
-    Ok(Value::RegExp(Rc::new(RefCell::new(RegExpValue::new(
-        kernel,
-        flags.contains('g'),
-    )))))
+    let mut regexp = RegExpValue::new(kernel, flags.contains('g'));
+    regexp.source = p;
+    regexp.flags = flags;
+    Ok(Value::RegExp(Rc::new(RefCell::new(regexp))))
+}
+
+fn validate_regexp_flags(vm: &Vm, flags: &str) -> JsResult<()> {
+    let mut seen = std::collections::HashSet::new();
+    for flag in flags.chars() {
+        if !matches!(flag, 'd' | 'g' | 'i' | 'm' | 's' | 'u' | 'v' | 'y') || !seen.insert(flag) {
+            return Err(JsError::Throw(syntax_error(
+                vm,
+                "invalid regular expression flags",
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn native_regexp_compile(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(regexp) = this.as_regexp() else {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "RegExp.prototype.compile called on non-RegExp",
+        )));
+    };
+    let pattern = args.first().cloned().unwrap_or(Value::Undefined);
+    let flags = if let Some(flags) = args.get(1) {
+        to_string_with_vm(vm, flags)?
+    } else {
+        regexp.borrow().flags.clone()
+    };
+    validate_regexp_flags(vm, &flags)?;
+    let source = if pattern.is_undefined() {
+        String::new()
+    } else if let Some(other) = pattern.as_regexp() {
+        if args.get(1).is_some() {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "flags may not be supplied when compiling from a RegExp",
+            )));
+        }
+        other.borrow().source.clone()
+    } else {
+        to_string_with_vm(vm, &pattern)?
+    };
+    let kernel = Rc::new(compile_regex(&source, flags.contains('i'))?);
+    let mut regexp = regexp.borrow_mut();
+    if regexp
+        .attributes
+        .get("lastIndex")
+        .is_some_and(|attributes| !attributes.writable)
+    {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "cannot reset non-writable RegExp.lastIndex",
+        )));
+    }
+    regexp.regex = kernel;
+    regexp.capture_locations = None;
+    regexp.global = flags.contains('g');
+    regexp.source = source;
+    regexp.flags = flags;
+    regexp.last_index = 0;
+    regexp.props.insert("lastIndex".into(), Value::Number(0.0));
+    Ok(this)
 }
 fn compile_regex(pattern: &str, insensitive: bool) -> JsResult<Regex> {
     let normalized = pattern
