@@ -4640,7 +4640,32 @@ impl Vm {
         }
         if let Some(f) = o.as_function_ref() {
             return if k == "prototype" {
-                Value::Object(f.prototype.clone())
+                let constructable = match &f.kind {
+                    FunctionKind::User { .. } => true,
+                    FunctionKind::Builtin(id) => matches!(
+                        id,
+                        BuiltinId::ObjectConstructor
+                            | BuiltinId::ArrayConstructor
+                            | BuiltinId::StringConstructor
+                            | BuiltinId::NumberConstructor
+                            | BuiltinId::DateConstructor
+                            | BuiltinId::RegExpConstructor
+                            | BuiltinId::ErrorConstructor
+                            | BuiltinId::TypeErrorConstructor
+                            | BuiltinId::RangeErrorConstructor
+                            | BuiltinId::URIErrorConstructor
+                            | BuiltinId::SyntaxErrorConstructor
+                            | BuiltinId::ReferenceErrorConstructor
+                            | BuiltinId::EvalErrorConstructor
+                            | BuiltinId::AggregateErrorConstructor
+                    ),
+                    FunctionKind::Native(_) | FunctionKind::Arrow { .. } => false,
+                };
+                if constructable {
+                    Value::Object(f.prototype.clone())
+                } else {
+                    Value::Undefined
+                }
             } else if k == "inheritsFrom" {
                 let value = self.function_prop(f, k);
                 if value.is_undefined() {

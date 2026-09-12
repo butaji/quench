@@ -180,16 +180,95 @@ pub(crate) fn instantiate(vm: &Vm) -> Box<[Value]> {
         .iter()
         .copied()
         .map(|id| {
-            Value::Function(Rc::new(FunctionValue {
+            let function = Rc::new(FunctionValue {
                 kind: FunctionKind::Builtin(id),
                 prototype: vm.allocate_object(Object::ordinary(None)),
-                props: Rc::new(RefCell::new(IndexMap::new())),
+                props: Rc::new(RefCell::new(IndexMap::from([
+                    ("name".to_string(), Value::string_value(id.recipe().key)),
+                    (
+                        "length".to_string(),
+                        Value::Number(builtin_length(id) as f64),
+                    ),
+                ]))),
                 dyn_jit: RefCell::new(None),
                 numeric_jit: RefCell::new(None),
                 source_id: None,
-            }))
+            });
+            Value::Function(function)
         })
         .collect()
+}
+
+fn builtin_length(id: BuiltinId) -> usize {
+    match id {
+        BuiltinId::ParseInt
+        | BuiltinId::ParseFloat
+        | BuiltinId::IsNaN
+        | BuiltinId::IsFinite
+        | BuiltinId::DecodeURI
+        | BuiltinId::DecodeURIComponent
+        | BuiltinId::EncodeURI
+        | BuiltinId::EncodeURIComponent
+        | BuiltinId::MathPow
+        | BuiltinId::MathMin
+        | BuiltinId::MathMax
+        | BuiltinId::MathHypot
+        | BuiltinId::MathImul
+        | BuiltinId::AssertStrictEqual
+        | BuiltinId::AssertThrows
+        | BuiltinId::SetTimeout
+        | BuiltinId::SetImmediate => 2,
+        BuiltinId::MathFloor
+        | BuiltinId::MathCeil
+        | BuiltinId::MathSqrt
+        | BuiltinId::MathAbs
+        | BuiltinId::MathLog
+        | BuiltinId::MathRound
+        | BuiltinId::MathTrunc
+        | BuiltinId::MathSign
+        | BuiltinId::MathSin
+        | BuiltinId::MathCos
+        | BuiltinId::MathTan
+        | BuiltinId::MathExp
+        | BuiltinId::MathLog10
+        | BuiltinId::MathLog2
+        | BuiltinId::MathClz32
+        | BuiltinId::MathFround
+        | BuiltinId::ClearTimeout
+        | BuiltinId::ProcessNextTick
+        | BuiltinId::StringFromCharCode
+        | BuiltinId::ArrayPush
+        | BuiltinId::ArrayPop
+        | BuiltinId::ArrayShift
+        | BuiltinId::ArrayUnshift
+        | BuiltinId::ArraySlice
+        | BuiltinId::ArrayJoin
+        | BuiltinId::ArrayConcat
+        | BuiltinId::StringSubstring
+        | BuiltinId::StringSlice
+        | BuiltinId::StringCharCodeAt
+        | BuiltinId::StringCharAt
+        | BuiltinId::StringSubstr
+        | BuiltinId::StringToLowerCase
+        | BuiltinId::StringToUpperCase
+        | BuiltinId::StringToString
+        | BuiltinId::StringConcat
+        | BuiltinId::StringReplace
+        | BuiltinId::StringSplit
+        | BuiltinId::StringMatch
+        | BuiltinId::StringIndexOf
+        | BuiltinId::StringLastIndexOf
+        | BuiltinId::NumberToFixed
+        | BuiltinId::NumberToPrecision
+        | BuiltinId::NumberToString
+        | BuiltinId::RegExpTest
+        | BuiltinId::RegExpExec
+        | BuiltinId::ObjectToString
+        | BuiltinId::ObjectValueOf
+        | BuiltinId::FunctionCall
+        | BuiltinId::FunctionApply => 1,
+        _ => 0,
+    }
 }
 
 #[cfg(test)]
