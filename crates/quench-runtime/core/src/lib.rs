@@ -10750,17 +10750,17 @@ fn native_string_replace_all(vm: &mut Vm, this: Value, args: &[Value]) -> JsResu
     Ok(Value::string_value(out))
 }
 fn native_string_split(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    let s = string_receiver(vm, &this, "split")?;
     if let Some(separator) = args.first()
         && let Some(method) = string_symbol_method(vm, separator, "split")?
     {
-        let mut protocol_args = vec![Value::string_value(s)];
+        let mut protocol_args = vec![this.clone()];
         protocol_args.extend(args.iter().skip(1).cloned());
         return vm.call_arguments(&method, separator.clone(), protocol_args.as_slice());
     }
+    let split_limit = string_split_limit(vm, args)?;
+    let s = string_receiver(vm, &this, "split")?;
     if let Some(r) = args.first().and_then(Value::as_regexp) {
-        let limit = string_split_limit(vm, args)?;
-        return regexp_split_values(vm, &r, &s, limit);
+        return regexp_split_values(vm, &r, &s, split_limit);
     }
     let mut parts = if args.first().is_none_or(Value::is_undefined) {
         vec![Value::string_value(s)]
@@ -10774,7 +10774,7 @@ fn native_string_split(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
             s.split(&sep).map(Value::string_value).collect()
         }
     };
-    if let Some(limit) = string_split_limit(vm, args)? {
+    if let Some(limit) = split_limit {
         parts.truncate(limit);
     }
     Ok(vm.array_from_values(parts))
@@ -10835,13 +10835,12 @@ fn string_split_limit(vm: &mut Vm, args: &[Value]) -> JsResult<Option<usize>> {
         return Ok(None);
     };
     let number = to_number_with_vm(vm, limit)?;
-    if number.is_nan() || number <= 0.0 {
+    if number.is_nan() || number.is_infinite() {
         return Ok(Some(0));
     }
-    if number.is_infinite() {
-        return Ok(None);
-    }
-    Ok(Some((number.trunc() as u64 & u32::MAX as u64) as usize))
+    Ok(Some(
+        (number.trunc() as i64 as u64 & u32::MAX as u64) as usize,
+    ))
 }
 
 #[inline]
