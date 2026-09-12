@@ -4870,7 +4870,7 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
 ///
 /// Passing one stable state pointer keeps the code/frame/context facts in one
 /// ABI argument across recursive continuation calls. This is the safe Rust
-/// approximation of Deegen's fixed-register pinning: ownership and observable
+/// approximation of fixed-register pinning: ownership and observable
 /// semantics are unchanged, and LLVM remains responsible for allocation.
 struct DispatchState<'code, 'state> {
     code: crate::machine::CodeView<'code>,
@@ -6442,7 +6442,7 @@ pub(crate) fn run_instruction_fallback(
 
 /// Enter the canonical slow-path body as a one-way VM transition.
 ///
-/// Deegen's `EnterSlowPath` is CPS-shaped: the fast component does not call
+/// The slow path is CPS-shaped: the fast component does not call
 /// into a value-returning helper and then decide what to do with its result.
 /// Rust cannot promise a machine-level tail-call ABI, so the equivalent here
 /// is an explicit `DispatchTransition` whose callee target is consumed by the

@@ -1,0 +1,23 @@
+[package]
+name = "quench-runtime-core"
+version = "0.1.0"
+edition = "2024"
+autobins = false
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+inline-census = []
+
+[dependencies]
+oxc_allocator = "0.149"
+oxc_ast = "0.149"
+oxc_parser = "0.149"
+oxc_span = "0.149"
+oxc_syntax = "0.149"
+regex = "1.11"
+indexmap = "2.12"
+
+[build-dependencies]
+object = "0.37"
