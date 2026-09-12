@@ -4186,6 +4186,15 @@ fn to_primitive_for_binary(vm: &mut Vm, value: &Value, string_hint: bool) -> JsR
         }
         let hint = Value::string_value(if string_hint { "string" } else { "number" });
         let result = vm.call(exotic, value.clone(), vec![hint])?;
+        if result
+            .as_object_ref()
+            .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
+        {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "cannot convert a Symbol value to primitive",
+            )));
+        }
         if !result.is_object() && !result.is_function() {
             return Ok(result);
         }
@@ -4205,6 +4214,15 @@ fn to_primitive_for_binary(vm: &mut Vm, value: &Value, string_hint: bool) -> JsR
             continue;
         }
         let result = vm.call(method, value.clone(), Vec::new())?;
+        if result
+            .as_object_ref()
+            .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
+        {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "cannot convert a Symbol value to primitive",
+            )));
+        }
         if !result.is_object() && !result.is_function() {
             return Ok(result);
         }
@@ -7793,17 +7811,17 @@ fn to_number_with_vm(vm: &mut Vm, value: &Value) -> JsResult<f64> {
         return Ok(text.parse().unwrap_or(f64::NAN));
     }
     if value.is_object() || value.is_function() {
-        if value.as_object_ref().is_some_and(|object| {
-            object
-                .borrow()
-                .props
-                .get("\0primitive")
-                .is_some_and(is_bigint_marker)
-        }) {
-            return Err(JsError::Throw(type_error(
-                vm,
-                "cannot convert a BigInt value to a number",
-            )));
+        if let Some(primitive) = value
+            .as_object_ref()
+            .and_then(|object| object.borrow().props.get("\0primitive").cloned())
+        {
+            if is_bigint_marker(&primitive) {
+                return Err(JsError::Throw(type_error(
+                    vm,
+                    "cannot convert a BigInt value to a number",
+                )));
+            }
+            return to_number_with_vm(vm, &primitive);
         }
         if value
             .as_object_ref()
@@ -7814,20 +7832,8 @@ fn to_number_with_vm(vm: &mut Vm, value: &Value) -> JsResult<f64> {
                 "cannot convert a Symbol value to a number",
             )));
         }
-        for method_name in ["valueOf", "toString"] {
-            let method = vm.get_prop(value, method_name);
-            if !method.is_function() {
-                continue;
-            }
-            let result = vm.call_arguments(&method, value.clone(), &[] as &[Value])?;
-            if !result.is_object() && !result.is_function() {
-                return to_number_with_vm(vm, &result);
-            }
-        }
-        return Err(JsError::Throw(type_error(
-            vm,
-            "cannot convert object to number",
-        )));
+        let primitive = to_primitive_for_binary(vm, value, false)?;
+        return to_number_with_vm(vm, &primitive);
     }
     Ok(f64::NAN)
 }
@@ -7890,6 +7896,15 @@ fn bigint_marker(value: BigInt) -> Value {
 }
 
 fn bigint_value(vm: &mut Vm, value: &Value) -> JsResult<BigInt> {
+    if value
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
+    {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "cannot convert a Symbol value to BigInt",
+        )));
+    }
     if let Some(primitive) = value
         .as_object_ref()
         .and_then(|object| object.borrow().props.get("\0primitive").cloned())
@@ -7908,15 +7923,16 @@ fn bigint_value(vm: &mut Vm, value: &Value) -> JsResult<BigInt> {
             .map_err(|_| JsError::Throw(syntax_error(vm, "cannot convert value to BigInt")));
     }
     if let Some(number) = primitive.as_number() {
-        if number.is_finite() && number.fract() == 0.0 {
-            return BigInt::from_f64(number)
-                .ok_or_else(|| JsError::Throw(type_error(vm, "cannot convert value to BigInt")));
-        }
+        let _ = number;
+        return Err(JsError::Throw(type_error(
+            vm,
+            "cannot convert a Number value to BigInt",
+        )));
     }
     if let Some(boolean) = primitive.as_bool() {
         return Ok(BigInt::from(i128::from(boolean)));
     }
-    Err(JsError::Throw(range_error(
+    Err(JsError::Throw(type_error(
         vm,
         "cannot convert value to BigInt",
     )))
@@ -7966,10 +7982,25 @@ fn native_bigint(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
             "cannot convert value to BigInt",
         )));
     }
-    Ok(bigint_marker(bigint_value(vm, &value)?))
+    let primitive = to_primitive_for_binary(vm, &value, false)?;
+    if let Some(number) = primitive.as_number() {
+        if !number.is_finite() || number.fract() != 0.0 {
+            return Err(JsError::Throw(range_error(
+                vm,
+                "cannot convert value to BigInt",
+            )));
+        }
+        return Ok(bigint_marker(BigInt::from_f64(number).ok_or_else(
+            || JsError::Throw(range_error(vm, "cannot convert value to BigInt")),
+        )?));
+    }
+    Ok(bigint_marker(bigint_value(vm, &primitive)?))
 }
 
 fn bigint_bits(vm: &mut Vm, value: &Value) -> JsResult<u32> {
+    if value.is_undefined() {
+        return Ok(0);
+    }
     if is_bigint_marker(value)
         || value
             .as_object_ref()
@@ -7981,15 +8012,26 @@ fn bigint_bits(vm: &mut Vm, value: &Value) -> JsResult<u32> {
             "cannot convert a BigInt value to an index",
         )));
     }
-    let number = to_number_with_vm(vm, value)?;
-    if !number.is_finite()
-        || number < 0.0
-        || number.fract() != 0.0
-        || number > 9_007_199_254_740_991.0
-    {
+    let primitive = if value.is_object() || value.is_function() {
+        to_primitive_for_binary(vm, value, false)?
+    } else {
+        value.clone()
+    };
+    if is_bigint_marker(&primitive) {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "cannot convert a BigInt value to an index",
+        )));
+    }
+    let number = to_number_with_vm(vm, &primitive)?;
+    if number.is_nan() {
+        return Ok(0);
+    }
+    let integer = number.trunc();
+    if !number.is_finite() || integer < 0.0 || integer > 9_007_199_254_740_991.0 {
         return Err(JsError::Throw(range_error(vm, "invalid BigInt width")));
     }
-    Ok((number as u64).min(u32::MAX as u64) as u32)
+    Ok((integer as u64).min(u32::MAX as u64) as u32)
 }
 
 fn native_bigint_as_uint_n(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
