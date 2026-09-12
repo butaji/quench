@@ -7395,14 +7395,8 @@ fn native_array_from(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     let Some(source) = a.first() else {
         return Ok(vm.array());
     };
-    if let Some(object) = source.as_object_ref() {
-        let values = object
-            .borrow()
-            .array
-            .as_ref()
-            .map(|array| array.values.clone())
-            .unwrap_or_default();
-        return Ok(vm.array_from_values(values));
+    if source.as_object_ref().is_some() {
+        return Ok(vm.array_from_values(array_values(source)));
     }
     let string = source.string();
     Ok(vm.array_from_values(
@@ -7825,7 +7819,7 @@ mod tests {
         vm.install_process(Vec::new(), Vec::new());
         vm.run_source_text(
             Path::new("<array-builtins>"),
-            "var a = Array.from('ab'); var b = Array.of(1, 2); var mapped = b.map(function (x) { return x + 1; }); var filtered = mapped.filter(function (x) { return x > 2; }); var reduced = b.reduce(function (x, y) { return x + y; }, 0); var flat = [[1], [2]].flat(); var sp = b.splice(0, 1, 9); b.reverse(); var bound = Function.prototype.call.bind(Array.prototype.join); result = [bound([1, 2], '-'), mapped[1], filtered.length, reduced, flat[1], sp[0], b[0]]; try { throw new TypeError(); } catch (e) { errorOk = e.constructor === TypeError && e.name === 'TypeError'; }",
+            "var a = Array.from('ab'); var like = {0: 'x', 1: 'y', length: 2}; var fromLike = Array.from(like); var b = Array.of(1, 2); var mapped = b.map(function (x) { return x + 1; }); var filtered = mapped.filter(function (x) { return x > 2; }); var reduced = b.reduce(function (x, y) { return x + y; }, 0); var flat = [[1], [2]].flat(); var sp = b.splice(0, 1, 9); b.reverse(); var bound = Function.prototype.call.bind(Array.prototype.join); result = [bound([1, 2], '-'), mapped[1], filtered.length, reduced, flat[1], sp[0], b[0], fromLike[1]]; try { throw new TypeError(); } catch (e) { errorOk = e.constructor === TypeError && e.name === 'TypeError'; }",
         )
         .expect("array helpers and errors execute");
         let result = Environment::get(&vm.global, "result").expect("result");
@@ -7837,6 +7831,7 @@ mod tests {
         assert_eq!(values[4].as_number(), Some(2.0));
         assert_eq!(values[5].as_number(), Some(1.0));
         assert_eq!(values[6].as_number(), Some(2.0));
+        assert_eq!(values[7].string(), "y");
         assert_eq!(Environment::get(&vm.global, "errorOk").and_then(|v| v.as_bool()), Some(true));
     }
 
