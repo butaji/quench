@@ -338,6 +338,7 @@ builtin_catalog! {
     StringStrike, StringPrototype, "strike", native_string_strike, Generic, MAY_ALLOCATE;
     StringSub, StringPrototype, "sub", native_string_sub, Generic, MAY_ALLOCATE;
     StringSup, StringPrototype, "sup", native_string_sup, Generic, MAY_ALLOCATE;
+    StringTrim, StringPrototype, "trim", native_string_trim, Generic, MAY_ALLOCATE;
     StringTrimStart, StringPrototype, "trimStart", native_string_trim_left, Generic, MAY_ALLOCATE;
     StringTrimEnd, StringPrototype, "trimEnd", native_string_trim_right, Generic, MAY_ALLOCATE;
     StringTrimLeft, StringPrototype, "trimLeft", native_string_trim_left, Generic, MAY_ALLOCATE;
@@ -562,6 +563,7 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::StringStrike
         | BuiltinId::StringSub
         | BuiltinId::StringSup
+        | BuiltinId::StringTrim
         | BuiltinId::StringTrimStart
         | BuiltinId::StringTrimEnd
         | BuiltinId::StringTrimLeft
