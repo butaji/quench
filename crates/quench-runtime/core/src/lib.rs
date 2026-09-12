@@ -7098,10 +7098,9 @@ fn native_array_slice(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Valu
         .map(Value::number)
         .unwrap_or(a.len() as f64)
         .max(0.0) as usize;
-    Ok(vm.object_value(Object::array(
-        None,
+    Ok(vm.array_from_values(
         a.values[start.min(a.len())..end.min(a.len()).max(start.min(a.len()))].to_vec(),
-    )))
+    ))
 }
 fn native_array_join(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let Some(o) = array_this(this) else {
