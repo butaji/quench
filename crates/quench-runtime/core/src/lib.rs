@@ -4187,7 +4187,7 @@ fn to_primitive_for_binary(vm: &mut Vm, value: &Value, string_hint: bool) -> JsR
         let hint = Value::string_value(if string_hint { "string" } else { "number" });
         let result = vm.call(exotic, value.clone(), vec![hint])?;
         if result
-            .as_object_ref()
+            .as_object()
             .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
         {
             return Err(JsError::Throw(type_error(
@@ -4942,10 +4942,20 @@ impl Vm {
             .prototype
             .clone();
         error_prototype.borrow_mut().prototype = Some(object_prototype_for_errors);
+        let error_to_string = self.native_named(native_error_to_string, "toString", 0);
+        self.mark_nonconstructable(&error_to_string);
         self.set_prop(
             &Value::Object(error_prototype.clone()),
             "toString",
-            self.native(native_error_to_string),
+            error_to_string,
+        );
+        error_prototype.borrow_mut().attributes.insert(
+            "toString".into(),
+            PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+            },
         );
         for (constructor, name) in error_names {
             let function = self.builtin(constructor);
@@ -5439,6 +5449,28 @@ impl Vm {
                 if let Some(v) = object.props.get(k) {
                     return v.clone();
                 }
+                if k == "stack" && object.props.contains_key("\0error") {
+                    let error_prototype = self
+                        .builtin(BuiltinId::ErrorConstructor)
+                        .as_function_ref()
+                        .map(|function| function.prototype);
+                    let mut current = object.prototype;
+                    let on_error_chain = error_prototype.is_some_and(|prototype| {
+                        while let Some(candidate) = current {
+                            if candidate.as_ptr() == prototype.as_ptr() {
+                                return true;
+                            }
+                            current = candidate.borrow().prototype;
+                        }
+                        false
+                    });
+                    if on_error_chain {
+                        // Keep the implementation-defined trace lazy. Error
+                        // instances expose the inherited accessor without
+                        // materializing an own enumerable property.
+                        return Value::string_value("Error");
+                    }
+                }
                 object.prototype.clone()
             };
             if let Some(prototype) = prototype {
@@ -5576,6 +5608,30 @@ impl Vm {
             }),
             FunctionKind::Builtin(_) | FunctionKind::Native(_) => false,
         }
+    }
+
+    pub(crate) fn has_error_stack_accessor(&self, value: &Value) -> bool {
+        let Some(target) = value.as_object() else {
+            return false;
+        };
+        if target.borrow().props.contains_key("stack") {
+            return false;
+        }
+        let Some(error_prototype) = self
+            .builtin(BuiltinId::ErrorConstructor)
+            .as_function_ref()
+            .map(|function| function.prototype)
+        else {
+            return false;
+        };
+        let mut current = Some(target);
+        while let Some(candidate) = current {
+            if candidate.as_ptr() == error_prototype.as_ptr() {
+                return true;
+            }
+            current = candidate.borrow().prototype;
+        }
+        false
     }
     fn get_computed_prop(&self, object: &Value, key: &Value) -> Value {
         if let Some(index) = dense_array_index(key)
@@ -9829,6 +9885,87 @@ fn native_error_is_error(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value
     });
     Ok(Value::Bool(is_error))
 }
+fn native_error_stack_get(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if !this.is_object() && !this.is_function() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Error.prototype.stack getter called on incompatible receiver",
+        )));
+    }
+    if let Some(object) = this.as_object_ref() {
+        let object = object.borrow();
+        if object.props.contains_key("\0symbol") {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "Error.prototype.stack getter called on incompatible receiver",
+            )));
+        }
+        if object.props.contains_key("\0error") {
+            return Ok(Value::string_value("Error"));
+        }
+    }
+    Ok(Value::Undefined)
+}
+fn native_error_stack_set(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if !this.is_object() && !this.is_function() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Error.prototype.stack setter called on incompatible receiver",
+        )));
+    }
+    if this
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
+    {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Error.prototype.stack setter called on incompatible receiver",
+        )));
+    }
+    let error_prototype = vm
+        .builtin(BuiltinId::ErrorConstructor)
+        .as_function_ref()
+        .map(|function| function.prototype);
+    if this
+        .as_object()
+        .zip(error_prototype)
+        .is_some_and(|(receiver, prototype)| receiver.as_ptr() == prototype.as_ptr())
+    {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Error.prototype.stack setter cannot target its home object",
+        )));
+    }
+    let Some(value) = args
+        .first()
+        .filter(|value| !is_bigint_marker(value))
+        .and_then(Value::as_string)
+    else {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Error.prototype.stack setter requires a string",
+        )));
+    };
+    if let Some(object) = this.as_object_ref() {
+        let object = object.borrow();
+        if let Some(attributes) = object.attributes.get("stack")
+            && !attributes.writable
+        {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "Error.prototype.stack setter cannot replace a non-writable property",
+            )));
+        }
+        if !object.extensible && !object.props.contains_key("stack") {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "Error.prototype.stack setter receiver is not extensible",
+            )));
+        }
+    }
+    vm.set_prop(&this, "stack", Value::string_value(value));
+    Ok(Value::Undefined)
+}
 fn native_error_to_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     let Some(object) = this.as_object_ref() else {
         return Err(JsError::Throw(type_error(
@@ -9836,8 +9973,24 @@ fn native_error_to_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Val
             "Error.prototype.toString called on incompatible receiver",
         )));
     };
-    let name = to_string_with_vm(vm, &vm.get_prop(&this, "name"))?;
-    let message = to_string_with_vm(vm, &vm.get_prop(&this, "message"))?;
+    if object.borrow().props.contains_key("\0symbol") {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Error.prototype.toString called on incompatible receiver",
+        )));
+    }
+    let name_value = vm.get_prop(&this, "name");
+    let name = if name_value.is_undefined() {
+        "Error".to_owned()
+    } else {
+        to_string_with_vm(vm, &name_value)?
+    };
+    let message_value = vm.get_prop(&this, "message");
+    let message = if message_value.is_undefined() {
+        String::new()
+    } else {
+        to_string_with_vm(vm, &message_value)?
+    };
     let _ = object;
     Ok(Value::string_value(
         match (name.is_empty(), message.is_empty()) {
@@ -9893,6 +10046,31 @@ fn native_object_get_own_property_descriptor(
         )));
     };
     let key = args.get(1).map(Value::string).unwrap_or_default();
+    let error_prototype = vm
+        .builtin(BuiltinId::ErrorConstructor)
+        .as_function_ref()
+        .map(|function| function.prototype);
+    if key == "stack"
+        && target
+            .as_object()
+            .zip(error_prototype)
+            .is_some_and(|(target, prototype)| target.as_ptr() == prototype.as_ptr())
+    {
+        let descriptor = vm.object(None);
+        vm.set_prop(&descriptor, "get", {
+            let getter = vm.native_named(native_error_stack_get, "get stack", 0);
+            vm.mark_nonconstructable(&getter);
+            getter
+        });
+        vm.set_prop(&descriptor, "set", {
+            let setter = vm.native_named(native_error_stack_set, "set stack", 1);
+            vm.mark_nonconstructable(&setter);
+            setter
+        });
+        vm.set_prop(&descriptor, "enumerable", Value::Bool(false));
+        vm.set_prop(&descriptor, "configurable", Value::Bool(true));
+        return Ok(descriptor);
+    }
     let value = if let Some(function) = target.as_function_ref() {
         if key == "prototype" {
             Some(Value::Object(function.prototype.clone()))
@@ -10138,6 +10316,17 @@ fn native_object_get_own_property_names(vm: &mut Vm, _: Value, args: &[Value]) -
         )));
     };
     let mut keys = Vec::new();
+    let error_stack = target
+        .as_object()
+        .zip(
+            vm.builtin(BuiltinId::ErrorConstructor)
+                .as_function_ref()
+                .map(|function| function.prototype),
+        )
+        .is_some_and(|(target, prototype)| target.as_ptr() == prototype.as_ptr());
+    if error_stack {
+        keys.push(Value::string_value("stack"));
+    }
     if let Some(function) = target.as_function_ref() {
         keys.extend(
             function
@@ -10625,17 +10814,28 @@ fn native_object_value_of(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Valu
     }
     Ok(this)
 }
-fn native_object_has_own_property(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+fn native_object_has_own_property(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let key = args.first().map(Value::string).unwrap_or_default();
+    let error_stack = key == "stack"
+        && this
+            .as_object()
+            .zip(
+                vm.builtin(BuiltinId::ErrorConstructor)
+                    .as_function_ref()
+                    .map(|function| function.prototype),
+            )
+            .is_some_and(|(target, prototype)| target.as_ptr() == prototype.as_ptr());
     let present = if let Some(function) = this.as_function_ref() {
         function.props.borrow().contains_key(&key) || key == "prototype"
     } else {
         this.as_object_ref().is_some_and(|object| {
             let object = object.borrow();
             if let Some(array) = &object.array {
-                key == "length" || array_index_key(&key).is_some_and(|index| index < array.len())
+                key == "length"
+                    || array_index_key(&key).is_some_and(|index| index < array.len())
+                    || object.props.contains_key(&key)
             } else {
-                object.props.contains_key(&key)
+                object.props.contains_key(&key) || error_stack
             }
         })
     };
@@ -10668,10 +10868,15 @@ fn native_object_property_is_enumerable(
     } else {
         this.as_object_ref().is_some_and(|object| {
             let object = object.borrow();
-            object.props.contains_key(&key)
-                || (object.array.as_ref().is_some_and(|array| {
-                    array_index_key(&key).is_some_and(|index| index < array.len())
-                }))
+            object.attributes.get(&key).map_or_else(
+                || {
+                    object.props.contains_key(&key)
+                        || (object.array.as_ref().is_some_and(|array| {
+                            array_index_key(&key).is_some_and(|index| index < array.len())
+                        }))
+                },
+                |attributes| attributes.enumerable,
+            )
         })
     };
     Ok(Value::Bool(enumerable))

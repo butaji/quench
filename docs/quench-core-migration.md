@@ -139,9 +139,10 @@ Verification completed:
 - the stencil Boolean stage now reaches 51/51 after projecting the constructor
   onto `globalThis` and carrying strict-mode deletion through generated
   bytecode; this stage is fully green
-- the stencil Error stage now reaches 47/93 after adding shared `Error.isError`
-  detection and preserving constructor-call prototypes; stack accessors and
-  remaining descriptor semantics are still open
+- the stencil Error stage now reaches 76/93 after adding shared `Error.isError`
+  detection, preserving constructor-call prototypes, and modeling the shared
+  `Error.prototype.stack` accessor contract; proxy/realm and accessor-descriptor
+  edge cases remain open
 - historical commits advertising “100% Test262” used `test262/skip.rs` to skip
   entire built-in families (including Object, Array, String, TypedArray, and
   Promise); those results are not equivalent to executing the full corpus
