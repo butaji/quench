@@ -10905,6 +10905,12 @@ fn string_pad(vm: &mut Vm, this: Value, args: &[Value], start: bool) -> JsResult
         return Ok(Value::string_value(source));
     }
     let fill = match args.get(1).filter(|value| !value.is_undefined()) {
+        Some(value) if is_symbol_carrier(value) => {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "Cannot convert a Symbol value to a string",
+            )));
+        }
         Some(value) => to_string_with_vm(vm, value)?,
         None => " ".into(),
     };
@@ -13253,10 +13259,12 @@ fn to_string_with_vm(vm: &mut Vm, value: &Value) -> JsResult<String> {
         .as_object_ref()
         .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
     {
-        return Err(JsError::Throw(type_error(
-            vm,
-            "Cannot convert a Symbol value to a string",
-        )));
+        let description = value
+            .as_object_ref()
+            .and_then(|object| object.borrow().props.get("\0symbol").cloned())
+            .map(|description| description.string())
+            .unwrap_or_default();
+        return Ok(format!("Symbol({description})"));
     }
     if value.is_object() || value.is_function() {
         let primitive = to_primitive_for_binary(vm, value, true)?;
