@@ -141,6 +141,10 @@ Verification completed:
 - intrinsic data-property installation now uses the declarative
   `install_data_properties!` Rust macro for Math and BigInt tables, keeping
   values and descriptors in one source-of-truth declaration
+- builtin prototype ownership is now declared once on `BuiltinOwner` and
+  lowered through one installer path; Node host bootstrap values likewise use
+  the `with_host_values!` declaration macro so ordered host wiring has one
+  representation
 - historical commits advertising “100% Test262” used `test262/skip.rs` to skip
   entire built-in families (including Object, Array, String, TypedArray, and
   Promise); those results are not equivalent to executing the full corpus
