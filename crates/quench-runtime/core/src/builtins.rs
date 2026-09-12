@@ -26,6 +26,27 @@ pub(crate) enum BuiltinOwner {
     FunctionConstructor,
 }
 
+impl BuiltinOwner {
+    /// Return the constructor whose prototype owns methods for this namespace.
+    ///
+    /// Keeping this relationship beside the owner declaration means builtin
+    /// installation can lower one catalog entry uniformly instead of carrying
+    /// a second, hand-maintained prototype match in the VM.
+    pub(crate) const fn prototype_constructor(self) -> Option<BuiltinId> {
+        match self {
+            Self::ArrayPrototype => Some(BuiltinId::ArrayConstructor),
+            Self::StringPrototype => Some(BuiltinId::StringConstructor),
+            Self::NumberPrototype => Some(BuiltinId::NumberConstructor),
+            Self::BooleanPrototype => Some(BuiltinId::BooleanConstructor),
+            Self::DatePrototype => Some(BuiltinId::DateConstructor),
+            Self::RegExpPrototype => Some(BuiltinId::RegExpConstructor),
+            Self::ObjectPrototype => Some(BuiltinId::ObjectConstructor),
+            Self::FunctionPrototype => Some(BuiltinId::FunctionConstructor),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BuiltinSignature {
     Generic,
