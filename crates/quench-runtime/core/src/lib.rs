@@ -6360,9 +6360,28 @@ fn native_array_concat(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
     Ok(vm.object_value(Object::array(None, out)))
 }
 fn array_values(this: &Value) -> Vec<Value> {
-    this.as_object_ref()
-        .and_then(|object| object.borrow().array.as_ref().map(ArrayStorage::to_vec))
-        .unwrap_or_default()
+    let Some(object) = this.as_object_ref() else {
+        return Vec::new();
+    };
+    let object = object.borrow();
+    if let Some(array) = &object.array {
+        return array.to_vec();
+    }
+    let length = object
+        .props
+        .get("length")
+        .map(Value::number)
+        .unwrap_or(0.0)
+        .max(0.0) as usize;
+    (0..length)
+        .map(|index| {
+            object
+                .props
+                .get(&index.to_string())
+                .cloned()
+                .unwrap_or(Value::Undefined)
+        })
+        .collect()
 }
 fn array_callback(vm: &mut Vm, callback: &Value, value: Value, index: usize, array: Value) -> JsResult<Value> {
     vm.call_arguments(
@@ -6508,14 +6527,10 @@ fn native_array_find_index(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
     Ok(Value::Number(-1.0))
 }
 fn native_array_splice(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    let Some(object) = this.as_object_ref() else {
+    let Some(object_handle) = this.as_object_ref() else {
         return Ok(vm.array());
     };
-    let mut object = object.borrow_mut();
-    let Some(array) = object.array.as_mut() else {
-        return Ok(vm.array());
-    };
-    let length = array.values.len();
+    let length = array_values(&this).len();
     let start_number = args.first().map(Value::number).unwrap_or(0.0);
     let start = if start_number.is_sign_negative() {
         length.saturating_sub((-start_number) as usize)
@@ -6528,10 +6543,32 @@ fn native_array_splice(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
         .unwrap_or((length - start) as f64)
         .max(0.0) as usize;
     let end = (start + delete_count).min(length);
-    let removed = array.values[start..end].to_vec();
+    let mut values = array_values(&this);
+    let removed = values[start..end].to_vec();
     let replacement = args.get(2..).unwrap_or_default();
-    array.values.splice(start..end, replacement.iter().cloned());
-    object.publish_dense_access();
+    values.splice(start..end, replacement.iter().cloned());
+    let mut object = object_handle.borrow_mut();
+    if let Some(array) = object.array.as_mut() {
+        array.values = values;
+        object.publish_dense_access();
+    } else {
+        let numeric_keys = object
+            .props
+            .keys()
+            .filter(|key| key.parse::<usize>().is_ok())
+            .cloned()
+            .collect::<Vec<_>>();
+        for key in numeric_keys {
+            object.props.shift_remove(&key);
+        }
+        for (index, value) in values.iter().cloned().enumerate() {
+            let key = index.to_string();
+            object.props.insert(&key, value);
+        }
+        object
+            .props
+            .insert("length", Value::Number(values.len() as f64));
+    }
     Ok(vm.array_from_values(removed))
 }
 fn native_array_reverse(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
@@ -6542,7 +6579,83 @@ fn native_array_reverse(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value>
             object.publish_dense_access();
         }
     }
-    Ok(this)
+    Ok(this.clone())
+}
+fn native_array_sort(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(object) = this.as_object_ref() else {
+        return Ok(this);
+    };
+    let mut values = array_values(&this);
+    if let Some(compare) = args.first().filter(|value| value.is_function()) {
+        // Use a deterministic insertion sort so comparator calls can observe
+        // the same VM and propagate exceptions without crossing host code.
+        let mut sorted: Vec<Value> = Vec::with_capacity(values.len());
+        for value in values.drain(..) {
+            let mut position = sorted.len();
+            for (index, existing) in sorted.iter().enumerate() {
+                let result = vm.call_arguments(
+                    compare,
+                    Value::Undefined,
+                    &[value.clone(), existing.clone()][..],
+                )?;
+                if result.number() < 0.0 {
+                    position = index;
+                    break;
+                }
+            }
+            sorted.insert(position, value);
+        }
+        values = sorted;
+    } else {
+        values.sort_by_key(Value::string);
+    }
+    let mut object = object.borrow_mut();
+    if let Some(array) = object.array.as_mut() {
+        array.values = values;
+        object.publish_dense_access();
+    } else {
+        for (index, value) in values.iter().cloned().enumerate() {
+            let key = index.to_string();
+            object.props.insert(&key, value);
+        }
+    }
+    Ok(this.clone())
+}
+fn flatten_values(values: Vec<Value>, depth: usize, output: &mut Vec<Value>) {
+    for value in values {
+        if depth > 0 {
+            if let Some(object) = value.as_object_ref()
+                && let Some(array) = object.borrow().array.as_ref()
+            {
+                flatten_values(array.to_vec(), depth - 1, output);
+                continue;
+            }
+        }
+        output.push(value);
+    }
+}
+fn native_array_flat(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let depth = args.first().map(Value::number).unwrap_or(1.0).max(0.0) as usize;
+    let mut output = Vec::new();
+    flatten_values(array_values(&this), depth, &mut output);
+    Ok(vm.array_from_values(output))
+}
+fn native_array_flat_map(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(callback) = args.first().filter(|value| value.is_function()) else {
+        return Err(JsError::Throw(type_error(vm, "callback is not a function")));
+    };
+    let mut output = Vec::new();
+    for (index, value) in array_values(&this).into_iter().enumerate() {
+        let mapped = array_callback(vm, callback, value, index, this.clone())?;
+        if let Some(object) = mapped.as_object_ref()
+            && let Some(array) = object.borrow().array.as_ref()
+        {
+            output.extend(array.to_vec());
+        } else {
+            output.push(mapped);
+        }
+    }
+    Ok(vm.array_from_values(output))
 }
 fn string_this(this: Value) -> String {
     this.string()
@@ -7712,7 +7825,7 @@ mod tests {
         vm.install_process(Vec::new(), Vec::new());
         vm.run_source_text(
             Path::new("<array-builtins>"),
-            "var a = Array.from('ab'); var b = Array.of(1, 2); var mapped = b.map(function (x) { return x + 1; }); var filtered = mapped.filter(function (x) { return x > 2; }); var reduced = b.reduce(function (x, y) { return x + y; }, 0); var sp = b.splice(0, 1, 9); b.reverse(); var bound = Function.prototype.call.bind(Array.prototype.join); result = [bound([1, 2], '-'), mapped[1], filtered.length, reduced, sp[0], b[0]]; try { throw new TypeError(); } catch (e) { errorOk = e.constructor === TypeError && e.name === 'TypeError'; }",
+            "var a = Array.from('ab'); var b = Array.of(1, 2); var mapped = b.map(function (x) { return x + 1; }); var filtered = mapped.filter(function (x) { return x > 2; }); var reduced = b.reduce(function (x, y) { return x + y; }, 0); var flat = [[1], [2]].flat(); var sp = b.splice(0, 1, 9); b.reverse(); var bound = Function.prototype.call.bind(Array.prototype.join); result = [bound([1, 2], '-'), mapped[1], filtered.length, reduced, flat[1], sp[0], b[0]]; try { throw new TypeError(); } catch (e) { errorOk = e.constructor === TypeError && e.name === 'TypeError'; }",
         )
         .expect("array helpers and errors execute");
         let result = Environment::get(&vm.global, "result").expect("result");
@@ -7721,8 +7834,9 @@ mod tests {
         assert_eq!(values[1].as_number(), Some(3.0));
         assert_eq!(values[2].as_number(), Some(1.0));
         assert_eq!(values[3].as_number(), Some(3.0));
-        assert_eq!(values[4].as_number(), Some(1.0));
-        assert_eq!(values[5].as_number(), Some(2.0));
+        assert_eq!(values[4].as_number(), Some(2.0));
+        assert_eq!(values[5].as_number(), Some(1.0));
+        assert_eq!(values[6].as_number(), Some(2.0));
         assert_eq!(Environment::get(&vm.global, "errorOk").and_then(|v| v.as_bool()), Some(true));
     }
 
