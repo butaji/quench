@@ -3746,6 +3746,18 @@ fn construct(
         values: register_values,
         registers: args,
     };
+    if matches!(
+        callee.as_function_ref().map(|function| &function.kind),
+        Some(FunctionKind::Builtin(BuiltinId::StringConstructor))
+    ) && arguments
+        .value(0)
+        .is_some_and(|value| super::symbol_primitive(&value).is_some())
+    {
+        return Err(JsError::Throw(super::type_error(
+            unsafe { &mut *frame.vm },
+            "Cannot convert a Symbol value to a string",
+        )));
+    }
     let result = unsafe { &mut *frame.vm }.call_arguments_with_ic(
         &callee,
         object.clone(),
