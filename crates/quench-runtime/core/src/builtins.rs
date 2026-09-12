@@ -423,6 +423,8 @@ fn builtin_length(id: BuiltinId) -> usize {
         BuiltinId::ObjectFromEntries => 1,
         BuiltinId::ObjectSetPrototypeOf => 2,
         BuiltinId::DateNow => 0,
+        BuiltinId::DateGetYear => 0,
+        BuiltinId::DateSetYear => 1,
         BuiltinId::DateParse => 1,
         BuiltinId::DateUTC => 7,
         BuiltinId::DateToJSON => 1,
