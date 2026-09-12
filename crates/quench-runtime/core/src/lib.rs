@@ -5101,7 +5101,7 @@ impl Vm {
         }
         install_data_properties!(
             self,
-            bigint_prototype_value,
+            bigint_prototype_value.clone(),
             "constructor" => bigint.clone(), PropertyAttributes::BUILTIN_METHOD;
             "toString" => bigint_to_string, PropertyAttributes::BUILTIN_METHOD;
             "toLocaleString" => bigint_to_locale_string, PropertyAttributes::BUILTIN_METHOD;
@@ -5116,6 +5116,21 @@ impl Vm {
                 enumerable: false,
                 configurable: true,
             };
+        );
+        let bigint_tag_key = self.well_known_symbol_key("toStringTag");
+        self.set_prop(
+            &bigint_prototype_value,
+            &bigint_tag_key,
+            Value::string_value("BigInt"),
+        );
+        set_property_attributes(
+            &bigint_prototype_value,
+            &bigint_tag_key,
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
         );
         if let Some(object) = bigint.as_object_ref() {
             let mut object = object.borrow_mut();
@@ -11551,6 +11566,11 @@ fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     ] {
         vm.set_prop(&global, name, vm.builtin(builtin));
     }
+    vm.set_prop(
+        &global,
+        "BigInt",
+        vm.native_named(native_bigint, "BigInt", 1),
+    );
     vm.set_prop(
         &function,
         dynbytecode::THROW_TYPE_ERROR_PROP,
