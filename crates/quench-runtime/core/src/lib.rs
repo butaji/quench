@@ -2009,6 +2009,8 @@ struct RegExpValue {
     capture_locations: Option<CaptureLocations>,
     global: bool,
     last_index: usize,
+    props: IndexMap<String, Value>,
+    attributes: HashMap<String, PropertyAttributes>,
 }
 
 impl RegExpValue {
@@ -2018,6 +2020,8 @@ impl RegExpValue {
             capture_locations: None,
             global,
             last_index: 0,
+            props: IndexMap::new(),
+            attributes: HashMap::new(),
         }
     }
 
@@ -5607,6 +5611,9 @@ impl Vm {
             };
         }
         if let Some(regexp) = o.as_regexp_ref() {
+            if let Some(value) = regexp.borrow().props.get(k) {
+                return value.clone();
+            }
             return regexp_method(self, regexp, k);
         }
         if o.as_number().is_some() {
@@ -5708,6 +5715,9 @@ impl Vm {
                 .prototype
                 .map(|prototype| self.has_property(&Value::Object(prototype), key))
                 .unwrap_or(false);
+        }
+        if let Some(regexp) = value.as_regexp_ref() {
+            return regexp.borrow().props.contains_key(key);
         }
         value
             .as_function_ref()
@@ -5829,6 +5839,22 @@ impl Vm {
         Value::Undefined
     }
     fn set_prop(&self, o: &Value, k: &str, v: Value) {
+        if let Some(regexp) = o.as_regexp_ref() {
+            let mut regexp = regexp.borrow_mut();
+            if regexp
+                .attributes
+                .get(k)
+                .is_some_and(|attributes| !attributes.writable)
+            {
+                return;
+            }
+            regexp.props.insert(k.to_owned(), v);
+            regexp
+                .attributes
+                .entry(k.to_owned())
+                .or_insert(PropertyAttributes::DEFAULT);
+            return;
+        }
         if let Some(object) = o.as_object_ref() {
             let mut object = object.borrow_mut();
             if object
@@ -5929,6 +5955,19 @@ impl Vm {
         }
     }
     fn delete_prop(&self, o: &Value, k: &str) -> bool {
+        if let Some(regexp) = o.as_regexp_ref() {
+            let mut regexp = regexp.borrow_mut();
+            if regexp
+                .attributes
+                .get(k)
+                .is_some_and(|attributes| !attributes.configurable)
+            {
+                return false;
+            }
+            regexp.props.shift_remove(k);
+            regexp.attributes.remove(k);
+            return true;
+        }
         if let Some(object) = o.as_object_ref() {
             let mut object = object.borrow_mut();
             if object
@@ -9997,7 +10036,7 @@ fn dynamic_function_strict_early_error(parameters: &str, body: &str) -> bool {
     body.split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
         .any(|token| token == "with")
 }
-fn native_date(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+fn native_date(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     if let Some(value) = args.first() {
         let primitive = to_primitive_for_binary(vm, value, false)?;
         if is_bigint_marker(&primitive) {
@@ -10007,7 +10046,14 @@ fn native_date(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
             )));
         }
     }
-    let date = vm.object(None);
+    // `new Date(...)` supplies the freshly allocated receiver. Preserve it so
+    // prototype identity and `instanceof Date` remain observable to descriptor
+    // getters; a plain `Date(...)` call still receives a VM-owned object.
+    let date = if this.is_object() {
+        this
+    } else {
+        vm.object(None)
+    };
     vm.set_prop(
         &date,
         "\0date",
@@ -10331,6 +10377,8 @@ fn native_object_get_own_property_descriptor(
         } else {
             object.props.get(&key).cloned()
         }
+    } else if let Some(regexp) = target.as_regexp_ref() {
+        regexp.borrow().props.get(&key).cloned()
     } else {
         None
     };
@@ -10367,6 +10415,11 @@ fn native_object_get_own_property_descriptor(
     let attributes = target
         .as_object_ref()
         .and_then(|object| object.borrow().attributes.get(&key).copied())
+        .or_else(|| {
+            target
+                .as_regexp_ref()
+                .and_then(|regexp| regexp.borrow().attributes.get(&key).copied())
+        })
         .unwrap_or(PropertyAttributes {
             writable: !function_metadata && !prototype_metadata && !is_number_constant,
             enumerable: !target
@@ -10791,11 +10844,22 @@ fn native_object_create(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value
     // ordinary objects with the default Object.prototype for language literals.
     let object = vm.object_value(Object::ordinary(prototype));
     if let Some(descriptors) = args.get(1).filter(|value| !value.is_undefined()) {
-        native_object_define_properties(
-            vm,
-            Value::Undefined,
-            &[object.clone(), descriptors.clone()],
-        )?;
+        let descriptors = if descriptors.is_object() || descriptors.is_function() {
+            descriptors.clone()
+        } else {
+            native_object(vm, Value::Undefined, std::slice::from_ref(descriptors))?
+        };
+        // Object.create uses EnumerableOwnProperties for its second argument;
+        // unlike Object.defineProperties, non-enumerable descriptor entries
+        // are intentionally ignored.
+        for key in object_own_enumerable_keys(&descriptors) {
+            let descriptor = vm.get_prop_with_accessors(&descriptors, &key)?;
+            native_object_define_property(
+                vm,
+                Value::Undefined,
+                &[object.clone(), Value::string_value(key), descriptor],
+            )?;
+        }
     }
     Ok(object)
 }
