@@ -4883,37 +4883,7 @@ impl Vm {
                     let array = self.builtin(BuiltinId::ArrayConstructor);
                     self.set_prop(&array, recipe.key, value);
                 }
-                BuiltinOwner::BooleanPrototype => {
-                    let boolean = self.builtin(BuiltinId::BooleanConstructor);
-                    let prototype = Value::Object(
-                        boolean
-                            .as_function_ref()
-                            .expect("Boolean is a function")
-                            .prototype
-                            .clone(),
-                    );
-                    if let Some(object) = prototype.as_object_ref() {
-                        object.borrow_mut().builtin_prototype = true;
-                    }
-                    self.set_prop(&prototype, recipe.key, value);
-                }
-                BuiltinOwner::ArrayPrototype
-                | BuiltinOwner::StringPrototype
-                | BuiltinOwner::NumberPrototype
-                | BuiltinOwner::DatePrototype
-                | BuiltinOwner::RegExpPrototype
-                | BuiltinOwner::ObjectPrototype
-                | BuiltinOwner::FunctionPrototype => {
-                    let constructor = match recipe.owner {
-                        BuiltinOwner::ArrayPrototype => BuiltinId::ArrayConstructor,
-                        BuiltinOwner::StringPrototype => BuiltinId::StringConstructor,
-                        BuiltinOwner::NumberPrototype => BuiltinId::NumberConstructor,
-                        BuiltinOwner::DatePrototype => BuiltinId::DateConstructor,
-                        BuiltinOwner::RegExpPrototype => BuiltinId::RegExpConstructor,
-                        BuiltinOwner::ObjectPrototype => BuiltinId::ObjectConstructor,
-                        BuiltinOwner::FunctionPrototype => BuiltinId::FunctionConstructor,
-                        _ => unreachable!(),
-                    };
+                owner if let Some(constructor) = owner.prototype_constructor() => {
                     let function = self.builtin(constructor);
                     let prototype = Value::Object(
                         function
