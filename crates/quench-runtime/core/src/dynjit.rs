@@ -11122,6 +11122,7 @@ mod tests {
             dense_access: DenseArrayAccess::EMPTY,
             array: None,
             extensible: true,
+            builtin_prototype: false,
         });
         let receiver_shape = object.borrow().props.shape.0;
         let property_ic = PropertyIc {
@@ -11204,6 +11205,7 @@ mod tests {
             dense_access: DenseArrayAccess::EMPTY,
             array: None,
             extensible: true,
+            builtin_prototype: false,
         });
         let first_ic = PropertyIc {
             receiver_shape: first_object.borrow().props.shape.0,
@@ -11221,6 +11223,7 @@ mod tests {
             dense_access: DenseArrayAccess::EMPTY,
             array: None,
             extensible: true,
+            builtin_prototype: false,
         });
         let second_ic = PropertyIc {
             receiver_shape: second_object.borrow().props.shape.0,
