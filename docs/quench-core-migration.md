@@ -96,25 +96,6 @@ Verification completed:
   67,124 passed and 0 failed; this validates the current Wasm frontend/runner,
   while migration of its execution backend into `quench-runtime-core` remains
   an explicit gate above
-- after that aggregate run, the Array stage was rerun against the extended
-  callback/index/reduction/flattening methods and descriptor guards and reached
-  1,165/3,081; the
-  aggregate total above is intentionally left as the last complete-corpus
-  measurement
-- the Object stage was rerun after adding boxed primitive identity, prototype
-  inheritance, constructor metadata, sparse-array holes, and `Object.assign`
-  descriptor guards, integrity levels, and Object static collections and reached 904/3,411; the remaining failures are recorded as missing semantics,
-  not a fallback to the legacy VM
-- the String stage was rerun after restoring historical conversion behavior,
-  array `toString`, ordinary-object prototypes, and boxed-string own properties
-  and reached 299/1,223; the remaining failures include UTF-16 surrogate,
-  Symbol, and unsupported-stencil cases
-- the Function stage was rerun after restoring dynamic `Function` source
-  compilation, strict early-error checks, callable metadata, and restricted
-  property guards and reached 210/509; caller-stack propagation remains open
-- the Number stage was rerun after restoring numeric constructor constants,
-  static predicates/parsers, prototype metadata, and numeric string coercion
-  and reached 199/340; BigInt, Realm, and constructor-reflection cases remain
 - the stencil Number stage now reaches 340/340 after deriving numeric
   predicates from one Rust macro, sharing exact number formatting helpers,
   preserving error prototypes, validating constructor/radix behavior, and
@@ -146,6 +127,9 @@ Verification completed:
   detection, preserving constructor-call prototypes, and modeling the shared
   `Error.prototype.stack` accessor contract; proxy/realm and accessor-descriptor
   edge cases remain open
+- intrinsic data-property installation now uses the declarative
+  `install_data_properties!` Rust macro for Math and BigInt tables, keeping
+  values and descriptors in one source-of-truth declaration
 - historical commits advertising “100% Test262” used `test262/skip.rs` to skip
   entire built-in families (including Object, Array, String, TypedArray, and
   Promise); those results are not equivalent to executing the full corpus
