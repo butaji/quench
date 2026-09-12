@@ -10182,7 +10182,11 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
     let has_value = descriptor
         .as_object_ref()
         .is_some_and(|object| object.borrow().props.contains_key("value"));
-    if has_value {
+    let has_accessor = descriptor.as_object_ref().is_some_and(|object| {
+        let object = object.borrow();
+        object.props.contains_key("get") || object.props.contains_key("set")
+    });
+    if has_value || !has_accessor {
         vm.set_prop(target, &key, value);
     }
     let writable = vm.get_prop(&descriptor, "writable");
