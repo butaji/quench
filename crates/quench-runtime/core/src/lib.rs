@@ -30,6 +30,7 @@ mod region_plan;
 mod static_call_census;
 
 use builtins::{BuiltinId, BuiltinOwner};
+use chrono::{Datelike, TimeZone, Timelike};
 use coverage::Coverage;
 use dynbytecode::DynOpcode;
 use indexmap::IndexMap;
@@ -4870,6 +4871,10 @@ impl Vm {
                     };
                     self.set_prop(&number, recipe.key, value);
                 }
+                BuiltinOwner::DateConstructor => {
+                    let date = self.builtin(BuiltinId::DateConstructor);
+                    self.set_prop(&date, recipe.key, value);
+                }
                 BuiltinOwner::ObjectConstructor => {
                     let object = self.builtin(BuiltinId::ObjectConstructor);
                     self.set_prop(&object, recipe.key, value);
@@ -4895,6 +4900,7 @@ impl Vm {
                 BuiltinOwner::ArrayPrototype
                 | BuiltinOwner::StringPrototype
                 | BuiltinOwner::NumberPrototype
+                | BuiltinOwner::DatePrototype
                 | BuiltinOwner::RegExpPrototype
                 | BuiltinOwner::ObjectPrototype
                 | BuiltinOwner::FunctionPrototype => {
@@ -4902,6 +4908,7 @@ impl Vm {
                         BuiltinOwner::ArrayPrototype => BuiltinId::ArrayConstructor,
                         BuiltinOwner::StringPrototype => BuiltinId::StringConstructor,
                         BuiltinOwner::NumberPrototype => BuiltinId::NumberConstructor,
+                        BuiltinOwner::DatePrototype => BuiltinId::DateConstructor,
                         BuiltinOwner::RegExpPrototype => BuiltinId::RegExpConstructor,
                         BuiltinOwner::ObjectPrototype => BuiltinId::ObjectConstructor,
                         BuiltinOwner::FunctionPrototype => BuiltinId::FunctionConstructor,
@@ -5111,6 +5118,7 @@ impl Vm {
             BuiltinId::NumberConstructor,
             BuiltinId::BooleanConstructor,
             BuiltinId::FunctionConstructor,
+            BuiltinId::DateConstructor,
             BuiltinId::RegExpConstructor,
         ] {
             let prototype = self
@@ -10170,13 +10178,313 @@ fn native_date(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     } else {
         vm.object(None)
     };
-    vm.set_prop(
-        &date,
-        "\0date",
-        Value::Number(vm.started_at.elapsed().as_secs_f64() * 1000.0),
-    );
+    let millis = if args.len() >= 2 {
+        let year = &args[0];
+        let month = &args[1];
+        let day = args.get(2).cloned().unwrap_or(Value::Number(1.0));
+        let hour = args.get(3).cloned().unwrap_or(Value::Number(0.0));
+        let minute = args.get(4).cloned().unwrap_or(Value::Number(0.0));
+        let second = args.get(5).cloned().unwrap_or(Value::Number(0.0));
+        let millisecond = args.get(6).cloned().unwrap_or(Value::Number(0.0));
+        let mut year = to_number_with_vm(vm, year)? as i32;
+        if (0..=99).contains(&year) {
+            year = year.saturating_add(1900);
+        }
+        let month = (to_number_with_vm(vm, month)? as u32).saturating_add(1);
+        let day = to_number_with_vm(vm, &day)? as u32;
+        let hour = to_number_with_vm(vm, &hour)? as u32;
+        let minute = to_number_with_vm(vm, &minute)? as u32;
+        let second = to_number_with_vm(vm, &second)? as u32;
+        let millisecond = to_number_with_vm(vm, &millisecond)? as u32;
+        chrono::Utc
+            .with_ymd_and_hms(year, month, day, hour, minute, second)
+            .single()
+            .map_or(f64::NAN, |date| {
+                date.timestamp_millis() as f64 + millisecond as f64
+            })
+    } else {
+        match args.first() {
+            Some(value) => date_argument_to_millis(vm, value)?,
+            None => vm.started_at.elapsed().as_secs_f64() * 1000.0,
+        }
+    };
+    let millis = time_clip(millis);
+    vm.set_prop(&date, "\0date", Value::Number(millis));
     Ok(date)
 }
+
+fn time_clip(value: f64) -> f64 {
+    if value.is_finite() && value.abs() <= 8_640_000_000_000_000.0 {
+        let clipped = value.trunc();
+        if clipped == 0.0 { 0.0 } else { clipped }
+    } else {
+        f64::NAN
+    }
+}
+
+fn date_argument_to_millis(vm: &mut Vm, value: &Value) -> JsResult<f64> {
+    let primitive = to_primitive_for_binary(vm, value, false)?;
+    if is_bigint_marker(&primitive) {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "cannot convert a BigInt value to a number",
+        )));
+    }
+    if let Some(number) = primitive.as_number() {
+        return Ok(number);
+    }
+    if primitive.as_bool().is_some() || primitive.is_null() {
+        return Ok(primitive.number());
+    }
+    let text = to_string_with_vm(vm, &primitive)?;
+    if let Ok(date) = chrono::DateTime::parse_from_rfc3339(&text) {
+        return Ok(date.timestamp_millis() as f64);
+    }
+    if let Ok(date) = chrono::NaiveDate::parse_from_str(&text, "%Y-%m-%d") {
+        return Ok(date
+            .and_hms_opt(0, 0, 0)
+            .expect("midnight is valid")
+            .and_utc()
+            .timestamp_millis() as f64);
+    }
+    Ok(f64::NAN)
+}
+
+fn date_millis(value: &Value) -> Option<f64> {
+    value.as_object_ref().and_then(|object| {
+        object
+            .borrow()
+            .props
+            .get("\0date")
+            .and_then(Value::as_number)
+    })
+}
+
+fn date_utc(value: &Value) -> Option<chrono::DateTime<chrono::Utc>> {
+    let millis = date_millis(value)?;
+    millis.is_finite().then(|| ())?;
+    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(millis as i64)
+}
+
+fn native_date_get_time(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    Ok(Value::Number(date_millis(&this).unwrap_or(f64::NAN)))
+}
+
+fn native_date_value_of(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    native_date_get_time(vm, this, args)
+}
+
+fn native_date_to_iso_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let Some(date) = date_utc(&this) else {
+        return Err(JsError::Throw(range_error(vm, "Invalid time value")));
+    };
+    Ok(Value::string_value(
+        date.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+    ))
+}
+
+fn native_date_to_json(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if date_utc(&this).is_none() {
+        return Ok(Value::Null);
+    }
+    native_date_to_iso_string(vm, this, &[])
+}
+
+fn native_date_to_string(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let Some(date) = date_utc(&this) else {
+        return Ok(Value::string_value("Invalid Date"));
+    };
+    Ok(Value::string_value(
+        date.format("%a %b %d %Y %H:%M:%S GMT+0000 (UTC)")
+            .to_string(),
+    ))
+}
+
+fn native_date_to_date_string(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let Some(date) = date_utc(&this) else {
+        return Ok(Value::string_value("Invalid Date"));
+    };
+    Ok(Value::string_value(date.format("%a %b %d %Y").to_string()))
+}
+
+fn native_date_to_utc_string(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let Some(date) = date_utc(&this) else {
+        return Ok(Value::string_value("Invalid Date"));
+    };
+    Ok(Value::string_value(
+        date.format("%a, %d %b %Y %H:%M:%S GMT").to_string(),
+    ))
+}
+
+fn native_date_to_primitive(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let hint = args.first().map(Value::string).unwrap_or_default();
+    if hint == "number" {
+        return native_date_value_of(vm, this, &[]);
+    }
+    native_date_to_string(vm, this, &[])
+}
+
+fn native_date_now(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
+    Ok(Value::Number(time_clip(
+        vm.started_at.elapsed().as_secs_f64() * 1000.0,
+    )))
+}
+
+fn native_date_parse(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(value) = args.first() else {
+        return Ok(Value::Number(f64::NAN));
+    };
+    date_argument_to_millis(vm, value).map(|millis| Value::Number(time_clip(millis)))
+}
+
+fn native_date_utc(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    if args.is_empty() {
+        return Ok(Value::Number(f64::NAN));
+    }
+    let date = native_date(vm, Value::Undefined, args)?;
+    Ok(Value::Number(date_millis(&date).unwrap_or(f64::NAN)))
+}
+
+macro_rules! define_date_utc_getters {
+    ($( $name:ident => $field:ident ),+ $(,)?) => {
+        $(
+            fn $name(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+                Ok(Value::Number(date_utc(&this).map_or(f64::NAN, |date| date.$field() as f64)))
+            }
+        )+
+    };
+}
+
+define_date_utc_getters! {
+    native_date_get_utc_full_year => year,
+    native_date_get_utc_month => month0,
+    native_date_get_utc_date => day,
+    native_date_get_utc_hours => hour,
+    native_date_get_utc_minutes => minute,
+    native_date_get_utc_seconds => second,
+    native_date_get_utc_milliseconds => timestamp_subsec_millis,
+}
+
+fn native_date_get_utc_day(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    Ok(Value::Number(date_utc(&this).map_or(f64::NAN, |date| {
+        date.weekday().num_days_from_sunday() as f64
+    })))
+}
+
+fn date_set_millis(vm: &mut Vm, this: &Value, millis: f64) -> JsResult<Value> {
+    if this.as_object_ref().is_none() {
+        return Err(JsError::Throw(type_error(vm, "Date receiver required")));
+    }
+    let millis = time_clip(millis);
+    vm.set_prop(this, "\0date", Value::Number(millis));
+    Ok(Value::Number(millis))
+}
+
+fn native_date_set_time(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let millis = args
+        .first()
+        .map(|value| to_number_with_vm(vm, value))
+        .transpose()?
+        .unwrap_or(f64::NAN);
+    date_set_millis(vm, &this, millis)
+}
+
+fn date_component_number(vm: &mut Vm, args: &[Value], index: usize, default: f64) -> JsResult<f64> {
+    args.get(index)
+        .map(|value| to_number_with_vm(vm, value))
+        .transpose()
+        .map(|value| value.unwrap_or(default))
+}
+
+fn date_set_utc_component(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+    component: &'static str,
+) -> JsResult<Value> {
+    let Some(current) = date_utc(&this) else {
+        return date_set_millis(vm, &this, f64::NAN);
+    };
+    let mut date = current;
+    match component {
+        "year" => {
+            let year = date_component_number(vm, args, 0, f64::NAN)? as i32;
+            let month = (date_component_number(vm, args, 1, date.month0() as f64)? as u32)
+                .saturating_add(1);
+            let day = date_component_number(vm, args, 2, date.day() as f64)? as u32;
+            date = date
+                .with_year(if (0..=99).contains(&year) {
+                    year.saturating_add(1900)
+                } else {
+                    year
+                })
+                .and_then(|date| date.with_month(month))
+                .and_then(|date| date.with_day(day))
+                .ok_or_else(|| JsError::Throw(range_error(vm, "Invalid time value")))?;
+        }
+        "month" => {
+            let month = (date_component_number(vm, args, 0, f64::NAN)? as u32).saturating_add(1);
+            let day = date_component_number(vm, args, 1, date.day() as f64)? as u32;
+            date = date
+                .with_month(month)
+                .and_then(|date| date.with_day(day))
+                .ok_or_else(|| JsError::Throw(range_error(vm, "Invalid time value")))?;
+        }
+        "date" => {
+            let day = date_component_number(vm, args, 0, f64::NAN)? as u32;
+            date = date
+                .with_day(day)
+                .ok_or_else(|| JsError::Throw(range_error(vm, "Invalid time value")))?;
+        }
+        "hours" => {
+            let hour = date_component_number(vm, args, 0, f64::NAN)? as u32;
+            date = date
+                .with_hour(hour)
+                .ok_or_else(|| JsError::Throw(range_error(vm, "Invalid time value")))?;
+        }
+        "minutes" => {
+            let minute = date_component_number(vm, args, 0, f64::NAN)? as u32;
+            date = date
+                .with_minute(minute)
+                .ok_or_else(|| JsError::Throw(range_error(vm, "Invalid time value")))?;
+        }
+        "seconds" => {
+            let second = date_component_number(vm, args, 0, f64::NAN)? as u32;
+            date = date
+                .with_second(second)
+                .ok_or_else(|| JsError::Throw(range_error(vm, "Invalid time value")))?;
+        }
+        "milliseconds" => {
+            let millis = date_component_number(vm, args, 0, f64::NAN)? as u32;
+            date = date
+                .with_nanosecond(millis * 1_000_000)
+                .ok_or_else(|| JsError::Throw(range_error(vm, "Invalid time value")))?;
+        }
+        _ => unreachable!("date setter catalog must use a known component"),
+    }
+    date_set_millis(vm, &this, date.timestamp_millis() as f64)
+}
+
+macro_rules! define_date_utc_setters {
+    ($( $name:ident => $component:literal ),+ $(,)?) => {
+        $(
+            fn $name(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+                date_set_utc_component(vm, this, args, $component)
+            }
+        )+
+    };
+}
+
+define_date_utc_setters! {
+    native_date_set_utc_full_year => "year",
+    native_date_set_utc_month => "month",
+    native_date_set_utc_date => "date",
+    native_date_set_utc_hours => "hours",
+    native_date_set_utc_minutes => "minutes",
+    native_date_set_utc_seconds => "seconds",
+    native_date_set_utc_milliseconds => "milliseconds",
+}
+
 fn native_regexp(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     let p = a.first().map(Value::string).unwrap_or_default();
     let flags = a.get(1).map(Value::string).unwrap_or_default();

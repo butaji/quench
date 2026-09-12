@@ -12,6 +12,7 @@ pub(crate) enum BuiltinOwner {
     StringPrototype,
     NumberPrototype,
     BooleanPrototype,
+    DatePrototype,
     RegExpPrototype,
     ObjectPrototype,
     FunctionPrototype,
@@ -19,6 +20,7 @@ pub(crate) enum BuiltinOwner {
     Process,
     StringConstructor,
     NumberConstructor,
+    DateConstructor,
     ObjectConstructor,
     ArrayConstructor,
     FunctionConstructor,
@@ -171,6 +173,48 @@ builtin_catalog! {
     BooleanValueOf, BooleanPrototype, "valueOf", native_boolean_value_of, Generic, PURE;
     BooleanToString, BooleanPrototype, "toString", native_boolean_to_string, Generic, PURE;
     DateConstructor, Global, "Date", native_date, Generic, PURE;
+    DateGetTime, DatePrototype, "getTime", native_date_get_time, Generic, PURE;
+    DateValueOf, DatePrototype, "valueOf", native_date_value_of, Generic, PURE;
+    DateToISOString, DatePrototype, "toISOString", native_date_to_iso_string, Generic, MAY_ALLOCATE;
+    DateToJSON, DatePrototype, "toJSON", native_date_to_json, Generic, MAY_ALLOCATE;
+    DateGetUTCFullYear, DatePrototype, "getUTCFullYear", native_date_get_utc_full_year, Generic, PURE;
+    DateGetUTCMonth, DatePrototype, "getUTCMonth", native_date_get_utc_month, Generic, PURE;
+    DateGetUTCDate, DatePrototype, "getUTCDate", native_date_get_utc_date, Generic, PURE;
+    DateGetUTCDay, DatePrototype, "getUTCDay", native_date_get_utc_day, Generic, PURE;
+    DateGetUTCHours, DatePrototype, "getUTCHours", native_date_get_utc_hours, Generic, PURE;
+    DateGetUTCMinutes, DatePrototype, "getUTCMinutes", native_date_get_utc_minutes, Generic, PURE;
+    DateGetUTCSeconds, DatePrototype, "getUTCSeconds", native_date_get_utc_seconds, Generic, PURE;
+    DateGetUTCMilliseconds, DatePrototype, "getUTCMilliseconds", native_date_get_utc_milliseconds, Generic, PURE;
+    DateGetFullYear, DatePrototype, "getFullYear", native_date_get_utc_full_year, Generic, PURE;
+    DateGetMonth, DatePrototype, "getMonth", native_date_get_utc_month, Generic, PURE;
+    DateGetDate, DatePrototype, "getDate", native_date_get_utc_date, Generic, PURE;
+    DateGetDay, DatePrototype, "getDay", native_date_get_utc_day, Generic, PURE;
+    DateGetHours, DatePrototype, "getHours", native_date_get_utc_hours, Generic, PURE;
+    DateGetMinutes, DatePrototype, "getMinutes", native_date_get_utc_minutes, Generic, PURE;
+    DateGetSeconds, DatePrototype, "getSeconds", native_date_get_utc_seconds, Generic, PURE;
+    DateGetMilliseconds, DatePrototype, "getMilliseconds", native_date_get_utc_milliseconds, Generic, PURE;
+    DateSetTime, DatePrototype, "setTime", native_date_set_time, Generic, MAY_MUTATE;
+    DateSetUTCFullYear, DatePrototype, "setUTCFullYear", native_date_set_utc_full_year, Generic, MAY_MUTATE;
+    DateSetUTCMonth, DatePrototype, "setUTCMonth", native_date_set_utc_month, Generic, MAY_MUTATE;
+    DateSetUTCDate, DatePrototype, "setUTCDate", native_date_set_utc_date, Generic, MAY_MUTATE;
+    DateSetUTCHours, DatePrototype, "setUTCHours", native_date_set_utc_hours, Generic, MAY_MUTATE;
+    DateSetUTCMinutes, DatePrototype, "setUTCMinutes", native_date_set_utc_minutes, Generic, MAY_MUTATE;
+    DateSetUTCSeconds, DatePrototype, "setUTCSeconds", native_date_set_utc_seconds, Generic, MAY_MUTATE;
+    DateSetUTCMilliseconds, DatePrototype, "setUTCMilliseconds", native_date_set_utc_milliseconds, Generic, MAY_MUTATE;
+    DateSetFullYear, DatePrototype, "setFullYear", native_date_set_utc_full_year, Generic, MAY_MUTATE;
+    DateSetMonth, DatePrototype, "setMonth", native_date_set_utc_month, Generic, MAY_MUTATE;
+    DateSetDate, DatePrototype, "setDate", native_date_set_utc_date, Generic, MAY_MUTATE;
+    DateSetHours, DatePrototype, "setHours", native_date_set_utc_hours, Generic, MAY_MUTATE;
+    DateSetMinutes, DatePrototype, "setMinutes", native_date_set_utc_minutes, Generic, MAY_MUTATE;
+    DateSetSeconds, DatePrototype, "setSeconds", native_date_set_utc_seconds, Generic, MAY_MUTATE;
+    DateSetMilliseconds, DatePrototype, "setMilliseconds", native_date_set_utc_milliseconds, Generic, MAY_MUTATE;
+    DateToString, DatePrototype, "toString", native_date_to_string, Generic, MAY_ALLOCATE;
+    DateToDateString, DatePrototype, "toDateString", native_date_to_date_string, Generic, MAY_ALLOCATE;
+    DateToUTCString, DatePrototype, "toUTCString", native_date_to_utc_string, Generic, MAY_ALLOCATE;
+    DateToPrimitive, DatePrototype, "Symbol(Symbol.toPrimitive)", native_date_to_primitive, Generic, MAY_ALLOCATE;
+    DateNow, DateConstructor, "now", native_date_now, Generic, PURE;
+    DateParse, DateConstructor, "parse", native_date_parse, Generic, MAY_ALLOCATE;
+    DateUTC, DateConstructor, "UTC", native_date_utc, Generic, MAY_ALLOCATE;
     RegExpConstructor, Global, "RegExp", native_regexp, Generic, MAY_ALLOCATE;
     ErrorConstructor, Global, "Error", native_error, Generic, MAY_ALLOCATE;
     TypeErrorConstructor, Global, "TypeError", native_error, Generic, MAY_ALLOCATE;
@@ -335,6 +379,9 @@ fn builtin_length(id: BuiltinId) -> usize {
         BuiltinId::ObjectDefineProperties => 2,
         BuiltinId::ObjectFromEntries => 1,
         BuiltinId::ObjectSetPrototypeOf => 2,
+        BuiltinId::DateNow => 0,
+        BuiltinId::DateParse => 1,
+        BuiltinId::DateUTC => 7,
         BuiltinId::ReflectConstruct => 2,
         BuiltinId::MathAtan2 => 2,
         BuiltinId::MathSumPrecise => 1,
