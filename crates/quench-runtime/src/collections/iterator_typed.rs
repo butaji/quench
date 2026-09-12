@@ -57,10 +57,7 @@ pub(crate) fn typed_values(value: Value) -> Result<Vec<Value>, crate::execute::V
                     if data.meta.property("\0float16_array").is_some()
                         || data.meta.prototype().is_some_and(|prototype| {
                             matches!(
-                                crate::execute::get_property(
-                                    &prototype,
-                                    "\0float16_constructor"
-                                ),
+                                crate::execute::get_property(&prototype, "\0float16_constructor"),
                                 Value::Boolean(true)
                             )
                         })

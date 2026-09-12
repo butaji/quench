@@ -226,13 +226,11 @@ mod tests {
         let low = read_instruction(&bytes, 0).unwrap();
         let high = read_instruction(&bytes, AARCH64_INSTRUCTION_BYTES).unwrap();
         assert_eq!(
-            (low >> AARCH64_MOV_WIDE_IMMEDIATE_SHIFT)
-                & AARCH64_MOV_WIDE_IMMEDIATE_MASK,
+            (low >> AARCH64_MOV_WIDE_IMMEDIATE_SHIFT) & AARCH64_MOV_WIDE_IMMEDIATE_MASK,
             WORD as u32 & AARCH64_MOV_WIDE_IMMEDIATE_MASK,
         );
         assert_eq!(
-            (high >> AARCH64_MOV_WIDE_IMMEDIATE_SHIFT)
-                & AARCH64_MOV_WIDE_IMMEDIATE_MASK,
+            (high >> AARCH64_MOV_WIDE_IMMEDIATE_SHIFT) & AARCH64_MOV_WIDE_IMMEDIATE_MASK,
             (WORD >> u16::BITS) as u32 & AARCH64_MOV_WIDE_IMMEDIATE_MASK,
         );
     }

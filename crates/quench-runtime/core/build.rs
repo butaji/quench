@@ -98,16 +98,10 @@ fn main() {
 }
 
 fn generate_register_region_matrix(path: &Path) {
-    const F64_BINARY_OPERATIONS: [(&str, &str); 3] = [
-        ("subtract", "-"),
-        ("multiply", "*"),
-        ("divide", "/"),
-    ];
-    const WORD_BINARY_OPERATIONS: [(&str, &str); 3] = [
-        ("bit_or", "|"),
-        ("bit_xor", "^"),
-        ("bit_and", "&"),
-    ];
+    const F64_BINARY_OPERATIONS: [(&str, &str); 3] =
+        [("subtract", "-"), ("multiply", "*"), ("divide", "/")];
+    const WORD_BINARY_OPERATIONS: [(&str, &str); 3] =
+        [("bit_or", "|"), ("bit_xor", "^"), ("bit_and", "&")];
     const WORD_SHIFT_OPERATIONS: [(&str, &str); 3] = [
         ("shift_left", "left"),
         ("shift_right", "right"),
@@ -606,9 +600,15 @@ fn extract_stencil<'data>(
                     | REGISTER_REGION_LEAVE_HOLE_SYMBOL
             ) {
                 next_relocations.push(offset - start);
-            } else if matches!(name, DYN_SLOW_HOLE_SYMBOL | REGISTER_REGION_SLOW_HOLE_SYMBOL) {
+            } else if matches!(
+                name,
+                DYN_SLOW_HOLE_SYMBOL | REGISTER_REGION_SLOW_HOLE_SYMBOL
+            ) {
                 slow_relocations.push(offset - start);
-            } else if matches!(name, DYN_BRANCH_HOLE_SYMBOL | REGISTER_REGION_BRANCH_HOLE_SYMBOL) {
+            } else if matches!(
+                name,
+                DYN_BRANCH_HOLE_SYMBOL | REGISTER_REGION_BRANCH_HOLE_SYMBOL
+            ) {
                 branch_relocations.push(offset - start);
             } else {
                 unexpected_relocations.push((offset - start, name.to_string()));

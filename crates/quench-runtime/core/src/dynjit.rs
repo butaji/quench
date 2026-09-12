@@ -413,15 +413,12 @@ impl PropertyIcSite {
     }
 
     fn invalidate_unmarked_object_identities(&self) {
-        let should_clear = self
-            .inherited
-            .borrow()
-            .as_ref()
-            .is_some_and(|location| {
-                location.chain.iter().any(|guard| {
-                    !unsafe { guard.identity.as_ref() }.is_some_and(ObjectCell::is_marked)
-                })
-            });
+        let should_clear = self.inherited.borrow().as_ref().is_some_and(|location| {
+            location
+                .chain
+                .iter()
+                .any(|guard| !unsafe { guard.identity.as_ref() }.is_some_and(ObjectCell::is_marked))
+        });
         if should_clear {
             self.clear_inherited();
         }
@@ -1627,22 +1624,14 @@ pub fn numeric_region_stats_json() -> String {
         load(&NUMERIC_REGION_RUNTIME_STATS.linked_register_conversions),
         load(&NUMERIC_REGION_RUNTIME_STATS.linked_register_forwarded_local_loads),
         load(&NUMERIC_REGION_RUNTIME_STATS.linked_register_alias_updates),
-        load(
-            &NUMERIC_REGION_RUNTIME_STATS.linked_register_maximum_location_fanout
-        ),
+        load(&NUMERIC_REGION_RUNTIME_STATS.linked_register_maximum_location_fanout),
         load(&NUMERIC_REGION_RUNTIME_STATS.register_plan_attempts),
         load(&NUMERIC_REGION_RUNTIME_STATS.register_reject_not_single_trace),
-        load(
-            &NUMERIC_REGION_RUNTIME_STATS.register_reject_too_little_numeric_work
-        ),
-        load(
-            &NUMERIC_REGION_RUNTIME_STATS.register_reject_unsupported_boolean_use
-        ),
+        load(&NUMERIC_REGION_RUNTIME_STATS.register_reject_too_little_numeric_work),
+        load(&NUMERIC_REGION_RUNTIME_STATS.register_reject_unsupported_boolean_use),
         load(&NUMERIC_REGION_RUNTIME_STATS.register_reject_missing_numeric_value),
         load(&NUMERIC_REGION_RUNTIME_STATS.register_reject_register_pressure),
-        load(
-            &NUMERIC_REGION_RUNTIME_STATS.register_reject_live_values_at_backedge
-        ),
+        load(&NUMERIC_REGION_RUNTIME_STATS.register_reject_live_values_at_backedge),
         load(&NUMERIC_REGION_RUNTIME_STATS.linked_register_word_literals),
         load(&NUMERIC_REGION_RUNTIME_STATS.linked_register_word_loads),
         load(&NUMERIC_REGION_RUNTIME_STATS.linked_register_spills),
@@ -2907,7 +2896,8 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
                 (Some(left), Some(right)) => exec_numeric_op(*kind, left, right),
                 _ if super::is_bigint_marker(left) && super::is_bigint_marker(right)
                     || super::is_bigint_marker(left) && right.as_number().is_some()
-                    || left.as_number().is_some() && super::is_bigint_marker(right) => {
+                    || left.as_number().is_some() && super::is_bigint_marker(right) =>
+                {
                     exec_numeric_op(*kind, left.number(), right.number())
                 }
                 _ => exec_op_ref(*kind, left, right),
@@ -3477,7 +3467,9 @@ fn construct(
             )
             .then(|| function.prototype.clone())
         });
-        error_prototype.map_or(Value::Undefined, |prototype| vm(frame).object(Some(prototype)))
+        error_prototype.map_or(Value::Undefined, |prototype| {
+            vm(frame).object(Some(prototype))
+        })
     } else if let Some(function) = callee.as_function_ref() {
         let prototype = Some(function.prototype);
         match constructor_shape {
@@ -3504,19 +3496,21 @@ fn construct(
     // identity with the constructor used (`thrown.constructor === TypeError`).
     // Stamp the constructor metadata at the construction boundary so all error
     // kinds share the same native allocation path.
-    let error_constructor = callee.as_function_ref().and_then(|function| match function.kind {
-        FunctionKind::Builtin(
-            BuiltinId::ErrorConstructor
-            | BuiltinId::TypeErrorConstructor
-            | BuiltinId::RangeErrorConstructor
-            | BuiltinId::URIErrorConstructor
-            | BuiltinId::SyntaxErrorConstructor
-            | BuiltinId::ReferenceErrorConstructor
-            | BuiltinId::EvalErrorConstructor
-            | BuiltinId::AggregateErrorConstructor,
-        ) => Some(()),
-        _ => None,
-    });
+    let error_constructor = callee
+        .as_function_ref()
+        .and_then(|function| match function.kind {
+            FunctionKind::Builtin(
+                BuiltinId::ErrorConstructor
+                | BuiltinId::TypeErrorConstructor
+                | BuiltinId::RangeErrorConstructor
+                | BuiltinId::URIErrorConstructor
+                | BuiltinId::SyntaxErrorConstructor
+                | BuiltinId::ReferenceErrorConstructor
+                | BuiltinId::EvalErrorConstructor
+                | BuiltinId::AggregateErrorConstructor,
+            ) => Some(()),
+            _ => None,
+        });
     if error_constructor.is_some() && result.as_object_ref().is_some() {
         vm(frame).set_prop(&result, "constructor", callee.clone());
         let name = callee
@@ -3534,7 +3528,10 @@ fn construct(
             _ => "Object",
         };
         vm(frame).set_prop(&object, "\0wrapper", Value::string_value(wrapper));
-        if matches!(callee.as_function_ref().map(|function| &function.kind), Some(FunctionKind::Builtin(BuiltinId::StringConstructor))) {
+        if matches!(
+            callee.as_function_ref().map(|function| &function.kind),
+            Some(FunctionKind::Builtin(BuiltinId::StringConstructor))
+        ) {
             super::initialize_string_wrapper(vm(frame), &object, &result);
         }
     }
@@ -3568,13 +3565,19 @@ fn enumerable_keys(value: &Value) -> Vec<String> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    keys.extend(object.props.keys().filter(|key| {
-        !key.starts_with('\0')
-            && object
-                .attributes
-                .get(*key)
-                .is_none_or(|attributes| attributes.enumerable)
-    }).cloned());
+    keys.extend(
+        object
+            .props
+            .keys()
+            .filter(|key| {
+                !key.starts_with('\0')
+                    && object
+                        .attributes
+                        .get(*key)
+                        .is_none_or(|attributes| attributes.enumerable)
+            })
+            .cloned(),
+    );
     keys
 }
 
@@ -3598,9 +3601,20 @@ fn delete_property(value: &Value, key: &str) -> bool {
         object.attributes.remove(key);
         return true;
     } else if let Some(function) = value.as_function_ref() {
-        if matches!(function.kind, super::FunctionKind::Builtin(super::BuiltinId::NumberConstructor))
-            && matches!(key, "NaN" | "POSITIVE_INFINITY" | "NEGATIVE_INFINITY" | "MAX_VALUE" | "MIN_VALUE" | "MAX_SAFE_INTEGER" | "MIN_SAFE_INTEGER" | "EPSILON")
-        {
+        if matches!(
+            function.kind,
+            super::FunctionKind::Builtin(super::BuiltinId::NumberConstructor)
+        ) && matches!(
+            key,
+            "NaN"
+                | "POSITIVE_INFINITY"
+                | "NEGATIVE_INFINITY"
+                | "MAX_VALUE"
+                | "MIN_VALUE"
+                | "MAX_SAFE_INTEGER"
+                | "MIN_SAFE_INTEGER"
+                | "EPSILON"
+        ) {
             return false;
         }
         function.props.borrow_mut().shift_remove(key);
@@ -4856,35 +4870,35 @@ fn build_aarch64(
     } else {
         Vec::new()
     };
-    let block_region_count =
-        if direct_enabled && MAX_STATIC_BLOCK_VERSIONS > GENERIC_BLOCK_VERSION_COUNT {
-            let block_regions = plan
-                .blocks()
-                .iter()
-                .filter(|block| {
-                    !regions.iter().any(|region| {
-                        block.start < region.quote.end && region.quote.start < block.end
-                    })
-                })
-                .filter_map(|block| numeric_region::quote_block(&code, block.start, block.end).ok())
-                .map(|quote| {
-                    let register_plan =
-                        register_region_plan_with_stats(&quote, region_stats_enabled);
-                    NumericRegionLink {
-                        guard: numeric_region::GuardPlan::from_region(&quote),
-                        quote,
-                        register_plan,
-                        level: StencilLevel::Block,
-                    }
-                })
-                .collect::<Vec<_>>();
-            let count = block_regions.len();
-            regions.extend(block_regions);
-            regions.sort_unstable_by_key(|region| region.quote.start);
-            count
-        } else {
-            0
-        };
+    let block_region_count = if direct_enabled
+        && MAX_STATIC_BLOCK_VERSIONS > GENERIC_BLOCK_VERSION_COUNT
+    {
+        let block_regions = plan
+            .blocks()
+            .iter()
+            .filter(|block| {
+                !regions
+                    .iter()
+                    .any(|region| block.start < region.quote.end && region.quote.start < block.end)
+            })
+            .filter_map(|block| numeric_region::quote_block(&code, block.start, block.end).ok())
+            .map(|quote| {
+                let register_plan = register_region_plan_with_stats(&quote, region_stats_enabled);
+                NumericRegionLink {
+                    guard: numeric_region::GuardPlan::from_region(&quote),
+                    quote,
+                    register_plan,
+                    level: StencilLevel::Block,
+                }
+            })
+            .collect::<Vec<_>>();
+        let count = block_regions.len();
+        regions.extend(block_regions);
+        regions.sort_unstable_by_key(|region| region.quote.start);
+        count
+    } else {
+        0
+    };
     let prototype_ic_stats_enabled = prototype_ic_stats_enabled();
     let property_ics = (0..code.ops.len())
         .map(|_| PropertyIcSite::new(prototype_ic_stats_enabled))
@@ -5115,15 +5129,12 @@ fn build_aarch64(
         )
     });
     let captures_frame = !code.hoisted.is_empty()
-        || code
-            .ops
-            .iter()
-            .any(|instruction| {
-                matches!(
-                    instruction.op,
-                    DynOp::MakeClosure { .. } | DynOp::MakeArrow { .. }
-                )
-            });
+        || code.ops.iter().any(|instruction| {
+            matches!(
+                instruction.op,
+                DynOp::MakeClosure { .. } | DynOp::MakeArrow { .. }
+            )
+        });
     let call_recipe = FunctionCallRecipe {
         entry,
         guest_entry: unsafe { std::mem::transmute::<usize, DynEntry>(guest_entry) },
@@ -5187,8 +5198,7 @@ fn build_aarch64(
                     .filter(|step| {
                         matches!(
                             step,
-                            RegisterStep::LoadWordLocal { .. }
-                                | RegisterStep::ReadDenseWord { .. }
+                            RegisterStep::LoadWordLocal { .. } | RegisterStep::ReadDenseWord { .. }
                         )
                     })
                     .count();
@@ -5671,8 +5681,7 @@ fn effect_reentry_block(code: &DynCode, start: usize, end: usize, enabled: bool)
 #[cfg(target_arch = "aarch64")]
 const REGION_BODY_LABEL_BASE: u32 = MAX_EMBEDDED_PC as u32 + 1;
 #[cfg(target_arch = "aarch64")]
-const REGISTER_REGION_EXIT_LABEL_BASE: u32 =
-    REGION_BODY_LABEL_BASE + MAX_EMBEDDED_PC as u32 + 1;
+const REGISTER_REGION_EXIT_LABEL_BASE: u32 = REGION_BODY_LABEL_BASE + MAX_EMBEDDED_PC as u32 + 1;
 
 #[cfg(target_arch = "aarch64")]
 fn register_region_exit_label(target: usize) -> LabelId {
@@ -5838,9 +5847,7 @@ fn register_region_enter_leaf() -> Stencil<Connector, RegisterRegionConnector> {
 }
 
 #[cfg(target_arch = "aarch64")]
-fn register_region_leave_leaf(
-    target: LabelId,
-) -> Stencil<RegisterRegionConnector, Connector> {
+fn register_region_leave_leaf(target: LabelId) -> Stencil<RegisterRegionConnector, Connector> {
     rustc_typed_stencil_with_site_advance(
         "quench_register_region_leave",
         Some(target),
@@ -5864,9 +5871,7 @@ fn register_region_step_leaf(
 
     let (name, branch_target) = match step {
         Step::Nop { .. } => ("quench_register_region_nop".to_owned(), None),
-        Step::CopyLoadLocal { .. } => {
-            ("quench_register_region_copy_load_local".to_owned(), None)
-        }
+        Step::CopyLoadLocal { .. } => ("quench_register_region_copy_load_local".to_owned(), None),
         Step::LoadLocal { destination, .. } => (
             format!("quench_register_region_load_local_d{destination}"),
             None,
@@ -5904,16 +5909,12 @@ fn register_region_step_leaf(
             format!("quench_register_region_load_name_d{destination}"),
             None,
         ),
-        Step::CopyLoadName { .. } => {
-            ("quench_register_region_copy_load_name".to_owned(), None)
-        }
+        Step::CopyLoadName { .. } => ("quench_register_region_copy_load_name".to_owned(), None),
         Step::StoreLocal { source, .. } => (
             format!("quench_register_region_store_local_s{source}"),
             None,
         ),
-        Step::CopyStoreLocal { .. } => {
-            ("quench_register_region_copy_store_local".to_owned(), None)
-        }
+        Step::CopyStoreLocal { .. } => ("quench_register_region_copy_store_local".to_owned(), None),
         Step::Move {
             destination,
             source,
@@ -5945,12 +5946,12 @@ fn register_region_step_leaf(
                 Conversion::F64ToWord32 => {
                     format!("quench_register_region_f64_to_word_w{destination}d{source}")
                 }
-                Conversion::SignedWord32ToF64 => format!(
-                    "quench_register_region_signed_word_to_f64_d{destination}w{source}"
-                ),
-                Conversion::UnsignedWord32ToF64 => format!(
-                    "quench_register_region_unsigned_word_to_f64_d{destination}w{source}"
-                ),
+                Conversion::SignedWord32ToF64 => {
+                    format!("quench_register_region_signed_word_to_f64_d{destination}w{source}")
+                }
+                Conversion::UnsignedWord32ToF64 => {
+                    format!("quench_register_region_unsigned_word_to_f64_d{destination}w{source}")
+                }
             },
             None,
         ),
@@ -6066,9 +6067,7 @@ fn register_region_step_leaf(
             format!("quench_register_region_load_static_d{destination}"),
             None,
         ),
-        Step::CopyReadStatic { .. } => {
-            ("quench_register_region_copy_read_static".to_owned(), None)
-        }
+        Step::CopyReadStatic { .. } => ("quench_register_region_copy_read_static".to_owned(), None),
         Step::WriteStatic { source, .. } => (
             format!("quench_register_region_write_static_s{source}"),
             None,
@@ -6099,10 +6098,7 @@ fn register_region_step_leaf(
 }
 
 #[cfg(target_arch = "aarch64")]
-fn register_region_target(
-    target: usize,
-    plan: &numeric_region::RegisterRegionPlan,
-) -> LabelId {
+fn register_region_target(target: usize, plan: &numeric_region::RegisterRegionPlan) -> LabelId {
     if (plan.start..plan.end).contains(&target) {
         LabelId(REGION_BODY_LABEL_BASE + target as u32)
     } else {

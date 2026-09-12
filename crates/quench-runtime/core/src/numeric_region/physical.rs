@@ -42,26 +42,51 @@ pub enum RegisterConversion {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RegisterRegionStep {
-    Nop { pc: usize },
-    CopyLoadLocal { pc: usize },
-    LoadLocal { pc: usize, destination: RegisterLane },
-    LoadWordLocal { pc: usize, destination: RegisterLane },
-    LoadLiteral { pc: usize, destination: RegisterLane },
+    Nop {
+        pc: usize,
+    },
+    CopyLoadLocal {
+        pc: usize,
+    },
+    LoadLocal {
+        pc: usize,
+        destination: RegisterLane,
+    },
+    LoadWordLocal {
+        pc: usize,
+        destination: RegisterLane,
+    },
+    LoadLiteral {
+        pc: usize,
+        destination: RegisterLane,
+    },
     LoadWordLiteral {
         pc: usize,
         destination: RegisterLane,
         word: u32,
     },
-    LoadName { pc: usize, destination: RegisterLane },
-    CopyLoadName { pc: usize },
-    StoreLocal { pc: usize, source: RegisterLane },
-    CopyStoreLocal { pc: usize },
+    LoadName {
+        pc: usize,
+        destination: RegisterLane,
+    },
+    CopyLoadName {
+        pc: usize,
+    },
+    StoreLocal {
+        pc: usize,
+        source: RegisterLane,
+    },
+    CopyStoreLocal {
+        pc: usize,
+    },
     Move {
         pc: usize,
         destination: RegisterLocation,
         source: RegisterLocation,
     },
-    CopyMove { pc: usize },
+    CopyMove {
+        pc: usize,
+    },
     Convert {
         pc: usize,
         destination: RegisterLane,
@@ -103,11 +128,24 @@ pub enum RegisterRegionStep {
         index: RegisterLane,
         source: RegisterLane,
     },
-    LoadStatic { pc: usize, destination: RegisterLane },
-    CopyReadStatic { pc: usize },
-    WriteStatic { pc: usize, source: RegisterLane },
-    CopyWriteStatic { pc: usize },
-    Jump { pc: usize, target: usize },
+    LoadStatic {
+        pc: usize,
+        destination: RegisterLane,
+    },
+    CopyReadStatic {
+        pc: usize,
+    },
+    WriteStatic {
+        pc: usize,
+        source: RegisterLane,
+    },
+    CopyWriteStatic {
+        pc: usize,
+    },
+    Jump {
+        pc: usize,
+        target: usize,
+    },
 }
 
 impl RegisterRegionStep {
@@ -168,14 +206,22 @@ pub struct RegisterRegionPlan {
 pub enum RegisterRegionReject {
     NotSingleTrace,
     TooLittleNumericWork,
-    UnsupportedBooleanUse { pc: usize },
-    MissingNumericValue { pc: usize, register: Register },
+    UnsupportedBooleanUse {
+        pc: usize,
+    },
+    MissingNumericValue {
+        pc: usize,
+        register: Register,
+    },
     RegisterPressure {
         pc: usize,
         word_lanes: usize,
         f64_lanes: usize,
     },
-    LiveValuesAtBackedge { pc: usize, count: usize },
+    LiveValuesAtBackedge {
+        pc: usize,
+        count: usize,
+    },
 }
 
 #[derive(Default)]
@@ -264,16 +310,15 @@ pub fn plan_register_region(
                 }
             }
             RegionOp::ReadLocal { dst, .. }
-                if numeric.contains(dst)
-                    && quote.internal_local_sources().contains_key(dst) =>
+                if numeric.contains(dst) && quote.internal_local_sources().contains_key(dst) =>
             {
                 let source = quote.internal_local_sources()[dst];
                 let source_location = consume(pc, source, &mut remaining, &mut locations)?;
                 locations.insert(*dst, source_location);
                 forwarded_local_loads += 1;
                 alias_updates += 1;
-                maximum_location_fanout = maximum_location_fanout
-                    .max(location_fanout(source_location, &locations));
+                maximum_location_fanout =
+                    maximum_location_fanout.max(location_fanout(source_location, &locations));
                 RegisterRegionStep::Nop { pc }
             }
             RegionOp::ReadLocal { dst, .. } if numeric.contains(dst) => {
@@ -352,8 +397,8 @@ pub fn plan_register_region(
                 consume(pc, *src, &mut remaining, &mut locations)?;
                 locations.insert(*dst, source);
                 alias_updates += 1;
-                maximum_location_fanout = maximum_location_fanout
-                    .max(location_fanout(source, &locations));
+                maximum_location_fanout =
+                    maximum_location_fanout.max(location_fanout(source, &locations));
                 RegisterRegionStep::Nop { pc }
             }
             RegionOp::Move { .. } => RegisterRegionStep::CopyMove { pc },
@@ -518,7 +563,9 @@ pub fn plan_register_region(
                     kind: *kind,
                 }
             }
-            RegionOp::ReadDense { dst, index: source, .. } => {
+            RegionOp::ReadDense {
+                dst, index: source, ..
+            } => {
                 let index_location = prepare_f64(
                     pc,
                     *source,
@@ -568,7 +615,9 @@ pub fn plan_register_region(
                     }
                 }
             }
-            RegionOp::WriteDense { index: key, src, .. } => {
+            RegionOp::WriteDense {
+                index: key, src, ..
+            } => {
                 let index_location = prepare_f64(
                     pc,
                     *key,
@@ -630,7 +679,10 @@ pub fn plan_register_region(
                         count: locations.len(),
                     });
                 }
-                RegisterRegionStep::Jump { pc, target: *target }
+                RegisterRegionStep::Jump {
+                    pc,
+                    target: *target,
+                }
             }
             RegionOp::JumpIfFalse { .. } => {
                 return Err(RegisterRegionReject::UnsupportedBooleanUse { pc });
@@ -828,15 +880,14 @@ fn allocate_destination(
         RegisterLocation::Word32 { kind, .. } => {
             let lane = free_word_lane(locations, &BTreeSet::new())
                 .ok_or_else(|| register_pressure(pc, locations))?;
-            *maximum_live_word_lanes = (*maximum_live_word_lanes)
-                .max(live_word_lanes(locations) + 1);
+            *maximum_live_word_lanes =
+                (*maximum_live_word_lanes).max(live_word_lanes(locations) + 1);
             Ok(RegisterLocation::Word32 { lane, kind })
         }
         RegisterLocation::F64(_) => {
             let lane = free_f64_lane(locations, &BTreeSet::new())
                 .ok_or_else(|| register_pressure(pc, locations))?;
-            *maximum_live_f64_lanes = (*maximum_live_f64_lanes)
-                .max(live_f64_lanes(locations) + 1);
+            *maximum_live_f64_lanes = (*maximum_live_f64_lanes).max(live_f64_lanes(locations) + 1);
             Ok(RegisterLocation::F64(lane))
         }
     }
@@ -1086,9 +1137,7 @@ fn operation_pc(operation: &RegionOp) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::numeric_region::model::{
-        NumericDenseState, Region, RegionNode, RewriteStats,
-    };
+    use crate::numeric_region::model::{NumericDenseState, Region, RegionNode, RewriteStats};
 
     const LOOP_HEADER_PC: usize = 0;
     const BLOCK_START_PC: usize = 0;
@@ -1152,13 +1201,7 @@ mod tests {
             target: LOOP_HEADER_PC,
         });
         let exit = pc + NEXT_BYTECODE_PC_DISTANCE;
-        let body = RegionNode::Seq(
-            operations
-                .iter()
-                .cloned()
-                .map(RegionNode::Op)
-                .collect(),
-        );
+        let body = RegionNode::Seq(operations.iter().cloned().map(RegionNode::Op).collect());
         let quote = QuotedLoop {
             start: LOOP_HEADER_PC,
             end: exit,
@@ -1179,10 +1222,11 @@ mod tests {
         let plan = plan_register_region(&quote).expect("mixed register cover");
         assert_eq!(plan.numeric_operations, WORD_OPERATION_COUNT);
         assert_eq!(plan.forwarded_local_loads, WORD_OPERATION_COUNT - 1);
-        assert!(plan.steps.iter().any(|step| matches!(
-            step,
-            RegisterRegionStep::LoadWordLocal { .. }
-        )));
+        assert!(
+            plan.steps
+                .iter()
+                .any(|step| matches!(step, RegisterRegionStep::LoadWordLocal { .. }))
+        );
         assert_eq!(
             plan.steps
                 .iter()
@@ -1238,13 +1282,7 @@ mod tests {
             target: LOOP_HEADER_PC,
         });
         let exit = pc + NEXT_BYTECODE_PC_DISTANCE;
-        let body = RegionNode::Seq(
-            operations
-                .iter()
-                .cloned()
-                .map(RegionNode::Op)
-                .collect(),
-        );
+        let body = RegionNode::Seq(operations.iter().cloned().map(RegionNode::Op).collect());
         let quote = QuotedLoop {
             start: LOOP_HEADER_PC,
             end: exit,
@@ -1264,14 +1302,13 @@ mod tests {
 
         let plan = plan_register_region(&quote).expect("alias-preserving register cover");
         assert_eq!(plan.alias_updates, WORD_OPERATION_COUNT);
-        assert_eq!(
-            plan.maximum_location_fanout,
-            SHARED_SOURCE_AND_ALIAS_FANOUT
+        assert_eq!(plan.maximum_location_fanout, SHARED_SOURCE_AND_ALIAS_FANOUT);
+        assert!(
+            !plan
+                .steps
+                .iter()
+                .any(|step| matches!(step, RegisterRegionStep::Move { .. }))
         );
-        assert!(!plan
-            .steps
-            .iter()
-            .any(|step| matches!(step, RegisterRegionStep::Move { .. })));
     }
 
     #[test]

@@ -115,19 +115,19 @@ Verification completed:
 - the Number stage was rerun after restoring numeric constructor constants,
   static predicates/parsers, prototype metadata, and numeric string coercion
   and reached 199/340; BigInt, Realm, and constructor-reflection cases remain
-- the stencil Number stage now reaches 339/340 after deriving numeric
+- the stencil Number stage now reaches 340/340 after deriving numeric
   predicates from one Rust macro, sharing exact number formatting helpers,
-  preserving error prototypes, and validating constructor/radix behavior; the
-  two remaining cases require Realm lowering and a BigInt type guard in
-  `toFixed`
-- the stencil NativeErrors stage now reaches 86/94 after deriving shared
+  preserving error prototypes, validating constructor/radix behavior, and
+  retaining primitive `prototype` overrides for cross-realm construction
+- the stencil NativeErrors stage now reaches 92/94 after deriving shared
   error prototypes, constructor identity, and non-enumerable message/cause
-  properties; the remaining cases require Realm or coercion lowering
+  properties, plus constructor-realm fallback; the two remaining cases are
+  native property-helper compatibility gaps
 - the stencil Math stage now reaches 325/327 after deriving unary and binary
   native wrappers, exact `sumPrecise` accumulation, binary16 rounding, and the
   complete intrinsic projection; the two remaining cases require generator /
   iterator lowering in the stencil compiler
-- the stencil Object stage reached 1,030/3,411 after deriving integrity helpers,
+- the stencil Object stage reached 1,131/3,411 after deriving integrity helpers,
   fixing descriptor borrow ordering, and keeping huge array lengths metadata
   backed; the remaining failures are unsupported stencil features
 - historical commits advertising “100% Test262” used `test262/skip.rs` to skip

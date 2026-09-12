@@ -11,12 +11,12 @@ mod harness_cache;
 pub mod module_graph;
 mod runner_support;
 pub mod runtime_host;
-pub mod stencil_host;
 mod stages;
+pub mod stencil_host;
 pub use harness_cache::HarnessCache;
 pub use runtime_host::{LinkedModule, LinkedModuleGraph, RuntimeHost};
-pub use stencil_host::{selected_host, StencilHost};
 pub use stages::{list_stages, resolve_stages, ConformanceStage, ResolvedStage};
+pub use stencil_host::{selected_host, StencilHost};
 
 /// Engine-facing execution contract for an external conformance runner.
 pub trait Test262Host: Send {
