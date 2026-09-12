@@ -10900,21 +10900,28 @@ fn string_pad(vm: &mut Vm, this: Value, args: &[Value], start: bool) -> JsResult
         .transpose()?
         .unwrap_or(0.0)
         .max(0.0) as usize;
-    let source_len = source.chars().count();
+    let source_len = source.encode_utf16().count();
     if target <= source_len {
         return Ok(Value::string_value(source));
     }
-    let fill = args.get(1).map(Value::string).unwrap_or_else(|| " ".into());
+    let fill = match args.get(1).filter(|value| !value.is_undefined()) {
+        Some(value) => to_string_with_vm(vm, value)?,
+        None => " ".into(),
+    };
     if fill.is_empty() {
         return Ok(Value::string_value(source));
     }
     let needed = target - source_len;
-    let padding = fill.chars().cycle().take(needed).collect::<String>();
-    Ok(Value::string_value(if start {
-        format!("{padding}{source}")
+    let padding = fill.encode_utf16().cycle().take(needed).collect::<Vec<_>>();
+    let mut result = Vec::with_capacity(target);
+    if start {
+        result.extend(padding);
+        result.extend(source.encode_utf16());
     } else {
-        format!("{source}{padding}")
-    }))
+        result.extend(source.encode_utf16());
+        result.extend(padding);
+    }
+    Ok(Value::string_value(String::from_utf16_lossy(&result)))
 }
 
 fn native_string_at(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
@@ -13246,12 +13253,10 @@ fn to_string_with_vm(vm: &mut Vm, value: &Value) -> JsResult<String> {
         .as_object_ref()
         .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
     {
-        let description = value
-            .as_object_ref()
-            .and_then(|object| object.borrow().props.get("\0symbol").cloned())
-            .map(|description| description.string())
-            .unwrap_or_default();
-        return Ok(format!("Symbol({description})"));
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Cannot convert a Symbol value to a string",
+        )));
     }
     if value.is_object() || value.is_function() {
         let primitive = to_primitive_for_binary(vm, value, true)?;
