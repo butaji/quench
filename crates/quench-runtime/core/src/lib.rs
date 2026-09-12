@@ -1394,6 +1394,15 @@ fn accessor_key(slot: &str) -> Option<(&str, &str)> {
     Some((kind, key))
 }
 
+/// Whether `key` has a logical accessor in the compact property store.
+/// Accessors occupy hidden getter/setter slots, so checking only the visible
+/// map would make descriptor-only metadata appear as a duplicate enumerable
+/// property. Keeping this predicate centralized makes all key projections
+/// agree on one representation.
+fn has_accessor_slots(props: &PropertyStorage, key: &str) -> bool {
+    props.contains_key(&accessor_slot("get", key)) || props.contains_key(&accessor_slot("set", key))
+}
+
 impl Object {
     fn ordinary(proto: Option<ObjectHandle>) -> Self {
         Self {
@@ -5810,13 +5819,15 @@ impl Vm {
             let get_slot = accessor_slot("get", key);
             let set_slot = accessor_slot("set", key);
             regexp.props.shift_remove(key);
-            regexp.props.shift_remove(&get_slot);
-            regexp.props.shift_remove(&set_slot);
             if let Some(getter) = getter {
                 regexp.props.insert(get_slot, getter);
+            } else {
+                regexp.props.shift_remove(&get_slot);
             }
             if let Some(setter) = setter {
                 regexp.props.insert(set_slot, setter);
+            } else {
+                regexp.props.shift_remove(&set_slot);
             }
             regexp.attributes.insert(key.to_owned(), attributes);
             return;
@@ -5826,15 +5837,17 @@ impl Vm {
         };
         let mut object = object.borrow_mut();
         object.props.shift_remove(key);
-        object.props.shift_remove(&accessor_slot("get", key));
-        object.props.shift_remove(&accessor_slot("set", key));
+        let get_slot = accessor_slot("get", key);
+        let set_slot = accessor_slot("set", key);
         if let Some(getter) = getter {
-            let slot = accessor_slot("get", key);
-            object.props.insert(&slot, getter);
+            object.props.insert(&get_slot, getter);
+        } else {
+            object.props.shift_remove(&get_slot);
         }
         if let Some(setter) = setter {
-            let slot = accessor_slot("set", key);
-            object.props.insert(&slot, setter);
+            object.props.insert(&set_slot, setter);
+        } else {
+            object.props.shift_remove(&set_slot);
         }
         object.attributes.insert(key.to_owned(), attributes);
     }
@@ -8260,6 +8273,15 @@ fn native_symbol(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let symbol = vm.object(None);
     vm.set_prop(&symbol, "\0symbol", Value::string_value(description));
     vm.set_prop(&symbol, "toString", vm.native(native_symbol_to_string));
+    if let Some(object) = symbol.as_object_ref() {
+        object.borrow_mut().attributes.insert(
+            "toString".into(),
+            PropertyAttributes {
+                enumerable: false,
+                ..PropertyAttributes::DEFAULT
+            },
+        );
+    }
     Ok(symbol)
 }
 fn native_symbol_to_string(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
@@ -11213,38 +11235,41 @@ fn object_own_enumerable_keys(target: &Value) -> Vec<String> {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        keys.extend(
-            object
-                .props
-                .keys()
-                .filter(|key| {
-                    !key.starts_with('\0')
-                        && object
-                            .attributes
-                            .get(*key)
-                            .is_none_or(|attrs| attrs.enumerable)
-                })
-                .cloned(),
-        );
-        keys.extend(
-            object
-                .props
-                .keys()
-                .filter_map(|key| accessor_key(key).map(|(_, key)| key.to_owned()))
-                .filter(|key| {
-                    !keys.iter().any(|existing| existing == key)
-                        && object
-                            .attributes
-                            .get(key)
-                            .is_none_or(|attributes| attributes.enumerable)
-                })
-                .collect::<Vec<_>>(),
-        );
+        let mut seen = HashSet::new();
+        // PropertyStorage is insertion ordered. Project hidden accessor slots
+        // back to their logical key while walking that one order, so an
+        // accessor created before a later data property remains before it.
+        for raw_key in object.props.keys() {
+            let key = accessor_key(raw_key)
+                .map(|(_, key)| key)
+                .unwrap_or(raw_key.as_str());
+            if raw_key.starts_with('\0') && accessor_key(raw_key).is_none() {
+                continue;
+            }
+            if key.starts_with("Symbol(") {
+                continue;
+            }
+            if !seen.insert(key.to_owned()) {
+                continue;
+            }
+            if object
+                .attributes
+                .get(key)
+                .is_none_or(|attributes| attributes.enumerable)
+            {
+                keys.push(key.to_owned());
+            }
+        }
         keys.extend(
             object
                 .attributes
                 .keys()
-                .filter(|key| !key.starts_with('\0') && !object.props.contains_key(*key))
+                .filter(|key| {
+                    !key.starts_with('\0')
+                        && !key.starts_with("Symbol(")
+                        && !object.props.contains_key(*key)
+                        && !has_accessor_slots(&object.props, key)
+                })
                 .filter(|key| {
                     object
                         .attributes
@@ -11262,6 +11287,7 @@ fn object_own_enumerable_keys(target: &Value) -> Vec<String> {
             .keys()
             .filter(|key| {
                 !key.starts_with('\0')
+                    && !key.starts_with("Symbol(")
                     && regexp
                         .attributes
                         .get(*key)
@@ -11310,17 +11336,32 @@ fn object_own_enumerable_keys(target: &Value) -> Vec<String> {
 }
 
 fn partition_symbol_keys(keys: Vec<String>) -> Vec<String> {
+    // ECMAScript own-key order is numeric indices first (ascending), then
+    // ordinary strings in insertion order, then symbols.  Keep this as one
+    // projection so Object.keys/values/entries and descriptor collection do
+    // not each grow a subtly different ordering algorithm.
+    let mut indices = Vec::new();
     let mut strings = Vec::with_capacity(keys.len());
     let mut symbols = Vec::new();
     for key in keys {
         if key.starts_with("Symbol(") {
             symbols.push(key);
+        } else if let Some(index) = key
+            .parse::<u64>()
+            .ok()
+            .filter(|index| *index <= MAX_JS_ARRAY_INDEX && index.to_string() == key)
+        {
+            indices.push((index, key));
         } else {
             strings.push(key);
         }
     }
-    strings.extend(symbols);
-    strings
+    indices.sort_unstable_by_key(|(index, _)| *index);
+    let mut ordered = Vec::with_capacity(indices.len() + strings.len() + symbols.len());
+    ordered.extend(indices.into_iter().map(|(_, key)| key));
+    ordered.extend(strings);
+    ordered.extend(symbols);
+    ordered
 }
 
 /// Own-property ordering used by descriptor collection.  This is deliberately
@@ -11410,6 +11451,14 @@ fn native_object_values(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value
     }
     let mut values = Vec::new();
     for key in object_own_enumerable_keys(target) {
+        // EnumerableOwnPropertyNames snapshots keys, then re-checks each
+        // descriptor before Get. A preceding getter may delete a later key.
+        if !object_own_enumerable_keys(target)
+            .iter()
+            .any(|existing| existing == &key)
+        {
+            continue;
+        }
         values.push(vm.get_prop_with_accessors(target, &key)?);
     }
     Ok(vm.array_from_values(values))
@@ -11426,6 +11475,12 @@ fn native_object_entries(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Valu
     }
     let mut entries = Vec::new();
     for key in object_own_enumerable_keys(target) {
+        if !object_own_enumerable_keys(target)
+            .iter()
+            .any(|existing| existing == &key)
+        {
+            continue;
+        }
         let value = vm.get_prop_with_accessors(target, &key)?;
         entries.push(vm.array_from_values(vec![Value::string_value(key), value]));
     }
@@ -11712,7 +11767,8 @@ fn native_object_property_is_enumerable(
                 || {
                     object.props.contains_key(&key)
                         || (object.array.as_ref().is_some_and(|array| {
-                            array_index_key(&key).is_some_and(|index| index < array.len())
+                            array_index_key(&key)
+                                .is_some_and(|index| index < array.len() && !array.holes[index])
                         }))
                 },
                 |attributes| attributes.enumerable,
