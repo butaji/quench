@@ -1694,6 +1694,22 @@ impl Compiler {
         use oxc_syntax::operator::UnaryOperator::*;
         if value.operator == Delete {
             let dst = self.alloc()?;
+            // Global immutable bindings are not deletable. Keep this fact in
+            // the stencil IR instead of folding every identifier delete to
+            // `true`; ordinary unresolved names retain the spec's sloppy-mode
+            // behavior below.
+            if let Expression::Identifier(identifier) = &value.argument
+                && matches!(identifier.name.as_str(), "NaN" | "Infinity" | "undefined")
+            {
+                self.emit(
+                    DynOp::LoadLiteral {
+                        dst,
+                        value: Literal::Bool(false),
+                    },
+                    value.span,
+                );
+                return Ok(dst);
+            }
             if let Some(member) = value.argument.as_member_expression() {
                 match self.member_lvalue(member)? {
                     Lvalue::Static { object, key } => self.emit(
