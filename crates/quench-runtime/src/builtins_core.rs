@@ -327,13 +327,32 @@ pub(crate) fn array_join(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
+    array_join_with_length(receiver, arguments, None)
+}
+
+pub(crate) fn array_join_typed(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let length = receiver.and_then(crate::typed_array_ops::logical_len);
+    array_join_with_length(receiver, arguments, length)
+}
+
+fn array_join_with_length(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    internal_length: Option<usize>,
+) -> Result<Value, crate::execute::VmError> {
     let Some(receiver) = receiver.filter(|value| !matches!(value, Value::Null | Value::Undefined)) else {
         return Err(crate::value::error::throw_type_error(
             "Array.prototype.join called on null or undefined",
         ));
     };
     let receiver = crate::construct::to_object(receiver)?;
-    let length = crate::builtins::map_length(&receiver)?;
+    let length = match internal_length {
+        Some(length) => length,
+        None => crate::builtins::map_length(&receiver)?,
+    };
     let separator: Vec<u16> = match arguments.first() {
         Some(Value::Undefined) | None => ",".encode_utf16().collect(),
         Some(value) => crate::conversion::to_string(value)?.encode_utf16().collect(),

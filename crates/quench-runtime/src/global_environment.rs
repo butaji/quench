@@ -13,6 +13,33 @@ struct Descriptor {
 thread_local! {
     static GLOBAL_BINDINGS: RefCell<HashMap<(crate::ops::RealmId, String), Rc<crate::value::BindingCell>>> =
         RefCell::new(HashMap::new());
+    static GLOBAL_DESCRIPTOR_FLAGS: RefCell<HashMap<(crate::ops::RealmId, String), (bool, bool, bool)>> =
+        RefCell::new(HashMap::new());
+}
+
+pub(crate) fn descriptor_flags(name: &str) -> Option<(bool, bool, bool)> {
+    let realm = crate::vm::current_context_or_default().realm();
+    GLOBAL_DESCRIPTOR_FLAGS.with(|flags| flags.borrow().get(&(realm, name.to_string())).copied())
+}
+
+pub(crate) fn reset_bindings() {
+    GLOBAL_BINDINGS.with(|bindings| bindings.borrow_mut().clear());
+    GLOBAL_DESCRIPTOR_FLAGS.with(|flags| flags.borrow_mut().clear());
+}
+
+pub(crate) fn remember_descriptor_flags(
+    name: &str,
+    writable: bool,
+    enumerable: bool,
+    configurable: bool,
+) {
+    let realm = crate::vm::current_context_or_default().realm();
+    GLOBAL_DESCRIPTOR_FLAGS.with(|flags| {
+        flags.borrow_mut().insert(
+            (realm, name.to_string()),
+            (writable, enumerable, configurable),
+        );
+    });
 }
 
 pub(crate) fn binding_cells() -> Vec<Rc<crate::value::BindingCell>> {
@@ -174,12 +201,26 @@ fn create_var(
     }
     let cell = binding_cell(name, slot, current.as_ref().map(|value| &value.value));
     // Per spec, global var bindings are non-configurable.
+    let remembered_flags = descriptor_flags(name)
+        .or_else(|| {
+            current
+                .as_ref()
+                .map(|current| (current.writable, current.enumerable, current.configurable))
+        })
+        .unwrap_or((true, true, deletable));
     let descriptor = match current {
         Some(current) if !current.configurable => value_descriptor(cell),
         Some(current) => descriptor_with_flags(cell, &current),
         None => data_descriptor(cell, true, true, deletable),
     };
-    define_global(registers, name, descriptor)
+    remember_descriptor_flags(
+        name,
+        remembered_flags.0,
+        remembered_flags.1,
+        remembered_flags.2,
+    );
+    let result = define_global(registers, name, descriptor);
+    result
 }
 
 fn alias_existing_global(
@@ -202,18 +243,62 @@ fn create_function(
     deletable: bool,
 ) -> Result<(), VmError> {
     let current = own_descriptor(name);
+    // Descriptor objects expose the public value of a binding cell.  Inspect
+    // the staged global storage directly so Annex B can preserve an existing
+    // non-enumerable property after CreateGlobalVarBinding has installed its
+    // internal cell.
+    let has_existing_global_binding = match crate::vm::current_global_object() {
+        Value::Object(properties) => properties
+            .iter()
+            .rev()
+            .any(|(key, value)| key == name && matches!(value, Value::BindingCell(_))),
+        _ => false,
+    };
     let value = crate::locals::slot_cell(slot).borrow().clone();
     let cell = binding_cell(name, slot, Some(&value));
-    // A function declaration only creates a new enumerable property when the
-    // name is absent.  Eval-time Annex B declarations must preserve the
-    // descriptor of an existing configurable property (including a deliberate
-    // non-enumerable flag) while replacing its value.
+    // A function declaration replaces an existing configurable property with
+    // the spec's writable/enumerable data descriptor. Only a non-configurable
+    // property retains its existing flags while its value is updated.
+    let remembered_flags = if has_existing_global_binding
+        || current
+            .as_ref()
+            .is_some_and(|current| !current.configurable)
+    {
+        descriptor_flags(name)
+            .or_else(|| {
+                current
+                    .as_ref()
+                    .map(|current| (current.writable, current.enumerable, current.configurable))
+            })
+            .unwrap_or((true, true, deletable))
+    } else {
+        (true, true, deletable)
+    };
     let descriptor = match current {
-        Some(current) if !current.configurable => value_descriptor(cell),
-        Some(current) => descriptor_with_flags(cell, &current),
+        Some(current) if !current.configurable || has_existing_global_binding => {
+            value_descriptor(cell)
+        }
+        Some(_) => data_descriptor(cell, true, true, deletable),
         _ => data_descriptor(cell, true, true, deletable),
     };
+    remember_descriptor_flags(
+        name,
+        remembered_flags.0,
+        remembered_flags.1,
+        remembered_flags.2,
+    );
     define_global(registers, name, descriptor)
+}
+
+fn descriptor_flags_from_fields(descriptor: &[(String, Value)]) -> (bool, bool, bool) {
+    let flag = |name: &str| {
+        descriptor
+            .iter()
+            .rev()
+            .find_map(|(key, value)| (key == name).then_some(matches!(value, Value::Boolean(true))))
+            .unwrap_or(false)
+    };
+    (flag("writable"), flag("enumerable"), flag("configurable"))
 }
 
 fn binding_cell(name: &str, slot: u16, value: Option<&Value>) -> Rc<crate::value::BindingCell> {

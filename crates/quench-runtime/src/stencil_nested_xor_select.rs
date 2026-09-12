@@ -55,7 +55,7 @@ fn select_top(
         Opcode::InitLocal => locals.push((instruction.a, *constants.get(&instruction.b)?)),
         Opcode::LoadLocal | Opcode::LoadLocalChecked => *returned_slot = Some(instruction.b),
         Opcode::Return => {}
-        Opcode::Slow => select_top_slow(code, pc, selected)?,
+        opcode if opcode.is_cold_marker() => select_top_slow(code, pc, selected)?,
         _ => return None,
     }
     Some(())
@@ -144,7 +144,7 @@ fn select_nested_body(
                     Some(crate::ops::Constant::Undefined)
                 ) => {}
             Opcode::Move => {}
-            Opcode::Slow if selected.is_none() => {
+            opcode if opcode.is_cold_marker() && selected.is_none() => {
                 selected = Some(select_level(code.cold_at(pc)?, depth, loops)?);
             }
             _ => return None,
@@ -177,7 +177,7 @@ fn terminal_instruction(
     match instruction.opcode {
         Opcode::LoadLocal | Opcode::LoadLocalChecked => load(instruction, loops, values),
         Opcode::LoadConst => load_constant(code, instruction, values)?,
-        Opcode::Binary => binary(instruction, values)?,
+        opcode if opcode.is_binary_family() => binary(instruction, values)?,
         Opcode::Add => add(instruction, values)?,
         Opcode::StoreLocal => store(instruction, values, update)?,
         Opcode::Move => copy(instruction, values)?,
@@ -216,7 +216,7 @@ fn load_constant(
 fn binary(instruction: crate::ir::Instruction, values: &mut BTreeMap<u16, Value>) -> Option<()> {
     let left = *values.get(&instruction.b)?;
     let right = *values.get(&instruction.c)?;
-    let value = match crate::ir::compact_binary_operator(instruction.flags)? {
+    let value = match instruction.opcode.binary_operator(instruction.flags)? {
         crate::ops::BinaryOp::BitwiseXor => xor(left, right)?,
         crate::ops::BinaryOp::BitwiseAnd => mask(left, right)?,
         _ => return None,

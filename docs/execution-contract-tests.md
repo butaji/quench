@@ -1,249 +1,119 @@
-# Execution contracts for JavaScript fixtures
+# Execution-profile contracts
 
-Status: partial implementation. The reusable contract DSL below remains proposed;
-the bounded planner and physical-layout contracts already have executable unit and
-normal-driver coverage. Gate status belongs in the [task register](../tasks/index.json).
+The corpus is `crates/quench-runtime/testdata/execution_profiles/`.
+It contains 342 JavaScript/JSON pairs. The Rust harness owns parsing,
+execution, verification and expectation comparison.
 
-## Current bounded optimizer contract
-
-Quench adopts the useful local ideas from general compilers and assemblers without
-embedding Cranelift or DynASM. `stencil_value_graph.rs` builds one disposable,
-eight-value graph over canonical residual instructions. It performs exact constant
-propagation/folding, local value numbering, dead-pure-node marking and costed fusion;
-effectful, coercive, live-out or unknown inputs reject to ordinary execution.
-`stencil_region_layout.rs` keeps operation/exit points symbolic until it derives
-fragment labels and checked fixups, then publishes transactionally through the
-existing arena. The selected runtime composition path uses this representation.
-
-Current deterministic evidence at `4c7851cda7` is planner 26/26, fused normal-driver
-11/11, property integration 5/5, and region layout 11/11. These tests cover folded
-constants, eliminated dead loads/moves, repeated-value reuse, ordered add trees,
-guard-breaking fallback, semantic CFG edges and failed composition without partial
-output. They do not establish a general SSA optimizer, global register allocator,
-arbitrary block composition, or a runtime assembler. Those larger mechanisms remain
-deliberately out of scope or open under task 075.
-
-## Purpose and boundaries
-
-Make measured improvements durable with small tests of semantic outcomes,
-avoidable execution work, resource bounds and ownership. A passing contract
-does not prove lower runtime or RSS. Validate those separately using the
-[performance lanes](performance-lanes.md), after the existing infrastructure gate.
-
-Follow [repository rules](../AGENTS.md) and the Lisp mindset: facts once, derived
-views, explicit effects, shallow composition. Use Rust for the runner and macros;
-JavaScript is fixture input parsed by OXC. Keep language tests in quench-runtime
-and Node host fixtures/adapters in quench-node. Do not build a competing syntax
-tree, semantic interpreter, ownership registry or general telemetry framework.
-
-## Authoring surface
-
-Start with a Rust macro expanding to ordinary Cargo tests and typed test data:
-
-```rust
-execution_test! {
-    numeric_loop {
-        js: r#"
-            function run(n) {
-                let sum = 0;
-                for (let i = 0; i < n; i++) sum += i;
-                return sum;
-            }
-        "#,
-        cases: [10, 1_000, 100_000],
-        measure: run(case),
-        expect: number(case * (case - 1) / 2),
-        counters: {
-            allocations.environment == 0,
-            allocations.object == 0,
-            deopts == 0,
-        },
-    }
+```json
+{
+  "schema": 3,
+  "contract": "optimized",
+  "warmup": 1,
+  "result": { "kind": "number", "value": 7 },
+  "ir": ["LoadLocal", "LoadLocal", "Add", "Return"]
 }
 ```
 
-The example measures the entire invocation: an environment needed for function
-entry would also count. Establish actual behavior before adopting a zero budget;
-use a justified constant bound if required. Do not silently exclude entry work
-to make a loop contract pass. Arguments are runtime inputs to ordinary execution,
-not injected compiler facts.
+`contract: "optimized"` names the execution-profile suite. The `ir` array is the
+single canonical semantic hot-IR target produced by the current lowering policy,
+and Quench must reproduce it. Quickened aliases belong only to the raw physical
+witness. This is the best *verified target for that policy*, not a proof that a
+different lowering or dataflow cannot be better. Passing this target does not by itself prove globally
+optimal IR or machine code; those claims require a changed lowering contract,
+independent semantic evidence, native-entry witnesses and production measurements.
+This example
+illustrates the schema, not a new fixture. Read actual warmup and
+verification behavior in `test_execution_profile_tests.rs::execute_case`:
+warmup executes the contract program; a fresh initialization prepares `run`,
+its arguments and verification; the harness captures reachable IR and invokes
+the verifier. Do not equate this automatically with warming one persistent
+function instance.
 
-Allow `js: include_str!("fixtures/numeric_loop.js")` through the same source field.
-Initially support named global callable entries with primitive arguments and
-ordinary return/throw expectations. Expected expressions above execute in Rust
-outside the interval. They are not another expression language for the runner.
-Keep JS numeric distinctions such as NaN and signed zero in typed expectations;
-do not compare results through lossy JSON serialization. Complex semantic checks
-can use existing assertion helpers after measurement; checking code must not
-execute inside the counter interval.
+The current `hot_ir` traverses reachable PCs and `canonical_hot_opcode` maps
+generic `Binary` flags and selected `Slow` payloads to canonical opcode names.
+The JSON array therefore does not prove dedicated physical opcode emission,
+dynamic hotness, nested-body coverage, complete operand/dataflow optimality,
+or machine-code quality. Stencil entries and fallback counters are deliberately
+outside this IR-only corpus; they are observed only by targeted execution tests
+and do not create a second JSON expectation set. They remain implementation
+work on the copy-and-patch JIT critical path.
 
-Counter constraints accept `==`, `<=`, and `>=`; omitted metrics are unconstrained.
-Unknown metrics, incompatible units and duplicate contradictory declarations are
-errors. Empty cases or no executed observations cannot count as a passing suite.
-An optional literal `warmup: 10` performs ten unmeasured invocations with the same
-arguments before the single measured invocation. Default warmup is zero. Fixtures
-with mutable state must explicitly expect the post-warmup state.
+The raw witness records each instruction's PC, opcode, flags, operands and
+branch target, plus sorted immutable code-store IDs for the run body and nested
+structured bodies. Warmups intentionally execute isolated contract instances;
+the harness does not claim that a stateful function instance is reused across
+warmup and measurement until that policy has its own proof.
 
-Exact tier assertions remain useful for targeted mechanism tests:
+These boundaries are normative for the task queue: “342 green” means the canonical
+hot-IR target and independent result contracts pass. This document is also the
+single current-status authority for architecture-specific execution modes. The
+current inventory has no generic `Binary` or
+generic `Slow` rows for the observed corpus, but raw physical instructions
+remain diagnostic for native qualification. The generated lowering map
+(`Op::LOWERING_MATRIX` and `Op::physical_opcode`) and its
+production dispatch consumers are part of the existing foundation; native entry
+and machine-code quality remain later JIT evidence. See [task evidence boundaries](../tasks/README.md#evidence-boundaries).
 
-```rust
-counters: {
-    native.entries == 1,
-    fast.instructions == 0,
-    dynamic.instructions == 0,
-    deopts == 0,
-}
+Run the aggregate contract check:
+
+```sh
+cargo test -p quench-runtime test_execution_profile::tests::every_json_contract_matches_hot_ir -- --nocapture
 ```
 
-These describe different units, not three mutually exclusive kinds of JS call.
-Native means entry into generated machine code; Fast counts actual compact
-handler execution and Dynamic counts actual general-handler execution. A native
-entry can retire many iterations or deopt into handlers. Count each actual event;
-do not reconstruct executed instructions from source or inferred loop length.
-Separate successful native completion from entry when completion matters.
-Define host calls and JS calls independently if a concrete correction needs them.
-Do not impose these quotas on general efficiency contracts: eliminating work
-entirely may legitimately reduce native entries to zero.
+This command uses the default execution policy. Architecture-specific stencil
+opt-ins are separate diagnostic configurations: they may change quickening or
+physical execution and must not be treated as another JSON expectation set.
+Such a mode must first pass this same 342-case contract check before it can be
+considered for production qualification.
+Quickening aliases are normalized through the generated `semantic_opcode` view,
+so the AArch64 `leaves` mode uses the same canonical IR contract as the default
+policy. The status matrix is deliberately small and data-first:
 
-## Canonical data and evaluation
+| Execution policy | 342 semantic contracts | Production qualification |
+| --- | --- | --- |
+| default host policy | green | Apple-arm remains diagnostic until native-entry and M4 evidence qualify it; other supported hosts follow their own native-entry evidence |
+| AArch64 `leaves` | green | diagnostic; native-entry and M4 qualification open |
+| AArch64 `fusion-numeric` | green | diagnostic; native-entry and M4 qualification open |
+| AArch64 `all` | green | diagnostic; native-entry and M4 qualification open |
 
-Extend the existing declarations in `execution_trace.rs` and the
-[observability design](observability-architecture.md), instead of maintaining a
-test-only metric catalogue. Declare each metric's ID, wire name, unit, measured
-population, supported scope and aggregation once in Rust data/macros. Derive
-typed accessors, indices, report names and validation from those declarations.
+These policies share one JSON expectation set. A policy may not create an
+alternate expectation or turn semantic green into a speed claim; qualification
+requires the native-entry witnesses and M4 measurements described in
+[the performance protocol](performance-lanes.md).
 
-The minimal conceptual data model is:
+To produce the current physical-lowering inventory without changing the JSON
+contract, use the diagnostic-only switch:
 
-| Data | Contents |
-| --- | --- |
-| Contract | Source, cases, invocation, warmup, outcome and constraints |
-| Metric definition | Identity, unit, population, scope and aggregation |
-| Constraint | Metric ID, comparison and typed bound |
-| Observation | Metric ID, interval, availability and measured value |
-| Violation | Constraint, actual observation and optional site evidence |
+```sh
+QUENCH_EXECUTION_PROFILE_PHYSICAL_INVENTORY=1 \
+  cargo test -p quench-runtime test_execution_profile::tests::every_json_contract_matches_hot_ir -- --nocapture
+```
 
-Use enums for comparison, aggregation and observation availability. A pure
-evaluator maps constraints and observations to violations; the execution adapter
-owns VM effects and the reporter owns formatting. The macro constructs this data
-and tests; it must not contain another runner implementation. Avoid a plugin
-registry or generalized query language until a concrete use earns it.
+It groups reachable top-level instructions by their raw opcode and, for generic
+`Binary`, by its flags. Typed cold markers are reported under their dedicated
+opcodes, including structured and host variants whose handlers remain canonical
+named fallbacks. The generic `Slow` row is reserved for operations without a
+fixed-width contract, unclassified variants and legacy decoding. The output is
+a physical-lowering inventory, not a desired physical expectation and not a
+performance score. The harness separately captures
+nested code-store identities for the raw witness; those identities are not
+folded into this top-level instruction count.
 
-Counters are folds over observed events, not a requirement to store event logs.
-Use dense counters for fixed kinds. Detailed site evidence is optional and bounded;
-its truncation must remain visible. Exact totals must stay complete independently
-of site-map capacity. Do not retain executable or object owners for diagnostics.
+The physical-witness milestone separates actual physical emission from semantic
+normalization. The active JIT work consumes that inventory to close generated
+lowering and account for unobserved variants. Keep all 342 cases and their intended
+semantics; do not regenerate desired expectations from current output just to
+make them pass. The canonical hot-IR JSON is one expectation authority; raw
+physical output remains a diagnostic witness for native qualification. Generic `Slow` witnesses carry the canonical
+`Op` variant name as their fallback boundary; typed cold rows must never be
+reported as anonymous generic fallbacks.
 
-## Measurement state machine
+For every optimization, test semantic boundaries and adversarial input variants:
+signed zero, NaN, overflow/conversion, changed types, aliases, descriptor/prototype
+mutation, coercion effects, throws and exact resumption as applicable.
+Use independent result expectations and the local Node oracle.
 
-Use an explicit lifecycle:
-
-`Create VM -> Load -> Resolve/prepare -> Warm up -> Begin -> Invoke -> End -> Check -> Drop`
-
-- Each case owns a fresh VM. Warmup deliberately preserves its execution and heap
-  state; opening measurement resets neither caches nor semantic state.
-- Loading, argument conversion, callable lookup, warmup, result checking and
-  formatting are outside the measured interval. Include callee activation,
-  transitive synchronous calls, helpers and fallback work during invocation.
-- Close the interval on normal return and JS throw using a scoped guard. Internal
-  runtime faults are harness failures, not expected JS exceptions or deopts.
-- Initial support is synchronous. Promise settlement, microtask draining, worker
-  attribution and host event-loop completion need explicit future adapters;
-  never imply that a synchronous return measures asynchronous completion.
-- Reject nested intervals initially. Scope ownership and availability explicitly;
-  process-global counters cannot masquerade as per-VM observations under parallel
-  Cargo tests. Use isolation for metrics that require it.
-- Missing capabilities produce an explicit unsupported result. Required CI
-  configurations treat unsupported contracts as failures; optional configurations
-  report them separately. Truncation or overflow fails affected exact assertions.
-- Feature-disabled instrumentation is unavailable, not observed zero. A sparse
-  missing event means zero only when the declared metric is active and collection
-  for its population and interval is complete.
-
-Use snapshot deltas only for monotonic cumulative counters. Live-byte gauges need
-opening and closing readings; interval peaks require tracking within the interval,
-not subtracting two lifetime high-water marks. Specify reset and overflow behavior
-for every aggregation. Metric coverage must include all relevant execution tiers.
-
-Tracing currently exposes `quickening_prefers_hot` to execution decisions. Audit
-and separate adaptive runtime facts from diagnostic state before trusting these
-contracts. Enabling, disabling or beginning measurement must not change policy.
-Compare semantic results and decision evidence with observation enabled/disabled;
-measure observer time and memory overhead separately without claiming zero cost.
-
-## Memory and growth contracts
-
-Add only metrics required by concrete regressions. Distinguish logical JS creation
-from physical header/backing allocation, resize, final destruction, code mapping
-and reserved capacity. Allocation count alone does not bound bytes. A live gauge
-requires matching allocation/free populations and an opening state, not subtraction
-of incompatible historical lifecycle counters.
-
-Use existing owners and resource ledgers to test bytecode, native code, metadata,
-cache capacity and retired-but-live bytes. State whose memory is charged, when it
-is released and whether shared resources are counted once. Do not add a second
-heap graph to answer test queries.
-
-Lifecycle scenarios need explicit checkpoints beyond invocation: release fixture
-roots/results, run the existing documented cleanup operation if applicable, then
-drop the VM. Native leases and escaped callables remain legitimate owners until
-released. Use ownership/drop tests where JS fixtures cannot expose this boundary;
-do not force Rust ownership assertions into the JavaScript DSL. Do not assume that
-function return or forced cleanup represents natural production reclamation.
-
-Test growth by varying one independent dimension with fresh state per case:
-
-- More loop iterations: no per-iteration environment allocation.
-- More receiver shapes: cache storage stays within the declared policy capacity.
-- More independently compiled functions: code/metadata remain charged to owners.
-- Repeated create/run/drop cycles: resources return to a documented baseline after
-  the final owner is released, allowing explicitly bounded shared caches.
-
-Initially express these through cases and shared explicit bounds. Add cross-case
-relations only when needed, with named dimensions and reproducible failure pairs.
-Finite cases provide regression evidence, not an asymptotic complexity proof.
-
-RSS, physical footprint and virtual memory are distinct process observations.
-Measure startup, steady execution, churn and post-cleanup behavior in isolated
-process benchmarks. Record absolute peaks and baselines, allocator/build/platform
-configuration, repeated samples and variability. Lower tracked live bytes do not
-guarantee that the allocator returns pages or that RSS falls immediately.
-
-## Failure reporting
-
-Report case/input, warmup, measured boundary, build/capabilities, semantic outcome,
-and every violated constraint with expected/actual units. Add first guard failure
-or source location only when recorded, using existing code identity/source maps.
-No guessed reason or retained object graph merely to improve an error message.
-Distinguish semantic failure, contract violation, unsupported measurement and
-harness failure. Diagnostic output cannot turn a failing test into a pass.
-
-## Incremental delivery and acceptance
-
-1. Establish trustworthy measurement: canonical definitions, independent adaptive
-   state, complete scoped totals, availability and isolation. Reuse existing hooks
-   and follow skill caps: functions at most 40 lines and complexity 10, files at
-   most 500 lines, with cohesive modules instead of arbitrary splitting.
-2. Implement the typed evaluator and small macro with inline/file JS, primitive
-   invocation, result/throw checks, comparisons, cases and explicit warmup.
-3. Add representative contracts for loop work, frame sizing, bounded cache reuse
-   and code-owner disposal. Keep lower-level ownership tests where appropriate.
-   Pair each guarded optimization with invalidating inputs and correct fallback;
-   include zero/one/many iterations, numeric edges and relevant observable effects.
-4. Verify harness failure paths: unavailable metrics cannot pass zero assertions;
-   warmup is excluded without clearing caches; throws close intervals; parallel
-   cases do not contaminate totals; bounded diagnostics preserve exact totals;
-   result checks are excluded; live/peak aggregation uses the correct boundary.
-5. After the existing infrastructure gate, validate selected corrections with the
-   unchanged benchmark inventory and uninstrumented runtime/RSS measurements.
-   Record tradeoffs in startup, compilation, native bytes and retained memory.
-
-Use explicit budgets justified by semantics, resource policy or measured baseline;
-never bless current output through automatic snapshot updates. Native-required
-tests must execute actual generated code on a supported configuration. Existing
-benchmark profile contracts remain complementary; migrate shared metric knowledge
-incrementally without introducing another JSON/string schema as the authority.
-
-Completion means executable coverage and trustworthy observations for the bounded
-correction batch, plus its required performance evidence. It does not mean every
-possible metric, async host or platform is supported.
+There is no implemented general execution-contract DSL promised by this document.
+New counters must derive names, units and populations from shared Rust declarations.
+Missing observations never prove zero work. Native and ownership tests supplement
+these fixtures; [production measurements](performance-lanes.md) establish speed.

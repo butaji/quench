@@ -46,6 +46,15 @@ pub struct AbiContract {
     /// Canonical live-out slots published by the physical entry. Bit zero is
     /// the ordinary result slot; wider masks are reserved for region exits.
     pub live_out_mask: u16,
+    /// Whether the runtime has a complete `NativeRegionContext` consumer for
+    /// this ABI. Typed plans may use the same context-shaped bytes through a
+    /// different entry protocol and must not be admitted as generic regions.
+    pub generic_context: bool,
+    /// Whether this ABI is a raw region kernel whose instruction bytes are
+    /// validated as a complete machine-code stream.  This fact is generated
+    /// with the ABI declaration so validation and allocation checks cannot
+    /// drift into separate variant lists.
+    pub raw_kernel: bool,
     /// Whether the caller must expose VM roots before a helper-capable entry.
     pub root_materialization_required: bool,
 }
@@ -85,6 +94,8 @@ macro_rules! region_abi_catalog {
         hardware_clobber_mask: $hardware_clobber_mask:expr,
         hardware_gpr_clobber_mask: $hardware_gpr_clobber_mask:expr,
         live_out_mask: $live_out_mask:expr,
+        generic_context: $generic_context:expr,
+        raw_kernel: $raw_kernel:expr,
         root_materialization_required: $root_materialization_required:expr
     }),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -99,6 +110,14 @@ macro_rules! region_abi_catalog {
                 match self { $(Self::$name => $region_context),+ }
             }
 
+            pub const fn is_raw_kernel(self) -> bool {
+                self.contract().raw_kernel
+            }
+
+            pub const fn accepts_generic_context(self) -> bool {
+                self.contract().generic_context
+            }
+
             pub const fn contract(self) -> AbiContract {
                 match self {
                     $(Self::$name => AbiContract {
@@ -109,6 +128,8 @@ macro_rules! region_abi_catalog {
                         hardware_clobber_mask: $hardware_clobber_mask,
                         hardware_gpr_clobber_mask: $hardware_gpr_clobber_mask,
                         live_out_mask: $live_out_mask,
+                        generic_context: $generic_context,
+                        raw_kernel: $raw_kernel,
                         root_materialization_required: $root_materialization_required,
                     }),+
                 }
@@ -244,6 +265,11 @@ impl RegionContract {
             && (abi.preserves_vm_registers
                 || abi.hardware_clobber_mask != 0
                 || abi.hardware_gpr_clobber_mask != 0)
+            && (!abi.raw_kernel
+                || (self.abi.accepts_region_context()
+                    && !abi.preserves_vm_registers
+                    && !abi.may_call_helper))
+            && (!abi.generic_context || self.abi.accepts_region_context())
             && (!self.operations.is_empty() || abi.live_out_mask == 0)
             && (!abi.may_call_helper || abi.root_materialization_required)
             && (!abi.interruptible_backedge || self.has_control_effect())

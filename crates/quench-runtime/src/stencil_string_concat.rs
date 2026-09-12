@@ -217,7 +217,6 @@ fn string_concat_function(function: &crate::value::FunctionValue) -> bool {
 fn concat_instructions(entries: &[crate::ir::Instruction; REGION_LEN]) -> Option<()> {
     let synthetic = entries.map(|instruction| BaselineEntry {
         instruction,
-        handler: instruction.opcode.handler(),
         control: instruction.opcode.control_operands(instruction),
     });
     concat_shape(synthetic.each_ref())
@@ -232,7 +231,7 @@ fn concat_shape(entries: [&BaselineEntry; REGION_LEN]) -> Option<()> {
     let loads = [a, b, c].iter().all(|op| op.opcode == Opcode::LoadLocal);
     let adds = [add_ab, add_c].iter().all(|op| {
         op.opcode == Opcode::Add
-            && crate::ir::compact_binary_operator(op.flags) == Some(crate::ops::BinaryOp::Add)
+            && op.opcode.binary_operator(op.flags) == Some(crate::ops::BinaryOp::Add)
     });
     let wiring = add_ab.b == a.a
         && add_ab.c == b.a

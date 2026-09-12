@@ -515,6 +515,11 @@ fn canonicalize_time_zone(time_zone: &str) -> String {
 }
 
 fn canonical_named_time_zone(time_zone: &str) -> Option<String> {
+    if time_zone.eq_ignore_ascii_case("Africa/Asmera") {
+        // ICU/JSC preserve this legacy IANA spelling as the canonical
+        // Intl identifier (the runtime timezone database accepts both).
+        return Some("Africa/Asmera".to_string());
+    }
     chrono_tz::TZ_VARIANTS
         .iter()
         .find(|zone| zone.name().eq_ignore_ascii_case(time_zone))

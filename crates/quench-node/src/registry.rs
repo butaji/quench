@@ -1294,8 +1294,7 @@ pub const SPEC_WEBCRYPTO_KEY_CONSTRUCT: NodeSpec =
 pub const SPEC_WEBCRYPTO_SIGN: NodeSpec = NodeSpec::new("webcrypto:sign", 0x1c38);
 pub const SPEC_WEBCRYPTO_VERIFY: NodeSpec = NodeSpec::new("webcrypto:verify", 0x1c39);
 pub const SPEC_WEBCRYPTO_EXPORT_KEY: NodeSpec = NodeSpec::new("webcrypto:exportKey", 0x1c3a);
-pub const SPEC_WEBCRYPTO_GET_PUBLIC_KEY: NodeSpec =
-    NodeSpec::new("webcrypto:getPublicKey", 0x1c3c);
+pub const SPEC_WEBCRYPTO_GET_PUBLIC_KEY: NodeSpec = NodeSpec::new("webcrypto:getPublicKey", 0x1c3c);
 pub const SPEC_WEBCRYPTO_SUPPORTS: NodeSpec = NodeSpec::new("webcrypto:supports", 0x1c3d);
 pub const SPEC_WEBCRYPTO_WRAP_KEY: NodeSpec = NodeSpec::new("webcrypto:wrapKey", 0x1c3e);
 pub const SPEC_WEBCRYPTO_UNWRAP_KEY: NodeSpec = NodeSpec::new("webcrypto:unwrapKey", 0x1c3f);

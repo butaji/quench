@@ -125,7 +125,7 @@ fn unique_plain_pair_plan_matches(
     second: &str,
     plan: &UniquePlainPairPlan,
 ) -> bool {
-    if object.semantic_layout_id() != plan.source_layout
+    if !object.has_current_layout(plan.source_layout)
         || crate::identity::property_key_id(first) != plan.first
         || crate::identity::property_key_id(second) != plan.second
         || crate::builtins::intrinsic_override_generation() != plan.intrinsic_generation
@@ -135,7 +135,7 @@ fn unique_plain_pair_plan_matches(
     let Some(prototype) = immediate_plain_prototype(object) else { return false };
     let Some(expected) = plan.prototype.upgrade() else { return false };
     std::rc::Rc::ptr_eq(&prototype, &expected)
-        && prototype.semantic_layout_id() == plan.prototype_layout
+        && prototype.has_current_layout(plan.prototype_layout)
 }
 
 fn derive_unique_plain_pair_plan(

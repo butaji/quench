@@ -13,7 +13,7 @@ use quench_runtime::host_api;
 use quench_runtime::value::{PromiseData, PromiseState, Value};
 
 use crate::host::HostState;
-use crate::registry::{SPEC_WEB_LOCKS_SETTLE, SPEC_WEB_LOCKS_REQUEST};
+use crate::registry::{SPEC_WEB_LOCKS_REQUEST, SPEC_WEB_LOCKS_SETTLE};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -148,7 +148,9 @@ fn parse_mode(options: &Value) -> Result<Mode, VmError> {
     match execute::to_js_string(&value)?.as_str() {
         "exclusive" => Ok(Mode::Exclusive),
         "shared" => Ok(Mode::Shared),
-        _ => Err(type_error("The mode option must be either 'exclusive' or 'shared'")),
+        _ => Err(type_error(
+            "The mode option must be either 'exclusive' or 'shared'",
+        )),
     }
 }
 

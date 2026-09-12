@@ -836,9 +836,7 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_INTERNAL_CRYPTO_EC_KEY_PAIR_GEN_JOB_RUN => {
             crate::modules::webcrypto::ec_key_pair_gen_job_run
         }
-        CAP_INTERNAL_CRYPTO_AES_CIPHER_JOB_RUN => {
-            crate::modules::webcrypto::aes_cipher_job_run
-        }
+        CAP_INTERNAL_CRYPTO_AES_CIPHER_JOB_RUN => crate::modules::webcrypto::aes_cipher_job_run,
         CAP_INTERNAL_CRYPTO_JOB_COMPLETE => crate::modules::webcrypto::crypto_job_complete,
         CAP_INTERNAL_UTIL_WEAK_REFERENCE_GET => internal_util_weak_reference_get,
         CAP_OS_GET_PRIORITY => os_get_priority,

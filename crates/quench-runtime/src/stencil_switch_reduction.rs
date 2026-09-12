@@ -1,10 +1,9 @@
-//! Bounded integer switch reductions selected from ordinary residual control flow.
+//! Integer switch reductions selected from ordinary residual control flow.
 
 use std::{cell::RefCell, rc::Rc};
 
 const MACHINE_SLAB_BYTES: usize = 4096;
 const MAX_CASES: usize = 8;
-const MAX_ITERATIONS: i128 = 1 << 20;
 const MAX_SAFE_INTEGER: i128 = 9_007_199_254_740_991;
 
 #[repr(u32)]
@@ -113,10 +112,8 @@ impl SwitchReductionContext {
 }
 
 struct SwitchMachine {
-    owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
     image: crate::stencil_region_layout::VerifiedRegionImage,
-    cache: crate::stencil_select::RenderedRegionCache,
-    installed: Option<crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>>,
+    physical: crate::stencil_installation::SharedPhysicalEntry<crate::stencil_arena::DispatchEntry>,
 }
 
 thread_local! {
@@ -134,45 +131,32 @@ impl SwitchMachine {
         let values = crate::stencil_fact::PatchValues::from_site(&site);
         let image = crate::stencil_region_layout::finalize_selected_leaf(view, &values).ok()?;
         Some(Self {
-            owner: Rc::new(RefCell::new(
+            physical: crate::stencil_installation::SharedPhysicalEntry::new(Rc::new(RefCell::new(
                 crate::stencil_arena::SharedStencilSlab::new(MACHINE_SLAB_BYTES).ok()?,
-            )),
+            ))),
             image,
-            cache: crate::stencil_select::RenderedRegionCache::new(),
-            installed: None,
         })
     }
 
     fn invoke(&mut self, context: &mut SwitchReductionContext) -> Option<u64> {
         let entry = self.entry()?;
-        let lease =
-            crate::stencil_arena::SharedStencilSlab::acquire_owned(&self.owner, entry).ok()?;
-        lease
-            .invoke(|call| call((context as *mut SwitchReductionContext).cast()))
+        self.physical
+            .invoke(entry, |call| {
+                call((context as *mut SwitchReductionContext).cast())
+            })
             .ok()
     }
 
     fn entry(
         &mut self,
     ) -> Option<crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>> {
-        if let Some(entry) = self
-            .installed
-            .filter(|entry| self.owner.borrow().entry_token_is_live(*entry))
-        {
-            return Some(entry);
-        }
-        let address = self
-            .owner
-            .borrow_mut()
-            .publish_region_image_or_get(&mut self.cache, &self.image)
-            .ok()?;
-        let entry = self
-            .owner
-            .borrow()
-            .owned_switch_reduction_loop_entry(address)
-            .ok()?;
-        self.installed = Some(entry);
-        Some(entry)
+        let image = &self.image;
+        self.physical
+            .entry(
+                |owner, cache| owner.borrow_mut().publish_region_image_or_get(cache, image),
+                |pool, address| pool.owned_switch_reduction_loop_entry(address),
+            )
+            .ok()
     }
 }
 
@@ -256,7 +240,7 @@ fn apply_action(total: i64, index: i32, action: Action) -> i64 {
 fn validate_range(fact: &FunctionSwitchReduction) -> Option<()> {
     let reduction = &fact.reduction;
     let iterations = i128::from(reduction.counted.end.checked_sub(reduction.counted.start)?);
-    (reduction.counted.start >= 0 && iterations <= MAX_ITERATIONS).then_some(())?;
+    (reduction.counted.start >= 0).then_some(())?;
     (reduction.divisor > 0 && reduction.cases.len() <= MAX_CASES).then_some(())?;
     validate_selector_range(reduction)?;
     let per_iteration = reduction

@@ -1,16 +1,25 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "string", "value": "[\"array\",[[\"number\",\"64\"],[\"number\",\"129\"]]]" },
-  "plan": {
-    "execution_kind": "portable_recipe",
-    "operation_route": ["builtins", "json_reviver"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadConst",
+    "StoreLocal",
+    "GetN",
+    "GetN",
+    "LoadLocal",
+    "GetN",
+    "MakeFunctionWithKind",
+    "CallN",
+    "StoreLocal",
+    "LoadLocal",
+    "GetN",
+    "LoadLocal",
+    "MakeArray",
+    "Return"
+  ],
+  "result": {
+    "kind": "string",
+    "value": "[\"array\",[[\"number\",\"64\"],[\"number\",\"129\"]]]"
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "builtins_json_reviver_region": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

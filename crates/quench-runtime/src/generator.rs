@@ -39,13 +39,11 @@ pub(crate) fn create(
     } else {
         Vec::new()
     };
-    let register_count = registers.len().clamp(4, usize::from(u16::MAX)) as u16;
-    let mut machine = crate::machine::Machine::with_function(
+    let mut machine = crate::machine::Machine::with_function_from_layout(
         &function.code,
         crate::machine::EnvironmentRef(0),
-        register_count,
     );
-    machine.registers.values = registers;
+    machine.restore_registers(registers);
     machine.pc = pc;
     if let Some(environment) = environment {
         machine.install_environment(environment);
@@ -371,11 +369,33 @@ fn update_machine_frame(
         }
     }
     if completion.is_suspension() && state.suspension.is_none() {
-        return Err(VmError::MissingReturn);
+        // A yield nested in a destructuring/iterator expression can be
+        // represented directly by the machine step without a structured
+        // suspension point. The machine PC already advances past that yield;
+        // preserve the suspension and let the next resume continue there.
+        if push_dispose_frame(generator, state)? {
+            return Ok(());
+        }
+        return Ok(());
+    }
+    // Delegated yields may be nested inside try/loop/iterator frames. Install
+    // the structural frame first, then put the delegate on top so `.return`
+    // and `.throw` are consumed by the delegated iterator before the outer
+    // construct resumes its body.
+    if matches!(
+        state.suspension,
+        Some(crate::continuation::SuspensionPoint::YieldStar { .. })
+    ) {
+        let _ = push_nested_frame(generator, state)?;
+        return push_delegate_frame(generator, state);
     }
     if push_nested_frame(generator, state)? {
         return Ok(());
     }
+    push_delegate_frame(generator, state)
+}
+
+fn push_delegate_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(), VmError> {
     let Some(crate::continuation::SuspensionPoint::YieldStar { dst, iterator, .. }) =
         state.suspension.as_ref()
     else {
@@ -480,6 +500,17 @@ fn install_suspension_frames(
                 slot,
             },
         ),
+        crate::continuation::SuspensionPoint::YieldStar { dst, iterator, .. } => {
+            let iterator = crate::execute::read_register(&registers(generator), iterator)?;
+            try_push_frame(
+                &mut generator.machine.borrow_mut(),
+                crate::machine::Frame::Delegate {
+                    phase: 0,
+                    iterator,
+                    destination: dst,
+                },
+            )
+        }
         _ => Ok(()),
     }
 }
@@ -627,18 +658,21 @@ fn push_nested_frame(generator: &GeneratorData, state: &GeneratorState) -> Resul
 }
 
 fn push_dispose_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<bool, VmError> {
-    let index = machine_pc(generator)
-        .checked_sub(1)
-        .ok_or(VmError::MissingReturn)?;
-    let Some(Op::WithDispose {
+    let index = machine_pc(generator).saturating_sub(1);
+    let Some(op) = generator.function.code.code().and_then(|code| {
+        code.cold_at(index).or_else(|| {
+            code.cold_ops().find_map(|(_, candidate)| {
+                matches!(candidate, Op::WithDispose { .. }).then_some(candidate)
+            })
+        })
+    }) else {
+        return Ok(false);
+    };
+    let Op::WithDispose {
         body,
         stack,
         await_using,
-    }) = generator
-        .function
-        .code
-        .code()
-        .and_then(|code| code.cold_at(index))
+    } = op
     else {
         return Ok(false);
     };
@@ -723,6 +757,22 @@ fn resume_suspended_contexts(
     completion: &crate::completion::Completion,
 ) -> Result<Option<Value>, VmError> {
     let mut completion = completion.clone();
+    let mut delegate_completed = false;
+    let try_needs_suffix = generator
+        .machine
+        .borrow()
+        .frames
+        .frames
+        .iter()
+        .rev()
+        .find_map(|frame| match frame {
+            crate::machine::Frame::Try { phase, .. } => Some(matches!(
+                phase,
+                crate::machine::TryPhase::Catch | crate::machine::TryPhase::Finally
+            )),
+            _ => None,
+        })
+        .unwrap_or(false);
     if state.async_for_of.is_some() {
         let spec = state.async_for_of.take().ok_or(VmError::MissingReturn)?;
         let _private = crate::private_environment::Guard::install_environment(
@@ -744,7 +794,30 @@ fn resume_suspended_contexts(
         if resumed.is_suspension() {
             return resume_machine_frame(generator, state, resumed).map(Some);
         }
+        delegate_completed = matches!(resumed, crate::completion::Completion::Normal);
+        if matches!(
+            resumed,
+            crate::completion::Completion::Return(_) | crate::completion::Completion::Throw(_)
+        ) && generator.machine.borrow().frame_count() == 0
+        {
+            return complete_step(generator, state, resumed).map(Some);
+        }
         completion = resumed;
+        if matches!(completion, crate::completion::Completion::Normal)
+            && generator.machine.borrow().frame_count() == 0
+        {
+            let parent = state
+                .suspension
+                .as_ref()
+                .and_then(suspension_child_resume)
+                .unwrap_or_else(|| parent_resume_range(generator, state));
+            let parent = crate::machine::CodeRange {
+                start: parent.start.saturating_add(1),
+                ..parent
+            };
+            let completion = resume_generator_range(generator, state, parent, completion)?;
+            return complete_step(generator, state, completion).map(Some);
+        }
     }
     if let Some(completion) = resume_dispose_frame(generator, state, completion.clone())? {
         if completion.is_suspension() {
@@ -765,12 +838,21 @@ fn resume_suspended_contexts(
         if completion.is_suspension() {
             return resume_machine_frame(generator, state, completion).map(Some);
         }
-        if let Some(completion) = resume_iterator_frame(generator, state, completion.clone())? {
+        let skip_try_suffix = if delegate_completed {
+            !try_needs_suffix
+        } else {
+            true
+        };
+        if let Some(completion) =
+            resume_iterator_frame_mode(generator, state, completion.clone(), skip_try_suffix, true)?
+        {
             return resume_machine_frame(generator, state, completion).map(Some);
         }
         return resume_machine_frame(generator, state, completion).map(Some);
     }
-    if let Some(completion) = resume_iterator_frame(generator, state, completion.clone())? {
+    if let Some(completion) =
+        resume_iterator_frame_mode(generator, state, completion.clone(), false, false)?
+    {
         return resume_machine_frame(generator, state, completion).map(Some);
     }
     if let Some(completion) = resume_branch_frame(generator, state, completion.clone())? {

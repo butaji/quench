@@ -1,16 +1,19 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "number", "value": 25 },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["typed_lane_arithmetic"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "MarkUninitialized",
+    "MarkUninitialized",
+    "LoadConst",
+    "InitLocal",
+    "LoadConst",
+    "Loop",
+    "LoadLocalChecked",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": 25
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "typed_lane_arithmetic_region": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

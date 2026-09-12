@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use crate::{
-    tagged_value::{DecodedValue, TaggedValue},
+    native_core::value_word::{DecodedValue, TaggedValue},
     value::Value,
 };
 
@@ -1232,7 +1232,7 @@ impl PartialEq<Vec<Value>> for RegisterFile {
 mod tests {
     use super::{RegisterFile, SlotWord, TaggedValue};
     use crate::{
-        tagged_value::DecodedValue,
+        native_core::value_word::DecodedValue,
         value::{ObjectData, Value},
     };
     use std::rc::Rc;

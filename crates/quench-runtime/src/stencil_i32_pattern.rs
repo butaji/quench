@@ -28,10 +28,8 @@ pub(crate) struct I32PatternSelection {
 
 pub(crate) struct NativeI32PatternPlan {
     selection: I32PatternSelection,
-    owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
     image: crate::stencil_region_layout::VerifiedRegionImage,
-    cache: crate::stencil_select::RenderedRegionCache,
-    installed: Option<crate::stencil_arena::EntryToken<extern "C" fn(i32, i32) -> i32>>,
+    physical: crate::stencil_installation::SharedPhysicalEntry<extern "C" fn(i32, i32) -> i32>,
 }
 
 impl NativeI32PatternPlan {
@@ -48,10 +46,8 @@ impl NativeI32PatternPlan {
         view.generated.then_some(())?;
         Some(Self {
             selection,
-            owner,
+            physical: crate::stencil_installation::SharedPhysicalEntry::new(Rc::clone(&owner)),
             image: region_image(view),
-            cache: crate::stencil_select::RenderedRegionCache::new(),
-            installed: None,
         })
     }
 
@@ -76,28 +72,25 @@ impl NativeI32PatternPlan {
         let value = to_int32(environment.get_number(self.selection.value_slot)?);
         let shift = to_int32(environment.get_number(self.selection.shift_slot)?);
         let entry = self.entry()?;
-        let lease =
-            crate::stencil_arena::SharedStencilSlab::acquire_owned(&self.owner, entry).ok()?;
-        lease.invoke(|call| call(value, shift)).ok().map(f64::from)
+        self.physical
+            .invoke(entry, |call| call(value, shift))
+            .ok()
+            .map(f64::from)
     }
 
     fn entry(
         &mut self,
     ) -> Option<crate::stencil_arena::EntryToken<extern "C" fn(i32, i32) -> i32>> {
-        if let Some(entry) = self.installed {
-            if self.owner.borrow().entry_token_is_live(entry) {
-                return Some(entry);
-            }
-            self.installed = None;
-        }
-        let address = self
-            .owner
-            .borrow_mut()
-            .publish_region_image_or_get(&mut self.cache, &self.image)
-            .ok()?;
-        let entry = self.owner.borrow().owned_i32_entry(address).ok()?;
-        self.installed = Some(entry);
-        Some(entry)
+        self.physical
+            .entry(
+                |owner, cache| {
+                    owner
+                        .borrow_mut()
+                        .publish_region_image_or_get(cache, &self.image)
+                },
+                |pool, address| pool.owned_i32_entry(address),
+            )
+            .ok()
     }
 }
 
@@ -128,7 +121,7 @@ fn operation_window(entries: &[BaselineEntry], start: usize) -> Option<[Instruct
     instructions
         .iter()
         .zip(OPERATIONS)
-        .all(|(instruction, opcode)| instruction.opcode == opcode)
+        .all(|(instruction, opcode)| opcode.matches_physical_contract(instruction.opcode))
         .then_some(instructions)
 }
 
@@ -166,7 +159,7 @@ fn binary(
     lhs: u16,
     rhs: u16,
 ) -> Option<()> {
-    (instruction.flags == crate::ir::compact_binary_id(operator)
+    (instruction.opcode.binary_operator(instruction.flags) == Some(operator)
         && instruction.b == lhs
         && instruction.c == rhs)
         .then_some(())

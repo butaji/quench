@@ -1217,7 +1217,10 @@ pub fn socket_address_module() -> Value {
     crate::host::namespace_object_from_pairs(vec![
         ("SocketAddress".into(), constructor),
         ("InternalSocketAddress".into(), internal),
-        ("kHandle".into(), Value::String("\0quench:socket-address:handle".into())),
+        (
+            "kHandle".into(),
+            Value::String("\0quench:socket-address:handle".into()),
+        ),
     ])
 }
 
@@ -1309,10 +1312,8 @@ pub fn build_with_state(state: Option<&Rc<RefCell<HostState>>>) -> Value {
         "prototype",
         host_api::object(vec![("isPipe".into(), Value::Boolean(false))]),
     );
-    let existing_socket_address = execute::get_property(
-        &global,
-        SOCKET_ADDRESS_CONSTRUCTOR_GLOBAL_PROP,
-    );
+    let existing_socket_address =
+        execute::get_property(&global, SOCKET_ADDRESS_CONSTRUCTOR_GLOBAL_PROP);
     let socket_address_ctor = if quench_runtime::is_callable(&existing_socket_address) {
         existing_socket_address
     } else {
@@ -1387,10 +1388,7 @@ pub fn build_with_state(state: Option<&Rc<RefCell<HostState>>>) -> Value {
         ("Server", server_ctor),
         ("BoundSocket", bound_socket_ctor),
         ("BlockList", block_list),
-        (
-            "SocketAddress",
-            socket_address_ctor,
-        ),
+        ("SocketAddress", socket_address_ctor),
         (
             "isIP",
             crate::host::capability(crate::registry::SPEC_NET_ISIP),

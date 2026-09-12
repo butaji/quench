@@ -1,20 +1,17 @@
 {
-  "schema": 1,
-  "warmup": 0,
-  "result": { "kind": "number", "value": 7 },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["Add", "Add", "Return"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "LoadLocal",
+    "Add",
+    "LoadLocal",
+    "Add",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": 7
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": {
-      "local_binary": { "entries": 1, "fallbacks": 0 }
-    },
-    "events": {
-      "leaf_hit": 1
-    }
-  }
+  "schema": 3,
+  "warmup": 0
 }

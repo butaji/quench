@@ -471,8 +471,7 @@ fn cached_direct_constructor(
         let stored_prototype = plan.prototype.upgrade()?;
         (std::rc::Rc::ptr_eq(&stored_function, function)
             && std::rc::Rc::ptr_eq(&stored_prototype, prototype)
-            && !prototype.has_replacement()
-            && prototype.semantic_layout_id() == plan.prototype_layout
+            && prototype.has_current_layout(plan.prototype_layout)
             && crate::builtins::intrinsic_override_generation() == plan.intrinsic_generation)
             .then(|| std::rc::Rc::clone(plan))
     })

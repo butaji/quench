@@ -245,5 +245,5 @@ impl crate::value::Value {
 }
 
 #[cfg(test)]
-#[path = "tagged_value_tests.rs"]
+#[path = "value_word_tests.rs"]
 mod tests;

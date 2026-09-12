@@ -1,16 +1,19 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "number", "value": 4 },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["f64_arithmetic_region", "comparison_branch", "sqrt_helper_boundary", "exact_return"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "LoadConst",
+    "LoadConst",
+    "LoadConst",
+    "LoadConst",
+    "TailCall",
+    "LoadConst",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": 4
   },
-  "profile": {
-    "residual": {},
-    "slow": { "sqrt_helper": 1 },
-    "stencils": { "guarded_f64_intersection": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

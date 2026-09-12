@@ -1,16 +1,21 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "number", "value": 49 },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["Switch", "AddConst", "MulConst", "SubConst", "Return"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadLocal",
+    "LoadConst",
+    "LoadConst",
+    "Call",
+    "LoadLocal",
+    "LoadConst",
+    "LoadConst",
+    "Call",
+    "Add",
+    "Return"
+  ],
+  "result": {
+    "kind": "number",
+    "value": 49
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "integer_switch_arithmetic_return": { "entries": 2, "fallbacks": 0 } },
-    "events": { "leaf_hit": 2 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

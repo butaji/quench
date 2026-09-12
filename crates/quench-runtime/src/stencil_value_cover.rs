@@ -173,7 +173,10 @@ impl ValueGraph<MAX_BLOCK_VALUES> {
         loop {
             let ValueDefinition::Binary { operator, lhs, rhs } = self.node(value)?.definition
             else {
-                return Some((self.resolve(value)?, NumericSeries::from_reverse(&reversed[..len])?));
+                return Some((
+                    self.resolve(value)?,
+                    NumericSeries::from_reverse(&reversed[..len])?,
+                ));
             };
             if series_operation(operator).is_none()
                 || self.resolve(rhs)? != repeated

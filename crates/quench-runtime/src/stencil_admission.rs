@@ -6,6 +6,9 @@ use crate::stencil_admission_budget::{
 
 pub(crate) trait AdmissionEntry {
     fn retained_metadata_bytes(&self) -> usize;
+    /// Stable generated kind used to index one admission family without
+    /// rescanning unrelated families at execution time.
+    fn kind(&self) -> u8;
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -44,6 +47,24 @@ impl<A> AdmissionStorage<A> {
             .unwrap_or(&[])
     }
 
+    /// Test whether a program counter has any admitted family without
+    /// materializing a slice or touching the flat entry storage.  The span
+    /// array is the derived per-PC index, so this is the cheapest execution
+    /// view for the baseline driver's common "no native work here" branch.
+    #[inline(always)]
+    pub(crate) fn has_entry_at(&self, pc: usize) -> bool {
+        self.spans.get(pc).is_some_and(|span| span.len != 0)
+    }
+
+    pub(crate) fn entry_of_kind(&self, pc: usize, kind: u8) -> Option<&A>
+    where
+        A: AdmissionEntry,
+    {
+        let entries = self.entries_at(pc);
+        let index = first_index_of_kind(entries, kind)?;
+        entries.get(index)
+    }
+
     #[cfg(test)]
     pub(crate) fn spans_len(&self) -> usize {
         self.spans.len()
@@ -58,6 +79,18 @@ impl<A> AdmissionStorage<A> {
     pub(crate) fn charged_bytes(&self) -> usize {
         self.charge.bytes()
     }
+}
+
+pub(crate) fn first_index_of_kind<A: AdmissionEntry>(entries: &[A], kind: u8) -> Option<usize> {
+    let mut index = entries
+        .binary_search_by_key(&kind, AdmissionEntry::kind)
+        .ok()?;
+    // Preserve the old first-match behavior if a future collector emits more
+    // than one plan of the same family at a PC.
+    while index > 0 && entries[index - 1].kind() == kind {
+        index -= 1;
+    }
+    Some(index)
 }
 
 pub(crate) struct AdmissionBuilder<A> {
@@ -137,9 +170,19 @@ impl<A: AdmissionEntry> AdmissionBuilder<A> {
         self.exhausted
     }
 
-    pub(crate) fn finish(self) -> Option<AdmissionStorage<A>> {
+    pub(crate) fn finish(mut self) -> Option<AdmissionStorage<A>> {
         if self.entries.is_empty() {
             return None;
+        }
+        // Admission construction is off the execution path.  Canonicalize
+        // each PC's family order once so every typed selector can use a
+        // logarithmic kind lookup instead of walking all unrelated plans.
+        for span in &self.spans {
+            let start = span.start as usize;
+            let end = start.saturating_add(span.len as usize);
+            if let Some(entries) = self.entries.get_mut(start..end) {
+                entries.sort_by_key(AdmissionEntry::kind);
+            }
         }
         let charge = self.charge?;
         Some(AdmissionStorage::from_parts(
@@ -164,27 +207,40 @@ mod tests {
     use super::*;
 
     #[derive(Debug)]
-    struct Dummy(usize);
+    struct Dummy {
+        kind: u8,
+        bytes: usize,
+    }
 
     impl AdmissionEntry for Dummy {
         fn retained_metadata_bytes(&self) -> usize {
-            self.0
+            self.bytes
+        }
+
+        fn kind(&self) -> u8 {
+            self.kind
         }
     }
 
     #[test]
     fn owner_budget_rejects_before_retaining_entry() {
         let mut builder = AdmissionBuilder::new(1);
-        builder.push(0, Dummy(MAX_OWNER_ADMISSION_BYTES));
+        builder.push(
+            0,
+            Dummy {
+                kind: 1,
+                bytes: MAX_OWNER_ADMISSION_BYTES,
+            },
+        );
         assert!(builder.exhausted());
-        builder.push(0, Dummy(0));
+        builder.push(0, Dummy { kind: 1, bytes: 0 });
         assert!(builder.finish().is_none());
     }
 
     #[test]
     fn storage_charges_once_for_exact_retained_view() {
         let mut builder = AdmissionBuilder::new(2);
-        builder.push(1, Dummy(23));
+        builder.push(1, Dummy { kind: 1, bytes: 23 });
         let storage = std::rc::Rc::new(builder.finish().expect("populated storage"));
         let charged = storage.charged_bytes();
         assert_eq!(storage.entries_at(0).len(), 0);
@@ -195,5 +251,32 @@ mod tests {
         drop(storage);
         assert_eq!(clone.charged_bytes(), charged);
         drop(clone);
+    }
+
+    #[test]
+    fn entries_are_sorted_once_for_kind_indexed_lookup() {
+        let mut builder = AdmissionBuilder::new(1);
+        builder.push(0, Dummy { kind: 7, bytes: 1 });
+        builder.push(0, Dummy { kind: 2, bytes: 1 });
+        builder.push(0, Dummy { kind: 4, bytes: 1 });
+        let storage = builder.finish().expect("populated storage");
+        assert_eq!(storage.entry_of_kind(0, 2).map(Dummy::kind), Some(2));
+        assert_eq!(storage.entry_of_kind(0, 4).map(Dummy::kind), Some(4));
+        assert_eq!(storage.entry_of_kind(0, 7).map(Dummy::kind), Some(7));
+        assert!(storage.entry_of_kind(0, 3).is_none());
+        assert!(storage.has_entry_at(0));
+        assert!(!storage.has_entry_at(1));
+    }
+
+    #[test]
+    fn duplicate_kinds_keep_the_first_admission() {
+        let mut builder = AdmissionBuilder::new(1);
+        builder.push(0, Dummy { kind: 7, bytes: 1 });
+        builder.push(0, Dummy { kind: 7, bytes: 2 });
+        let storage = builder.finish().expect("populated storage");
+        assert_eq!(
+            storage.entry_of_kind(0, 7).map(|entry| entry.bytes),
+            Some(1)
+        );
     }
 }

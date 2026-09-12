@@ -1,16 +1,47 @@
 {
-  "schema": 1,
-  "warmup": 1,
-  "result": { "kind": "string", "value": "[\"number\",\"3104\"]" },
-  "plan": {
-    "execution_kind": "native_machine_code",
-    "operation_route": ["composition", "closure_allocation"],
-    "fallback": false
+  "contract": "optimized",
+  "ir": [
+    "LoadConst",
+    "StoreLocal",
+    "MakeFunctionWithKind",
+    "SetFunctionName",
+    "LoadConst",
+    "SetN",
+    "StoreLocal",
+    "LoadConst",
+    "StoreLocal",
+    "LoadConst",
+    "LoadConst",
+    "StoreLocal",
+    "LoadConst",
+    "LoadLocal",
+    "LoadLocal",
+    "GetN",
+    "LessThan",
+    "JumpIfFalse",
+    "LoadLocal",
+    "LoadLocal",
+    "LoadLocal",
+    "Call",
+    "LoadLocal",
+    "GetN",
+    "Call",
+    "Add",
+    "StoreLocal",
+    "Move",
+    "LoadLocal",
+    "LoadConst",
+    "NumericAdd",
+    "StoreLocal",
+    "Unary",
+    "Jump",
+    "LoadLocal",
+    "Return"
+  ],
+  "result": {
+    "kind": "string",
+    "value": "[\"number\",\"3104\"]"
   },
-  "profile": {
-    "residual": {},
-    "slow": {},
-    "stencils": { "composition_closure_allocation_region": { "entries": 1, "fallbacks": 0 } },
-    "events": { "leaf_hit": 1 }
-  }
+  "schema": 3,
+  "warmup": 1
 }

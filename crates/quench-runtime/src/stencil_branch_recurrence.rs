@@ -3,7 +3,6 @@
 use std::{cell::RefCell, rc::Rc};
 
 const MACHINE_SLAB_BYTES: usize = 4096;
-const MAX_ITERATIONS: usize = 1 << 20;
 const TWO_TO_64: f64 = 18_446_744_073_709_551_616.0;
 const MAX_SAFE_INTEGER: i128 = 9_007_199_254_740_991;
 
@@ -93,10 +92,8 @@ impl BranchRecurrenceContext {
 }
 
 struct BranchMachine {
-    owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
     image: crate::stencil_region_layout::VerifiedRegionImage,
-    cache: crate::stencil_select::RenderedRegionCache,
-    installed: Option<crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>>,
+    physical: crate::stencil_installation::SharedPhysicalEntry<crate::stencil_arena::DispatchEntry>,
 }
 
 thread_local! {
@@ -113,46 +110,37 @@ impl BranchMachine {
         let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::Binary);
         let values = crate::stencil_fact::PatchValues::from_site(&site);
         let image = crate::stencil_region_layout::finalize_selected_leaf(view, &values).ok()?;
+        let owner = Rc::new(RefCell::new(
+            crate::stencil_arena::SharedStencilSlab::new(MACHINE_SLAB_BYTES).ok()?,
+        ));
         Some(Self {
-            owner: Rc::new(RefCell::new(
-                crate::stencil_arena::SharedStencilSlab::new(MACHINE_SLAB_BYTES).ok()?,
-            )),
             image,
-            cache: crate::stencil_select::RenderedRegionCache::new(),
-            installed: None,
+            physical: crate::stencil_installation::SharedPhysicalEntry::new(owner),
         })
     }
 
     fn invoke(&mut self, context: &mut BranchRecurrenceContext) -> Option<u64> {
         let entry = self.entry()?;
-        let lease =
-            crate::stencil_arena::SharedStencilSlab::acquire_owned(&self.owner, entry).ok()?;
-        lease
-            .invoke(|call| call((context as *mut BranchRecurrenceContext).cast()))
+        self.physical
+            .invoke(entry, |call| {
+                call((context as *mut BranchRecurrenceContext).cast())
+            })
             .ok()
     }
 
     fn entry(
         &mut self,
     ) -> Option<crate::stencil_arena::EntryToken<crate::stencil_arena::DispatchEntry>> {
-        if let Some(entry) = self
-            .installed
-            .filter(|entry| self.owner.borrow().entry_token_is_live(*entry))
-        {
-            return Some(entry);
-        }
-        let address = self
-            .owner
-            .borrow_mut()
-            .publish_region_image_or_get(&mut self.cache, &self.image)
-            .ok()?;
-        let entry = self
-            .owner
-            .borrow()
-            .owned_branch_recurrence_loop_entry(address)
-            .ok()?;
-        self.installed = Some(entry);
-        Some(entry)
+        self.physical
+            .entry(
+                |owner, cache| {
+                    owner
+                        .borrow_mut()
+                        .publish_region_image_or_get(cache, &self.image)
+                },
+                |pool, address| pool.owned_branch_recurrence_loop_entry(address),
+            )
+            .ok()
     }
 }
 
@@ -193,8 +181,8 @@ fn finish_portable(context: &mut BranchRecurrenceContext) {
 
 fn validate_range(fact: FunctionRecurrence) -> Option<()> {
     let recurrence = fact.recurrence;
-    let iterations = usize::try_from(recurrence.end.checked_sub(recurrence.start)?).ok()?;
-    (recurrence.start >= 0 && iterations <= MAX_ITERATIONS).then_some(())?;
+    let iterations = i128::from(recurrence.end.checked_sub(recurrence.start)?);
+    (recurrence.start >= 0).then_some(())?;
     let maximum = f64::from(u32::MAX) * recurrence.multiplier + recurrence.addend;
     (recurrence.multiplier >= 0.0 && recurrence.addend >= 0.0 && maximum < TWO_TO_64)
         .then_some(())?;

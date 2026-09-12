@@ -86,6 +86,7 @@ pub enum ControlFlow {
     Branch,
     Jump,
     Return,
+    Throw,
     Loop,
 }
 
@@ -122,6 +123,9 @@ pub struct OperationSpec {
     pub name: &'static str,
     pub operand_width: u8,
     pub effects: &'static [OperationEffect],
+    /// Whether the canonical opcode may participate in the generic
+    /// value/control bridge before instance payload and artifact checks.
+    pub generic_bridge: bool,
     pub fallback: &'static str,
     pub result: ResultShape,
     pub control: ControlFlow,
@@ -147,6 +151,18 @@ impl OperationEffect {
 }
 
 impl OperationSpec {
+    /// Whether this operation may participate in the generic value/control
+    /// Bridge before instance guards and physical-artifact checks. The
+    /// declaration owns the effect/control boundary; consumers must not grow
+    /// another list of heap, allocation or structured-loop exclusions.
+    pub const fn generic_bridge_safe(self) -> bool {
+        !self.has_effect(OperationEffect::ReadHeap)
+            && !self.has_effect(OperationEffect::WriteHeap)
+            && !self.has_effect(OperationEffect::Allocate)
+            && !self.has_effect(OperationEffect::Observable)
+            && !matches!(self.control, ControlFlow::Loop)
+    }
+
     pub const fn validate(self) -> bool {
         if self.opcode == 0
             || self.name.is_empty()
@@ -156,6 +172,9 @@ impl OperationSpec {
             return false;
         }
         if (!self.control.is_next()) != self.has_effect(OperationEffect::Control) {
+            return false;
+        }
+        if self.generic_bridge && !self.generic_bridge_safe() {
             return false;
         }
         self.effects_are_unique() && self.guards_are_unique()
@@ -667,6 +686,7 @@ mod tests {
             name: "duplicate",
             operand_width: 1,
             effects: &[OperationEffect::Pure, OperationEffect::Pure],
+            generic_bridge: false,
             fallback: "fallback",
             result: ResultShape::None,
             control: ControlFlow::Next,
@@ -679,6 +699,7 @@ mod tests {
             name: "wide",
             operand_width: 4,
             effects: &[OperationEffect::Pure],
+            generic_bridge: false,
             fallback: "fallback",
             result: ResultShape::None,
             control: ControlFlow::Next,
@@ -691,6 +712,7 @@ mod tests {
             name: "branch",
             operand_width: 1,
             effects: &[OperationEffect::Pure],
+            generic_bridge: false,
             fallback: "fallback",
             result: ResultShape::None,
             control: ControlFlow::Branch,
@@ -703,12 +725,26 @@ mod tests {
             name: "guarded",
             operand_width: 1,
             effects: &[OperationEffect::Control],
+            generic_bridge: false,
             fallback: "fallback",
             result: ResultShape::None,
             control: ControlFlow::Branch,
             guards: &[super::OperationGuard::Shape, super::OperationGuard::Shape],
         };
         assert!(!duplicate_guard.validate());
+
+        let heap_bridge = OperationSpec {
+            opcode: 1,
+            name: "heap_bridge",
+            operand_width: 1,
+            effects: &[OperationEffect::ReadHeap],
+            generic_bridge: true,
+            fallback: "fallback",
+            result: ResultShape::Value,
+            control: ControlFlow::Next,
+            guards: &[],
+        };
+        assert!(!heap_bridge.validate());
     }
 
     #[test]

@@ -104,7 +104,7 @@ fn validate_shape(
     ];
     ops.iter()
         .zip(expected)
-        .all(|(entry, op)| entry.instruction.opcode == op)
+        .all(|(entry, op)| op.matches_physical_contract(entry.instruction.opcode))
         .then_some(())?;
     (i(0).b == i(3).b
         && i(2).flags == 1

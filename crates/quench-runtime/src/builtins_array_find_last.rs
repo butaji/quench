@@ -2,25 +2,44 @@ pub(crate) fn array_find_last(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    find_last(receiver, arguments, false)
+    find_last(receiver, arguments, false, false)
+}
+
+pub(crate) fn array_find_last_typed(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    find_last(receiver, arguments, false, true)
 }
 
 pub(crate) fn array_find_last_index(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    find_last(receiver, arguments, true)
+    find_last(receiver, arguments, true, false)
+}
+
+pub(crate) fn array_find_last_index_typed(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    find_last(receiver, arguments, true, true)
 }
 
 fn find_last(
     receiver: Option<&Value>,
     arguments: &[Value],
     index_result: bool,
+    typed: bool,
 ) -> Result<Value, crate::execute::VmError> {
     let Some(receiver) = receiver.filter(|value| !matches!(value, Value::Null | Value::Undefined)) else {
         return Err(crate::value::error::throw_type_error("Array method called on incompatible receiver"));
     };
-    let length = crate::builtins::map_length(receiver)?;
+    let length = if typed {
+        crate::typed_array_ops::logical_len(receiver).unwrap_or(0)
+    } else {
+        crate::builtins::map_length(receiver)?
+    };
     let Some(callback) = arguments.first() else {
         return Err(crate::value::error::throw_type_error("predicate must be callable"));
     };

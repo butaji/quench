@@ -129,6 +129,7 @@ pub(crate) fn attach_executed_suspension(
         .cold_at(pc)
         .ok_or(crate::execute::VmError::MissingReturn)?;
     let point = executed_point(op, code.range(), step.next)
+        .or_else(|| nested_executed_point(op))
         .ok_or(crate::execute::VmError::MissingReturn)?;
     step.completion = match step.completion {
         Completion::Yield(value) => Completion::YieldAt(value, point),
@@ -136,4 +137,36 @@ pub(crate) fn attach_executed_suspension(
         completion => completion,
     };
     Ok(step)
+}
+
+/// Locate the actual yield nested inside a structured loop/binding operation.
+/// The compact step reports the outer operation as its successor, while the
+/// suspension belongs to the nested code range; retaining that range is what
+/// lets the generator resume destructuring and iterator bodies precisely.
+pub(crate) fn nested_executed_point(op: &crate::ops::Op) -> Option<SuspensionPoint> {
+    fn scan(code: crate::machine::CodeView<'_>) -> Option<SuspensionPoint> {
+        for (index, nested) in code.cold_ops() {
+            if let Some(point) = executed_point(nested, code.range(), index + 1) {
+                return Some(point);
+            }
+            let mut point = None;
+            nested.visit_bodies(&mut |body| {
+                if point.is_none() {
+                    point = body.code().and_then(&scan);
+                }
+            });
+            if point.is_some() {
+                return point;
+            }
+        }
+        None
+    }
+
+    let mut point = None;
+    op.visit_bodies(&mut |body| {
+        if point.is_none() {
+            point = body.code().and_then(scan);
+        }
+    });
+    point
 }
