@@ -71,6 +71,7 @@ fn loop_code(tail: Vec<DynOp>) -> DynCode {
             object: OBJECT_REGISTER,
             key: INDEX_REGISTER,
             src: RESULT_REGISTER,
+            accessor: None,
         },
         DynOp::LoadLiteral {
             dst: ONE_REGISTER,
@@ -485,6 +486,7 @@ fn composes_property_prologue_with_dense_loop_as_one_typed_region() {
             object: 5,
             key: 6,
             src: 11,
+            accessor: None,
         },
         DynOp::Binary {
             dst: 12,

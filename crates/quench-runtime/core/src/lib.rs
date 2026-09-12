@@ -10849,19 +10849,21 @@ fn object_own_enumerable_keys(target: &Value) -> Vec<String> {
                 })
                 .collect::<Vec<_>>(),
         );
-        return keys;
+        return partition_symbol_keys(keys);
     }
     if let Some(function) = target.as_function_ref() {
-        return function
-            .props
-            .borrow()
-            .keys()
-            .filter(|key| {
-                !matches!(key.as_str(), "name" | "length")
-                    && !matches!(function.kind, FunctionKind::Builtin(_))
-            })
-            .cloned()
-            .collect();
+        return partition_symbol_keys(
+            function
+                .props
+                .borrow()
+                .keys()
+                .filter(|key| {
+                    !matches!(key.as_str(), "name" | "length")
+                        && !matches!(function.kind, FunctionKind::Builtin(_))
+                })
+                .cloned()
+                .collect(),
+        );
     }
     target
         .as_string()
@@ -10871,6 +10873,20 @@ fn object_own_enumerable_keys(target: &Value) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn partition_symbol_keys(keys: Vec<String>) -> Vec<String> {
+    let mut strings = Vec::with_capacity(keys.len());
+    let mut symbols = Vec::new();
+    for key in keys {
+        if key.starts_with("Symbol(") {
+            symbols.push(key);
+        } else {
+            strings.push(key);
+        }
+    }
+    strings.extend(symbols);
+    strings
 }
 
 /// Own-property ordering used by descriptor collection.  This is deliberately
@@ -10906,10 +10922,10 @@ fn object_own_property_keys(target: &Value) -> Vec<String> {
             .filter(|key| !keys.iter().any(|item| item == key))
             .collect::<Vec<_>>();
         keys.extend(accessors);
-        return keys;
+        return partition_symbol_keys(keys);
     }
     if let Some(function) = target.as_function_ref() {
-        return function.props.borrow().keys().cloned().collect();
+        return partition_symbol_keys(function.props.borrow().keys().cloned().collect());
     }
     target
         .as_string()

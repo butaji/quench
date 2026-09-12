@@ -276,7 +276,9 @@ fn quote_op(pc: usize, op: &DynOp) -> Result<RegionOp, RejectReason> {
             object: *object,
             index: *key,
         },
-        DynOp::SetComputed { object, key, src } => RegionOp::WriteDense {
+        DynOp::SetComputed {
+            object, key, src, ..
+        } => RegionOp::WriteDense {
             pc,
             object: *object,
             index: *key,

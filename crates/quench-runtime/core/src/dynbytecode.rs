@@ -330,6 +330,7 @@ pub enum DynOp {
         object: Register,
         key: Register,
         src: Register,
+        accessor: Option<AccessorKind>,
     },
     DeleteStatic {
         dst: Register,
@@ -389,6 +390,12 @@ pub enum DynOp {
     Return {
         src: Option<Register>,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AccessorKind {
+    Getter,
+    Setter,
 }
 
 // One active opcode table drives naming and stencil selection. Keep semantic
@@ -1642,6 +1649,11 @@ impl Compiler {
                         object: dst,
                         key,
                         src,
+                        accessor: match property.kind {
+                            PropertyKind::Get => Some(AccessorKind::Getter),
+                            PropertyKind::Set => Some(AccessorKind::Setter),
+                            _ => None,
+                        },
                     },
                     property.span,
                 );
@@ -2164,7 +2176,15 @@ impl Compiler {
                 self.emit(DynOp::SetStatic { object, key, src }, span);
             }
             Lvalue::Computed { object, key } => {
-                self.emit(DynOp::SetComputed { object, key, src }, span);
+                self.emit(
+                    DynOp::SetComputed {
+                        object,
+                        key,
+                        src,
+                        accessor: None,
+                    },
+                    span,
+                );
             }
         }
     }
