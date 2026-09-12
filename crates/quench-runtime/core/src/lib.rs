@@ -4325,6 +4325,21 @@ impl Vm {
                 _ => {}
             }
         }
+        // Numeric constructor constants are data properties of Number, not
+        // separate globals. Keep them VM-owned so parseFloat/isFinite and
+        // arithmetic conformance tests observe the standard identities.
+        let number = self.builtin(BuiltinId::NumberConstructor);
+        for (name, value) in [
+            ("NaN", Value::Number(f64::NAN)),
+            ("POSITIVE_INFINITY", Value::Number(f64::INFINITY)),
+            ("NEGATIVE_INFINITY", Value::Number(f64::NEG_INFINITY)),
+            ("MAX_VALUE", Value::Number(f64::MAX)),
+            ("MIN_VALUE", Value::Number(f64::MIN_POSITIVE)),
+            ("MAX_SAFE_INTEGER", Value::Number(9_007_199_254_740_991.0)),
+            ("MIN_SAFE_INTEGER", Value::Number(-9_007_199_254_740_991.0)),
+        ] {
+            self.set_prop(&number, name, value);
+        }
         if let Some(array_value) = Environment::get(g, "Array")
             && let Some(array) = array_value.as_function()
         {
@@ -5853,6 +5868,142 @@ fn native_parse_int(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(Value::Number(if neg { -n } else { n }))
 }
 
+fn native_parse_float(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    let source = a.first().map(Value::string).unwrap_or_default();
+    let source = source.trim_start();
+    let sign = usize::from(source.starts_with(['+', '-']));
+    if source[sign..].starts_with("Infinity") {
+        return Ok(Value::Number(if source.starts_with('-') {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        }));
+    }
+    let bytes = source.as_bytes();
+    let mut cursor = sign;
+    let mut digits = 0usize;
+    while bytes.get(cursor).is_some_and(u8::is_ascii_digit) {
+        cursor += 1;
+        digits += 1;
+    }
+    if bytes.get(cursor) == Some(&b'.') {
+        cursor += 1;
+        while bytes.get(cursor).is_some_and(u8::is_ascii_digit) {
+            cursor += 1;
+            digits += 1;
+        }
+    }
+    if digits == 0 {
+        return Ok(Value::Number(f64::NAN));
+    }
+    if bytes.get(cursor).is_some_and(|byte| matches!(byte, b'e' | b'E')) {
+        let exponent_start = cursor;
+        cursor += 1;
+        if bytes.get(cursor).is_some_and(|byte| matches!(byte, b'+' | b'-')) {
+            cursor += 1;
+        }
+        let exponent_digits = cursor;
+        while bytes.get(cursor).is_some_and(u8::is_ascii_digit) {
+            cursor += 1;
+        }
+        if cursor == exponent_digits {
+            cursor = exponent_start;
+        }
+    }
+    Ok(Value::Number(source[..cursor].parse::<f64>().unwrap_or(f64::NAN)))
+}
+
+fn native_is_finite(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    let Some(value) = a.first() else {
+        return Ok(Value::Bool(false));
+    };
+    let number = value.number();
+    Ok(Value::Bool(number.is_finite()))
+}
+
+fn uri_reserved(byte: u8) -> bool {
+    matches!(byte, b';' | b',' | b'/' | b'?' | b':' | b'@' | b'&' | b'=' | b'+' | b'$' | b'#')
+}
+
+fn uri_unescaped(byte: u8, component: bool) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(byte, b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')')
+        || (!component && uri_reserved(byte))
+}
+
+fn native_encode_uri_impl(value: &Value, component: bool) -> Value {
+    let bytes = value.string().into_bytes();
+    let mut out = String::new();
+    for byte in bytes {
+        if uri_unescaped(byte, component) {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    Value::string_value(out)
+}
+
+fn native_encode_uri(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    Ok(native_encode_uri_impl(a.first().unwrap_or(&Value::Undefined), false))
+}
+
+fn native_encode_uri_component(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    Ok(native_encode_uri_impl(a.first().unwrap_or(&Value::Undefined), true))
+}
+
+fn decode_hex(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn native_decode_uri_impl(value: &Value, component: bool) -> JsResult<Value> {
+    let source = value.string();
+    let bytes = source.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            out.push(bytes[index]);
+            index += 1;
+            continue;
+        }
+        if index + 2 >= bytes.len() {
+            return Err(JsError::Message("URIError: malformed URI".into()));
+        }
+        let high = decode_hex(bytes[index + 1]);
+        let low = decode_hex(bytes[index + 2]);
+        let Some(high) = high else {
+            return Err(JsError::Message("URIError: malformed URI".into()));
+        };
+        let Some(low) = low else {
+            return Err(JsError::Message("URIError: malformed URI".into()));
+        };
+        let decoded = (high << 4) | low;
+        if !component && uri_reserved(decoded) {
+            out.extend_from_slice(&bytes[index..index + 3]);
+        } else {
+            out.push(decoded);
+        }
+        index += 3;
+    }
+    String::from_utf8(out)
+        .map(Value::string_value)
+        .map_err(|_| JsError::Message("URIError: malformed URI".into()))
+}
+
+fn native_decode_uri(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    native_decode_uri_impl(a.first().unwrap_or(&Value::Undefined), false)
+}
+
+fn native_decode_uri_component(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    native_decode_uri_impl(a.first().unwrap_or(&Value::Undefined), true)
+}
+
 fn array_method(vm: &Vm, name: &str) -> Option<Value> {
     let value = vm.builtin_property(BuiltinOwner::ArrayPrototype, name);
     (!value.is_undefined()).then_some(value)
@@ -6813,6 +6964,22 @@ pub fn run_source_with_argv_and_output_status(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn number_constructor_exposes_standard_constants() {
+        let mut vm = Vm::new();
+        vm.install_process(Vec::new(), Vec::new());
+        let source = "result = [Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NaN, Number.MAX_SAFE_INTEGER];";
+        let path = Path::new("<number-constants>");
+        vm.run_source_text(path, source).expect("constants execute");
+        let result = Environment::get(&vm.global, "result").expect("result binding");
+        let object = result.as_object().expect("array result");
+        let values = object.borrow().array.as_ref().expect("array storage").to_vec();
+        assert_eq!(values[0].as_number(), Some(f64::INFINITY));
+        assert_eq!(values[1].as_number(), Some(f64::NEG_INFINITY));
+        assert!(values[2].as_number().is_some_and(f64::is_nan));
+        assert_eq!(values[3].as_number(), Some(9_007_199_254_740_991.0));
+    }
 
     #[test]
     fn process_invocation_data_is_installed_in_the_core_vm() {

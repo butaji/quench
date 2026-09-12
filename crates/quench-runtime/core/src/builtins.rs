@@ -86,7 +86,13 @@ macro_rules! builtin_catalog {
 
 builtin_catalog! {
     ParseInt, Global, "parseInt", native_parse_int, Generic, EFFECTFUL;
+    ParseFloat, Global, "parseFloat", native_parse_float, Generic, EFFECTFUL;
     IsNaN, Global, "isNaN", native_is_nan, UnaryNumber, PURE;
+    IsFinite, Global, "isFinite", native_is_finite, UnaryNumber, PURE;
+    DecodeURI, Global, "decodeURI", native_decode_uri, Generic, MAY_ALLOCATE;
+    DecodeURIComponent, Global, "decodeURIComponent", native_decode_uri_component, Generic, MAY_ALLOCATE;
+    EncodeURI, Global, "encodeURI", native_encode_uri, Generic, MAY_ALLOCATE;
+    EncodeURIComponent, Global, "encodeURIComponent", native_encode_uri_component, Generic, MAY_ALLOCATE;
     MathPow, Math, "pow", native_math_pow, BinaryNumber, PURE;
     MathFloor, Math, "floor", native_math_floor, UnaryNumber, PURE;
     MathCeil, Math, "ceil", native_math_ceil, UnaryNumber, PURE;
