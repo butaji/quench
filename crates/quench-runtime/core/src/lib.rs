@@ -8587,6 +8587,19 @@ fn array_like_length(vm: &mut Vm, value: &Value) -> JsResult<usize> {
         .min(MAX_MATERIALIZED_ARRAY_LENGTH as f64) as usize)
 }
 
+fn array_like_target(vm: &mut Vm, value: &Value) -> JsResult<Value> {
+    if value.is_null() || value.is_undefined() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "array method called on null or undefined",
+        )));
+    }
+    if value.is_object_like() || value.is_string() {
+        return Ok(value.clone());
+    }
+    native_object(vm, Value::Undefined, std::slice::from_ref(value))
+}
+
 fn array_like_value(vm: &mut Vm, value: &Value, index: usize) -> JsResult<Option<Value>> {
     if let Some(object) = value.as_object_ref()
         && let Some(array) = &object.borrow().array
@@ -8624,10 +8637,11 @@ fn native_array_for_each(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
     let Some(callback) = args.first().filter(|value| value.is_function()) else {
         return Err(JsError::Throw(type_error(vm, "callback is not a function")));
     };
-    let length = array_like_length(vm, &this)?;
+    let target = array_like_target(vm, &this)?;
+    let length = array_like_length(vm, &target)?;
     for index in 0..length {
-        if let Some(value) = array_like_value(vm, &this, index)? {
-            array_callback(vm, callback, value, index, this.clone())?;
+        if let Some(value) = array_like_value(vm, &target, index)? {
+            array_callback(vm, callback, value, index, target.clone())?;
         }
     }
     Ok(Value::Undefined)
@@ -8636,7 +8650,8 @@ fn native_array_map(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value>
     let Some(callback) = args.first().filter(|value| value.is_function()) else {
         return Err(JsError::Throw(type_error(vm, "callback is not a function")));
     };
-    let length = array_like_length(vm, &this)?;
+    let target = array_like_target(vm, &this)?;
+    let length = array_like_length(vm, &target)?;
     let result = vm.array();
     if let Some(object) = result.as_object_ref() {
         object
@@ -8647,8 +8662,8 @@ fn native_array_map(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value>
             .resize(length, Value::Undefined);
     }
     for index in 0..length {
-        if let Some(value) = array_like_value(vm, &this, index)? {
-            let mapped = array_callback(vm, callback, value, index, this.clone())?;
+        if let Some(value) = array_like_value(vm, &target, index)? {
+            let mapped = array_callback(vm, callback, value, index, target.clone())?;
             vm.set_prop(&result, &index.to_string(), mapped);
         }
     }
@@ -8659,10 +8674,11 @@ fn native_array_filter(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
         return Err(JsError::Throw(type_error(vm, "callback is not a function")));
     };
     let mut filtered = Vec::new();
-    let length = array_like_length(vm, &this)?;
+    let target = array_like_target(vm, &this)?;
+    let length = array_like_length(vm, &target)?;
     for index in 0..length {
-        if let Some(value) = array_like_value(vm, &this, index)? {
-            let keep = array_callback(vm, callback, value.clone(), index, this.clone())?.truthy();
+        if let Some(value) = array_like_value(vm, &target, index)? {
+            let keep = array_callback(vm, callback, value.clone(), index, target.clone())?.truthy();
             if keep {
                 filtered.push(value);
             }
@@ -8674,10 +8690,11 @@ fn native_array_some(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value
     let Some(callback) = args.first().filter(|value| value.is_function()) else {
         return Err(JsError::Throw(type_error(vm, "callback is not a function")));
     };
-    let length = array_like_length(vm, &this)?;
+    let target = array_like_target(vm, &this)?;
+    let length = array_like_length(vm, &target)?;
     for index in 0..length {
-        if let Some(value) = array_like_value(vm, &this, index)?
-            && array_callback(vm, callback, value, index, this.clone())?.truthy()
+        if let Some(value) = array_like_value(vm, &target, index)?
+            && array_callback(vm, callback, value, index, target.clone())?.truthy()
         {
             return Ok(Value::Bool(true));
         }
@@ -8688,10 +8705,11 @@ fn native_array_every(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Valu
     let Some(callback) = args.first().filter(|value| value.is_function()) else {
         return Err(JsError::Throw(type_error(vm, "callback is not a function")));
     };
-    let length = array_like_length(vm, &this)?;
+    let target = array_like_target(vm, &this)?;
+    let length = array_like_length(vm, &target)?;
     for index in 0..length {
-        if let Some(value) = array_like_value(vm, &this, index)?
-            && !array_callback(vm, callback, value, index, this.clone())?.truthy()
+        if let Some(value) = array_like_value(vm, &target, index)?
+            && !array_callback(vm, callback, value, index, target.clone())?.truthy()
         {
             return Ok(Value::Bool(false));
         }
@@ -8871,10 +8889,11 @@ fn array_reduce_impl(vm: &mut Vm, this: Value, args: &[Value], reverse: bool) ->
     let Some(callback) = args.first().filter(|value| value.is_function()) else {
         return Err(JsError::Throw(type_error(vm, "callback is not a function")));
     };
-    let length = array_like_length(vm, &this)?;
+    let target = array_like_target(vm, &this)?;
+    let length = array_like_length(vm, &target)?;
     let mut indexed = Vec::new();
     for index in 0..length {
-        if let Some(value) = array_like_value(vm, &this, index)? {
+        if let Some(value) = array_like_value(vm, &target, index)? {
             indexed.push((index, value));
         }
     }
@@ -8898,7 +8917,7 @@ fn array_reduce_impl(vm: &mut Vm, this: Value, args: &[Value], reverse: bool) ->
                 accumulator,
                 value,
                 Value::Number(index as f64),
-                this.clone(),
+                target.clone(),
             ][..],
         )?;
     }
