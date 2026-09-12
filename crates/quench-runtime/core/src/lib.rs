@@ -8937,6 +8937,16 @@ fn native_string_trim_left(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Va
     ))
 }
 
+fn native_string_trim(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if this.is_null() || this.is_undefined() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "String.prototype.trim called on null or undefined",
+        )));
+    }
+    Ok(Value::string_value(to_string_with_vm(vm, &this)?.trim()))
+}
+
 fn native_string_trim_right(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     if this.is_null() || this.is_undefined() {
         return Err(JsError::Throw(type_error(
