@@ -7097,6 +7097,14 @@ impl Vm {
                     .declare(&name, args.get(i).cloned().unwrap_or(Value::Undefined));
             }
         }
+        if let Some(rest) = &n.params.rest
+            && let Some(name) = pattern_name(&rest.rest.argument)
+        {
+            e.borrow_mut().declare(
+                &name,
+                self.array_from_values(args.iter().skip(n.params.items.len()).cloned().collect()),
+            );
+        }
         let result = (|| {
             if let Some(b) = &n.body {
                 match self.exec_stmts(&b.statements, e)? {
@@ -7132,6 +7140,14 @@ impl Vm {
                 e.borrow_mut()
                     .declare(&name, args.get(i).cloned().unwrap_or(Value::Undefined));
             }
+        }
+        if let Some(rest) = &n.params.rest
+            && let Some(name) = pattern_name(&rest.rest.argument)
+        {
+            e.borrow_mut().declare(
+                &name,
+                self.array_from_values(args.iter().skip(n.params.items.len()).cloned().collect()),
+            );
         }
         let result = (|| {
             if let Some(expression) = n.body.as_expression() {
@@ -7612,20 +7628,31 @@ impl Vm {
             ThisExpression(_) => Ok(Environment::get(&e, "this").unwrap_or(Value::Undefined)),
             ArrayExpression(v) => {
                 let a = self.array();
-                if let Some(object) = a.as_object_ref() {
-                    object
-                        .borrow_mut()
-                        .array
-                        .as_mut()
-                        .expect("array literal storage")
-                        .resize(v.elements.len(), Value::Undefined);
-                }
-                for (i, z) in v.elements.iter().enumerate() {
-                    if let Some(z) = z.as_expression() {
-                        let value = self.eval_expr(z, e.clone())?;
-                        self.set_prop(&a, &i.to_string(), value)
+                let mut index = 0usize;
+                for element in &v.elements {
+                    match element {
+                        ArrayExpressionElement::Elision(_) => index += 1,
+                        ArrayExpressionElement::SpreadElement(spread) => {
+                            let source = self.eval_expr(&spread.argument, e.clone())?;
+                            let values = native_array_from(self, Value::Undefined, &[source])?;
+                            let length = array_from_length(self, &values)?;
+                            for offset in 0..length {
+                                let value = self.get_prop(&values, &offset.to_string());
+                                self.set_prop(&a, &index.to_string(), value);
+                                index += 1;
+                            }
+                        }
+                        element => {
+                            let expression = element
+                                .as_expression()
+                                .expect("non-spread array element is an expression");
+                            let value = self.eval_expr(expression, e.clone())?;
+                            self.set_prop(&a, &index.to_string(), value);
+                            index += 1;
+                        }
                     }
                 }
+                self.set_prop(&a, "length", Value::Number(index as f64));
                 Ok(a)
             }
             ObjectExpression(v) => {
@@ -10415,7 +10442,18 @@ fn string_argument(vm: &mut Vm, value: &Value) -> JsResult<String> {
             "Cannot convert a Symbol value to a string",
         )));
     }
-    to_string_with_vm(vm, value)
+    let primitive = if value.is_object_like() {
+        to_primitive_for_binary(vm, value, true)?
+    } else {
+        value.clone()
+    };
+    if symbol_primitive(&primitive).is_some() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Cannot convert a Symbol value to a string",
+        )));
+    }
+    to_string_with_vm(vm, &primitive)
 }
 
 fn expand_js_replacement(
@@ -10661,59 +10699,9 @@ fn native_string_replace_all(vm: &mut Vm, this: Value, args: &[Value]) -> JsResu
             }
         }
         if let Some(method) = string_symbol_method(vm, search, "replace")? {
-            let s = string_receiver(vm, &this, "replaceAll")?;
             let replacement = args.get(1).cloned().unwrap_or(Value::Undefined);
-            return vm.call_arguments(
-                &method,
-                search.clone(),
-                &[Value::string_value(s), replacement][..],
-            );
+            return vm.call_arguments(&method, search.clone(), &[this.clone(), replacement][..]);
         }
-    }
-    if let Some(r) = args.first().and_then(Value::as_regexp) {
-        let undefined = Value::Undefined;
-        let replacement = args.get(1).unwrap_or(&undefined);
-        let b = r.borrow();
-        if !b.global {
-            return Err(JsError::Throw(type_error(
-                vm,
-                "String.prototype.replaceAll requires a global RegExp",
-            )));
-        }
-        let replacement_string = (!replacement.is_function())
-            .then(|| string_argument(vm, replacement))
-            .transpose()?;
-        let s = string_receiver(vm, &this, "replaceAll")?;
-        let mut out = String::new();
-        let mut last = 0;
-        for captures in b.regex.captures_iter(&s) {
-            let Some(found) = captures.get(0) else {
-                continue;
-            };
-            out.push_str(&s[last..found.start()]);
-            if replacement.is_function() {
-                out.push_str(&replacement_text(
-                    vm,
-                    replacement,
-                    &s,
-                    found.as_str(),
-                    found.start(),
-                    Some(&captures),
-                )?);
-            } else {
-                let text = replacement_string.as_deref().unwrap_or_default();
-                out.push_str(&expand_js_replacement(
-                    &text,
-                    &s,
-                    &captures,
-                    found.start(),
-                    found.end(),
-                ));
-            }
-            last = found.end();
-        }
-        out.push_str(&s[last..]);
-        return Ok(Value::string_value(out));
     }
     let s = string_receiver(vm, &this, "replaceAll")?;
     let from = string_argument(vm, args.first().unwrap_or(&Value::Undefined))?;
