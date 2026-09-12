@@ -5211,6 +5211,25 @@ impl Vm {
                 _ => {}
             }
         }
+        // Annex B keeps the historical spellings as identity aliases of the
+        // standard trim methods; the catalog still declares both names so
+        // descriptor installation and lookup remain data-driven.
+        let string_prototype = self
+            .builtin(BuiltinId::StringConstructor)
+            .as_function_ref()
+            .map(|function| Value::Object(function.prototype.clone()));
+        if let Some(string_prototype) = string_prototype {
+            self.set_prop(
+                &string_prototype,
+                "trimLeft",
+                self.builtin(BuiltinId::StringTrimStart),
+            );
+            self.set_prop(
+                &string_prototype,
+                "trimRight",
+                self.builtin(BuiltinId::StringTrimEnd),
+            );
+        }
         // Numeric constructor constants are data properties of Number, not
         // separate globals. Keep them VM-owned so parseFloat/isFinite and
         // arithmetic conformance tests observe the standard identities.
@@ -5651,6 +5670,8 @@ impl Vm {
                 "isNaN",
                 "parseFloat",
                 "parseInt",
+                "escape",
+                "unescape",
                 "eval",
                 "Buffer",
                 "Blob",
@@ -8161,6 +8182,92 @@ fn native_decode_uri_component(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<V
     native_decode_uri_impl(vm, &source, true)
 }
 
+fn native_escape(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let undefined = Value::Undefined;
+    let value = args.first().unwrap_or(&undefined);
+    if value
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
+    {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Cannot convert a Symbol value to a string",
+        )));
+    }
+    let source = to_string_with_vm(vm, value)?;
+    let mut output = String::new();
+    for character in source.chars() {
+        if character.is_ascii_alphanumeric()
+            || matches!(character, '@' | '*' | '_' | '+' | '-' | '.' | '/')
+        {
+            output.push(character);
+        } else {
+            let code = character as u32;
+            if code <= 0xff {
+                output.push_str(&format!("%{code:02X}"));
+            } else {
+                output.push_str(&format!("%u{code:04X}"));
+            }
+        }
+    }
+    Ok(Value::string_value(output))
+}
+
+fn native_unescape(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let undefined = Value::Undefined;
+    let value = args.first().unwrap_or(&undefined);
+    if value
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
+    {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Cannot convert a Symbol value to a string",
+        )));
+    }
+    let source = to_string_with_vm(vm, value)?;
+    let bytes = source.as_bytes();
+    let mut output = String::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            let character = source[index..]
+                .chars()
+                .next()
+                .expect("UTF-8 boundary from byte index");
+            output.push(character);
+            index += character.len_utf8();
+            continue;
+        }
+        let remaining = &source[index + 1..];
+        if remaining.len() >= 5
+            && remaining.as_bytes()[0] == b'u'
+            && remaining.as_bytes()[1..5]
+                .iter()
+                .all(|byte| decode_hex(*byte).is_some())
+        {
+            let code = remaining.as_bytes()[1..5].iter().fold(0u32, |value, byte| {
+                (value << 4) | u32::from(decode_hex(*byte).unwrap())
+            });
+            output.push(char::from_u32(code).unwrap_or('\u{fffd}'));
+            index += 6;
+        } else if remaining.len() >= 2
+            && remaining.as_bytes()[..2]
+                .iter()
+                .all(|byte| decode_hex(*byte).is_some())
+        {
+            let code = (u16::from(decode_hex(remaining.as_bytes()[0]).unwrap()) << 4)
+                | u16::from(decode_hex(remaining.as_bytes()[1]).unwrap());
+            output.push(char::from_u32(u32::from(code)).unwrap_or('\u{fffd}'));
+            index += 3;
+        } else {
+            output.push('%');
+            index += 1;
+        }
+    }
+    Ok(Value::string_value(output))
+}
+
 fn array_method(vm: &Vm, name: &str) -> Option<Value> {
     let value = vm.builtin_property(BuiltinOwner::ArrayPrototype, name);
     (!value.is_undefined()).then_some(value)
@@ -8666,6 +8773,86 @@ fn native_string_substr(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
         .max(0.0) as usize;
     Ok(Value::string_value(
         s.chars().skip(start).take(len).collect::<String>(),
+    ))
+}
+
+fn escape_html_attribute(value: &str) -> String {
+    value.replace('"', "&quot;")
+}
+
+fn native_string_html(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+    tag: &str,
+    attribute: Option<&str>,
+) -> JsResult<Value> {
+    if this.is_null() || this.is_undefined() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "String.prototype HTML method called on null or undefined",
+        )));
+    }
+    let text = to_string_with_vm(vm, &this)?;
+    let result = if let Some(attribute) = attribute {
+        let value = to_string_with_vm(vm, args.first().unwrap_or(&Value::Undefined))?;
+        format!(
+            "<{tag} {attribute}=\"{}\">{text}</{tag}>",
+            escape_html_attribute(&value)
+        )
+    } else {
+        format!("<{tag}>{text}</{tag}>")
+    };
+    Ok(Value::string_value(result))
+}
+
+macro_rules! define_string_html_methods {
+    ($( $name:ident => ($tag:literal, $attribute:expr) ),+ $(,)?) => {
+        $(
+            fn $name(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+                native_string_html(vm, this, args, $tag, $attribute)
+            }
+        )+
+    };
+}
+
+define_string_html_methods! {
+    native_string_anchor => ("a", Some("name")),
+    native_string_big => ("big", None),
+    native_string_blink => ("blink", None),
+    native_string_bold => ("b", None),
+    native_string_fixed => ("tt", None),
+    native_string_fontcolor => ("font", Some("color")),
+    native_string_fontsize => ("font", Some("size")),
+    native_string_italics => ("i", None),
+    native_string_link => ("a", Some("href")),
+    native_string_small => ("small", None),
+    native_string_strike => ("strike", None),
+    native_string_sub => ("sub", None),
+    native_string_sup => ("sup", None),
+}
+
+fn native_string_trim_left(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if this.is_null() || this.is_undefined() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "String.prototype.trimLeft called on null or undefined",
+        )));
+    }
+    Ok(Value::string_value(
+        to_string_with_vm(vm, &this)?.trim_start(),
+    ))
+}
+
+fn native_string_trim_right(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if this.is_null() || this.is_undefined() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "String.prototype.trimRight called on null or undefined",
+        )));
+    }
+    Ok(Value::string_value(
+        to_string_with_vm(vm, &this)?.trim_end(),
     ))
 }
 fn native_string_lower(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
@@ -11101,6 +11288,12 @@ fn native_array_from(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
             loop {
                 let next = vm.get_prop_with_accessors(&iterator, "next")?;
                 let step = vm.call_arguments(&next, iterator.clone(), &[] as &[Value])?;
+                if !step.is_object_like() {
+                    return Err(JsError::Throw(type_error(
+                        vm,
+                        "Iterator result is not an object",
+                    )));
+                }
                 if vm.get_prop_with_accessors(&step, "done")?.truthy() {
                     break;
                 }
@@ -11678,7 +11871,11 @@ fn native_date_set_year(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Va
     };
     let month = date_component_number(vm, args, 1, current.month0() as f64)?;
     let day = date_component_number(vm, args, 2, current.day() as f64)?;
-    let date = date_from_parts(
+    // Chrono's civil-date type is intentionally bounded to four-digit years,
+    // while ECMAScript Date permits values through ±275760. Compute the
+    // millisecond value arithmetically so Annex B setYear still honors
+    // TimeClip at the full language range.
+    let millis = date_parts_millis(
         year as i64,
         month as i64,
         day as i64,
@@ -11687,11 +11884,7 @@ fn native_date_set_year(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Va
         current.second() as i64,
         current.timestamp_subsec_millis() as i64,
     );
-    date_set_millis(
-        vm,
-        &this,
-        date.map_or(f64::NAN, |date| date.timestamp_millis() as f64),
-    )
+    date_set_millis(vm, &this, millis.map_or(f64::NAN, |millis| millis as f64))
 }
 
 fn date_component_number(vm: &mut Vm, args: &[Value], index: usize, default: f64) -> JsResult<f64> {
@@ -11730,6 +11923,47 @@ fn date_from_parts(
             + Duration::seconds(second)
             + Duration::milliseconds(millisecond),
     )
+}
+
+fn date_parts_millis(
+    year: i64,
+    month0: i64,
+    day: i64,
+    hour: i64,
+    minute: i64,
+    second: i64,
+    millisecond: i64,
+) -> Option<i64> {
+    let total_months = year.checked_mul(12)?.checked_add(month0)?;
+    let normalized_year = total_months.div_euclid(12);
+    let normalized_month = total_months.rem_euclid(12) + 1;
+    let days =
+        days_from_civil(normalized_year, normalized_month, 1)?.checked_add(day.checked_sub(1)?)?;
+    let day_millis = 86_400_000i64;
+    let time = hour
+        .checked_mul(3_600_000)?
+        .checked_add(minute.checked_mul(60_000)?)?
+        .checked_add(second.checked_mul(1_000)?)?
+        .checked_add(millisecond)?;
+    days.checked_mul(day_millis)?.checked_add(time)
+}
+
+/// Proleptic-Gregorian days from 1970-01-01 (Howard Hinnant's civil
+/// calendar conversion), valid for every year representable by i64.
+fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
+    let year = year.checked_sub((month <= 2) as i64)?;
+    let era = if year >= 0 {
+        year / 400
+    } else {
+        (year - 399) / 400
+    };
+    let year_of_era = year - era * 400;
+    let month_prime = month + if month > 2 { -3 } else { 9 };
+    let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era.checked_mul(146_097)
+        .and_then(|value| value.checked_add(day_of_era))
+        .and_then(|value| value.checked_sub(719_468))
 }
 
 fn date_set_utc_component(

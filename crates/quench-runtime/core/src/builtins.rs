@@ -323,6 +323,25 @@ builtin_catalog! {
     StringReplace, StringPrototype, "replace", native_string_replace, Generic, MAY_ALLOCATE;
     StringSplit, StringPrototype, "split", native_string_split, Generic, MAY_ALLOCATE;
     StringMatch, StringPrototype, "match", native_string_match, Generic, MAY_ALLOCATE;
+    StringAnchor, StringPrototype, "anchor", native_string_anchor, Generic, MAY_ALLOCATE;
+    StringBig, StringPrototype, "big", native_string_big, Generic, MAY_ALLOCATE;
+    StringBlink, StringPrototype, "blink", native_string_blink, Generic, MAY_ALLOCATE;
+    StringBold, StringPrototype, "bold", native_string_bold, Generic, MAY_ALLOCATE;
+    StringFixed, StringPrototype, "fixed", native_string_fixed, Generic, MAY_ALLOCATE;
+    StringFontcolor, StringPrototype, "fontcolor", native_string_fontcolor, Generic, MAY_ALLOCATE;
+    StringFontsize, StringPrototype, "fontsize", native_string_fontsize, Generic, MAY_ALLOCATE;
+    StringItalics, StringPrototype, "italics", native_string_italics, Generic, MAY_ALLOCATE;
+    StringLink, StringPrototype, "link", native_string_link, Generic, MAY_ALLOCATE;
+    StringSmall, StringPrototype, "small", native_string_small, Generic, MAY_ALLOCATE;
+    StringStrike, StringPrototype, "strike", native_string_strike, Generic, MAY_ALLOCATE;
+    StringSub, StringPrototype, "sub", native_string_sub, Generic, MAY_ALLOCATE;
+    StringSup, StringPrototype, "sup", native_string_sup, Generic, MAY_ALLOCATE;
+    StringTrimStart, StringPrototype, "trimStart", native_string_trim_left, Generic, MAY_ALLOCATE;
+    StringTrimEnd, StringPrototype, "trimEnd", native_string_trim_right, Generic, MAY_ALLOCATE;
+    StringTrimLeft, StringPrototype, "trimLeft", native_string_trim_left, Generic, MAY_ALLOCATE;
+    StringTrimRight, StringPrototype, "trimRight", native_string_trim_right, Generic, MAY_ALLOCATE;
+    Escape, Global, "escape", native_escape, Generic, MAY_ALLOCATE;
+    Unescape, Global, "unescape", native_unescape, Generic, MAY_ALLOCATE;
     StringIndexOf, StringPrototype, "indexOf", native_string_index_of, Generic, PURE;
     StringLastIndexOf, StringPrototype, "lastIndexOf", native_string_last_index_of, Generic, PURE;
     NumberToFixed, NumberPrototype, "toFixed", native_number_to_fixed, Generic, MAY_ALLOCATE;
@@ -533,6 +552,19 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::StringReplace
         | BuiltinId::StringSplit
         | BuiltinId::StringMatch
+        | BuiltinId::StringBig
+        | BuiltinId::StringBlink
+        | BuiltinId::StringBold
+        | BuiltinId::StringFixed
+        | BuiltinId::StringItalics
+        | BuiltinId::StringSmall
+        | BuiltinId::StringStrike
+        | BuiltinId::StringSub
+        | BuiltinId::StringSup
+        | BuiltinId::StringTrimStart
+        | BuiltinId::StringTrimEnd
+        | BuiltinId::StringTrimLeft
+        | BuiltinId::StringTrimRight
         | BuiltinId::StringIndexOf
         | BuiltinId::StringLastIndexOf
         | BuiltinId::RegExpTest
@@ -540,6 +572,12 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::ObjectToString
         | BuiltinId::ObjectToLocaleString
         | BuiltinId::ObjectValueOf => 0,
+        BuiltinId::StringAnchor
+        | BuiltinId::StringFontcolor
+        | BuiltinId::StringFontsize
+        | BuiltinId::StringLink
+        | BuiltinId::Escape
+        | BuiltinId::Unescape => 1,
         BuiltinId::ObjectIsPrototypeOf
         | BuiltinId::ObjectHasOwnProperty
         | BuiltinId::ObjectPropertyIsEnumerable
