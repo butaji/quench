@@ -7142,7 +7142,7 @@ fn native_array_concat(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
         }
         out.push(v);
     }
-    Ok(vm.object_value(Object::array(None, out)))
+    Ok(vm.array_from_values(out))
 }
 fn array_values(this: &Value) -> Vec<Value> {
     let Some(object) = this.as_object_ref() else {
@@ -7678,7 +7678,7 @@ fn native_string_split(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
     if let Some(r) = args.first().and_then(Value::as_regexp) {
         let b = r.borrow();
         let parts = b.regex.split(&s).map(Value::string_value).collect();
-        return Ok(vm.object_value(Object::array(None, parts)));
+        return Ok(vm.array_from_values(parts));
     }
     let sep = args.first().map(Value::string).unwrap_or_default();
     let parts = if sep.is_empty() {
@@ -7688,7 +7688,7 @@ fn native_string_split(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
     } else {
         s.split(&sep).map(Value::string_value).collect()
     };
-    Ok(vm.object_value(Object::array(None, parts)))
+    Ok(vm.array_from_values(parts))
 }
 fn native_string_match(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let s = string_this(this);
@@ -7709,7 +7709,7 @@ fn native_string_match(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
     if vals.is_empty() {
         Ok(Value::Null)
     } else {
-        Ok(vm.object_value(Object::array(None, vals)))
+        Ok(vm.array_from_values(vals))
     }
 }
 fn native_string_index_of(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
@@ -7748,7 +7748,7 @@ fn native_regexp_exec(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Valu
     let Some(a) = b.capture_values(&s) else {
         return Ok(Value::Null);
     };
-    Ok(vm.object_value(Object::array(None, a)))
+    Ok(vm.array_from_values(a))
 }
 fn checked_number_precision(
     vm: &mut Vm,
@@ -9537,7 +9537,7 @@ fn native_object_keys(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> 
         .into_iter()
         .map(Value::string_value)
         .collect();
-    Ok(vm.object_value(Object::array(None, keys)))
+    Ok(vm.array_from_values(keys))
 }
 fn native_object_get_own_property_names(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let Some(target) = args.first() else {
@@ -9586,7 +9586,7 @@ fn native_object_get_own_property_names(vm: &mut Vm, _: Value, args: &[Value]) -
             (0..string.chars().count()).map(|index| Value::string_value(index.to_string())),
         );
     }
-    Ok(vm.object_value(Object::array(None, keys)))
+    Ok(vm.array_from_values(keys))
 }
 fn native_object_get_own_property_symbols(
     vm: &mut Vm,
@@ -9611,7 +9611,7 @@ fn native_object_get_own_property_symbols(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    Ok(vm.object_value(Object::array(None, keys)))
+    Ok(vm.array_from_values(keys))
 }
 fn native_object_get_own_property_descriptors(
     vm: &mut Vm,
@@ -9819,7 +9819,7 @@ fn native_object_values(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value
         .into_iter()
         .map(|key| vm.get_prop(target, &key))
         .collect();
-    Ok(vm.object_value(Object::array(None, values)))
+    Ok(vm.array_from_values(values))
 }
 fn native_object_entries(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let target = args
@@ -9838,7 +9838,7 @@ fn native_object_entries(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Valu
             vm.array_from_values(vec![Value::string_value(key), value])
         })
         .collect();
-    Ok(vm.object_value(Object::array(None, entries)))
+    Ok(vm.array_from_values(entries))
 }
 fn native_object_from_entries(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let result = vm.object(None);
