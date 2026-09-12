@@ -134,7 +134,7 @@ Verification completed:
   correct defaults, and routing descriptor/accessor fields through the shared
   property model; the remaining failures are mostly arrays, proxies, and
   unsupported stencil features
-- the stencil BigInt stage now reaches 72/77 after deriving one marker-based
+- the stencil BigInt stage now reaches 76/77 after deriving one marker-based
   conversion path, native metadata, computed Symbol keys, wrapper prototypes,
   and radix formatting; remaining failures are numeric edge errors and
   prototype/accessor details
