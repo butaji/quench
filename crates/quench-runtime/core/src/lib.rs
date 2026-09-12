@@ -4995,6 +4995,14 @@ impl Vm {
             .as_function_ref()
             .map(|function| Value::Object(function.prototype.clone()))
         {
+            if let Some(object_prototype) = self
+                .builtin(BuiltinId::ObjectConstructor)
+                .as_function_ref()
+                .map(|function| function.prototype.clone())
+                && let Some(symbol_prototype_object) = symbol_prototype.as_object_ref()
+            {
+                symbol_prototype_object.borrow_mut().prototype = Some(object_prototype);
+            }
             let symbol_to_string = self.native_named(native_symbol_to_string, "toString", 0);
             let symbol_value_of = self.native_named(native_symbol_value_of, "valueOf", 0);
             let symbol_description =
@@ -6296,6 +6304,12 @@ impl Vm {
             let object = object.borrow();
             object.props.contains_key("\0symbol") && !key.starts_with('\0')
         }) {
+            if self.strict_mode {
+                return Err(JsError::Throw(type_error(
+                    self,
+                    "cannot assign a property to a Symbol value",
+                )));
+            }
             return Ok(());
         }
         if let Some((_, setter)) = self.find_accessor(object, key) {
@@ -6530,6 +6544,14 @@ impl Vm {
             if function.props.borrow().contains_key("\0sealed")
                 && k != "prototype"
                 && !function.props.borrow().contains_key(k)
+            {
+                return;
+            }
+            if function
+                .attributes
+                .borrow()
+                .get(k)
+                .is_some_and(|attributes| !attributes.writable)
             {
                 return;
             }
@@ -17219,6 +17241,62 @@ mod tests {
         assert!(
             result.is_err(),
             "strict assignment must reject read-only global"
+        );
+    }
+
+    #[test]
+    fn symbol_static_and_prototype_surface_is_available() {
+        let mut vm = Vm::new();
+        vm.install_process(Vec::new(), Vec::new());
+        vm.run_source_text(
+            Path::new("<symbol-surface>"),
+            "result = [typeof Symbol, typeof Symbol.for, typeof Symbol.keyFor, typeof Symbol.prototype, typeof Symbol('x').toString, Symbol('x').description];",
+        )
+        .expect("symbol surface executes");
+        let values = Environment::get(&vm.global, "result")
+            .and_then(|value| value.as_object())
+            .and_then(|object| object.borrow().array.clone())
+            .expect("result array")
+            .values;
+        assert_eq!(values[0].string(), "function");
+        assert_eq!(values[1].string(), "function");
+        assert_eq!(values[2].string(), "function");
+        assert_eq!(values[3].string(), "object");
+        assert_eq!(values[4].string(), "function");
+        assert_eq!(values[5].string(), "x");
+    }
+
+    #[test]
+    fn symbol_well_known_descriptors_are_constant() {
+        let mut vm = Vm::new();
+        vm.install_process(Vec::new(), Vec::new());
+        vm.run_source_text(
+            Path::new("<symbol-descriptor>"),
+            "var getter = Object.getOwnPropertyDescriptor; var old = Symbol.iterator; function writable(o,k) { try { o[k] = 'unlikelyValue'; } catch (_) {} return o[k] === 'unlikelyValue'; } try { Symbol.iterator = 'unlikelyValue'; } catch (_) {} result = [getter(Symbol, 'iterator').writable, writable(Symbol, 'iterator'), Symbol.iterator === old];",
+        )
+        .expect("descriptor executes");
+        let values = Environment::get(&vm.global, "result")
+            .and_then(|value| value.as_object())
+            .and_then(|object| object.borrow().array.clone())
+            .expect("result array")
+            .values;
+        assert_eq!(values[0].as_bool(), Some(false));
+        assert_eq!(values[1].as_bool(), Some(false));
+        assert_eq!(values[2].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn symbol_wrapper_uses_ordinary_to_primitive_after_delete() {
+        let mut vm = Vm::new();
+        vm.install_process(Vec::new(), Vec::new());
+        vm.run_source_text(
+            Path::new("<symbol-ordinary-primitive>"),
+            "delete Symbol.prototype[Symbol.toPrimitive]; Object.defineProperty(Symbol.prototype, 'valueOf', { get: function () { return function () { return 123; }; } }); result = Object(Symbol()) == 123;",
+        )
+        .expect("ordinary Symbol coercion executes");
+        assert_eq!(
+            Environment::get(&vm.global, "result").and_then(|v| v.as_bool()),
+            Some(true)
         );
     }
 
