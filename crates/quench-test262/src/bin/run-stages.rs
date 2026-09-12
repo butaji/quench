@@ -386,7 +386,7 @@ fn run_isolated_file(root: &Path, path: &Path) -> Result<TestOutcome, String> {
     }
     let root = root.to_path_buf();
     let path = path.to_path_buf();
-    std::thread::Builder::new()
+    let joined = std::thread::Builder::new()
         .stack_size(256 * 1024 * 1024)
         .spawn(move || {
             let mut runner = Test262Runner::new(selected_host());
@@ -394,8 +394,13 @@ fn run_isolated_file(root: &Path, path: &Path) -> Result<TestOutcome, String> {
             runner.run_file_with_cache(path, &mut harness)
         })
         .map_err(|error| format!("stage worker spawn failed: {error}"))?
-        .join()
-        .map_err(|_| "stage worker panicked".to_string())?
+        .join();
+    match joined {
+        Ok(outcome) => outcome,
+        Err(_) => Ok(TestOutcome::Fail {
+            reason: "test execution thread panicked".to_string(),
+        }),
+    }
 }
 
 fn run_file_in_process(root: &Path, path: &Path) -> Result<TestOutcome, String> {
