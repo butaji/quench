@@ -107,11 +107,12 @@ Verification completed:
   native wrappers, exact `sumPrecise` accumulation, binary16 rounding, and the
   complete intrinsic projection; the two remaining cases require generator /
   iterator lowering in the stencil compiler
-- the stencil Date stage now reaches 327/594 after deriving constructor
-  time-clipping, ISO/RFC date parsing, UTC/local component getters and
-  setters, string serialization, and static `now`/`parse`/`UTC` helpers from
-  one date payload; the remaining failures are mostly Temporal hooks,
-  proxies, and unsupported prototype methods
+- the stencil Date stage now reaches 406/594 after deriving constructor
+  time-clipping, ISO/RFC date parsing, normalized UTC/local component getters
+  and setters, string serialization, generic `toJSON` coercion, Temporal
+  Instant conversion, and static `now`/`parse`/`UTC` helpers from one date
+  payload; the remaining failures are mostly Temporal hooks, proxies, and
+  unsupported prototype methods
 - the stencil String stage now reaches 424/1,223 after routing constructor
   coercion and global binding projection through the shared stencil VM; the
   remaining failures are unsupported syntax, accessors, and Unicode details
