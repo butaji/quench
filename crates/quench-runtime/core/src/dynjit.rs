@@ -3373,6 +3373,18 @@ fn set_static_cached(
 }
 
 fn unary(kind: UnaryKind, value: &Value) -> Value {
+    if super::is_bigint_marker(value) {
+        let bigint = super::parse_bigint_text(value.as_string().map_or("", String::as_str))
+            .unwrap_or_else(|_| num_bigint::BigInt::from(0));
+        return match kind {
+            UnaryKind::Negate => super::bigint_marker(-bigint),
+            UnaryKind::BitNot => super::bigint_marker(!bigint),
+            UnaryKind::Typeof => Value::string_value("bigint"),
+            UnaryKind::Plus => Value::Number(bigint.to_f64().unwrap_or(f64::NAN)),
+            UnaryKind::Not => Value::Bool(false),
+            UnaryKind::Void => Value::Undefined,
+        };
+    }
     match kind {
         UnaryKind::Plus => Value::Number(value.number()),
         UnaryKind::Negate => Value::Number(-value.number()),
