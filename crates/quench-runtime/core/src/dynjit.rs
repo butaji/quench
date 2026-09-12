@@ -2968,20 +2968,24 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
         }
         DynOp::SetStatic { object, key, src } => {
             let value = get(frame, src);
-            let object = get_ref(frame, *object);
+            let object = get_ref(frame, *object).clone();
             if object.is_null() || object.is_undefined() {
                 return Err(JsError::Message(format!(
                     "cannot write property {key} of {}",
                     object.display()
                 )));
             }
+            if key == "stack" && unsafe { &*frame.vm }.has_error_stack_accessor(&object) {
+                super::native_error_stack_set(unsafe { &mut *frame.vm }, object.clone(), &[value])?;
+                return Ok(next);
+            }
             match property_ic() {
                 Some(cache) => {
-                    if let Err(value) = set_static_cached(object, key, value, cache) {
-                        unsafe { &*frame.vm }.set_prop(object, key, value);
+                    if let Err(value) = set_static_cached(&object, key, value, cache) {
+                        unsafe { &*frame.vm }.set_prop(&object, key, value);
                     }
                 }
-                None => unsafe { &*frame.vm }.set_prop(object, key, value),
+                None => unsafe { &*frame.vm }.set_prop(&object, key, value),
             }
         }
         DynOp::SetComputed { object, key, src } => {
@@ -2994,6 +2998,10 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
                 )));
             }
             let key = get_ref(frame, *key).clone();
+            if key.string() == "stack" && unsafe { &*frame.vm }.has_error_stack_accessor(&object) {
+                super::native_error_stack_set(unsafe { &mut *frame.vm }, object, &[value])?;
+                return Ok(next);
+            }
             unsafe { &mut *frame.vm }.set_computed_prop(&object, &key, value)?;
         }
         DynOp::DeleteStatic {
