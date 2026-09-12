@@ -80,7 +80,7 @@ Verification completed:
 - core-backed `tests/node-compat/stage-2650/buffer-tostring-range.js`
 - core-backed file timer smoke (`sync` before `timer`)
 - core-backed `process.nextTick` ordering smoke (`sync`, `tick`, then `timer`)
-- full core-backed `tests/node-compat` audit currently reports 13/863; the
+- full core-backed `tests/node-compat` audit currently reports 16/863; the
   remaining failures identify host-module and syntax migration work still
   required before the compatibility-host path can be removed
 - full compatibility-host Test262 stage sweep (stages 0..113) ran 51,653/51,900
