@@ -7391,6 +7391,9 @@ fn native_regexp_exec(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Valu
     Ok(vm.object_value(Object::array(None, a)))
 }
 fn checked_number_precision(vm: &mut Vm, args: &[Value], default: f64, minimum: f64) -> JsResult<usize> {
+    if args.first().is_some_and(is_bigint_marker) {
+        return Err(JsError::Throw(type_error(vm, "cannot convert a BigInt value to a number")));
+    }
     let value = args
         .first()
         .map(|value| to_number_with_vm(vm, value))
@@ -7407,6 +7410,9 @@ fn checked_number_precision(vm: &mut Vm, args: &[Value], default: f64, minimum: 
 }
 
 fn required_number_precision(vm: &mut Vm, args: &[Value], minimum: f64) -> JsResult<usize> {
+    if args.first().is_some_and(is_bigint_marker) {
+        return Err(JsError::Throw(type_error(vm, "cannot convert a BigInt value to a number")));
+    }
     let value = args
         .first()
         .map(|value| to_number_with_vm(vm, value))
@@ -7417,6 +7423,12 @@ fn required_number_precision(vm: &mut Vm, args: &[Value], minimum: f64) -> JsRes
         return Err(JsError::Throw(range_error(vm, "precision out of range")));
     }
     Ok(value as usize)
+}
+
+fn is_bigint_marker(value: &Value) -> bool {
+    value
+        .as_string()
+        .is_some_and(|value| value.starts_with('\0') && value.starts_with("\0bigint:"))
 }
 
 fn number_this_value(vm: &Vm, value: &Value) -> JsResult<f64> {
