@@ -92,7 +92,8 @@ Verification completed:
   diagnostics, proving the corpus reaches the new VM without silently falling
   back
 - after that aggregate run, the Array stage was rerun against the extended
-  callback/index/reduction/flattening methods and reached 1,090/3,081; the
+  callback/index/reduction/flattening methods and descriptor guards and reached
+  1,140/3,081; the
   aggregate total above is intentionally left as the last complete-corpus
   measurement
 - canonical V8V7 exact driver, all eight fixtures valid
