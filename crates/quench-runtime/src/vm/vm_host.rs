@@ -301,6 +301,7 @@ fn realm_global_object(
         ("Number", Builtin::Number),
         ("String", Builtin::String),
         ("RegExp", Builtin::RegExp),
+        ("Intl", Builtin::Intl),
         ("Reflect", Builtin::Reflect),
         ("Boolean", Builtin::Boolean),
         ("Symbol", Builtin::Symbol),
@@ -324,10 +325,14 @@ fn realm_global_object(
     ] {
         properties.push((name.to_string(), realm::intrinsic(realm, builtin)?));
     }
-    properties.push((
-        "Float16Array".to_string(),
-        float16_constructor_for_realm(realm),
-    ));
+    let float16_enabled = realm::context(realm)
+        .is_some_and(|context| context.host_value("Float16Array").is_some());
+    if float16_enabled {
+        properties.push((
+            "Float16Array".to_string(),
+            float16_constructor_for_realm(realm),
+        ));
+    }
     Some(Rc::new(crate::value::ObjectData::new(properties)))
 }
 
@@ -342,6 +347,7 @@ fn float16_constructor_for_realm(realm: crate::ops::RealmId) -> Value {
         ("\0float16_constructor".to_string(), Value::Boolean(true)),
         ("\0prototype".to_string(), prototype.clone()),
     ]);
+    let receiver_for_update = receiver.clone();
     let constructor = Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
         realm,
         target: Value::Builtin(Builtin::Uint16Array),
@@ -365,7 +371,23 @@ fn float16_constructor_for_realm(realm: crate::ops::RealmId) -> Value {
         "\0function_prototype",
         Value::Builtin(Builtin::TypedArray),
     );
-    let _ = crate::execute::set_property(prototype, "constructor", constructor.clone());
+    let prototype = crate::builtins::define_own_property_public(
+        &prototype,
+        "constructor",
+        &[
+            ("value".to_string(), constructor.clone()),
+            ("writable".to_string(), Value::Boolean(true)),
+            ("enumerable".to_string(), Value::Boolean(false)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ],
+    )
+    .unwrap_or(prototype);
+    let _ = crate::execute::set_property_in_place(
+        &receiver_for_update,
+        "\0prototype",
+        prototype.clone(),
+    );
+    let constructor = crate::execute::set_property(constructor, "prototype", prototype);
     constructor
 }
 
