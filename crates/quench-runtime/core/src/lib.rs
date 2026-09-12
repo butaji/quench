@@ -5866,6 +5866,9 @@ fn native_parse_int(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
             10
         };
     }
+    if !(2..=36).contains(&radix) {
+        return Ok(Value::Number(f64::NAN));
+    }
     if radix == 16 && (s.starts_with("0x") || s.starts_with("0X")) {
         s.drain(..2);
     }
@@ -5873,7 +5876,12 @@ fn native_parse_int(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
         .chars()
         .take_while(|c| c.to_digit(radix).is_some())
         .collect();
-    let n = i64::from_str_radix(&digits, radix).unwrap_or(0) as f64;
+    if digits.is_empty() {
+        return Ok(Value::Number(f64::NAN));
+    }
+    let n = digits.chars().fold(0.0, |acc, digit| {
+        acc * radix as f64 + digit.to_digit(radix).unwrap_or(0) as f64
+    });
     Ok(Value::Number(if neg { -n } else { n }))
 }
 
