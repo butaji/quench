@@ -2177,8 +2177,8 @@ impl RegExpValue {
 enum Signal {
     Normal(Value),
     Return(Value),
-    Break,
-    Continue,
+    Break(Option<String>),
+    Continue(Option<String>),
 }
 enum LValue {
     Var(Env, String),
@@ -4574,6 +4574,7 @@ struct Vm {
     symbol_registry: HashMap<String, Value>,
     next_symbol_id: u64,
     throw_type_error: RefCell<Option<Value>>,
+    pending_loop_label: Option<String>,
 }
 impl Vm {
     fn new() -> Self {
@@ -4619,6 +4620,7 @@ impl Vm {
             symbol_registry: HashMap::new(),
             next_symbol_id: 1,
             throw_type_error: RefCell::new(None),
+            pending_loop_label: None,
         };
         v.builtin_functions = builtins::instantiate(&v);
         v.install();
@@ -7318,6 +7320,15 @@ impl Vm {
             EmptyStatement(_) | DebuggerStatement(_) => Ok(Signal::Normal(Value::Undefined)),
             ExpressionStatement(x) => Ok(Signal::Normal(self.eval_expr(&x.expression, e)?)),
             BlockStatement(x) => self.exec_stmts(&x.body, Environment::new(Some(e))),
+            // Labels do not introduce a scope. Re-enter the labeled body when
+            // a matching continue signal returns from its loop, and consume a
+            // matching break. Other control signals continue outward.
+            LabeledStatement(x) => {
+                let previous = self.pending_loop_label.replace(x.label.name.to_string());
+                let result = self.exec_stmt(&x.body, e);
+                self.pending_loop_label = previous;
+                result
+            }
             ReturnStatement(x) => Ok(Signal::Return(
                 x.argument
                     .as_ref()
@@ -7326,8 +7337,12 @@ impl Vm {
                     .unwrap_or(Value::Undefined),
             )),
             ThrowStatement(x) => Err(JsError::Throw(self.eval_expr(&x.argument, e)?)),
-            BreakStatement(_) => Ok(Signal::Break),
-            ContinueStatement(_) => Ok(Signal::Continue),
+            BreakStatement(x) => Ok(Signal::Break(
+                x.label.as_ref().map(|label| label.name.to_string()),
+            )),
+            ContinueStatement(x) => Ok(Signal::Continue(
+                x.label.as_ref().map(|label| label.name.to_string()),
+            )),
             IfStatement(x) => {
                 if self.eval_expr(&x.test, e.clone())?.truthy() {
                     self.exec_stmt(&x.consequent, e)
@@ -7338,24 +7353,44 @@ impl Vm {
                 }
             }
             WhileStatement(x) => {
+                let loop_label = self.pending_loop_label.take();
                 loop {
                     if !self.eval_expr(&x.test, e.clone())?.truthy() {
                         break;
                     }
                     match self.exec_stmt(&x.body, e.clone())? {
-                        Signal::Break => break,
+                        Signal::Break(None) => break,
+                        Signal::Break(Some(label))
+                            if loop_label.as_deref() == Some(label.as_str()) =>
+                        {
+                            break;
+                        }
+                        Signal::Break(Some(label)) => return Ok(Signal::Break(Some(label))),
                         Signal::Return(v) => return Ok(Signal::Return(v)),
-                        Signal::Continue | Signal::Normal(_) => {}
+                        Signal::Continue(None) | Signal::Normal(_) => {}
+                        Signal::Continue(Some(label))
+                            if loop_label.as_deref() == Some(label.as_str()) => {}
+                        Signal::Continue(Some(label)) => return Ok(Signal::Continue(Some(label))),
                     }
                 }
                 Ok(Signal::Normal(Value::Undefined))
             }
             DoWhileStatement(x) => {
+                let loop_label = self.pending_loop_label.take();
                 loop {
                     match self.exec_stmt(&x.body, e.clone())? {
-                        Signal::Break => break,
+                        Signal::Break(None) => break,
+                        Signal::Break(Some(label))
+                            if loop_label.as_deref() == Some(label.as_str()) =>
+                        {
+                            break;
+                        }
+                        Signal::Break(Some(label)) => return Ok(Signal::Break(Some(label))),
                         Signal::Return(v) => return Ok(Signal::Return(v)),
-                        _ => {}
+                        Signal::Continue(None) | Signal::Normal(_) => {}
+                        Signal::Continue(Some(label))
+                            if loop_label.as_deref() == Some(label.as_str()) => {}
+                        Signal::Continue(Some(label)) => return Ok(Signal::Continue(Some(label))),
                     }
                     if !self.eval_expr(&x.test, e.clone())?.truthy() {
                         break;
@@ -7364,6 +7399,7 @@ impl Vm {
                 Ok(Signal::Normal(Value::Undefined))
             }
             ForStatement(x) => {
+                let loop_label = self.pending_loop_label.take();
                 if let Some(i) = &x.init {
                     if let Some(z) = i.as_expression() {
                         self.eval_expr(z, e.clone())?;
@@ -7378,9 +7414,18 @@ impl Vm {
                         }
                     }
                     match self.exec_stmt(&x.body, e.clone())? {
-                        Signal::Break => break,
+                        Signal::Break(None) => break,
+                        Signal::Break(Some(label))
+                            if loop_label.as_deref() == Some(label.as_str()) =>
+                        {
+                            break;
+                        }
+                        Signal::Break(Some(label)) => return Ok(Signal::Break(Some(label))),
                         Signal::Return(v) => return Ok(Signal::Return(v)),
-                        _ => {}
+                        Signal::Continue(None) | Signal::Normal(_) => {}
+                        Signal::Continue(Some(label))
+                            if loop_label.as_deref() == Some(label.as_str()) => {}
+                        Signal::Continue(Some(label)) => return Ok(Signal::Continue(Some(label))),
                     }
                     if let Some(u) = &x.update {
                         self.eval_expr(u, e.clone())?;
@@ -7389,6 +7434,7 @@ impl Vm {
                 Ok(Signal::Normal(Value::Undefined))
             }
             ForInStatement(x) => {
+                let loop_label = self.pending_loop_label.take();
                 let o = self.eval_expr(&x.right, e.clone())?;
                 let mut ks = Vec::new();
                 if let Some(o) = o.as_object() {
@@ -7403,9 +7449,18 @@ impl Vm {
                 for k in ks {
                     self.assign_for_left(&x.left, Value::String(Rc::new(k.into())), e.clone())?;
                     match self.exec_stmt(&x.body, e.clone())? {
-                        Signal::Break => break,
+                        Signal::Break(None) => break,
+                        Signal::Break(Some(label))
+                            if loop_label.as_deref() == Some(label.as_str()) =>
+                        {
+                            break;
+                        }
+                        Signal::Break(Some(label)) => return Ok(Signal::Break(Some(label))),
                         Signal::Return(v) => return Ok(Signal::Return(v)),
-                        _ => {}
+                        Signal::Continue(None) | Signal::Normal(_) => {}
+                        Signal::Continue(Some(label))
+                            if loop_label.as_deref() == Some(label.as_str()) => {}
+                        Signal::Continue(Some(label)) => return Ok(Signal::Continue(Some(label))),
                     }
                 }
                 Ok(Signal::Normal(Value::Undefined))
@@ -7423,10 +7478,16 @@ impl Vm {
                     if active {
                         for st in &c.consequent {
                             match self.exec_stmt(st, e.clone())? {
-                                Signal::Break => return Ok(Signal::Normal(Value::Undefined)),
+                                Signal::Break(None) => return Ok(Signal::Normal(Value::Undefined)),
+                                Signal::Break(Some(label)) => {
+                                    return Ok(Signal::Break(Some(label)));
+                                }
                                 Signal::Return(v) => return Ok(Signal::Return(v)),
-                                Signal::Continue => return Ok(Signal::Continue),
-                                _ => {}
+                                Signal::Continue(None) => return Ok(Signal::Continue(None)),
+                                Signal::Continue(Some(label)) => {
+                                    return Ok(Signal::Continue(Some(label)));
+                                }
+                                Signal::Normal(_) => {}
                             }
                         }
                     }
