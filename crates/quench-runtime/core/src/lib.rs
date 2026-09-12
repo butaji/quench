@@ -4005,6 +4005,12 @@ fn loose_eq(a: &Value, b: &Value) -> bool {
     if a.as_bool().is_some() || b.as_bool().is_some() {
         return a.number() == b.number();
     }
+    if a.is_object() || a.is_function() || b.is_object() || b.is_function() {
+        if a.is_string() || b.is_string() {
+            return a.string() == b.string();
+        }
+        return a.number() == b.number();
+    }
     false
 }
 fn instance_of(value: &Value, ctor: &Value) -> bool {
@@ -4477,6 +4483,28 @@ impl Vm {
             let proto = Value::Object(function.as_function_ref().expect("constructor function").prototype.clone());
             self.set_prop(&proto, "constructor", self.builtin(constructor));
         }
+        let object_prototype = self
+            .builtin(BuiltinId::ObjectConstructor)
+            .as_function_ref()
+            .expect("Object constructor")
+            .prototype
+            .clone();
+        for constructor in [
+            BuiltinId::ArrayConstructor,
+            BuiltinId::StringConstructor,
+            BuiltinId::NumberConstructor,
+            BuiltinId::BooleanConstructor,
+            BuiltinId::FunctionConstructor,
+            BuiltinId::RegExpConstructor,
+        ] {
+            let prototype = self
+                .builtin(constructor)
+                .as_function_ref()
+                .expect("constructor function")
+                .prototype
+                .clone();
+            prototype.borrow_mut().prototype = Some(object_prototype);
+        }
     }
 
     /// Install the small, host-provided part of Node's process object.
@@ -4755,7 +4783,7 @@ impl Vm {
                 return self.get_prop(&Value::Object(prototype), k);
             }
             return match k {
-                "inheritsFrom" | "toString" | "toLocaleString" | "valueOf" | "hasOwnProperty" | "propertyIsEnumerable" => {
+                "inheritsFrom" | "toString" | "toLocaleString" | "valueOf" | "hasOwnProperty" | "propertyIsEnumerable" | "isPrototypeOf" => {
                     self.builtin_property(BuiltinOwner::ObjectPrototype, k)
                 }
                 "call" | "apply" | "bind" => self.builtin_property(BuiltinOwner::FunctionPrototype, k),
@@ -4799,7 +4827,7 @@ impl Vm {
                 } else {
                     value
                 }
-            } else if matches!(k, "toString" | "toLocaleString" | "valueOf" | "hasOwnProperty" | "propertyIsEnumerable") {
+            } else if matches!(k, "toString" | "toLocaleString" | "valueOf" | "hasOwnProperty" | "propertyIsEnumerable" | "isPrototypeOf") {
                 let value = self.function_prop(f, k);
                 if value.is_undefined() {
                     self.builtin_property(BuiltinOwner::ObjectPrototype, k)
@@ -4893,6 +4921,8 @@ impl Vm {
             if k == "prototype" {
                 if let Some(source) = v.as_object() {
                     *function.prototype.borrow_mut() = source.borrow().clone();
+                    let prototype = Value::Object(function.prototype.clone());
+                    self.set_prop(&prototype, "\0prototype_alias", Value::Object(source));
                     self.invalidate_prototype_membership();
                 }
             } else {
@@ -7435,10 +7465,24 @@ fn native_buffer_to_string(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
 }
 fn native_object(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let Some(value) = args.first() else {
-        return Ok(vm.object(None));
+        let object_constructor = vm.builtin(BuiltinId::ObjectConstructor);
+        return Ok(vm.object(Some(
+            object_constructor
+                .as_function_ref()
+                .expect("Object constructor")
+                .prototype
+                .clone(),
+        )));
     };
     if value.is_null() || value.is_undefined() {
-        return Ok(vm.object(None));
+        let object_constructor = vm.builtin(BuiltinId::ObjectConstructor);
+        return Ok(vm.object(Some(
+            object_constructor
+                .as_function_ref()
+                .expect("Object constructor")
+                .prototype
+                .clone(),
+        )));
     }
     if value.is_object() || value.is_function() {
         return Ok(value.clone());
@@ -7753,6 +7797,29 @@ fn native_object_property_is_enumerable(
     };
     Ok(Value::Bool(enumerable))
 }
+fn native_object_is_prototype_of(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(target) = args.first().and_then(Value::as_object_ref) else {
+        return Ok(Value::Bool(false));
+    };
+    let Some(this_object) = this.as_object() else {
+        return Ok(Value::Bool(false));
+    };
+    let mut current = target.borrow().prototype.clone();
+    while let Some(prototype) = current {
+        if prototype == this_object
+            || prototype
+                .borrow()
+                .props
+                .get("\0prototype_alias")
+                .and_then(Value::as_object)
+                == Some(this_object)
+        {
+            return Ok(Value::Bool(true));
+        }
+        current = prototype.borrow().prototype.clone();
+    }
+    Ok(Value::Bool(false))
+}
 fn native_inherits_from(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     if let Some(parent) = args.first().and_then(Value::as_function) {
         if let Some(object) = this.as_object() {
@@ -7958,7 +8025,7 @@ mod tests {
         vm.install_process(Vec::new(), Vec::new());
         vm.run_source_text(
             Path::new("<object-constructor>"),
-            "var n = Object(3); var s = Object('x'); var b = Object(true); var o = {}; var f = function () {}; result = [typeof n, n.constructor === Number, typeof s, s.constructor === String, b.constructor === Boolean, Object(o) === o, Object(f) === f];",
+            "var n = Object(3); var s = Object('x'); var b = Object(true); var o = {}; var f = function () {}; function A() {}; var p = {}; A.prototype = p; var x = new A(); result = [typeof n, n.constructor === Number, typeof s, s.constructor === String, b.constructor === Boolean, Object(o) === o, Object(f) === f, p.isPrototypeOf(x)];",
         )
         .expect("Object boxing executes");
         let values = Environment::get(&vm.global, "result")
@@ -7973,6 +8040,7 @@ mod tests {
         assert_eq!(values[4].as_bool(), Some(true));
         assert_eq!(values[5].as_bool(), Some(true));
         assert_eq!(values[6].as_bool(), Some(true));
+        assert_eq!(values[7].as_bool(), Some(true));
     }
 
     #[test]
