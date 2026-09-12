@@ -8645,6 +8645,135 @@ fn native_array_includes(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Va
             .any(|value| eq_same_value_zero(&value, &needle)),
     ))
 }
+
+fn native_array_last_index_of(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let needle = args.first().cloned().unwrap_or(Value::Undefined);
+    let values = array_values(&this);
+    let start = args
+        .get(1)
+        .map(Value::number)
+        .map(|value| value.max(0.0) as usize)
+        .unwrap_or(values.len().saturating_sub(1));
+    for (index, value) in values
+        .into_iter()
+        .enumerate()
+        .rev()
+        .filter(|(index, _)| *index <= start)
+    {
+        if eq_strict(&value, &needle) {
+            return Ok(Value::Number(index as f64));
+        }
+    }
+    Ok(Value::Number(-1.0))
+}
+
+fn native_array_at(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let values = array_values(&this);
+    let index = args.first().map(Value::number).unwrap_or(0.0).trunc() as isize;
+    let index = if index < 0 {
+        values.len() as isize + index
+    } else {
+        index
+    };
+    Ok(values
+        .get(index.max(0) as usize)
+        .cloned()
+        .unwrap_or(Value::Undefined))
+}
+
+fn native_array_fill(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(object) = array_this(this.clone()) else {
+        return Ok(this);
+    };
+    let mut object = object.borrow_mut();
+    let array = object.array.as_mut().expect("array storage");
+    let start = args.get(1).map(Value::number).unwrap_or(0.0).max(0.0) as usize;
+    let end = args
+        .get(2)
+        .map(Value::number)
+        .unwrap_or(array.len() as f64)
+        .max(0.0) as usize;
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    for index in start.min(array.len())..end.min(array.len()) {
+        array.set(index, value.clone());
+    }
+    Ok(this)
+}
+
+fn native_array_copy_within(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(object) = array_this(this.clone()) else {
+        return Ok(this);
+    };
+    let mut object = object.borrow_mut();
+    let array = object.array.as_mut().expect("array storage");
+    let len = array.len();
+    let target = args.first().map(Value::number).unwrap_or(0.0).max(0.0) as usize;
+    let start = args.get(1).map(Value::number).unwrap_or(0.0).max(0.0) as usize;
+    let end = args
+        .get(2)
+        .map(Value::number)
+        .unwrap_or(len as f64)
+        .max(0.0) as usize;
+    let count = end.min(len).saturating_sub(start.min(len));
+    let copied = (0..count)
+        .map(|offset| {
+            array
+                .get(start.saturating_add(offset))
+                .cloned()
+                .unwrap_or(Value::Undefined)
+        })
+        .collect::<Vec<_>>();
+    for (offset, value) in copied.into_iter().enumerate() {
+        let destination = target.saturating_add(offset);
+        if destination < len {
+            array.set(destination, value);
+        }
+    }
+    Ok(this)
+}
+
+fn native_array_to_reversed(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let mut values = array_values(&this);
+    values.reverse();
+    Ok(vm.array_from_values(values))
+}
+
+fn native_array_to_sorted(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let mut values = array_values(&this);
+    values.sort_by_key(Value::string);
+    Ok(vm.array_from_values(values))
+}
+
+fn native_array_to_spliced(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let mut values = array_values(&this);
+    let start = args.first().map(Value::number).unwrap_or(0.0).max(0.0) as usize;
+    let delete_count = args
+        .get(1)
+        .map(Value::number)
+        .unwrap_or((values.len().saturating_sub(start)) as f64)
+        .max(0.0) as usize;
+    let end = start
+        .min(values.len())
+        .saturating_add(delete_count)
+        .min(values.len());
+    values.splice(start.min(values.len())..end, args.iter().skip(2).cloned());
+    Ok(vm.array_from_values(values))
+}
+
+fn native_array_with(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let mut values = array_values(&this);
+    let index = args.first().map(Value::number).unwrap_or(0.0).trunc() as isize;
+    let index = if index < 0 {
+        values.len() as isize + index
+    } else {
+        index
+    };
+    if index < 0 || index as usize >= values.len() {
+        return Err(JsError::Throw(range_error(vm, "array index out of range")));
+    }
+    values[index as usize] = args.get(1).cloned().unwrap_or(Value::Undefined);
+    Ok(vm.array_from_values(values))
+}
 fn array_reduce_impl(vm: &mut Vm, this: Value, args: &[Value], reverse: bool) -> JsResult<Value> {
     let Some(callback) = args.first().filter(|value| value.is_function()) else {
         return Err(JsError::Throw(type_error(vm, "callback is not a function")));
@@ -12141,6 +12270,7 @@ fn native_array(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
 
 const ARRAY_ITERATOR_SOURCE: &str = "\0array_iterator_source";
 const ARRAY_ITERATOR_INDEX: &str = "\0array_iterator_index";
+const ARRAY_ITERATOR_KIND: &str = "\0array_iterator_kind";
 const STRING_ITERATOR_SOURCE: &str = "\0string_iterator_source";
 const STRING_ITERATOR_INDEX: &str = "\0string_iterator_index";
 const REGEXP_ITERATOR_REGEXP: &str = "\0regexp_iterator_regexp";
@@ -12161,6 +12291,38 @@ fn native_array_iterator(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Valu
     vm.set_prop(&iterator, ARRAY_ITERATOR_INDEX, Value::Number(0.0));
     let next = vm.native(native_array_iterator_next);
     vm.set_prop(&iterator, "next", next);
+    vm.set_prop(
+        &iterator,
+        &vm.well_known_symbol_key("iterator"),
+        vm.native(native_iterator_self),
+    );
+    Ok(iterator)
+}
+
+fn native_array_values(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    native_array_iterator(vm, this, args)
+}
+
+fn native_array_keys(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    array_iterator_with_kind(vm, this, "keys")
+}
+
+fn native_array_entries(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    array_iterator_with_kind(vm, this, "entries")
+}
+
+fn array_iterator_with_kind(vm: &mut Vm, this: Value, kind: &str) -> JsResult<Value> {
+    if !this.is_object_like() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Array iterator receiver is not object-like",
+        )));
+    }
+    let iterator = vm.object(None);
+    vm.set_prop(&iterator, ARRAY_ITERATOR_SOURCE, this);
+    vm.set_prop(&iterator, ARRAY_ITERATOR_INDEX, Value::Number(0.0));
+    vm.set_prop(&iterator, ARRAY_ITERATOR_KIND, Value::string_value(kind));
+    vm.set_prop(&iterator, "next", vm.native(native_array_iterator_next));
     vm.set_prop(
         &iterator,
         &vm.well_known_symbol_key("iterator"),
@@ -12237,6 +12399,12 @@ fn native_array_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult
         Value::Number((index + 1) as f64),
     );
     vm.set_prop(&result, "done", Value::Bool(false));
+    let kind = vm.get_prop(&this, ARRAY_ITERATOR_KIND).string();
+    let value = match kind.as_str() {
+        "keys" => Value::Number(index as f64),
+        "entries" => vm.array_from_values(vec![Value::Number(index as f64), value]),
+        _ => value,
+    };
     vm.set_prop(&result, "value", value);
     Ok(result)
 }
