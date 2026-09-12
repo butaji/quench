@@ -115,9 +115,10 @@ Verification completed:
 - the Number stage was rerun after restoring numeric constructor constants,
   static predicates/parsers, prototype metadata, and numeric string coercion
   and reached 199/340; BigInt, Realm, and constructor-reflection cases remain
-- the stencil Number stage remains 199/340 after deriving its four numeric
-  predicates from one Rust macro; precision conversion now rejects out-of-range
-  widths without panicking
+- the stencil Number stage now reaches 337/340 after deriving numeric
+  predicates from one Rust macro, sharing exact number formatting helpers,
+  preserving error prototypes, and validating constructor/radix behavior; the
+  three remaining cases require BigInt or Realm lowering
 - the stencil Math stage now reaches 325/327 after deriving unary and binary
   native wrappers, exact `sumPrecise` accumulation, binary16 rounding, and the
   complete intrinsic projection; the two remaining cases require generator /

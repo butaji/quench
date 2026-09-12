@@ -4453,7 +4453,7 @@ impl Vm {
         // Symbols are represented as property-key atoms by the current core;
         // expose the well-known tag through the same canonical key path until
         // the tagged Symbol value lands in the stencil representation.
-        let symbol = self.object(None);
+        let symbol = self.native(native_symbol);
         self.set_prop(&symbol, "toStringTag", Value::string_value("Symbol.toStringTag"));
         Environment::set(g, "Symbol", symbol);
         self.set_prop(&m, "Symbol.toStringTag", Value::string_value("Math"));
@@ -7169,6 +7169,12 @@ fn to_number_with_vm(vm: &mut Vm, value: &Value) -> JsResult<f64> {
         return Ok(text.parse().unwrap_or(f64::NAN));
     }
     if value.is_object() || value.is_function() {
+        if value
+            .as_object_ref()
+            .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
+        {
+            return Err(JsError::Throw(type_error(vm, "cannot convert a Symbol value to a number")));
+        }
         for method_name in ["valueOf", "toString"] {
             let method = vm.get_prop(value, method_name);
             if !method.is_function() {
@@ -7214,6 +7220,16 @@ fn native_string_to_string(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Val
 }
 fn native_noop(_: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Ok(Value::Undefined)
+}
+fn native_symbol(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let description = args
+        .first()
+        .filter(|value| !value.is_undefined())
+        .map(Value::string)
+        .unwrap_or_default();
+    let symbol = vm.object(None);
+    vm.set_prop(&symbol, "\0symbol", Value::string_value(description));
+    Ok(symbol)
 }
 fn native_string_replace(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let s = string_this(this);
@@ -7308,56 +7324,198 @@ fn native_regexp_exec(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Valu
     };
     Ok(vm.object_value(Object::array(None, a)))
 }
-fn checked_number_precision(vm: &Vm, args: &[Value], default: f64, minimum: f64) -> JsResult<usize> {
-    let value = args.first().map(Value::number).unwrap_or(default).trunc();
+fn checked_number_precision(vm: &mut Vm, args: &[Value], default: f64, minimum: f64) -> JsResult<usize> {
+    let value = args
+        .first()
+        .map(|value| to_number_with_vm(vm, value))
+        .transpose()?
+        .unwrap_or(default)
+        .trunc();
+    if value.is_nan() {
+        return Ok(default as usize);
+    }
     if !value.is_finite() || value < minimum || value > 100.0 {
         return Err(JsError::Throw(range_error(vm, "precision out of range")));
     }
     Ok(value as usize)
 }
 
+fn required_number_precision(vm: &mut Vm, args: &[Value], minimum: f64) -> JsResult<usize> {
+    let value = args
+        .first()
+        .map(|value| to_number_with_vm(vm, value))
+        .transpose()?
+        .unwrap_or(f64::NAN)
+        .trunc();
+    if !value.is_finite() || value < minimum || value > 100.0 {
+        return Err(JsError::Throw(range_error(vm, "precision out of range")));
+    }
+    Ok(value as usize)
+}
+
+fn number_this_value(vm: &Vm, value: &Value) -> JsResult<f64> {
+    if let Some(number) = value.as_number() {
+        return Ok(number);
+    }
+    if let Some(object) = value.as_object_ref()
+        && object.borrow().props.get("\0primitive").and_then(Value::as_number).is_some()
+    {
+        return Ok(object.borrow().props.get("\0primitive").and_then(Value::as_number).unwrap_or(0.0));
+    }
+    Err(JsError::Throw(type_error(vm, "Number.prototype method called on incompatible receiver")))
+}
+
+fn number_fraction_digits(vm: &mut Vm, args: &[Value]) -> JsResult<Option<usize>> {
+    let Some(value) = args.first() else { return Ok(None); };
+    if value.is_undefined() {
+        return Ok(None);
+    }
+    let number = to_number_with_vm(vm, value)?.trunc();
+    if number.is_nan() {
+        return Ok(Some(0));
+    }
+    if !number.is_finite() || number < 0.0 || number > 100.0 {
+        return Err(JsError::Throw(range_error(vm, "precision out of range")));
+    }
+    Ok(Some(number as usize))
+}
+
 fn native_number_to_fixed(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    let p = checked_number_precision(vm, args, 0.0, 0.0)?;
-    Ok(Value::string_value(format!("{:.*}", p, this.number())))
+    let number = number_this_value(vm, &this)?;
+    let p = if args.first().is_none_or(Value::is_undefined) {
+        0
+    } else {
+        checked_number_precision(vm, args, 0.0, 0.0)?
+    };
+    if number.abs() >= 1e21 || !number.is_finite() {
+        return Ok(Value::string_value(js_number_to_string(number)));
+    }
+    Ok(Value::string_value(format!("{:.*}", p, number)))
 }
 fn native_number_to_precision(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    let p = checked_number_precision(vm, args, 6.0, 1.0)?;
-    Ok(Value::string_value(format!(
-        "{:.*}",
-        p.saturating_sub(1),
-        this.number()
-    )))
-}
-fn native_number_to_exponential(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    let number = this.number();
-    if args.first().is_some() {
-        let _ = checked_number_precision(vm, args, 0.0, 0.0)?;
-    }
-    if number.is_nan() { return Ok(Value::string_value("NaN")); }
-    if number == f64::INFINITY { return Ok(Value::string_value("Infinity")); }
-    if number == f64::NEG_INFINITY { return Ok(Value::string_value("-Infinity")); }
-    let precision = args.first().map(Value::number);
-    let text = match precision {
-        Some(value) => format!("{number:.prec$e}", prec = value.max(0.0) as usize),
-        None => format!("{number:e}"),
-    };
-    let text = if let Some((mantissa, exponent)) = text.split_once('e') {
-        if exponent.starts_with('-') || exponent.starts_with('+') {
-            text
-        } else {
-            format!("{mantissa}e+{exponent}")
+    let number = number_this_value(vm, &this)?;
+    if number.is_nan() {
+        if args.first().is_some_and(|value| !value.is_undefined()) {
+            let _ = to_number_with_vm(vm, args.first().expect("checked presence"))?;
         }
+        return Ok(Value::string_value("NaN"));
+    }
+    if !number.is_finite() {
+        return Ok(Value::string_value(js_number_to_string(number)));
+    }
+    if args.first().is_none_or(Value::is_undefined) {
+        return Ok(Value::string_value(js_number_to_string(this.number())));
+    }
+    let p = required_number_precision(vm, args, 1.0)?;
+    let magnitude = if number == 0.0 {
+        0
     } else {
-        text
+        number.abs().log10().floor() as i32
+    };
+    let text = if number == 0.0 {
+        if p == 1 { "0".into() } else { format!("0.{:0<width$}", "", width = p - 1) }
+    } else if magnitude >= p as i32 || magnitude < -6 {
+        format_scientific(number, p - 1)
+    } else {
+        format!("{number:.digits$}", digits = (p as i32 - magnitude - 1) as usize)
     };
     Ok(Value::string_value(text))
 }
-fn native_number_value_of(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    Ok(Value::Number(this.number()))
+fn native_number_to_exponential(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let number = number_this_value(vm, &this)?;
+    if number == f64::INFINITY { return Ok(Value::string_value("Infinity")); }
+    if number == f64::NEG_INFINITY { return Ok(Value::string_value("-Infinity")); }
+    let precision = if number.is_nan() {
+        if let Some(value) = args.first().filter(|value| !value.is_undefined()) {
+            let _ = to_number_with_vm(vm, value)?;
+        }
+        None
+    } else {
+        number_fraction_digits(vm, args)?
+    };
+    if number.is_nan() { return Ok(Value::string_value("NaN")); }
+    if number == 0.0 {
+        return Ok(Value::string_value(match precision {
+            Some(0) | None => "0e+0".into(),
+            Some(digits) => format!("0.{:0<width$}e+0", "", width = digits),
+        }));
+    }
+    if let Some(precision) = precision.filter(|precision| *precision <= 15) {
+        let magnitude = number.abs();
+        let exponent = magnitude.log10().floor() as i32;
+        let quantum = 10.0_f64.powi(exponent - precision as i32);
+        let quotient = magnitude / quantum;
+        if quotient.fract() == 0.5 {
+            let rounded = quotient.floor() + 1.0;
+            let digits = 10.0_f64.powi(precision as i32);
+            let mantissa = rounded / digits;
+            let mantissa = if number.is_sign_negative() { -mantissa } else { mantissa };
+            return Ok(Value::string_value(format!("{mantissa:.precision$}e{:+}", exponent, precision = precision)));
+        }
+    }
+    let text = precision.map_or_else(
+        || default_exponential(number),
+        |digits| format_scientific(number, digits),
+    );
+    Ok(Value::string_value(text))
 }
-fn native_number_to_string(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    let n = this.number();
-    let radix = args.first().map(Value::number).unwrap_or(10.0) as u32;
+
+fn format_scientific(number: f64, digits: usize) -> String {
+    let value = format!("{number:.digits$e}");
+    let (coefficient, exponent) = value.split_once('e').unwrap_or((&value, "0"));
+    let exponent = exponent.parse::<i32>().unwrap_or_default();
+    if let Some((coefficient, exponent)) = halfway_coefficient(number, digits, exponent) {
+        return format!("{coefficient}e{exponent:+}");
+    }
+    format!("{coefficient}e{exponent:+}")
+}
+
+fn halfway_coefficient(number: f64, digits: usize, exponent: i32) -> Option<(String, i32)> {
+    if !(-10..=10).contains(&exponent) {
+        return None;
+    }
+    let scale = 10_f64.powi(exponent - digits as i32);
+    let scaled = number.abs() / scale;
+    if scaled.fract() != 0.5 {
+        return None;
+    }
+    let mut rounded = scaled.floor() + 1.0;
+    let mut exponent = exponent;
+    if rounded == 10_f64.powi(digits as i32 + 1) {
+        rounded /= 10.0;
+        exponent += 1;
+    }
+    let coefficient = rounded / 10_f64.powi(digits as i32);
+    let sign = if number.is_sign_negative() { "-" } else { "" };
+    Some((format!("{sign}{coefficient:.digits$}"), exponent))
+}
+
+fn default_exponential(number: f64) -> String {
+    let value = format_scientific(number, 15);
+    let (coefficient, exponent) = value.split_once('e').unwrap_or((&value, "0"));
+    let coefficient = coefficient.trim_end_matches('0').trim_end_matches('.');
+    format!("{coefficient}e{exponent}")
+}
+fn native_number_value_of(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    Ok(Value::Number(number_this_value(vm, &this)?))
+}
+fn native_number_to_string(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let n = number_this_value(vm, &this)?;
+    let radix_value = args
+        .first()
+        .filter(|value| !value.is_undefined())
+        .map(|value| to_number_with_vm(vm, value))
+        .transpose()?
+        .unwrap_or(10.0);
+    let radix = if radix_value.is_nan() { 10 } else { radix_value as u32 };
+    if args.first().is_some_and(|value| !value.is_undefined())
+        && (!radix_value.is_finite() || radix_value.trunc() != radix_value || !(2..=36).contains(&radix))
+    {
+        return Err(JsError::Throw(range_error(vm, "radix out of range")));
+    }
+    if !n.is_finite() || radix == 10 {
+        return Ok(Value::string_value(js_number_to_string(n)));
+    }
     if (2..=36).contains(&radix) && n.is_finite() && n.fract() == 0.0 && n.abs() <= i64::MAX as f64
     {
         let mut x = n.abs() as u64;
@@ -7779,27 +7937,23 @@ fn assertion_error(vm: &Vm, message: &str) -> Value {
     error
 }
 fn type_error(vm: &Vm, message: &str) -> Value {
-    let error = assertion_error(vm, message);
-    if let Some(constructor) = Environment::get(&vm.global, "TypeError") {
-        vm.set_prop(&error, "constructor", constructor);
-    }
-    vm.set_prop(&error, "name", Value::string_value("TypeError"));
-    error
+    intrinsic_error(vm, BuiltinId::TypeErrorConstructor, "TypeError", message)
 }
 fn range_error(vm: &Vm, message: &str) -> Value {
-    let error = assertion_error(vm, message);
-    if let Some(constructor) = Environment::get(&vm.global, "RangeError") {
-        vm.set_prop(&error, "constructor", constructor);
-    }
-    vm.set_prop(&error, "name", Value::string_value("RangeError"));
-    error
+    intrinsic_error(vm, BuiltinId::RangeErrorConstructor, "RangeError", message)
 }
 fn syntax_error(vm: &Vm, message: &str) -> Value {
-    let error = assertion_error(vm, message);
-    if let Some(constructor) = Environment::get(&vm.global, "SyntaxError") {
-        vm.set_prop(&error, "constructor", constructor);
-    }
-    vm.set_prop(&error, "name", Value::string_value("SyntaxError"));
+    intrinsic_error(vm, BuiltinId::SyntaxErrorConstructor, "SyntaxError", message)
+}
+fn intrinsic_error(vm: &Vm, constructor_id: BuiltinId, name: &str, message: &str) -> Value {
+    let prototype = vm
+        .builtin(constructor_id)
+        .as_function_ref()
+        .map(|function| function.prototype.clone());
+    let error = vm.object(prototype);
+    vm.set_prop(&error, "message", Value::string_value(message));
+    vm.set_prop(&error, "name", Value::string_value(name));
+    vm.set_prop(&error, "constructor", vm.builtin(constructor_id));
     error
 }
 fn native_assert(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
@@ -8398,9 +8552,13 @@ fn dynamic_function_strict_early_error(parameters: &str, body: &str) -> bool {
         .any(|token| token == "with")
 }
 fn native_date(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
-    Ok(Value::Number(
-        vm.started_at.elapsed().as_secs_f64() * 1000.0,
-    ))
+    let date = vm.object(None);
+    vm.set_prop(
+        &date,
+        "\0date",
+        Value::Number(vm.started_at.elapsed().as_secs_f64() * 1000.0),
+    );
+    Ok(date)
 }
 fn native_regexp(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     let p = a.first().map(Value::string).unwrap_or_default();
@@ -8468,7 +8626,11 @@ fn native_object_get_own_property_descriptor(
     };
     let key = args.get(1).map(Value::string).unwrap_or_default();
     let value = if let Some(function) = target.as_function_ref() {
-        function.props.borrow().get(&key).cloned()
+        if key == "prototype" {
+            Some(Value::Object(function.prototype.clone()))
+        } else {
+            function.props.borrow().get(&key).cloned()
+        }
     } else if let Some(object) = target.as_object_ref() {
         let object = object.borrow();
         if key == "length" && object.array.is_some() {
@@ -8489,6 +8651,7 @@ fn native_object_get_own_property_descriptor(
     let descriptor = vm.object(None);
     vm.set_prop(&descriptor, "value", value);
     let function_metadata = target.as_function().is_some() && matches!(key.as_str(), "name" | "length");
+    let prototype_metadata = target.as_function().is_some() && key == "prototype";
     let builtin_function = target
         .as_function_ref()
         .is_some_and(|function| matches!(function.kind, FunctionKind::Builtin(_)));
@@ -8500,13 +8663,14 @@ fn native_object_get_own_property_descriptor(
         .as_object_ref()
         .and_then(|object| object.borrow().attributes.get(&key).copied())
         .unwrap_or(PropertyAttributes {
-            writable: !function_metadata && !is_number_constant,
+            writable: !function_metadata && !prototype_metadata && !is_number_constant,
             enumerable: !function_metadata && !is_number_constant
+                && !prototype_metadata
                 && !builtin_function
                 && !target
                     .as_object_ref()
                     .is_some_and(|object| object.borrow().builtin_prototype),
-            configurable: !is_number_constant,
+            configurable: !is_number_constant && !prototype_metadata,
         });
     vm.set_prop(&descriptor, "writable", Value::Bool(attributes.writable));
     vm.set_prop(&descriptor, "enumerable", Value::Bool(attributes.enumerable));
