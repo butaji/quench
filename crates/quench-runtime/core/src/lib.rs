@@ -6990,12 +6990,63 @@ fn native_string_concat(_: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
             .concat(),
     ))
 }
-fn native_string_from_char_code(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
-    Ok(Value::string_value(
-        args.iter()
-            .map(|v| char::from_u32(v.number() as u32).unwrap_or('\0'))
-            .collect::<String>(),
-    ))
+fn to_number_with_vm(vm: &mut Vm, value: &Value) -> JsResult<f64> {
+    if let Some(number) = value.as_number() {
+        return Ok(number);
+    }
+    if let Some(boolean) = value.as_bool() {
+        return Ok(if boolean { 1.0 } else { 0.0 });
+    }
+    if value.is_null() {
+        return Ok(0.0);
+    }
+    if value.is_undefined() {
+        return Ok(f64::NAN);
+    }
+    if let Some(string) = value.as_string() {
+        let text = string.trim();
+        return Ok(if text.is_empty() { 0.0 } else { text.parse().unwrap_or(f64::NAN) });
+    }
+    if value.is_object() || value.is_function() {
+        for method_name in ["valueOf", "toString"] {
+            let method = vm.get_prop(value, method_name);
+            if !method.is_function() {
+                continue;
+            }
+            let result = vm.call_arguments(&method, value.clone(), &[] as &[Value])?;
+            if !result.is_object() && !result.is_function() {
+                return to_number_with_vm(vm, &result);
+            }
+        }
+        return Err(JsError::Throw(type_error(vm, "cannot convert object to number")));
+    }
+    Ok(f64::NAN)
+}
+fn native_string_from_char_code(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let mut output = String::new();
+    for value in args {
+        let number = to_number_with_vm(vm, value)?;
+        let unit = if !number.is_finite() || number == 0.0 {
+            0
+        } else {
+            (number.trunc() as i64 as u64 & 0xffff) as u32
+        };
+        output.push(
+        char::from_u32(unit).unwrap_or('\u{fffd}')
+        );
+    }
+    Ok(Value::string_value(output))
+}
+fn native_string_from_code_point(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let mut output = String::new();
+    for value in args {
+        let number = to_number_with_vm(vm, value)?;
+        if !number.is_finite() || number.fract() != 0.0 || !(0.0..=(0x10ffff as f64)).contains(&number) || ((0xd800 as f64)..=(0xdfff as f64)).contains(&number) {
+            return Err(JsError::Throw(range_error(vm, "Invalid code point")));
+        }
+        output.push(char::from_u32(number as u32).expect("validated Unicode scalar"));
+    }
+    Ok(Value::string_value(output))
 }
 fn native_string_to_string(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     Ok(Value::string_value(this.string()))
@@ -7276,6 +7327,14 @@ fn type_error(vm: &Vm, message: &str) -> Value {
         vm.set_prop(&error, "constructor", constructor);
     }
     vm.set_prop(&error, "name", Value::string_value("TypeError"));
+    error
+}
+fn range_error(vm: &Vm, message: &str) -> Value {
+    let error = assertion_error(vm, message);
+    if let Some(constructor) = Environment::get(&vm.global, "RangeError") {
+        vm.set_prop(&error, "constructor", constructor);
+    }
+    vm.set_prop(&error, "name", Value::string_value("RangeError"));
     error
 }
 fn syntax_error(vm: &Vm, message: &str) -> Value {

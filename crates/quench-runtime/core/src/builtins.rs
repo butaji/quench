@@ -176,6 +176,7 @@ builtin_catalog! {
     ProcessNextTick, Process, "nextTick", native_process_next_tick, Generic, EFFECTFUL;
     ConsoleLog, Console, "log", native_print, Generic, EFFECTFUL;
     StringFromCharCode, StringConstructor, "fromCharCode", native_string_from_char_code, Generic, MAY_ALLOCATE;
+    StringFromCodePoint, StringConstructor, "fromCodePoint", native_string_from_code_point, Generic, MAY_ALLOCATE;
     ArrayPush, ArrayPrototype, "push", native_array_push, Generic, MAY_MUTATE;
     ArrayPop, ArrayPrototype, "pop", native_array_pop, Generic, MAY_MUTATE;
     ArrayShift, ArrayPrototype, "shift", native_array_shift, Generic, MAY_MUTATE;
@@ -335,6 +336,7 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::ClearTimeout
         | BuiltinId::ProcessNextTick
         | BuiltinId::StringFromCharCode
+        | BuiltinId::StringFromCodePoint
         | BuiltinId::ArrayPush
         | BuiltinId::ArrayPop
         | BuiltinId::ArrayShift
