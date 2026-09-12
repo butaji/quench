@@ -374,6 +374,7 @@ builtin_catalog! {
     StringRepeat, StringPrototype, "repeat", native_string_repeat, Generic, MAY_ALLOCATE;
     StringPadStart, StringPrototype, "padStart", native_string_pad_start, Generic, MAY_ALLOCATE;
     StringPadEnd, StringPrototype, "padEnd", native_string_pad_end, Generic, MAY_ALLOCATE;
+    StringRaw, StringConstructor, "raw", native_string_raw, Generic, MAY_ALLOCATE;
     StringAt, StringPrototype, "at", native_string_at, Generic, MAY_ALLOCATE;
     StringCodePointAt, StringPrototype, "codePointAt", native_string_code_point_at, Generic, PURE;
     StringNormalize, StringPrototype, "normalize", native_string_normalize, Generic, MAY_ALLOCATE;
@@ -445,6 +446,7 @@ fn builtin_length(id: BuiltinId) -> usize {
     match id {
         BuiltinId::StringFromCharCode
         | BuiltinId::StringFromCodePoint
+        | BuiltinId::StringRaw
         | BuiltinId::StringAt
         | BuiltinId::StringCodePointAt
         | BuiltinId::StringIncludes

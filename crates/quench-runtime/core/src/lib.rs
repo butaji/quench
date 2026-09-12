@@ -7620,6 +7620,23 @@ impl Vm {
                 }
                 Ok(o)
             }
+            TemplateLiteral(v) => {
+                let mut output = String::new();
+                for (index, quasi) in v.quasis.iter().enumerate() {
+                    let cooked = quasi
+                        .value
+                        .cooked
+                        .as_ref()
+                        .map(|value| value.as_str())
+                        .unwrap_or_else(|| quasi.value.raw.as_str());
+                    output.push_str(cooked);
+                    if let Some(expression) = v.expressions.get(index) {
+                        let value = self.eval_expr(expression, e.clone())?;
+                        output.push_str(&string_argument(self, &value)?);
+                    }
+                }
+                Ok(Value::string_value(output))
+            }
             FunctionExpression(v) => Ok(self.make_user(v, e)),
             ArrowFunctionExpression(v) => Ok(self.make_arrow(v, e)),
             ParenthesizedExpression(v) => self.eval_expr(&v.expression, e),
@@ -7921,6 +7938,19 @@ impl Vm {
                 regexp.flags = flags;
                 Ok(Value::RegExp(Rc::new(RefCell::new(regexp))))
             }
+            TaggedTemplateExpression(v) => {
+                let tag = self.eval_expr(&v.tag, e.clone())?;
+                let template = self.make_template_object(&v.quasi);
+                let mut arguments = vec![template];
+                arguments.extend(
+                    v.quasi
+                        .expressions
+                        .iter()
+                        .map(|expression| self.eval_expr(expression, e.clone()))
+                        .collect::<JsResult<Vec<_>>>()?,
+                );
+                self.call(tag, Value::Undefined, arguments)
+            }
             _ => Err(JsError::Message("unsupported expression".into())),
         }
     }
@@ -7949,6 +7979,32 @@ impl Vm {
                     .and_then(|value| self.to_property_key(value))
             }
         }
+    }
+    fn make_template_object<'a>(&mut self, template: &TemplateLiteral<'a>) -> Value {
+        let cooked = self.array_from_values(
+            template
+                .quasis
+                .iter()
+                .map(|quasi| {
+                    quasi
+                        .value
+                        .cooked
+                        .as_ref()
+                        .map_or(Value::Undefined, |value| {
+                            Value::string_value(value.as_str())
+                        })
+                })
+                .collect(),
+        );
+        let raw = self.array_from_values(
+            template
+                .quasis
+                .iter()
+                .map(|quasi| Value::string_value(quasi.value.raw.as_str()))
+                .collect(),
+        );
+        self.set_prop(&cooked, "raw", raw);
+        cooked
     }
     fn member_parts<'a>(&mut self, m: &MemberExpression<'a>, e: Env) -> JsResult<(Value, String)> {
         match m {
@@ -9382,6 +9438,52 @@ fn native_string_substring(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
         &units[start..end],
     )))
 }
+
+fn native_string_raw(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let undefined = Value::Undefined;
+    let template = args.first().unwrap_or(&undefined);
+    if template.is_null() || template.is_undefined() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "String.raw requires an object template",
+        )));
+    }
+    let raw = vm.get_prop_with_accessors(template, "raw")?;
+    if raw.is_null() || raw.is_undefined() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "String.raw template.raw is not an object",
+        )));
+    }
+    let length_value = vm.get_prop_with_accessors(&raw, "length")?;
+    let length = to_length_for_string_raw(vm, &length_value)?;
+    if length == 0 {
+        return Ok(Value::string_value(String::new()));
+    }
+    let mut output = String::new();
+    for index in 0..length {
+        let segment = vm.get_prop_with_accessors(&raw, &index.to_string())?;
+        output.push_str(&string_argument(vm, &segment)?);
+        if index + 1 < length {
+            if let Some(substitution) = args.get(index + 1) {
+                output.push_str(&string_argument(vm, substitution)?);
+            }
+        }
+    }
+    Ok(Value::string_value(output))
+}
+
+fn to_length_for_string_raw(vm: &mut Vm, value: &Value) -> JsResult<usize> {
+    let number = to_number_with_vm(vm, value)?;
+    if number.is_nan() || number <= 0.0 {
+        return Ok(0);
+    }
+    if number.is_infinite() {
+        return Ok(usize::MAX);
+    }
+    Ok(number.trunc().min(9_007_199_254_740_991.0) as usize)
+}
+
 fn native_string_slice(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let source = string_receiver(vm, &this, "slice")?;
     let units = source.encode_utf16().collect::<Vec<_>>();
