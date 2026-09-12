@@ -91,6 +91,11 @@ Verification completed:
   47,660 failures remain as explicit missing-stencil or missing-built-in
   diagnostics, proving the corpus reaches the new VM without silently falling
   back
+- after initializing the pinned upstream WebAssembly testsuite submodule,
+  `cargo run -p quench-wasm-test --bin run` executes 67,124 directives with
+  67,124 passed and 0 failed; this validates the current Wasm frontend/runner,
+  while migration of its execution backend into `quench-runtime-core` remains
+  an explicit gate above
 - after that aggregate run, the Array stage was rerun against the extended
   callback/index/reduction/flattening methods and descriptor guards and reached
   1,165/3,081; the
