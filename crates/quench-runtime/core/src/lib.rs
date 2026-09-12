@@ -10524,10 +10524,10 @@ fn replacement_text(
 }
 
 fn native_string_replace(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    let s = string_receiver(vm, &this, "replace")?;
     if let Some(search) = args.first()
         && let Some(method) = string_symbol_method(vm, search, "replace")?
     {
+        let s = string_receiver(vm, &this, "replace")?;
         let replacement = args.get(1).cloned().unwrap_or(Value::Undefined);
         return vm.call_arguments(
             &method,
@@ -10535,9 +10535,13 @@ fn native_string_replace(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
             &[Value::string_value(s), replacement][..],
         );
     }
+    let s = string_receiver(vm, &this, "replace")?;
     if let Some(r) = args.first().and_then(Value::as_regexp) {
         let undefined = Value::Undefined;
         let replacement = args.get(1).unwrap_or(&undefined);
+        let replacement_string = (!replacement.is_function())
+            .then(|| string_argument(vm, replacement))
+            .transpose()?;
         let b = r.borrow();
         let mut out = String::new();
         let mut last = 0;
@@ -10556,7 +10560,7 @@ fn native_string_replace(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
                     Some(&captures),
                 )?);
             } else {
-                let text = string_argument(vm, replacement)?;
+                let text = replacement_string.as_deref().unwrap_or_default();
                 out.push_str(&expand_js_replacement(
                     &text,
                     &s,
@@ -10575,13 +10579,21 @@ fn native_string_replace(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
     }
     let undefined = Value::Undefined;
     let from = string_argument(vm, args.first().unwrap_or(&undefined))?;
+    let replacement_value = args.get(1).unwrap_or(&undefined);
+    let replacement_string = (!replacement_value.is_function())
+        .then(|| string_argument(vm, replacement_value))
+        .transpose()?;
     if let Some(start) = s.find(&from) {
         let end = start + from.len();
-        let replacement_value = args.get(1).unwrap_or(&undefined);
         let replacement = if replacement_value.is_function() {
             replacement_text(vm, replacement_value, &s, &s[start..end], start, None)?
         } else {
-            expand_string_replacement(&string_argument(vm, replacement_value)?, &s, start, end)
+            expand_string_replacement(
+                replacement_string.as_deref().unwrap_or_default(),
+                &s,
+                start,
+                end,
+            )
         };
         return Ok(Value::string_value(format!(
             "{}{}{}",
@@ -10593,10 +10605,10 @@ fn native_string_replace(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
     Ok(Value::string_value(s))
 }
 fn native_string_replace_all(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    let s = string_receiver(vm, &this, "replaceAll")?;
     if let Some(search) = args.first()
         && let Some(method) = string_symbol_method(vm, search, "replace")?
     {
+        let s = string_receiver(vm, &this, "replaceAll")?;
         let replacement = args.get(1).cloned().unwrap_or(Value::Undefined);
         return vm.call_arguments(
             &method,
@@ -10604,9 +10616,13 @@ fn native_string_replace_all(vm: &mut Vm, this: Value, args: &[Value]) -> JsResu
             &[Value::string_value(s), replacement][..],
         );
     }
+    let s = string_receiver(vm, &this, "replaceAll")?;
     if let Some(r) = args.first().and_then(Value::as_regexp) {
         let undefined = Value::Undefined;
         let replacement = args.get(1).unwrap_or(&undefined);
+        let replacement_string = (!replacement.is_function())
+            .then(|| string_argument(vm, replacement))
+            .transpose()?;
         let b = r.borrow();
         if !b.global {
             return Err(JsError::Throw(type_error(
@@ -10631,7 +10647,7 @@ fn native_string_replace_all(vm: &mut Vm, this: Value, args: &[Value]) -> JsResu
                     Some(&captures),
                 )?);
             } else {
-                let text = string_argument(vm, replacement)?;
+                let text = replacement_string.as_deref().unwrap_or_default();
                 out.push_str(&expand_js_replacement(
                     &text,
                     &s,
