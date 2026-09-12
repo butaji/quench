@@ -115,6 +115,15 @@ Verification completed:
 - the Number stage was rerun after restoring numeric constructor constants,
   static predicates/parsers, prototype metadata, and numeric string coercion
   and reached 199/340; BigInt, Realm, and constructor-reflection cases remain
+- the stencil Number stage remains 199/340 after deriving its four numeric
+  predicates from one Rust macro; precision conversion now rejects out-of-range
+  widths without panicking
+- the stencil Math stage reached 265/327 after deriving unary and binary native
+  wrappers from declarative macros; the remaining failures are missing Symbol
+  and Reflect semantics, not duplicate VM execution paths
+- the stencil Object stage reached 1,030/3,411 after deriving integrity helpers,
+  fixing descriptor borrow ordering, and keeping huge array lengths metadata
+  backed; the remaining failures are unsupported stencil features
 - historical commits advertising “100% Test262” used `test262/skip.rs` to skip
   entire built-in families (including Object, Array, String, TypedArray, and
   Promise); those results are not equivalent to executing the full corpus

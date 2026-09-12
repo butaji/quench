@@ -102,6 +102,19 @@ builtin_catalog! {
     MathFloor, Math, "floor", native_math_floor, UnaryNumber, PURE;
     MathCeil, Math, "ceil", native_math_ceil, UnaryNumber, PURE;
     MathSqrt, Math, "sqrt", native_math_sqrt, UnaryNumber, PURE;
+    MathAcos, Math, "acos", native_math_acos, UnaryNumber, PURE;
+    MathAsin, Math, "asin", native_math_asin, UnaryNumber, PURE;
+    MathAtan, Math, "atan", native_math_atan, UnaryNumber, PURE;
+    MathAtan2, Math, "atan2", native_math_atan2, BinaryNumber, PURE;
+    MathCbrt, Math, "cbrt", native_math_cbrt, UnaryNumber, PURE;
+    MathCosh, Math, "cosh", native_math_cosh, UnaryNumber, PURE;
+    MathSinh, Math, "sinh", native_math_sinh, UnaryNumber, PURE;
+    MathTanh, Math, "tanh", native_math_tanh, UnaryNumber, PURE;
+    MathAcosh, Math, "acosh", native_math_acosh, UnaryNumber, PURE;
+    MathAsinh, Math, "asinh", native_math_asinh, UnaryNumber, PURE;
+    MathAtanh, Math, "atanh", native_math_atanh, UnaryNumber, PURE;
+    MathExpm1, Math, "expm1", native_math_expm1, UnaryNumber, PURE;
+    MathLog1p, Math, "log1p", native_math_log1p, UnaryNumber, PURE;
     MathAbs, Math, "abs", native_math_abs, UnaryNumber, PURE;
     MathMin, Math, "min", native_math_min, VariadicNumber, PURE;
     MathMax, Math, "max", native_math_max, VariadicNumber, PURE;
@@ -119,6 +132,7 @@ builtin_catalog! {
     MathClz32, Math, "clz32", native_math_clz32, UnaryNumber, PURE;
     MathImul, Math, "imul", native_math_imul, BinaryNumber, PURE;
     MathFround, Math, "fround", native_math_fround, UnaryNumber, PURE;
+    MathF16Round, Math, "f16round", native_math_f16round, UnaryNumber, PURE;
     MathRandom, Math, "random", native_random, Generic, PURE;
     ObjectConstructor, Global, "Object", native_object, Generic, MAY_ALLOCATE;
     ObjectGetOwnPropertyDescriptor, ObjectConstructor, "getOwnPropertyDescriptor", native_object_get_own_property_descriptor, Generic, MAY_ALLOCATE;
@@ -314,6 +328,7 @@ fn builtin_length(id: BuiltinId) -> usize {
         BuiltinId::ObjectDefineProperties => 2,
         BuiltinId::ObjectFromEntries => 1,
         BuiltinId::ObjectSetPrototypeOf => 2,
+        BuiltinId::MathAtan2 => 2,
         BuiltinId::ParseInt
         | BuiltinId::ParseFloat
         | BuiltinId::IsNaN
@@ -349,6 +364,19 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::MathLog2
         | BuiltinId::MathClz32
         | BuiltinId::MathFround
+        | BuiltinId::MathF16Round
+        | BuiltinId::MathAcos
+        | BuiltinId::MathAsin
+        | BuiltinId::MathAtan
+        | BuiltinId::MathCbrt
+        | BuiltinId::MathCosh
+        | BuiltinId::MathSinh
+        | BuiltinId::MathTanh
+        | BuiltinId::MathAcosh
+        | BuiltinId::MathAsinh
+        | BuiltinId::MathAtanh
+        | BuiltinId::MathExpm1
+        | BuiltinId::MathLog1p
         | BuiltinId::ClearTimeout
         | BuiltinId::ProcessNextTick
         | BuiltinId::StringFromCharCode
