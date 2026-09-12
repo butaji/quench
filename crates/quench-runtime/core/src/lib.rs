@@ -4825,6 +4825,24 @@ impl Vm {
             );
         }
         let reflect = self.object(None);
+        if let Some(object) = reflect.as_object_ref() {
+            object.borrow_mut().builtin_prototype = true;
+        }
+        self.set_prop(
+            &reflect,
+            "Symbol.toStringTag",
+            Value::string_value("Reflect"),
+        );
+        if let Some(object) = reflect.as_object_ref() {
+            object.borrow_mut().attributes.insert(
+                "Symbol.toStringTag".into(),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
+        }
         Environment::set(&g, "Reflect", reflect);
         let console = self.object(None);
         Environment::set(&g, "console", console);
@@ -5624,7 +5642,7 @@ impl Vm {
         if o.as_bool().is_some() {
             return match k {
                 "valueOf" | "toString" => self.builtin_property(BuiltinOwner::BooleanPrototype, k),
-                _ => Value::Undefined,
+                _ => object_prototype_method(self, k),
             };
         }
         if let Some(string) = o.as_string() {
@@ -5637,7 +5655,12 @@ impl Vm {
                     .map(|character| Value::string_value(character.to_string()))
                     .unwrap_or(Value::Undefined)
             } else {
-                string_method(self, k)
+                let method = string_method(self, k);
+                if method.is_undefined() {
+                    object_prototype_method(self, k)
+                } else {
+                    method
+                }
             };
         }
         if let Some(regexp) = o.as_regexp_ref() {
@@ -5647,7 +5670,12 @@ impl Vm {
             return regexp_method(self, regexp, k);
         }
         if o.as_number().is_some() {
-            return number_method(self, k);
+            let method = number_method(self, k);
+            return if method.is_undefined() {
+                object_prototype_method(self, k)
+            } else {
+                method
+            };
         }
         Value::Undefined
     }
@@ -7664,6 +7692,9 @@ fn array_method(vm: &Vm, name: &str) -> Option<Value> {
 fn string_method(vm: &Vm, name: &str) -> Value {
     vm.builtin_property(BuiltinOwner::StringPrototype, name)
 }
+fn object_prototype_method(vm: &Vm, name: &str) -> Value {
+    vm.builtin_property(BuiltinOwner::ObjectPrototype, name)
+}
 fn number_method(vm: &Vm, name: &str) -> Value {
     vm.builtin_property(BuiltinOwner::NumberPrototype, name)
 }
@@ -9299,6 +9330,225 @@ fn native_math_log(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(Value::Number(value.number().ln()))
 }
 
+fn reflect_require_object(vm: &mut Vm, value: Option<&Value>, _operation: &str) -> JsResult<Value> {
+    let Some(value) = value.filter(|value| {
+        value.is_object_like()
+            && !value
+                .as_object_ref()
+                .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
+    }) else {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Reflect operation target is not an object",
+        )));
+    };
+    Ok(value.clone())
+}
+
+fn reflect_array_arguments(vm: &mut Vm, value: Option<&Value>) -> JsResult<Vec<Value>> {
+    let Some(value) = value else {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Reflect.apply arguments list is not an object",
+        )));
+    };
+    if value.is_null()
+        || value.is_undefined()
+        || !value.is_object_like()
+        || value
+            .as_object_ref()
+            .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
+    {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Reflect.apply arguments list is not an object",
+        )));
+    }
+    let length_value = vm.get_prop_with_accessors(value, "length")?;
+    let length = to_number_with_vm(vm, &length_value)?;
+    if !length.is_finite() || length <= 0.0 {
+        return Ok(Vec::new());
+    }
+    let length = length.floor().min(usize::MAX as f64) as usize;
+    (0..length)
+        .map(|index| vm.get_prop_with_accessors(value, &index.to_string()))
+        .collect()
+}
+
+fn native_reflect_apply(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
+    if !target.is_function() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Reflect.apply target is not callable",
+        )));
+    }
+    let this_arg = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let call_args = reflect_array_arguments(vm, args.get(2))?;
+    vm.call_arguments(&target, this_arg, call_args.as_slice())
+}
+
+fn native_reflect_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let _ = reflect_require_object(vm, args.first(), "defineProperty")?;
+    match native_object_define_property(vm, Value::Undefined, args) {
+        Ok(_) => Ok(Value::Bool(true)),
+        Err(JsError::Throw(error)) if is_type_error_value(&error) => Ok(Value::Bool(false)),
+        Err(error) => Err(error),
+    }
+}
+
+fn native_reflect_delete_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let target = reflect_require_object(vm, args.first(), "deleteProperty")?;
+    let key = vm.to_property_key(args.get(1).cloned().unwrap_or(Value::Undefined))?;
+    Ok(Value::Bool(vm.delete_prop(&target, &key)))
+}
+
+fn native_reflect_get(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let target = reflect_require_object(vm, args.first(), "get")?;
+    let key = vm.to_property_key(args.get(1).cloned().unwrap_or(Value::Undefined))?;
+    let receiver = args.get(2).cloned().unwrap_or_else(|| target.clone());
+    if let Some((getter, _)) = vm.find_accessor(&target, &key) {
+        let Some(getter) = getter else {
+            return Ok(Value::Undefined);
+        };
+        return vm.call_arguments(&getter, receiver, &[] as &[Value]);
+    }
+    Ok(vm.get_prop(&target, &key))
+}
+
+fn native_reflect_get_own_property_descriptor(
+    vm: &mut Vm,
+    _: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    let target = reflect_require_object(vm, args.first(), "getOwnPropertyDescriptor")?;
+    let key = vm.to_property_key(args.get(1).cloned().unwrap_or(Value::Undefined))?;
+    native_object_get_own_property_descriptor(
+        vm,
+        Value::Undefined,
+        &[target, Value::string_value(key)],
+    )
+}
+
+fn native_reflect_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let target = reflect_require_object(vm, args.first(), "getPrototypeOf")?;
+    native_object_get_prototype_of(vm, Value::Undefined, &[target])
+}
+
+fn native_reflect_has(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let target = reflect_require_object(vm, args.first(), "has")?;
+    let key = vm.to_property_key(args.get(1).cloned().unwrap_or(Value::Undefined))?;
+    Ok(Value::Bool(vm.has_property(&target, &key)))
+}
+
+fn native_reflect_is_extensible(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let target = reflect_require_object(vm, args.first(), "isExtensible")?;
+    Ok(Value::Bool(
+        target
+            .as_object_ref()
+            .is_none_or(|object| object.borrow().extensible),
+    ))
+}
+
+fn native_reflect_own_keys(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let target = reflect_require_object(vm, args.first(), "ownKeys")?;
+    Ok(vm.array_from_values(
+        object_own_property_keys(&target)
+            .into_iter()
+            .map(Value::string_value)
+            .collect(),
+    ))
+}
+
+fn native_reflect_prevent_extensions(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let target = reflect_require_object(vm, args.first(), "preventExtensions")?;
+    native_object_prevent_extensions(vm, Value::Undefined, &[target])?;
+    Ok(Value::Bool(true))
+}
+
+fn native_reflect_set(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let target = reflect_require_object(vm, args.first(), "set")?;
+    let key = vm.to_property_key(args.get(1).cloned().unwrap_or(Value::Undefined))?;
+    let value = args.get(2).cloned().unwrap_or(Value::Undefined);
+    let receiver = args.get(3).cloned().unwrap_or_else(|| target.clone());
+    if !receiver.is_object_like() {
+        return Ok(Value::Bool(false));
+    }
+    if let Some((_, setter)) = vm.find_accessor(&target, &key) {
+        let Some(setter) = setter else {
+            return Ok(Value::Bool(false));
+        };
+        vm.call_arguments(&setter, receiver, &[value][..])?;
+        return Ok(Value::Bool(true));
+    }
+    if let Some(object) = target.as_object_ref()
+        && object
+            .borrow()
+            .attributes
+            .get(&key)
+            .is_some_and(|attributes| !attributes.writable)
+    {
+        return Ok(Value::Bool(false));
+    }
+    if let Some(object) = receiver.as_object_ref()
+        && object
+            .borrow()
+            .attributes
+            .get(&key)
+            .is_some_and(|attributes| !attributes.writable)
+    {
+        return Ok(Value::Bool(false));
+    }
+    if let Err(error @ JsError::Throw(_)) = vm.set_prop_with_accessors(&receiver, &key, value) {
+        if matches!(error, JsError::Throw(ref value) if is_type_error_value(value)) {
+            return Ok(Value::Bool(false));
+        }
+        return Err(error);
+    }
+    Ok(Value::Bool(true))
+}
+
+fn native_reflect_set_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let target = reflect_require_object(vm, args.first(), "setPrototypeOf")?;
+    let prototype = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if prototype
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
+    {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "prototype must be an object or null",
+        )));
+    }
+    let target_object = target.as_object().expect("validated Reflect target");
+    let prototype_handle = prototype.as_object();
+    if prototype_handle
+        .as_ref()
+        .is_some_and(|prototype| prototype.as_ptr() == target_object.as_ptr())
+    {
+        return Ok(Value::Bool(false));
+    }
+    let current_prototype = target_object.borrow().prototype.clone();
+    if current_prototype.as_ref().map(|handle| handle.as_ptr())
+        == prototype_handle.as_ref().map(|handle| handle.as_ptr())
+        && (prototype.is_null() || prototype.is_object_like())
+    {
+        return Ok(Value::Bool(true));
+    }
+    if !target_object.borrow().extensible {
+        return Ok(Value::Bool(false));
+    }
+    let mut current = prototype_handle.clone();
+    while let Some(candidate) = current {
+        if candidate.as_ptr() == target_object.as_ptr() {
+            return Ok(Value::Bool(false));
+        }
+        current = candidate.borrow().prototype.clone();
+    }
+    native_object_set_prototype_of(vm, Value::Undefined, &[target, prototype])?;
+    Ok(Value::Bool(true))
+}
+
 pub(crate) fn constructable(value: &Value) -> bool {
     let Some(function) = value.as_function_ref() else {
         return false;
@@ -9342,18 +9592,7 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
             "target is not a constructor",
         )));
     }
-    let Some(argument_object) = args.get(1).and_then(Value::as_object_ref) else {
-        return Err(JsError::Throw(type_error(
-            vm,
-            "arguments list is not an object",
-        )));
-    };
-    let arguments = argument_object
-        .borrow()
-        .array
-        .as_ref()
-        .map(ArrayStorage::to_vec)
-        .unwrap_or_default();
+    let arguments = reflect_array_arguments(vm, args.get(1))?;
     let new_target = args.get(2).cloned().unwrap_or_else(|| target.clone());
     if !constructable(&new_target) {
         return Err(JsError::Throw(type_error(
@@ -9439,6 +9678,14 @@ fn assertion_error(vm: &Vm, message: &str) -> Value {
 fn type_error(vm: &Vm, message: &str) -> Value {
     intrinsic_error(vm, BuiltinId::TypeErrorConstructor, "TypeError", message)
 }
+
+fn is_type_error_value(value: &Value) -> bool {
+    value
+        .as_object_ref()
+        .and_then(|object| object.borrow().props.get("name").cloned())
+        .is_some_and(|name| name.as_string().is_some_and(|name| name == "TypeError"))
+}
+
 fn range_error(vm: &Vm, message: &str) -> Value {
     intrinsic_error(vm, BuiltinId::RangeErrorConstructor, "RangeError", message)
 }
@@ -10884,7 +11131,7 @@ fn native_object_get_own_property_descriptor(
             "descriptor target is undefined",
         )));
     };
-    let key = args.get(1).map(Value::string).unwrap_or_default();
+    let key = vm.to_property_key(args.get(1).cloned().unwrap_or(Value::Undefined))?;
     let error_prototype = vm
         .builtin(BuiltinId::ErrorConstructor)
         .as_function_ref()
@@ -11051,7 +11298,7 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
             "defineProperty target is not an object",
         )));
     }
-    let key = args.get(1).map(Value::string).unwrap_or_default();
+    let key = vm.to_property_key(args.get(1).cloned().unwrap_or(Value::Undefined))?;
     let descriptor = args.get(2).cloned().unwrap_or(Value::Undefined);
     if !descriptor.is_object_like() {
         return Err(JsError::Throw(type_error(
@@ -12053,12 +12300,15 @@ fn native_object_set_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
         )));
     };
     let prototype = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let symbol_prototype = prototype
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.contains_key("\0symbol"));
     let handle = if prototype.is_null() {
         None
     } else {
         prototype.as_object()
     };
-    if handle.is_none() && !prototype.is_null() {
+    if (handle.is_none() && !prototype.is_null()) || symbol_prototype {
         return Err(JsError::Throw(type_error(
             vm,
             "prototype must be an object or null",
