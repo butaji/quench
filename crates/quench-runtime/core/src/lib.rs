@@ -6099,6 +6099,9 @@ impl Vm {
             return bigint_method(self, k);
         }
         if o.as_bool().is_some() {
+            if let Some(value) = self.prototype_property(BuiltinOwner::BooleanPrototype, k) {
+                return value;
+            }
             return match k {
                 "valueOf" | "toString" => self.builtin_property(BuiltinOwner::BooleanPrototype, k),
                 _ => object_prototype_method(self, k),
@@ -6114,6 +6117,9 @@ impl Vm {
                     .map(|character| Value::string_value(character.to_string()))
                     .unwrap_or(Value::Undefined)
             } else {
+                if let Some(value) = self.prototype_property(BuiltinOwner::StringPrototype, k) {
+                    return value;
+                }
                 let method = string_method(self, k);
                 if method.is_undefined() {
                     object_prototype_method(self, k)
@@ -6129,6 +6135,9 @@ impl Vm {
             return regexp_method(self, regexp, k);
         }
         if o.as_number().is_some() {
+            if let Some(value) = self.prototype_property(BuiltinOwner::NumberPrototype, k) {
+                return value;
+            }
             let method = number_method(self, k);
             return if method.is_undefined() {
                 object_prototype_method(self, k)
@@ -6137,6 +6146,13 @@ impl Vm {
             };
         }
         Value::Undefined
+    }
+
+    fn prototype_property(&self, owner: BuiltinOwner, key: &str) -> Option<Value> {
+        let constructor = owner.prototype_constructor()?;
+        let value = self.builtin(constructor);
+        let function = value.as_function_ref()?;
+        function.prototype.borrow().props.get(key).cloned()
     }
 
     /// ES5 restricted function properties.  The old VM made this check at
@@ -8332,7 +8348,18 @@ fn native_eval_in_environment(vm: &mut Vm, a: &[Value], environment: Env) -> JsR
         .last()
         .cloned()
         .unwrap_or_else(|| PathBuf::from("<eval>"));
-    match vm.run_source_text_in_environment(&path, &source, environment) {
+    // A lone string literal is parsed by OXC as a directive and therefore
+    // omitted from `Program::body`; eval nevertheless returns its completion
+    // value. Parenthesize this expression-only form before handing it to the
+    // normal shared evaluator.
+    let eval_source = if (source.starts_with('"') && source.ends_with('"'))
+        || (source.starts_with('\'') && source.ends_with('\''))
+    {
+        format!("({source})")
+    } else {
+        source.clone()
+    };
+    match vm.run_source_text_in_environment(&path, &eval_source, environment) {
         Err(JsError::Message(message)) if message.starts_with("parse error:") => {
             Err(JsError::Throw(syntax_error(vm, &message)))
         }
