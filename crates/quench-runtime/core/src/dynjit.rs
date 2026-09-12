@@ -3099,6 +3099,20 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             }
             let cache = property_ic();
             let vm = unsafe { &mut *frame.vm };
+            if *strict
+                && object.as_object_ref().is_some_and(|object| {
+                    object
+                        .borrow()
+                        .attributes
+                        .get(key)
+                        .is_some_and(|attributes| !attributes.writable)
+                })
+            {
+                return Err(JsError::Throw(super::type_error(
+                    vm,
+                    "cannot assign to read-only property",
+                )));
+            }
             if vm.find_accessor(&object, key).is_none() {
                 if let Some(cache) = cache {
                     if set_static_cached(&object, key, value.clone(), cache).is_ok() {
@@ -4157,6 +4171,12 @@ fn select_direct_opcode_template(op: &DynOp) -> Option<DirectOpcodeTemplate> {
         }),
         DynOp::GetStatic { .. } => DirectOpcodeTemplate::Next("quench_dyn_get_static"),
         DynOp::GetComputed { .. } => DirectOpcodeTemplate::Next("quench_dyn_get_computed_dense"),
+        // Strict stores must traverse the semantic setter path so read-only
+        // descriptors and accessors are observed. The raw direct handlers
+        // only know about shape/slot layout and cannot inspect attributes.
+        DynOp::SetStatic { strict: true, .. } | DynOp::SetComputed { strict: true, .. } => {
+            return None;
+        }
         DynOp::SetStatic { .. } => DirectOpcodeTemplate::Next("quench_dyn_set_static"),
         DynOp::SetComputed { .. } => DirectOpcodeTemplate::Next("quench_dyn_set_computed_dense"),
         DynOp::Jump { target } => DirectOpcodeTemplate::Transfer {
