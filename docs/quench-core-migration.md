@@ -126,6 +126,9 @@ Verification completed:
   native wrappers, exact `sumPrecise` accumulation, binary16 rounding, and the
   complete intrinsic projection; the two remaining cases require generator /
   iterator lowering in the stencil compiler
+- the stencil String stage now reaches 424/1,223 after routing constructor
+  coercion and global binding projection through the shared stencil VM; the
+  remaining failures are unsupported syntax, accessors, and Unicode details
 - the stencil Object stage reached 1,131/3,411 after deriving integrity helpers,
   fixing descriptor borrow ordering, and keeping huge array lengths metadata
   backed; the remaining failures are unsupported stencil features
