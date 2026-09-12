@@ -1385,6 +1385,44 @@ macro_rules! install_data_properties {
     }};
 }
 
+/// Install aliases from an environment onto an object using the standard
+/// global-property descriptor policy. The alias table is the data; lookup,
+/// installation, and attributes stay one operation so new globals cannot
+/// accidentally diverge from the existing semantics.
+macro_rules! install_global_aliases {
+    ($vm:expr, $target:expr, $environment:expr, [$($name:expr),+ $(,)?]) => {{
+        let target = $target;
+        let environment = $environment;
+        $(
+            if let Some(value) = Environment::get(environment, $name) {
+                $vm.set_prop(&target, $name, value);
+                if let Some(object) = target.as_object_ref() {
+                    object
+                        .borrow_mut()
+                        .attributes
+                        .insert($name.into(), global_alias_attributes($name));
+                }
+            }
+        )+
+    }};
+}
+
+fn global_alias_attributes(name: &str) -> PropertyAttributes {
+    if matches!(name, "undefined" | "NaN" | "Infinity") {
+        PropertyAttributes {
+            writable: false,
+            enumerable: false,
+            configurable: false,
+        }
+    } else {
+        PropertyAttributes {
+            writable: true,
+            enumerable: false,
+            configurable: true,
+        }
+    }
+}
+
 fn accessor_slot(kind: &str, key: &str) -> String {
     format!("\0accessor:{kind}:{key}")
 }
@@ -5324,69 +5362,52 @@ impl Vm {
         // The core environment remains the binding authority; this object is
         // the observable `global`/`globalThis` projection used by Node code.
         let global_this = self.object(None);
-        for name in [
-            "undefined",
-            "process",
-            "console",
-            "NaN",
-            "Infinity",
-            "Math",
-            "Symbol",
-            "BigInt",
-            "Object",
-            "Array",
-            "Boolean",
-            "String",
-            "Number",
-            "Function",
-            "Date",
-            "RegExp",
-            "Error",
-            "EvalError",
-            "RangeError",
-            "ReferenceError",
-            "SyntaxError",
-            "TypeError",
-            "URIError",
-            "AggregateError",
-            "assert",
-            "decodeURI",
-            "decodeURIComponent",
-            "encodeURI",
-            "encodeURIComponent",
-            "isFinite",
-            "isNaN",
-            "parseFloat",
-            "parseInt",
-            "eval",
-            "Buffer",
-            "Blob",
-            "JSON",
-            "setTimeout",
-            "clearTimeout",
-        ] {
-            if let Some(value) = Environment::get(&self.global, name) {
-                self.set_prop(&global_this, name, value);
-                if let Some(object) = global_this.as_object_ref() {
-                    object.borrow_mut().attributes.insert(
-                        name.into(),
-                        if matches!(name, "undefined" | "NaN" | "Infinity") {
-                            PropertyAttributes {
-                                writable: false,
-                                enumerable: false,
-                                configurable: false,
-                            }
-                        } else {
-                            PropertyAttributes {
-                                writable: true,
-                                enumerable: false,
-                                configurable: true,
-                            }
-                        },
-                    );
-                }
-            }
-        }
+        install_global_aliases!(
+            self,
+            global_this.clone(),
+            &self.global,
+            [
+                "undefined",
+                "process",
+                "console",
+                "NaN",
+                "Infinity",
+                "Math",
+                "Symbol",
+                "BigInt",
+                "Object",
+                "Array",
+                "Boolean",
+                "String",
+                "Number",
+                "Function",
+                "Date",
+                "RegExp",
+                "Error",
+                "EvalError",
+                "RangeError",
+                "ReferenceError",
+                "SyntaxError",
+                "TypeError",
+                "URIError",
+                "AggregateError",
+                "assert",
+                "decodeURI",
+                "decodeURIComponent",
+                "encodeURI",
+                "encodeURIComponent",
+                "isFinite",
+                "isNaN",
+                "parseFloat",
+                "parseInt",
+                "eval",
+                "Buffer",
+                "Blob",
+                "JSON",
+                "setTimeout",
+                "clearTimeout",
+            ]
+        );
         self.set_prop(&global_this, "global", global_this.clone());
         self.set_prop(&global_this, "globalThis", global_this.clone());
         if let Some(object) = global_this.as_object_ref() {
