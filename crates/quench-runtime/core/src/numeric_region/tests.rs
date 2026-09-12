@@ -72,6 +72,7 @@ fn loop_code(tail: Vec<DynOp>) -> DynCode {
             key: INDEX_REGISTER,
             src: RESULT_REGISTER,
             accessor: None,
+            strict: false,
         },
         DynOp::LoadLiteral {
             dst: ONE_REGISTER,
@@ -134,6 +135,7 @@ fn static_property_loop_code(property_local: usize) -> DynCode {
             object: OBJECT_REGISTER,
             key: "coordinate".to_owned(),
             src: PROPERTY_RESULT_REGISTER,
+            strict: false,
         },
         DynOp::LoadLocal {
             dst: INDEX_REGISTER,
@@ -487,6 +489,7 @@ fn composes_property_prologue_with_dense_loop_as_one_typed_region() {
             key: 6,
             src: 11,
             accessor: None,
+            strict: false,
         },
         DynOp::Binary {
             dst: 12,
