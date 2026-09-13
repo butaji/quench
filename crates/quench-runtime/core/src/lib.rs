@@ -214,6 +214,7 @@ const PROMISE_STATE_PROP: &str = "\0quench:promise-state";
 const PROMISE_RESULT_PROP: &str = "\0quench:promise-result";
 const PROMISE_MARKER_PROP: &str = "\0quench:promise";
 const PROMISE_QUEUE_PROP: &str = "\0quench:promise-queue";
+const PROMISE_RESOLUTION_STARTED_PROP: &str = "\0quench:promise-resolution-started";
 const PROMISE_CAPABILITY_RESOLVE_PROP: &str = "\0quench:promise-capability-resolve";
 const PROMISE_CAPABILITY_REJECT_PROP: &str = "\0quench:promise-capability-reject";
 const PROMISE_ALL_STATE_PROP: &str = "\0quench:promise-all-state";
@@ -255,6 +256,7 @@ const REALM_GLOBAL_PROP: &str = "\0quench:realm-global";
 const FUNCTION_PROTOTYPE_OVERRIDE_PROP: &str = "\0quench:function-prototype-override";
 const PROXY_TARGET_PROP: &str = "\0quench:proxy-target";
 const PROXY_HANDLER_PROP: &str = "\0quench:proxy-handler";
+const PROXY_REVOKED_PROP: &str = "\0quench:proxy-revoked";
 static NEXT_OBJECT_HEAP_ID: AtomicU64 = AtomicU64::new(FIRST_OBJECT_HEAP_ID);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -5256,6 +5258,7 @@ struct Vm {
     instruction_budget: Option<u64>,
     strict_mode: bool,
     output: Option<Box<dyn FnMut(&str)>>,
+    microtasks: VecDeque<Timer>,
     timers: VecDeque<Timer>,
     next_ticks: VecDeque<Timer>,
     next_timer_id: u64,
@@ -5310,6 +5313,7 @@ impl Vm {
                 .and_then(|value| value.parse().ok()),
             strict_mode: false,
             output: None,
+            microtasks: VecDeque::new(),
             timers: VecDeque::new(),
             next_ticks: VecDeque::new(),
             next_timer_id: 1,
@@ -5777,6 +5781,7 @@ impl Vm {
         let promise = self.object(promise_prototype);
         self.set_prop(&promise, PROMISE_MARKER_PROP, Value::Bool(true));
         self.set_prop(&promise, PROMISE_STATE_PROP, Value::string_value("pending"));
+        self.set_prop(&promise, PROMISE_RESOLUTION_STARTED_PROP, Value::Bool(false));
         self.set_prop(&promise, PROMISE_RESULT_PROP, Value::Undefined);
         self.set_prop(
             &promise,
@@ -6346,6 +6351,8 @@ impl Vm {
         );
         Environment::set(&g, "Promise", promise);
         let proxy = self.native_named(native_proxy_constructor, "Proxy", 2);
+        let revocable = self.native_named(native_proxy_revocable, "revocable", 2);
+        self.set_prop(&proxy, "revocable", revocable);
         Environment::set(&g, "Proxy", proxy);
         let json = self.object(None);
         self.set_prop(&json, "stringify", self.native(native_json_stringify));
@@ -6912,6 +6919,12 @@ impl Vm {
         id
     }
 
+    fn schedule_microtask(&mut self, callback: Value, args: Vec<Value>) {
+        let id = self.next_timer_id;
+        self.next_timer_id = self.next_timer_id.wrapping_add(1).max(1);
+        self.microtasks.push_back(Timer { id, callback, args });
+    }
+
     fn schedule_next_tick(&mut self, callback: Value, args: Vec<Value>) -> u64 {
         let id = self.next_timer_id;
         self.next_timer_id = self.next_timer_id.wrapping_add(1).max(1);
@@ -6928,6 +6941,7 @@ impl Vm {
         while let Some(timer) = self
             .next_ticks
             .pop_front()
+            .or_else(|| self.microtasks.pop_front())
             .or_else(|| self.timers.pop_front())
         {
             self.call(timer.callback, Value::Undefined, timer.args)?;
@@ -7459,8 +7473,18 @@ impl Vm {
 
     pub(crate) fn get_prop_with_accessors(&mut self, object: &Value, key: &str) -> JsResult<Value> {
         if let Some(target) = proxy_target(object) {
+            if proxy_revoked(object) {
+                return Err(JsError::Throw(type_error(self, "revoked Proxy")));
+            }
             let handler = proxy_handler(object).unwrap_or(Value::Undefined);
             let trap = self.get_prop_with_accessors(&handler, "get")?;
+            if self.has_property(&handler, "get")
+                && !trap.is_function()
+                && !trap.is_null()
+                && !trap.is_undefined()
+            {
+                return Err(JsError::Throw(type_error(self, "Proxy get trap is not callable")));
+            }
             if trap.is_function() {
                 return self.call(
                     trap,
@@ -8132,6 +8156,9 @@ impl Vm {
         a: &A,
         call_ic: Option<&dynjit::CallIcSite>,
     ) -> JsResult<Value> {
+        if proxy_target(c).is_some() {
+            return self.call_proxy(c, t, a);
+        }
         let captures_deleted_binding = c.as_function_ref().is_some_and(|function| {
             matches!(
                 &function.kind,
@@ -8326,6 +8353,74 @@ impl Vm {
         } else {
             Err(JsError::Throw(type_error(self, "not a function")))
         }
+    }
+
+    fn call_proxy<A: CallArguments + ?Sized>(
+        &mut self,
+        proxy: &Value,
+        this: Value,
+        args: &A,
+    ) -> JsResult<Value> {
+        if proxy_revoked(proxy) {
+            return Err(JsError::Throw(type_error(self, "revoked Proxy")));
+        }
+        let target = proxy_target(proxy).unwrap_or(Value::Undefined);
+        if !target.is_function() {
+            return Err(JsError::Throw(type_error(self, "Proxy target is not callable")));
+        }
+        let handler = proxy_handler(proxy).unwrap_or(Value::Undefined);
+        if self.current_new_target.is_some() {
+            let trap = self.get_prop_with_accessors(&handler, "construct")?;
+            if self.has_property(&handler, "construct")
+                && !trap.is_function()
+                && !trap.is_null()
+                && !trap.is_undefined()
+            {
+                return Err(JsError::Throw(type_error(self, "Proxy construct trap is not callable")));
+            }
+            if trap.is_function() {
+                let arguments = self.array_from_values(args.materialize());
+                let new_target = self
+                    .current_new_target
+                    .clone()
+                    .unwrap_or_else(|| proxy.clone());
+                let result = self.call(
+                    trap,
+                    handler,
+                    vec![target, arguments, new_target],
+                )?;
+                if !result.is_object_like() {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "Proxy construct trap must return an object",
+                    )));
+                }
+                return Ok(result);
+            }
+        }
+        let trap = self.get_prop_with_accessors(&handler, "apply")?;
+        if self.has_property(&handler, "apply")
+            && !trap.is_function()
+            && !trap.is_null()
+            && !trap.is_undefined()
+        {
+            return Err(JsError::Throw(type_error(self, "Proxy apply trap is not callable")));
+        }
+        if trap.is_function() {
+            let arguments = self.array_from_values(args.materialize());
+            return self.call(
+                trap,
+                handler,
+                vec![target, this, arguments],
+            );
+        }
+        if let Some(function) = target.as_function_ref()
+            && matches!(function.kind, FunctionKind::Class { .. })
+            && self.current_new_target.is_some()
+        {
+            return self.call_class(function, this, args.materialize());
+        }
+        self.call_arguments(&target, this, args)
     }
 
     fn call_native_semantic<A: CallArguments + ?Sized>(
@@ -13866,14 +13961,45 @@ fn native_proxy_constructor(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
     if !handler.is_object_like() || is_symbol_carrier(&handler) || handler.is_null() {
         return Err(JsError::Throw(type_error(vm, "Proxy handler must be an object")));
     }
-    let prototype = target
-        .as_object_ref()
-        .and_then(|object| object.borrow().prototype.clone())
-        .or_else(|| target.as_function_ref().map(|function| function.prototype.clone()));
-    let proxy = vm.object(prototype);
+    let proxy = if target.is_function() {
+        let length = vm.get_prop(&target, "length").number().max(0.0) as usize;
+        let proxy = vm.native_named(native_proxy_call, "", length);
+        if !constructable(&target) {
+            vm.mark_nonconstructable(&proxy);
+        }
+        proxy
+    } else {
+        let prototype = target
+            .as_object_ref()
+            .and_then(|object| object.borrow().prototype.clone());
+        vm.object(prototype)
+    };
     vm.set_prop(&proxy, PROXY_TARGET_PROP, target);
     vm.set_prop(&proxy, PROXY_HANDLER_PROP, handler);
+    vm.set_prop(&proxy, PROXY_REVOKED_PROP, Value::Bool(false));
     Ok(proxy)
+}
+
+fn native_proxy_call(_: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
+    // Callable proxy dispatch is intercepted by Vm::call_proxy before native
+    // semantic dispatch reaches this placeholder.
+    Ok(Value::Undefined)
+}
+
+fn native_proxy_revoke(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    vm.set_prop(&this, PROXY_REVOKED_PROP, Value::Bool(true));
+    vm.set_prop(&this, PROXY_HANDLER_PROP, Value::Undefined);
+    Ok(Value::Undefined)
+}
+
+fn native_proxy_revocable(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let proxy = native_proxy_constructor(vm, Value::Undefined, args)?;
+    let revoke = vm.native_named(native_proxy_revoke, "", 0);
+    let revoke = native_function_bind(vm, revoke, std::slice::from_ref(&proxy))?;
+    let result = vm.object(None);
+    vm.set_prop(&result, "proxy", proxy);
+    vm.set_prop(&result, "revoke", revoke);
+    Ok(result)
 }
 
 fn promise_species_constructor(vm: &mut Vm, promise: &Value) -> JsResult<Value> {
@@ -13891,10 +14017,6 @@ fn promise_species_constructor(vm: &mut Vm, promise: &Value) -> JsResult<Value> 
     }
     let species_key = vm.well_known_symbol_key("species");
     let species = vm.get_prop_with_accessors(&constructor, &species_key)?;
-    if std::env::var_os("QUENCH_DEBUG_PROMISE_SPECIES").is_some() {
-        let promise = Environment::get(&vm.global, "Promise").unwrap_or(Value::Undefined);
-        eprintln!("species constructor={} species={} same_ctor={} same_promise={} constructable={}", constructor.display(), species.display(), species.same_bits(&constructor), species.same_bits(&promise), constructable(&species));
-    }
     if species.is_null() || species.is_undefined() {
         return Ok(default_constructor);
     }
@@ -14022,28 +14144,20 @@ fn native_promise_finally(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<
     vm.set_prop(&state_rejected, PROMISE_FINALLY_CALLBACK_PROP, callback);
     vm.set_prop(&state_rejected, PROMISE_FINALLY_VALUE_PROP, Value::Undefined);
     vm.set_prop(&state_rejected, PROMISE_FINALLY_REJECTED_PROP, Value::Bool(true));
-    let fulfilled = native_function_bind(
-        vm,
-        vm.native_named(native_promise_finally_handler, "", 1),
-        std::slice::from_ref(&state_fulfilled),
-    )?;
-    let rejected = native_function_bind(
-        vm,
-        vm.native_named(native_promise_finally_handler, "", 1),
-        std::slice::from_ref(&state_rejected),
-    )?;
+    let fulfilled_target = vm.native_named(native_promise_finally_handler, "", 1);
+    let rejected_target = vm.native_named(native_promise_finally_handler, "", 1);
+    vm.mark_nonconstructable(&fulfilled_target);
+    vm.mark_nonconstructable(&rejected_target);
+    let fulfilled = native_function_bind(vm, fulfilled_target, std::slice::from_ref(&state_fulfilled))?;
+    let rejected = native_function_bind(vm, rejected_target, std::slice::from_ref(&state_rejected))?;
     vm.set_prop(&state_fulfilled, PROMISE_FINALLY_HANDLER_PROP, fulfilled);
     vm.set_prop(&state_rejected, PROMISE_FINALLY_HANDLER_PROP, rejected);
-    let fulfill_forward = native_function_bind(
-        vm,
-        vm.native_named(native_promise_finally_capture_fulfilled, "", 1),
-        std::slice::from_ref(&state_fulfilled),
-    )?;
-    let reject_forward = native_function_bind(
-        vm,
-        vm.native_named(native_promise_finally_capture_rejected, "", 1),
-        std::slice::from_ref(&state_rejected),
-    )?;
+    let fulfill_target = vm.native_named(native_promise_finally_capture_fulfilled, "", 1);
+    let reject_target = vm.native_named(native_promise_finally_capture_rejected, "", 1);
+    vm.mark_nonconstructable(&fulfill_target);
+    vm.mark_nonconstructable(&reject_target);
+    let fulfill_forward = native_function_bind(vm, fulfill_target, std::slice::from_ref(&state_fulfilled))?;
+    let reject_forward = native_function_bind(vm, reject_target, std::slice::from_ref(&state_rejected))?;
     for forward in [&fulfill_forward, &reject_forward] {
         set_function_name(forward, "");
         set_property_attributes(
@@ -14114,6 +14228,7 @@ fn anonymous_native_bound(
     length: usize,
 ) -> JsResult<Value> {
     let target = vm.native_named(native, "", length);
+    vm.mark_nonconstructable(&target);
     let bound = native_function_bind(vm, target, std::slice::from_ref(this_arg))?;
     set_function_name(&bound, "");
     set_property_attributes(
@@ -14161,9 +14276,6 @@ fn new_promise_capability(
     } else {
         vm.call(constructor, target.clone(), vec![executor])
     };
-    if std::env::var_os("QUENCH_DEBUG_PROMISE_SPECIES").is_some() {
-        eprintln!("capability call result is_err={}", result.is_err());
-    }
     vm.current_new_target = previous_new_target;
     let result = result?;
     let promise = if result.is_object_like() { result } else { target };
@@ -14191,6 +14303,7 @@ fn native_promise_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsRes
     };
     vm.set_prop(&promise, PROMISE_MARKER_PROP, Value::Bool(true));
     vm.set_prop(&promise, PROMISE_STATE_PROP, Value::string_value("pending"));
+    vm.set_prop(&promise, PROMISE_RESOLUTION_STARTED_PROP, Value::Bool(false));
     vm.set_prop(&promise, PROMISE_RESULT_PROP, Value::Undefined);
     vm.set_prop(
         &promise,
@@ -14216,6 +14329,10 @@ fn native_promise_resolve_executor(vm: &mut Vm, this: Value, args: &[Value]) -> 
         .as_string()
         .is_some_and(|state| state.as_str() == "pending")
     {
+        if vm.get_prop(&this, PROMISE_RESOLUTION_STARTED_PROP).truthy() {
+            return Ok(Value::Undefined);
+        }
+        vm.set_prop(&this, PROMISE_RESOLUTION_STARTED_PROP, Value::Bool(true));
         let value = args.first().cloned().unwrap_or(Value::Undefined);
         if value.same_bits(&this) {
             vm.settle_promise(
@@ -14228,21 +14345,7 @@ fn native_promise_resolve_executor(vm: &mut Vm, this: Value, args: &[Value]) -> 
             let then = vm.get_prop_with_accessors(&value, "then");
             match then {
                 Ok(then) if then.is_function() => {
-                    let resolve = anonymous_native_bound(
-                        vm,
-                        native_promise_resolve_executor,
-                        &this,
-                        1,
-                    )?;
-                    let reject = anonymous_native_bound(
-                        vm,
-                        native_promise_reject_executor,
-                        &this,
-                        1,
-                    )?;
-                    if let Err(error) = vm.call(then, value, vec![resolve, reject]) {
-                        vm.settle_promise(&this, Err(error));
-                    }
+                    schedule_promise_thenable_job(vm, &this, value, then);
                 }
                 Ok(_) => vm.settle_promise(&this, Ok(value)),
                 Err(error) => vm.settle_promise(&this, Err(error)),
@@ -14250,21 +14353,7 @@ fn native_promise_resolve_executor(vm: &mut Vm, this: Value, args: &[Value]) -> 
         } else {
             match vm.get_prop_with_accessors(&value, "then") {
                 Ok(then) if then.is_function() => {
-                    let resolve = anonymous_native_bound(
-                        vm,
-                        native_promise_resolve_executor,
-                        &this,
-                        1,
-                    )?;
-                    let reject = anonymous_native_bound(
-                        vm,
-                        native_promise_reject_executor,
-                        &this,
-                        1,
-                    )?;
-                    if let Err(error) = vm.call(then, value, vec![resolve, reject]) {
-                        vm.settle_promise(&this, Err(error));
-                    }
+                    schedule_promise_thenable_job(vm, &this, value, then);
                 }
                 Ok(_) => vm.settle_promise(&this, Ok(value)),
                 Err(error) => vm.settle_promise(&this, Err(error)),
@@ -14273,12 +14362,36 @@ fn native_promise_resolve_executor(vm: &mut Vm, this: Value, args: &[Value]) -> 
     }
     Ok(Value::Undefined)
 }
+
+fn schedule_promise_thenable_job(vm: &mut Vm, promise: &Value, thenable: Value, then: Value) {
+    let job = vm.object(None);
+    vm.set_prop(&job, "promise", promise.clone());
+    vm.set_prop(&job, "thenable", thenable);
+    vm.set_prop(&job, "then", then);
+    vm.schedule_microtask(vm.native(native_promise_thenable_job), vec![job]);
+}
+
+fn native_promise_thenable_job(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let job = args.first().cloned().unwrap_or(Value::Undefined);
+    let promise = vm.get_prop(&job, "promise");
+    let thenable = vm.get_prop(&job, "thenable");
+    let then = vm.get_prop(&job, "then");
+    let resolve = anonymous_native_bound(vm, native_promise_resolve_executor, &promise, 1)?;
+    let reject = anonymous_native_bound(vm, native_promise_reject_executor, &promise, 1)?;
+    if let Err(error) = vm.call(then, thenable, vec![resolve, reject]) {
+        vm.settle_promise(&promise, Err(error));
+    }
+    Ok(Value::Undefined)
+}
+
 fn native_promise_reject_executor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     if vm
         .get_prop(&this, PROMISE_STATE_PROP)
         .as_string()
         .is_some_and(|state| state.as_str() == "pending")
+        && !vm.get_prop(&this, PROMISE_RESOLUTION_STARTED_PROP).truthy()
     {
+        vm.set_prop(&this, PROMISE_RESOLUTION_STARTED_PROP, Value::Bool(true));
         vm.settle_promise(
             &this,
             Err(JsError::Throw(
@@ -14474,9 +14587,11 @@ fn native_promise_all(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsResu
             Value::Number(index as f64),
         );
         vm.set_prop(&element_state, PROMISE_ALL_CALLED_PROP, Value::Bool(false));
+        let resolve_target = vm.native_named(native_promise_all_resolve_element, "", 1);
+        vm.mark_nonconstructable(&resolve_target);
         let resolve_element = native_function_bind(
             vm,
-            vm.native_named(native_promise_all_resolve_element, "", 1),
+            resolve_target,
             std::slice::from_ref(&element_state),
         )?;
         set_function_name(&resolve_element, "");
@@ -18256,7 +18371,8 @@ pub(crate) fn constructable(value: &Value) -> bool {
         FunctionKind::User { node, .. } => !node.generator && !node.r#async,
         FunctionKind::Builtin(id) => id.is_constructable(),
         FunctionKind::Native(_) => !function.props.borrow().contains_key("\0nonconstructable"),
-        FunctionKind::Arrow { .. } | FunctionKind::Bound { .. } => false,
+        FunctionKind::Arrow { .. } => false,
+        FunctionKind::Bound { target, .. } => constructable(target),
         FunctionKind::Class { .. } => true,
     }
 }
@@ -18287,6 +18403,18 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
         )));
     }
     let arguments = reflect_array_arguments(vm, args.get(1))?;
+    // Promise validates its executor before GetPrototypeFromConstructor.  Do
+    // that early here so a poisoned newTarget.prototype cannot mask the
+    // required TypeError for a non-callable executor.
+    if target.as_function_ref().is_some_and(|function| {
+        matches!(
+            function.kind,
+            FunctionKind::Native(native) if native as *const () == native_promise_constructor as *const ()
+        )
+    }) && !arguments.first().is_some_and(Value::is_function)
+    {
+        return Err(JsError::Throw(type_error(vm, "Promise resolver is not a function")));
+    }
     let new_target = args.get(2).cloned().unwrap_or_else(|| target.clone());
     if !constructable(&new_target) {
         return Err(JsError::Throw(type_error(
@@ -18301,7 +18429,10 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
         .clone()
         .and_then(|value| value.as_object());
     let ordinary_prototype = if prototype_override.is_none() {
-        Some(vm.get_prop_with_accessors(&new_target, "prototype")?)
+        Some(match vm.get_prop_with_accessors(&new_target, "prototype") {
+            Ok(value) => value,
+            Err(error) => return Err(error),
+        })
     } else {
         None
     };
@@ -18426,6 +18557,16 @@ fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
         throw_type_error,
     );
     vm.set_prop(&global, "Function", function);
+    // Intrinsics are shared by the compact core today; publishing the same
+    // constructor identity still preserves the observable prototype fallback
+    // for cross-realm Reflect.construct while keeping the realm global
+    // complete (notably Promise/Proxy, which test262 accesses directly).
+    if let Some(promise) = Environment::get(&vm.global, "Promise") {
+        vm.set_prop(&global, "Promise", promise);
+    }
+    if let Some(proxy) = Environment::get(&vm.global, "Proxy") {
+        vm.set_prop(&global, "Proxy", proxy);
+    }
     vm.set_prop(&global, "globalThis", global.clone());
     let eval = native_function_bind(vm, vm.builtin(BuiltinId::Eval), &[global.clone()])?;
     vm.set_prop(&global, "eval", eval.clone());
@@ -22615,21 +22756,44 @@ fn object_own_enumerable_keys_with_symbols(target: &Value) -> Vec<String> {
 }
 
 fn proxy_target(value: &Value) -> Option<Value> {
+    if let Some(object) = value.as_object_ref() {
+        return object.borrow().props.get(PROXY_TARGET_PROP).cloned();
+    }
     value
-        .as_object_ref()
-        .and_then(|object| object.borrow().props.get(PROXY_TARGET_PROP).cloned())
+        .as_function_ref()
+        .and_then(|function| function.props.borrow().get(PROXY_TARGET_PROP).cloned())
 }
 
 fn proxy_handler(value: &Value) -> Option<Value> {
+    if let Some(object) = value.as_object_ref() {
+        return object.borrow().props.get(PROXY_HANDLER_PROP).cloned();
+    }
     value
-        .as_object_ref()
-        .and_then(|object| object.borrow().props.get(PROXY_HANDLER_PROP).cloned())
+        .as_function_ref()
+        .and_then(|function| function.props.borrow().get(PROXY_HANDLER_PROP).cloned())
+}
+
+fn proxy_revoked(value: &Value) -> bool {
+    if let Some(object) = value.as_object_ref() {
+        return object
+            .borrow()
+            .props
+            .get(PROXY_REVOKED_PROP)
+            .is_some_and(Value::truthy);
+    }
+    value
+        .as_function_ref()
+        .and_then(|function| function.props.borrow().get(PROXY_REVOKED_PROP).cloned())
+        .is_some_and(|value| value.truthy())
 }
 
 /// Implements the enumerable-key projection needed by keyed Promise
 /// combinators.  Keeping this operation in the VM (rather than teaching each
 /// combinator about proxy traps) preserves one property-ordering pipeline.
 fn proxy_own_enumerable_keys(vm: &mut Vm, target: &Value) -> JsResult<Vec<String>> {
+    if proxy_revoked(target) {
+        return Err(JsError::Throw(type_error(vm, "revoked Proxy")));
+    }
     let Some(proxy_target_value) = proxy_target(target) else {
         return Ok(object_own_enumerable_keys_with_symbols(target));
     };
@@ -22677,6 +22841,9 @@ fn proxy_own_enumerable_keys(vm: &mut Vm, target: &Value) -> JsResult<Vec<String
 }
 
 fn object_own_enumerable_keys_mode(target: &Value, include_symbols: bool) -> Vec<String> {
+    if let Some(proxy_target_value) = proxy_target(target) {
+        return object_own_enumerable_keys_mode(&proxy_target_value, include_symbols);
+    }
     if let Some(object) = target.as_object_ref() {
         let object = object.borrow();
         let mut keys = object
@@ -22829,6 +22996,9 @@ fn partition_symbol_keys(keys: Vec<String>) -> Vec<String> {
 /// derived from the same compact storage as enumerable keys, but retains
 /// non-enumerable fields (notably string-wrapper indices and `length`).
 fn object_own_property_keys(target: &Value) -> Vec<String> {
+    if let Some(proxy_target_value) = proxy_target(target) {
+        return object_own_property_keys(&proxy_target_value);
+    }
     if let Some(object) = target.as_object_ref() {
         let object = object.borrow();
         let mut keys = object
