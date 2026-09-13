@@ -22311,11 +22311,12 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
             let result = vm.call(
                 trap,
                 handler,
-                vec![proxy_target_value, Value::string_value(key.clone()), descriptor.clone()],
+                vec![proxy_target_value.clone(), Value::string_value(key.clone()), descriptor.clone()],
             )?;
             if !result.truthy() {
                 return Err(JsError::Throw(type_error(vm, "Proxy defineProperty trap returned false")));
             }
+            validate_proxy_define_invariant(vm, &proxy_target_value, &key, &descriptor)?;
             return Ok(target.clone());
         }
         if vm.has_property(&handler, "defineProperty")
@@ -23362,6 +23363,51 @@ fn validate_proxy_set_invariant(vm: &mut Vm, target: &Value, key: &str, value: &
         && vm.get_prop(&descriptor, "set").is_undefined()
     {
         return Err(JsError::Throw(type_error(vm, "Proxy set trap violated accessor target invariant")));
+    }
+    Ok(())
+}
+
+fn validate_proxy_define_invariant(
+    vm: &mut Vm,
+    target: &Value,
+    key: &str,
+    descriptor: &Value,
+) -> JsResult<()> {
+    let current = native_object_get_own_property_descriptor(
+        vm,
+        Value::Undefined,
+        &[target.clone(), Value::string_value(key.to_owned())],
+    )?;
+    let extensible = native_object_is_extensible(vm, Value::Undefined, &[target.clone()])?.truthy();
+    if current.is_undefined() {
+        if !extensible {
+            return Err(JsError::Throw(type_error(vm, "Proxy defineProperty trap added to non-extensible target")));
+        }
+        return Ok(());
+    }
+    if !vm.get_prop(&current, "configurable").truthy()
+        && vm.has_property(descriptor, "configurable")
+        && vm.get_prop_with_accessors(descriptor, "configurable")?.truthy()
+    {
+        return Err(JsError::Throw(type_error(vm, "Proxy defineProperty trap made target property configurable")));
+    }
+    if !vm.get_prop(&current, "configurable").truthy()
+        && vm.has_property(&current, "writable")
+        && !vm.get_prop(&current, "writable").truthy()
+    {
+        if vm.has_property(descriptor, "writable")
+            && vm.get_prop_with_accessors(descriptor, "writable")?.truthy()
+        {
+            return Err(JsError::Throw(type_error(vm, "Proxy defineProperty trap made target property writable")));
+        }
+        if vm.has_property(descriptor, "value")
+            && vm.has_property(&current, "value")
+            && !vm
+                .get_prop_with_accessors(descriptor, "value")?
+                .same_bits(&vm.get_prop(&current, "value"))
+        {
+            return Err(JsError::Throw(type_error(vm, "Proxy defineProperty trap changed frozen target value")));
+        }
     }
     Ok(())
 }
