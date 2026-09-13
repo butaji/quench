@@ -2,6 +2,97 @@
 
 use crate::ops::Builtin;
 
+// Array and typed-array intrinsics are one semantic family.  Keep the
+// observable name and the Function#length metadata beside each other so a
+// new method cannot drift between the two dispatch tables.
+macro_rules! declare_array_method_metadata {
+    ($( $builtin:ident => $name:literal, $length:expr ),+ $(,)?) => {
+        const fn method_name(builtin: Builtin) -> Option<&'static str> {
+            match builtin {
+                $(Builtin::$builtin => Some($name),)+
+                _ => None,
+            }
+        }
+
+        const fn method_length(builtin: Builtin) -> Option<f64> {
+            match builtin {
+                $(Builtin::$builtin => Some($length),)+
+                _ => None,
+            }
+        }
+    };
+}
+
+declare_array_method_metadata! {
+    ArrayMap => "map", 1.0,
+    ArrayFilter => "filter", 1.0,
+    ArraySome => "some", 1.0,
+    ArrayEvery => "every", 1.0,
+    TypedArrayEvery => "every", 1.0,
+    TypedArraySome => "some", 1.0,
+    TypedArrayMap => "map", 1.0,
+    TypedArrayFilter => "filter", 1.0,
+    TypedArraySlice => "slice", 2.0,
+    ArrayFind => "find", 1.0,
+    TypedArrayFind => "find", 1.0,
+    ArrayFindIndex => "findIndex", 1.0,
+    TypedArrayFindIndex => "findIndex", 1.0,
+    ArrayIterator => "values", 0.0,
+    TypedArrayIterator => "values", 0.0,
+    ArrayKeys => "keys", 0.0,
+    TypedArrayKeys => "keys", 0.0,
+    ArrayEntries => "entries", 0.0,
+    TypedArrayEntries => "entries", 0.0,
+    ArrayIncludes => "includes", 1.0,
+    TypedArrayIncludes => "includes", 1.0,
+    ArrayIndexOf => "indexOf", 1.0,
+    TypedArrayIndexOf => "indexOf", 1.0,
+    ArrayLastIndexOf => "lastIndexOf", 1.0,
+    TypedArrayLastIndexOf => "lastIndexOf", 1.0,
+    ArraySlice => "slice", 2.0,
+    ArrayConcat => "concat", 1.0,
+    ArrayFlat => "flat", 0.0,
+    ArrayFlatMap => "flatMap", 1.0,
+    ArrayAt => "at", 1.0,
+    TypedArrayAt => "at", 1.0,
+    ArraySort => "sort", 1.0,
+    TypedArraySort => "sort", 1.0,
+    TypedArrayWith => "with", 2.0,
+    ArrayForEach => "forEach", 1.0,
+    TypedArrayForEach => "forEach", 1.0,
+    ArrayReduce => "reduce", 1.0,
+    ArrayReduceRight => "reduceRight", 1.0,
+    TypedArrayReduce => "reduce", 1.0,
+    TypedArrayReduceRight => "reduceRight", 1.0,
+    ArrayPush => "push", 1.0,
+    ArrayShift => "shift", 0.0,
+    ArrayReverse => "reverse", 0.0,
+    TypedArrayReverse => "reverse", 0.0,
+    TypedArrayCopyWithin => "copyWithin", 2.0,
+    ArrayFindLast => "findLast", 1.0,
+    TypedArrayFindLast => "findLast", 1.0,
+    ArrayFindLastIndex => "findLastIndex", 1.0,
+    TypedArrayFindLastIndex => "findLastIndex", 1.0,
+    TypedArrayFill => "fill", 1.0,
+    ArrayPop => "pop", 0.0,
+    ArrayUnshift => "unshift", 1.0,
+    ArrayFill => "fill", 1.0,
+    ArrayCopyWithin => "copyWithin", 2.0,
+    ArrayToSorted => "toSorted", 1.0,
+    TypedArrayToSorted => "toSorted", 1.0,
+    ArrayToReversed => "toReversed", 0.0,
+    TypedArrayToReversed => "toReversed", 0.0,
+    ArrayToSpliced => "toSpliced", 2.0,
+    ArrayWith => "with", 2.0,
+    ArrayToString => "toString", 0.0,
+    ArraySplice => "splice", 2.0,
+    ArrayJoin => "join", 1.0,
+    TypedArrayJoin => "join", 1.0,
+    ArrayToLocaleString => "toLocaleString", 0.0,
+    TypedArrayToLocaleString => "toLocaleString", 0.0,
+    TypedArraySet => "set", 1.0,
+}
+
 pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
     match builtin {
         Builtin::ArrayIsArray => Some("isArray"),
@@ -22,81 +113,7 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
 }
 
 const fn fn_name_methods(builtin: Builtin) -> Option<&'static str> {
-    match builtin {
-        Builtin::ArrayMap => Some("map"),
-        Builtin::ArrayFilter => Some("filter"),
-        Builtin::ArraySome => Some("some"),
-        Builtin::ArrayEvery => Some("every"),
-        Builtin::TypedArrayEvery => Some("every"),
-        Builtin::TypedArraySome => Some("some"),
-        Builtin::TypedArrayMap => Some("map"),
-        Builtin::TypedArrayFilter => Some("filter"),
-        Builtin::TypedArraySlice => Some("slice"),
-        Builtin::ArrayFind => Some("find"),
-        Builtin::TypedArrayFind => Some("find"),
-        Builtin::ArrayFindIndex => Some("findIndex"),
-        Builtin::TypedArrayFindIndex => Some("findIndex"),
-        Builtin::ArrayIterator | Builtin::TypedArrayIterator => Some("values"),
-        Builtin::ArrayKeys => Some("keys"),
-        Builtin::TypedArrayKeys => Some("keys"),
-        Builtin::ArrayEntries => Some("entries"),
-        Builtin::TypedArrayEntries => Some("entries"),
-        Builtin::ArrayIncludes => Some("includes"),
-        Builtin::TypedArrayIncludes => Some("includes"),
-        Builtin::ArrayIndexOf => Some("indexOf"),
-        Builtin::TypedArrayIndexOf => Some("indexOf"),
-        Builtin::ArrayLastIndexOf => Some("lastIndexOf"),
-        Builtin::TypedArrayLastIndexOf => Some("lastIndexOf"),
-        Builtin::ArraySlice => Some("slice"),
-        Builtin::ArrayConcat => Some("concat"),
-        Builtin::ArrayFlat => Some("flat"),
-        Builtin::ArrayFlatMap => Some("flatMap"),
-        Builtin::ArrayAt => Some("at"),
-        Builtin::TypedArrayAt => Some("at"),
-        Builtin::ArraySort => Some("sort"),
-        Builtin::TypedArraySort => Some("sort"),
-        Builtin::TypedArrayWith => Some("with"),
-        Builtin::ArrayForEach => Some("forEach"),
-        Builtin::TypedArrayForEach => Some("forEach"),
-        Builtin::ArrayReduce => Some("reduce"),
-        Builtin::ArrayReduceRight => Some("reduceRight"),
-        Builtin::TypedArrayReduce => Some("reduce"),
-        Builtin::TypedArrayReduceRight => Some("reduceRight"),
-        Builtin::ArrayPush => Some("push"),
-        Builtin::ArrayShift => Some("shift"),
-        Builtin::ArrayReverse => Some("reverse"),
-        Builtin::TypedArrayReverse => Some("reverse"),
-        Builtin::TypedArrayCopyWithin => Some("copyWithin"),
-        Builtin::ArrayFindLast => Some("findLast"),
-        Builtin::TypedArrayFindLast => Some("findLast"),
-        Builtin::ArrayFindLastIndex => Some("findLastIndex"),
-        Builtin::TypedArrayFindLastIndex => Some("findLastIndex"),
-        Builtin::TypedArrayFill => Some("fill"),
-        _ => fn_name_tail(builtin),
-    }
-}
-
-const fn fn_name_tail(builtin: Builtin) -> Option<&'static str> {
-    match builtin {
-        Builtin::ArrayPop => Some("pop"),
-        Builtin::ArrayUnshift => Some("unshift"),
-        Builtin::ArrayFill => Some("fill"),
-        Builtin::ArrayCopyWithin => Some("copyWithin"),
-        Builtin::ArrayToSorted => Some("toSorted"),
-        Builtin::ArrayToReversed => Some("toReversed"),
-        Builtin::ArrayToSpliced => Some("toSpliced"),
-        Builtin::ArrayWith => Some("with"),
-        Builtin::ArrayToString => Some("toString"),
-        Builtin::ArraySplice => Some("splice"),
-        Builtin::ArrayJoin => Some("join"),
-        Builtin::TypedArrayJoin => Some("join"),
-        Builtin::ArrayToLocaleString => Some("toLocaleString"),
-        Builtin::TypedArrayToLocaleString => Some("toLocaleString"),
-        Builtin::TypedArrayToReversed => Some("toReversed"),
-        Builtin::TypedArrayToSorted => Some("toSorted"),
-        Builtin::TypedArraySet => Some("set"),
-        _ => None,
-    }
+    method_name(builtin)
 }
 
 pub const fn fn_len(builtin: Builtin) -> Option<f64> {
@@ -113,84 +130,7 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         | Builtin::Uint8ArraySetFromHex => Some(1.0),
         Builtin::Uint8ArrayToBase64 | Builtin::Uint8ArrayToHex => Some(0.0),
         Builtin::Uint8ArraySubarray => Some(2.0),
-        _ => fn_len_methods(builtin),
-    }
-}
-
-const fn fn_len_methods(builtin: Builtin) -> Option<f64> {
-    match builtin {
-        Builtin::ArrayMap
-        | Builtin::ArrayFilter
-        | Builtin::ArraySome
-        | Builtin::ArrayEvery
-        | Builtin::TypedArrayEvery
-        | Builtin::TypedArraySome
-        | Builtin::TypedArrayMap
-        | Builtin::TypedArrayFilter
-        | Builtin::ArrayFind
-        | Builtin::TypedArrayFind
-        | Builtin::ArrayFindIndex
-        | Builtin::TypedArrayFindIndex
-        | Builtin::ArrayFindLast
-        | Builtin::TypedArrayFindLast
-        | Builtin::ArrayFindLastIndex
-        | Builtin::TypedArrayFindLastIndex
-        | Builtin::ArrayIncludes
-        | Builtin::TypedArrayIncludes
-        | Builtin::ArrayIndexOf
-        | Builtin::TypedArrayIndexOf
-        | Builtin::ArrayLastIndexOf
-        | Builtin::TypedArrayLastIndexOf
-        | Builtin::ArrayFlatMap
-        | Builtin::ArrayAt
-        | Builtin::TypedArrayAt
-        | Builtin::ArraySort
-        | Builtin::TypedArraySort
-        | Builtin::ArrayForEach
-        | Builtin::TypedArrayForEach
-        | Builtin::ArrayReduce
-        | Builtin::ArrayReduceRight
-        | Builtin::TypedArrayReduce
-        | Builtin::TypedArrayReduceRight
-        | Builtin::ArrayPush
-        | Builtin::ArrayUnshift
-        | Builtin::ArrayFill
-        | Builtin::TypedArrayFill
-        | Builtin::ArrayToSorted
-        | Builtin::TypedArrayToSorted => Some(1.0),
-        Builtin::TypedArraySet => Some(1.0),
-        Builtin::ArrayIterator
-        | Builtin::TypedArrayIterator
-        | Builtin::ArrayKeys
-        | Builtin::TypedArrayKeys
-        | Builtin::ArrayEntries
-        | Builtin::TypedArrayEntries
-        | Builtin::ArrayShift => Some(0.0),
-        Builtin::ArrayFlat
-        | Builtin::ArrayReverse
-        | Builtin::TypedArrayReverse
-        | Builtin::ArrayPop
-        | Builtin::ArrayToReversed
-        | Builtin::TypedArrayToReversed
-        | Builtin::ArrayToString
-        | Builtin::ArrayToLocaleString => Some(0.0),
-        Builtin::ArrayJoin => Some(1.0),
-        Builtin::TypedArrayJoin => Some(1.0),
-        Builtin::TypedArrayToLocaleString => Some(0.0),
-        _ => fn_len_tail(builtin),
-    }
-}
-
-const fn fn_len_tail(builtin: Builtin) -> Option<f64> {
-    match builtin {
-        Builtin::ArrayCopyWithin
-        | Builtin::TypedArrayCopyWithin
-        | Builtin::ArrayToSpliced
-        | Builtin::ArrayWith
-        | Builtin::TypedArrayWith => Some(2.0),
-        Builtin::ArraySlice | Builtin::TypedArraySlice | Builtin::ArraySplice => Some(2.0),
-        Builtin::ArrayConcat => Some(1.0),
-        _ => None,
+        _ => method_length(builtin),
     }
 }
 
