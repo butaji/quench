@@ -5359,6 +5359,7 @@ struct Vm {
     // record instead of recursively re-entering the loader.
     module_exports_cache: HashMap<PathBuf, HashMap<String, Value>>,
     module_namespace_cache: HashMap<(PathBuf, bool), Value>,
+    module_errors: HashMap<PathBuf, Value>,
     module_evaluating: HashSet<PathBuf>,
     deferred_namespace_loading: bool,
     module_export_stack: Vec<HashMap<String, Value>>,
@@ -5415,6 +5416,7 @@ impl Vm {
             module_cache: HashMap::new(),
             module_exports_cache: HashMap::new(),
             module_namespace_cache: HashMap::new(),
+            module_errors: HashMap::new(),
             module_evaluating: HashSet::new(),
             deferred_namespace_loading: false,
             module_export_stack: Vec::new(),
@@ -7377,6 +7379,18 @@ impl Vm {
                 self.cwd.join(path)
             }
         })
+    }
+
+    fn module_is_evaluating(&self, path: &Path) -> bool {
+        let key = self.module_key(path);
+        let synthetic = key.with_extension("mjs");
+        let relative = synthetic
+            .strip_prefix(&self.cwd)
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| synthetic.clone());
+        self.module_evaluating.contains(&key)
+            || self.module_evaluating.contains(&synthetic)
+            || self.module_evaluating.contains(&relative)
     }
 
     fn require_module(&mut self, specifier: &str) -> JsResult<Value> {
@@ -10118,7 +10132,10 @@ impl Vm {
         if let Some(exports) = self.module_exports_cache.get(&key) {
             return Ok(exports.clone());
         }
-        if self.module_evaluating.contains(&key) {
+        if let Some(error) = self.module_errors.get(&key) {
+            return Err(JsError::Throw(error.clone()));
+        }
+        if self.module_is_evaluating(&key) {
             if self.deferred_namespace_loading {
                 return Err(JsError::Throw(type_error(
                     self,
@@ -10154,7 +10171,14 @@ impl Vm {
         // path for file I/O and diagnostics.
         let module_path = key.with_extension("mjs");
         let environment = self.module_environment();
-        let _ = self.run_source_text_in_environment(&module_path, &source, environment)?;
+        if let Err(error) = self.run_source_text_in_environment(&module_path, &source, environment)
+        {
+            self.module_evaluating.remove(&key);
+            if let JsError::Throw(value) = &error {
+                self.module_errors.insert(key.clone(), value.clone());
+            }
+            return Err(error);
+        }
         let exports = self
             .module_exports_cache
             .get(&module_path)
@@ -10364,7 +10388,7 @@ impl Vm {
             return Ok(());
         };
         let key = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-        if self.module_evaluating.contains(&key) {
+        if self.module_is_evaluating(&key) {
             return Err(JsError::Throw(type_error(
                 self,
                 "cannot access a deferred module while it is evaluating",
