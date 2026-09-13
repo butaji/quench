@@ -188,6 +188,7 @@ use oxc_ast::ast::*;
 use oxc_ast_visit::{Visit, walk as ast_walk};
 use oxc_parser::{ParseOptions, Parser};
 use oxc_span::{GetSpan, SourceType, Span};
+use oxc_syntax::scope::ScopeFlags;
 use regex::{CaptureLocations, Regex as LinearRegex};
 use std::cell::{Cell, OnceCell, RefCell, UnsafeCell};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -11847,6 +11848,12 @@ impl Vm {
             .iter()
             .any(|directive| directive.directive.as_str() == "use strict");
         let effective_strict_mode = previous_strict_mode || source_strict_mode || st.is_module();
+        if has_function_early_error(&r.program, effective_strict_mode) {
+            return Err(JsError::Throw(syntax_error(
+                self,
+                "invalid function parameter list",
+            )));
+        }
         if has_for_in_initializer_early_error(&r.program, effective_strict_mode) {
             return Err(JsError::Throw(syntax_error(
                 self,
@@ -16148,6 +16155,114 @@ fn collect_lexical_binding_names(statements: &[Statement<'_>], names: &mut HashS
 /// identifier; strict mode and destructuring bindings are early SyntaxErrors.
 /// Keeping this as a tree fact makes the check apply before any user code (or
 /// `$DONOTEVALUATE`) executes.
+fn has_function_early_error(program: &Program<'_>, inherited_strict: bool) -> bool {
+    struct Validator {
+        strict_stack: Vec<bool>,
+        inherited_strict: bool,
+        invalid: bool,
+    }
+
+    impl Validator {
+        fn strict(&self) -> bool {
+            self.strict_stack
+                .last()
+                .copied()
+                .unwrap_or(self.inherited_strict)
+        }
+
+        fn check_parameters(
+            &mut self,
+            parameters: &FormalParameters<'_>,
+            strict: bool,
+            arrow: bool,
+            body_strict: bool,
+        ) {
+            let mut names = Vec::new();
+            for parameter in &parameters.items {
+                pattern_bound_names(&parameter.pattern, &mut names);
+            }
+            if let Some(rest) = &parameters.rest {
+                pattern_bound_names(&rest.rest.argument, &mut names);
+            }
+            let mut seen = HashSet::new();
+            let duplicate = names.iter().any(|name| !seen.insert(name.clone()));
+            let non_simple = parameters.items.iter().any(|parameter| {
+                parameter.initializer.is_some()
+                    || !matches!(parameter.pattern, BindingPattern::BindingIdentifier(_))
+            }) || parameters.rest.is_some();
+            if duplicate && (arrow || strict || non_simple) {
+                self.invalid = true;
+            }
+            if (arrow || strict)
+                && names
+                    .iter()
+                    .any(|name| matches!(name.as_str(), "eval" | "arguments"))
+            {
+                self.invalid = true;
+            }
+            if strict
+                && names.iter().any(|name| {
+                    matches!(
+                        name.as_str(),
+                        "await"
+                            | "enum"
+                            | "implements"
+                            | "interface"
+                            | "let"
+                            | "package"
+                            | "private"
+                            | "protected"
+                            | "public"
+                            | "static"
+                            | "yield"
+                    )
+                })
+            {
+                self.invalid = true;
+            }
+            if body_strict && non_simple {
+                self.invalid = true;
+            }
+        }
+    }
+
+    impl<'a> Visit<'a> for Validator {
+        fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+            let body_strict = function.body.as_ref().is_some_and(|body| {
+                body.directives
+                    .iter()
+                    .any(|directive| directive.directive.as_str() == "use strict")
+            });
+            let strict = self.strict() || body_strict;
+            self.check_parameters(&function.params, strict, false, body_strict);
+            self.strict_stack.push(strict);
+            ast_walk::walk_function(self, function, flags);
+            self.strict_stack.pop();
+        }
+
+        fn visit_arrow_function_expression(&mut self, arrow: &ArrowFunctionExpression<'a>) {
+            let body_strict = arrow.body.as_function_body().is_some_and(|body| {
+                body.directives
+                    .iter()
+                    .any(|directive| directive.directive.as_str() == "use strict")
+            });
+            let strict = self.strict() || body_strict;
+            self.check_parameters(&arrow.params, strict, true, body_strict);
+            self.strict_stack.push(strict);
+            ast_walk::walk_arrow_function_expression(self, arrow);
+            self.strict_stack.pop();
+        }
+    }
+
+    let mut validator = Validator {
+        strict_stack: Vec::new(),
+        inherited_strict,
+        invalid: false,
+    };
+    validator.visit_program(program);
+    validator.invalid
+}
+
 fn has_for_in_initializer_early_error(program: &Program<'_>, strict: bool) -> bool {
     program
         .body
