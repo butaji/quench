@@ -79,6 +79,9 @@ Verification completed:
   arrow-function slice remains 55/55 after preserving parameter/body
   environments, lexical `new.target`/`super`, direct-eval conflicts, and
   `Symbol.unscopables`
+- canonical stencil Test262 stage 11 (`language/function-code`) is fully green
+  at 217/217; this confirms the same source-boundary early-error and function
+  environment machinery across the next language partition
 - production `quench-node` build and a core-backed Node smoke test
 - core-backed `tests/node-compat/stage-2235` (2/2 fixtures)
 - core-backed `tests/node-compat/stage-2650/buffer-tostring-range.js`
