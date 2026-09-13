@@ -61,13 +61,14 @@ use oxc_allocator::Allocator;
 use oxc_ast::ast::*;
 use oxc_parser::{ParseOptions, Parser};
 use oxc_span::{GetSpan, SourceType, Span};
-use regex::{CaptureLocations, Regex};
+use regex::{CaptureLocations, Regex as LinearRegex};
 use std::cell::{Cell, OnceCell, RefCell, UnsafeCell};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::env;
 use std::fmt;
 use std::fs;
 use std::marker::PhantomData;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::ptr;
 use std::rc::Rc;
@@ -2106,7 +2107,122 @@ struct FunctionValue<'a> {
     numeric_jit: RefCell<Option<Rc<LegoJitCode>>>,
     source_id: Option<usize>,
 }
-type RegExpKernel = Regex;
+#[derive(Clone)]
+enum RegExpKernel {
+    /// Linear-time backend for ordinary patterns.
+    Linear(LinearRegex),
+    /// Backtracking backend for ECMAScript constructs that the linear engine
+    /// deliberately rejects (backreferences and lookarounds).
+    Fancy(fancy_regex::Regex),
+}
+
+#[derive(Clone)]
+struct KernelCaptures {
+    groups: Vec<Option<Range<usize>>>,
+}
+
+impl KernelCaptures {
+    fn len(&self) -> usize {
+        self.groups.len()
+    }
+
+    fn get(&self, index: usize) -> Option<Range<usize>> {
+        self.groups.get(index).cloned().flatten()
+    }
+
+    fn iter(&self) -> impl Iterator<Item = Option<Range<usize>>> + '_ {
+        self.groups.iter().cloned()
+    }
+}
+
+#[derive(Clone, Copy)]
+struct KernelMatch {
+    start: usize,
+    end: usize,
+}
+
+impl RegExpKernel {
+    fn is_match(&self, text: &str) -> bool {
+        match self {
+            Self::Linear(regex) => regex.is_match(text),
+            Self::Fancy(regex) => regex.is_match(text).unwrap_or(false),
+        }
+    }
+
+    fn find(&self, text: &str) -> Option<KernelMatch> {
+        self.find_at(text, 0)
+    }
+
+    fn find_at(&self, text: &str, start: usize) -> Option<KernelMatch> {
+        match self {
+            Self::Linear(regex) => regex
+                .find_at(text, start)
+                .map(|m| KernelMatch { start: m.start(), end: m.end() }),
+            Self::Fancy(regex) => regex
+                .find_from_pos(text, start)
+                .ok()
+                .flatten()
+                .map(|m| KernelMatch { start: m.start(), end: m.end() }),
+        }
+    }
+
+    fn find_iter(&self, text: &str) -> Vec<KernelMatch> {
+        match self {
+            Self::Linear(regex) => regex
+                .find_iter(text)
+                .map(|m| KernelMatch { start: m.start(), end: m.end() })
+                .collect(),
+            Self::Fancy(regex) => regex
+                .find_iter(text)
+                .filter_map(Result::ok)
+                .map(|m| KernelMatch { start: m.start(), end: m.end() })
+                .collect(),
+        }
+    }
+
+    fn captures_iter(&self, text: &str) -> Vec<KernelCaptures> {
+        match self {
+            Self::Linear(regex) => regex
+                .captures_iter(text)
+                .map(|captures| KernelCaptures {
+                    groups: (0..captures.len())
+                        .map(|index| captures.get(index).map(|m| m.start()..m.end()))
+                        .collect(),
+                })
+                .collect(),
+            Self::Fancy(regex) => regex
+                .captures_iter(text)
+                .filter_map(Result::ok)
+                .map(|captures| KernelCaptures {
+                    groups: (0..captures.len())
+                        .map(|index| captures.get(index).map(|m| m.start()..m.end()))
+                        .collect(),
+                })
+                .collect(),
+        }
+    }
+
+    fn captures_at(&self, text: &str, start: usize) -> Option<KernelCaptures> {
+        match self {
+            Self::Linear(regex) => regex.captures_at(text, start).map(|captures| {
+                KernelCaptures {
+                    groups: (0..captures.len())
+                        .map(|index| captures.get(index).map(|m| m.start()..m.end()))
+                        .collect(),
+                }
+            }),
+            Self::Fancy(regex) => regex
+                .captures_from_pos(text, start)
+                .ok()
+                .flatten()
+                .map(|captures| KernelCaptures {
+                    groups: (0..captures.len())
+                        .map(|index| captures.get(index).map(|m| m.start()..m.end()))
+                        .collect(),
+                }),
+        }
+    }
+}
 
 #[derive(Clone)]
 enum RegExpLiteralKernel {
@@ -2133,6 +2249,8 @@ impl RegExpLiteralKernel {
 struct RegExpValue {
     regex: Rc<RegExpKernel>,
     capture_locations: Option<CaptureLocations>,
+    last_match: Option<(usize, usize)>,
+    last_captures: Option<KernelCaptures>,
     global: bool,
     source: String,
     flags: String,
@@ -2157,6 +2275,8 @@ impl RegExpValue {
         Self {
             regex,
             capture_locations: None,
+            last_match: None,
+            last_captures: None,
             global,
             source: String::new(),
             flags: if global { "g".into() } else { String::new() },
@@ -2174,25 +2294,153 @@ impl RegExpValue {
         if start > subject.len() || !subject.is_char_boundary(start) {
             return None;
         }
-        if self.capture_locations.is_none() {
-            self.capture_locations = Some(self.regex.capture_locations());
-        }
-        let locations = self
-            .capture_locations
-            .as_mut()
-            .expect("capture locations initialized above");
-        self.regex.captures_read_at(locations, subject, start)?;
-        Some(
-            (0..locations.len())
-                .map(|index| {
-                    locations
-                        .get(index)
-                        .map_or(Value::Undefined, |(start, end)| {
-                            Value::string_value(&subject[start..end])
+        match self.regex.as_ref() {
+            RegExpKernel::Linear(regex) => {
+                if self.capture_locations.is_none() {
+                    self.capture_locations = Some(regex.capture_locations());
+                }
+                let locations = self
+                    .capture_locations
+                    .as_mut()
+                    .expect("capture locations initialized above");
+                regex.captures_read_at(locations, subject, start)?;
+                self.last_match = locations.get(0);
+                self.last_captures = Some(KernelCaptures {
+                    groups: (0..locations.len())
+                        .map(|index| locations.get(index).map(|(start, end)| start..end))
+                        .collect(),
+                });
+                Some(
+                    (0..locations.len())
+                        .map(|index| {
+                            locations
+                                .get(index)
+                                .map_or(Value::Undefined, |(start, end)| {
+                                    Value::string_value(&subject[start..end])
+                                })
                         })
-                })
-                .collect(),
-        )
+                        .collect(),
+                )
+            }
+            RegExpKernel::Fancy(_) => {
+                let captures = self.regex.captures_at(subject, start)?;
+                self.last_match = captures.get(0).map(|range| (range.start, range.end));
+                self.last_captures = Some(captures.clone());
+                Some(
+                    (0..captures.len())
+                        .map(|index| {
+                            captures.get(index).map_or(Value::Undefined, |range| {
+                                Value::string_value(&subject[range])
+                            })
+                        })
+                        .collect(),
+                )
+            }
+        }
+    }
+}
+
+/// Recover named-capture declarations from the source spelling once, at the
+/// result boundary. OXC validates the pattern syntax; this scanner keeps the
+/// VM's observable groups/indices.groups shape independent of the regex engine
+/// (including duplicate names in disjunctions).
+fn named_group_catalog(source: &str) -> Vec<(String, Vec<usize>)> {
+    let bytes = source.as_bytes();
+    let mut groups = Vec::<(String, Vec<usize>)>::new();
+    let mut capture_index = 0usize;
+    let mut index = 0usize;
+    let mut escaped = false;
+    let mut in_class = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if escaped {
+            escaped = false;
+            index += 1;
+            continue;
+        }
+        if byte == b'\\' {
+            escaped = true;
+            index += 1;
+            continue;
+        }
+        if byte == b'[' {
+            in_class = true;
+            index += 1;
+            continue;
+        }
+        if byte == b']' && in_class {
+            in_class = false;
+            index += 1;
+            continue;
+        }
+        if !in_class && byte == b'(' {
+            let named_start = index + 3;
+            if bytes.get(index + 1) == Some(&b'?')
+                && bytes.get(index + 2) == Some(&b'<')
+                && !matches!(bytes.get(index + 3), Some(b'=') | Some(b'!'))
+            {
+                if let Some(close) = bytes[named_start..].iter().position(|byte| *byte == b'>') {
+                    let close = named_start + close;
+                    let name = String::from_utf8_lossy(&bytes[named_start..close]).into_owned();
+                    capture_index += 1;
+                    if let Some((_, indices)) = groups.iter_mut().find(|(key, _)| key == &name) {
+                        indices.push(capture_index);
+                    } else {
+                        groups.push((name, vec![capture_index]));
+                    }
+                    index = close + 1;
+                    continue;
+                }
+            }
+            if bytes.get(index + 1) != Some(&b'?') {
+                capture_index += 1;
+            }
+        }
+        index += 1;
+    }
+    groups
+}
+
+fn attach_regexp_match_metadata(
+    vm: &Vm,
+    result: &Value,
+    regexp: &RegExpValue,
+    source: &str,
+) {
+    let names = named_group_catalog(&regexp.source);
+    if names.is_empty() {
+        return;
+    }
+    let Some(captures) = regexp.last_captures.as_ref() else {
+        return;
+    };
+    let groups = vm.object(None);
+    for (name, indices) in &names {
+        let matching = indices.iter().rev().find_map(|index| captures.get(*index));
+        let value = matching.map_or(Value::Undefined, |range| {
+            Value::string_value(&source[range])
+        });
+        vm.set_prop(&groups, name, value);
+    }
+    vm.set_prop(result, "groups", groups.clone());
+    if regexp.flags.contains('d') {
+        let indices = vm.object(None);
+        for (name, group_indices) in names {
+            let matching = group_indices
+                .iter()
+                .rev()
+                .find_map(|index| captures.get(*index));
+            let value = matching.map_or(Value::Undefined, |range| {
+                vm.array_from_values(vec![
+                    Value::Number(utf16_index(source, range.start) as f64),
+                    Value::Number(utf16_index(source, range.end) as f64),
+                ])
+            });
+            vm.set_prop(&indices, &name, value);
+        }
+        let indices_array = vm.object(None);
+        vm.set_prop(&indices_array, "groups", indices);
+        vm.set_prop(result, "indices", indices_array);
     }
 }
 enum Signal {
@@ -10592,7 +10840,7 @@ fn string_argument(vm: &mut Vm, value: &Value) -> JsResult<String> {
 fn expand_js_replacement(
     template: &str,
     source: &str,
-    captures: &regex::Captures<'_>,
+    captures: &KernelCaptures,
     start: usize,
     end: usize,
 ) -> String {
@@ -10628,7 +10876,7 @@ fn expand_js_replacement(
                     let capture_index = chars[index + 2].to_digit(10).unwrap_or(0) as usize;
                     if capture_index > 0 && capture_index < captures.len() {
                         if let Some(capture) = captures.get(capture_index) {
-                            output.push_str(capture.as_str());
+                            output.push_str(&source[capture]);
                         }
                         index += 3;
                         continue;
@@ -10651,7 +10899,7 @@ fn expand_js_replacement(
                 }
                 if capture_index < captures.len() {
                     if let Some(capture) = captures.get(capture_index) {
-                        output.push_str(capture.as_str());
+                        output.push_str(&source[capture]);
                     }
                     index += consumed;
                 } else {
@@ -10710,14 +10958,14 @@ fn replacement_text(
     source: &str,
     matched: &str,
     start: usize,
-    captures: Option<&regex::Captures<'_>>,
+    captures: Option<&KernelCaptures>,
 ) -> JsResult<String> {
     if replacement.is_function() {
         let mut arguments = vec![Value::string_value(matched)];
         if let Some(captures) = captures {
             arguments.extend((1..captures.len()).map(|index| {
                 captures.get(index).map_or(Value::Undefined, |capture| {
-                    Value::string_value(capture.as_str())
+                    Value::string_value(&source[capture])
                 })
             }));
         }
@@ -10755,14 +11003,14 @@ fn native_string_replace(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
             let Some(found) = captures.get(0) else {
                 continue;
             };
-            out.push_str(&s[last..found.start()]);
+            out.push_str(&s[last..found.start]);
             if replacement.is_function() {
                 out.push_str(&replacement_text(
                     vm,
                     replacement,
                     &s,
-                    found.as_str(),
-                    found.start(),
+                    &s[found.clone()],
+                    found.start,
                     Some(&captures),
                 )?);
             } else {
@@ -10771,11 +11019,11 @@ fn native_string_replace(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
                     &text,
                     &s,
                     &captures,
-                    found.start(),
-                    found.end(),
+                    found.start,
+                    found.end,
                 ));
             }
-            last = found.end();
+            last = found.end;
             if !b.global {
                 break;
             }
@@ -10946,27 +11194,27 @@ fn regexp_split_values(
         };
         // A zero-width match at the start does not split the string (for
         // example, "x".split(/^/) is ["x"]).
-        if found.start() == 0 && found.end() == 0 && last_end == 0 {
+        if found.start == 0 && found.end == 0 && last_end == 0 {
             continue;
         }
-        if found.start() == source.len() && found.end() == source.len() {
+        if found.start == source.len() && found.end == source.len() {
             continue;
         }
         parts.push(Value::string_value(
-            source[last_end..found.start()].to_string(),
+            source[last_end..found.start].to_string(),
         ));
         if parts.len() >= limit {
             break;
         }
         for capture in captures.iter().skip(1) {
             parts.push(capture.map_or(Value::Undefined, |value| {
-                Value::string_value(value.as_str().to_string())
+                Value::string_value(source[value].to_string())
             }));
             if parts.len() >= limit {
                 break;
             }
         }
-        last_end = found.end();
+        last_end = found.end;
         if parts.len() >= limit {
             break;
         }
@@ -11184,7 +11432,8 @@ fn native_string_match(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
     let vals: Vec<Value> = if b.global {
         b.regex
             .find_iter(&s)
-            .map(|m| Value::string_value(m.as_str()))
+            .into_iter()
+            .map(|m| Value::string_value(&s[m.start..m.end]))
             .collect()
     } else if let Some(captures) = b.capture_values(&s) {
         captures
@@ -11196,11 +11445,7 @@ fn native_string_match(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
     } else {
         let result = vm.array_from_values(vals);
         if !b.global {
-            let index = b
-                .capture_locations
-                .as_ref()
-                .and_then(|locations| locations.get(0))
-                .map_or(0, |(start, _)| start);
+            let index = b.last_match.map_or(0, |(start, _)| start);
             vm.set_prop(
                 &result,
                 "index",
@@ -11477,19 +11722,19 @@ fn native_regexp_string_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> 
     };
     let mut regexp = regexp.borrow_mut();
     let values = regexp
-        .capture_values_at(&source, found.start())
-        .unwrap_or_else(|| vec![Value::string_value(found.as_str())]);
+        .capture_values_at(&source, found.start)
+        .unwrap_or_else(|| vec![Value::string_value(&source[found.start..found.end])]);
     let match_result = vm.array_from_values(values);
     vm.set_prop(
         &match_result,
         "index",
-        Value::Number(utf16_index(&source, found.start()) as f64),
+        Value::Number(utf16_index(&source, found.start) as f64),
     );
     vm.set_prop(&match_result, "input", Value::string_value(source.clone()));
-    let next_index = if found.end() == found.start() {
-        found.end().saturating_add(1)
+    let next_index = if found.end == found.start {
+        found.end.saturating_add(1)
     } else {
-        found.end()
+        found.end
     };
     vm.set_prop(
         &this,
@@ -12003,7 +12248,8 @@ fn native_regexp_symbol_match(vm: &mut Vm, this: Value, args: &[Value]) -> JsRes
             regexp
                 .regex
                 .find_iter(&source)
-                .map(|m| Value::string_value(m.as_str()))
+                .into_iter()
+                .map(|m| Value::string_value(&source[m.start..m.end]))
                 .collect(),
         ));
     }
@@ -12011,17 +12257,14 @@ fn native_regexp_symbol_match(vm: &mut Vm, this: Value, args: &[Value]) -> JsRes
         return Ok(Value::Null);
     };
     let result = vm.array_from_values(values);
-    let index = regexp
-        .capture_locations
-        .as_ref()
-        .and_then(|locations| locations.get(0))
-        .map_or(0, |(start, _)| start);
+    let index = regexp.last_match.map_or(0, |(start, _)| start);
     vm.set_prop(
         &result,
         "index",
         Value::Number(utf16_index(&source, index) as f64),
     );
-    vm.set_prop(&result, "input", Value::string_value(source));
+    vm.set_prop(&result, "input", Value::string_value(&source));
+    attach_regexp_match_metadata(vm, &result, &regexp, &source);
     Ok(result)
 }
 
@@ -12038,7 +12281,7 @@ fn native_regexp_symbol_search(vm: &mut Vm, this: Value, args: &[Value]) -> JsRe
             .borrow()
             .regex
             .find(&source)
-            .map_or(-1.0, |m| utf16_index(&source, m.start()) as f64),
+            .map_or(-1.0, |m| utf16_index(&source, m.start) as f64),
     ))
 }
 
@@ -12059,16 +12302,16 @@ fn native_regexp_symbol_replace(vm: &mut Vm, this: Value, args: &[Value]) -> JsR
             let Some(found) = captures.get(0) else {
                 continue;
             };
-            out.push_str(&source[last..found.start()]);
+            out.push_str(&source[last..found.start]);
             out.push_str(&replacement_text(
                 vm,
                 &replacement,
                 &source,
-                found.as_str(),
-                found.start(),
+                &source[found.clone()],
+                found.start,
                 Some(&captures),
             )?);
-            last = found.end();
+            last = found.end;
             if !regexp.global {
                 break;
             }
@@ -12083,15 +12326,15 @@ fn native_regexp_symbol_replace(vm: &mut Vm, this: Value, args: &[Value]) -> JsR
         let Some(found) = captures.get(0) else {
             continue;
         };
-        out.push_str(&source[last..found.start()]);
+        out.push_str(&source[last..found.start]);
         out.push_str(&expand_js_replacement(
             &replacement,
             &source,
             &captures,
-            found.start(),
-            found.end(),
+            found.start,
+            found.end,
         ));
-        last = found.end();
+        last = found.end;
         if !regexp.global {
             break;
         }
@@ -12147,24 +12390,17 @@ fn native_regexp_exec(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Valu
         }
         return Ok(Value::Null);
     };
-    let index = b
-        .capture_locations
-        .as_ref()
-        .and_then(|locations| locations.get(0))
-        .map_or(0, |(start, _)| start);
+    let index = b.last_match.map_or(0, |(start, _)| start);
     let result = vm.array_from_values(a);
     vm.set_prop(
         &result,
         "index",
         Value::Number(utf16_index(&s, index) as f64),
     );
-    vm.set_prop(&result, "input", Value::string_value(s));
+    vm.set_prop(&result, "input", Value::string_value(&s));
+    attach_regexp_match_metadata(vm, &result, &b, &s);
     if b.global {
-        let end = b
-            .capture_locations
-            .as_ref()
-            .and_then(|locations| locations.get(0))
-            .map_or(index, |(_, end)| end);
+        let end = b.last_match.map_or(index, |(_, end)| end);
         b.last_index = if end == index {
             end.saturating_add(1)
         } else {
@@ -14955,6 +15191,8 @@ fn native_regexp_compile(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
         .is_some_and(|attributes| !attributes.writable);
     regexp.regex = kernel;
     regexp.capture_locations = None;
+    regexp.last_match = None;
+    regexp.last_captures = None;
     regexp.global = flags.contains('g');
     regexp.source = source;
     regexp.flags = flags;
@@ -14983,7 +15221,21 @@ fn has_unicode_decimal_escape(pattern: &str) -> bool {
         .any(|pair| pair[0] == b'\\' && matches!(pair[1], b'1'..=b'9'))
 }
 
-fn compile_regex(pattern: &str, insensitive: bool) -> JsResult<Regex> {
+fn compile_regex(pattern: &str, insensitive: bool) -> JsResult<RegExpKernel> {
+    let pattern = rename_duplicate_named_groups(pattern);
+    // `regex` is the default linear backend.  Delegate patterns that contain
+    // a real numeric backreference or lookaround to the ECMAScript-capable
+    // engine instead of rewriting them into a different language.
+    if requires_fancy_regex(&pattern) {
+        let source = if insensitive {
+            format!("(?i:{pattern})")
+        } else {
+            pattern.to_owned()
+        };
+        return fancy_regex::Regex::new(&source)
+            .map(RegExpKernel::Fancy)
+            .map_err(|e| JsError::Message(format!("regex parse error: {e}")));
+    }
     let normalized = pattern
         .replace(r"[\s[]", r"[\s\[]")
         .replace(r"[\w[]", r"[\w\[]")
@@ -14996,6 +15248,13 @@ fn compile_regex(pattern: &str, insensitive: bool) -> JsResult<Regex> {
         .replace(r"\2", r#"['\"]?"#)
         .replace(r"\3", r#"['\"]?"#)
         .replace(r"\4", r#"['\"]?"#)
+        // In non-Unicode patterns, a decimal escape without a corresponding
+        // capture is an identity escape (Annex B), not a backreference.
+        .replace(r"\5", "5")
+        .replace(r"\6", "6")
+        .replace(r"\7", "7")
+        .replace(r"\8", "8")
+        .replace(r"\9", "9")
         .replace("(?=;)", "")
         .replace("(?!;)", "");
     let normalized = if normalized == "[]" {
@@ -15015,7 +15274,93 @@ fn compile_regex(pattern: &str, insensitive: bool) -> JsResult<Regex> {
     } else {
         normalized
     };
-    Regex::new(&source).map_err(|e| JsError::Message(format!("regex parse error: {e}")))
+    LinearRegex::new(&source)
+        .map(RegExpKernel::Linear)
+        .map_err(|e| JsError::Message(format!("regex parse error: {e}")))
+}
+
+fn requires_fancy_regex(pattern: &str) -> bool {
+    let captures = pattern
+        .as_bytes()
+        .windows(2)
+        .filter(|pair| pair[0] == b'(' && pair[1] != b'?')
+        .count();
+    let has_backreference = pattern.as_bytes().windows(2).any(|pair| {
+        pair[0] == b'\\'
+            && matches!(pair[1], b'1'..=b'9')
+            && usize::from(pair[1] - b'0') <= captures
+    });
+    has_backreference
+}
+
+fn rename_duplicate_named_groups(pattern: &str) -> String {
+    let bytes = pattern.as_bytes();
+    let mut output = String::with_capacity(pattern.len());
+    let mut names = HashMap::<String, usize>::new();
+    let mut index = 0usize;
+    let mut escaped = false;
+    let mut in_class = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if !byte.is_ascii() {
+            let character = pattern[index..]
+                .chars()
+                .next()
+                .expect("valid UTF-8 pattern");
+            output.push(character);
+            index += character.len_utf8();
+            escaped = false;
+            continue;
+        }
+        if escaped {
+            output.push(byte as char);
+            escaped = false;
+            index += 1;
+            continue;
+        }
+        if byte == b'\\' {
+            output.push('\\');
+            escaped = true;
+            index += 1;
+            continue;
+        }
+        if byte == b'[' {
+            in_class = true;
+            output.push('[');
+            index += 1;
+            continue;
+        }
+        if byte == b']' && in_class {
+            in_class = false;
+            output.push(']');
+            index += 1;
+            continue;
+        }
+        if !in_class
+            && bytes.get(index..).is_some_and(|tail| tail.starts_with(b"(?<"))
+            && !matches!(bytes.get(index + 3), Some(b'=') | Some(b'!'))
+        {
+            let name_start = index + 3;
+            if let Some(close_offset) = bytes[name_start..].iter().position(|byte| *byte == b'>') {
+                let close = name_start + close_offset;
+                let name = String::from_utf8_lossy(&bytes[name_start..close]).into_owned();
+                let occurrence = names.entry(name.clone()).or_insert(0);
+                *occurrence += 1;
+                output.push_str("(?<");
+                output.push_str(&name);
+                if *occurrence > 1 {
+                    output.push_str("__quench_dup");
+                    output.push_str(&occurrence.to_string());
+                }
+                output.push('>');
+                index = close + 1;
+                continue;
+            }
+        }
+        output.push(byte as char);
+        index += 1;
+    }
+    output
 }
 fn native_error(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
     let o = if this.is_object() {
@@ -17740,7 +18085,9 @@ mod tests {
         );
         assert_value_clone_drop(
             Rc::new(RefCell::new(RegExpValue::new(
-                Rc::new(Regex::new("value").expect("test regular expression")),
+                Rc::new(RegExpKernel::Linear(
+                    LinearRegex::new("value").expect("test regular expression"),
+                )),
                 false,
             ))),
             Value::RegExp,
@@ -17765,7 +18112,9 @@ mod tests {
         );
         assert_owned_raw_round_trip(
             Rc::new(RefCell::new(RegExpValue::new(
-                Rc::new(Regex::new("value").expect("test regular expression")),
+                Rc::new(RegExpKernel::Linear(
+                    LinearRegex::new("value").expect("test regular expression"),
+                )),
                 false,
             ))),
             Value::RegExp,
@@ -18120,7 +18469,9 @@ mod tests {
 
     #[test]
     fn regexp_capture_locations_are_lazy_and_reused() {
-        let kernel = Rc::new(Regex::new("(a)(b)?").expect("test regular expression"));
+        let kernel = Rc::new(RegExpKernel::Linear(
+            LinearRegex::new("(a)(b)?").expect("test regular expression"),
+        ));
         let mut regexp = RegExpValue::new(kernel, false);
         assert!(regexp.capture_locations.is_none());
 
@@ -18154,6 +18505,33 @@ mod tests {
     }
 
     #[test]
+    fn regexp_backreferences_use_the_semantic_fallback() {
+        let kernel = compile_regex(r"^(a+)\1*$", false).expect("backreference compiles");
+        assert!(kernel.is_match("aaaa"));
+        assert!(!kernel.is_match("aaab"));
+    }
+
+    #[test]
+    fn regexp_duplicate_named_groups_execute_on_semantic_fallback() {
+        let mut vm = Vm::new();
+        vm.install_process(Vec::new(), Vec::new());
+        vm.run_source_text(
+            Path::new("<duplicate-groups>"),
+            "result = 'abc'.match(/(?:(?<x>a)|(?<y>a)(?<x>b))(?:(?<z>c)|(?<z>d))/);",
+        )
+        .expect("duplicate groups execute");
+        assert!(!Environment::get(&vm.global, "result")
+            .is_some_and(|value| value.is_null()));
+        vm.run_source_text(
+            Path::new("<duplicate-groups-const>"),
+            "const matcher = /(?:(?<x>a)|(?<y>a)(?<x>b))(?:(?<z>c)|(?<z>d))/; result = 'abc'.match(matcher);",
+        )
+        .expect("duplicate groups const execute");
+        assert!(!Environment::get(&vm.global, "result")
+            .is_some_and(|value| value.is_null()));
+    }
+
+    #[test]
     fn builtin_method_reads_reuse_one_realm_identity() {
         let vm = Vm::new();
         let array = vm.array();
@@ -18170,7 +18548,9 @@ mod tests {
         assert!(first_to_fixed.same_bits(&second_to_fixed));
 
         let regexp = Value::RegExp(Rc::new(RefCell::new(RegExpValue::new(
-            Rc::new(Regex::new("value").expect("test regular expression")),
+            Rc::new(RegExpKernel::Linear(
+                LinearRegex::new("value").expect("test regular expression"),
+            )),
             false,
         ))));
         let first_test = vm.get_prop(&regexp, "test");

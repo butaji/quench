@@ -1520,6 +1520,15 @@ impl Compiler {
                     })
                     .unwrap_or(value.regex.pattern.text.as_str())
                     .to_string();
+                // Named captures carry an observable groups/indices object.
+                // Keep those patterns on the semantic interpreter until the
+                // stencil opcode carries that metadata explicitly.
+                if source.contains("(?<") {
+                    return Err(CompileGap {
+                        span: value.span,
+                        reason: "named RegExp groups use semantic fallback",
+                    });
+                }
                 let flags = regexp_flags!(value.regex.flags);
                 self.emit(
                     DynOp::RegExp {
