@@ -11214,6 +11214,24 @@ impl Vm {
         };
         for statement in &parsed.program.body {
             match statement {
+                Statement::ExportDefaultDeclaration(default) if imported == "default" => {
+                    let local = match &default.declaration {
+                        ExportDefaultDeclarationKind::FunctionDeclaration(function) => {
+                            function.id.as_ref().map(|id| id.name.to_string())
+                        }
+                        ExportDefaultDeclarationKind::ClassDeclaration(class) => {
+                            class.id.as_ref().map(|id| id.name.to_string())
+                        }
+                        _ => None,
+                    };
+                    if let Some(local) = local {
+                        if let Some(environment) = self.module_environments.get(&key)
+                            && let Some(value) = Environment::get(environment, &local)
+                        {
+                            return Ok(value);
+                        }
+                    }
+                }
                 Statement::ExportFromDeclaration(export) => {
                     for specifier in &export.specifiers {
                         if module_export_name_for_early_error(&specifier.exported) == imported {
@@ -11254,8 +11272,21 @@ impl Vm {
             return Ok(());
         };
         for statement in &program.body {
-            let Statement::ImportDeclaration(import) = statement else {
-                continue;
+            let import = match statement {
+                Statement::ImportDeclaration(import) => import,
+                Statement::ExportFromDeclaration(export) => {
+                    let dependency =
+                        self.resolve_module_request(parent, export.source.value.as_str());
+                    self.load_module_exports(&dependency)?;
+                    continue;
+                }
+                Statement::ExportAllDeclaration(export) => {
+                    let dependency =
+                        self.resolve_module_request(parent, export.source.value.as_str());
+                    self.load_module_exports(&dependency)?;
+                    continue;
+                }
+                _ => continue,
             };
             let target = self.resolve_module_request(parent, import.source.value.as_str());
             let import_type = import.with_clause.as_ref().and_then(|clause| {
@@ -11365,7 +11396,22 @@ impl Vm {
                     } else {
                         match exports.get(&imported).cloned() {
                             Some(value) => {
-                                if let Some((reference_path, reference_name)) =
+                                if import_type.is_none()
+                                    && !deferred
+                                    && let Some(local_name) =
+                                        self.module_export_local_binding(&target, &imported)
+                                {
+                                    self.module_import_ref(&target, &local_name)
+                                } else if import_type.is_none()
+                                    && !deferred
+                                    && self
+                                        .module_export_bindings(&target)?
+                                        .get(&imported)
+                                        .copied()
+                                        == Some(1)
+                                {
+                                    self.module_import_ref(&target, &imported)
+                                } else if let Some((reference_path, reference_name)) =
                                     self.module_ref_value_parts(&value)
                                 {
                                     self.resolve_named_module_ref(
@@ -13602,6 +13648,22 @@ impl Vm {
                     declaration_names_for_early_error(&export.declaration, &mut names);
                     if names.iter().any(|name| name == exported_name) {
                         return Some(exported_name.to_owned());
+                    }
+                }
+                Statement::ExportDefaultDeclaration(default) => {
+                    let local = match &default.declaration {
+                        ExportDefaultDeclarationKind::FunctionDeclaration(function) => {
+                            function.id.as_ref().map(|id| id.name.to_string())
+                        }
+                        ExportDefaultDeclarationKind::ClassDeclaration(class) => {
+                            class.id.as_ref().map(|id| id.name.to_string())
+                        }
+                        _ => None,
+                    };
+                    if exported_name == "default" {
+                        if let Some(local) = local {
+                            return Some(local);
+                        }
                     }
                 }
                 Statement::ExportNamedDeclaration(export) => {
