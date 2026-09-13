@@ -14913,10 +14913,25 @@ fn native_string(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     let value = a.first().cloned().unwrap_or(Value::Undefined);
     Ok(Value::string_value(if a.is_empty() {
         String::new()
+    } else if is_symbol_carrier(&value) {
+        symbol_display_string(&value)
     } else {
         let primitive = to_primitive_for_binary(vm, &value, true)?;
-        to_string_with_vm(vm, &primitive)?
+        if is_symbol_carrier(&primitive) {
+            symbol_display_string(&primitive)
+        } else {
+            to_string_with_vm(vm, &primitive)?
+        }
     }))
+}
+
+fn symbol_display_string(value: &Value) -> String {
+    let description = value
+        .as_object_ref()
+        .and_then(|object| object.borrow().props.get("\0symbol").cloned())
+        .map(|description| description.string())
+        .unwrap_or_default();
+    format!("Symbol({description})")
 }
 
 fn js_number_to_string(number: f64) -> String {
@@ -14969,12 +14984,10 @@ fn to_string_with_vm(vm: &mut Vm, value: &Value) -> JsResult<String> {
         .as_object_ref()
         .is_some_and(|object| object.borrow().props.contains_key("\0symbol"))
     {
-        let description = value
-            .as_object_ref()
-            .and_then(|object| object.borrow().props.get("\0symbol").cloned())
-            .map(|description| description.string())
-            .unwrap_or_default();
-        return Ok(format!("Symbol({description})"));
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Cannot convert a Symbol value to a string",
+        )));
     }
     if value.is_object() || value.is_function() || value.is_regexp() {
         let primitive = to_primitive_for_binary(vm, value, true)?;
