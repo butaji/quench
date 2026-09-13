@@ -13540,11 +13540,13 @@ impl Vm {
                 self.bind_pattern_with_eval_env(&assignment.left, value, target, eval_env)
             }
             BindingPattern::ArrayPattern(array) => {
-                let values = if value.is_undefined() || value.is_null() {
-                    Vec::new()
-                } else {
-                    self.iterable_values(&value)?
-                };
+                if value.is_undefined() || value.is_null() {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "cannot destructure nullish value",
+                    )));
+                }
+                let values = self.iterable_values(&value)?;
                 for (index, element) in array.elements.iter().enumerate() {
                     if let Some(element) = element {
                         self.bind_pattern_with_eval_env(
