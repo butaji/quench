@@ -172,11 +172,17 @@ Verification completed:
 - the stencil AsyncFunction built-ins stage now reaches 18/18 after deriving
   the shared async constructor/prototype identity, constructability checks,
   `instanceof Function`, and non-writable `Symbol.toStringTag` metadata
-- the stencil AsyncGeneratorFunction built-ins stage now reaches 16/23 after
+- the stencil AsyncGeneratorFunction built-ins stage now reaches 23/23 after
   deriving the shared async-generator constructor/prototype identity,
-  generator prototype descriptors, and `instanceof` behavior; the remaining
-  cases require async-generator suspension/`next()` execution, dynamic
-  parameter early errors, and cross-realm construction
+  generator prototype descriptors, `instanceof` behavior, deferred
+  `next()` execution, and constructor-realm selection
+- the stencil AsyncGeneratorPrototype and AsyncIteratorPrototype stages are
+  fully green (48/48 and 13/13); Promise-backed request queues, iterator
+  self/dispose methods, and async-generator completion all execute through
+  the same core
+- the stencil Promise stage reaches 326/729; the remaining failures are
+  Promise capability/thenable assimilation, aggregate combinators, and
+  species/realm edge cases, so this gate is intentionally still open
 - the stencil eval-code stage now reaches 347/347 after modeling parameter
   binding conflicts, implicit `arguments`, lexical TDZ state, strict reserved
   bindings, strict caller propagation, isolated strict-eval environments, and
