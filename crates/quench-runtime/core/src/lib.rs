@@ -111,6 +111,7 @@ macro_rules! environment_keys {
 
 environment_keys! {
     CLASS_METHOD_STRICT_ENV_NAME => "class-method-strict",
+    CLASS_HOME_OBJECT_ENV_NAME => "class-home-object",
     CLASS_SUPER_CONSTRUCTOR_ENV_NAME => "class-super-constructor",
     CLASS_SUPER_PROTOTYPE_ENV_NAME => "class-super-prototype",
     EVAL_CODE_ENV_NAME => "eval-code",
@@ -9427,9 +9428,19 @@ impl Vm {
             NewTarget(_) => {
                 Ok(Environment::get(&e, NEW_TARGET_VALUE_NAME).unwrap_or(Value::Undefined))
             }
-            Super(_) => Ok(
-                Environment::get(&e, CLASS_SUPER_PROTOTYPE_ENV_NAME).unwrap_or(Value::Undefined)
-            ),
+            Super(_) => {
+                let home_prototype = Environment::get(&e, CLASS_HOME_OBJECT_ENV_NAME)
+                    .and_then(|value| {
+                        value
+                            .as_object_ref()
+                            .map(|home| home.borrow().prototype.clone())
+                    })
+                    .flatten();
+                Ok(home_prototype
+                    .map(Value::Object)
+                    .or_else(|| Environment::get(&e, CLASS_SUPER_PROTOTYPE_ENV_NAME))
+                    .unwrap_or(Value::Undefined))
+            }
             ArrayExpression(v) => {
                 let a = self.array();
                 let mut index = 0usize;
@@ -9465,6 +9476,13 @@ impl Vm {
                     if let ObjectPropertyKind::ObjectProperty(p) = p {
                         let k = self.eval_property_key(&p.key, e.clone())?;
                         let z = self.eval_expr(&p.value, e.clone())?;
+                        if p.method
+                            && let Some(function) = z.as_function_ref()
+                            && let FunctionKind::User { env, .. } = &function.kind
+                        {
+                            env.borrow_mut()
+                                .declare(CLASS_HOME_OBJECT_ENV_NAME, o.clone());
+                        }
                         match p.kind {
                             PropertyKind::Get => self.define_accessor_slot(
                                 &o,
@@ -11307,6 +11325,23 @@ fn native_eval_in_environment(
         return Err(JsError::Throw(syntax_error(
             vm,
             "new.target is not permitted in this eval context",
+        )));
+    }
+    if source.contains("super")
+        && nearest_local_binding(&environment, CLASS_SUPER_PROTOTYPE_ENV_NAME).is_none()
+        && nearest_local_binding(&environment, CLASS_HOME_OBJECT_ENV_NAME).is_none()
+    {
+        return Err(JsError::Throw(syntax_error(
+            vm,
+            "super is not permitted in this eval context",
+        )));
+    }
+    if source.contains("super(")
+        && nearest_local_binding(&environment, CLASS_SUPER_CONSTRUCTOR_ENV_NAME).is_none()
+    {
+        return Err(JsError::Throw(syntax_error(
+            vm,
+            "super call is not permitted in this eval context",
         )));
     }
     let path = vm
