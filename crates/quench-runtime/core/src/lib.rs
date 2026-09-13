@@ -100,6 +100,9 @@ const OBJECT_LIVE_HEAP_GROWTH_FACTOR: usize = 2;
 const OBJECT_GC_STRESS_ENV: &str = "QUENCH_OBJECT_GC_STRESS";
 const FIRST_OBJECT_HEAP_ID: u64 = 1;
 const OBJECT_HEAP_ID_INCREMENT: u64 = 1;
+const CLASS_METHOD_STRICT_ENV_NAME: &str = "\0quench:class-method-strict";
+const CLASS_SUPER_CONSTRUCTOR_ENV_NAME: &str = "\0quench:class-super-constructor";
+const CLASS_SUPER_PROTOTYPE_ENV_NAME: &str = "\0quench:class-super-prototype";
 static NEXT_OBJECT_HEAP_ID: AtomicU64 = AtomicU64::new(FIRST_OBJECT_HEAP_ID);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1322,6 +1325,16 @@ impl<'a> ObjectTracer<'a> {
             FunctionKind::User { env, .. } | FunctionKind::Arrow { env, .. } => {
                 self.environment(env.clone());
             }
+            FunctionKind::Class {
+                env,
+                super_constructor,
+                ..
+            } => {
+                self.environment(env.clone());
+                if let Some(constructor) = super_constructor {
+                    self.value(constructor);
+                }
+            }
             FunctionKind::Builtin(_) | FunctionKind::Native(_) => {}
             FunctionKind::Bound {
                 target,
@@ -1975,6 +1988,11 @@ enum FunctionKind<'a> {
         node: &'a ArrowFunctionExpression<'a>,
         env: Env,
     },
+    Class {
+        node: &'a Class<'a>,
+        env: Env,
+        super_constructor: Option<Value>,
+    },
     Builtin(BuiltinId),
     Native(fn(&mut Vm, Value, &[Value]) -> JsResult<Value>),
     Bound {
@@ -2262,6 +2280,7 @@ impl RegExpLiteralKernel {
 
 struct RegExpValue {
     regex: Rc<RegExpKernel>,
+    prototype: Option<ObjectHandle>,
     capture_locations: Option<CaptureLocations>,
     last_match: Option<(usize, usize)>,
     last_captures: Option<KernelCaptures>,
@@ -2288,6 +2307,7 @@ impl RegExpValue {
         );
         Self {
             regex,
+            prototype: None,
             capture_locations: None,
             last_match: None,
             last_captures: None,
@@ -6230,6 +6250,29 @@ impl Vm {
                 if let Some(v) = object.props.get(k) {
                     return v.clone();
                 }
+                let builtin_owner = [
+                    BuiltinOwner::ArrayPrototype,
+                    BuiltinOwner::StringPrototype,
+                    BuiltinOwner::NumberPrototype,
+                    BuiltinOwner::BooleanPrototype,
+                    BuiltinOwner::DatePrototype,
+                    BuiltinOwner::RegExpPrototype,
+                    BuiltinOwner::ObjectPrototype,
+                    BuiltinOwner::FunctionPrototype,
+                ]
+                .into_iter()
+                .find(|owner| {
+                    owner
+                        .prototype_constructor()
+                        .and_then(|constructor| self.builtin(constructor).as_function())
+                        .is_some_and(|function| std::ptr::eq(&*function.prototype, x))
+                });
+                if let Some(owner) = builtin_owner {
+                    let method = self.builtin_property(owner, k);
+                    if !method.is_undefined() {
+                        return method;
+                    }
+                }
                 if let Some(wrapper) = object.props.get("\0wrapper").and_then(Value::as_string) {
                     let owner = match wrapper.as_str() {
                         "String" => Some(BuiltinOwner::StringPrototype),
@@ -6324,6 +6367,7 @@ impl Vm {
                     {
                         true
                     }
+                    FunctionKind::Class { .. } => true,
                     FunctionKind::Native(_)
                     | FunctionKind::Arrow { .. }
                     | FunctionKind::Bound { .. } => false,
@@ -6402,6 +6446,12 @@ impl Vm {
             if let Some(value) = regexp.borrow().props.get(k) {
                 return value.clone();
             }
+            if let Some(prototype) = regexp.borrow().prototype.clone() {
+                let value = self.get_prop(&Value::Object(prototype), k);
+                if !value.is_undefined() {
+                    return value;
+                }
+            }
             return regexp_method(self, regexp, k);
         }
         if o.as_number().is_some() {
@@ -6439,7 +6489,9 @@ impl Vm {
             return true;
         }
         match &function.kind {
-            FunctionKind::Arrow { .. } | FunctionKind::Bound { .. } => true,
+            FunctionKind::Arrow { .. }
+            | FunctionKind::Bound { .. }
+            | FunctionKind::Class { .. } => true,
             FunctionKind::User { node, .. } => node.body.as_ref().is_some_and(|body| {
                 body.directives
                     .iter()
@@ -7067,6 +7119,7 @@ impl Vm {
                 match &f.kind {
                     FunctionKind::User { node, .. } => self.compile_user_function(&f, node)?,
                     FunctionKind::Arrow { node, .. } => self.compile_arrow_function(&f, node)?,
+                    FunctionKind::Class { .. } => unreachable!(),
                     FunctionKind::Builtin(_)
                     | FunctionKind::Native(_)
                     | FunctionKind::Bound { .. } => unreachable!(),
@@ -7095,7 +7148,9 @@ impl Vm {
                 && let Some(code) = f.dyn_jit.borrow().clone()
             {
                 let env = match &f.kind {
-                    FunctionKind::User { env, .. } | FunctionKind::Arrow { env, .. } => env,
+                    FunctionKind::User { env, .. }
+                    | FunctionKind::Arrow { env, .. }
+                    | FunctionKind::Class { env, .. } => env,
                     FunctionKind::Builtin(_)
                     | FunctionKind::Native(_)
                     | FunctionKind::Bound { .. } => unreachable!(),
@@ -7119,6 +7174,10 @@ impl Vm {
                                 FunctionKind::Arrow { node, env } => {
                                     self.call_arrow(node, env.clone(), a.materialize(), f.source_id)
                                 }
+                                FunctionKind::Class { .. } => Err(JsError::Throw(type_error(
+                                    self,
+                                    "class constructor cannot be invoked without 'new'",
+                                ))),
                                 _ => Err(error),
                             },
                             result => result,
@@ -7133,6 +7192,10 @@ impl Vm {
                         FunctionKind::Arrow { node, env } => {
                             self.call_arrow(node, env.clone(), a.materialize(), f.source_id)
                         }
+                        FunctionKind::Class { .. } => Err(JsError::Throw(type_error(
+                            self,
+                            "class constructor cannot be invoked without 'new'",
+                        ))),
                         _ => Err(error),
                     },
                     result => result,
@@ -7174,6 +7237,10 @@ impl Vm {
                 FunctionKind::Arrow { node, env } => {
                     self.call_arrow(node, env.clone(), a.materialize(), f.source_id)
                 }
+                FunctionKind::Class { .. } => Err(JsError::Throw(type_error(
+                    self,
+                    "class constructor cannot be invoked without 'new'",
+                ))),
             }
         } else {
             Err(JsError::Throw(type_error(self, "not a function")))
@@ -7402,6 +7469,44 @@ impl Vm {
             self.source_ids.pop();
         }
         result
+    }
+
+    fn call_class(
+        &mut self,
+        function: &FunctionValue<'static>,
+        this: Value,
+        args: Vec<Value>,
+    ) -> JsResult<Value> {
+        let (class, env, super_constructor) = match &function.kind {
+            FunctionKind::Class {
+                node,
+                env,
+                super_constructor,
+            } => (*node, env.clone(), super_constructor.clone()),
+            _ => unreachable!("call_class requires a class function"),
+        };
+        let constructor = class.body.body.iter().find_map(|element| {
+            let ClassElement::MethodDefinition(method) = element else {
+                return None;
+            };
+            (method.kind == MethodDefinitionKind::Constructor).then_some(&*method.value)
+        });
+        if let Some(constructor) = constructor {
+            let constructor = self.make_user(constructor, env);
+            let result = self.call_arguments(&constructor, this.clone(), args.as_slice())?;
+            if let Some(regexp) = result.as_regexp_ref() {
+                regexp.borrow_mut().prototype = this.as_object();
+            }
+            Ok(result)
+        } else if let Some(super_constructor) = super_constructor {
+            let result = self.call_arguments(&super_constructor, this.clone(), args.as_slice())?;
+            if let Some(regexp) = result.as_regexp_ref() {
+                regexp.borrow_mut().prototype = this.as_object();
+            }
+            Ok(result)
+        } else {
+            Ok(Value::Undefined)
+        }
     }
 
     fn call_arrow(
@@ -7737,6 +7842,29 @@ impl Vm {
                 }
                 Ok(Signal::Normal(Value::Undefined))
             }
+            ForOfStatement(x) => {
+                let loop_label = self.pending_loop_label.take();
+                let iterable = self.eval_expr(&x.right, e.clone())?;
+                let values = self.iterable_values(&iterable)?;
+                for value in values {
+                    self.assign_for_left(&x.left, value, e.clone())?;
+                    match self.exec_stmt(&x.body, e.clone())? {
+                        Signal::Break(None) => break,
+                        Signal::Break(Some(label))
+                            if loop_label.as_deref() == Some(label.as_str()) =>
+                        {
+                            break;
+                        }
+                        Signal::Break(Some(label)) => return Ok(Signal::Break(Some(label))),
+                        Signal::Return(v) => return Ok(Signal::Return(v)),
+                        Signal::Continue(None) | Signal::Normal(_) => {}
+                        Signal::Continue(Some(label))
+                            if loop_label.as_deref() == Some(label.as_str()) => {}
+                        Signal::Continue(Some(label)) => return Ok(Signal::Continue(Some(label))),
+                    }
+                }
+                Ok(Signal::Normal(Value::Undefined))
+            }
             SwitchStatement(x) => {
                 let d = self.eval_expr(&x.discriminant, e.clone())?;
                 let mut active = false;
@@ -7790,14 +7918,50 @@ impl Vm {
                 }
                 out
             }
+            WithStatement(x) => {
+                let object = self.eval_expr(&x.object, e.clone())?;
+                if object.is_null() || object.is_undefined() {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "cannot convert nullish to object",
+                    )));
+                }
+                let with_env = Environment::new(Some(e));
+                let keys = object
+                    .as_object_ref()
+                    .map(|object| object.borrow().props.keys().cloned().collect::<Vec<_>>())
+                    .unwrap_or_default();
+                for key in &keys {
+                    let value = self.get_prop(&object, key);
+                    with_env.borrow_mut().declare(key, value);
+                }
+                let result = self.exec_stmt(&x.body, with_env.clone());
+                for key in keys {
+                    if let Some(value) = Environment::get(&with_env, &key) {
+                        // Sloppy `with` assignments silently ignore writes to
+                        // read-only properties; the ordinary setter path has
+                        // exactly that behavior in this snapshot model.
+                        self.set_prop(&object, &key, value);
+                    }
+                }
+                result
+            }
             VariableDeclaration(v) => {
                 self.exec_var(v, e)?;
                 Ok(Signal::Normal(Value::Undefined))
             }
             FunctionDeclaration(f) => {
                 if let Some(i) = &f.id {
-                    e.borrow_mut()
-                        .declare(i.name.as_str(), self.make_user(f, e.clone()));
+                    let closure = self.make_user(f, e.clone());
+                    e.borrow_mut().declare(i.name.as_str(), closure);
+                }
+                Ok(Signal::Normal(Value::Undefined))
+            }
+            ClassDeclaration(class) => {
+                if let Some(id) = &class.id {
+                    let value = self.make_class(class, e.clone())?;
+                    e.borrow_mut().declare(id.name.as_str(), value.clone());
+                    self.sync_global_binding(&e, id.name.as_str(), value);
                 }
                 Ok(Signal::Normal(Value::Undefined))
             }
@@ -7818,23 +7982,26 @@ impl Vm {
                 }
                 Ok(Signal::Normal(Value::Undefined))
             }
+            Declaration::ClassDeclaration(class) => {
+                if let Some(id) = &class.id {
+                    let value = self.make_class(class, e.clone())?;
+                    e.borrow_mut().declare(id.name.as_str(), value.clone());
+                    self.sync_global_binding(&e, id.name.as_str(), value);
+                }
+                Ok(Signal::Normal(Value::Undefined))
+            }
             _ => Err(JsError::Message("unsupported declaration".into())),
         }
     }
     fn exec_var<'a>(&mut self, v: &VariableDeclaration<'a>, e: Env) -> JsResult<()> {
         for d in &v.declarations {
-            if let Some(n) = pattern_name(&d.id) {
-                if let Some(init) = &d.init {
-                    let x = self.eval_expr(init, e.clone())?;
-                    e.borrow_mut().declare(&n, x.clone());
-                    self.sync_global_binding(&e, &n, x);
-                } else if !e.borrow().contains_local(&n) {
-                    e.borrow_mut().declare(&n, Value::Undefined);
-                    self.sync_global_binding(&e, &n, Value::Undefined);
-                }
-            } else {
-                return Err(JsError::Message("destructuring unsupported".into()));
-            }
+            let value = d
+                .init
+                .as_ref()
+                .map(|init| self.eval_expr(init, e.clone()))
+                .transpose()?
+                .unwrap_or(Value::Undefined);
+            self.bind_pattern(&d.id, value, e.clone())?;
         }
         Ok(())
     }
@@ -7851,9 +8018,7 @@ impl Vm {
         match l {
             ForStatementLeft::VariableDeclaration(d) => {
                 if let Some(x) = d.declarations.first() {
-                    if let Some(n) = pattern_name(&x.id) {
-                        e.borrow_mut().declare(&n, v)
-                    }
+                    self.bind_pattern(&x.id, v, e)?;
                 }
             }
             _ => {
@@ -7868,11 +8033,98 @@ impl Vm {
         }
         Ok(())
     }
+
+    fn iterable_values(&self, value: &Value) -> JsResult<Vec<Value>> {
+        if let Some(object) = value.as_object_ref() {
+            return object
+                .borrow()
+                .array
+                .as_ref()
+                .map(|array| array.values.clone())
+                .ok_or_else(|| JsError::Throw(type_error(self, "value is not iterable")));
+        }
+        if let Some(string) = value.as_string() {
+            return Ok(utf16_units(string)
+                .into_iter()
+                .map(|unit| Value::string_value(string_from_utf16_units(&[unit])))
+                .collect());
+        }
+        Err(JsError::Throw(type_error(self, "value is not iterable")))
+    }
+
+    fn bind_pattern<'a>(
+        &mut self,
+        pattern: &BindingPattern<'a>,
+        value: Value,
+        e: Env,
+    ) -> JsResult<()> {
+        match pattern {
+            BindingPattern::BindingIdentifier(identifier) => {
+                let name = identifier.name.as_str();
+                e.borrow_mut().declare(name, value.clone());
+                self.sync_global_binding(&e, name, value);
+                Ok(())
+            }
+            BindingPattern::AssignmentPattern(assignment) => {
+                let value = if value.is_undefined() {
+                    self.eval_expr(&assignment.right, e.clone())?
+                } else {
+                    value
+                };
+                self.bind_pattern(&assignment.left, value, e)
+            }
+            BindingPattern::ArrayPattern(array) => {
+                let values = if value.is_undefined() || value.is_null() {
+                    Vec::new()
+                } else {
+                    self.iterable_values(&value)?
+                };
+                for (index, element) in array.elements.iter().enumerate() {
+                    if let Some(element) = element {
+                        self.bind_pattern(
+                            element,
+                            values.get(index).cloned().unwrap_or(Value::Undefined),
+                            e.clone(),
+                        )?;
+                    }
+                }
+                if let Some(rest) = &array.rest {
+                    self.bind_pattern(
+                        &rest.argument,
+                        self.array_from_values(
+                            values.into_iter().skip(array.elements.len()).collect(),
+                        ),
+                        e,
+                    )?;
+                }
+                Ok(())
+            }
+            BindingPattern::ObjectPattern(object) => {
+                if value.is_null() || value.is_undefined() {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "cannot destructure nullish value",
+                    )));
+                }
+                for property in &object.properties {
+                    let key = self.eval_property_key(&property.key, e.clone())?;
+                    let property_value = self.get_prop(&value, &key);
+                    self.bind_pattern(&property.value, property_value, e.clone())?;
+                }
+                if let Some(rest) = &object.rest {
+                    self.bind_pattern(&rest.argument, self.ordinary_object(), e)?;
+                }
+                Ok(())
+            }
+        }
+    }
     fn make_user<'a>(&self, n: &'a Function<'a>, e: Env) -> Value {
         // A non-simple parameter list creates an unmapped arguments object,
         // even in sloppy code.  Preserve that fact on the function's lexical
         // environment so every execution tier can derive the same accessor
         // policy without duplicating AST checks in the call machinery.
+        let class_method_strict =
+            Environment::get(&e, CLASS_METHOD_STRICT_ENV_NAME).is_some_and(|value| value.truthy());
         let e = if n.params.items.iter().any(|parameter| {
             parameter.initializer.is_some()
                 || !matches!(parameter.pattern, BindingPattern::BindingIdentifier(_))
@@ -7902,6 +8154,7 @@ impl Vm {
                 env: e,
             },
             strict: self.strict_mode
+                || class_method_strict
                 || n.body.as_ref().is_some_and(|body| {
                     body.directives
                         .iter()
@@ -7949,6 +8202,171 @@ impl Vm {
         p.borrow_mut().props.insert("constructor", v.clone());
         v
     }
+
+    fn make_class<'a>(&mut self, n: &'a Class<'a>, outer: Env) -> JsResult<Value> {
+        let super_constructor = n
+            .heritage
+            .as_ref()
+            .map(|heritage| self.eval_expr(&heritage.expression, outer.clone()))
+            .transpose()?;
+        let super_prototype = super_constructor.as_ref().and_then(|constructor| {
+            constructor
+                .as_function_ref()
+                .map(|function| function.prototype.clone())
+        });
+        let prototype = self.object_value(Object::ordinary(super_prototype));
+        let prototype_handle = prototype
+            .as_object()
+            .expect("class prototype is an ordinary object");
+        let class_env = Environment::new(Some(outer));
+        class_env
+            .borrow_mut()
+            .declare(CLASS_METHOD_STRICT_ENV_NAME, Value::Bool(true));
+        class_env.borrow_mut().declare(
+            CLASS_SUPER_CONSTRUCTOR_ENV_NAME,
+            super_constructor.clone().unwrap_or(Value::Undefined),
+        );
+        class_env.borrow_mut().declare(
+            CLASS_SUPER_PROTOTYPE_ENV_NAME,
+            super_constructor
+                .as_ref()
+                .and_then(|constructor| {
+                    constructor
+                        .as_function_ref()
+                        .map(|function| Value::Object(function.prototype.clone()))
+                })
+                .unwrap_or(Value::Undefined),
+        );
+        let constructor_method = n.body.body.iter().find_map(|element| {
+            let ClassElement::MethodDefinition(method) = element else {
+                return None;
+            };
+            (method.kind == MethodDefinitionKind::Constructor).then_some(&*method.value)
+        });
+        let length = constructor_method
+            .map(|constructor| {
+                constructor
+                    .params
+                    .items
+                    .iter()
+                    .take_while(|parameter| !parameter.pattern.is_assignment_pattern())
+                    .count()
+            })
+            .unwrap_or(0);
+        let name = n.id.as_ref().map_or("", |id| id.name.as_str());
+        let function = FunctionValue {
+            kind: FunctionKind::Class {
+                node: unsafe { std::mem::transmute(n) },
+                env: class_env.clone(),
+                super_constructor,
+            },
+            strict: true,
+            prototype: prototype_handle,
+            props: Rc::new(RefCell::new(IndexMap::from([
+                ("name".into(), Value::string_value(name)),
+                ("length".into(), Value::Number(length as f64)),
+            ]))),
+            attributes: Rc::new(RefCell::new(HashMap::new())),
+            dyn_jit: RefCell::new(None),
+            numeric_jit: RefCell::new(None),
+            source_id: self.source_ids.last().copied(),
+        };
+        let class = Value::Function(Rc::new(function));
+        if let Some(id) = &n.id {
+            class_env
+                .borrow_mut()
+                .declare(id.name.as_str(), class.clone());
+        }
+        self.set_prop(&prototype, "constructor", class.clone());
+        set_property_attributes(&prototype, "constructor", PropertyAttributes::DEFAULT);
+        if let Some(super_constructor) =
+            class
+                .as_function_ref()
+                .and_then(|function| match &function.kind {
+                    FunctionKind::Class {
+                        super_constructor, ..
+                    } => super_constructor.as_ref(),
+                    _ => None,
+                })
+        {
+            // Static data properties are inherited through the constructor's
+            // [[Prototype]] chain.  The compact core stores callable statics
+            // in the function property table, so materialize that projection
+            // once when the class is created.
+            let inherited = super_constructor
+                .as_function_ref()
+                .map(|function| {
+                    function
+                        .props
+                        .borrow()
+                        .iter()
+                        .filter(|(key, _)| {
+                            !key.starts_with('\0')
+                                && !matches!(key.as_str(), "name" | "length" | "prototype")
+                        })
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            for (key, value) in inherited {
+                self.set_prop(&class, &key, value);
+            }
+            let species_key = self.well_known_symbol_key("species");
+            if self
+                .find_accessor(super_constructor, &species_key)
+                .is_some()
+            {
+                // The built-in species accessor returns its receiver.  A
+                // class-local data projection preserves that observable
+                // result for computed property reads in this compact core.
+                self.set_prop(&class, &species_key, class.clone());
+                set_property_attributes(&class, &species_key, PropertyAttributes::BUILTIN_CONSTANT);
+            }
+        }
+        for element in &n.body.body {
+            let ClassElement::MethodDefinition(method) = element else {
+                continue;
+            };
+            if method.kind == MethodDefinitionKind::Constructor {
+                continue;
+            }
+            let key = self.eval_property_key(&method.key, class_env.clone())?;
+            let method_value = self.make_user(&method.value, class_env.clone());
+            self.set_prop(&method_value, "name", Value::string_value(key.clone()));
+            set_property_attributes(&method_value, "name", PropertyAttributes::BUILTIN_CONSTANT);
+            let target = if method.r#static { &class } else { &prototype };
+            match method.kind {
+                MethodDefinitionKind::Method => {
+                    self.set_prop(target, &key, method_value);
+                    set_property_attributes(target, &key, PropertyAttributes::BUILTIN_METHOD);
+                }
+                MethodDefinitionKind::Get => self.define_accessor_slot(
+                    target,
+                    &key,
+                    Some(method_value),
+                    None,
+                    PropertyAttributes {
+                        writable: false,
+                        enumerable: false,
+                        configurable: true,
+                    },
+                ),
+                MethodDefinitionKind::Set => self.define_accessor_slot(
+                    target,
+                    &key,
+                    None,
+                    Some(method_value),
+                    PropertyAttributes {
+                        writable: false,
+                        enumerable: false,
+                        configurable: true,
+                    },
+                ),
+                MethodDefinitionKind::Constructor => unreachable!(),
+            }
+        }
+        Ok(class)
+    }
     fn eval_expr<'a>(&mut self, x: &Expression<'a>, e: Env) -> JsResult<Value> {
         self.coverage_hit(x.span(), expression_kind(x));
         use Expression::*;
@@ -7968,6 +8386,9 @@ impl Vm {
             StringLiteral(v) => Ok(Value::String(Rc::new(string_literal_value(v).into()))),
             Identifier(v) => Ok(Environment::get(&e, v.name.as_str()).unwrap_or(Value::Undefined)),
             ThisExpression(_) => Ok(Environment::get(&e, "this").unwrap_or(Value::Undefined)),
+            Super(_) => Ok(
+                Environment::get(&e, CLASS_SUPER_PROTOTYPE_ENV_NAME).unwrap_or(Value::Undefined)
+            ),
             ArrayExpression(v) => {
                 let a = self.array();
                 let mut index = 0usize;
@@ -8043,6 +8464,7 @@ impl Vm {
             }
             FunctionExpression(v) => Ok(self.make_user(v, e)),
             ArrowFunctionExpression(v) => Ok(self.make_arrow(v, e)),
+            ClassExpression(v) => self.make_class(v, e),
             ParenthesizedExpression(v) => self.eval_expr(&v.expression, e),
             SequenceExpression(v) => {
                 let mut z = Value::Undefined;
@@ -8225,9 +8647,29 @@ impl Vm {
                 Ok(self.get_prop(&o, &k))
             }
             CallExpression(v) => {
+                if matches!(&v.callee, Expression::Super(_)) {
+                    let callee = Environment::get(&e, CLASS_SUPER_CONSTRUCTOR_ENV_NAME)
+                        .unwrap_or(Value::Undefined);
+                    let this = Environment::get(&e, "this").unwrap_or(Value::Undefined);
+                    let args = self.eval_args(&v.arguments, e)?;
+                    return self.call(callee, this, args);
+                }
                 let (t, c) = if let Some(m) = v.callee.as_member_expression() {
                     let (o, k) = self.member_parts(m, e.clone())?;
-                    (o.clone(), self.get_prop(&o, &k))
+                    let receiver = if matches!(
+                        m,
+                        MemberExpression::StaticMemberExpression(member)
+                            if matches!(&member.object, Expression::Super(_))
+                    ) || matches!(
+                        m,
+                        MemberExpression::ComputedMemberExpression(member)
+                            if matches!(&member.object, Expression::Super(_))
+                    ) {
+                        Environment::get(&e, "this").unwrap_or(Value::Undefined)
+                    } else {
+                        o.clone()
+                    };
+                    (receiver, self.get_prop(&o, &k))
                 } else {
                     (Value::Undefined, self.eval_expr(&v.callee, e.clone())?)
                 };
@@ -8252,6 +8694,23 @@ impl Vm {
             }
             NewExpression(v) => {
                 let c = self.eval_expr(&v.callee, e.clone())?;
+                let args = self.eval_args(&v.arguments, e)?;
+                if c.as_function_ref()
+                    .is_some_and(|function| matches!(function.kind, FunctionKind::Class { .. }))
+                {
+                    let function = c
+                        .as_function()
+                        .expect("class constructor function remains callable");
+                    let object = self.object(Some(function.prototype.clone()));
+                    let result = self.call_class(&function, object.clone(), args)?;
+                    return Ok(
+                        if result.is_object() || result.is_function() || result.is_regexp() {
+                            result
+                        } else {
+                            object
+                        },
+                    );
+                }
                 let Some(function) = c.as_function() else {
                     return Err(JsError::Message("TypeError: not a constructor".into()));
                 };
@@ -8263,7 +8722,6 @@ impl Vm {
                     )));
                 }
                 let o = self.object(Some(function.prototype.clone()));
-                let args = self.eval_args(&v.arguments, e)?;
                 if matches!(
                     function.kind,
                     FunctionKind::Builtin(BuiltinId::StringConstructor)
@@ -8377,8 +8835,11 @@ impl Vm {
         for x in a {
             if let Some(x) = x.as_expression() {
                 v.push(self.eval_expr(x, e.clone())?)
+            } else if let Argument::SpreadElement(spread) = x {
+                let source = self.eval_expr(&spread.argument, e.clone())?;
+                v.extend(self.iterable_values(&source)?);
             } else {
-                return Err(JsError::Message("spread unsupported".into()));
+                return Err(JsError::Message("unsupported argument".into()));
             }
         }
         Ok(v)
@@ -10838,6 +11299,7 @@ fn expand_js_replacement(
     captures: &KernelCaptures,
     start: usize,
     end: usize,
+    named_groups: &[(String, Vec<usize>)],
 ) -> String {
     let mut output = String::new();
     let chars = template.chars().collect::<Vec<_>>();
@@ -10864,6 +11326,31 @@ fn expand_js_replacement(
             '\'' => {
                 output.push_str(&source[end..]);
                 index += 2;
+            }
+            '<' => {
+                let Some(close) = chars[index + 2..].iter().position(|c| *c == '>') else {
+                    output.push('$');
+                    index += 1;
+                    continue;
+                };
+                let close = index + 2 + close;
+                let name = chars[index + 2..close].iter().collect::<String>();
+                let Some(indices) = named_groups
+                    .iter()
+                    .find_map(|(group, indices)| (group == &name).then_some(indices))
+                else {
+                    if named_groups.is_empty() {
+                        output.push('$');
+                        index += 1;
+                    } else {
+                        index = close + 1;
+                    }
+                    continue;
+                };
+                if let Some(capture) = indices.iter().rev().find_map(|index| captures.get(*index)) {
+                    output.push_str(&source[capture]);
+                }
+                index = close + 1;
             }
             '0' => {
                 // `$01` is the first capture, while `$0` remains literal.
@@ -10992,6 +11479,7 @@ fn native_string_replace(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
             .then(|| string_argument(vm, replacement))
             .transpose()?;
         let b = r.borrow();
+        let named_groups = named_group_catalog(&b.source);
         let mut out = String::new();
         let mut last = 0;
         for captures in b.regex.captures_iter(&s) {
@@ -11016,6 +11504,7 @@ fn native_string_replace(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
                     &captures,
                     found.start,
                     found.end,
+                    &named_groups,
                 ));
             }
             last = found.end;
@@ -12301,10 +12790,11 @@ fn native_regexp_symbol_replace(vm: &mut Vm, this: Value, args: &[Value]) -> JsR
     let source = string_argument(vm, args.first().unwrap_or(&Value::Undefined))?;
     let replacement = args.get(1).cloned().unwrap_or(Value::Undefined);
     let regexp = regexp.borrow();
+    let captures = regexp_replacement_captures(&regexp, &source);
     if replacement.is_function() {
         let mut out = String::new();
         let mut last = 0;
-        for captures in regexp.regex.captures_iter(&source) {
+        for captures in captures {
             let Some(found) = captures.get(0) else {
                 continue;
             };
@@ -12328,7 +12818,7 @@ fn native_regexp_symbol_replace(vm: &mut Vm, this: Value, args: &[Value]) -> JsR
     let replacement = string_argument(vm, &replacement)?;
     let mut out = String::new();
     let mut last = 0;
-    for captures in regexp.regex.captures_iter(&source) {
+    for captures in captures {
         let Some(found) = captures.get(0) else {
             continue;
         };
@@ -12339,6 +12829,7 @@ fn native_regexp_symbol_replace(vm: &mut Vm, this: Value, args: &[Value]) -> JsR
             &captures,
             found.start,
             found.end,
+            &named_group_catalog(&regexp.source),
         ));
         last = found.end;
         if !regexp.global {
@@ -12347,6 +12838,35 @@ fn native_regexp_symbol_replace(vm: &mut Vm, this: Value, args: &[Value]) -> JsR
     }
     out.push_str(&source[last..]);
     Ok(Value::string_value(out))
+}
+
+fn regexp_replacement_captures(regexp: &RegExpValue, source: &str) -> Vec<KernelCaptures> {
+    if !regexp.flags.contains('y') {
+        return regexp.regex.captures_iter(source);
+    }
+    let mut captures = Vec::new();
+    let mut index = 0;
+    loop {
+        let Some(candidate) = regexp.regex.captures_at(source, index) else {
+            break;
+        };
+        let Some(found) = candidate.get(0) else {
+            break;
+        };
+        if found.start != index {
+            break;
+        }
+        captures.push(candidate);
+        index = if found.end == index {
+            index.saturating_add(1)
+        } else {
+            found.end
+        };
+        if !regexp.global {
+            break;
+        }
+    }
+    captures
 }
 
 fn native_regexp_symbol_split(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
@@ -13347,6 +13867,7 @@ pub(crate) fn constructable(value: &Value) -> bool {
         ) => true,
         FunctionKind::Native(_) => !function.props.borrow().contains_key("\0nonconstructable"),
         FunctionKind::Arrow { .. } | FunctionKind::Bound { .. } | FunctionKind::Builtin(_) => false,
+        FunctionKind::Class { .. } => true,
     }
 }
 
@@ -14457,10 +14978,11 @@ fn native_function_constructor(vm: &mut Vm, receiver: Value, args: &[Value]) -> 
         .map(|value| to_string_with_vm(vm, value))
         .transpose()?
         .unwrap_or_default();
+    let body = strip_legacy_html_comments(&body);
     let parameters = if args.len() > 1 {
         let mut parameters = Vec::with_capacity(args.len() - 1);
         for value in &args[..args.len() - 1] {
-            parameters.push(to_string_with_vm(vm, value)?);
+            parameters.push(strip_legacy_html_comments(&to_string_with_vm(vm, value)?));
         }
         parameters.join(",")
     } else {
@@ -14506,6 +15028,14 @@ fn native_function_constructor(vm: &mut Vm, receiver: Value, args: &[Value]) -> 
         environment
     };
     Ok(vm.make_user(function, environment))
+}
+
+fn strip_legacy_html_comments(source: &str) -> String {
+    // Annex B admits HTML comment tokens at the beginning/end of a dynamic
+    // function body and parameter list. OXC deliberately parses the modern
+    // grammar, so erase only those legacy markers before handing the source
+    // to the same parser used by ordinary functions.
+    source.replace("<!--", "").replace("-->", "")
 }
 
 fn dynamic_function_strict_early_error(parameters: &str, body: &str) -> bool {

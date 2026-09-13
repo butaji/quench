@@ -3760,6 +3760,14 @@ fn construct(
         values: register_values,
         registers: args,
     };
+    if let Some(function) = callee.as_function()
+        && matches!(function.kind, FunctionKind::Class { .. })
+    {
+        let result = vm(frame).call_class(&function, object.clone(), arguments.materialize())?;
+        let returns_object = result.is_object() || result.is_function() || result.is_regexp();
+        put(frame, dst, if returns_object { result } else { object });
+        return Ok(());
+    }
     if matches!(
         callee.as_function_ref().map(|function| &function.kind),
         Some(FunctionKind::Builtin(BuiltinId::StringConstructor))
