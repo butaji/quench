@@ -12019,6 +12019,7 @@ impl Vm {
             || statement_position_error
             || nested_strict_error
             || global_code_error
+            || has_class_strict_name_error(&r.program)
             || restricted_global_lexical_error
             || strict_assignment_error
         {
@@ -13867,10 +13868,25 @@ impl Vm {
     }
 
     fn make_class<'a>(&mut self, n: &'a Class<'a>, outer: Env) -> JsResult<Value> {
+        // Class names are bound in a fresh lexical environment before the
+        // heritage expression runs. This makes closures created by `extends`
+        // observe the class binding while it is still in its TDZ, then the
+        // completed class value, without leaking the outer binding.
+        let class_env = Environment::new(Some(outer.clone()));
+        if let Some(id) = &n.id {
+            let name = id.name.as_str();
+            class_env.borrow_mut().lexical_names.insert(name.to_owned());
+            class_env
+                .borrow_mut()
+                .immutable_names
+                .insert(name.to_owned());
+            class_env.borrow_mut().tdz_names.insert(name.to_owned());
+            class_env.borrow_mut().declare(name, Value::Undefined);
+        }
         let super_constructor = n
             .heritage
             .as_ref()
-            .map(|heritage| self.eval_expr(&heritage.expression, outer.clone()))
+            .map(|heritage| self.eval_expr(&heritage.expression, class_env.clone()))
             .transpose()?;
         if let Some(superclass) = &super_constructor
             && !superclass.is_null()
@@ -13890,7 +13906,6 @@ impl Vm {
         let prototype_handle = prototype
             .as_object()
             .expect("class prototype is an ordinary object");
-        let class_env = Environment::new(Some(outer));
         class_env
             .borrow_mut()
             .declare(CLASS_METHOD_STRICT_ENV_NAME, Value::Bool(true));
@@ -13945,6 +13960,7 @@ impl Vm {
         };
         let class = Value::Function(Rc::new(function));
         if let Some(id) = &n.id {
+            class_env.borrow_mut().tdz_names.remove(id.name.as_str());
             class_env
                 .borrow_mut()
                 .declare(id.name.as_str(), class.clone());
@@ -16412,6 +16428,24 @@ fn expression_contains_await(expression: &Expression<'_>) -> bool {
     scan.found
 }
 
+fn expression_contains_identifier(expression: &Expression<'_>, name: &str) -> bool {
+    struct Scan<'b> {
+        name: &'b str,
+        found: bool,
+    }
+    impl<'a, 'b> Visit<'a> for Scan<'b> {
+        fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+            if identifier.name == self.name {
+                self.found = true;
+            }
+            ast_walk::walk_identifier_reference(self, identifier);
+        }
+    }
+    let mut scan = Scan { name, found: false };
+    scan.visit_expression(expression);
+    scan.found
+}
+
 fn function_contains_new_target(function: &Function<'_>) -> bool {
     struct Scan {
         found: bool,
@@ -16430,6 +16464,7 @@ fn function_contains_new_target(function: &Function<'_>) -> bool {
 fn has_function_early_error(program: &Program<'_>, inherited_strict: bool) -> bool {
     struct Validator {
         strict_stack: Vec<bool>,
+        async_stack: Vec<bool>,
         inherited_strict: bool,
         invalid: bool,
     }
@@ -16440,6 +16475,35 @@ fn has_function_early_error(program: &Program<'_>, inherited_strict: bool) -> bo
                 .last()
                 .copied()
                 .unwrap_or(self.inherited_strict)
+        }
+
+        fn asynchronous(&self) -> bool {
+            self.async_stack.last().copied().unwrap_or(false)
+        }
+
+        fn check_body_parameter_conflicts(
+            &mut self,
+            parameters: &FormalParameters<'_>,
+            body: Option<&FunctionBody<'_>>,
+        ) {
+            let Some(body) = body else {
+                return;
+            };
+            let mut parameter_names = Vec::new();
+            for parameter in &parameters.items {
+                pattern_bound_names(&parameter.pattern, &mut parameter_names);
+            }
+            if let Some(rest) = &parameters.rest {
+                pattern_bound_names(&rest.rest.argument, &mut parameter_names);
+            }
+            let mut lexical_names = HashSet::new();
+            collect_direct_lexical_names(&body.statements, &mut lexical_names);
+            if parameter_names
+                .iter()
+                .any(|name| lexical_names.contains(name))
+            {
+                self.invalid = true;
+            }
         }
 
         fn check_parameters(
@@ -16500,7 +16564,10 @@ fn has_function_early_error(program: &Program<'_>, inherited_strict: bool) -> bo
             if parameters.items.iter().any(|parameter| {
                 parameter.initializer.as_ref().is_some_and(|initializer| {
                     (arrow || generator) && expression_contains_yield(initializer)
-                        || asynchronous && expression_contains_await(initializer)
+                        || strict && expression_contains_identifier(initializer, "yield")
+                        || asynchronous
+                            && (expression_contains_await(initializer)
+                                || expression_contains_identifier(initializer, "await"))
                 })
             }) {
                 self.invalid = true;
@@ -16509,6 +16576,12 @@ fn has_function_early_error(program: &Program<'_>, inherited_strict: bool) -> bo
     }
 
     impl<'a> Visit<'a> for Validator {
+        fn visit_class(&mut self, class: &Class<'a>) {
+            self.strict_stack.push(true);
+            ast_walk::walk_class(self, class);
+            self.strict_stack.pop();
+        }
+
         fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
             let body_strict = function.body.as_ref().is_some_and(|body| {
                 body.directives
@@ -16516,16 +16589,28 @@ fn has_function_early_error(program: &Program<'_>, inherited_strict: bool) -> bo
                     .any(|directive| directive.directive.as_str() == "use strict")
             });
             let strict = self.strict() || body_strict;
+            let asynchronous = self.asynchronous() || function.r#async;
+            if strict
+                && function
+                    .id
+                    .as_ref()
+                    .is_some_and(|id| matches!(id.name.as_str(), "eval" | "arguments"))
+            {
+                self.invalid = true;
+            }
             self.check_parameters(
                 &function.params,
                 strict,
                 false,
                 body_strict,
                 function.generator,
-                function.r#async,
+                asynchronous,
             );
+            self.check_body_parameter_conflicts(&function.params, function.body.as_deref());
             self.strict_stack.push(strict);
+            self.async_stack.push(asynchronous);
             ast_walk::walk_function(self, function, flags);
+            self.async_stack.pop();
             self.strict_stack.pop();
         }
 
@@ -16536,22 +16621,27 @@ fn has_function_early_error(program: &Program<'_>, inherited_strict: bool) -> bo
                     .any(|directive| directive.directive.as_str() == "use strict")
             });
             let strict = self.strict() || body_strict;
+            let asynchronous = self.asynchronous() || arrow.r#async;
             self.check_parameters(
                 &arrow.params,
                 strict,
                 true,
                 body_strict,
                 false,
-                arrow.r#async,
+                asynchronous,
             );
+            self.check_body_parameter_conflicts(&arrow.params, arrow.body.as_function_body());
             self.strict_stack.push(strict);
+            self.async_stack.push(asynchronous);
             ast_walk::walk_arrow_function_expression(self, arrow);
+            self.async_stack.pop();
             self.strict_stack.pop();
         }
     }
 
     let mut validator = Validator {
         strict_stack: Vec::new(),
+        async_stack: Vec::new(),
         inherited_strict,
         invalid: false,
     };
@@ -17540,15 +17630,45 @@ fn has_strict_legacy_literal_escape(source: &str) -> bool {
 }
 
 fn has_strict_yield_binding(program: &Program<'_>) -> bool {
-    program.body.iter().any(|statement| {
-        matches!(
-            statement,
-            Statement::VariableDeclaration(declaration)
-                if declaration.declarations.iter().any(|declarator| {
-                    pattern_name(&declarator.id).as_deref() == Some("yield")
-                })
-        )
-    })
+    struct Scan {
+        strict_depth: usize,
+        invalid: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_class(&mut self, class: &Class<'a>) {
+            self.strict_depth += 1;
+            ast_walk::walk_class(self, class);
+            self.strict_depth -= 1;
+        }
+
+        fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+            let body_strict = function.body.as_ref().is_some_and(|body| {
+                body.directives
+                    .iter()
+                    .any(|directive| directive.directive.as_str() == "use strict")
+            });
+            if body_strict {
+                self.strict_depth += 1;
+            }
+            ast_walk::walk_function(self, function, flags);
+            if body_strict {
+                self.strict_depth -= 1;
+            }
+        }
+
+        fn visit_binding_identifier(&mut self, identifier: &BindingIdentifier<'a>) {
+            if self.strict_depth > 0 && identifier.name == "yield" {
+                self.invalid = true;
+            }
+            ast_walk::walk_binding_identifier(self, identifier);
+        }
+    }
+    let mut scan = Scan {
+        strict_depth: 0,
+        invalid: false,
+    };
+    scan.visit_program(program);
+    scan.invalid
 }
 
 fn has_strict_reserved_binding(program: &Program<'_>) -> bool {
@@ -17569,6 +17689,41 @@ fn has_strict_reserved_binding(program: &Program<'_>) -> bool {
                 | "static"
         )
     })
+}
+
+fn has_class_strict_name_error(program: &Program<'_>) -> bool {
+    const RESERVED: [&str; 12] = [
+        "await",
+        "enum",
+        "implements",
+        "interface",
+        "let",
+        "package",
+        "private",
+        "protected",
+        "public",
+        "static",
+        "yield",
+        "arguments",
+    ];
+    struct Scan {
+        invalid: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_class(&mut self, class: &Class<'a>) {
+            if class
+                .id
+                .as_ref()
+                .is_some_and(|id| RESERVED.contains(&id.name.as_str()))
+            {
+                self.invalid = true;
+            }
+            ast_walk::walk_class(self, class);
+        }
+    }
+    let mut scan = Scan { invalid: false };
+    scan.visit_program(program);
+    scan.invalid
 }
 
 fn for_in_error_in_statement(statement: &Statement<'_>, strict: bool) -> bool {
