@@ -1888,6 +1888,9 @@ impl Environment {
             let Some(parent) = parent else {
                 let global_this = {
                     let root = root.borrow();
+                    if !root.names.contains_key(EVAL_CODE_ENV_NAME) {
+                        return None;
+                    }
                     root.names
                         .get("globalThis")
                         .and_then(|slot| root.values.get(*slot))
@@ -10025,7 +10028,31 @@ fn collect_global_object_binding_names(statements: &[Statement<'_>], names: &mut
             Statement::TryStatement(statement) => {
                 collect_global_object_binding_names(&statement.block.body, names);
                 if let Some(handler) = &statement.handler {
-                    collect_global_object_binding_names(&handler.body.body, names);
+                    if matches!(
+                        &handler.param,
+                        Some(param)
+                            if !matches!(
+                                &param.pattern,
+                                BindingPattern::BindingIdentifier(_)
+                            )
+                    ) {
+                        let mut catch_names = Vec::new();
+                        if let Some(param) = &handler.param {
+                            pattern_bound_names(&param.pattern, &mut catch_names);
+                        }
+                        let mut catch_bindings = Vec::new();
+                        collect_global_object_binding_names(
+                            &handler.body.body,
+                            &mut catch_bindings,
+                        );
+                        names.extend(
+                            catch_bindings
+                                .into_iter()
+                                .filter(|name| !catch_names.contains(name)),
+                        );
+                    } else {
+                        collect_global_object_binding_names(&handler.body.body, names);
+                    }
                 }
                 if let Some(finalizer) = &statement.finalizer {
                     collect_global_object_binding_names(&finalizer.body, names);
