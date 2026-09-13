@@ -180,7 +180,7 @@ Verification completed:
   fully green (48/48 and 13/13); Promise-backed request queues, iterator
   self/dispose methods, and async-generator completion all execute through
   the same core
-- the stencil Promise stage reaches 714/729; capability construction,
+- the stencil Promise stage reaches 723/729; capability construction,
   species-aware `then`, generic `catch`, all standard/keyed combinators, and
   iterator-close behavior are covered. The remaining failures are the core
   Proxy representation, cross-realm prototype plumbing, and microtask
