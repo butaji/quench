@@ -1558,6 +1558,12 @@ impl Compiler {
                 value.span,
             ),
             Identifier(value) => {
+                if value.name == ARGUMENTS_BINDING_NAME {
+                    return Err(CompileGap {
+                        span: value.span,
+                        reason: "arguments object aliasing deferred to shared call semantics",
+                    });
+                }
                 let dst = self.alloc()?;
                 self.emit(
                     DynOp::LoadName {

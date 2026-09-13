@@ -5365,6 +5365,7 @@ struct Vm {
     construct_depth: usize,
     current_constructor: Option<Value>,
     async_generator_yields: Option<Vec<Value>>,
+    mapped_arguments: RefCell<Vec<(ObjectHandle, Env, Vec<String>)>>,
 }
 impl Vm {
     fn new() -> Self {
@@ -5421,6 +5422,7 @@ impl Vm {
             construct_depth: 0,
             current_constructor: None,
             async_generator_yields: None,
+            mapped_arguments: RefCell::new(Vec::new()),
         };
         v.builtin_functions = builtins::instantiate(&v);
         v.install();
@@ -8426,11 +8428,13 @@ impl Vm {
                     if array.len() <= index {
                         array.resize(index + 1, Value::Undefined)
                     }
-                    array.set(index, v);
+                    array.set(index, v.clone());
                     object
                         .attributes
                         .entry(k.into())
                         .or_insert(PropertyAttributes::DEFAULT);
+                    drop(object);
+                    self.sync_mapped_parameter(o, index, v);
                     return;
                 }
             }
@@ -8728,6 +8732,7 @@ impl Vm {
 
     fn call_user_or_async(
         &mut self,
+        callee: Value,
         node: &'static Function<'static>,
         env: Env,
         this: Value,
@@ -8736,7 +8741,7 @@ impl Vm {
         strict: bool,
     ) -> JsResult<Value> {
         let is_async = node.r#async;
-        let result = self.call_user(node, env, this, args, source_id, strict);
+        let result = self.call_user(node, env, this, args, source_id, strict, Some(callee));
         if is_async {
             Ok(self.promise_from_result(result))
         } else {
@@ -8859,6 +8864,7 @@ impl Vm {
             args,
             source_id,
             strict,
+            Some(function),
         );
         let yields = self.async_generator_yields.take().unwrap_or_default();
         self.async_generator_yields = previous_yields;
@@ -9018,8 +9024,15 @@ impl Vm {
                 // evaluator and expose the canonical array iterator protocol.
                 let previous_yields = self.async_generator_yields.take();
                 self.async_generator_yields = Some(Vec::new());
-                let result =
-                    self.call_user(node, env.clone(), t, a.materialize(), f.source_id, f.strict);
+                let result = self.call_user(
+                    node,
+                    env.clone(),
+                    t,
+                    a.materialize(),
+                    f.source_id,
+                    f.strict,
+                    Some(c.clone()),
+                );
                 let yields = self.async_generator_yields.take().unwrap_or_default();
                 self.async_generator_yields = previous_yields;
                 result?;
@@ -9111,6 +9124,7 @@ impl Vm {
                         ) {
                             Err(error) if is_stencil_fallback_error(&error) => match &f.kind {
                                 FunctionKind::User { node, env } => self.call_user_or_async(
+                                    c.clone(),
                                     node,
                                     env.clone(),
                                     t,
@@ -9142,6 +9156,7 @@ impl Vm {
                 ) {
                     Err(error) if is_stencil_fallback_error(&error) => match &f.kind {
                         FunctionKind::User { node, env } => self.call_user_or_async(
+                            c.clone(),
                             node,
                             env.clone(),
                             t,
@@ -9204,6 +9219,7 @@ impl Vm {
                     self.call_arguments_with_ic(target, receiver, combined.as_slice(), None)
                 }
                 FunctionKind::User { node, env } => self.call_user_or_async(
+                    c.clone(),
                     node,
                     env.clone(),
                     t,
@@ -9550,6 +9566,7 @@ impl Vm {
         args: Vec<Value>,
         source_id: Option<usize>,
         function_strict: bool,
+        callee: Option<Value>,
     ) -> JsResult<Value> {
         if let Some(source_id) = source_id {
             self.source_ids.push(source_id);
@@ -9580,7 +9597,11 @@ impl Vm {
         e.borrow_mut().declare("this", this);
         let av = self.object_value(Object::array(self.array_proto, args.clone()));
         self.set_prop(&av, "\0wrapper", Value::string_value("Arguments"));
-        self.set_prop(&av, "callee", self.make_user(n, outer.clone()));
+        self.set_prop(
+            &av,
+            "callee",
+            callee.unwrap_or_else(|| self.make_user(n, outer.clone())),
+        );
         set_property_attributes(
             &av,
             "callee",
@@ -9604,15 +9625,22 @@ impl Vm {
         if !strict {
             let mut environment = e.borrow_mut();
             environment.arguments_object = Some(av.clone());
+            let mut mapped_names = vec![String::new(); n.params.items.len()];
             for (index, parameter) in n.params.items.iter().enumerate() {
                 if let BindingPattern::BindingIdentifier(identifier) = &parameter.pattern {
+                    mapped_names[index] = identifier.name.to_string();
                     environment
                         .arguments_map
                         .insert(identifier.name.to_string(), index);
                 }
             }
+            if let Some(object) = av.as_object() {
+                self.mapped_arguments
+                    .borrow_mut()
+                    .push((object, e.clone(), mapped_names));
+            }
         }
-        e.borrow_mut().declare("arguments", av);
+        e.borrow_mut().declare("arguments", av.clone());
         e.borrow_mut().declare(FUNCTION_ENV_NAME, Value::Bool(true));
         e.borrow_mut().declare(
             NEW_TARGET_VALUE_NAME,
@@ -9679,6 +9707,11 @@ impl Vm {
         })();
         if source_id.is_some() {
             self.source_ids.pop();
+        }
+        if let Some(object) = av.as_object() {
+            self.mapped_arguments
+                .borrow_mut()
+                .retain(|(mapped_object, _, _)| mapped_object.as_ptr() != object.as_ptr());
         }
         self.strict_mode = previous_strict_mode;
         result
@@ -12342,6 +12375,20 @@ impl Vm {
                 return;
             }
             current = parent;
+        }
+    }
+
+    fn sync_mapped_parameter(&self, object: &Value, index: usize, value: Value) {
+        let Some(object) = object.as_object() else {
+            return;
+        };
+        for (mapped_object, environment, names) in self.mapped_arguments.borrow().iter() {
+            if object.as_ptr() == mapped_object.as_ptr()
+                && let Some(name) = names.get(index).filter(|name| !name.is_empty())
+            {
+                Environment::set(environment, name, value);
+                return;
+            }
         }
     }
 
