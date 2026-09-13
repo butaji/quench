@@ -10332,8 +10332,6 @@ impl Vm {
                 _ => {}
             }
         }
-        let resolutions = self.module_export_bindings(&key)?;
-        names.retain(|name| resolutions.get(name).copied().unwrap_or(0) == 1);
         let mut names = names.into_iter().collect::<Vec<_>>();
         names.sort_unstable();
         Ok(names)
@@ -10452,11 +10450,15 @@ impl Vm {
                 // their bindings are linked before evaluation completes.
                 continue;
             }
-            let available = self.module_export_bindings(&target)?;
-            if names
-                .iter()
-                .any(|name| available.get(name).copied().unwrap_or(0) != 1)
-            {
+            let declared = match self.module_export_names(&target) {
+                Ok(names) => names.into_iter().collect::<HashSet<_>>(),
+                Err(JsError::Message(_)) => return Ok(true),
+                Err(error) => return Err(error),
+            };
+            let resolutions = self.module_export_bindings(&target)?;
+            if names.iter().any(|name| {
+                !declared.contains(name) || resolutions.get(name).copied().unwrap_or(0) > 1
+            }) {
                 return Ok(true);
             }
         }
@@ -10525,7 +10527,11 @@ impl Vm {
                         for specifier in &export.specifiers {
                             let local = module_export_name_for_early_error(&specifier.local);
                             let exported = module_export_name_for_early_error(&specifier.exported);
-                            let count = dependency_bindings.get(&local).copied().unwrap_or(0);
+                            let count = if local == "*" {
+                                1
+                            } else {
+                                dependency_bindings.get(&local).copied().unwrap_or(0)
+                            };
                             *bindings.entry(exported).or_insert(0) += count;
                         }
                     }
@@ -11482,7 +11488,10 @@ impl Vm {
                     for specifier in &export.specifiers {
                         let imported = module_export_name_for_early_error(&specifier.local);
                         let exported = module_export_name_for_early_error(&specifier.exported);
-                        if let Some(value) = exports.get(&imported) {
+                        if imported == "*" {
+                            let namespace = self.module_namespace(&source, &exports, false);
+                            self.record_module_export(exported, namespace);
+                        } else if let Some(value) = exports.get(&imported) {
                             self.record_module_export(exported, value.clone());
                         }
                     }
