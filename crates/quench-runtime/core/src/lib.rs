@@ -11060,12 +11060,30 @@ fn native_eval_in_environment(vm: &mut Vm, a: &[Value], environment: Env) -> JsR
     }
 }
 
+macro_rules! with_strict_mode {
+    ($vm:expr, $strict:expr, $body:expr) => {{
+        let previous_strict_mode = $vm.strict_mode;
+        $vm.strict_mode = $strict;
+        let result = $body;
+        $vm.strict_mode = previous_strict_mode;
+        result
+    }};
+}
+
 fn native_eval(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    native_eval_in_environment(vm, a, vm.global.clone())
+    with_strict_mode!(
+        vm,
+        false,
+        native_eval_in_environment(vm, a, vm.global.clone())
+    )
 }
 
 fn native_eval_script(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    native_eval_in_environment(vm, a, vm.global.clone())
+    with_strict_mode!(
+        vm,
+        false,
+        native_eval_in_environment(vm, a, vm.global.clone())
+    )
 }
 
 fn native_is_finite(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
