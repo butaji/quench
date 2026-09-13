@@ -15631,7 +15631,10 @@ fn set_assignment_property(vm: &mut Vm, object: &Value, key: &str, value: Value)
     match vm.set_prop_with_accessors(object, key, value) {
         Ok(()) => Ok(()),
         Err(JsError::Throw(error))
-            if !vm.strict_mode && proxy_target(object).is_none() && is_type_error_value(&error) =>
+            if !vm.strict_mode
+                && proxy_target(object).is_none()
+                && !vm.restricted_function_property(object, key)
+                && is_type_error_value(&error) =>
         {
             Ok(())
         }
