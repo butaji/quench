@@ -1801,6 +1801,12 @@ struct Environment {
     names: Rc<HashMap<String, usize>>,
     values: Vec<Value>,
     parent: Option<Env>,
+    // Formal parameters are tracked separately from ordinary var bindings;
+    // Annex B must not overwrite a parameter when a block function is
+    // evaluated in a sloppy function body.
+    parameter_names: HashSet<String>,
+    lexical_names: HashSet<String>,
+    catch_names: HashSet<String>,
 }
 impl Environment {
     fn new(parent: Option<Env>) -> Env {
@@ -1817,6 +1823,9 @@ impl Environment {
             names,
             values: vec![Value::Undefined; binding_count],
             parent,
+            parameter_names: HashSet::new(),
+            lexical_names: HashSet::new(),
+            catch_names: HashSet::new(),
         };
         environment.publish_access();
         Rc::new(RefCell::new(environment))
@@ -1841,20 +1850,23 @@ impl Environment {
         self.publish_access();
     }
     fn reserve(&mut self, names: impl IntoIterator<Item = String>) {
-        let missing = names
-            .into_iter()
-            .filter(|name| !self.names.contains_key(name))
-            .collect::<Vec<_>>();
-        if missing.is_empty() {
+        let mut next_names = self.names.as_ref().clone();
+        let mut next_slot = self.values.len();
+        for name in names {
+            // Declaration scanners may encounter the same var/function name
+            // through multiple control-flow branches. Deduplicate while
+            // assigning slots so the name map can never point past `values`.
+            if next_names.contains_key(&name) {
+                continue;
+            }
+            next_names.insert(name, next_slot);
+            next_slot += 1;
+        }
+        if next_slot == self.values.len() {
             return;
         }
-        let mut next_names = self.names.as_ref().clone();
-        let start = self.values.len();
-        for (offset, name) in missing.into_iter().enumerate() {
-            next_names.insert(name, start + offset);
-        }
         self.names = Rc::new(next_names);
-        self.values.resize(self.names.len(), Value::Undefined);
+        self.values.resize(next_slot, Value::Undefined);
         self.publish_access();
     }
     fn contains_local(&self, k: &str) -> bool {
@@ -7302,6 +7314,17 @@ impl Vm {
         function: &FunctionValue<'static>,
         node: &Function<'static>,
     ) -> JsResult<()> {
+        // Annex B block functions need the shared environment transition
+        // (lexical binding plus conditional var binding), so keep this
+        // structural edge on the interpreter path of the same VM.
+        if !function.strict
+            && node.body.as_ref().is_some_and(|body| {
+                dynbytecode::contains_nested_function_declaration(&body.statements)
+            })
+        {
+            self.jit_stats.compile_rejections += 1;
+            return Ok(());
+        }
         let cache_key = node as *const Function<'static> as usize;
         if let Some(code) = self.jit_cache.get(&cache_key) {
             *function.dyn_jit.borrow_mut() = Some(code.clone());
@@ -7393,6 +7416,14 @@ impl Vm {
         function: &FunctionValue<'static>,
         node: &ArrowFunctionExpression<'static>,
     ) -> JsResult<()> {
+        if !function.strict
+            && node.body.as_function_body().is_some_and(|body| {
+                dynbytecode::contains_nested_function_declaration(&body.statements)
+            })
+        {
+            self.jit_stats.compile_rejections += 1;
+            return Ok(());
+        }
         let cache_key = node as *const ArrowFunctionExpression<'static> as usize;
         if let Some(code) = self.jit_cache.get(&cache_key) {
             *function.dyn_jit.borrow_mut() = Some(code.clone());
@@ -7451,6 +7482,9 @@ impl Vm {
             self.source_ids.push(source_id);
         }
         let e = Environment::new(Some(outer));
+        if let Some(body) = &n.body {
+            reserve_script_bindings(&e, &body.statements);
+        }
         let strict = n.body.as_ref().is_some_and(|body| {
             body.directives
                 .iter()
@@ -7472,14 +7506,17 @@ impl Vm {
         e.borrow_mut().declare("arguments", av);
         for (i, p) in n.params.items.iter().enumerate() {
             if let Some(name) = pattern_name(&p.pattern) {
-                e.borrow_mut()
-                    .declare(&name, args.get(i).cloned().unwrap_or(Value::Undefined));
+                let mut environment = e.borrow_mut();
+                environment.parameter_names.insert(name.clone());
+                environment.declare(&name, args.get(i).cloned().unwrap_or(Value::Undefined));
             }
         }
         if let Some(rest) = &n.params.rest
             && let Some(name) = pattern_name(&rest.rest.argument)
         {
-            e.borrow_mut().declare(
+            let mut environment = e.borrow_mut();
+            environment.parameter_names.insert(name.clone());
+            environment.declare(
                 &name,
                 self.array_from_values(args.iter().skip(n.params.items.len()).cloned().collect()),
             );
@@ -7552,6 +7589,9 @@ impl Vm {
         // parameter bindings live in a fresh environment layered over the
         // captured scope.
         let e = Environment::new(Some(outer));
+        if let Some(body) = n.body.as_function_body() {
+            reserve_script_bindings(&e, &body.statements);
+        }
         for (i, p) in n.params.items.iter().enumerate() {
             if let Some(name) = pattern_name(&p.pattern) {
                 e.borrow_mut()
@@ -7638,6 +7678,12 @@ impl Vm {
             .directives
             .iter()
             .any(|directive| directive.directive.as_str() == "use strict");
+        // Script declaration instantiation happens before any statement (and
+        // before a stencil image is entered). Reserve lexical slots and
+        // materialize the observable global `var`/Annex-B function projection
+        // once so both execution tiers see the same pre-evaluation state.
+        reserve_script_bindings(&environment, &r.program.body);
+        self.materialize_script_bindings(&environment, &r.program.body);
         self.source_stack.push(p.to_path_buf());
         self.source_ids.push(source_id);
         let out = if self.jit_mode == JitMode::Stencil {
@@ -7720,12 +7766,20 @@ impl Vm {
         }
     }
     fn exec_stmts<'a>(&mut self, b: &[Statement<'a>], e: Env) -> JsResult<Signal> {
+        let annex_b_allowed = !b.iter().any(|statement| {
+            direct_lexical_binding_name(statement).is_some_and(|name| {
+                b.iter().any(|candidate| {
+                    matches!(candidate, Statement::FunctionDeclaration(function) if function
+                        .id
+                        .as_ref()
+                        .is_some_and(|id| id.name.as_str() == name))
+                })
+            })
+        });
         for stmt in b {
             if let Statement::FunctionDeclaration(f) = stmt {
                 if let Some(id) = &f.id {
-                    let closure = self.make_user(f, e.clone());
-                    e.borrow_mut().declare(id.name.as_str(), closure.clone());
-                    self.sync_global_binding(&e, id.name.as_str(), closure);
+                    self.declare_function_binding(f, e.clone(), id.name.as_str(), annex_b_allowed);
                 }
             }
         }
@@ -7962,7 +8016,10 @@ impl Vm {
                             let ce = Environment::new(Some(e.clone()));
                             if let Some(p) = &h.param {
                                 if let Some(n) = pattern_name(&p.pattern) {
-                                    ce.borrow_mut().declare(&n, v)
+                                    let mut catch_environment = ce.borrow_mut();
+                                    catch_environment.lexical_names.insert(n.clone());
+                                    catch_environment.catch_names.insert(n.clone());
+                                    catch_environment.declare(&n, v)
                                 }
                             }
                             self.exec_stmts(&h.body.body, ce)
@@ -8011,13 +8068,13 @@ impl Vm {
             }
             FunctionDeclaration(f) => {
                 if let Some(i) = &f.id {
-                    let closure = self.make_user(f, e.clone());
-                    e.borrow_mut().declare(i.name.as_str(), closure);
+                    self.declare_function_binding(f, e.clone(), i.name.as_str(), true);
                 }
                 Ok(Signal::Normal(Value::Undefined))
             }
             ClassDeclaration(class) => {
                 if let Some(id) = &class.id {
+                    e.borrow_mut().lexical_names.insert(id.name.to_string());
                     let value = self.make_class(class, e.clone())?;
                     e.borrow_mut().declare(id.name.as_str(), value.clone());
                     self.sync_global_binding(&e, id.name.as_str(), value);
@@ -8035,14 +8092,13 @@ impl Vm {
             }
             Declaration::FunctionDeclaration(f) => {
                 if let Some(i) = &f.id {
-                    let closure = self.make_user(f, e.clone());
-                    e.borrow_mut().declare(i.name.as_str(), closure.clone());
-                    self.sync_global_binding(&e, i.name.as_str(), closure);
+                    self.declare_function_binding(f, e.clone(), i.name.as_str(), true);
                 }
                 Ok(Signal::Normal(Value::Undefined))
             }
             Declaration::ClassDeclaration(class) => {
                 if let Some(id) = &class.id {
+                    e.borrow_mut().lexical_names.insert(id.name.to_string());
                     let value = self.make_class(class, e.clone())?;
                     e.borrow_mut().declare(id.name.as_str(), value.clone());
                     self.sync_global_binding(&e, id.name.as_str(), value);
@@ -8054,13 +8110,28 @@ impl Vm {
     }
     fn exec_var<'a>(&mut self, v: &VariableDeclaration<'a>, e: Env) -> JsResult<()> {
         for d in &v.declarations {
+            if v.kind != VariableDeclarationKind::Var
+                && let Some(name) = pattern_name(&d.id)
+            {
+                e.borrow_mut().lexical_names.insert(name);
+            }
             let value = d
                 .init
                 .as_ref()
                 .map(|init| self.eval_expr(init, e.clone()))
                 .transpose()?
                 .unwrap_or(Value::Undefined);
-            self.bind_pattern(&d.id, value, e.clone())?;
+            let target = if v.kind == VariableDeclarationKind::Var {
+                let catch_binding = pattern_name(&d.id).is_some_and(|name| {
+                    e.borrow().catch_names.contains(&name)
+                });
+                catch_binding
+                    .then(|| e.clone())
+                    .unwrap_or_else(|| variable_environment(&e))
+            } else {
+                e.clone()
+            };
+            self.bind_pattern(&d.id, value, target)?;
         }
         Ok(())
     }
@@ -8071,6 +8142,87 @@ impl Vm {
         }
         if let Some(global_this) = Environment::get(&self.global, "globalThis") {
             self.set_prop(&global_this, name, value);
+        }
+    }
+
+    fn materialize_script_bindings(&self, environment: &Env, statements: &[Statement<'_>]) {
+        if !Rc::ptr_eq(environment, &self.global) {
+            return;
+        }
+        let Some(global_this) = Environment::get(&self.global, "globalThis") else {
+            return;
+        };
+        let mut names = Vec::new();
+        collect_global_object_binding_names(statements, &mut names);
+        let mut lexical = HashSet::new();
+        collect_lexical_binding_names(statements, &mut lexical);
+        for name in names {
+            if lexical.contains(&name) {
+                continue;
+            }
+            let exists = global_this
+                .as_object_ref()
+                .is_some_and(|object| object.borrow().props.contains_key(&name));
+            if exists {
+                continue;
+            }
+            self.set_prop(&global_this, &name, Value::Undefined);
+            set_property_attributes(
+                &global_this,
+                &name,
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: true,
+                    configurable: false,
+                },
+            );
+        }
+    }
+
+    /// Install a function declaration in its lexical environment and, for a
+    /// sloppy block declaration, update the nearest variable environment as
+    /// required by Annex B. Keeping this transition in one helper makes the
+    /// interpreter and every statement/declaration entry point agree.
+    fn declare_function_binding<'a>(
+        &mut self,
+        function: &'a Function<'a>,
+        environment: Env,
+        name: &str,
+        annex_b_allowed: bool,
+    ) {
+        let closure = self.make_user(function, environment.clone());
+        environment.borrow_mut().declare(name, closure.clone());
+        self.sync_global_binding(&environment, name, closure.clone());
+        if !annex_b_allowed || self.strict_mode || Rc::ptr_eq(&environment, &self.global) {
+            return;
+        }
+        let mut current = Some(environment);
+        let mut lexical_conflict = false;
+        let mut first_environment = true;
+        while let Some(candidate) = current {
+            let is_global = Rc::ptr_eq(&candidate, &self.global);
+            let (parent, is_variable_environment, has_name, is_parameter, is_lexical) = {
+                let candidate = candidate.borrow();
+                (
+                    candidate.parent.clone(),
+                    candidate.contains_local("arguments") || is_global,
+                    candidate.contains_local(name),
+                    candidate.parameter_names.contains(name),
+                    candidate.lexical_names.contains(name),
+                )
+            };
+            if !first_environment && has_name && is_lexical {
+                lexical_conflict = true;
+            }
+            first_environment = false;
+            if is_variable_environment {
+                if !lexical_conflict && !is_parameter {
+                    candidate.borrow_mut().declare(name, closure.clone());
+                    self.sync_global_binding(&candidate, name, closure);
+                }
+                break;
+            }
+            current = parent;
         }
     }
     fn assign_for_left<'a>(&mut self, l: &ForStatementLeft<'a>, v: Value, e: Env) -> JsResult<()> {
@@ -8473,7 +8625,8 @@ impl Vm {
             .map(bigint_marker)
             .map_err(|_| JsError::Throw(syntax_error(self, "invalid BigInt literal"))),
             StringLiteral(v) => Ok(Value::String(Rc::new(string_literal_value(v).into()))),
-            Identifier(v) => Ok(Environment::get(&e, v.name.as_str()).unwrap_or(Value::Undefined)),
+            Identifier(v) => Environment::get(&e, v.name.as_str())
+                .ok_or_else(|| JsError::Throw(reference_error(self, v.name.as_str()))),
             ThisExpression(_) => Ok(Environment::get(&e, "this").unwrap_or(Value::Undefined)),
             Super(_) => Ok(
                 Environment::get(&e, CLASS_SUPER_PROTOTYPE_ENV_NAME).unwrap_or(Value::Undefined)
@@ -8565,6 +8718,12 @@ impl Vm {
             UnaryExpression(v) => {
                 if v.operator == oxc_syntax::operator::UnaryOperator::Delete {
                     return self.delete_expression(&v.argument, e);
+                }
+                if v.operator == oxc_syntax::operator::UnaryOperator::Typeof
+                    && let Expression::Identifier(identifier) = &v.argument
+                    && Environment::get(&e, identifier.name.as_str()).is_none()
+                {
+                    return Ok(Value::string_value("undefined"));
                 }
                 let z = self.eval_expr(&v.argument, e)?;
                 use oxc_syntax::operator::UnaryOperator::*;
@@ -9179,16 +9338,244 @@ fn pattern_name<'a>(p: &BindingPattern<'a>) -> Option<String> {
     }
 }
 
+fn variable_environment(environment: &Env) -> Env {
+    let mut current = environment.clone();
+    loop {
+        let is_variable = {
+            let candidate = current.borrow();
+            candidate.contains_local(dynbytecode::ARGUMENTS_BINDING_NAME)
+                || candidate.parent.is_none()
+        };
+        if is_variable {
+            return current;
+        }
+        let parent = current
+            .borrow()
+            .parent
+            .clone()
+            .expect("non-root environment has a parent");
+        current = parent;
+    }
+}
+
 fn reserve_script_bindings(environment: &Env, statements: &[Statement<'_>]) {
-    let names = statements
-        .iter()
-        .filter_map(|statement| match statement {
-            Statement::VariableDeclaration(declaration) => Some(declaration),
-            _ => None,
-        })
-        .flat_map(|declaration| declaration.declarations.iter())
-        .filter_map(|declarator| pattern_name(&declarator.id));
+    let mut names = Vec::new();
+    collect_script_binding_names(statements, &mut names);
+    let mut lexical = HashSet::new();
+    collect_lexical_binding_names(statements, &mut lexical);
+    names.retain(|name| !lexical.contains(name));
     environment.borrow_mut().reserve(names);
+}
+
+fn collect_script_binding_names(statements: &[Statement<'_>], names: &mut Vec<String>) {
+    for statement in statements {
+        match statement {
+            Statement::VariableDeclaration(declaration) => names.extend(
+                declaration
+                    .declarations
+                    .iter()
+                    .filter_map(|declarator| pattern_name(&declarator.id)),
+            ),
+            Statement::FunctionDeclaration(function) => {
+                if let Some(id) = &function.id {
+                    names.push(id.name.to_string());
+                }
+            }
+            Statement::BlockStatement(block) => collect_script_binding_names(&block.body, names),
+            Statement::IfStatement(statement) => {
+                collect_script_binding_names(std::slice::from_ref(&statement.consequent), names);
+                if let Some(alternate) = &statement.alternate {
+                    collect_script_binding_names(std::slice::from_ref(alternate), names);
+                }
+            }
+            Statement::LabeledStatement(statement) => {
+                collect_script_binding_names(std::slice::from_ref(&statement.body), names)
+            }
+            Statement::DoWhileStatement(statement) => {
+                collect_script_binding_names(std::slice::from_ref(&statement.body), names)
+            }
+            Statement::WhileStatement(statement) => {
+                collect_script_binding_names(std::slice::from_ref(&statement.body), names)
+            }
+            Statement::ForStatement(statement) => {
+                collect_script_binding_names(std::slice::from_ref(&statement.body), names)
+            }
+            Statement::ForInStatement(statement) => {
+                collect_script_binding_names(std::slice::from_ref(&statement.body), names)
+            }
+            Statement::ForOfStatement(statement) => {
+                collect_script_binding_names(std::slice::from_ref(&statement.body), names)
+            }
+            Statement::WithStatement(statement) => {
+                collect_script_binding_names(std::slice::from_ref(&statement.body), names)
+            }
+            Statement::SwitchStatement(statement) => {
+                for case in &statement.cases {
+                    collect_script_binding_names(&case.consequent, names);
+                }
+            }
+            Statement::TryStatement(statement) => {
+                collect_script_binding_names(&statement.block.body, names);
+                if let Some(handler) = &statement.handler {
+                    collect_script_binding_names(&handler.body.body, names);
+                }
+                if let Some(finalizer) = &statement.finalizer {
+                    collect_script_binding_names(&finalizer.body, names);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn direct_lexical_binding_name(statement: &Statement<'_>) -> Option<String> {
+    match statement {
+        Statement::VariableDeclaration(declaration)
+            if declaration.kind != VariableDeclarationKind::Var =>
+        {
+            declaration
+                .declarations
+                .first()
+                .and_then(|declarator| pattern_name(&declarator.id))
+        }
+        Statement::ClassDeclaration(class) => class.id.as_ref().map(|id| id.name.to_string()),
+        _ => None,
+    }
+}
+
+fn collect_global_object_binding_names(statements: &[Statement<'_>], names: &mut Vec<String>) {
+    for statement in statements {
+        match statement {
+            Statement::VariableDeclaration(declaration)
+                if declaration.kind == VariableDeclarationKind::Var =>
+            {
+                names.extend(
+                    declaration
+                        .declarations
+                        .iter()
+                        .filter_map(|declarator| pattern_name(&declarator.id)),
+                )
+            }
+            Statement::FunctionDeclaration(function) => {
+                if let Some(id) = &function.id {
+                    names.push(id.name.to_string());
+                }
+            }
+            Statement::BlockStatement(block) => {
+                collect_global_object_binding_names(&block.body, names)
+            }
+            Statement::IfStatement(statement) => {
+                collect_global_object_binding_names(
+                    std::slice::from_ref(&statement.consequent),
+                    names,
+                );
+                if let Some(alternate) = &statement.alternate {
+                    collect_global_object_binding_names(std::slice::from_ref(alternate), names);
+                }
+            }
+            Statement::LabeledStatement(statement) => {
+                collect_global_object_binding_names(std::slice::from_ref(&statement.body), names)
+            }
+            Statement::DoWhileStatement(statement) => {
+                collect_global_object_binding_names(std::slice::from_ref(&statement.body), names)
+            }
+            Statement::WhileStatement(statement) => {
+                collect_global_object_binding_names(std::slice::from_ref(&statement.body), names)
+            }
+            Statement::ForStatement(statement) => {
+                collect_global_object_binding_names(std::slice::from_ref(&statement.body), names)
+            }
+            Statement::ForInStatement(statement) => {
+                collect_global_object_binding_names(std::slice::from_ref(&statement.body), names)
+            }
+            Statement::ForOfStatement(statement) => {
+                collect_global_object_binding_names(std::slice::from_ref(&statement.body), names)
+            }
+            Statement::WithStatement(statement) => {
+                collect_global_object_binding_names(std::slice::from_ref(&statement.body), names)
+            }
+            Statement::SwitchStatement(statement) => {
+                for case in &statement.cases {
+                    collect_global_object_binding_names(&case.consequent, names);
+                }
+            }
+            Statement::TryStatement(statement) => {
+                collect_global_object_binding_names(&statement.block.body, names);
+                if let Some(handler) = &statement.handler {
+                    collect_global_object_binding_names(&handler.body.body, names);
+                }
+                if let Some(finalizer) = &statement.finalizer {
+                    collect_global_object_binding_names(&finalizer.body, names);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_lexical_binding_names(statements: &[Statement<'_>], names: &mut HashSet<String>) {
+    for statement in statements {
+        match statement {
+            Statement::VariableDeclaration(declaration)
+                if declaration.kind != VariableDeclarationKind::Var =>
+            {
+                names.extend(
+                    declaration
+                        .declarations
+                        .iter()
+                        .filter_map(|declarator| pattern_name(&declarator.id)),
+                )
+            }
+            Statement::ClassDeclaration(class) => {
+                if let Some(id) = &class.id {
+                    names.insert(id.name.to_string());
+                }
+            }
+            Statement::BlockStatement(block) => collect_lexical_binding_names(&block.body, names),
+            Statement::IfStatement(statement) => {
+                collect_lexical_binding_names(std::slice::from_ref(&statement.consequent), names);
+                if let Some(alternate) = &statement.alternate {
+                    collect_lexical_binding_names(std::slice::from_ref(alternate), names);
+                }
+            }
+            Statement::LabeledStatement(statement) => {
+                collect_lexical_binding_names(std::slice::from_ref(&statement.body), names)
+            }
+            Statement::DoWhileStatement(statement) => {
+                collect_lexical_binding_names(std::slice::from_ref(&statement.body), names)
+            }
+            Statement::WhileStatement(statement) => {
+                collect_lexical_binding_names(std::slice::from_ref(&statement.body), names)
+            }
+            Statement::ForStatement(statement) => {
+                collect_lexical_binding_names(std::slice::from_ref(&statement.body), names)
+            }
+            Statement::ForInStatement(statement) => {
+                collect_lexical_binding_names(std::slice::from_ref(&statement.body), names)
+            }
+            Statement::ForOfStatement(statement) => {
+                collect_lexical_binding_names(std::slice::from_ref(&statement.body), names)
+            }
+            Statement::WithStatement(statement) => {
+                collect_lexical_binding_names(std::slice::from_ref(&statement.body), names)
+            }
+            Statement::SwitchStatement(statement) => {
+                for case in &statement.cases {
+                    collect_lexical_binding_names(&case.consequent, names);
+                }
+            }
+            Statement::TryStatement(statement) => {
+                collect_lexical_binding_names(&statement.block.body, names);
+                if let Some(handler) = &statement.handler {
+                    collect_lexical_binding_names(&handler.body.body, names);
+                }
+                if let Some(finalizer) = &statement.finalizer {
+                    collect_lexical_binding_names(&finalizer.body, names);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Validate the Annex B grammar cases OXC intentionally accepts as an AST.
@@ -14310,6 +14697,15 @@ fn assertion_error(vm: &Vm, message: &str) -> Value {
 }
 fn type_error(vm: &Vm, message: &str) -> Value {
     intrinsic_error(vm, BuiltinId::TypeErrorConstructor, "TypeError", message)
+}
+
+fn reference_error(vm: &Vm, name: &str) -> Value {
+    intrinsic_error(
+        vm,
+        BuiltinId::ReferenceErrorConstructor,
+        "ReferenceError",
+        &format!("{name} is not defined"),
+    )
 }
 
 fn is_type_error_value(value: &Value) -> bool {
