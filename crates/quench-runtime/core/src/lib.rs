@@ -10146,7 +10146,13 @@ impl Vm {
                     let value = if imported == "*" {
                         namespace()
                     } else {
-                        exports.get(&imported).cloned().unwrap_or(Value::Undefined)
+                        let Some(value) = exports.get(&imported).cloned() else {
+                            return Err(JsError::Throw(syntax_error(
+                                self,
+                                "requested module export is not provided",
+                            )));
+                        };
+                        value
                     };
                     environment.borrow_mut().declare(local, value);
                 }
