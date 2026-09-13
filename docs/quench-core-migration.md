@@ -72,7 +72,7 @@ interpreter would be a compatibility regression, not a migration.
 Verification completed:
 
 - `cargo check -p quench-runtime`
-- `cargo test -p quench-runtime-core --lib` (185 tests)
+- `cargo test -p quench-runtime-core --lib` (187 tests)
 - `cargo test -p quench-node --lib` (18 tests)
 - `cargo test -p quench-wasm --lib` (16 tests)
 - production `quench-node` build and a core-backed Node smoke test
@@ -167,6 +167,10 @@ Verification completed:
 - the stencil Annex B built-ins stage reaches 214/241; remaining cases are
   advanced RegExp grammar/Unicode behavior, Proxy/custom-realm RegExp
   receivers, and TypedArray iterator lowering
+- the stencil language/literals stage now reaches 534/534 after routing
+  RegExp flags and identity escapes through one compiled kernel, preserving
+  UTF-8 astral literals and surrogate-pair escapes, and enforcing strict
+  legacy-literal early errors across direct and eval code
 - intrinsic data-property installation now uses the declarative
   `install_data_properties!` Rust macro for Math and BigInt tables, keeping
   values and descriptors in one source-of-truth declaration
