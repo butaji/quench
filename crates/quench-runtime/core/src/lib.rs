@@ -5360,6 +5360,7 @@ struct Vm {
     module_exports_cache: HashMap<PathBuf, HashMap<String, Value>>,
     module_namespace_cache: HashMap<(PathBuf, bool), Value>,
     module_evaluating: HashSet<PathBuf>,
+    deferred_namespace_loading: bool,
     module_export_stack: Vec<HashMap<String, Value>>,
     started_at: Instant,
     coverage: Coverage,
@@ -5415,6 +5416,7 @@ impl Vm {
             module_exports_cache: HashMap::new(),
             module_namespace_cache: HashMap::new(),
             module_evaluating: HashSet::new(),
+            deferred_namespace_loading: false,
             module_export_stack: Vec::new(),
             started_at: Instant::now(),
             coverage: if env::var_os("QUENCH_STENCIL_COVERAGE").is_some() {
@@ -7365,6 +7367,16 @@ impl Vm {
             path.set_extension("js");
         }
         path
+    }
+
+    fn module_key(&self, path: &Path) -> PathBuf {
+        fs::canonicalize(path).unwrap_or_else(|_| {
+            if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                self.cwd.join(path)
+            }
+        })
     }
 
     fn require_module(&mut self, specifier: &str) -> JsResult<Value> {
@@ -10102,16 +10114,31 @@ impl Vm {
     }
 
     fn load_module_exports(&mut self, path: &Path) -> JsResult<HashMap<String, Value>> {
-        let key = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let key = self.module_key(path);
         if let Some(exports) = self.module_exports_cache.get(&key) {
             return Ok(exports.clone());
         }
         if self.module_evaluating.contains(&key) {
+            if self.deferred_namespace_loading {
+                return Err(JsError::Throw(type_error(
+                    self,
+                    "cannot evaluate a deferred module dependency while it is evaluating",
+                )));
+            }
             return Ok(HashMap::new());
         }
         self.module_evaluating.insert(key.clone());
         let source =
             fs::read_to_string(&key).map_err(|error| JsError::Message(error.to_string()))?;
+        if self.deferred_namespace_loading
+            && self.module_has_evaluating_dependency(&key, &source)?
+        {
+            self.module_evaluating.remove(&key);
+            return Err(JsError::Throw(type_error(
+                self,
+                "cannot evaluate a deferred module with an evaluating dependency",
+            )));
+        }
         if key.extension().and_then(|extension| extension.to_str()) == Some("json") {
             let parsed: serde_json::Value = serde_json::from_str(&source).map_err(|error| {
                 JsError::Message(format!("SyntaxError: invalid JSON module: {error}"))
@@ -10138,8 +10165,42 @@ impl Vm {
         Ok(exports)
     }
 
+    fn module_has_evaluating_dependency(&mut self, path: &Path, source: &str) -> JsResult<bool> {
+        let parsed_source: &'static str = Box::leak(source.to_owned().into_boxed_str());
+        let allocator: &'static Allocator = Box::leak(Box::new(Allocator::default()));
+        let parsed = Parser::new(allocator, parsed_source, SourceType::mjs()).parse();
+        if parsed.diagnostics.first().is_some() {
+            return Ok(false);
+        }
+        let Some(parent) = path.parent() else {
+            return Ok(false);
+        };
+        let current = self.module_key(path);
+        Ok(parsed.program.body.iter().any(|statement| {
+            let request = match statement {
+                Statement::ImportDeclaration(import) => Some(import.source.value.as_str()),
+                Statement::ExportFromDeclaration(export) => Some(export.source.value.as_str()),
+                Statement::ExportAllDeclaration(export) => Some(export.source.value.as_str()),
+                _ => None,
+            };
+            request.is_some_and(|request| {
+                let dependency = self.resolve_module_request(parent, request);
+                let dependency = self.module_key(&dependency);
+                let synthetic = dependency.with_extension("mjs");
+                let relative = synthetic
+                    .strip_prefix(&self.cwd)
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|_| synthetic.clone());
+                dependency != current
+                    && (self.module_evaluating.contains(&dependency)
+                        || self.module_evaluating.contains(&synthetic)
+                        || self.module_evaluating.contains(&relative))
+            })
+        }))
+    }
+
     fn module_export_names(&mut self, path: &Path) -> JsResult<Vec<String>> {
-        let key = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let key = self.module_key(path);
         if key.extension().and_then(|extension| extension.to_str()) == Some("json") {
             return Ok(vec![String::from("default")]);
         }
@@ -10237,10 +10298,7 @@ impl Vm {
         exports: &HashMap<String, Value>,
         deferred: bool,
     ) -> Value {
-        let key = (
-            fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
-            deferred,
-        );
+        let key = (self.module_key(path), deferred);
         if let Some(namespace) = self.module_namespace_cache.get(&key) {
             return namespace.clone();
         }
@@ -10305,7 +10363,18 @@ impl Vm {
         else {
             return Ok(());
         };
-        let exports = self.load_module_exports(&path)?;
+        let key = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        if self.module_evaluating.contains(&key) {
+            return Err(JsError::Throw(type_error(
+                self,
+                "cannot access a deferred module while it is evaluating",
+            )));
+        }
+        let previous_loading = self.deferred_namespace_loading;
+        self.deferred_namespace_loading = true;
+        let exports = self.load_module_exports(&path);
+        self.deferred_namespace_loading = previous_loading;
+        let exports = exports?;
         for (name, value) in exports {
             self.set_prop(object, &name, value);
             set_property_attributes(
@@ -10689,8 +10758,7 @@ impl Vm {
             }
         }
         let module_source = st.is_module();
-        let module_key =
-            module_source.then(|| fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()));
+        let module_key = module_source.then(|| self.module_key(p));
         let module_owner = module_key
             .as_ref()
             .is_some_and(|key| self.module_evaluating.insert(key.clone()));
