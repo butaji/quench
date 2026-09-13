@@ -59,12 +59,19 @@ macro_rules! define_native_accessors {
     };
 }
 
+#[path = "native/conv.rs"]
 mod conv;
+#[path = "native/float.rs"]
 mod float;
+#[path = "native/i32_ops.rs"]
 mod i32_ops;
+#[path = "native/i64_ops.rs"]
 mod i64_ops;
+#[path = "native/simd.rs"]
 mod simd;
+#[path = "native/simd_extra.rs"]
 pub(crate) mod simd_extra;
+#[path = "native/simd_more.rs"]
 pub(crate) mod simd_more;
 
 pub use conv::{Bits, ConvOp};

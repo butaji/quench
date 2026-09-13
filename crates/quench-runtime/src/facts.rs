@@ -4,42 +4,9 @@ use oxc::span::Span;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-/// Arithmetic operations whose semantics are shared by the JavaScript and
-/// Wasm frontends.  Frontends retain their physical instruction types, while
-/// this fact keeps the overlapping meaning declared exactly once.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SharedBinaryFact {
-    Add,
-    Subtract,
-    Multiply,
-}
-
-impl SharedBinaryFact {
-    pub const fn from_js(operator: crate::ops::BinaryOp) -> Option<Self> {
-        match operator {
-            crate::ops::BinaryOp::Add => Some(Self::Add),
-            crate::ops::BinaryOp::Subtract => Some(Self::Subtract),
-            crate::ops::BinaryOp::Multiply => Some(Self::Multiply),
-            _ => None,
-        }
-    }
-
-    pub const fn to_js(self) -> crate::ops::BinaryOp {
-        match self {
-            Self::Add => crate::ops::BinaryOp::Add,
-            Self::Subtract => crate::ops::BinaryOp::Subtract,
-            Self::Multiply => crate::ops::BinaryOp::Multiply,
-        }
-    }
-
-    pub const fn to_wasm_i32(self) -> crate::native::BinI32 {
-        match self {
-            Self::Add => crate::native::BinI32::Add,
-            Self::Subtract => crate::native::BinI32::Sub,
-            Self::Multiply => crate::native::BinI32::Mul,
-        }
-    }
-}
+/// Arithmetic facts are owned by the core so JavaScript and Wasm frontends
+/// cannot grow divergent representations of the same operation.
+pub use quench_runtime_core::facts::SharedBinaryFact;
 
 /// Observable effects attached to a generated VM operation.
 ///
@@ -640,8 +607,20 @@ mod tests {
             (crate::ops::BinaryOp::Subtract, crate::native::BinI32::Sub),
             (crate::ops::BinaryOp::Multiply, crate::native::BinI32::Mul),
         ] {
-            let fact = SharedBinaryFact::from_js(js).expect("shared arithmetic fact");
-            assert_eq!(fact.to_js(), js);
+            let fact = match js {
+                crate::ops::BinaryOp::Add => SharedBinaryFact::Add,
+                crate::ops::BinaryOp::Subtract => SharedBinaryFact::Subtract,
+                crate::ops::BinaryOp::Multiply => SharedBinaryFact::Multiply,
+                _ => unreachable!(),
+            };
+            assert_eq!(
+                match fact {
+                    SharedBinaryFact::Add => crate::ops::BinaryOp::Add,
+                    SharedBinaryFact::Subtract => crate::ops::BinaryOp::Subtract,
+                    SharedBinaryFact::Multiply => crate::ops::BinaryOp::Multiply,
+                },
+                js
+            );
             assert_eq!(fact.to_wasm_i32(), wasm);
         }
     }
