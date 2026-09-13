@@ -8572,7 +8572,7 @@ impl Vm {
                     handler,
                     vec![target, arguments, new_target],
                 )?;
-                if !result.is_object_like() {
+                if !result.is_object_like() || is_symbol_carrier(&result) {
                     return Err(JsError::Throw(type_error(
                         self,
                         "Proxy construct trap must return an object",
