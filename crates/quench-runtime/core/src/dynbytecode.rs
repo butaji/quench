@@ -1580,6 +1580,7 @@ impl Compiler {
                         kernel: RegExpLiteralKernel::compile(
                             &source,
                             value.regex.flags.contains(RegExpFlags::I),
+                            value.regex.flags.contains(RegExpFlags::M),
                             value.regex.flags.contains(RegExpFlags::U),
                         ),
                     },
