@@ -3029,9 +3029,9 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             let value = {
                 let object = get_ref(frame, *object).clone();
                 if object.is_null() || object.is_undefined() {
-                    return Err(JsError::Message(format!(
-                        "cannot read property {key} of {}",
-                        object.display()
+                    return Err(JsError::Throw(super::type_error(
+                        unsafe { &mut *frame.vm },
+                        &format!("cannot read property {key} of {}", object.display()),
                     )));
                 }
                 if unsafe { &*frame.vm }.restricted_function_property(&object, key) {
@@ -3055,9 +3055,9 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             let value = {
                 let object = get_ref(frame, *object).clone();
                 if object.is_null() || object.is_undefined() {
-                    return Err(JsError::Message(format!(
-                        "cannot read computed property of {}",
-                        object.display()
+                    return Err(JsError::Throw(super::type_error(
+                        unsafe { &mut *frame.vm },
+                        &format!("cannot read computed property of {}", object.display()),
                     )));
                 }
                 let key = get_ref(frame, *key).clone();
@@ -3730,12 +3730,15 @@ fn construct(
             )
             .then(|| function.prototype.clone())
         });
+        let proxy_prototype = super::proxy_target(&callee)
+            .and_then(|target| target.as_function_ref().map(|function| function.prototype.clone()));
         let error_prototype = callee.as_function_ref().and_then(|function| {
             matches!(function.kind, FunctionKind::Builtin(id) if id.is_error_constructor())
                 .then(|| function.prototype.clone())
         });
         error_prototype
             .or(native_prototype)
+            .or(proxy_prototype)
             .map_or(Value::Undefined, |prototype| {
                 vm(frame).object(Some(prototype))
             })
@@ -3768,7 +3771,10 @@ fn construct(
     if let Some(function) = callee.as_function()
         && matches!(function.kind, FunctionKind::Class { .. })
     {
-        let result = vm(frame).call_class(&function, object.clone(), arguments.materialize())?;
+        let previous_new_target = vm(frame).current_new_target.replace(callee.clone());
+        let result = vm(frame).call_class(&function, object.clone(), arguments.materialize());
+        vm(frame).current_new_target = previous_new_target;
+        let result = result?;
         let returns_object = result.is_object() || result.is_function() || result.is_regexp();
         put(frame, dst, if returns_object { result } else { object });
         return Ok(());
@@ -3785,12 +3791,15 @@ fn construct(
             "Cannot convert a Symbol value to a string",
         )));
     }
+    let previous_new_target = vm(frame).current_new_target.replace(callee.clone());
     let result = unsafe { &mut *frame.vm }.call_arguments_with_ic(
         &callee,
         object.clone(),
         &arguments,
         call_ic,
-    )?;
+    );
+    vm(frame).current_new_target = previous_new_target;
+    let result = result?;
     // Error constructors return ordinary objects, but those objects must retain
     // identity with the constructor used (`thrown.constructor === TypeError`).
     // Stamp the constructor metadata at the construction boundary so all error
