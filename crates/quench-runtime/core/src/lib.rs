@@ -19641,6 +19641,14 @@ fn native_promise_thenable_job(vm: &mut Vm, _: Value, args: &[Value]) -> JsResul
     let promise = vm.get_prop(&job, "promise");
     let thenable = vm.get_prop(&job, "thenable");
     let then = vm.get_prop(&job, "then");
+    // The outer resolving function marks the promise as assimilating before
+    // this job runs.  Re-open the one-shot callback gate for the thenable's
+    // resolve/reject pair; the first callback will close it again.
+    vm.set_prop(
+        &promise,
+        PROMISE_RESOLUTION_STARTED_PROP,
+        Value::Bool(false),
+    );
     let resolve = anonymous_native_bound(vm, native_promise_resolve_executor, &promise, 1)?;
     let reject = anonymous_native_bound(vm, native_promise_reject_executor, &promise, 1)?;
     if let Err(error) = vm.call(then, thenable, vec![resolve, reject]) {
