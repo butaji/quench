@@ -3009,15 +3009,23 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             put(frame, dst, value);
         }
         DynOp::InstanceOf { dst, left, right } => {
-            let value = if let Some(cache) = instanceof_ic() {
+            let left_value = get_ref(frame, *left).clone();
+            let right_value = get_ref(frame, *right).clone();
+            let value = if super::proxy_target(&left_value).is_some() {
+                Value::Bool(super::instance_of_with_vm(
+                    vm(frame),
+                    &left_value,
+                    &right_value,
+                )?)
+            } else if let Some(cache) = instanceof_ic() {
                 Value::Bool(instance_of_cached(
-                    get_ref(frame, *left),
-                    get_ref(frame, *right),
+                    &left_value,
+                    &right_value,
                     cache,
                     unsafe { (*frame.vm).prototype_epoch.get() },
                 ))
             } else {
-                Value::Bool(instance_of(get_ref(frame, *left), get_ref(frame, *right)))
+                Value::Bool(instance_of(&left_value, &right_value))
             };
             put(frame, dst, value);
         }
