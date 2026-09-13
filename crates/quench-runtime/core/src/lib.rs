@@ -10067,6 +10067,14 @@ impl Vm {
         self.run_source_text(p, &source)
     }
 
+    fn module_environment(&self) -> Env {
+        let environment = Environment::new(Some(self.global.clone()));
+        // A Module Environment Record owns a `this` binding whose value is
+        // always undefined; it must not fall through to the realm global.
+        environment.borrow_mut().declare("this", Value::Undefined);
+        environment
+    }
+
     fn load_module_exports(&mut self, path: &Path) -> JsResult<HashMap<String, Value>> {
         let key = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         if let Some(exports) = self.module_exports_cache.get(&key) {
@@ -10092,7 +10100,7 @@ impl Vm {
         // synthetic `.mjs` identity to the parser while retaining the actual
         // path for file I/O and diagnostics.
         let module_path = key.with_extension("mjs");
-        let environment = Environment::new(Some(self.global.clone()));
+        let environment = self.module_environment();
         let _ = self.run_source_text_in_environment(&module_path, &source, environment)?;
         let exports = self
             .module_exports_cache
@@ -10291,7 +10299,7 @@ impl Vm {
             // Modules execute in a fresh module environment whose parent is
             // the realm global.  This keeps module bindings out of the global
             // object while still using the same VM and stencil machinery.
-            let environment = Environment::new(Some(self.global.clone()));
+            let environment = self.module_environment();
             self.run_source_text_in_environment(p, source, environment)
         } else {
             self.run_source_text_in_environment(p, source, self.global.clone())
