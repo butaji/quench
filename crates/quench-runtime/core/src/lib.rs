@@ -1294,6 +1294,13 @@ fn array_length(object: &Object) -> usize {
         )
 }
 
+fn array_value_length(value: &Value) -> usize {
+    value
+        .as_object_ref()
+        .map(|object| array_length(&object.borrow()))
+        .unwrap_or(0)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(transparent)]
 struct ObjectHandle {
@@ -7572,10 +7579,10 @@ impl Vm {
         if let Some(x) = o.as_object_ref() {
             if k == "size" {
                 if let Some(entries) = x.borrow().props.get(MAP_ENTRIES_PROP).cloned() {
-                    return Value::Number(array_length(&entries) as f64);
+                    return Value::Number(array_value_length(&entries) as f64);
                 }
                 if let Some(values) = x.borrow().props.get(SET_VALUES_PROP).cloned() {
-                    return Value::Number(array_length(&values) as f64);
+                    return Value::Number(array_value_length(&values) as f64);
                 }
             }
             // Typed-array elements and length are views over the shared
@@ -8141,10 +8148,10 @@ impl Vm {
         {
             let object = object_ref.borrow();
             if let Some(entries) = object.props.get(MAP_ENTRIES_PROP).cloned() {
-                return Ok(Value::Number(array_length(&entries) as f64));
+                return Ok(Value::Number(array_value_length(&entries) as f64));
             }
             if let Some(values) = object.props.get(SET_VALUES_PROP).cloned() {
-                return Ok(Value::Number(array_length(&values) as f64));
+                return Ok(Value::Number(array_value_length(&values) as f64));
             }
         }
         if key != DEFERRED_NAMESPACE_PATH_PROP
@@ -11801,7 +11808,6 @@ impl Vm {
                 self.module_environments
                     .insert(key.with_extension("js"), environment.clone());
             }
-            self.bind_module_imports(p, &r.program, &environment)?;
             self.module_export_stack.push(HashMap::new());
             self.module_export_stack_paths.push(self.module_key(p));
             let mut module_vars = Vec::new();
@@ -11817,6 +11823,11 @@ impl Vm {
             environment
                 .borrow_mut()
                 .declare(MODULE_INSTANTIATED_ENV_NAME, Value::Bool(true));
+            // Declaration instantiation (especially hoisted functions) is
+            // complete before dependency evaluation.  Cyclic dependencies
+            // therefore observe initialized function bindings as required by
+            // ModuleEvaluation, while imports still retain live references.
+            self.bind_module_imports(p, &r.program, &environment)?;
         }
         // Script declaration instantiation happens before any statement (and
         // before a stencil image is entered). Reserve lexical slots and
@@ -13800,6 +13811,7 @@ impl Vm {
                         .as_string()
                         .is_some_and(|state| state.as_str() == "fulfilled")
                     {
+                        self.run_timers()?;
                         return Ok(self.get_prop(&value, PROMISE_RESULT_PROP));
                     }
                 }
@@ -13820,10 +13832,12 @@ impl Vm {
                         self.await_result = previous;
                         call_result?;
                         if let Some(result) = settled {
+                            self.run_timers()?;
                             return result.map_err(JsError::Throw);
                         }
                     }
                 }
+                self.run_timers()?;
                 Ok(value)
             }
             PrivateInExpression(private_in) => {
@@ -18582,7 +18596,7 @@ fn native_map_size(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
             "Method get Map.prototype.size called on incompatible receiver",
         )));
     }
-    Ok(Value::Number(array_length(&entries) as f64))
+    Ok(Value::Number(array_value_length(&entries) as f64))
 }
 
 fn map_entries(vm: &Vm, map: &Value) -> Vec<Value> {
@@ -18687,7 +18701,7 @@ fn native_set_size(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
             "Method get Set.prototype.size called on incompatible receiver",
         )));
     }
-    Ok(Value::Number(array_length(&values) as f64))
+    Ok(Value::Number(array_value_length(&values) as f64))
 }
 
 fn set_values(vm: &Vm, set: &Value) -> Vec<Value> {
@@ -19202,26 +19216,51 @@ fn native_promise_then(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
         .cloned()
         .unwrap_or(Value::Undefined);
     let value = vm.get_prop(&this, PROMISE_RESULT_PROP);
+    let entry = vm.object(None);
+    vm.set_prop(
+        &entry,
+        "fulfilled",
+        args.first().cloned().unwrap_or(Value::Undefined),
+    );
+    vm.set_prop(
+        &entry,
+        "rejected",
+        args.get(1).cloned().unwrap_or(Value::Undefined),
+    );
+    vm.set_prop(&entry, "promise", child.clone());
+    vm.set_prop(&entry, "resolve", child_resolve);
+    vm.set_prop(&entry, "reject", child_reject);
+    vm.set_prop(&entry, "value", value);
+    vm.set_prop(&entry, "is-fulfilled", Value::Bool(fulfilled));
+    let _ = handler;
+    vm.schedule_microtask(vm.native(native_promise_reaction_job), vec![entry]);
+    Ok(child)
+}
+
+fn native_promise_reaction_job(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let entry = args.first().cloned().unwrap_or(Value::Undefined);
+    let fulfilled = vm.get_prop(&entry, "is-fulfilled").truthy();
+    let handler = vm.get_prop(&entry, if fulfilled { "fulfilled" } else { "rejected" });
+    let value = vm.get_prop(&entry, "value");
+    let resolve = vm.get_prop(&entry, "resolve");
+    let reject = vm.get_prop(&entry, "reject");
     if !handler.is_function() {
-        let resolver = if fulfilled {
-            child_resolve
-        } else {
-            child_reject
-        };
-        let argument = value.clone();
-        let _ = vm.call(resolver, Value::Undefined, vec![argument]);
-        return Ok(child);
+        vm.call(
+            if fulfilled { resolve } else { reject },
+            Value::Undefined,
+            vec![value],
+        )?;
+        return Ok(Value::Undefined);
     }
-    let result = vm.call(handler, Value::Undefined, vec![value]);
-    match result {
+    match vm.call(handler, Value::Undefined, vec![value]) {
         Ok(value) => {
-            let _ = vm.call(child_resolve, Value::Undefined, vec![value]);
+            vm.call(resolve, Value::Undefined, vec![value])?;
         }
         Err(error) => {
-            let _ = vm.call(child_reject, Value::Undefined, vec![error_value(error)]);
+            vm.call(reject, Value::Undefined, vec![error_value(error)])?;
         }
     }
-    Ok(child)
+    Ok(Value::Undefined)
 }
 fn native_promise_catch(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     if this.is_null() || this.is_undefined() {
