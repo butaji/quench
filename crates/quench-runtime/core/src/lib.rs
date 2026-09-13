@@ -2613,6 +2613,7 @@ struct RegExpValue {
     last_index: usize,
     props: IndexMap<String, Value>,
     attributes: HashMap<String, PropertyAttributes>,
+    extensible: bool,
 }
 
 impl RegExpValue {
@@ -2640,6 +2641,7 @@ impl RegExpValue {
             last_index: 0,
             props,
             attributes,
+            extensible: true,
         }
     }
 
@@ -18571,6 +18573,8 @@ fn native_reflect_is_extensible(vm: &mut Vm, _: Value, args: &[Value]) -> JsResu
         if let Some(function) = target.as_function_ref() {
             !function.props.borrow().contains_key("\0throw-type-error")
                 && !function.props.borrow().contains_key("\0sealed")
+        } else if let Some(regexp) = target.as_regexp_ref() {
+            regexp.borrow().extensible
         } else {
             target
                 .as_object_ref()
@@ -22869,6 +22873,8 @@ fn native_object_prevent_extensions(vm: &mut Vm, _: Value, args: &[Value]) -> Js
             .props
             .borrow_mut()
             .insert("\0sealed".into(), Value::Bool(true));
+    } else if let Some(regexp) = target.as_regexp_ref() {
+        regexp.borrow_mut().extensible = false;
     }
     Ok(target.clone())
 }
@@ -22902,6 +22908,9 @@ fn native_object_is_extensible(vm: &mut Vm, _: Value, args: &[Value]) -> JsResul
             if let Some(function) = value.as_function_ref() {
                 return !function.props.borrow().contains_key("\0sealed")
                     && !function.props.borrow().contains_key("\0throw-type-error");
+            }
+            if let Some(regexp) = value.as_regexp_ref() {
+                return regexp.borrow().extensible;
             }
             true
         })
@@ -23999,6 +24008,16 @@ fn native_object_set_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
     Ok(target.clone())
 }
 fn set_integrity_level(target: &Value, freeze: bool) {
+    if let Some(regexp) = target.as_regexp_ref() {
+        let mut regexp = regexp.borrow_mut();
+        regexp.extensible = false;
+        if freeze {
+            if let Some(attributes) = regexp.attributes.get_mut("lastIndex") {
+                attributes.writable = false;
+            }
+        }
+        return;
+    }
     if let Some(function) = target.as_function_ref() {
         let mut props = function.props.borrow_mut();
         props.insert("\0sealed".into(), Value::Bool(true));
@@ -24063,6 +24082,15 @@ fn set_integrity_level(target: &Value, freeze: bool) {
     }
 }
 fn integrity_level(target: &Value, frozen: bool) -> bool {
+    if let Some(regexp) = target.as_regexp_ref() {
+        let regexp = regexp.borrow();
+        return !regexp.extensible
+            && (!frozen
+                || regexp
+                    .attributes
+                    .values()
+                    .all(|attrs| !attrs.configurable && !attrs.writable));
+    }
     let Some(object) = target.as_object_ref() else {
         return true;
     };
@@ -24070,8 +24098,9 @@ fn integrity_level(target: &Value, frozen: bool) -> bool {
     !object.extensible
         && object
             .attributes
-            .values()
-            .all(|attrs| !attrs.configurable && (!frozen || !attrs.writable))
+            .iter()
+            .filter(|(key, _)| !key.starts_with('\0'))
+            .all(|(_, attrs)| !attrs.configurable && (!frozen || !attrs.writable))
 }
 
 macro_rules! define_integrity_builtins {
