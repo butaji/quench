@@ -52,8 +52,32 @@ mod static_call_census;
 // Wasm's typed substrate is hosted by this same VM crate. Keeping the frontend,
 // HIR, instance, interpreter, and native value ladder under one module tree
 // makes the shared-executor invariant structural rather than convention-only.
-#[path = "wasm_runtime/identity.rs"]
-pub mod identity;
+macro_rules! wasm_runtime_modules {
+    ($($name:ident => $path:literal),+ $(,)?) => {
+        $(
+            #[path = $path]
+            pub mod $name;
+        )+
+    };
+}
+
+wasm_runtime_modules! {
+    identity => "wasm_runtime/identity.rs",
+    bulk => "wasm_runtime/bulk.rs",
+    dynamic => "wasm_runtime/dynamic/mod.rs",
+    fast => "wasm_runtime/fast.rs",
+    gc => "wasm_runtime/gc.rs",
+    hir => "wasm_runtime/hir.rs",
+    hir_gc => "wasm_runtime/hir_gc.rs",
+    instance => "wasm_runtime/instance/mod.rs",
+    interp => "wasm_runtime/interp.rs",
+    layer => "wasm_runtime/layer.rs",
+    native => "wasm_runtime/native.rs",
+    slot => "wasm_runtime/slot.rs",
+    unwind => "wasm_runtime/unwind.rs",
+    wasm => "wasm_runtime/wasm/mod.rs",
+    wasm_atomic => "wasm_runtime/wasm_atomic.rs",
+}
 pub mod facts {
     #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
     pub enum SharedBinaryFact {
@@ -100,35 +124,6 @@ pub mod facts {
         }
     }
 }
-#[path = "wasm_runtime/bulk.rs"]
-pub mod bulk;
-#[path = "wasm_runtime/dynamic/mod.rs"]
-pub mod dynamic;
-#[path = "wasm_runtime/fast.rs"]
-pub mod fast;
-#[path = "wasm_runtime/gc.rs"]
-pub mod gc;
-#[path = "wasm_runtime/hir.rs"]
-pub mod hir;
-#[path = "wasm_runtime/hir_gc.rs"]
-pub mod hir_gc;
-#[path = "wasm_runtime/instance/mod.rs"]
-pub mod instance;
-#[path = "wasm_runtime/interp.rs"]
-pub mod interp;
-#[path = "wasm_runtime/layer.rs"]
-pub mod layer;
-#[path = "wasm_runtime/native.rs"]
-pub mod native;
-#[path = "wasm_runtime/slot.rs"]
-pub mod slot;
-#[path = "wasm_runtime/unwind.rs"]
-pub mod unwind;
-#[path = "wasm_runtime/wasm/mod.rs"]
-pub mod wasm;
-#[path = "wasm_runtime/wasm_atomic.rs"]
-pub mod wasm_atomic;
-
 use builtins::{BuiltinId, BuiltinInstallTarget, BuiltinOwner};
 use chrono::{Datelike, Duration, TimeZone, Timelike};
 use coverage::Coverage;
