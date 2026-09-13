@@ -532,11 +532,11 @@ pub(crate) fn instantiate(vm: &Vm) -> Box<[Value]> {
                 strict: false,
                 prototype: vm.allocate_object(Object::ordinary(None)),
                 props: Rc::new(RefCell::new(IndexMap::from([
-                    ("name".to_string(), Value::string_value(name)),
                     (
                         "length".to_string(),
                         Value::Number(builtin_length(id) as f64),
                     ),
+                    ("name".to_string(), Value::string_value(name)),
                 ]))),
                 attributes: Rc::new(RefCell::new(HashMap::new())),
                 dyn_jit: RefCell::new(None),

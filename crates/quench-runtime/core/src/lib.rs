@@ -30,6 +30,20 @@ macro_rules! regexp_flags {
     }};
 }
 
+// Intrinsic methods are a data table, not a sequence of subtly different
+// property writes.  This keeps the value/descriptor pair together whenever a
+// constructor or prototype publishes a builtin method.
+macro_rules! install_builtin_methods {
+    ($vm:expr, $owner:expr, $( $name:literal => $method:expr ),+ $(,)?) => {{
+        let owner = $owner;
+        $(
+            let method = $method;
+            $vm.set_prop(&owner, $name, method);
+            set_property_attributes(&owner, $name, PropertyAttributes::BUILTIN_METHOD);
+        )+
+    }};
+}
+
 mod dynbytecode;
 mod dynjit;
 #[cfg(any(test, feature = "inline-census"))]
@@ -197,6 +211,20 @@ environment_keys! {
 }
 const PROMISE_STATE_PROP: &str = "\0quench:promise-state";
 const PROMISE_RESULT_PROP: &str = "\0quench:promise-result";
+const PROMISE_MARKER_PROP: &str = "\0quench:promise";
+const PROMISE_QUEUE_PROP: &str = "\0quench:promise-queue";
+const ASYNC_GENERATOR_VALUES_PROP: &str = "\0quench:async-generator-values";
+const ASYNC_GENERATOR_INDEX_PROP: &str = "\0quench:async-generator-index";
+const ASYNC_GENERATOR_ERROR_PROP: &str = "\0quench:async-generator-error";
+const ASYNC_GENERATOR_INSTANCE_PROP: &str = "\0quench:async-generator-instance";
+const ASYNC_GENERATOR_FUNCTION_PROP: &str = "\0quench:async-generator-function";
+const ASYNC_GENERATOR_ARGS_PROP: &str = "\0quench:async-generator-args";
+const ASYNC_GENERATOR_THIS_PROP: &str = "\0quench:async-generator-this";
+const ASYNC_GENERATOR_STARTED_PROP: &str = "\0quench:async-generator-started";
+const ASYNC_GENERATOR_EXECUTING_PROP: &str = "\0quench:async-generator-executing";
+const ASYNC_GENERATOR_QUEUE_PROP: &str = "\0quench:async-generator-queue";
+const REALM_GLOBAL_PROP: &str = "\0quench:realm-global";
+const FUNCTION_PROTOTYPE_OVERRIDE_PROP: &str = "\0quench:function-prototype-override";
 static NEXT_OBJECT_HEAP_ID: AtomicU64 = AtomicU64::new(FIRST_OBJECT_HEAP_ID);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2017,9 +2045,6 @@ impl Environment {
             let Some(parent) = parent else {
                 let global_this = {
                     let root = root.borrow();
-                    if !root.names.contains_key(EVAL_CODE_ENV_NAME) {
-                        return None;
-                    }
                     root.names
                         .get("globalThis")
                         .and_then(|slot| root.values.get(*slot))
@@ -2056,6 +2081,38 @@ impl Environment {
             }
             Self::set_at(e, location, v);
             return;
+        }
+        // Unresolved writes from a function created in a realm target an
+        // existing global object property. Keep this at the environment edge
+        // so lexical bindings remain local while cross-realm dynamic code
+        // observes the same global object used by reads.
+        let mut root = e.clone();
+        loop {
+            let parent = root.borrow().parent.clone();
+            let Some(parent) = parent else {
+                let global_this = {
+                    let root = root.borrow();
+                    root.names
+                        .get("globalThis")
+                        .and_then(|slot| root.values.get(*slot))
+                        .cloned()
+                };
+                if let Some(object) = global_this.and_then(|value| value.as_object()) {
+                    let mut object = object.borrow_mut();
+                    if object.props.contains_key(k) {
+                        if object
+                            .attributes
+                            .get(k)
+                            .is_none_or(|attributes| attributes.writable)
+                        {
+                            object.props.insert(k, v);
+                        }
+                        return;
+                    }
+                }
+                break;
+            };
+            root = parent;
         }
         e.borrow_mut().declare(k, v);
     }
@@ -4830,6 +4887,19 @@ fn is_html_dda_value(value: &Value) -> bool {
             .is_some_and(|function| function.props.borrow().contains_key("\0html-dda"))
 }
 fn instance_of(value: &Value, ctor: &Value) -> bool {
+    if value
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.contains_key(PROMISE_MARKER_PROP))
+        && ctor.as_function_ref().is_some_and(|function| {
+            matches!(
+                function.kind,
+                FunctionKind::Native(native)
+                    if native as *const () == native_promise_constructor as *const ()
+            )
+        })
+    {
+        return true;
+    }
     if value.as_function_ref().is_some_and(|function| {
         matches!(&function.kind, FunctionKind::User { node, .. } if node.r#async && node.generator)
     }) && ctor.as_function_ref().is_some_and(|function| {
@@ -5157,9 +5227,12 @@ struct Vm {
     next_symbol_id: u64,
     async_function_constructor: RefCell<Option<Value>>,
     async_generator_constructor: RefCell<Option<Value>>,
+    realm_async_constructors: RefCell<Vec<(bool, ObjectHandle, Value)>>,
     throw_type_error: RefCell<Option<Value>>,
     pending_loop_label: Option<String>,
     current_new_target: Option<Value>,
+    current_constructor: Option<Value>,
+    async_generator_yields: Option<Vec<Value>>,
 }
 impl Vm {
     fn new() -> Self {
@@ -5208,9 +5281,12 @@ impl Vm {
             next_symbol_id: 1,
             async_function_constructor: RefCell::new(None),
             async_generator_constructor: RefCell::new(None),
+            realm_async_constructors: RefCell::new(Vec::new()),
             throw_type_error: RefCell::new(None),
             pending_loop_label: None,
             current_new_target: None,
+            current_constructor: None,
+            async_generator_yields: None,
         };
         v.builtin_functions = builtins::instantiate(&v);
         v.install();
@@ -5430,8 +5506,8 @@ impl Vm {
         length: usize,
     ) -> Value {
         let value = self.native(f);
-        self.set_prop(&value, "name", Value::string_value(name));
         self.set_prop(&value, "length", Value::Number(length as f64));
+        self.set_prop(&value, "name", Value::string_value(name));
         if let Some(object) = value.as_object_ref() {
             let mut object = object.borrow_mut();
             for key in ["name", "length"] {
@@ -5460,13 +5536,35 @@ impl Vm {
         value
     }
     fn async_constructor(&self, generator: bool) -> Value {
-        let cache = if generator {
-            &self.async_generator_constructor
+        self.async_constructor_for_realm(generator, None)
+    }
+
+    fn async_constructor_for_realm(
+        &self,
+        generator: bool,
+        realm_global: Option<Value>,
+    ) -> Value {
+        let realm_handle = realm_global.as_ref().and_then(Value::as_object);
+        if let Some(realm_handle) = realm_handle.as_ref() {
+            if let Some((_, _, value)) = self
+                .realm_async_constructors
+                .borrow()
+                .iter()
+                .find(|(is_generator, global, _)| {
+                    *is_generator == generator && global.as_ptr() == realm_handle.as_ptr()
+                })
+            {
+                return value.clone();
+            }
         } else {
-            &self.async_function_constructor
-        };
-        if let Some(value) = cache.borrow().clone() {
-            return value;
+            let cache = if generator {
+                &self.async_generator_constructor
+            } else {
+                &self.async_function_constructor
+            };
+            if let Some(value) = cache.borrow().clone() {
+                return value;
+            }
         }
         let native: fn(&mut Vm, Value, &[Value]) -> JsResult<Value> = if generator {
             native_async_generator_constructor
@@ -5488,8 +5586,18 @@ impl Vm {
         };
         let constructor = self.native_named(native, name, 1);
         self.set_prop(&constructor, marker, Value::Bool(true));
-        let function_prototype = self
-            .builtin(BuiltinId::FunctionConstructor)
+        let constructor_global = realm_global
+            .clone()
+            .or_else(|| self.global_object_for_environment(&self.global));
+        if let Some(global) = constructor_global.as_ref() {
+            self.set_prop(&constructor, REALM_GLOBAL_PROP, global.clone());
+        }
+        let function_constructor = realm_global
+            .as_ref()
+            .map(|global| self.get_prop(global, "Function"))
+            .filter(|value| value.is_function())
+            .unwrap_or_else(|| self.builtin(BuiltinId::FunctionConstructor));
+        let function_prototype = function_constructor
             .as_function_ref()
             .expect("Function constructor")
             .prototype
@@ -5526,7 +5634,24 @@ impl Vm {
                 },
             );
             if generator {
-                let generator_prototype = self.object(None);
+                let object_constructor = realm_global
+                    .as_ref()
+                    .map(|global| self.get_prop(global, "Object"))
+                    .filter(|value| value.is_function())
+                    .unwrap_or_else(|| self.builtin(BuiltinId::ObjectConstructor));
+                let object_prototype = object_constructor
+                    .as_function_ref()
+                    .expect("Object constructor")
+                    .prototype
+                    .clone();
+                let async_iterator_prototype = self.object(Some(object_prototype));
+                let generator_prototype = self.object(
+                    Some(
+                        async_iterator_prototype
+                            .as_object()
+                            .expect("async iterator prototype is an object"),
+                    ),
+                );
                 let async_function_prototype = Value::Object(
                     constructor
                         .as_function_ref()
@@ -5544,9 +5669,58 @@ impl Vm {
                         configurable: true,
                     },
                 );
+                let generator_prototype = self
+                    .get_prop(&async_function_prototype, "prototype");
+                let constructor_prototype = async_function_prototype.clone();
+                let next = self.native_named(native_async_generator_next, "next", 1);
+                let return_method = self.native_named(native_async_generator_return, "return", 1);
+                let throw_method = self.native_named(native_async_generator_throw, "throw", 1);
+                let async_iterator = self.native_named(native_async_iterator_self, "[Symbol.asyncIterator]", 0);
+                let async_dispose = self.native_named(native_async_iterator_dispose, "[Symbol.asyncDispose]", 0);
+                install_data_properties!(
+                    self,
+                    generator_prototype.clone(),
+                    "constructor" => constructor_prototype, PropertyAttributes::BUILTIN_METHOD;
+                    "next" => next, PropertyAttributes::BUILTIN_METHOD;
+                    "return" => return_method, PropertyAttributes::BUILTIN_METHOD;
+                    "throw" => throw_method, PropertyAttributes::BUILTIN_METHOD;
+                );
+                set_property_attributes(
+                    &generator_prototype,
+                    "constructor",
+                    PropertyAttributes {
+                        writable: false,
+                        enumerable: false,
+                        configurable: true,
+                    },
+                );
+                let async_iterator_key = self.well_known_symbol_key("asyncIterator");
+                self.set_prop(&async_iterator_prototype, &async_iterator_key, async_iterator);
+                set_property_attributes(&async_iterator_prototype, &async_iterator_key, PropertyAttributes::BUILTIN_METHOD);
+                let async_dispose_key = self.well_known_symbol_key("asyncDispose");
+                self.set_prop(&async_iterator_prototype, &async_dispose_key, async_dispose);
+                set_property_attributes(&async_iterator_prototype, &async_dispose_key, PropertyAttributes::BUILTIN_METHOD);
+                let to_string_tag_key = self.well_known_symbol_key("toStringTag");
+                self.set_prop(&generator_prototype, &to_string_tag_key, Value::string_value("AsyncGenerator"));
+                set_property_attributes(&generator_prototype, &to_string_tag_key, PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                });
             }
         }
-        *cache.borrow_mut() = Some(constructor.clone());
+        if let Some(realm_handle) = realm_handle {
+            self.realm_async_constructors
+                .borrow_mut()
+                .push((generator, realm_handle, constructor.clone()));
+        } else {
+            let cache = if generator {
+                &self.async_generator_constructor
+            } else {
+                &self.async_function_constructor
+            };
+            *cache.borrow_mut() = Some(constructor.clone());
+        }
         constructor
     }
     fn async_function_constructor(&self) -> Value {
@@ -5556,20 +5730,61 @@ impl Vm {
         self.async_constructor(true)
     }
     fn promise_from_result(&mut self, result: JsResult<Value>) -> Value {
+        let promise = self.new_pending_promise();
+        self.settle_promise(&promise, result);
+        promise
+    }
+    fn new_pending_promise(&mut self) -> Value {
+        let promise_prototype = Environment::get(&self.global, "Promise")
+            .and_then(|promise| promise.as_function_ref().map(|function| function.prototype));
+        let promise = self.object(promise_prototype);
+        self.set_prop(&promise, PROMISE_MARKER_PROP, Value::Bool(true));
+        self.set_prop(&promise, PROMISE_STATE_PROP, Value::string_value("pending"));
+        self.set_prop(&promise, PROMISE_RESULT_PROP, Value::Undefined);
+        self.set_prop(
+            &promise,
+            PROMISE_QUEUE_PROP,
+            self.array_from_values(Vec::new()),
+        );
+        promise
+    }
+    fn settle_promise(&mut self, promise: &Value, result: JsResult<Value>) {
+        // Promise resolution is idempotent.  Besides matching the spec's
+        // "already resolved" guard, this keeps a handler that settles its own
+        // child from recursively re-entering the same queue forever.
+        let current_state = self.get_prop(promise, PROMISE_STATE_PROP);
+        if current_state
+            .as_string()
+            .is_some_and(|state| state.as_str() != "pending")
+        {
+            return;
+        }
         let (state, value) = match result {
             Ok(value) => ("fulfilled", value),
             Err(JsError::Throw(value)) => ("rejected", value),
             Err(JsError::Message(message)) => ("rejected", Value::string_value(message)),
         };
-        let promise = self.object(None);
-        self.set_prop(&promise, PROMISE_STATE_PROP, Value::string_value(state));
-        self.set_prop(&promise, PROMISE_RESULT_PROP, value);
-        self.set_prop(
-            &promise,
-            "then",
-            self.native_named(native_promise_then, "then", 2),
-        );
-        promise
+        self.set_prop(promise, PROMISE_STATE_PROP, Value::string_value(state));
+        self.set_prop(promise, PROMISE_RESULT_PROP, value.clone());
+        let queue = self.get_prop(promise, PROMISE_QUEUE_PROP);
+        let length = array_from_length(self, &queue).unwrap_or(0);
+        self.set_prop(promise, PROMISE_QUEUE_PROP, self.array_from_values(Vec::new()));
+        for index in 0..length {
+            let entry = self.get_prop(&queue, &index.to_string());
+            let handler = self.get_prop(
+                &entry,
+                if state == "fulfilled" { "fulfilled" } else { "rejected" },
+            );
+            let child = self.get_prop(&entry, "promise");
+            let child_result = if handler.is_function() {
+                self.call(handler, Value::Undefined, vec![value.clone()])
+            } else if state == "fulfilled" {
+                Ok(value.clone())
+            } else {
+                Err(JsError::Throw(value.clone()))
+            };
+            self.settle_promise(&child, child_result);
+        }
     }
     fn mark_nonconstructable(&self, value: &Value) {
         self.set_prop(value, "\0nonconstructable", Value::Bool(true));
@@ -5619,6 +5834,26 @@ impl Vm {
                 .realm_globals
                 .iter()
                 .any(|(_, candidate)| Rc::ptr_eq(environment, candidate))
+    }
+    fn realm_environment_for_environment(&self, environment: &Env) -> Env {
+        let mut current = environment.clone();
+        loop {
+            if self.is_global_environment(&current) {
+                return current;
+            }
+            let Some(parent) = current.borrow().parent.clone() else {
+                return self.global.clone();
+            };
+            current = parent;
+        }
+    }
+    fn async_constructor_for_environment(&self, generator: bool, environment: &Env) -> Value {
+        let realm = self.realm_environment_for_environment(environment);
+        if Rc::ptr_eq(&realm, &self.global) {
+            return self.async_constructor(generator);
+        }
+        let global = self.global_object_for_environment(&realm);
+        self.async_constructor_for_realm(generator, global)
     }
     fn global_object_for_environment(&self, environment: &Env) -> Option<Value> {
         if Rc::ptr_eq(environment, &self.global) {
@@ -5830,7 +6065,6 @@ impl Vm {
                     "Map",
                     native_noop as fn(&mut Vm, Value, &[Value]) -> JsResult<Value>,
                 ),
-                ("Promise", native_noop as _),
                 ("Set", native_noop as _),
             ] {
                 let constructor = self.native_named(native, name, 0);
@@ -5970,6 +6204,49 @@ impl Vm {
         Environment::set(&g, "Reflect", reflect);
         let console = self.object(None);
         Environment::set(&g, "console", console);
+        let promise = self.native_named(native_promise_constructor, "Promise", 1);
+        let promise_all = self.native_named(native_promise_all, "all", 1);
+        let promise_reject = self.native_named(native_promise_reject, "reject", 1);
+        let promise_resolve = self.native_named(native_promise_resolve, "resolve", 1);
+        install_builtin_methods!(
+            self,
+            promise.clone(),
+            "all" => promise_all,
+            "reject" => promise_reject,
+            "resolve" => promise_resolve,
+        );
+        let promise_prototype = Value::Object(
+            promise
+                .as_function_ref()
+                .expect("Promise constructor")
+                .prototype,
+        );
+        self.set_prop(&promise_prototype, "constructor", promise.clone());
+        install_builtin_methods!(
+            self,
+            promise_prototype.clone(),
+            "then" => self.native_named(native_promise_then, "then", 2),
+            "catch" => self.native_named(native_promise_catch, "catch", 1),
+        );
+        // Promise's species accessor is installed after the constructor is
+        // materialized.  The earlier generic species pass creates temporary
+        // Map/Promise/Set placeholders; publishing the real Promise here
+        // must not lose that accessor.
+        let species_key = self.well_known_symbol_key("species");
+        let species_getter = self.native_named(native_species_getter, "get [Symbol.species]", 0);
+        self.mark_nonconstructable(&species_getter);
+        self.define_accessor_slot(
+            &promise,
+            &species_key,
+            Some(species_getter),
+            None,
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+        Environment::set(&g, "Promise", promise);
         let json = self.object(None);
         self.set_prop(&json, "stringify", self.native(native_json_stringify));
         Environment::set(&g, "JSON", json);
@@ -6807,6 +7084,11 @@ impl Vm {
                     {
                         true
                     }
+                    FunctionKind::Native(native)
+                        if *native as *const () == native_promise_constructor as *const () =>
+                    {
+                        true
+                    }
                     FunctionKind::Class { .. } => true,
                     FunctionKind::Native(_)
                     | FunctionKind::Arrow { .. }
@@ -7558,17 +7840,153 @@ impl Vm {
         strict: bool,
     ) -> JsResult<Value> {
         let is_async = node.r#async;
-        let is_async_generator = is_async && node.generator;
         let result = self.call_user(node, env, this, args, source_id, strict);
-        if is_async_generator {
-            // Async-generator suspension is not lowered yet. Preserve the
-            // synchronous parameter/declaration error boundary rather than
-            // hiding it inside a rejected Promise-like result.
-            result
-        } else if is_async {
+        if is_async {
             Ok(self.promise_from_result(result))
         } else {
             result
+        }
+    }
+
+    /// Materialize an async-generator activation once, then expose its
+    /// yielded values through the ordinary Promise/`next` protocol. This is a
+    /// correctness bridge for the stencil evaluator while suspension points
+    /// are being lowered into resumable stencil frames; all evaluation still
+    /// runs through this VM's shared AST evaluator.
+    fn make_async_generator_instance(
+        &mut self,
+        function: Value,
+        this: Value,
+        args: Vec<Value>,
+        prototype: Option<ObjectHandle>,
+    ) -> JsResult<Value> {
+        let iterator = self.object(prototype);
+        self.set_prop(
+            &iterator,
+            ASYNC_GENERATOR_INSTANCE_PROP,
+            Value::Bool(true),
+        );
+        self.set_prop(&iterator, ASYNC_GENERATOR_FUNCTION_PROP, function);
+        self.set_prop(
+            &iterator,
+            ASYNC_GENERATOR_ARGS_PROP,
+            self.array_from_values(args),
+        );
+        self.set_prop(&iterator, ASYNC_GENERATOR_THIS_PROP, this);
+        self.set_prop(&iterator, ASYNC_GENERATOR_STARTED_PROP, Value::Bool(false));
+        self.set_prop(&iterator, ASYNC_GENERATOR_EXECUTING_PROP, Value::Bool(false));
+        self.set_prop(
+            &iterator,
+            ASYNC_GENERATOR_QUEUE_PROP,
+            self.array_from_values(Vec::new()),
+        );
+        self.set_prop(
+            &iterator,
+            ASYNC_GENERATOR_VALUES_PROP,
+            self.array_from_values(Vec::new()),
+        );
+        self.set_prop(
+            &iterator,
+            ASYNC_GENERATOR_INDEX_PROP,
+            Value::Number(0.0),
+        );
+        self.set_prop(
+            &iterator,
+            "next",
+            self.native_named(native_async_generator_next, "next", 1),
+        );
+        Ok(iterator)
+    }
+    fn resolve_async_generator_next(&mut self, iterator: &Value, promise: &Value) {
+        let values = self.get_prop(iterator, ASYNC_GENERATOR_VALUES_PROP);
+        let index = self
+            .get_prop(iterator, ASYNC_GENERATOR_INDEX_PROP)
+            .as_number()
+            .unwrap_or(0.0)
+            .max(0.0) as usize;
+        let length = array_from_length(self, &values).unwrap_or(0);
+        let done = index >= length;
+        let value = if done {
+            Value::Undefined
+        } else {
+            self.get_prop(&values, &index.to_string())
+        };
+        if !done {
+            self.set_prop(
+                iterator,
+                ASYNC_GENERATOR_INDEX_PROP,
+                Value::Number((index + 1) as f64),
+            );
+        }
+        let result = self.object(None);
+        self.set_prop(&result, "value", value);
+        self.set_prop(&result, "done", Value::Bool(done));
+        self.settle_promise(promise, Ok(result));
+    }
+    fn start_async_generator(&mut self, iterator: &Value, first: &Value) {
+        let function = self.get_prop(iterator, ASYNC_GENERATOR_FUNCTION_PROP);
+        let args_value = self.get_prop(iterator, ASYNC_GENERATOR_ARGS_PROP);
+        let args_length = array_from_length(self, &args_value).unwrap_or(0);
+        let args = (0..args_length)
+            .map(|index| self.get_prop(&args_value, &index.to_string()))
+            .collect::<Vec<_>>();
+        let Some(function_ref) = function.as_function_ref() else {
+            self.settle_promise(
+                first,
+                Err(JsError::Throw(type_error(
+                    self,
+                    "invalid async generator function",
+                ))),
+            );
+            return;
+        };
+        let (node, env, source_id, strict) = match &function_ref.kind {
+            FunctionKind::User { node, env } => (*node, env.clone(), function_ref.source_id, function_ref.strict),
+            _ => {
+                self.settle_promise(
+                    first,
+                    Err(JsError::Throw(type_error(
+                        self,
+                        "invalid async generator function",
+                    ))),
+                );
+                return;
+            }
+        };
+        let previous_yields = self.async_generator_yields.take();
+        self.async_generator_yields = Some(Vec::new());
+        let result = self.call_user(
+            node,
+            env,
+            self.get_prop(iterator, ASYNC_GENERATOR_THIS_PROP),
+            args,
+            source_id,
+            strict,
+        );
+        let yields = self.async_generator_yields.take().unwrap_or_default();
+        self.async_generator_yields = previous_yields;
+        self.set_prop(iterator, ASYNC_GENERATOR_VALUES_PROP, self.array_from_values(yields));
+        self.set_prop(iterator, ASYNC_GENERATOR_EXECUTING_PROP, Value::Bool(false));
+        let queue = self.get_prop(iterator, ASYNC_GENERATOR_QUEUE_PROP);
+        let queue_length = array_from_length(self, &queue).unwrap_or(0);
+        self.set_prop(iterator, ASYNC_GENERATOR_QUEUE_PROP, self.array_from_values(Vec::new()));
+        if let Err(error) = result {
+            let value = match error {
+                JsError::Throw(value) => value,
+                JsError::Message(message) => Value::string_value(message),
+            };
+            self.set_prop(iterator, ASYNC_GENERATOR_ERROR_PROP, value.clone());
+            self.settle_promise(first, Err(JsError::Throw(value.clone())));
+            for index in 0..queue_length {
+                let request = self.get_prop(&queue, &index.to_string());
+                self.settle_promise(&request, Err(JsError::Throw(value.clone())));
+            }
+            return;
+        }
+        self.resolve_async_generator_next(iterator, first);
+        for index in 0..queue_length {
+            let request = self.get_prop(&queue, &index.to_string());
+            self.resolve_async_generator_next(iterator, &request);
         }
     }
 
@@ -7610,6 +8028,17 @@ impl Vm {
             return call_ic.call(self, t, a);
         }
         if let Some(f) = c.as_function_ref() {
+            if let FunctionKind::User { node, .. } = &f.kind
+                && node.r#async
+                && node.generator
+            {
+                return self.make_async_generator_instance(
+                    c.clone(),
+                    t,
+                    a.materialize(),
+                    Some(f.prototype),
+                );
+            }
             let t = match &f.kind {
                 FunctionKind::User { .. } if !f.strict && (t.is_null() || t.is_undefined()) => {
                     Environment::get(&self.global, "globalThis").unwrap_or(Value::Undefined)
@@ -7735,6 +8164,12 @@ impl Vm {
                         t
                     };
                     self.call_native_semantic(id.recipe().semantic, receiver, a)
+                }
+                FunctionKind::Native(native) if is_dynamic_constructor_native(*native) => {
+                    let previous_constructor = self.current_constructor.replace(c.clone());
+                    let result = self.call_native_semantic(*native, t, a);
+                    self.current_constructor = previous_constructor;
+                    result
                 }
                 FunctionKind::Native(native) => self.call_native_semantic(*native, t, a),
                 FunctionKind::Bound {
@@ -9500,7 +9935,7 @@ impl Vm {
         };
         let p = self.allocate_object(Object::ordinary(self.default_object_prototype()));
         if n.r#async && n.generator {
-            let constructor = self.async_generator_constructor();
+            let constructor = self.async_constructor_for_environment(true, &e);
             let prototype = constructor
                 .as_function_ref()
                 .and_then(|function| function.prototype.borrow().props.get("prototype").cloned())
@@ -9519,7 +9954,7 @@ impl Vm {
         let f = FunctionValue {
             kind: FunctionKind::User {
                 node: unsafe { std::mem::transmute(n) },
-                env: e,
+                env: e.clone(),
             },
             strict: self.strict_mode
                 || class_method_strict
@@ -9530,8 +9965,8 @@ impl Vm {
                 }),
             prototype: p,
             props: Rc::new(RefCell::new(IndexMap::from([
-                ("name".into(), Value::string_value(name)),
                 ("length".into(), Value::Number(length as f64)),
+                ("name".into(), Value::string_value(name)),
             ]))),
             attributes: Rc::new(RefCell::new(HashMap::new())),
             dyn_jit: RefCell::new(None),
@@ -9545,9 +9980,9 @@ impl Vm {
                 function.props.borrow_mut().insert(
                     "constructor".into(),
                     if n.generator {
-                        self.async_generator_constructor()
+                        self.async_constructor_for_environment(true, &e)
                     } else {
-                        self.async_function_constructor()
+                        self.async_constructor_for_environment(false, &e)
                     },
                 );
             }
@@ -9570,8 +10005,8 @@ impl Vm {
             strict: self.strict_mode,
             prototype: p,
             props: Rc::new(RefCell::new(IndexMap::from([
-                ("name".into(), Value::string_value("")),
                 ("length".into(), Value::Number(length as f64)),
+                ("name".into(), Value::string_value("")),
             ]))),
             attributes: Rc::new(RefCell::new(HashMap::new())),
             dyn_jit: RefCell::new(None),
@@ -9652,8 +10087,8 @@ impl Vm {
             strict: true,
             prototype: prototype_handle,
             props: Rc::new(RefCell::new(IndexMap::from([
-                ("name".into(), Value::string_value(name)),
                 ("length".into(), Value::Number(length as f64)),
+                ("name".into(), Value::string_value(name)),
             ]))),
             attributes: Rc::new(RefCell::new(HashMap::new())),
             dyn_jit: RefCell::new(None),
@@ -9783,6 +10218,20 @@ impl Vm {
             ThisExpression(_) => Ok(Environment::get(&e, "this").unwrap_or(Value::Undefined)),
             NewTarget(_) => {
                 Ok(Environment::get(&e, NEW_TARGET_VALUE_NAME).unwrap_or(Value::Undefined))
+            }
+            AwaitExpression(await_expression) => self.eval_expr(&await_expression.argument, e),
+            YieldExpression(yield_expression) => {
+                let value = yield_expression
+                    .argument
+                    .as_ref()
+                    .map(|argument| self.eval_expr(argument, e.clone()))
+                    .transpose()?
+                    .unwrap_or(Value::Undefined);
+                let Some(yields) = self.async_generator_yields.as_mut() else {
+                    return Err(JsError::Message("unsupported yield expression".into()));
+                };
+                yields.push(value);
+                Ok(Value::Undefined)
             }
             Super(_) => {
                 let home_prototype = Environment::get(&e, CLASS_HOME_OBJECT_ENV_NAME)
@@ -13212,9 +13661,97 @@ fn native_string_value_of(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Val
 fn native_noop(_: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Ok(Value::Undefined)
 }
+fn native_async_generator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if vm.get_prop(&this, ASYNC_GENERATOR_INSTANCE_PROP).is_undefined() {
+        return Ok(vm.promise_from_result(Err(JsError::Throw(type_error(
+            vm,
+            "AsyncGenerator.prototype.next called on incompatible receiver",
+        )))));
+    }
+    let promise = vm.new_pending_promise();
+    if vm
+        .get_prop(&this, ASYNC_GENERATOR_EXECUTING_PROP)
+        .truthy()
+    {
+        let queue = vm.get_prop(&this, ASYNC_GENERATOR_QUEUE_PROP);
+        let length = array_from_length(vm, &queue).unwrap_or(0);
+        vm.set_prop(&queue, &length.to_string(), promise.clone());
+        return Ok(promise);
+    }
+    if !vm
+        .get_prop(&this, ASYNC_GENERATOR_STARTED_PROP)
+        .truthy()
+    {
+        vm.set_prop(&this, ASYNC_GENERATOR_STARTED_PROP, Value::Bool(true));
+        vm.set_prop(&this, ASYNC_GENERATOR_EXECUTING_PROP, Value::Bool(true));
+        vm.start_async_generator(&this, &promise);
+        return Ok(promise);
+    }
+    let error = vm.get_prop(&this, ASYNC_GENERATOR_ERROR_PROP);
+    if !error.is_undefined() {
+        return Ok(vm.promise_from_result(Err(JsError::Throw(error))));
+    }
+    vm.resolve_async_generator_next(&this, &promise);
+    Ok(promise)
+}
+fn native_async_generator_return(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if vm.get_prop(&this, ASYNC_GENERATOR_INSTANCE_PROP).is_undefined() {
+        return Ok(vm.promise_from_result(Err(JsError::Throw(type_error(
+            vm,
+            "AsyncGenerator.prototype.return called on incompatible receiver",
+        )))));
+    }
+    let result = vm.object(None);
+    vm.set_prop(
+        &result,
+        "value",
+        args.first().cloned().unwrap_or(Value::Undefined),
+    );
+    vm.set_prop(&result, "done", Value::Bool(true));
+    Ok(vm.promise_from_result(Ok(result)))
+}
+fn native_async_generator_throw(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if vm.get_prop(&this, ASYNC_GENERATOR_INSTANCE_PROP).is_undefined() {
+        return Ok(vm.promise_from_result(Err(JsError::Throw(type_error(
+            vm,
+            "AsyncGenerator.prototype.throw called on incompatible receiver",
+        )))));
+    }
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    Ok(vm.promise_from_result(Err(JsError::Throw(value))))
+}
+fn native_async_iterator_self(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    Ok(this)
+}
+fn native_async_iterator_dispose(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let return_method = vm.get_prop(&this, "return");
+    if return_method.is_function() {
+        return vm.call(return_method, this, vec![]);
+    }
+    Ok(vm.promise_from_result(Ok(Value::Undefined)))
+}
 fn native_promise_then(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    let fulfilled = vm
-        .get_prop(&this, PROMISE_STATE_PROP)
+    let state = vm.get_prop(&this, PROMISE_STATE_PROP);
+    if state.as_string().is_some_and(|state| state.as_str() == "pending") {
+        let child = vm.new_pending_promise();
+        let entry = vm.object(None);
+        vm.set_prop(
+            &entry,
+            "fulfilled",
+            args.first().cloned().unwrap_or(Value::Undefined),
+        );
+        vm.set_prop(
+            &entry,
+            "rejected",
+            args.get(1).cloned().unwrap_or(Value::Undefined),
+        );
+        vm.set_prop(&entry, "promise", child.clone());
+        let queue = vm.get_prop(&this, PROMISE_QUEUE_PROP);
+        let length = array_from_length(vm, &queue).unwrap_or(0);
+        vm.set_prop(&queue, &length.to_string(), entry);
+        return Ok(child);
+    }
+    let fulfilled = state
         .as_string()
         .is_some_and(|state| state.as_str() == "fulfilled");
     let handler = args
@@ -13231,6 +13768,172 @@ fn native_promise_then(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
     }
     let result = vm.call(handler, Value::Undefined, vec![value]);
     Ok(vm.promise_from_result(result))
+}
+fn native_promise_catch(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    native_promise_then(
+        vm,
+        this,
+        &[Value::Undefined, args.first().cloned().unwrap_or(Value::Undefined)],
+    )
+}
+fn native_promise_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(executor) = args.first().filter(|value| value.is_function()).cloned() else {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Promise resolver is not a function",
+        )));
+    };
+    let promise = if this.is_object_like() {
+        this.clone()
+    } else {
+        vm.new_pending_promise()
+    };
+    vm.set_prop(&promise, PROMISE_MARKER_PROP, Value::Bool(true));
+    vm.set_prop(&promise, PROMISE_STATE_PROP, Value::string_value("pending"));
+    vm.set_prop(&promise, PROMISE_RESULT_PROP, Value::Undefined);
+    vm.set_prop(
+        &promise,
+        PROMISE_QUEUE_PROP,
+        vm.array_from_values(Vec::new()),
+    );
+    let resolve = native_function_bind(
+        vm,
+        vm.native(native_promise_resolve_executor),
+        std::slice::from_ref(&promise),
+    )?;
+    let reject = native_function_bind(
+        vm,
+        vm.native(native_promise_reject_executor),
+        std::slice::from_ref(&promise),
+    )?;
+    if let Err(error) = vm.call(executor, Value::Undefined, vec![resolve, reject]) {
+        if vm
+            .get_prop(&this, PROMISE_STATE_PROP)
+            .as_string()
+            .is_some_and(|state| state.as_str() == "pending")
+        {
+            vm.settle_promise(&promise, Err(error));
+        }
+    }
+    Ok(promise)
+}
+fn native_promise_resolve_executor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if vm
+        .get_prop(&this, PROMISE_STATE_PROP)
+        .as_string()
+        .is_some_and(|state| state.as_str() == "pending")
+    {
+        vm.settle_promise(
+            &this,
+            Ok(args.first().cloned().unwrap_or(Value::Undefined)),
+        );
+    }
+    Ok(Value::Undefined)
+}
+fn native_promise_reject_executor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if vm
+        .get_prop(&this, PROMISE_STATE_PROP)
+        .as_string()
+        .is_some_and(|state| state.as_str() == "pending")
+    {
+        vm.settle_promise(
+            &this,
+            Err(JsError::Throw(
+                args.first().cloned().unwrap_or(Value::Undefined),
+            )),
+        );
+    }
+    Ok(Value::Undefined)
+}
+fn native_promise_resolve(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    if let Some(value) = args.first()
+        && !vm.get_prop(value, PROMISE_MARKER_PROP).is_undefined()
+    {
+        return Ok(value.clone());
+    }
+    Ok(vm.promise_from_result(Ok(
+        args.first().cloned().unwrap_or(Value::Undefined),
+    )))
+}
+fn native_promise_reject(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    Ok(vm.promise_from_result(Err(JsError::Throw(
+        args.first().cloned().unwrap_or(Value::Undefined),
+    ))))
+}
+fn native_promise_all(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsResult<Value> {
+    let iterable = args.first().cloned().unwrap_or(Value::Undefined);
+    let iterator_key = vm.well_known_symbol_key("iterator");
+    let method = vm.get_prop_with_accessors(&iterable, &iterator_key)?;
+    if !method.is_function() {
+        return Err(JsError::Throw(type_error(vm, "value is not iterable")));
+    }
+    let iterator = vm.call(method, iterable, Vec::new())?;
+    let resolve = vm.get_prop_with_accessors(&constructor, "resolve")?;
+    if !resolve.is_function() {
+        return Err(JsError::Throw(type_error(vm, "Promise resolve is not callable")));
+    }
+    let mut results = Vec::new();
+    loop {
+        let next = vm.get_prop_with_accessors(&iterator, "next")?;
+        if !next.is_function() {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "iterator next method is not callable",
+            )));
+        }
+        let step = match vm.call(next, iterator.clone(), Vec::new()) {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = vm.iterator_close(&iterator);
+                return Err(error);
+            }
+        };
+        if !step.is_object_like() {
+            let error = JsError::Throw(type_error(vm, "iterator result is not an object"));
+            let _ = vm.iterator_close(&iterator);
+            return Err(error);
+        }
+        if vm.get_prop_with_accessors(&step, "done")?.truthy() {
+            break;
+        }
+        let value = vm.get_prop_with_accessors(&step, "value")?;
+        let resolved = match vm.call(resolve.clone(), constructor.clone(), vec![value]) {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = vm.iterator_close(&iterator);
+                return Ok(vm.promise_from_result(Err(error)));
+            }
+        };
+        // PerformPromiseAll invokes the resolved promise's `then` before it
+        // advances the iterator.  Calling the method here is observable (and
+        // is what guarantees IteratorClose when a user replacement throws).
+        let then_method = vm.get_prop_with_accessors(&resolved, "then")?;
+        if !then_method.is_function() {
+            let error = JsError::Throw(type_error(vm, "promise then is not callable"));
+            let _ = vm.iterator_close(&iterator);
+            return Ok(vm.promise_from_result(Err(error)));
+        }
+        if let Err(error) = vm.call(
+            then_method,
+            resolved.clone(),
+            vec![vm.native(native_noop), vm.native(native_noop)],
+        ) {
+            let _ = vm.iterator_close(&iterator);
+            return Ok(vm.promise_from_result(Err(error)));
+        }
+        let state = vm.get_prop(&resolved, PROMISE_STATE_PROP);
+        if state.as_string().is_some_and(|state| state.as_str() == "rejected") {
+            let error = JsError::Throw(vm.get_prop(&resolved, PROMISE_RESULT_PROP));
+            let _ = vm.iterator_close(&iterator);
+            return Ok(vm.promise_from_result(Err(error)));
+        }
+        results.push(if state.as_string().is_some_and(|state| state.as_str() == "fulfilled") {
+            vm.get_prop(&resolved, PROMISE_RESULT_PROP)
+        } else {
+            resolved
+        });
+    }
+    Ok(vm.promise_from_result(Ok(vm.array_from_values(results))))
 }
 fn native_html_dda(_: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Ok(Value::Null)
@@ -16553,7 +17256,10 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
                 .map(|function| function.prototype.clone())
         });
     let object = vm.object(prototype);
-    let result = vm.call(target.clone(), object.clone(), arguments)?;
+    let previous_new_target = vm.current_new_target.replace(new_target.clone());
+    let call_result = vm.call(target.clone(), object.clone(), arguments);
+    vm.current_new_target = previous_new_target;
+    let result = call_result?;
     let wrapper = target
         .as_function_ref()
         .and_then(|function| match function.kind {
@@ -16588,6 +17294,7 @@ fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Environment::set(&environment, "globalThis", global.clone());
     let symbol = vm.native_named(native_symbol, "Symbol", 0);
     let function = vm.native_named(native_function_constructor, "Function", 1);
+    vm.set_prop(&function, REALM_GLOBAL_PROP, global.clone());
     let throw_type_error = vm.new_throw_type_error();
     vm.set_prop(
         &global,
@@ -17706,6 +18413,15 @@ fn native_async_generator_constructor(
     dynamic_function_constructor(vm, receiver, args, "async function*")
 }
 
+fn is_dynamic_constructor_native(
+    native: fn(&mut Vm, Value, &[Value]) -> JsResult<Value>,
+) -> bool {
+    let pointer = native as *const ();
+    pointer == native_function_constructor as *const ()
+        || pointer == native_async_function_constructor as *const ()
+        || pointer == native_async_generator_constructor as *const ()
+}
+
 fn dynamic_function_constructor(
     vm: &mut Vm,
     receiver: Value,
@@ -17772,10 +18488,43 @@ fn dynamic_function_constructor(
         )));
     };
     let thrower = receiver_thrower;
+    let constructor_realm_global = vm
+        .current_constructor
+        .as_ref()
+        .and_then(|constructor| {
+            vm.get_prop(constructor, REALM_GLOBAL_PROP)
+                .as_object()
+                .map(Value::Object)
+        })
+        .or_else(|| {
+            vm.get_prop(&receiver, REALM_GLOBAL_PROP)
+                .as_object()
+                .map(Value::Object)
+        });
+    let new_target_realm_global = vm
+        .current_new_target
+        .as_ref()
+        .and_then(|target| {
+            vm.get_prop(target, REALM_GLOBAL_PROP)
+                .as_object()
+                .map(Value::Object)
+        })
+        .or_else(|| constructor_realm_global.clone());
+    let realm_environment = constructor_realm_global
+        .as_ref()
+        .and_then(Value::as_object_ref)
+        .and_then(|global| {
+            let pointer = global as *const ObjectCell;
+            vm.realm_globals
+                .iter()
+                .find(|(candidate, _)| candidate.as_ptr() == pointer)
+                .map(|(_, environment)| environment.clone())
+        })
+        .unwrap_or_else(|| vm.global.clone());
     let environment = if thrower.is_undefined() {
-        vm.global.clone()
+        realm_environment
     } else {
-        let environment = Environment::new(Some(vm.global.clone()));
+        let environment = Environment::new(Some(realm_environment));
         Environment::set(
             &environment,
             dynbytecode::THROW_TYPE_ERROR_ENV_NAME,
@@ -17783,7 +18532,37 @@ fn dynamic_function_constructor(
         );
         environment
     };
-    Ok(vm.make_user(function, environment))
+    let result = vm.make_user(function, environment);
+    if let Some(global) = constructor_realm_global.as_ref() {
+        vm.set_prop(&result, REALM_GLOBAL_PROP, global.clone());
+    }
+    if let Some(new_target) = vm.current_new_target.clone() {
+        let fallback_constructor = if prefix == "async function*" {
+            vm.async_constructor_for_realm(true, new_target_realm_global.clone())
+        } else if prefix == "async function" {
+            vm.async_constructor_for_realm(false, new_target_realm_global.clone())
+        } else {
+            new_target_realm_global
+                .as_ref()
+                .map(|global| vm.get_prop(global, "Function"))
+                .filter(|value| value.is_function())
+                .unwrap_or_else(|| vm.builtin(BuiltinId::FunctionConstructor))
+        };
+        let new_target_prototype = vm.get_prop(&new_target, "prototype");
+        let prototype = new_target_prototype
+            .as_object()
+            .filter(|_| !is_symbol_carrier(&new_target_prototype))
+            .map(Value::Object)
+            .or_else(|| {
+                vm.get_prop(&fallback_constructor, "prototype")
+                    .as_object()
+                    .map(Value::Object)
+            });
+        if let Some(prototype) = prototype {
+            vm.set_prop(&result, FUNCTION_PROTOTYPE_OVERRIDE_PROP, prototype);
+        }
+    }
+    Ok(result)
 }
 
 fn strip_legacy_html_comments(source: &str) -> String {
@@ -20312,18 +21091,27 @@ fn native_object_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
             .map(Value::Object)
             .unwrap_or(Value::Null));
     }
-    if target.as_function().is_some() {
-        if target.as_function_ref().is_some_and(
-            |function| matches!(&function.kind, FunctionKind::User { node, .. } if node.r#async),
-        ) {
+        if target.as_function().is_some() {
+            if target.as_function_ref().is_some_and(
+                |function| matches!(&function.kind, FunctionKind::User { node, .. } if node.r#async),
+            ) {
+            if let Some(override_value) = target
+                .as_function_ref()
+                .and_then(|function| function.props.borrow().get(FUNCTION_PROTOTYPE_OVERRIDE_PROP).cloned())
+            {
+                return Ok(override_value);
+            }
             let generator = target.as_function_ref().is_some_and(|function| {
                 matches!(&function.kind, FunctionKind::User { node, .. } if node.generator)
             });
-            let prototype = if generator {
-                vm.async_generator_constructor()
-            } else {
-                vm.async_function_constructor()
-            }
+            let prototype = target
+                .as_function_ref()
+                .and_then(|function| function.props.borrow().get("constructor").cloned())
+                .unwrap_or_else(|| if generator {
+                    vm.async_generator_constructor()
+                } else {
+                    vm.async_function_constructor()
+                })
             .as_function_ref()
             .map(|function| function.prototype.clone());
             return Ok(prototype.map(Value::Object).unwrap_or(Value::Null));
@@ -21547,11 +22335,11 @@ fn native_function_bind(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Va
         strict: true,
         prototype: vm.allocate_object(Object::ordinary(None)),
         props: Rc::new(RefCell::new(IndexMap::from([
-            ("name".into(), Value::string_value("bound ")),
             (
                 "length".into(),
                 Value::Number((target_length - bound_length as f64).max(0.0)),
             ),
+            ("name".into(), Value::string_value("bound ")),
         ]))),
         attributes: Rc::new(RefCell::new(HashMap::new())),
         dyn_jit: RefCell::new(None),
