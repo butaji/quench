@@ -174,7 +174,7 @@ Verification completed:
 - the stencil AsyncFunction built-ins stage now reaches 18/18 after deriving
   the shared async constructor/prototype identity, constructability checks,
   `instanceof Function`, and non-writable `Symbol.toStringTag` metadata
-- the stencil AsyncGeneratorFunction built-ins stage now reaches 15/23 after
+- the stencil AsyncGeneratorFunction built-ins stage now reaches 16/23 after
   deriving the shared async-generator constructor/prototype identity,
   generator prototype descriptors, and `instanceof` behavior; the remaining
   cases require async-generator suspension/`next()` execution, dynamic
