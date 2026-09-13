@@ -22649,6 +22649,24 @@ fn native_object_prevent_extensions(vm: &mut Vm, _: Value, args: &[Value]) -> Js
             "preventExtensions target is undefined",
         )));
     };
+    if let Some(proxy_target_value) = proxy_target(target) {
+        if proxy_revoked(target) {
+            return Err(JsError::Throw(type_error(vm, "revoked Proxy")));
+        }
+        let handler = proxy_handler(target).unwrap_or(Value::Undefined);
+        let trap = vm.get_prop_with_accessors(&handler, "preventExtensions")?;
+        if trap.is_function() {
+            let result = vm.call(trap, handler, vec![proxy_target_value.clone()])?;
+            if !result.truthy() {
+                return Err(JsError::Throw(type_error(vm, "Proxy preventExtensions trap returned false")));
+            }
+            return Ok(target.clone());
+        }
+        if vm.has_property(&handler, "preventExtensions") && !trap.is_null() && !trap.is_undefined() {
+            return Err(JsError::Throw(type_error(vm, "Proxy preventExtensions trap is not callable")));
+        }
+        return native_object_prevent_extensions(vm, Value::Undefined, &[proxy_target_value]);
+    }
     if let Some(object) = target.as_object_ref() {
         object.borrow_mut().extensible = false;
     } else if let Some(function) = target.as_function_ref() {
@@ -22659,7 +22677,23 @@ fn native_object_prevent_extensions(vm: &mut Vm, _: Value, args: &[Value]) -> Js
     }
     Ok(target.clone())
 }
-fn native_object_is_extensible(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+fn native_object_is_extensible(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    if let Some(target) = args.first().and_then(proxy_target) {
+        let proxy = args.first().expect("proxy target source");
+        if proxy_revoked(proxy) {
+            return Err(JsError::Throw(type_error(vm, "revoked Proxy")));
+        }
+        let handler = proxy_handler(proxy).unwrap_or(Value::Undefined);
+        let trap = vm.get_prop_with_accessors(&handler, "isExtensible")?;
+        if trap.is_function() {
+            let result = vm.call(trap, handler, vec![target.clone()])?;
+            return Ok(Value::Bool(result.truthy()));
+        }
+        if vm.has_property(&handler, "isExtensible") && !trap.is_null() && !trap.is_undefined() {
+            return Err(JsError::Throw(type_error(vm, "Proxy isExtensible trap is not callable")));
+        }
+        return native_object_is_extensible(vm, Value::Undefined, &[target]);
+    }
     let extensible = args
         .first()
         .map(|value| {
@@ -22681,6 +22715,24 @@ fn native_object_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
             "TypeError: prototype target is undefined".into(),
         ));
     };
+    if let Some(proxy_target_value) = proxy_target(target) {
+        if proxy_revoked(target) {
+            return Err(JsError::Throw(type_error(vm, "revoked Proxy")));
+        }
+        let handler = proxy_handler(target).unwrap_or(Value::Undefined);
+        let trap = vm.get_prop_with_accessors(&handler, "getPrototypeOf")?;
+        if trap.is_function() {
+            let result = vm.call(trap, handler, vec![proxy_target_value.clone()])?;
+            if result.is_null() || result.is_object_like() {
+                return Ok(result);
+            }
+            return Err(JsError::Throw(type_error(vm, "Proxy getPrototypeOf trap must return object or null")));
+        }
+        if vm.has_property(&handler, "getPrototypeOf") && !trap.is_null() && !trap.is_undefined() {
+            return Err(JsError::Throw(type_error(vm, "Proxy getPrototypeOf trap is not callable")));
+        }
+        return native_object_get_prototype_of(vm, Value::Undefined, &[proxy_target_value]);
+    }
     if let Some(object) = target.as_object() {
         return Ok(object
             .borrow()
@@ -23529,6 +23581,24 @@ fn native_object_set_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
         )));
     };
     let prototype = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if let Some(proxy_target_value) = proxy_target(target) {
+        if proxy_revoked(target) {
+            return Err(JsError::Throw(type_error(vm, "revoked Proxy")));
+        }
+        let handler = proxy_handler(target).unwrap_or(Value::Undefined);
+        let trap = vm.get_prop_with_accessors(&handler, "setPrototypeOf")?;
+        if trap.is_function() {
+            let result = vm.call(trap, handler, vec![proxy_target_value.clone(), prototype.clone()])?;
+            if !result.truthy() {
+                return Err(JsError::Throw(type_error(vm, "Proxy setPrototypeOf trap returned false")));
+            }
+            return Ok(target.clone());
+        }
+        if vm.has_property(&handler, "setPrototypeOf") && !trap.is_null() && !trap.is_undefined() {
+            return Err(JsError::Throw(type_error(vm, "Proxy setPrototypeOf trap is not callable")));
+        }
+        return native_object_set_prototype_of(vm, Value::Undefined, &[proxy_target_value, prototype]);
+    }
     let symbol_prototype = prototype
         .as_object_ref()
         .is_some_and(|object| object.borrow().props.contains_key("\0symbol"));
