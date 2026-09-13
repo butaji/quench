@@ -7461,6 +7461,25 @@ impl Vm {
             {
                 return true;
             }
+            if matches!(
+                key,
+                "source"
+                    | "flags"
+                    | "global"
+                    | "ignoreCase"
+                    | "multiline"
+                    | "dotAll"
+                    | "unicode"
+                    | "unicodeSets"
+                    | "sticky"
+                    | "hasIndices"
+                    | "exec"
+            ) || ["match", "search", "replace", "split", "matchAll"]
+                .iter()
+                .any(|name| key == self.well_known_symbol_key(name) || key == format!("Symbol.{name}"))
+            {
+                return true;
+            }
             return borrowed
                 .prototype
                 .map(|prototype| self.has_property(&Value::Object(prototype), key))
@@ -7468,15 +7487,32 @@ impl Vm {
         }
         if let Some(regexp) = value.as_regexp_ref() {
             let borrowed = regexp.borrow();
-            return borrowed.props.contains_key(key)
+            if borrowed.props.contains_key(key)
                 || borrowed.props.contains_key(&accessor_slot("get", key))
-                || borrowed.props.contains_key(&accessor_slot("set", key));
+                || borrowed.props.contains_key(&accessor_slot("set", key))
+            {
+                return true;
+            }
+            drop(borrowed);
+            return self.has_property(
+                &Value::Object(
+                    self.builtin(BuiltinId::RegExpConstructor)
+                        .as_function_ref()
+                        .expect("RegExp constructor")
+                        .prototype
+                        .clone(),
+                ),
+                key,
+            );
         }
         value.as_function_ref().is_some_and(|function| {
             let props = function.props.borrow();
             props.contains_key(key)
                 || props.contains_key(&accessor_slot("get", key))
                 || props.contains_key(&accessor_slot("set", key))
+                || (key == "prototype" && constructable(value))
+                || key == "name"
+                || key == "length"
         })
     }
 
@@ -10744,7 +10780,10 @@ impl Vm {
                     BitwiseXOR => Op::Xor,
                     BitwiseAnd => Op::And,
                     Instanceof => return Ok(Value::Bool(instance_of(&a, &b))),
-                    In => return Ok(Value::Bool(in_prop(&a, &b))),
+                    In => {
+                        let key = self.to_property_key(a)?;
+                        return Ok(Value::Bool(self.has_property_with_proxy(&b, &key)?));
+                    }
                 };
                 binary_with_vm(self, op, &a, &b)
             }
@@ -11198,6 +11237,46 @@ impl Vm {
             current = candidate.borrow().parent.clone();
         }
         false
+    }
+
+    fn has_property_with_proxy(&mut self, value: &Value, key: &str) -> JsResult<bool> {
+        let Some(target) = proxy_target(value) else {
+            if self.has_property(value, key) {
+                return Ok(true);
+            }
+            // The ordinary fast path cannot see a proxy hidden behind an
+            // ordinary object's prototype. Walk that chain here and re-enter
+            // the trap-aware operation whenever one appears.
+            let mut current = value.as_object_ref().and_then(|object| object.borrow().prototype.clone());
+            while let Some(prototype) = current {
+                let candidate = Value::Object(prototype.clone());
+                if proxy_target(&candidate).is_some() {
+                    return self.has_property_with_proxy(&candidate, key);
+                }
+                if self.has_property(&candidate, key) {
+                    return Ok(true);
+                }
+                current = prototype.borrow().prototype.clone();
+            }
+            return Ok(false);
+        };
+        if proxy_revoked(value) {
+            return Err(JsError::Throw(type_error(self, "revoked Proxy")));
+        }
+        let handler = proxy_handler(value).unwrap_or(Value::Undefined);
+        let trap = self.get_prop_with_accessors(&handler, "has")?;
+        if trap.is_function() {
+            let result = self.call(
+                trap,
+                handler,
+                vec![target.clone(), Value::string_value(key)],
+            )?;
+            return Ok(result.truthy());
+        }
+        if self.has_property(&handler, "has") && !trap.is_null() && !trap.is_undefined() {
+            return Err(JsError::Throw(type_error(self, "Proxy has trap is not callable")));
+        }
+        self.has_property_with_proxy(&target, key)
     }
     fn eval_simple_target<'a>(
         &mut self,
