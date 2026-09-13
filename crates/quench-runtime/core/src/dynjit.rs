@@ -3168,7 +3168,7 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
                     }
                 }
             }
-            vm.set_prop_with_accessors(&object, key, value)?;
+            super::set_assignment_property(vm, &object, key, value)?;
         }
         DynOp::SetComputed {
             object,
@@ -3209,7 +3209,7 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
                 super::native_error_stack_set(unsafe { &mut *frame.vm }, object, &[value])?;
                 return Ok(next);
             }
-            vm.set_prop_with_accessors(&object, &key_string, value)?;
+            super::set_assignment_property(vm, &object, &key_string, value)?;
         }
         DynOp::DeleteStatic {
             dst,
@@ -3602,6 +3602,13 @@ fn set_static_cached(
         return Err(new_value);
     }
     let mut object = object.borrow_mut();
+    if object
+        .attributes
+        .get(key)
+        .is_some_and(|attributes| !attributes.writable)
+    {
+        return Err(new_value);
+    }
     let receiver_shape = object.props.shape.0;
     if let Some(location) = cache.own.get().populated()
         && location.receiver_shape == receiver_shape
