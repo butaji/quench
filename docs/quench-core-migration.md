@@ -171,15 +171,15 @@ Verification completed:
   RegExp flags and identity escapes through one compiled kernel, preserving
   UTF-8 astral literals and surrogate-pair escapes, and enforcing strict
   legacy-literal early errors across direct and eval code
-- the stencil eval-code stage now reaches 346/347 after modeling parameter
+- the stencil eval-code stage now reaches 347/347 after modeling parameter
   binding conflicts, implicit `arguments`, lexical TDZ state, strict reserved
   bindings, strict caller propagation, isolated strict-eval environments, and
   top-level eval control-flow completion, direct/indirect `super` validation,
   and object-method home-object tracking; eval-created module declarations now
   reject as SyntaxErrors, and local bindings now also
   retain explicit sloppy-`delete` state and become unresolvable in closures;
-  remaining failures are primarily async/generator, realm, super, and global
-  declaration semantics
+  remaining failures are primarily generator, super, and global declaration
+  semantics
 - intrinsic data-property installation now uses the declarative
   `install_data_properties!` Rust macro for Math and BigInt tables, keeping
   values and descriptors in one source-of-truth declaration
