@@ -21942,17 +21942,57 @@ fn native_object_get_own_property_descriptor(
         let handler = proxy_handler(target).unwrap_or(Value::Undefined);
         let trap = vm.get_prop_with_accessors(&handler, "getOwnPropertyDescriptor")?;
         if trap.is_function() {
-            return vm.call(
+            let result = vm.call(
                 trap,
                 handler,
                 vec![
-                    proxy_target_value,
+                    proxy_target_value.clone(),
                     vm.symbol_keys
                         .get(&key)
                         .cloned()
-                        .unwrap_or_else(|| Value::string_value(key)),
+                        .unwrap_or_else(|| Value::string_value(key.clone())),
                 ],
-            );
+            )?;
+            if !result.is_undefined() && !result.is_object_like() {
+                return Err(JsError::Throw(type_error(vm, "Proxy getOwnPropertyDescriptor trap must return object or undefined")));
+            }
+            let target_descriptor = native_object_get_own_property_descriptor(
+                vm,
+                Value::Undefined,
+                &[proxy_target_value.clone(), Value::string_value(key.clone())],
+            )?;
+            let target_extensible = if let Some(object) = proxy_target_value.as_object_ref() {
+                object.borrow().extensible
+            } else if let Some(function) = proxy_target_value.as_function_ref() {
+                !function.props.borrow().contains_key("\0sealed")
+            } else {
+                true
+            };
+            if result.is_undefined() {
+                if target_descriptor.is_object_like()
+                    && (!vm.get_prop(&target_descriptor, "configurable").truthy() || !target_extensible)
+                {
+                    return Err(JsError::Throw(type_error(vm, "Proxy getOwnPropertyDescriptor trap omitted a target property")));
+                }
+            } else {
+                let result_configurable = vm.get_prop(&result, "configurable").truthy();
+                if !result_configurable && target_descriptor.is_undefined() {
+                    return Err(JsError::Throw(type_error(vm, "Proxy descriptor added to non-extensible target")));
+                }
+                if target_descriptor.is_object_like() && !vm.get_prop(&target_descriptor, "configurable").truthy() {
+                    if result_configurable {
+                        return Err(JsError::Throw(type_error(vm, "Proxy descriptor made target property configurable")));
+                    }
+                    if vm.has_property(&target_descriptor, "writable")
+                        && vm.get_prop(&target_descriptor, "writable").truthy()
+                        && vm.has_property(&result, "writable")
+                        && !vm.get_prop(&result, "writable").truthy()
+                    {
+                        return Err(JsError::Throw(type_error(vm, "Proxy descriptor made target property writable")));
+                    }
+                }
+            }
+            return Ok(result);
         }
         if vm.has_property(&handler, "getOwnPropertyDescriptor")
             && !trap.is_null()
