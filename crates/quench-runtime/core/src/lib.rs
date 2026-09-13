@@ -6346,26 +6346,7 @@ impl Vm {
             return if k == "prototype" {
                 let constructable = match &f.kind {
                     FunctionKind::User { node, .. } => !node.generator && !node.r#async,
-                    FunctionKind::Builtin(id) => matches!(
-                        id,
-                        BuiltinId::ObjectConstructor
-                            | BuiltinId::ArrayConstructor
-                            | BuiltinId::StringConstructor
-                            | BuiltinId::NumberConstructor
-                            | BuiltinId::BooleanConstructor
-                            | BuiltinId::DateConstructor
-                            | BuiltinId::RegExpConstructor
-                            | BuiltinId::ErrorConstructor
-                            | BuiltinId::TypeErrorConstructor
-                            | BuiltinId::RangeErrorConstructor
-                            | BuiltinId::URIErrorConstructor
-                            | BuiltinId::SyntaxErrorConstructor
-                            | BuiltinId::ReferenceErrorConstructor
-                            | BuiltinId::EvalErrorConstructor
-                            | BuiltinId::AggregateErrorConstructor
-                            | BuiltinId::SuppressedErrorConstructor
-                            | BuiltinId::FunctionConstructor
-                    ),
+                    FunctionKind::Builtin(id) => id.is_constructable(),
                     FunctionKind::Native(native)
                         if *native as *const () == native_bigint as *const () =>
                     {
@@ -13986,27 +13967,9 @@ pub(crate) fn constructable(value: &Value) -> bool {
     };
     match &function.kind {
         FunctionKind::User { node, .. } => !node.generator && !node.r#async,
-        FunctionKind::Builtin(
-            BuiltinId::ObjectConstructor
-            | BuiltinId::ArrayConstructor
-            | BuiltinId::StringConstructor
-            | BuiltinId::NumberConstructor
-            | BuiltinId::BooleanConstructor
-            | BuiltinId::DateConstructor
-            | BuiltinId::RegExpConstructor
-            | BuiltinId::ErrorConstructor
-            | BuiltinId::TypeErrorConstructor
-            | BuiltinId::RangeErrorConstructor
-            | BuiltinId::URIErrorConstructor
-            | BuiltinId::SyntaxErrorConstructor
-            | BuiltinId::ReferenceErrorConstructor
-            | BuiltinId::EvalErrorConstructor
-            | BuiltinId::AggregateErrorConstructor
-            | BuiltinId::SuppressedErrorConstructor
-            | BuiltinId::FunctionConstructor,
-        ) => true,
+        FunctionKind::Builtin(id) => id.is_constructable(),
         FunctionKind::Native(_) => !function.props.borrow().contains_key("\0nonconstructable"),
-        FunctionKind::Arrow { .. } | FunctionKind::Bound { .. } | FunctionKind::Builtin(_) => false,
+        FunctionKind::Arrow { .. } | FunctionKind::Bound { .. } => false,
         FunctionKind::Class { .. } => true,
     }
 }
