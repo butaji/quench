@@ -3013,7 +3013,7 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
         } => {
             let old = get_ref(frame, *src).clone();
             let primitive = if old.is_object() || old.is_function() {
-                super::to_primitive_for_binary(vm(frame), &old, false)?
+                super::to_primitive_for_binary(vm(frame), &old, super::PrimitiveHint::Number)?
             } else {
                 old
             };

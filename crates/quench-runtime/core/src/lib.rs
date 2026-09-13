@@ -5198,7 +5198,14 @@ define_ops! {
  And => numeric |x:f64,y:f64| Value::Number((i32_js(x)&i32_js(y))as f64), generic |a:&Value,b:&Value| exec_numeric_op(Op::And,a.number(),b.number());
 }
 
-fn to_primitive_for_binary(vm: &mut Vm, value: &Value, string_hint: bool) -> JsResult<Value> {
+#[derive(Clone, Copy)]
+enum PrimitiveHint {
+    Default,
+    Number,
+    String,
+}
+
+fn to_primitive_for_binary(vm: &mut Vm, value: &Value, hint: PrimitiveHint) -> JsResult<Value> {
     if !value.is_object() && !value.is_function() && !value.is_regexp() {
         return Ok(value.clone());
     }
@@ -5219,7 +5226,16 @@ fn to_primitive_for_binary(vm: &mut Vm, value: &Value, string_hint: bool) -> JsR
                 "@@toPrimitive is not callable",
             )));
         }
-        let hint = Value::string_value(if string_hint { "string" } else { "number" });
+        // Binary `+` requests the ordinary `default` hint. Dates are the one
+        // built-in whose @@toPrimitive default is string-oriented; ordinary
+        // objects still receive the numeric hint used by the shared coercion
+        // path. Keep that distinction in the value model rather than in each
+        // operator lowering.
+        let hint = Value::string_value(match hint {
+            PrimitiveHint::String => "string",
+            PrimitiveHint::Default => "default",
+            PrimitiveHint::Number => "number",
+        });
         let result = vm.call(exotic, value.clone(), vec![hint])?;
         if result
             .as_object()
@@ -5237,7 +5253,7 @@ fn to_primitive_for_binary(vm: &mut Vm, value: &Value, string_hint: bool) -> JsR
             "@@toPrimitive must return a primitive value",
         )));
     }
-    let methods = if string_hint {
+    let methods = if matches!(hint, PrimitiveHint::String | PrimitiveHint::Default) {
         ["toString", "valueOf"]
     } else {
         ["valueOf", "toString"]
@@ -5303,9 +5319,13 @@ fn binary_with_vm(vm: &mut Vm, op: Op, left: &Value, right: &Value) -> JsResult<
     }
     // Addition uses the ordinary/default hint; primitive result types decide
     // whether the final operation is numeric or string concatenation.
-    let string_hint = false;
-    let left = to_primitive_for_binary(vm, left, string_hint)?;
-    let right = to_primitive_for_binary(vm, right, string_hint)?;
+    let hint = if matches!(op, Op::Add | Op::Eq | Op::Ne) {
+        PrimitiveHint::Default
+    } else {
+        PrimitiveHint::Number
+    };
+    let left = to_primitive_for_binary(vm, left, hint)?;
+    let right = to_primitive_for_binary(vm, right, hint)?;
     if matches!(op, Op::Add)
         && ((left.is_string() && !is_bigint_marker(&left))
             || (right.is_string() && !is_bigint_marker(&right)))
@@ -10092,7 +10112,12 @@ impl Vm {
         let result = (|| {
             if let Some(b) = &n.body {
                 match self.exec_stmts(&b.statements, body_environment)? {
-                    Signal::Return(v) | Signal::Normal(v) => Ok(v),
+                    Signal::Return(v) => Ok(v),
+                    // A function's completion value is not its return value;
+                    // only an explicit `return` produces a result. Keeping
+                    // this boundary uniform prevents assignment expressions
+                    // in callbacks from leaking objects into coercion.
+                    Signal::Normal(_) => Ok(Value::Undefined),
                     _ => Ok(Value::Undefined),
                 }
             } else {
@@ -10329,7 +10354,8 @@ impl Vm {
                 return Ok(Value::Undefined);
             };
             match self.exec_stmts(&body.statements, body_environment)? {
-                Signal::Return(v) | Signal::Normal(v) => Ok(v),
+                Signal::Return(v) => Ok(v),
+                Signal::Normal(_) => Ok(Value::Undefined),
                 _ => Ok(Value::Undefined),
             }
         })();
@@ -18753,7 +18779,7 @@ fn to_number_with_vm(vm: &mut Vm, value: &Value) -> JsResult<f64> {
                 "cannot convert a Symbol value to a number",
             )));
         }
-        let primitive = to_primitive_for_binary(vm, value, false)?;
+        let primitive = to_primitive_for_binary(vm, value, PrimitiveHint::Number)?;
         return to_number_with_vm(vm, &primitive);
     }
     Ok(f64::NAN)
@@ -20991,7 +21017,7 @@ fn bigint_value(vm: &mut Vm, value: &Value) -> JsResult<BigInt> {
     {
         return bigint_value(vm, &primitive);
     }
-    let primitive = to_primitive_for_binary(vm, value, false)?;
+    let primitive = to_primitive_for_binary(vm, value, PrimitiveHint::Number)?;
     if primitive.is_undefined() || primitive.is_null() {
         return Err(JsError::Throw(type_error(
             vm,
@@ -21076,7 +21102,7 @@ fn native_bigint(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
             "cannot convert value to BigInt",
         )));
     }
-    let primitive = to_primitive_for_binary(vm, &value, false)?;
+    let primitive = to_primitive_for_binary(vm, &value, PrimitiveHint::Number)?;
     if let Some(number) = primitive.as_number() {
         if !number.is_finite() || number.fract() != 0.0 {
             return Err(JsError::Throw(range_error(
@@ -21130,7 +21156,7 @@ fn bigint_bits(vm: &mut Vm, value: &Value) -> JsResult<u32> {
         )));
     }
     let primitive = if value.is_object() || value.is_function() {
-        to_primitive_for_binary(vm, value, false)?
+        to_primitive_for_binary(vm, value, PrimitiveHint::Number)?
     } else {
         value.clone()
     };
@@ -21327,7 +21353,7 @@ fn string_argument(vm: &mut Vm, value: &Value) -> JsResult<String> {
         )));
     }
     let primitive = if value.is_object_like() {
-        to_primitive_for_binary(vm, value, true)?
+        to_primitive_for_binary(vm, value, PrimitiveHint::String)?
     } else {
         value.clone()
     };
@@ -25440,7 +25466,7 @@ fn native_string(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     } else if is_symbol_carrier(&value) {
         symbol_display_string(&value)
     } else {
-        let primitive = to_primitive_for_binary(vm, &value, true)?;
+        let primitive = to_primitive_for_binary(vm, &value, PrimitiveHint::String)?;
         if is_symbol_carrier(&primitive) {
             symbol_display_string(&primitive)
         } else {
@@ -25514,7 +25540,7 @@ fn to_string_with_vm(vm: &mut Vm, value: &Value) -> JsResult<String> {
         )));
     }
     if value.is_object() || value.is_function() || value.is_regexp() {
-        let primitive = to_primitive_for_binary(vm, value, true)?;
+        let primitive = to_primitive_for_binary(vm, value, PrimitiveHint::String)?;
         return to_string_with_vm(vm, &primitive);
     }
     Ok(value.string())
@@ -25524,7 +25550,7 @@ fn native_number(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
         None => 0.0,
         Some(value) => {
             let primitive = if value.is_object() || value.is_function() {
-                to_primitive_for_binary(vm, value, false)?
+                to_primitive_for_binary(vm, value, PrimitiveHint::Number)?
             } else {
                 value.clone()
             };
@@ -26022,7 +26048,7 @@ fn date_argument_to_millis(vm: &mut Vm, value: &Value) -> JsResult<f64> {
                 &[Value::string_value("default")][..],
             )?
         } else {
-            to_primitive_for_binary(vm, value, false)?
+            to_primitive_for_binary(vm, value, PrimitiveHint::Default)?
         }
     } else {
         value.clone()
@@ -26091,7 +26117,7 @@ fn native_date_to_iso_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<
 
 fn native_date_to_json(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     let object = object_receiver(vm, &this)?;
-    let primitive = to_primitive_for_binary(vm, &object, false)?;
+    let primitive = to_primitive_for_binary(vm, &object, PrimitiveHint::Number)?;
     if primitive
         .as_number()
         .is_some_and(|number| !number.is_finite())
