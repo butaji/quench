@@ -7290,8 +7290,16 @@ impl Vm {
         a: &A,
         call_ic: Option<&dynjit::CallIcSite>,
     ) -> JsResult<Value> {
+        let captures_deleted_binding = c.as_function_ref().is_some_and(|function| {
+            matches!(
+                &function.kind,
+                FunctionKind::User { env, .. } | FunctionKind::Arrow { env, .. }
+                    if environment_has_deleted_bindings(env)
+            )
+        });
         if let Some(call_ic) = call_ic
             && call_ic.matches(c)
+            && !captures_deleted_binding
         {
             self.jit_stats.native_entries += 1;
             if call_ic.has_loop() {
@@ -7324,6 +7332,7 @@ impl Vm {
             }
             if self.jit_mode == JitMode::Stencil
                 && let Some(code) = f.numeric_jit.borrow().clone()
+                && !captures_deleted_binding
                 && let Some(contiguous) = a.contiguous()
                 && let Some(result) = code.call(contiguous)
             {
@@ -7342,6 +7351,7 @@ impl Vm {
                 return Ok(result);
             }
             if self.jit_mode == JitMode::Stencil
+                && !captures_deleted_binding
                 && let Some(code) = f.dyn_jit.borrow().clone()
             {
                 let env = match &f.kind {
@@ -8781,6 +8791,15 @@ impl Vm {
             } else {
                 e.clone()
             };
+            if v.kind == VariableDeclarationKind::Var
+                && d.init.is_none()
+                && pattern_name(&d.id)
+                    .is_some_and(|name| target.borrow().deleted_names.contains(&name))
+            {
+                // A `var x;` statement is declaration-instantiation only;
+                // after sloppy eval deletes x it must not recreate the slot.
+                continue;
+            }
             self.bind_pattern(&d.id, value, target)?;
         }
         Ok(())
@@ -8890,6 +8909,12 @@ impl Vm {
         name: &str,
         annex_b_allowed: bool,
     ) {
+        if environment.borrow().deleted_names.contains(name) {
+            // Function declarations are instantiated before statement
+            // execution. A later statement pass must not recreate a binding
+            // that sloppy eval has already deleted.
+            return;
+        }
         let closure = self.make_user(function, environment.clone());
         let is_global_environment = Rc::ptr_eq(&environment, &self.global);
         let is_lexical_environment =
@@ -21074,7 +21099,7 @@ mod tests {
         vm.install_process(Vec::new(), Vec::new());
         let result = vm.run_source_text(
             Path::new("<eval-delete>"),
-            "eval('var x; delete x;'); (function () { x; })();",
+            "var postDeletion; (function () { eval('delete x; postDeletion = function () { x; }; var x;'); }()); postDeletion();",
         );
         assert!(
             result.is_err(),
