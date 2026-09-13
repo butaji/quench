@@ -65,10 +65,17 @@ impl Test262Host for StencilHost {
     }
 
     fn run_harnessed_module(&mut self, harness: &[&str], source: &str) -> Result<(), String> {
-        self.run_source_at(
-            &Self::compose(harness, source, false),
-            Path::new("<test262-module-harnessed>.mjs"),
+        let path = Path::new("<test262-module-harnessed>.mjs");
+        let argv = vec!["quench-node".to_string(), path.display().to_string()];
+        quench_runtime::vm_core::run_harnessed_module_with_argv_and_output_status(
+            path,
+            harness,
+            source,
+            argv,
+            Vec::new(),
+            |_| {},
         )
+        .map(|_| ())
     }
 
     fn run_harnessed_module_at(
@@ -82,7 +89,16 @@ impl Test262Host for StencilHost {
         // SourceType from the path, so preserve the module grammar explicitly
         // at this boundary while retaining the original basename/location.
         let module_path = path.with_extension("mjs");
-        self.run_source_at(&Self::compose(harness, source, false), &module_path)
+        let argv = vec!["quench-node".to_string(), module_path.display().to_string()];
+        quench_runtime::vm_core::run_harnessed_module_with_argv_and_output_status(
+            &module_path,
+            harness,
+            source,
+            argv,
+            Vec::new(),
+            |_| {},
+        )
+        .map(|_| ())
     }
 }
 

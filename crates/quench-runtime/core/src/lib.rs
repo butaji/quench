@@ -11139,7 +11139,11 @@ impl Vm {
             return Ok(());
         };
         let key = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-        if self.module_is_evaluating(&key) {
+        let synthetic_key = key.with_extension("mjs");
+        if self.module_is_evaluating(&key)
+            || self.pending_async_modules.contains(&key)
+            || self.pending_async_modules.contains(&synthetic_key)
+        {
             return Err(JsError::Throw(type_error(
                 self,
                 "cannot access a deferred module while it is evaluating",
@@ -11172,7 +11176,9 @@ impl Vm {
     }
 
     fn ensure_deferred_namespace(&mut self, object: &Value, key: Option<&str>) -> JsResult<()> {
-        if key.is_some_and(|key| key == "then" || key.starts_with('\0')) {
+        if key
+            .is_some_and(|key| key == "then" || key.starts_with('\0') || key.starts_with("Symbol("))
+        {
             return Ok(());
         }
         if object.as_object_ref().is_some_and(|object| {
@@ -11443,6 +11449,11 @@ impl Vm {
                 for dependency in self.deferred_async_dependencies(&target)? {
                     self.load_module_exports(&dependency)?;
                 }
+                // `import defer` eagerly evaluates asynchronous transitive
+                // dependencies before exposing the deferred namespace. Their
+                // continuations are VM microtasks, so drain that queue as one
+                // graph step after all dependencies have been discovered.
+                self.run_timers()?;
             }
             let exports = if source_phase {
                 HashMap::new()
@@ -14835,8 +14846,10 @@ impl Vm {
             if value.is_object_like() {
                 if is_module_namespace(value) {
                     // Module namespace [[HasProperty]] consults only its
-                    // exported-name table; unlike [[GetOwnProperty]], it does
-                    // not read the live binding.
+                    // exported-name table. Deferred namespaces first perform
+                    // their graph-owned synchronous evaluation for ordinary
+                    // string keys; symbol-like keys remain inert.
+                    self.ensure_deferred_namespace(value, Some(key))?;
                     return Ok(self.has_own_property_key(value, key));
                 }
                 let own = native_object_get_own_property_descriptor(
@@ -19879,9 +19892,11 @@ fn native_async_module_continuation(vm: &mut Vm, _: Value, args: &[Value]) -> Js
     else {
         return Ok(Value::Undefined);
     };
-    vm.pending_async_modules
-        .remove(&vm.module_key(&continuation.path));
+    let continuation_key = vm.module_key(&continuation.path);
     vm.exec_stmts(continuation.statements, continuation.environment)?;
+    vm.pending_async_modules.remove(&continuation_key);
+    vm.pending_async_modules
+        .remove(&continuation_key.with_extension("mjs"));
     Ok(Value::Undefined)
 }
 
@@ -30822,6 +30837,32 @@ pub fn run_source_with_argv_and_output_status(
     vm.output = Some(Box::new(output));
     vm.install_process(argv, exec_argv);
     vm.install_main_module(path);
+    vm.run_source_text(path, source)
+        .and_then(|_| vm.run_timers())
+        .map(|_| vm.process_exit_code())
+        .map_err(|error| error.to_string())
+}
+
+/// Execute script harness units in the realm script scope, then evaluate the
+/// module source in that same VM. Test262 harnesses are scripts even when the
+/// test itself is a module; concatenating them into module code would make
+/// `$DONE`, `assert`, and helper bindings module-local instead of globals.
+pub fn run_harnessed_module_with_argv_and_output_status(
+    path: &Path,
+    harness: &[&str],
+    source: &str,
+    argv: Vec<String>,
+    exec_argv: Vec<String>,
+    mut output: impl FnMut(&str) + 'static,
+) -> Result<i32, String> {
+    let mut vm = Vm::new();
+    vm.output = Some(Box::new(move |line| output(line)));
+    vm.install_process(argv, exec_argv);
+    let harness_path = path.with_extension("cjs");
+    for unit in harness {
+        vm.run_source_text(&harness_path, unit)
+            .map_err(|error| error.to_string())?;
+    }
     vm.run_source_text(path, source)
         .and_then(|_| vm.run_timers())
         .map(|_| vm.process_exit_code())

@@ -10,8 +10,8 @@ pub mod build_profile;
 pub mod vm_core {
     pub use quench_runtime_core::{
         run_file, run_file_with_argv, run_file_with_argv_and_output,
-        run_file_with_argv_and_output_status, run_source_with_argv_and_output,
-        run_source_with_argv_and_output_status,
+        run_file_with_argv_and_output_status, run_harnessed_module_with_argv_and_output_status,
+        run_source_with_argv_and_output, run_source_with_argv_and_output_status,
     };
 
     /// Runtime-owned Wasm boundary. Format decoding stays in `quench-wasm`,
