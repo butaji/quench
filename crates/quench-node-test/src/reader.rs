@@ -132,7 +132,7 @@ impl NodeRunner {
         } else {
             source
         };
-        let dgram_surface = if is_module && fixture_source.contains("dgram") {
+        let dgram_surface = if fixture_source.contains("dgram") {
             ["dgram-head", "dgram", "dgram-tail", "membership"]
                 .into_iter()
                 .filter_map(|name| quench_node::polyfills::bootstrap::lookup(name))
