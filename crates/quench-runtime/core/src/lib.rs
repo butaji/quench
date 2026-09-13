@@ -8735,7 +8735,12 @@ impl Vm {
             }
             FunctionDeclaration(f) => {
                 if let Some(i) = &f.id {
-                    self.declare_function_binding(f, e.clone(), i.name.as_str(), true);
+                    let function_environment = if e.borrow().contains_local(EVAL_CODE_ENV_NAME) {
+                        variable_environment(&e)
+                    } else {
+                        e.clone()
+                    };
+                    self.declare_function_binding(f, function_environment, i.name.as_str(), true);
                 }
                 Ok(Signal::Normal(Value::Undefined))
             }
@@ -21159,6 +21164,20 @@ mod tests {
         assert!(
             result.is_err(),
             "a closure must observe a deleted eval binding as unresolvable"
+        );
+    }
+
+    #[test]
+    fn sloppy_eval_function_bindings_remain_deleted_after_instantiation() {
+        let mut vm = Vm::new();
+        vm.install_process(Vec::new(), Vec::new());
+        let result = vm.run_source_text(
+            Path::new("<eval-delete-function>"),
+            "var initial, postDeletion; (function () { eval('initial = f; delete f; postDeletion = function () { f; }; function f() { return 33; }'); }()); postDeletion();",
+        );
+        assert!(
+            result.is_err(),
+            "a function declaration must not recreate a deleted eval binding"
         );
     }
 
