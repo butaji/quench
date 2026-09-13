@@ -2824,6 +2824,11 @@ enum Signal {
 enum LValue {
     Var(Env, String),
     Prop(Value, String),
+    SuperProp {
+        base: Value,
+        receiver: Value,
+        key: String,
+    },
 }
 
 // A closed, benchmark-independent vocabulary for selecting and profiling
@@ -5645,20 +5650,16 @@ impl Vm {
         self.async_constructor_for_realm(generator, None)
     }
 
-    fn async_constructor_for_realm(
-        &self,
-        generator: bool,
-        realm_global: Option<Value>,
-    ) -> Value {
+    fn async_constructor_for_realm(&self, generator: bool, realm_global: Option<Value>) -> Value {
         let realm_handle = realm_global.as_ref().and_then(Value::as_object);
         if let Some(realm_handle) = realm_handle.as_ref() {
-            if let Some((_, _, value)) = self
-                .realm_async_constructors
-                .borrow()
-                .iter()
-                .find(|(is_generator, global, _)| {
-                    *is_generator == generator && global.as_ptr() == realm_handle.as_ptr()
-                })
+            if let Some((_, _, value)) =
+                self.realm_async_constructors
+                    .borrow()
+                    .iter()
+                    .find(|(is_generator, global, _)| {
+                        *is_generator == generator && global.as_ptr() == realm_handle.as_ptr()
+                    })
             {
                 return value.clone();
             }
@@ -5751,13 +5752,11 @@ impl Vm {
                     .prototype
                     .clone();
                 let async_iterator_prototype = self.object(Some(object_prototype));
-                let generator_prototype = self.object(
-                    Some(
-                        async_iterator_prototype
-                            .as_object()
-                            .expect("async iterator prototype is an object"),
-                    ),
-                );
+                let generator_prototype = self.object(Some(
+                    async_iterator_prototype
+                        .as_object()
+                        .expect("async iterator prototype is an object"),
+                ));
                 let async_function_prototype = Value::Object(
                     constructor
                         .as_function_ref()
@@ -5775,14 +5774,15 @@ impl Vm {
                         configurable: true,
                     },
                 );
-                let generator_prototype = self
-                    .get_prop(&async_function_prototype, "prototype");
+                let generator_prototype = self.get_prop(&async_function_prototype, "prototype");
                 let constructor_prototype = async_function_prototype.clone();
                 let next = self.native_named(native_async_generator_next, "next", 1);
                 let return_method = self.native_named(native_async_generator_return, "return", 1);
                 let throw_method = self.native_named(native_async_generator_throw, "throw", 1);
-                let async_iterator = self.native_named(native_async_iterator_self, "[Symbol.asyncIterator]", 0);
-                let async_dispose = self.native_named(native_async_iterator_dispose, "[Symbol.asyncDispose]", 0);
+                let async_iterator =
+                    self.native_named(native_async_iterator_self, "[Symbol.asyncIterator]", 0);
+                let async_dispose =
+                    self.native_named(native_async_iterator_dispose, "[Symbol.asyncDispose]", 0);
                 install_data_properties!(
                     self,
                     generator_prototype.clone(),
@@ -5801,24 +5801,46 @@ impl Vm {
                     },
                 );
                 let async_iterator_key = self.well_known_symbol_key("asyncIterator");
-                self.set_prop(&async_iterator_prototype, &async_iterator_key, async_iterator);
-                set_property_attributes(&async_iterator_prototype, &async_iterator_key, PropertyAttributes::BUILTIN_METHOD);
+                self.set_prop(
+                    &async_iterator_prototype,
+                    &async_iterator_key,
+                    async_iterator,
+                );
+                set_property_attributes(
+                    &async_iterator_prototype,
+                    &async_iterator_key,
+                    PropertyAttributes::BUILTIN_METHOD,
+                );
                 let async_dispose_key = self.well_known_symbol_key("asyncDispose");
                 self.set_prop(&async_iterator_prototype, &async_dispose_key, async_dispose);
-                set_property_attributes(&async_iterator_prototype, &async_dispose_key, PropertyAttributes::BUILTIN_METHOD);
+                set_property_attributes(
+                    &async_iterator_prototype,
+                    &async_dispose_key,
+                    PropertyAttributes::BUILTIN_METHOD,
+                );
                 let to_string_tag_key = self.well_known_symbol_key("toStringTag");
-                self.set_prop(&generator_prototype, &to_string_tag_key, Value::string_value("AsyncGenerator"));
-                set_property_attributes(&generator_prototype, &to_string_tag_key, PropertyAttributes {
-                    writable: false,
-                    enumerable: false,
-                    configurable: true,
-                });
+                self.set_prop(
+                    &generator_prototype,
+                    &to_string_tag_key,
+                    Value::string_value("AsyncGenerator"),
+                );
+                set_property_attributes(
+                    &generator_prototype,
+                    &to_string_tag_key,
+                    PropertyAttributes {
+                        writable: false,
+                        enumerable: false,
+                        configurable: true,
+                    },
+                );
             }
         }
         if let Some(realm_handle) = realm_handle {
-            self.realm_async_constructors
-                .borrow_mut()
-                .push((generator, realm_handle, constructor.clone()));
+            self.realm_async_constructors.borrow_mut().push((
+                generator,
+                realm_handle,
+                constructor.clone(),
+            ));
         } else {
             let cache = if generator {
                 &self.async_generator_constructor
@@ -5846,7 +5868,11 @@ impl Vm {
         let promise = self.object(promise_prototype);
         self.set_prop(&promise, PROMISE_MARKER_PROP, Value::Bool(true));
         self.set_prop(&promise, PROMISE_STATE_PROP, Value::string_value("pending"));
-        self.set_prop(&promise, PROMISE_RESOLUTION_STARTED_PROP, Value::Bool(false));
+        self.set_prop(
+            &promise,
+            PROMISE_RESOLUTION_STARTED_PROP,
+            Value::Bool(false),
+        );
         self.set_prop(&promise, PROMISE_RESULT_PROP, Value::Undefined);
         self.set_prop(
             &promise,
@@ -5875,12 +5901,20 @@ impl Vm {
         self.set_prop(promise, PROMISE_RESULT_PROP, value.clone());
         let queue = self.get_prop(promise, PROMISE_QUEUE_PROP);
         let length = array_from_length(self, &queue).unwrap_or(0);
-        self.set_prop(promise, PROMISE_QUEUE_PROP, self.array_from_values(Vec::new()));
+        self.set_prop(
+            promise,
+            PROMISE_QUEUE_PROP,
+            self.array_from_values(Vec::new()),
+        );
         for index in 0..length {
             let entry = self.get_prop(&queue, &index.to_string());
             let handler = self.get_prop(
                 &entry,
-                if state == "fulfilled" { "fulfilled" } else { "rejected" },
+                if state == "fulfilled" {
+                    "fulfilled"
+                } else {
+                    "rejected"
+                },
             );
             let child = self.get_prop(&entry, "promise");
             let child_result = if handler.is_function() {
@@ -5893,7 +5927,11 @@ impl Vm {
             // Species constructors provide their own resolving functions.  A
             // custom promise instance may not carry the compact-core marker,
             // so route settlements through the capability when present.
-            let capability_key = if child_result.is_ok() { "resolve" } else { "reject" };
+            let capability_key = if child_result.is_ok() {
+                "resolve"
+            } else {
+                "reject"
+            };
             let capability = self.get_prop(&entry, capability_key);
             if capability.is_function() {
                 let argument = match child_result {
@@ -6180,21 +6218,56 @@ impl Vm {
                 self.builtin(BuiltinId::ArrayConstructor),
                 self.builtin(BuiltinId::RegExpConstructor),
             ];
-            for (name, native) in [("Map", native_map_constructor as _), ("Set", native_set_constructor as _)] {
+            for (name, native) in [
+                ("Map", native_map_constructor as _),
+                ("Set", native_set_constructor as _),
+            ] {
                 let constructor = self.native_named(native, name, 0);
-                let prototype = constructor.as_function_ref().expect("collection constructor").prototype.clone();
+                let prototype = constructor
+                    .as_function_ref()
+                    .expect("collection constructor")
+                    .prototype
+                    .clone();
                 self.set_prop(&constructor, "prototype", Value::Object(prototype.clone()));
                 if name == "Map" {
-                    self.set_prop(&Value::Object(prototype.clone()), "get", self.native_named(native_map_get, "get", 1));
-                    self.set_prop(&Value::Object(prototype.clone()), "set", self.native_named(native_map_set, "set", 2));
-                    self.set_prop(&Value::Object(prototype.clone()), "has", self.native_named(native_map_has, "has", 1));
+                    self.set_prop(
+                        &Value::Object(prototype.clone()),
+                        "get",
+                        self.native_named(native_map_get, "get", 1),
+                    );
+                    self.set_prop(
+                        &Value::Object(prototype.clone()),
+                        "set",
+                        self.native_named(native_map_set, "set", 2),
+                    );
+                    self.set_prop(
+                        &Value::Object(prototype.clone()),
+                        "has",
+                        self.native_named(native_map_has, "has", 1),
+                    );
                     let iterator = self.well_known_symbol_key("iterator");
-                    self.set_prop(&Value::Object(prototype.clone()), &iterator, self.native_named(native_map_iterator, "entries", 0));
+                    self.set_prop(
+                        &Value::Object(prototype.clone()),
+                        &iterator,
+                        self.native_named(native_map_iterator, "entries", 0),
+                    );
                 } else {
-                    self.set_prop(&Value::Object(prototype.clone()), "add", self.native_named(native_set_add, "add", 1));
-                    self.set_prop(&Value::Object(prototype.clone()), "has", self.native_named(native_set_has, "has", 1));
+                    self.set_prop(
+                        &Value::Object(prototype.clone()),
+                        "add",
+                        self.native_named(native_set_add, "add", 1),
+                    );
+                    self.set_prop(
+                        &Value::Object(prototype.clone()),
+                        "has",
+                        self.native_named(native_set_has, "has", 1),
+                    );
                     let iterator = self.well_known_symbol_key("iterator");
-                    self.set_prop(&Value::Object(prototype.clone()), &iterator, self.native_named(native_set_iterator, "values", 0));
+                    self.set_prop(
+                        &Value::Object(prototype.clone()),
+                        &iterator,
+                        self.native_named(native_set_iterator, "values", 0),
+                    );
                 }
                 Environment::set(&g, name, constructor.clone());
                 constructors.push(constructor);
@@ -6339,7 +6412,8 @@ impl Vm {
         let promise_race = self.native_named(native_promise_race, "race", 1);
         let promise_any = self.native_named(native_promise_any, "any", 1);
         let promise_all_settled = self.native_named(native_promise_all_settled, "allSettled", 1);
-        let promise_with_resolvers = self.native_named(native_promise_with_resolvers, "withResolvers", 0);
+        let promise_with_resolvers =
+            self.native_named(native_promise_with_resolvers, "withResolvers", 0);
         let promise_try = self.native_named(native_promise_try, "try", 1);
         let promise_all_keyed = self.native_named(native_promise_all_keyed, "allKeyed", 1);
         let promise_all_settled_keyed =
@@ -6423,7 +6497,10 @@ impl Vm {
         // only by their element width/name. Keep that fact declarative so the
         // global surface and prototype metadata cannot drift apart.
         let array_buffer = self.native_named(native_array_buffer_constructor, "ArrayBuffer", 1);
-        if let Some(prototype) = array_buffer.as_function_ref().map(|function| function.prototype.clone()) {
+        if let Some(prototype) = array_buffer
+            .as_function_ref()
+            .map(|function| function.prototype.clone())
+        {
             self.set_prop(&array_buffer, "prototype", Value::Object(prototype));
         }
         Environment::set(&g, "ArrayBuffer", array_buffer);
@@ -6448,7 +6525,11 @@ impl Vm {
                 "BYTES_PER_ELEMENT",
                 Value::Number(bytes as f64),
             );
-            self.set_prop(&constructor, FUNCTION_PROTOTYPE_OVERRIDE_PROP, typed_array_base.clone());
+            self.set_prop(
+                &constructor,
+                FUNCTION_PROTOTYPE_OVERRIDE_PROP,
+                typed_array_base.clone(),
+            );
             let prototype = constructor
                 .as_function_ref()
                 .expect("typed array constructor")
@@ -6487,23 +6568,59 @@ impl Vm {
         // kernel even when Symbol.species is unavailable in a reduced realm.
         if Environment::get(&g, "Map").is_none() {
             let constructor = self.native_named(native_map_constructor, "Map", 0);
-            let prototype = constructor.as_function_ref().expect("Map constructor").prototype.clone();
+            let prototype = constructor
+                .as_function_ref()
+                .expect("Map constructor")
+                .prototype
+                .clone();
             self.set_prop(&constructor, "prototype", Value::Object(prototype.clone()));
-            self.set_prop(&Value::Object(prototype.clone()), "get", self.native_named(native_map_get, "get", 1));
-            self.set_prop(&Value::Object(prototype.clone()), "set", self.native_named(native_map_set, "set", 2));
-            self.set_prop(&Value::Object(prototype), "has", self.native_named(native_map_has, "has", 1));
+            self.set_prop(
+                &Value::Object(prototype.clone()),
+                "get",
+                self.native_named(native_map_get, "get", 1),
+            );
+            self.set_prop(
+                &Value::Object(prototype.clone()),
+                "set",
+                self.native_named(native_map_set, "set", 2),
+            );
+            self.set_prop(
+                &Value::Object(prototype),
+                "has",
+                self.native_named(native_map_has, "has", 1),
+            );
             let iterator = self.well_known_symbol_key("iterator");
-            self.set_prop(&Value::Object(prototype.clone()), &iterator, self.native_named(native_map_iterator, "entries", 0));
+            self.set_prop(
+                &Value::Object(prototype.clone()),
+                &iterator,
+                self.native_named(native_map_iterator, "entries", 0),
+            );
             Environment::set(&g, "Map", constructor);
         }
         if Environment::get(&g, "Set").is_none() {
             let constructor = self.native_named(native_set_constructor, "Set", 0);
-            let prototype = constructor.as_function_ref().expect("Set constructor").prototype.clone();
+            let prototype = constructor
+                .as_function_ref()
+                .expect("Set constructor")
+                .prototype
+                .clone();
             self.set_prop(&constructor, "prototype", Value::Object(prototype.clone()));
-            self.set_prop(&Value::Object(prototype.clone()), "add", self.native_named(native_set_add, "add", 1));
-            self.set_prop(&Value::Object(prototype), "has", self.native_named(native_set_has, "has", 1));
+            self.set_prop(
+                &Value::Object(prototype.clone()),
+                "add",
+                self.native_named(native_set_add, "add", 1),
+            );
+            self.set_prop(
+                &Value::Object(prototype),
+                "has",
+                self.native_named(native_set_has, "has", 1),
+            );
             let iterator = self.well_known_symbol_key("iterator");
-            self.set_prop(&Value::Object(prototype.clone()), &iterator, self.native_named(native_set_iterator, "values", 0));
+            self.set_prop(
+                &Value::Object(prototype.clone()),
+                &iterator,
+                self.native_named(native_set_iterator, "values", 0),
+            );
             Environment::set(&g, "Set", constructor);
         }
         let json = self.object(None);
@@ -7347,49 +7464,52 @@ impl Vm {
                 if let Some(override_value) = override_value {
                     return override_value;
                 }
-                let has_prototype = !f.props.borrow().contains_key(PROXY_NO_PROTOTYPE_PROP) && match &f.kind {
-                    FunctionKind::User { node, .. } => !node.r#async || node.generator,
-                    FunctionKind::Builtin(id) => id.is_constructable(),
-                    FunctionKind::Native(native)
-                        if *native as *const () == native_bigint as *const () =>
-                    {
-                        true
-                    }
-                    FunctionKind::Native(native)
-                        if *native as *const () == native_symbol as *const () =>
-                    {
-                        true
-                    }
-                    FunctionKind::Native(native)
-                        if *native as *const ()
-                            == native_async_function_constructor as *const () =>
-                    {
-                        true
-                    }
-                    FunctionKind::Native(native)
-                        if *native as *const ()
-                            == native_async_generator_constructor as *const () =>
-                    {
-                        true
-                    }
-                    FunctionKind::Native(native)
-                        if *native as *const () == native_promise_constructor as *const () =>
-                    {
-                        true
-                    }
-                    FunctionKind::Native(native)
-                        if *native as *const () == native_array_buffer_constructor as *const ()
-                            || *native as *const () == native_typed_array_constructor as *const ()
-                            || *native as *const () == native_map_constructor as *const ()
-                            || *native as *const () == native_set_constructor as *const () =>
-                    {
-                        true
-                    }
-                    FunctionKind::Class { .. } => true,
-                    FunctionKind::Native(_)
-                    | FunctionKind::Arrow { .. }
-                    | FunctionKind::Bound { .. } => false,
-                };
+                let has_prototype = !f.props.borrow().contains_key(PROXY_NO_PROTOTYPE_PROP)
+                    && match &f.kind {
+                        FunctionKind::User { node, .. } => !node.r#async || node.generator,
+                        FunctionKind::Builtin(id) => id.is_constructable(),
+                        FunctionKind::Native(native)
+                            if *native as *const () == native_bigint as *const () =>
+                        {
+                            true
+                        }
+                        FunctionKind::Native(native)
+                            if *native as *const () == native_symbol as *const () =>
+                        {
+                            true
+                        }
+                        FunctionKind::Native(native)
+                            if *native as *const ()
+                                == native_async_function_constructor as *const () =>
+                        {
+                            true
+                        }
+                        FunctionKind::Native(native)
+                            if *native as *const ()
+                                == native_async_generator_constructor as *const () =>
+                        {
+                            true
+                        }
+                        FunctionKind::Native(native)
+                            if *native as *const () == native_promise_constructor as *const () =>
+                        {
+                            true
+                        }
+                        FunctionKind::Native(native)
+                            if *native as *const ()
+                                == native_array_buffer_constructor as *const ()
+                                || *native as *const ()
+                                    == native_typed_array_constructor as *const ()
+                                || *native as *const () == native_map_constructor as *const ()
+                                || *native as *const () == native_set_constructor as *const () =>
+                        {
+                            true
+                        }
+                        FunctionKind::Class { .. } => true,
+                        FunctionKind::Native(_)
+                        | FunctionKind::Arrow { .. }
+                        | FunctionKind::Bound { .. } => false,
+                    };
                 if has_prototype {
                     Value::Object(f.prototype.clone())
                 } else {
@@ -7650,7 +7770,9 @@ impl Vm {
                     | "exec"
             ) || ["match", "search", "replace", "split", "matchAll"]
                 .iter()
-                .any(|name| key == self.well_known_symbol_key(name) || key == format!("Symbol.{name}"))
+                .any(|name| {
+                    key == self.well_known_symbol_key(name) || key == format!("Symbol.{name}")
+                })
             {
                 return true;
             }
@@ -7730,7 +7852,10 @@ impl Vm {
                 && !trap.is_null()
                 && !trap.is_undefined()
             {
-                return Err(JsError::Throw(type_error(self, "Proxy get trap is not callable")));
+                return Err(JsError::Throw(type_error(
+                    self,
+                    "Proxy get trap is not callable",
+                )));
             }
             if trap.is_function() {
                 let result = self.call(
@@ -7750,7 +7875,10 @@ impl Vm {
                 if let Ok(descriptor) = native_object_get_own_property_descriptor(
                     self,
                     Value::Undefined,
-                    &[proxy_target(object).unwrap_or(Value::Undefined), Value::string_value(key)],
+                    &[
+                        proxy_target(object).unwrap_or(Value::Undefined),
+                        Value::string_value(key),
+                    ],
                 ) {
                     if !descriptor.is_undefined()
                         && !self.get_prop(&descriptor, "configurable").truthy()
@@ -7759,8 +7887,7 @@ impl Vm {
                         if self.has_property(&descriptor, "value") {
                             let writable = self.get_prop(&descriptor, "writable");
                             let value = self.get_prop(&descriptor, "value");
-                            if !writable.truthy() && !result.same_bits(&value)
-                            {
+                            if !writable.truthy() && !result.same_bits(&value) {
                                 return Err(JsError::Throw(type_error(
                                     self,
                                     "Proxy get trap violated target invariant",
@@ -7839,7 +7966,12 @@ impl Vm {
                 let result = self.call(
                     trap,
                     handler,
-                vec![target.clone(), Value::string_value(key), value.clone(), receiver.clone()],
+                    vec![
+                        target.clone(),
+                        Value::string_value(key),
+                        value.clone(),
+                        receiver.clone(),
+                    ],
                 )?;
                 if result.truthy() {
                     validate_proxy_set_invariant(self, &target, key, &value)?;
@@ -7848,15 +7980,18 @@ impl Vm {
                     if !self.strict_mode {
                         return Ok(());
                     }
-                    return Err(JsError::Throw(type_error(self, "Proxy set trap returned false")));
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "Proxy set trap returned false",
+                    )));
                 }
                 return Ok(());
             }
-            if self.has_property(&handler, "set")
-                && !trap.is_null()
-                && !trap.is_undefined()
-            {
-                return Err(JsError::Throw(type_error(self, "Proxy set trap is not callable")));
+            if self.has_property(&handler, "set") && !trap.is_null() && !trap.is_undefined() {
+                return Err(JsError::Throw(type_error(
+                    self,
+                    "Proxy set trap is not callable",
+                )));
             }
             return self.set_prop_with_receiver(&target, key, value, receiver);
         }
@@ -8042,12 +8177,12 @@ impl Vm {
         });
         while let Some(prototype) = current {
             let object = prototype.borrow();
-                if let Some(v) = object.props.get(k) {
-                    return v.clone();
-                }
-                if let Some(prototype_function) = object.props.get("\0prototype_function") {
-                    return self.get_prop(prototype_function, k);
-                }
+            if let Some(v) = object.props.get(k) {
+                return v.clone();
+            }
+            if let Some(prototype_function) = object.props.get("\0prototype_function") {
+                return self.get_prop(prototype_function, k);
+            }
             current = object.prototype.clone();
         }
         Value::Undefined
@@ -8201,11 +8336,8 @@ impl Vm {
             let handler = proxy_handler(o).unwrap_or(Value::Undefined);
             let trap = self.get_prop_with_accessors(&handler, "deleteProperty")?;
             if trap.is_function() {
-                let result = self.call(
-                    trap,
-                    handler,
-                    vec![target.clone(), Value::string_value(k)],
-                )?;
+                let result =
+                    self.call(trap, handler, vec![target.clone(), Value::string_value(k)])?;
                 if result.truthy() {
                     let descriptor = native_object_get_own_property_descriptor(
                         self,
@@ -8221,12 +8353,8 @@ impl Vm {
                         )));
                     }
                     if descriptor.is_object_like()
-                        && !native_object_is_extensible(
-                            self,
-                            Value::Undefined,
-                            &[target.clone()],
-                        )?
-                        .truthy()
+                        && !native_object_is_extensible(self, Value::Undefined, &[target.clone()])?
+                            .truthy()
                     {
                         return Err(JsError::Throw(type_error(
                             self,
@@ -8353,9 +8481,10 @@ impl Vm {
         match x {
             Expression::StaticMemberExpression(member) => {
                 let object = self.eval_expr(&member.object, e)?;
-                Ok(Value::Bool(
-                    self.delete_prop_with_vm(&object, member.property.name.as_str())?,
-                ))
+                Ok(Value::Bool(self.delete_prop_with_vm(
+                    &object,
+                    member.property.name.as_str(),
+                )?))
             }
             Expression::ComputedMemberExpression(member) => {
                 let object = self.eval_expr(&member.object, e.clone())?;
@@ -8448,11 +8577,7 @@ impl Vm {
         prototype: Option<ObjectHandle>,
     ) -> JsResult<Value> {
         let iterator = self.object(prototype);
-        self.set_prop(
-            &iterator,
-            ASYNC_GENERATOR_INSTANCE_PROP,
-            Value::Bool(true),
-        );
+        self.set_prop(&iterator, ASYNC_GENERATOR_INSTANCE_PROP, Value::Bool(true));
         self.set_prop(&iterator, ASYNC_GENERATOR_FUNCTION_PROP, function);
         self.set_prop(
             &iterator,
@@ -8461,7 +8586,11 @@ impl Vm {
         );
         self.set_prop(&iterator, ASYNC_GENERATOR_THIS_PROP, this);
         self.set_prop(&iterator, ASYNC_GENERATOR_STARTED_PROP, Value::Bool(false));
-        self.set_prop(&iterator, ASYNC_GENERATOR_EXECUTING_PROP, Value::Bool(false));
+        self.set_prop(
+            &iterator,
+            ASYNC_GENERATOR_EXECUTING_PROP,
+            Value::Bool(false),
+        );
         self.set_prop(
             &iterator,
             ASYNC_GENERATOR_QUEUE_PROP,
@@ -8472,11 +8601,7 @@ impl Vm {
             ASYNC_GENERATOR_VALUES_PROP,
             self.array_from_values(Vec::new()),
         );
-        self.set_prop(
-            &iterator,
-            ASYNC_GENERATOR_INDEX_PROP,
-            Value::Number(0.0),
-        );
+        self.set_prop(&iterator, ASYNC_GENERATOR_INDEX_PROP, Value::Number(0.0));
         self.set_prop(
             &iterator,
             "next",
@@ -8528,7 +8653,12 @@ impl Vm {
             return;
         };
         let (node, env, source_id, strict) = match &function_ref.kind {
-            FunctionKind::User { node, env } => (*node, env.clone(), function_ref.source_id, function_ref.strict),
+            FunctionKind::User { node, env } => (
+                *node,
+                env.clone(),
+                function_ref.source_id,
+                function_ref.strict,
+            ),
             _ => {
                 self.settle_promise(
                     first,
@@ -8552,11 +8682,19 @@ impl Vm {
         );
         let yields = self.async_generator_yields.take().unwrap_or_default();
         self.async_generator_yields = previous_yields;
-        self.set_prop(iterator, ASYNC_GENERATOR_VALUES_PROP, self.array_from_values(yields));
+        self.set_prop(
+            iterator,
+            ASYNC_GENERATOR_VALUES_PROP,
+            self.array_from_values(yields),
+        );
         self.set_prop(iterator, ASYNC_GENERATOR_EXECUTING_PROP, Value::Bool(false));
         let queue = self.get_prop(iterator, ASYNC_GENERATOR_QUEUE_PROP);
         let queue_length = array_from_length(self, &queue).unwrap_or(0);
-        self.set_prop(iterator, ASYNC_GENERATOR_QUEUE_PROP, self.array_from_values(Vec::new()));
+        self.set_prop(
+            iterator,
+            ASYNC_GENERATOR_QUEUE_PROP,
+            self.array_from_values(Vec::new()),
+        );
         if let Err(error) = result {
             let value = match error {
                 JsError::Throw(value) => value,
@@ -8628,11 +8766,13 @@ impl Vm {
         // stencil parameter-lowering recipe is complete; compiling them with
         // a partial binding map can turn a valid rest name into a spurious
         // ReferenceError.
-        let has_rest_parameter = c.as_function_ref().is_some_and(|function| match &function.kind {
-            FunctionKind::User { node, .. } => node.params.rest.is_some(),
-            FunctionKind::Arrow { node, .. } => node.params.rest.is_some(),
-            _ => false,
-        });
+        let has_rest_parameter = c
+            .as_function_ref()
+            .is_some_and(|function| match &function.kind {
+                FunctionKind::User { node, .. } => node.params.rest.is_some(),
+                FunctionKind::Arrow { node, .. } => node.params.rest.is_some(),
+                _ => false,
+            });
         if let Some(call_ic) = call_ic
             && call_ic.matches(c)
             && !captures_deleted_binding
@@ -8649,11 +8789,13 @@ impl Vm {
                                 .iter()
                                 .any(|directive| directive.directive.as_str() == "use strict")
                         }),
-                        FunctionKind::Arrow { node, .. } => node.body.as_function_body().is_some_and(|body| {
-                            body.directives
-                                .iter()
-                                .any(|directive| directive.directive.as_str() == "use strict")
-                        }),
+                        FunctionKind::Arrow { node, .. } => {
+                            node.body.as_function_body().is_some_and(|body| {
+                                body.directives
+                                    .iter()
+                                    .any(|directive| directive.directive.as_str() == "use strict")
+                            })
+                        }
                         _ => false,
                     }
             });
@@ -8696,14 +8838,8 @@ impl Vm {
                 // evaluator and expose the canonical array iterator protocol.
                 let previous_yields = self.async_generator_yields.take();
                 self.async_generator_yields = Some(Vec::new());
-                let result = self.call_user(
-                    node,
-                    env.clone(),
-                    t,
-                    a.materialize(),
-                    f.source_id,
-                    f.strict,
-                );
+                let result =
+                    self.call_user(node, env.clone(), t, a.materialize(), f.source_id, f.strict);
                 let yields = self.async_generator_yields.take().unwrap_or_default();
                 self.async_generator_yields = previous_yields;
                 result?;
@@ -8911,7 +9047,10 @@ impl Vm {
         }
         let target = proxy_target(proxy).unwrap_or(Value::Undefined);
         if !target.is_function() {
-            return Err(JsError::Throw(type_error(self, "Proxy target is not callable")));
+            return Err(JsError::Throw(type_error(
+                self,
+                "Proxy target is not callable",
+            )));
         }
         let handler = proxy_handler(proxy).unwrap_or(Value::Undefined);
         if self.current_new_target.is_some() {
@@ -8921,7 +9060,10 @@ impl Vm {
                 && !trap.is_null()
                 && !trap.is_undefined()
             {
-                return Err(JsError::Throw(type_error(self, "Proxy construct trap is not callable")));
+                return Err(JsError::Throw(type_error(
+                    self,
+                    "Proxy construct trap is not callable",
+                )));
             }
             if trap.is_function() {
                 let arguments = self.array_from_values(args.materialize());
@@ -8929,11 +9071,7 @@ impl Vm {
                     .current_new_target
                     .clone()
                     .unwrap_or_else(|| proxy.clone());
-                let result = self.call(
-                    trap,
-                    handler,
-                    vec![target, arguments, new_target],
-                )?;
+                let result = self.call(trap, handler, vec![target, arguments, new_target])?;
                 if !result.is_object_like() || is_symbol_carrier(&result) {
                     return Err(JsError::Throw(type_error(
                         self,
@@ -8949,15 +9087,14 @@ impl Vm {
             && !trap.is_null()
             && !trap.is_undefined()
         {
-            return Err(JsError::Throw(type_error(self, "Proxy apply trap is not callable")));
+            return Err(JsError::Throw(type_error(
+                self,
+                "Proxy apply trap is not callable",
+            )));
         }
         if trap.is_function() {
             let arguments = self.array_from_values(args.materialize());
-            return self.call(
-                trap,
-                handler,
-                vec![target, this, arguments],
-            );
+            return self.call(trap, handler, vec![target, this, arguments]);
         }
         if let Some(function) = target.as_function_ref()
             && matches!(function.kind, FunctionKind::Class { .. })
@@ -9590,9 +9727,10 @@ impl Vm {
                     )));
                 }
             }
-            if var_names.iter().any(|name| {
-                name == "arguments" && eval_arguments_conflict(&environment)
-            }) {
+            if var_names
+                .iter()
+                .any(|name| name == "arguments" && eval_arguments_conflict(&environment))
+            {
                 return Err(JsError::Throw(syntax_error(
                     self,
                     "eval var declaration conflicts with parameter binding",
@@ -9861,9 +9999,9 @@ impl Vm {
                             oxc_ast::ast::ImportDeclarationSpecifier::ImportDefaultSpecifier(
                                 specifier,
                             ) => (specifier.local.name.as_str(), Value::Undefined),
-                            oxc_ast::ast::ImportDeclarationSpecifier::ImportSpecifier(specifier) => {
-                                (specifier.local.name.as_str(), Value::Undefined)
-                            }
+                            oxc_ast::ast::ImportDeclarationSpecifier::ImportSpecifier(
+                                specifier,
+                            ) => (specifier.local.name.as_str(), Value::Undefined),
                         };
                         e.borrow_mut().declare(name, value);
                     }
@@ -10892,7 +11030,15 @@ impl Vm {
                 .declare(id.name.as_str(), class.clone());
         }
         self.set_prop(&prototype, "constructor", class.clone());
-        set_property_attributes(&prototype, "constructor", PropertyAttributes::DEFAULT);
+        set_property_attributes(
+            &prototype,
+            "constructor",
+            PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+            },
+        );
         if let Some(super_constructor) =
             class
                 .as_function_ref()
@@ -10945,6 +11091,12 @@ impl Vm {
                 continue;
             }
             let key = self.eval_property_key(&method.key, class_env.clone())?;
+            if method.r#static && key == "prototype" {
+                return Err(JsError::Throw(type_error(
+                    self,
+                    "Class static property cannot be named prototype",
+                )));
+            }
             let method_value = self.make_user(&method.value, class_env.clone());
             self.set_prop(&method_value, "name", Value::string_value(key.clone()));
             set_property_attributes(&method_value, "name", PropertyAttributes::BUILTIN_CONSTANT);
@@ -11096,7 +11248,7 @@ impl Vm {
                     if let ObjectPropertyKind::ObjectProperty(p) = p {
                         let k = self.eval_property_key(&p.key, e.clone())?;
                         let z = self.eval_expr(&p.value, e.clone())?;
-                        if p.method
+                        if (p.method || matches!(p.kind, PropertyKind::Get | PropertyKind::Set))
                             && let Some(function) = z.as_function_ref()
                             && let FunctionKind::User { env, .. } = &function.kind
                         {
@@ -11376,7 +11528,22 @@ impl Vm {
                     } else {
                         o.clone()
                     };
-                    (receiver, self.get_prop_with_accessors(&o, &k)?)
+                    (
+                        receiver.clone(),
+                        if matches!(
+                            m,
+                            MemberExpression::StaticMemberExpression(member)
+                                if matches!(&member.object, Expression::Super(_))
+                        ) || matches!(
+                            m,
+                            MemberExpression::ComputedMemberExpression(member)
+                                if matches!(&member.object, Expression::Super(_))
+                        ) {
+                            self.get_prop_with_receiver(&o, &k, &receiver)?
+                        } else {
+                            self.get_prop_with_accessors(&o, &k)?
+                        },
+                    )
                 } else {
                     (Value::Undefined, self.eval_expr(&v.callee, e.clone())?)
                 };
@@ -11592,7 +11759,7 @@ impl Vm {
             PropertyKey::StaticIdentifier(identifier) => Ok(identifier.name.to_string()),
             PropertyKey::PrivateIdentifier(identifier) => Ok(identifier.name.to_string()),
             PropertyKey::StringLiteral(string) => Ok(string.value.to_string()),
-            PropertyKey::NumericLiteral(number) => Ok(number.value.to_string()),
+            PropertyKey::NumericLiteral(number) => Ok(js_number_to_string(number.value)),
             _ => {
                 let expression = key
                     .as_expression()
@@ -11658,15 +11825,29 @@ impl Vm {
             SimpleAssignmentTarget::AssignmentTargetIdentifier(i) => {
                 Ok(LValue::Var(e, i.name.to_string()))
             }
-            SimpleAssignmentTarget::StaticMemberExpression(m) => Ok(LValue::Prop(
-                self.eval_expr(&m.object, e)?,
-                m.property.name.to_string(),
-            )),
+            SimpleAssignmentTarget::StaticMemberExpression(m) => {
+                let base = self.eval_expr(&m.object, e.clone())?;
+                if matches!(&m.object, Expression::Super(_)) {
+                    return Ok(LValue::SuperProp {
+                        base,
+                        receiver: Environment::get(&e, "this").unwrap_or(Value::Undefined),
+                        key: m.property.name.to_string(),
+                    });
+                }
+                Ok(LValue::Prop(base, m.property.name.to_string()))
+            }
             SimpleAssignmentTarget::ComputedMemberExpression(m) => {
-                Ok(LValue::Prop(self.eval_expr(&m.object, e.clone())?, {
-                    let key_value = self.eval_expr(&m.expression, e)?;
-                    self.to_property_key(key_value)?
-                }))
+                let base = self.eval_expr(&m.object, e.clone())?;
+                let key_value = self.eval_expr(&m.expression, e.clone())?;
+                let key = self.to_property_key(key_value)?;
+                if matches!(&m.object, Expression::Super(_)) {
+                    return Ok(LValue::SuperProp {
+                        base,
+                        receiver: Environment::get(&e, "this").unwrap_or(Value::Undefined),
+                        key,
+                    });
+                }
+                Ok(LValue::Prop(base, key))
             }
             _ => Err(JsError::Message("target unsupported".into())),
         }
@@ -11675,6 +11856,7 @@ impl Vm {
         match target {
             LValue::Var(e, name) => Environment::get(e, name).unwrap_or(Value::Undefined),
             LValue::Prop(o, k) => self.get_prop(o, k),
+            LValue::SuperProp { base, key, .. } => self.get_prop(base, key),
         }
     }
     fn write_lvalue(&mut self, target: LValue, v: Value) -> JsResult<()> {
@@ -11693,16 +11875,19 @@ impl Vm {
                 }
                 Environment::set(&e, &name, v);
             }
-            LValue::Prop(o, k) => {
-                match self.set_prop_with_accessors(&o, &k, v) {
-                    Ok(()) => {}
-                    Err(JsError::Throw(value))
-                        if !self.strict_mode
-                            && proxy_target(&o).is_none()
-                            && is_type_error_value(&value) => {}
-                    Err(error) => return Err(error),
-                }
-            }
+            LValue::Prop(o, k) => match self.set_prop_with_accessors(&o, &k, v) {
+                Ok(()) => {}
+                Err(JsError::Throw(value))
+                    if !self.strict_mode
+                        && proxy_target(&o).is_none()
+                        && is_type_error_value(&value) => {}
+                Err(error) => return Err(error),
+            },
+            LValue::SuperProp {
+                base,
+                receiver,
+                key,
+            } => self.set_prop_with_receiver(&base, &key, v, &receiver)?,
         }
         Ok(())
     }
@@ -11735,15 +11920,18 @@ impl Vm {
             } else if self.has_property(value, key) {
                 return Ok(true);
             }
-            if let Some(prototype_function) = value.as_object_ref().and_then(|object| {
-                object.borrow().props.get("\0prototype_function").cloned()
-            }) {
+            if let Some(prototype_function) = value
+                .as_object_ref()
+                .and_then(|object| object.borrow().props.get("\0prototype_function").cloned())
+            {
                 return self.has_property_with_proxy(&prototype_function, key);
             }
             // The ordinary fast path cannot see a proxy hidden behind an
             // ordinary object's prototype. Walk that chain here and re-enter
             // the trap-aware operation whenever one appears.
-            let mut current = value.as_object_ref().and_then(|object| object.borrow().prototype.clone());
+            let mut current = value
+                .as_object_ref()
+                .and_then(|object| object.borrow().prototype.clone());
             while let Some(prototype) = current {
                 let candidate = Value::Object(prototype.clone());
                 if proxy_target(&candidate).is_some() {
@@ -11783,7 +11971,7 @@ impl Vm {
                     self.symbol_keys
                         .get(key)
                         .cloned()
-                    .unwrap_or_else(|| Value::string_value(key)),
+                        .unwrap_or_else(|| Value::string_value(key)),
                 ],
             )?;
             if !result.truthy() {
@@ -11796,12 +11984,8 @@ impl Vm {
                     && (!self
                         .get_prop_with_accessors(&descriptor, "configurable")?
                         .truthy()
-                        || !native_object_is_extensible(
-                            self,
-                            Value::Undefined,
-                            &[target.clone()],
-                        )?
-                        .truthy())
+                        || !native_object_is_extensible(self, Value::Undefined, &[target.clone()])?
+                            .truthy())
                 {
                     return Err(proxy_invariant_error(
                         self,
@@ -11812,7 +11996,10 @@ impl Vm {
             return Ok(result.truthy());
         }
         if self.has_property(&handler, "has") && !trap.is_null() && !trap.is_undefined() {
-            return Err(JsError::Throw(type_error(self, "Proxy has trap is not callable")));
+            return Err(JsError::Throw(type_error(
+                self,
+                "Proxy has trap is not callable",
+            )));
         }
         self.has_property_with_proxy(&target, key)
     }
@@ -12000,7 +12187,9 @@ fn function_property_writable(function: &FunctionValue<'_>, key: &str) -> bool {
         .attributes
         .borrow()
         .get(key)
-        .map_or(!matches!(key, "name" | "length"), |attributes| attributes.writable)
+        .map_or(!matches!(key, "name" | "length"), |attributes| {
+            attributes.writable
+        })
 }
 
 impl Vm {
@@ -14650,12 +14839,23 @@ const SET_VALUES_PROP: &str = "\0set-values";
 
 fn native_map_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     if vm.construct_depth == 0 {
-        return Err(JsError::Throw(type_error(vm, "Map constructor must be called with new")));
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Map constructor must be called with new",
+        )));
     }
-    let map = if this.is_object_like() { this } else { vm.object(None) };
+    let map = if this.is_object_like() {
+        this
+    } else {
+        vm.object(None)
+    };
     vm.set_prop(&map, MAP_ENTRIES_PROP, vm.array_from_values(Vec::new()));
     if let Some(iterable) = args.first().filter(|value| value.is_object_like()) {
-        let length = vm.get_prop(iterable, "length").as_number().unwrap_or(0.0).max(0.0) as usize;
+        let length = vm
+            .get_prop(iterable, "length")
+            .as_number()
+            .unwrap_or(0.0)
+            .max(0.0) as usize;
         for index in 0..length {
             let pair = vm.get_prop(iterable, &index.to_string());
             let key = vm.get_prop(&pair, "0");
@@ -14668,8 +14868,13 @@ fn native_map_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<
 
 fn map_entries(vm: &Vm, map: &Value) -> Vec<Value> {
     let entries = vm.get_prop(map, MAP_ENTRIES_PROP);
-    let length = entries.as_object_ref().and_then(|object| object.borrow().array.as_ref().map(|array| array.len())).unwrap_or(0);
-    (0..length).map(|index| vm.get_prop(&entries, &index.to_string())).collect()
+    let length = entries
+        .as_object_ref()
+        .and_then(|object| object.borrow().array.as_ref().map(|array| array.len()))
+        .unwrap_or(0);
+    (0..length)
+        .map(|index| vm.get_prop(&entries, &index.to_string()))
+        .collect()
 }
 
 fn native_map_get(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
@@ -14684,7 +14889,11 @@ fn native_map_get(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
 
 fn native_map_has(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let key = args.first().cloned().unwrap_or(Value::Undefined);
-    Ok(Value::Bool(map_entries(vm, &this).into_iter().any(|pair| vm.get_prop(&pair, "0").same_bits(&key))))
+    Ok(Value::Bool(
+        map_entries(vm, &this)
+            .into_iter()
+            .any(|pair| vm.get_prop(&pair, "0").same_bits(&key)),
+    ))
 }
 
 fn native_map_set(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
@@ -14705,25 +14914,47 @@ fn native_map_set(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
         }
     }
     let pair = vm.array_from_values(vec![key, value]);
-    let length = entries.as_object_ref().and_then(|object| object.borrow().array.as_ref().map(|array| array.len())).unwrap_or(0);
+    let length = entries
+        .as_object_ref()
+        .and_then(|object| object.borrow().array.as_ref().map(|array| array.len()))
+        .unwrap_or(0);
     vm.set_prop(&entries, &length.to_string(), pair);
     Ok(this)
 }
 
 fn native_map_iterator(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    Ok(native_array_iterator(vm, vm.get_prop(&this, MAP_ENTRIES_PROP), &[]))?
+    Ok(native_array_iterator(
+        vm,
+        vm.get_prop(&this, MAP_ENTRIES_PROP),
+        &[],
+    ))?
 }
 
 fn native_set_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     if vm.construct_depth == 0 {
-        return Err(JsError::Throw(type_error(vm, "Set constructor must be called with new")));
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Set constructor must be called with new",
+        )));
     }
-    let set = if this.is_object_like() { this } else { vm.object(None) };
+    let set = if this.is_object_like() {
+        this
+    } else {
+        vm.object(None)
+    };
     vm.set_prop(&set, SET_VALUES_PROP, vm.array_from_values(Vec::new()));
     if let Some(iterable) = args.first().filter(|value| value.is_object_like()) {
-        let length = vm.get_prop(iterable, "length").as_number().unwrap_or(0.0).max(0.0) as usize;
+        let length = vm
+            .get_prop(iterable, "length")
+            .as_number()
+            .unwrap_or(0.0)
+            .max(0.0) as usize;
         for index in 0..length {
-            native_set_add(vm, set.clone(), &[vm.get_prop(iterable, &index.to_string())])?;
+            native_set_add(
+                vm,
+                set.clone(),
+                &[vm.get_prop(iterable, &index.to_string())],
+            )?;
         }
     }
     Ok(set)
@@ -14731,18 +14962,30 @@ fn native_set_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<
 
 fn set_values(vm: &Vm, set: &Value) -> Vec<Value> {
     let values = vm.get_prop(set, SET_VALUES_PROP);
-    let length = values.as_object_ref().and_then(|object| object.borrow().array.as_ref().map(|array| array.len())).unwrap_or(0);
-    (0..length).map(|index| vm.get_prop(&values, &index.to_string())).collect()
+    let length = values
+        .as_object_ref()
+        .and_then(|object| object.borrow().array.as_ref().map(|array| array.len()))
+        .unwrap_or(0);
+    (0..length)
+        .map(|index| vm.get_prop(&values, &index.to_string()))
+        .collect()
 }
 
 fn native_set_has(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let value = args.first().cloned().unwrap_or(Value::Undefined);
-    Ok(Value::Bool(set_values(vm, &this).into_iter().any(|item| item.same_bits(&value))))
+    Ok(Value::Bool(
+        set_values(vm, &this)
+            .into_iter()
+            .any(|item| item.same_bits(&value)),
+    ))
 }
 
 fn native_set_add(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let value = args.first().cloned().unwrap_or(Value::Undefined);
-    if !set_values(vm, &this).into_iter().any(|item| item.same_bits(&value)) {
+    if !set_values(vm, &this)
+        .into_iter()
+        .any(|item| item.same_bits(&value))
+    {
         let values = vm.get_prop(&this, SET_VALUES_PROP);
         let values = if values.is_undefined() {
             let values = vm.array_from_values(Vec::new());
@@ -14751,21 +14994,24 @@ fn native_set_add(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
         } else {
             values
         };
-        let length = values.as_object_ref().and_then(|object| object.borrow().array.as_ref().map(|array| array.len())).unwrap_or(0);
+        let length = values
+            .as_object_ref()
+            .and_then(|object| object.borrow().array.as_ref().map(|array| array.len()))
+            .unwrap_or(0);
         vm.set_prop(&values, &length.to_string(), value);
     }
     Ok(this)
 }
 
 fn native_set_iterator(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    Ok(native_array_iterator(vm, vm.get_prop(&this, SET_VALUES_PROP), &[]))?
+    Ok(native_array_iterator(
+        vm,
+        vm.get_prop(&this, SET_VALUES_PROP),
+        &[],
+    ))?
 }
 
-fn native_array_buffer_constructor(
-    vm: &mut Vm,
-    this: Value,
-    args: &[Value],
-) -> JsResult<Value> {
+fn native_array_buffer_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     if vm.construct_depth == 0 {
         return Err(JsError::Throw(type_error(
             vm,
@@ -14775,7 +15021,11 @@ fn native_array_buffer_constructor(
     // The stencil constructor kernel deliberately omits a generic receiver
     // for native constructors. Materialize the receiver here so both the AST
     // and stencil construction paths share this semantic implementation.
-    let this = if this.is_object_like() { this } else { vm.object(None) };
+    let this = if this.is_object_like() {
+        this
+    } else {
+        vm.object(None)
+    };
     let length = args
         .first()
         .map(|value| to_number_with_vm(vm, value))
@@ -14793,18 +15043,18 @@ fn native_array_buffer_constructor(
     Ok(this)
 }
 
-fn native_typed_array_constructor(
-    vm: &mut Vm,
-    this: Value,
-    args: &[Value],
-) -> JsResult<Value> {
+fn native_typed_array_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     if vm.construct_depth == 0 {
         return Err(JsError::Throw(type_error(
             vm,
             "TypedArray constructor must be called with new",
         )));
     }
-    let this = if this.is_object_like() { this } else { vm.object(None) };
+    let this = if this.is_object_like() {
+        this
+    } else {
+        vm.object(None)
+    };
     let bytes = this
         .as_object_ref()
         .and_then(|object| object.borrow().prototype.clone())
@@ -14823,12 +15073,16 @@ fn native_typed_array_constructor(
             vec![Value::Number(0.0); length.floor() as usize]
         }
         Some(value) => {
-            let length = vm.get_prop_with_accessors(value, "length").ok().map(|v| {
-                v.number().max(0.0).min(9_007_199_254_740_991.0) as usize
-            });
+            let length = vm
+                .get_prop_with_accessors(value, "length")
+                .ok()
+                .map(|v| v.number().max(0.0).min(9_007_199_254_740_991.0) as usize);
             let length = length.unwrap_or(0);
             (0..length)
-                .map(|index| vm.get_prop_with_accessors(value, &index.to_string()).unwrap_or(Value::Undefined))
+                .map(|index| {
+                    vm.get_prop_with_accessors(value, &index.to_string())
+                        .unwrap_or(Value::Undefined)
+                })
                 .collect()
         }
         None => Vec::new(),
@@ -14841,7 +15095,11 @@ fn native_typed_array_constructor(
     );
     vm.set_prop(&buffer, "\0array-buffer", Value::Bool(true));
     vm.set_prop(&this, "buffer", buffer);
-    vm.set_prop(&this, "byteLength", Value::Number(values.len() as f64 * bytes));
+    vm.set_prop(
+        &this,
+        "byteLength",
+        Value::Number(values.len() as f64 * bytes),
+    );
     vm.set_prop(&this, "byteOffset", Value::Number(0.0));
     vm.set_prop(&this, "length", Value::Number(values.len() as f64));
     for (index, value) in values.into_iter().enumerate() {
@@ -14886,26 +15144,23 @@ fn native_typed_array_fill(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
 }
 
 fn native_async_generator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    if vm.get_prop(&this, ASYNC_GENERATOR_INSTANCE_PROP).is_undefined() {
+    if vm
+        .get_prop(&this, ASYNC_GENERATOR_INSTANCE_PROP)
+        .is_undefined()
+    {
         return Ok(vm.promise_from_result(Err(JsError::Throw(type_error(
             vm,
             "AsyncGenerator.prototype.next called on incompatible receiver",
         )))));
     }
     let promise = vm.new_pending_promise();
-    if vm
-        .get_prop(&this, ASYNC_GENERATOR_EXECUTING_PROP)
-        .truthy()
-    {
+    if vm.get_prop(&this, ASYNC_GENERATOR_EXECUTING_PROP).truthy() {
         let queue = vm.get_prop(&this, ASYNC_GENERATOR_QUEUE_PROP);
         let length = array_from_length(vm, &queue).unwrap_or(0);
         vm.set_prop(&queue, &length.to_string(), promise.clone());
         return Ok(promise);
     }
-    if !vm
-        .get_prop(&this, ASYNC_GENERATOR_STARTED_PROP)
-        .truthy()
-    {
+    if !vm.get_prop(&this, ASYNC_GENERATOR_STARTED_PROP).truthy() {
         vm.set_prop(&this, ASYNC_GENERATOR_STARTED_PROP, Value::Bool(true));
         vm.set_prop(&this, ASYNC_GENERATOR_EXECUTING_PROP, Value::Bool(true));
         vm.start_async_generator(&this, &promise);
@@ -14919,7 +15174,10 @@ fn native_async_generator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResul
     Ok(promise)
 }
 fn native_async_generator_return(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    if vm.get_prop(&this, ASYNC_GENERATOR_INSTANCE_PROP).is_undefined() {
+    if vm
+        .get_prop(&this, ASYNC_GENERATOR_INSTANCE_PROP)
+        .is_undefined()
+    {
         return Ok(vm.promise_from_result(Err(JsError::Throw(type_error(
             vm,
             "AsyncGenerator.prototype.return called on incompatible receiver",
@@ -14935,7 +15193,10 @@ fn native_async_generator_return(vm: &mut Vm, this: Value, args: &[Value]) -> Js
     Ok(vm.promise_from_result(Ok(result)))
 }
 fn native_async_generator_throw(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    if vm.get_prop(&this, ASYNC_GENERATOR_INSTANCE_PROP).is_undefined() {
+    if vm
+        .get_prop(&this, ASYNC_GENERATOR_INSTANCE_PROP)
+        .is_undefined()
+    {
         return Ok(vm.promise_from_result(Err(JsError::Throw(type_error(
             vm,
             "AsyncGenerator.prototype.throw called on incompatible receiver",
@@ -14959,10 +15220,16 @@ fn native_proxy_constructor(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
     let target = args.first().cloned().unwrap_or(Value::Undefined);
     let handler = args.get(1).cloned().unwrap_or(Value::Undefined);
     if !target.is_object_like() || is_symbol_carrier(&target) {
-        return Err(JsError::Throw(type_error(vm, "Proxy target must be an object")));
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Proxy target must be an object",
+        )));
     }
     if !handler.is_object_like() || is_symbol_carrier(&handler) || handler.is_null() {
-        return Err(JsError::Throw(type_error(vm, "Proxy handler must be an object")));
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Proxy handler must be an object",
+        )));
     }
     let proxy = if target.is_function() {
         let length = vm.get_prop(&target, "length").number().max(0.0) as usize;
@@ -15053,7 +15320,10 @@ fn native_promise_then(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
     let state = vm.get_prop(&this, PROMISE_STATE_PROP);
     let species = promise_species_constructor(vm, &this)?;
     let (child, child_resolve, child_reject) = new_promise_capability(vm, species)?;
-    if state.as_string().is_some_and(|state| state.as_str() == "pending") {
+    if state
+        .as_string()
+        .is_some_and(|state| state.as_str() == "pending")
+    {
         let entry = vm.object(None);
         vm.set_prop(
             &entry,
@@ -15082,7 +15352,11 @@ fn native_promise_then(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
         .unwrap_or(Value::Undefined);
     let value = vm.get_prop(&this, PROMISE_RESULT_PROP);
     if !handler.is_function() {
-        let resolver = if fulfilled { child_resolve } else { child_reject };
+        let resolver = if fulfilled {
+            child_resolve
+        } else {
+            child_reject
+        };
         let argument = value.clone();
         let _ = vm.call(resolver, Value::Undefined, vec![argument]);
         return Ok(child);
@@ -15107,19 +15381,21 @@ fn native_promise_catch(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Va
     }
     let then_method = vm.get_prop_with_accessors(&this, "then")?;
     if !then_method.is_function() {
-        return Err(JsError::Throw(type_error(vm, "promise then is not callable")));
+        return Err(JsError::Throw(type_error(
+            vm,
+            "promise then is not callable",
+        )));
     }
     vm.call(
         then_method,
         this,
-        vec![Value::Undefined, args.first().cloned().unwrap_or(Value::Undefined)],
+        vec![
+            Value::Undefined,
+            args.first().cloned().unwrap_or(Value::Undefined),
+        ],
     )
 }
-fn native_promise_finally_handler(
-    vm: &mut Vm,
-    this: Value,
-    _: &[Value],
-) -> JsResult<Value> {
+fn native_promise_finally_handler(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     let callback = vm.get_prop(&this, PROMISE_FINALLY_CALLBACK_PROP);
     if callback.is_function() {
         vm.call(callback, Value::Undefined, Vec::new())?;
@@ -15142,36 +15418,59 @@ fn native_promise_finally(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<
     if !callback.is_function() {
         let then_method = vm.get_prop_with_accessors(&this, "then")?;
         if !then_method.is_function() {
-            return Err(JsError::Throw(type_error(vm, "promise then is not callable")));
+            return Err(JsError::Throw(type_error(
+                vm,
+                "promise then is not callable",
+            )));
         }
         return vm.call(then_method, this, vec![callback.clone(), callback]);
     }
     let state_fulfilled = vm.object(None);
-    vm.set_prop(&state_fulfilled, PROMISE_FINALLY_CALLBACK_PROP, callback.clone());
+    vm.set_prop(
+        &state_fulfilled,
+        PROMISE_FINALLY_CALLBACK_PROP,
+        callback.clone(),
+    );
     vm.set_prop(
         &state_fulfilled,
         PROMISE_FINALLY_VALUE_PROP,
         Value::Undefined,
     );
-    vm.set_prop(&state_fulfilled, PROMISE_FINALLY_REJECTED_PROP, Value::Bool(false));
+    vm.set_prop(
+        &state_fulfilled,
+        PROMISE_FINALLY_REJECTED_PROP,
+        Value::Bool(false),
+    );
     let state_rejected = vm.object(None);
     vm.set_prop(&state_rejected, PROMISE_FINALLY_CALLBACK_PROP, callback);
-    vm.set_prop(&state_rejected, PROMISE_FINALLY_VALUE_PROP, Value::Undefined);
-    vm.set_prop(&state_rejected, PROMISE_FINALLY_REJECTED_PROP, Value::Bool(true));
+    vm.set_prop(
+        &state_rejected,
+        PROMISE_FINALLY_VALUE_PROP,
+        Value::Undefined,
+    );
+    vm.set_prop(
+        &state_rejected,
+        PROMISE_FINALLY_REJECTED_PROP,
+        Value::Bool(true),
+    );
     let fulfilled_target = vm.native_named(native_promise_finally_handler, "", 1);
     let rejected_target = vm.native_named(native_promise_finally_handler, "", 1);
     vm.mark_nonconstructable(&fulfilled_target);
     vm.mark_nonconstructable(&rejected_target);
-    let fulfilled = native_function_bind(vm, fulfilled_target, std::slice::from_ref(&state_fulfilled))?;
-    let rejected = native_function_bind(vm, rejected_target, std::slice::from_ref(&state_rejected))?;
+    let fulfilled =
+        native_function_bind(vm, fulfilled_target, std::slice::from_ref(&state_fulfilled))?;
+    let rejected =
+        native_function_bind(vm, rejected_target, std::slice::from_ref(&state_rejected))?;
     vm.set_prop(&state_fulfilled, PROMISE_FINALLY_HANDLER_PROP, fulfilled);
     vm.set_prop(&state_rejected, PROMISE_FINALLY_HANDLER_PROP, rejected);
     let fulfill_target = vm.native_named(native_promise_finally_capture_fulfilled, "", 1);
     let reject_target = vm.native_named(native_promise_finally_capture_rejected, "", 1);
     vm.mark_nonconstructable(&fulfill_target);
     vm.mark_nonconstructable(&reject_target);
-    let fulfill_forward = native_function_bind(vm, fulfill_target, std::slice::from_ref(&state_fulfilled))?;
-    let reject_forward = native_function_bind(vm, reject_target, std::slice::from_ref(&state_rejected))?;
+    let fulfill_forward =
+        native_function_bind(vm, fulfill_target, std::slice::from_ref(&state_fulfilled))?;
+    let reject_forward =
+        native_function_bind(vm, reject_target, std::slice::from_ref(&state_rejected))?;
     for forward in [&fulfill_forward, &reject_forward] {
         set_function_name(forward, "");
         set_property_attributes(
@@ -15186,7 +15485,10 @@ fn native_promise_finally(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<
     }
     let then_method = vm.get_prop_with_accessors(&this, "then")?;
     if !then_method.is_function() {
-        return Err(JsError::Throw(type_error(vm, "promise then is not callable")));
+        return Err(JsError::Throw(type_error(
+            vm,
+            "promise then is not callable",
+        )));
     }
     vm.call(then_method, this, vec![fulfill_forward, reject_forward])
 }
@@ -15196,7 +15498,11 @@ fn native_promise_finally_capture_fulfilled(
     args: &[Value],
 ) -> JsResult<Value> {
     let state = this.clone();
-    vm.set_prop(&state, PROMISE_FINALLY_VALUE_PROP, args.first().cloned().unwrap_or(Value::Undefined));
+    vm.set_prop(
+        &state,
+        PROMISE_FINALLY_VALUE_PROP,
+        args.first().cloned().unwrap_or(Value::Undefined),
+    );
     let handler = vm.get_prop(&state, PROMISE_FINALLY_HANDLER_PROP);
     vm.call(handler, Value::Undefined, Vec::new())
 }
@@ -15206,15 +15512,15 @@ fn native_promise_finally_capture_rejected(
     args: &[Value],
 ) -> JsResult<Value> {
     let state = this.clone();
-    vm.set_prop(&state, PROMISE_FINALLY_VALUE_PROP, args.first().cloned().unwrap_or(Value::Undefined));
+    vm.set_prop(
+        &state,
+        PROMISE_FINALLY_VALUE_PROP,
+        args.first().cloned().unwrap_or(Value::Undefined),
+    );
     let handler = vm.get_prop(&state, PROMISE_FINALLY_HANDLER_PROP);
     vm.call(handler, Value::Undefined, Vec::new())
 }
-fn native_promise_capability_executor(
-    vm: &mut Vm,
-    this: Value,
-    args: &[Value],
-) -> JsResult<Value> {
+fn native_promise_capability_executor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let resolve = args.first().cloned().unwrap_or(Value::Undefined);
     let reject = args.get(1).cloned().unwrap_or(Value::Undefined);
     let old_resolve = vm.get_prop(&this, PROMISE_CAPABILITY_RESOLVE_PROP);
@@ -15264,19 +15570,23 @@ fn set_function_name(value: &Value, name: &str) {
             .insert("name".into(), Value::string_value(name));
     }
 }
-fn new_promise_capability(
-    vm: &mut Vm,
-    constructor: Value,
-) -> JsResult<(Value, Value, Value)> {
+fn new_promise_capability(vm: &mut Vm, constructor: Value) -> JsResult<(Value, Value, Value)> {
     if !constructable(&constructor) {
-        return Err(JsError::Throw(type_error(vm, "Promise constructor is not a constructor")));
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Promise constructor is not a constructor",
+        )));
     }
     let holder = vm.object(None);
     let executor = anonymous_native_bound(vm, native_promise_capability_executor, &holder, 2)?;
     let prototype = vm
         .get_prop(&constructor, "prototype")
         .as_object()
-        .or_else(|| constructor.as_function_ref().map(|function| function.prototype.clone()));
+        .or_else(|| {
+            constructor
+                .as_function_ref()
+                .map(|function| function.prototype.clone())
+        });
     let target = vm.object(prototype);
     // Capability construction is the spec's `new Constructor(executor)` path.
     // Keep the dynamic new.target visible to user constructors while invoking
@@ -15294,7 +15604,11 @@ fn new_promise_capability(
     vm.construct_depth = vm.construct_depth.saturating_sub(1);
     vm.current_new_target = previous_new_target;
     let result = result?;
-    let promise = if result.is_object_like() { result } else { target };
+    let promise = if result.is_object_like() {
+        result
+    } else {
+        target
+    };
     let resolve = vm.get_prop(&holder, PROMISE_CAPABILITY_RESOLVE_PROP);
     let reject = vm.get_prop(&holder, PROMISE_CAPABILITY_REJECT_PROP);
     if !resolve.is_function() || !reject.is_function() {
@@ -15325,7 +15639,11 @@ fn native_promise_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsRes
     };
     vm.set_prop(&promise, PROMISE_MARKER_PROP, Value::Bool(true));
     vm.set_prop(&promise, PROMISE_STATE_PROP, Value::string_value("pending"));
-    vm.set_prop(&promise, PROMISE_RESOLUTION_STARTED_PROP, Value::Bool(false));
+    vm.set_prop(
+        &promise,
+        PROMISE_RESOLUTION_STARTED_PROP,
+        Value::Bool(false),
+    );
     vm.set_prop(&promise, PROMISE_RESULT_PROP, Value::Undefined);
     vm.set_prop(
         &promise,
@@ -15359,7 +15677,10 @@ fn native_promise_resolve_executor(vm: &mut Vm, this: Value, args: &[Value]) -> 
         if value.same_bits(&this) {
             vm.settle_promise(
                 &this,
-                Err(JsError::Throw(type_error(vm, "promise cannot resolve itself"))),
+                Err(JsError::Throw(type_error(
+                    vm,
+                    "promise cannot resolve itself",
+                ))),
             );
             return Ok(Value::Undefined);
         }
@@ -15449,11 +15770,7 @@ fn native_promise_reject(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsR
     )?;
     Ok(promise)
 }
-fn native_promise_all_resolve_element(
-    vm: &mut Vm,
-    this: Value,
-    args: &[Value],
-) -> JsResult<Value> {
+fn native_promise_all_resolve_element(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     if vm.get_prop(&this, PROMISE_ALL_CALLED_PROP).truthy() {
         return Ok(Value::Undefined);
     }
@@ -15530,7 +15847,11 @@ fn native_promise_all(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsResu
         PROMISE_ALL_RESOLVE_PROP,
         aggregate_resolve.clone(),
     );
-    vm.set_prop(&aggregate_state, PROMISE_ALL_REJECT_PROP, aggregate_reject.clone());
+    vm.set_prop(
+        &aggregate_state,
+        PROMISE_ALL_REJECT_PROP,
+        aggregate_reject.clone(),
+    );
     let mut index = 0usize;
     loop {
         let next = match vm.get_prop_with_accessors(&iterator, "next") {
@@ -15602,7 +15923,11 @@ fn native_promise_all(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsResu
             return Ok(aggregate);
         }
         let element_state = vm.object(None);
-        vm.set_prop(&element_state, PROMISE_ALL_STATE_PROP, aggregate_state.clone());
+        vm.set_prop(
+            &element_state,
+            PROMISE_ALL_STATE_PROP,
+            aggregate_state.clone(),
+        );
         vm.set_prop(
             &element_state,
             PROMISE_ALL_INDEX_PROP,
@@ -15611,11 +15936,8 @@ fn native_promise_all(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsResu
         vm.set_prop(&element_state, PROMISE_ALL_CALLED_PROP, Value::Bool(false));
         let resolve_target = vm.native_named(native_promise_all_resolve_element, "", 1);
         vm.mark_nonconstructable(&resolve_target);
-        let resolve_element = native_function_bind(
-            vm,
-            resolve_target,
-            std::slice::from_ref(&element_state),
-        )?;
+        let resolve_element =
+            native_function_bind(vm, resolve_target, std::slice::from_ref(&element_state))?;
         set_function_name(&resolve_element, "");
         set_property_attributes(
             &resolve_element,
@@ -15642,18 +15964,16 @@ fn native_promise_all(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsResu
         PROMISE_ALL_TOTAL_PROP,
         Value::Number(index as f64),
     );
-    let count = vm.get_prop(&aggregate_state, PROMISE_ALL_COUNT_PROP).number() as usize;
+    let count = vm
+        .get_prop(&aggregate_state, PROMISE_ALL_COUNT_PROP)
+        .number() as usize;
     if index == 0 || count == index {
         let values = vm.get_prop(&aggregate_state, PROMISE_ALL_VALUES_PROP);
         let _ = vm.call(aggregate_resolve, Value::Undefined, vec![values]);
     }
     Ok(aggregate)
 }
-fn native_promise_combinator_fulfill(
-    vm: &mut Vm,
-    this: Value,
-    args: &[Value],
-) -> JsResult<Value> {
+fn native_promise_combinator_fulfill(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     if vm.get_prop(&this, PROMISE_COMBINATOR_CALLED_PROP).truthy() {
         return Ok(Value::Undefined);
     }
@@ -15688,16 +16008,16 @@ fn native_promise_combinator_fulfill(
         } else {
             value
         };
-        let result_key = if keyed { key.clone() } else { index.to_string() };
+        let result_key = if keyed {
+            key.clone()
+        } else {
+            index.to_string()
+        };
         vm.set_prop(&values, &result_key, result);
     }
     promise_combinator_complete(vm, &state)
 }
-fn native_promise_combinator_reject(
-    vm: &mut Vm,
-    this: Value,
-    args: &[Value],
-) -> JsResult<Value> {
+fn native_promise_combinator_reject(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     if vm.get_prop(&this, PROMISE_COMBINATOR_CALLED_PROP).truthy() {
         return Ok(Value::Undefined);
     }
@@ -15735,7 +16055,11 @@ fn native_promise_combinator_reject(
 }
 fn promise_combinator_complete(vm: &mut Vm, state: &Value) -> JsResult<Value> {
     let count = vm.get_prop(state, PROMISE_COMBINATOR_COUNT_PROP).number() as usize + 1;
-    vm.set_prop(state, PROMISE_COMBINATOR_COUNT_PROP, Value::Number(count as f64));
+    vm.set_prop(
+        state,
+        PROMISE_COMBINATOR_COUNT_PROP,
+        Value::Number(count as f64),
+    );
     promise_combinator_finish(vm, state)
 }
 fn promise_combinator_finish(vm: &mut Vm, state: &Value) -> JsResult<Value> {
@@ -15752,8 +16076,16 @@ fn promise_combinator_finish(vm: &mut Vm, state: &Value) -> JsResult<Value> {
                 .as_function_ref()
                 .map(|function| function.prototype.clone()),
         );
-        vm.set_prop(&aggregate_error, "name", Value::string_value("AggregateError"));
-        vm.set_prop(&aggregate_error, "message", Value::string_value("All promises were rejected"));
+        vm.set_prop(
+            &aggregate_error,
+            "name",
+            Value::string_value("AggregateError"),
+        );
+        vm.set_prop(
+            &aggregate_error,
+            "message",
+            Value::string_value("All promises were rejected"),
+        );
         vm.set_prop(&aggregate_error, "errors", errors);
         let reject = vm.get_prop(state, PROMISE_COMBINATOR_REJECT_PROP);
         if reject.is_function() {
@@ -15785,10 +16117,22 @@ fn native_promise_combinator(
 ) -> JsResult<Value> {
     let (aggregate, resolve, reject) = new_promise_capability(vm, constructor.clone())?;
     let state = vm.object(None);
-    vm.set_prop(&state, PROMISE_COMBINATOR_KIND_PROP, Value::string_value(kind));
+    vm.set_prop(
+        &state,
+        PROMISE_COMBINATOR_KIND_PROP,
+        Value::string_value(kind),
+    );
     vm.set_prop(&state, PROMISE_COMBINATOR_KEYED_PROP, Value::Bool(false));
-    vm.set_prop(&state, PROMISE_COMBINATOR_VALUES_PROP, vm.array_from_values(Vec::new()));
-    vm.set_prop(&state, PROMISE_COMBINATOR_ERRORS_PROP, vm.array_from_values(Vec::new()));
+    vm.set_prop(
+        &state,
+        PROMISE_COMBINATOR_VALUES_PROP,
+        vm.array_from_values(Vec::new()),
+    );
+    vm.set_prop(
+        &state,
+        PROMISE_COMBINATOR_ERRORS_PROP,
+        vm.array_from_values(Vec::new()),
+    );
     vm.set_prop(&state, PROMISE_COMBINATOR_TOTAL_PROP, Value::Number(0.0));
     vm.set_prop(&state, PROMISE_COMBINATOR_COUNT_PROP, Value::Number(0.0));
     vm.set_prop(&state, PROMISE_COMBINATOR_RESOLVE_PROP, resolve.clone());
@@ -15803,7 +16147,11 @@ fn native_promise_combinator(
         }
     };
     if !method.is_function() {
-        let _ = vm.call(reject, Value::Undefined, vec![type_error(vm, "value is not iterable")]);
+        let _ = vm.call(
+            reject,
+            Value::Undefined,
+            vec![type_error(vm, "value is not iterable")],
+        );
         return Ok(aggregate);
     }
     let iterator = match vm.call(method, iterable, Vec::new()) {
@@ -15817,7 +16165,11 @@ fn native_promise_combinator(
         Ok(resolve) if resolve.is_function() => resolve,
         Ok(_) => {
             let _ = vm.iterator_close(&iterator);
-            let _ = vm.call(reject, Value::Undefined, vec![type_error(vm, "Promise resolve is not callable")]);
+            let _ = vm.call(
+                reject,
+                Value::Undefined,
+                vec![type_error(vm, "Promise resolve is not callable")],
+            );
             return Ok(aggregate);
         }
         Err(error) => {
@@ -15836,7 +16188,11 @@ fn native_promise_combinator(
             }
         };
         if !next.is_function() {
-            let _ = vm.call(reject, Value::Undefined, vec![type_error(vm, "iterator next method is not callable")]);
+            let _ = vm.call(
+                reject,
+                Value::Undefined,
+                vec![type_error(vm, "iterator next method is not callable")],
+            );
             return Ok(aggregate);
         }
         let step = match vm.call(next, iterator.clone(), Vec::new()) {
@@ -15847,7 +16203,11 @@ fn native_promise_combinator(
             }
         };
         if !step.is_object_like() {
-            let _ = vm.call(reject, Value::Undefined, vec![type_error(vm, "iterator result is not an object")]);
+            let _ = vm.call(
+                reject,
+                Value::Undefined,
+                vec![type_error(vm, "iterator result is not an object")],
+            );
             return Ok(aggregate);
         }
         let done = match vm.get_prop_with_accessors(&step, "done") {
@@ -15877,7 +16237,11 @@ fn native_promise_combinator(
         };
         let element = vm.object(None);
         vm.set_prop(&element, PROMISE_COMBINATOR_STATE_PROP, state.clone());
-        vm.set_prop(&element, PROMISE_COMBINATOR_INDEX_PROP, Value::Number(index as f64));
+        vm.set_prop(
+            &element,
+            PROMISE_COMBINATOR_INDEX_PROP,
+            Value::Number(index as f64),
+        );
         vm.set_prop(&element, PROMISE_COMBINATOR_CALLED_PROP, Value::Bool(false));
         // Promise.any forwards fulfillment directly to the capability's
         // resolve function.  The resolve function itself is responsible for
@@ -15888,7 +16252,8 @@ fn native_promise_combinator(
         } else {
             anonymous_native_bound(vm, native_promise_combinator_fulfill, &element, 1)?
         };
-        let reject_element = anonymous_native_bound(vm, native_promise_combinator_reject, &element, 1)?;
+        let reject_element =
+            anonymous_native_bound(vm, native_promise_combinator_reject, &element, 1)?;
         let then = match vm.get_prop_with_accessors(&value, "then") {
             Ok(then) => then,
             Err(error) => {
@@ -15899,7 +16264,11 @@ fn native_promise_combinator(
         };
         if !then.is_function() {
             let _ = vm.iterator_close(&iterator);
-            let _ = vm.call(reject, Value::Undefined, vec![type_error(vm, "promise then is not callable")]);
+            let _ = vm.call(
+                reject,
+                Value::Undefined,
+                vec![type_error(vm, "promise then is not callable")],
+            );
             return Ok(aggregate);
         }
         if let Err(error) = vm.call(then, value, vec![fulfill, reject_element]) {
@@ -15909,7 +16278,11 @@ fn native_promise_combinator(
         }
         index += 1;
     }
-    vm.set_prop(&state, PROMISE_COMBINATOR_TOTAL_PROP, Value::Number(index as f64));
+    vm.set_prop(
+        &state,
+        PROMISE_COMBINATOR_TOTAL_PROP,
+        Value::Number(index as f64),
+    );
     let count = vm.get_prop(&state, PROMISE_COMBINATOR_COUNT_PROP).number() as usize;
     if index == 0 || count == index {
         promise_combinator_finish(vm, &state)?;
@@ -15928,7 +16301,11 @@ fn native_promise_race(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsRes
         }
     };
     if !method.is_function() {
-        let _ = vm.call(reject, Value::Undefined, vec![type_error(vm, "value is not iterable")]);
+        let _ = vm.call(
+            reject,
+            Value::Undefined,
+            vec![type_error(vm, "value is not iterable")],
+        );
         return Ok(aggregate);
     }
     let iterator = match vm.call(method, iterable, Vec::new()) {
@@ -15942,7 +16319,11 @@ fn native_promise_race(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsRes
         Ok(resolve) if resolve.is_function() => resolve,
         Ok(_) => {
             let _ = vm.iterator_close(&iterator);
-            let _ = vm.call(reject, Value::Undefined, vec![type_error(vm, "Promise resolve is not callable")]);
+            let _ = vm.call(
+                reject,
+                Value::Undefined,
+                vec![type_error(vm, "Promise resolve is not callable")],
+            );
             return Ok(aggregate);
         }
         Err(error) => {
@@ -15960,7 +16341,11 @@ fn native_promise_race(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsRes
             }
         };
         if !next.is_function() {
-            let _ = vm.call(reject, Value::Undefined, vec![type_error(vm, "iterator next method is not callable")]);
+            let _ = vm.call(
+                reject,
+                Value::Undefined,
+                vec![type_error(vm, "iterator next method is not callable")],
+            );
             return Ok(aggregate);
         }
         let step = match vm.call(next, iterator.clone(), Vec::new()) {
@@ -15971,7 +16356,11 @@ fn native_promise_race(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsRes
             }
         };
         if !step.is_object_like() {
-            let _ = vm.call(reject, Value::Undefined, vec![type_error(vm, "iterator result is not an object")]);
+            let _ = vm.call(
+                reject,
+                Value::Undefined,
+                vec![type_error(vm, "iterator result is not an object")],
+            );
             return Ok(aggregate);
         }
         let done = match vm.get_prop_with_accessors(&step, "done") {
@@ -16010,7 +16399,11 @@ fn native_promise_race(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsRes
             }
         };
         if !then.is_function() {
-            let _ = vm.call(reject.clone(), Value::Undefined, vec![type_error(vm, "promise then is not callable")]);
+            let _ = vm.call(
+                reject.clone(),
+                Value::Undefined,
+                vec![type_error(vm, "promise then is not callable")],
+            );
             return Ok(aggregate);
         }
         if let Err(error) = vm.call(then, value, vec![resolve.clone(), reject.clone()]) {
@@ -16036,14 +16429,22 @@ fn native_promise_keyed(
     let (aggregate, resolve, reject) = new_promise_capability(vm, constructor.clone())?;
     let input = args.first().cloned().unwrap_or(Value::Undefined);
     if !input.is_object_like() {
-        let _ = vm.call(reject, Value::Undefined, vec![type_error(vm, "value is not an object")]);
+        let _ = vm.call(
+            reject,
+            Value::Undefined,
+            vec![type_error(vm, "value is not an object")],
+        );
         return Ok(aggregate);
     }
     let keys = proxy_own_enumerable_keys(vm, &input)?;
     let resolve_method = match vm.get_prop_with_accessors(&constructor, "resolve") {
         Ok(resolve) if resolve.is_function() => resolve,
         Ok(_) => {
-            let _ = vm.call(reject, Value::Undefined, vec![type_error(vm, "Promise resolve is not callable")]);
+            let _ = vm.call(
+                reject,
+                Value::Undefined,
+                vec![type_error(vm, "Promise resolve is not callable")],
+            );
             return Ok(aggregate);
         }
         Err(error) => {
@@ -16052,12 +16453,32 @@ fn native_promise_keyed(
         }
     };
     let state = vm.object(None);
-    vm.set_prop(&state, PROMISE_COMBINATOR_KIND_PROP, Value::string_value(kind));
+    vm.set_prop(
+        &state,
+        PROMISE_COMBINATOR_KIND_PROP,
+        Value::string_value(kind),
+    );
     vm.set_prop(&state, PROMISE_COMBINATOR_KEYED_PROP, Value::Bool(true));
-    vm.set_prop(&state, PROMISE_COMBINATOR_VALUES_PROP, vm.array_from_values(Vec::new()));
-    vm.set_prop(&state, PROMISE_COMBINATOR_ERRORS_PROP, vm.array_from_values(Vec::new()));
-    vm.set_prop(&state, PROMISE_COMBINATOR_RESULT_PROP, vm.object_value(Object::ordinary(None)));
-    vm.set_prop(&state, PROMISE_COMBINATOR_TOTAL_PROP, Value::Number(keys.len() as f64));
+    vm.set_prop(
+        &state,
+        PROMISE_COMBINATOR_VALUES_PROP,
+        vm.array_from_values(Vec::new()),
+    );
+    vm.set_prop(
+        &state,
+        PROMISE_COMBINATOR_ERRORS_PROP,
+        vm.array_from_values(Vec::new()),
+    );
+    vm.set_prop(
+        &state,
+        PROMISE_COMBINATOR_RESULT_PROP,
+        vm.object_value(Object::ordinary(None)),
+    );
+    vm.set_prop(
+        &state,
+        PROMISE_COMBINATOR_TOTAL_PROP,
+        Value::Number(keys.len() as f64),
+    );
     vm.set_prop(&state, PROMISE_COMBINATOR_COUNT_PROP, Value::Number(0.0));
     vm.set_prop(&state, PROMISE_COMBINATOR_RESOLVE_PROP, resolve.clone());
     vm.set_prop(&state, PROMISE_COMBINATOR_REJECT_PROP, reject.clone());
@@ -16072,14 +16493,27 @@ fn native_promise_keyed(
         };
         let element = vm.object(None);
         vm.set_prop(&element, PROMISE_COMBINATOR_STATE_PROP, state.clone());
-        vm.set_prop(&element, PROMISE_COMBINATOR_INDEX_PROP, Value::Number(index as f64));
-        vm.set_prop(&element, PROMISE_COMBINATOR_KEY_PROP, Value::string_value(key));
+        vm.set_prop(
+            &element,
+            PROMISE_COMBINATOR_INDEX_PROP,
+            Value::Number(index as f64),
+        );
+        vm.set_prop(
+            &element,
+            PROMISE_COMBINATOR_KEY_PROP,
+            Value::string_value(key),
+        );
         vm.set_prop(&element, PROMISE_COMBINATOR_CALLED_PROP, Value::Bool(false));
         let fulfill = anonymous_native_bound(vm, native_promise_combinator_fulfill, &element, 1)?;
-        let reject_element = anonymous_native_bound(vm, native_promise_combinator_reject, &element, 1)?;
+        let reject_element =
+            anonymous_native_bound(vm, native_promise_combinator_reject, &element, 1)?;
         let then = vm.get_prop_with_accessors(&value, "then")?;
         if !then.is_function() {
-            let _ = vm.call(reject, Value::Undefined, vec![type_error(vm, "promise then is not callable")]);
+            let _ = vm.call(
+                reject,
+                Value::Undefined,
+                vec![type_error(vm, "promise then is not callable")],
+            );
             return Ok(aggregate);
         }
         if let Err(error) = vm.call(then, value, vec![fulfill, reject_element]) {
@@ -16116,7 +16550,10 @@ fn native_promise_try(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsResu
     let result = if callback.is_function() {
         vm.call(callback, Value::Undefined, call_args)
     } else {
-        Err(JsError::Throw(type_error(vm, "Promise.try callback is not callable")))
+        Err(JsError::Throw(type_error(
+            vm,
+            "Promise.try callback is not callable",
+        )))
     };
     let (promise, resolve, reject) = new_promise_capability(vm, constructor)?;
     match result {
@@ -19284,14 +19721,23 @@ fn native_reflect_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsR
                 )?
                 .truthy();
                 if !extensible && !result.same_bits(&target_proto) {
-                    return Err(JsError::Throw(type_error(vm, "Proxy getPrototypeOf trap violated target invariant")));
+                    return Err(JsError::Throw(type_error(
+                        vm,
+                        "Proxy getPrototypeOf trap violated target invariant",
+                    )));
                 }
                 return Ok(result);
             }
-            return Err(JsError::Throw(type_error(vm, "Proxy getPrototypeOf trap must return object or null")));
+            return Err(JsError::Throw(type_error(
+                vm,
+                "Proxy getPrototypeOf trap must return object or null",
+            )));
         }
         if vm.has_property(&handler, "getPrototypeOf") && !trap.is_null() && !trap.is_undefined() {
-            return Err(JsError::Throw(type_error(vm, "Proxy getPrototypeOf trap is not callable")));
+            return Err(JsError::Throw(type_error(
+                vm,
+                "Proxy getPrototypeOf trap is not callable",
+            )));
         }
         return native_reflect_get_prototype_of(vm, Value::Undefined, &[proxy_target_value]);
     }
@@ -19314,14 +19760,21 @@ fn native_reflect_is_extensible(vm: &mut Vm, _: Value, args: &[Value]) -> JsResu
         let trap = vm.get_prop_with_accessors(&handler, "isExtensible")?;
         if trap.is_function() {
             let result = vm.call(trap, handler, vec![proxy_target_value.clone()])?;
-            let target_result = native_reflect_is_extensible(vm, Value::Undefined, &[proxy_target_value])?;
+            let target_result =
+                native_reflect_is_extensible(vm, Value::Undefined, &[proxy_target_value])?;
             if result.truthy() != target_result.truthy() {
-                return Err(JsError::Throw(type_error(vm, "Proxy isExtensible trap result disagrees with target")));
+                return Err(JsError::Throw(type_error(
+                    vm,
+                    "Proxy isExtensible trap result disagrees with target",
+                )));
             }
             return Ok(Value::Bool(result.truthy()));
         }
         if vm.has_property(&handler, "isExtensible") && !trap.is_null() && !trap.is_undefined() {
-            return Err(JsError::Throw(type_error(vm, "Proxy isExtensible trap is not callable")));
+            return Err(JsError::Throw(type_error(
+                vm,
+                "Proxy isExtensible trap is not callable",
+            )));
         }
         return native_reflect_is_extensible(vm, Value::Undefined, &[proxy_target_value]);
     }
@@ -19343,8 +19796,7 @@ fn native_reflect_own_keys(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Va
     let target = reflect_require_object(vm, args.first(), "ownKeys")?;
     let keys = proxy_own_property_keys_with_vm(vm, &target)?;
     Ok(vm.array_from_values(
-        keys
-            .into_iter()
+        keys.into_iter()
             .map(|key| {
                 vm.symbol_keys
                     .get(&key)
@@ -19367,8 +19819,12 @@ fn native_reflect_prevent_extensions(vm: &mut Vm, _: Value, args: &[Value]) -> J
             let result = vm.call(trap, handler, vec![proxy_target_value.clone()])?;
             return Ok(Value::Bool(result.truthy()));
         }
-        if vm.has_property(&handler, "preventExtensions") && !trap.is_null() && !trap.is_undefined() {
-            return Err(JsError::Throw(type_error(vm, "Proxy preventExtensions trap is not callable")));
+        if vm.has_property(&handler, "preventExtensions") && !trap.is_null() && !trap.is_undefined()
+        {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "Proxy preventExtensions trap is not callable",
+            )));
         }
         return native_reflect_prevent_extensions(vm, Value::Undefined, &[proxy_target_value]);
     }
@@ -19397,7 +19853,12 @@ fn native_reflect_set(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> 
             let result = vm.call(
                 trap,
                 handler,
-                vec![proxy_target_value.clone(), Value::string_value(key.clone()), value.clone(), receiver],
+                vec![
+                    proxy_target_value.clone(),
+                    Value::string_value(key.clone()),
+                    value.clone(),
+                    receiver,
+                ],
             )?;
             if result.truthy() {
                 validate_proxy_set_invariant(vm, &proxy_target_value, &key, &value)?;
@@ -19405,9 +19866,21 @@ fn native_reflect_set(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> 
             return Ok(Value::Bool(result.truthy()));
         }
         if vm.has_property(&handler, "set") && !trap.is_null() && !trap.is_undefined() {
-            return Err(JsError::Throw(type_error(vm, "Proxy set trap is not callable")));
+            return Err(JsError::Throw(type_error(
+                vm,
+                "Proxy set trap is not callable",
+            )));
         }
-        return native_reflect_set(vm, Value::Undefined, &[proxy_target_value, Value::string_value(key), value, receiver]);
+        return native_reflect_set(
+            vm,
+            Value::Undefined,
+            &[
+                proxy_target_value,
+                Value::string_value(key),
+                value,
+                receiver,
+            ],
+        );
     }
     if let Some((_, setter)) = vm.find_accessor(&target, &key) {
         let Some(setter) = setter else {
@@ -19425,11 +19898,13 @@ fn native_reflect_set(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> 
     {
         return Ok(Value::Bool(false));
     }
-    if target.as_function_ref().is_some_and(|function| {
-        !function_property_writable(function, &key)
-    }) || receiver.as_function_ref().is_some_and(|function| {
-        !function_property_writable(function, &key)
-    }) {
+    if target
+        .as_function_ref()
+        .is_some_and(|function| !function_property_writable(function, &key))
+        || receiver
+            .as_function_ref()
+            .is_some_and(|function| !function_property_writable(function, &key))
+    {
         return Ok(Value::Bool(false));
     }
     if target.as_regexp_ref().is_some()
@@ -19485,16 +19960,27 @@ fn native_reflect_set_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsR
         let handler = proxy_handler(&target).unwrap_or(Value::Undefined);
         let trap = vm.get_prop_with_accessors(&handler, "setPrototypeOf")?;
         if trap.is_function() {
-            let result = vm.call(trap, handler, vec![proxy_target_value.clone(), prototype.clone()])?;
+            let result = vm.call(
+                trap,
+                handler,
+                vec![proxy_target_value.clone(), prototype.clone()],
+            )?;
             if result.truthy() {
                 validate_proxy_set_prototype_invariant(vm, &proxy_target_value, &prototype)?;
             }
             return Ok(Value::Bool(result.truthy()));
         }
         if vm.has_property(&handler, "setPrototypeOf") && !trap.is_null() && !trap.is_undefined() {
-            return Err(JsError::Throw(type_error(vm, "Proxy setPrototypeOf trap is not callable")));
+            return Err(JsError::Throw(type_error(
+                vm,
+                "Proxy setPrototypeOf trap is not callable",
+            )));
         }
-        return native_reflect_set_prototype_of(vm, Value::Undefined, &[proxy_target_value, prototype]);
+        return native_reflect_set_prototype_of(
+            vm,
+            Value::Undefined,
+            &[proxy_target_value, prototype],
+        );
     }
     let target_object = target.as_object().expect("validated Reflect target");
     let prototype_handle = prototype.as_object();
@@ -19609,7 +20095,11 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
             new_target
                 .as_function_ref()
                 .and_then(|function| function.props.borrow().get(REALM_GLOBAL_PROP).cloned())
-                .and_then(|global| vm.get_prop(&global, "Object").as_function_ref().map(|function| function.prototype.clone()))
+                .and_then(|global| {
+                    vm.get_prop(&global, "Object")
+                        .as_function_ref()
+                        .map(|function| function.prototype.clone())
+                })
         })
         .or_else(|| {
             target
@@ -19754,7 +20244,11 @@ fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
 }
 
 fn native_realm_type_error(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    let error = if this.is_object_like() { this } else { vm.object(None) };
+    let error = if this.is_object_like() {
+        this
+    } else {
+        vm.object(None)
+    };
     vm.set_prop(&error, "name", Value::string_value("TypeError"));
     let message = args
         .first()
@@ -20821,9 +21315,7 @@ fn native_async_generator_constructor(
     dynamic_function_constructor(vm, receiver, args, "async function*")
 }
 
-fn is_dynamic_constructor_native(
-    native: fn(&mut Vm, Value, &[Value]) -> JsResult<Value>,
-) -> bool {
+fn is_dynamic_constructor_native(native: fn(&mut Vm, Value, &[Value]) -> JsResult<Value>) -> bool {
     let pointer = native as *const ();
     pointer == native_function_constructor as *const ()
         || pointer == native_async_function_constructor as *const ()
@@ -21902,7 +22394,10 @@ fn normalize_unicode_hex_escapes(pattern: &str) -> String {
             result.push_str(&format!("\\x{{{value:02X}}}"));
             index += 4;
         } else {
-            let character = pattern[index..].chars().next().expect("valid UTF-8 pattern");
+            let character = pattern[index..]
+                .chars()
+                .next()
+                .expect("valid UTF-8 pattern");
             result.push(character);
             index += character.len_utf8();
         }
@@ -21929,7 +22424,10 @@ fn normalize_surrogate_escapes(pattern: &str) -> String {
                 continue;
             }
         }
-        let character = pattern[index..].chars().next().expect("valid UTF-8 pattern");
+        let character = pattern[index..]
+            .chars()
+            .next()
+            .expect("valid UTF-8 pattern");
         result.push(character);
         index += character.len_utf8();
     }
@@ -22955,7 +23453,10 @@ fn native_object_get_own_property_descriptor(
                 ],
             )?;
             if !result.is_undefined() && !result.is_object_like() {
-                return Err(JsError::Throw(type_error(vm, "Proxy getOwnPropertyDescriptor trap must return object or undefined")));
+                return Err(JsError::Throw(type_error(
+                    vm,
+                    "Proxy getOwnPropertyDescriptor trap must return object or undefined",
+                )));
             }
             let target_descriptor = native_object_get_own_property_descriptor(
                 vm,
@@ -22971,9 +23472,13 @@ fn native_object_get_own_property_descriptor(
             };
             if result.is_undefined() {
                 if target_descriptor.is_object_like()
-                    && (!vm.get_prop(&target_descriptor, "configurable").truthy() || !target_extensible)
+                    && (!vm.get_prop(&target_descriptor, "configurable").truthy()
+                        || !target_extensible)
                 {
-                    return Err(JsError::Throw(type_error(vm, "Proxy getOwnPropertyDescriptor trap omitted a target property")));
+                    return Err(JsError::Throw(type_error(
+                        vm,
+                        "Proxy getOwnPropertyDescriptor trap omitted a target property",
+                    )));
                 }
             } else {
                 let result_configurable = vm.get_prop(&result, "configurable").truthy();
@@ -22984,7 +23489,8 @@ fn native_object_get_own_property_descriptor(
                     )));
                 }
                 if target_descriptor.is_object_like() {
-                    let target_configurable = vm.get_prop(&target_descriptor, "configurable").truthy();
+                    let target_configurable =
+                        vm.get_prop(&target_descriptor, "configurable").truthy();
                     if !result_configurable && target_configurable {
                         return Err(JsError::Throw(type_error(
                             vm,
@@ -23066,25 +23572,21 @@ fn native_object_get_own_property_descriptor(
             let descriptor = vm.object(None);
             vm.set_prop(&descriptor, "get", getter.unwrap_or(Value::Undefined));
             vm.set_prop(&descriptor, "set", setter.unwrap_or(Value::Undefined));
-            let attributes =
-                function
-                    .attributes
-                    .borrow()
-                    .get(&key)
-                    .copied()
-                    .unwrap_or(if key == "prototype" && constructable(target) {
-                        PropertyAttributes {
-                            writable: true,
-                            enumerable: false,
-                            configurable: false,
-                        }
-                    } else {
-                        PropertyAttributes {
-                            writable: false,
-                            enumerable: false,
-                            configurable: false,
-                        }
-                    });
+            let attributes = function.attributes.borrow().get(&key).copied().unwrap_or(
+                if key == "prototype" && constructable(target) {
+                    PropertyAttributes {
+                        writable: true,
+                        enumerable: false,
+                        configurable: false,
+                    }
+                } else {
+                    PropertyAttributes {
+                        writable: false,
+                        enumerable: false,
+                        configurable: false,
+                    }
+                },
+            );
             vm.set_prop(
                 &descriptor,
                 "enumerable",
@@ -23134,7 +23636,12 @@ fn native_object_get_own_property_descriptor(
         }
     }
     let value = if let Some(function) = target.as_function_ref() {
-        if key == "prototype" && !function.props.borrow().contains_key(PROXY_NO_PROTOTYPE_PROP) {
+        if key == "prototype"
+            && !function
+                .props
+                .borrow()
+                .contains_key(PROXY_NO_PROTOTYPE_PROP)
+        {
             function
                 .props
                 .borrow()
@@ -23290,16 +23797,19 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
                 ],
             )?;
             if !result.truthy() {
-                return Err(JsError::Throw(type_error(vm, "Proxy defineProperty trap returned false")));
+                return Err(JsError::Throw(type_error(
+                    vm,
+                    "Proxy defineProperty trap returned false",
+                )));
             }
             validate_proxy_define_invariant(vm, &proxy_target_value, &key, &descriptor)?;
             return Ok(target.clone());
         }
-        if vm.has_property(&handler, "defineProperty")
-            && !trap.is_null()
-            && !trap.is_undefined()
-        {
-            return Err(JsError::Throw(type_error(vm, "Proxy defineProperty trap is not callable")));
+        if vm.has_property(&handler, "defineProperty") && !trap.is_null() && !trap.is_undefined() {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "Proxy defineProperty trap is not callable",
+            )));
         }
         return native_object_define_property(
             vm,
@@ -23670,7 +24180,14 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
 /// object with normalized boolean attributes.
 fn to_proxy_property_descriptor(vm: &mut Vm, descriptor: &Value) -> JsResult<Value> {
     let result = vm.object(None);
-    for field in ["value", "writable", "get", "set", "enumerable", "configurable"] {
+    for field in [
+        "value",
+        "writable",
+        "get",
+        "set",
+        "enumerable",
+        "configurable",
+    ] {
         if !vm.has_property(descriptor, field) {
             continue;
         }
@@ -23741,7 +24258,10 @@ fn define_function_property(
             .as_ref()
             .is_some_and(|value| !value.is_undefined() && !value.is_function())
     {
-        return Err(JsError::Throw(type_error(vm, "accessor must be callable or undefined")));
+        return Err(JsError::Throw(type_error(
+            vm,
+            "accessor must be callable or undefined",
+        )));
     }
     let enumerable = vm.get_prop_with_accessors(descriptor, "enumerable")?;
     let configurable = vm.get_prop_with_accessors(descriptor, "configurable")?;
@@ -23784,21 +24304,39 @@ fn define_function_property(
         });
     if old_present && !old_attributes.configurable {
         if !configurable.is_undefined() && configurable.truthy() {
-            return Err(JsError::Throw(type_error(vm, "cannot reconfigure a non-configurable property")));
+            return Err(JsError::Throw(type_error(
+                vm,
+                "cannot reconfigure a non-configurable property",
+            )));
         }
         if (has_get || has_set) != old_accessor {
-            return Err(JsError::Throw(type_error(vm, "cannot change property kind")));
+            return Err(JsError::Throw(type_error(
+                vm,
+                "cannot change property kind",
+            )));
         }
     }
     let next_attributes = PropertyAttributes {
-        writable: writable.unwrap_or(if old_present { old_attributes.writable } else { false }),
+        writable: writable.unwrap_or(if old_present {
+            old_attributes.writable
+        } else {
+            false
+        }),
         enumerable: if enumerable.is_undefined() {
-            if old_present { old_attributes.enumerable } else { false }
+            if old_present {
+                old_attributes.enumerable
+            } else {
+                false
+            }
         } else {
             enumerable.truthy()
         },
         configurable: if configurable.is_undefined() {
-            if old_present { old_attributes.configurable } else { false }
+            if old_present {
+                old_attributes.configurable
+            } else {
+                false
+            }
         } else {
             configurable.truthy()
         },
@@ -23881,15 +24419,25 @@ fn native_object_prevent_extensions(vm: &mut Vm, _: Value, args: &[Value]) -> Js
         if trap.is_function() {
             let result = vm.call(trap, handler, vec![proxy_target_value.clone()])?;
             if !result.truthy() {
-                return Err(JsError::Throw(type_error(vm, "Proxy preventExtensions trap returned false")));
+                return Err(JsError::Throw(type_error(
+                    vm,
+                    "Proxy preventExtensions trap returned false",
+                )));
             }
             if native_reflect_is_extensible(vm, Value::Undefined, &[proxy_target_value])?.truthy() {
-                return Err(JsError::Throw(type_error(vm, "Proxy preventExtensions trap did not make target non-extensible")));
+                return Err(JsError::Throw(type_error(
+                    vm,
+                    "Proxy preventExtensions trap did not make target non-extensible",
+                )));
             }
             return Ok(target.clone());
         }
-        if vm.has_property(&handler, "preventExtensions") && !trap.is_null() && !trap.is_undefined() {
-            return Err(JsError::Throw(type_error(vm, "Proxy preventExtensions trap is not callable")));
+        if vm.has_property(&handler, "preventExtensions") && !trap.is_null() && !trap.is_undefined()
+        {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "Proxy preventExtensions trap is not callable",
+            )));
         }
         return native_object_prevent_extensions(vm, Value::Undefined, &[proxy_target_value]);
     }
@@ -23917,12 +24465,18 @@ fn native_object_is_extensible(vm: &mut Vm, _: Value, args: &[Value]) -> JsResul
             let result = vm.call(trap, handler, vec![target.clone()])?;
             let target_result = native_object_is_extensible(vm, Value::Undefined, &[target])?;
             if result.truthy() != target_result.truthy() {
-                return Err(JsError::Throw(type_error(vm, "Proxy isExtensible trap result disagrees with target")));
+                return Err(JsError::Throw(type_error(
+                    vm,
+                    "Proxy isExtensible trap result disagrees with target",
+                )));
             }
             return Ok(Value::Bool(result.truthy()));
         }
         if vm.has_property(&handler, "isExtensible") && !trap.is_null() && !trap.is_undefined() {
-            return Err(JsError::Throw(type_error(vm, "Proxy isExtensible trap is not callable")));
+            return Err(JsError::Throw(type_error(
+                vm,
+                "Proxy isExtensible trap is not callable",
+            )));
         }
         return native_object_is_extensible(vm, Value::Undefined, &[target]);
     }
@@ -23959,26 +24513,40 @@ fn native_object_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
         if trap.is_function() {
             let result = vm.call(trap, handler, vec![proxy_target_value.clone()])?;
             if result.is_null() || (result.is_object_like() && !is_symbol_carrier(&result)) {
-                let target_proto = native_object_get_prototype_of(vm, Value::Undefined, &[proxy_target_value.clone()])?;
-                let extensible = native_object_is_extensible(vm, Value::Undefined, &[proxy_target_value.clone()])?.truthy();
+                let target_proto = native_object_get_prototype_of(
+                    vm,
+                    Value::Undefined,
+                    &[proxy_target_value.clone()],
+                )?;
+                let extensible = native_object_is_extensible(
+                    vm,
+                    Value::Undefined,
+                    &[proxy_target_value.clone()],
+                )?
+                .truthy();
                 if !extensible && !result.same_bits(&target_proto) {
-                    return Err(JsError::Throw(type_error(vm, "Proxy getPrototypeOf trap violated target invariant")));
+                    return Err(JsError::Throw(type_error(
+                        vm,
+                        "Proxy getPrototypeOf trap violated target invariant",
+                    )));
                 }
                 return Ok(result);
             }
-            return Err(JsError::Throw(type_error(vm, "Proxy getPrototypeOf trap must return object or null")));
+            return Err(JsError::Throw(type_error(
+                vm,
+                "Proxy getPrototypeOf trap must return object or null",
+            )));
         }
         if vm.has_property(&handler, "getPrototypeOf") && !trap.is_null() && !trap.is_undefined() {
-            return Err(JsError::Throw(type_error(vm, "Proxy getPrototypeOf trap is not callable")));
+            return Err(JsError::Throw(type_error(
+                vm,
+                "Proxy getPrototypeOf trap is not callable",
+            )));
         }
         return native_object_get_prototype_of(vm, Value::Undefined, &[proxy_target_value]);
     }
     if let Some(object) = target.as_object() {
-        if let Some(prototype_function) = object
-            .borrow()
-            .props
-            .get("\0prototype_function")
-            .cloned()
+        if let Some(prototype_function) = object.borrow().props.get("\0prototype_function").cloned()
         {
             return Ok(prototype_function);
         }
@@ -23989,29 +24557,34 @@ fn native_object_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
             .map(Value::Object)
             .unwrap_or(Value::Null));
     }
-        if target.as_function().is_some() {
-            if let Some(override_value) = target
-                .as_function_ref()
-                .and_then(|function| function.props.borrow().get(FUNCTION_PROTOTYPE_OVERRIDE_PROP).cloned())
-            {
-                return Ok(override_value);
-            }
-            if target.as_function_ref().is_some_and(
-                |function| matches!(&function.kind, FunctionKind::User { node, .. } if node.r#async),
-            ) {
+    if target.as_function().is_some() {
+        if let Some(override_value) = target.as_function_ref().and_then(|function| {
+            function
+                .props
+                .borrow()
+                .get(FUNCTION_PROTOTYPE_OVERRIDE_PROP)
+                .cloned()
+        }) {
+            return Ok(override_value);
+        }
+        if target.as_function_ref().is_some_and(
+            |function| matches!(&function.kind, FunctionKind::User { node, .. } if node.r#async),
+        ) {
             let generator = target.as_function_ref().is_some_and(|function| {
                 matches!(&function.kind, FunctionKind::User { node, .. } if node.generator)
             });
             let prototype = target
                 .as_function_ref()
                 .and_then(|function| function.props.borrow().get("constructor").cloned())
-                .unwrap_or_else(|| if generator {
-                    vm.async_generator_constructor()
-                } else {
-                    vm.async_function_constructor()
+                .unwrap_or_else(|| {
+                    if generator {
+                        vm.async_generator_constructor()
+                    } else {
+                        vm.async_function_constructor()
+                    }
                 })
-            .as_function_ref()
-            .map(|function| function.prototype.clone());
+                .as_function_ref()
+                .map(|function| function.prototype.clone());
             return Ok(prototype.map(Value::Object).unwrap_or(Value::Null));
         }
         if target.as_function_ref().is_some_and(|function| {
@@ -24100,19 +24673,10 @@ fn native_object_get_own_property_names(vm: &mut Vm, _: Value, args: &[Value]) -
     }
     if let Some(function) = target.as_function_ref() {
         keys.extend(
-            function
-                .props
-                .borrow()
-                .keys()
-                .cloned()
+            function_own_property_keys(function, false, false, true, constructable(target))
+                .into_iter()
                 .map(Value::string_value),
         );
-        if !matches!(
-            function.kind,
-            FunctionKind::Native(_) | FunctionKind::Arrow { .. } | FunctionKind::Bound { .. }
-        ) {
-            keys.push(Value::string_value("prototype"));
-        }
     } else if let Some(object) = target.as_object_ref() {
         let object = object.borrow();
         if let Some(array) = &object.array {
@@ -24189,6 +24753,14 @@ fn native_object_get_own_property_symbols(
             .collect();
         return Ok(vm.array_from_values(keys));
     }
+    if let Some(function) = target.as_function_ref() {
+        let keys = function_own_property_keys(function, false, true, true, constructable(target))
+            .into_iter()
+            .filter(|key| is_symbol_key(key))
+            .filter_map(|key| vm.symbol_keys.get(&key).cloned())
+            .collect();
+        return Ok(vm.array_from_values(keys));
+    }
     let keys = target
         .as_object_ref()
         .map(|object| {
@@ -24257,7 +24829,9 @@ fn native_object_get_own_property_descriptors(
 }
 fn native_object_create(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let prototype_value = args.first().cloned().unwrap_or(Value::Undefined);
-    let prototype_function = prototype_value.as_function_ref().map(|_| prototype_value.clone());
+    let prototype_function = prototype_value
+        .as_function_ref()
+        .map(|_| prototype_value.clone());
     let prototype = if prototype_value.is_null() || prototype_function.is_some() {
         None
     } else if prototype_value.is_object() || prototype_value.is_function() {
@@ -24398,7 +24972,12 @@ fn proxy_revoked(value: &Value) -> bool {
         .is_some_and(|value| value.truthy())
 }
 
-fn validate_proxy_set_invariant(vm: &mut Vm, target: &Value, key: &str, value: &Value) -> JsResult<()> {
+fn validate_proxy_set_invariant(
+    vm: &mut Vm,
+    target: &Value,
+    key: &str,
+    value: &Value,
+) -> JsResult<()> {
     let descriptor = native_object_get_own_property_descriptor(
         vm,
         Value::Undefined,
@@ -24413,13 +24992,19 @@ fn validate_proxy_set_invariant(vm: &mut Vm, target: &Value, key: &str, value: &
         && vm.has_property(&descriptor, "value")
         && !vm.get_prop(&descriptor, "value").same_bits(value)
     {
-        return Err(JsError::Throw(type_error(vm, "Proxy set trap violated non-writable target invariant")));
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Proxy set trap violated non-writable target invariant",
+        )));
     }
     if !vm.has_property(&descriptor, "writable")
         && !vm.get_prop(&descriptor, "configurable").truthy()
         && vm.get_prop(&descriptor, "set").is_undefined()
     {
-        return Err(JsError::Throw(type_error(vm, "Proxy set trap violated accessor target invariant")));
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Proxy set trap violated accessor target invariant",
+        )));
     }
     Ok(())
 }
@@ -24444,17 +25029,26 @@ fn validate_proxy_define_invariant(
     let extensible = native_object_is_extensible(vm, Value::Undefined, &[target.clone()])?.truthy();
     if current.is_undefined() {
         if !extensible {
-            return Err(proxy_invariant_error(vm, "Proxy defineProperty trap added to non-extensible target"));
+            return Err(proxy_invariant_error(
+                vm,
+                "Proxy defineProperty trap added to non-extensible target",
+            ));
         }
         if vm.has_property(descriptor, "configurable")
-            && !vm.get_prop_with_accessors(descriptor, "configurable")?.truthy()
+            && !vm
+                .get_prop_with_accessors(descriptor, "configurable")?
+                .truthy()
         {
-            return Err(proxy_invariant_error(vm, "Proxy defineProperty trap reported a non-configurable new property"));
+            return Err(proxy_invariant_error(
+                vm,
+                "Proxy defineProperty trap reported a non-configurable new property",
+            ));
         }
         return Ok(());
     }
     let current_configurable = vm.get_prop(&current, "configurable").truthy();
-    let requested_configurable = vm.has_property(descriptor, "configurable")
+    let requested_configurable = vm
+        .has_property(descriptor, "configurable")
         .then(|| vm.get_prop_with_accessors(descriptor, "configurable"))
         .transpose()?
         .map_or(false, |value| value.truthy());
@@ -24462,13 +25056,21 @@ fn validate_proxy_define_invariant(
         && vm.has_property(descriptor, "configurable")
         && !requested_configurable
     {
-        return Err(proxy_invariant_error(vm, "Proxy defineProperty trap made target property non-configurable"));
+        return Err(proxy_invariant_error(
+            vm,
+            "Proxy defineProperty trap made target property non-configurable",
+        ));
     }
     if !vm.get_prop(&current, "configurable").truthy()
         && vm.has_property(descriptor, "configurable")
-        && vm.get_prop_with_accessors(descriptor, "configurable")?.truthy()
+        && vm
+            .get_prop_with_accessors(descriptor, "configurable")?
+            .truthy()
     {
-        return Err(proxy_invariant_error(vm, "Proxy defineProperty trap made target property configurable"));
+        return Err(proxy_invariant_error(
+            vm,
+            "Proxy defineProperty trap made target property configurable",
+        ));
     }
     if !vm.get_prop(&current, "configurable").truthy()
         && vm.has_property(&current, "writable")
@@ -24477,7 +25079,10 @@ fn validate_proxy_define_invariant(
         if vm.has_property(descriptor, "writable")
             && vm.get_prop_with_accessors(descriptor, "writable")?.truthy()
         {
-            return Err(proxy_invariant_error(vm, "Proxy defineProperty trap made target property writable"));
+            return Err(proxy_invariant_error(
+                vm,
+                "Proxy defineProperty trap made target property writable",
+            ));
         }
         if vm.has_property(descriptor, "value")
             && vm.has_property(&current, "value")
@@ -24485,7 +25090,10 @@ fn validate_proxy_define_invariant(
                 .get_prop_with_accessors(descriptor, "value")?
                 .same_bits(&vm.get_prop(&current, "value"))
         {
-            return Err(proxy_invariant_error(vm, "Proxy defineProperty trap changed frozen target value"));
+            return Err(proxy_invariant_error(
+                vm,
+                "Proxy defineProperty trap changed frozen target value",
+            ));
         }
     }
     if vm.get_prop(&current, "configurable").truthy() == false
@@ -24493,7 +25101,10 @@ fn validate_proxy_define_invariant(
         && vm.has_property(descriptor, "writable")
         && !vm.get_prop_with_accessors(descriptor, "writable")?.truthy()
     {
-        return Err(proxy_invariant_error(vm, "Proxy defineProperty trap made writable target property non-writable"));
+        return Err(proxy_invariant_error(
+            vm,
+            "Proxy defineProperty trap made writable target property non-writable",
+        ));
     }
     Ok(())
 }
@@ -24515,19 +25126,28 @@ fn proxy_own_enumerable_keys(vm: &mut Vm, target: &Value) -> JsResult<Vec<String
         && !own_keys.is_null()
         && !own_keys.is_undefined()
     {
-        return Err(JsError::Throw(type_error(vm, "Proxy ownKeys trap is not callable")));
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Proxy ownKeys trap is not callable",
+        )));
     }
     let keys = if own_keys.is_function() {
         let returned = vm.call(own_keys, handler.clone(), vec![proxy_target_value.clone()])?;
         if !returned.is_object_like() {
-            return Err(JsError::Throw(type_error(vm, "Proxy ownKeys trap must return an object")));
+            return Err(JsError::Throw(type_error(
+                vm,
+                "Proxy ownKeys trap must return an object",
+            )));
         }
         let length = array_from_length(vm, &returned).unwrap_or(0);
         let mut keys = Vec::with_capacity(length);
         for index in 0..length {
             let element = vm.get_prop(&returned, &index.to_string());
             if !element.is_string() && !is_symbol_carrier(&element) {
-                return Err(JsError::Throw(type_error(vm, "Proxy ownKeys trap returned invalid key")));
+                return Err(JsError::Throw(type_error(
+                    vm,
+                    "Proxy ownKeys trap returned invalid key",
+                )));
             }
             let key = vm.to_property_key(element)?;
             keys.push(key);
@@ -24548,7 +25168,13 @@ fn proxy_own_enumerable_keys(vm: &mut Vm, target: &Value) -> JsResult<Vec<String
             vm.call(
                 descriptor_trap.clone(),
                 handler.clone(),
-                vec![proxy_target_value.clone(), vm.symbol_keys.get(&key).cloned().unwrap_or_else(|| Value::string_value(key.clone()))],
+                vec![
+                    proxy_target_value.clone(),
+                    vm.symbol_keys
+                        .get(&key)
+                        .cloned()
+                        .unwrap_or_else(|| Value::string_value(key.clone())),
+                ],
             )?
         } else {
             native_object_get_own_property_descriptor(
@@ -24579,21 +25205,30 @@ fn proxy_own_property_keys_with_vm(vm: &mut Vm, target: &Value) -> JsResult<Vec<
     if trap.is_function() {
         let returned = vm.call(trap, handler.clone(), vec![proxy_target_value.clone()])?;
         if !returned.is_object_like() {
-            return Err(JsError::Throw(type_error(vm, "Proxy ownKeys trap must return an object")));
+            return Err(JsError::Throw(type_error(
+                vm,
+                "Proxy ownKeys trap must return an object",
+            )));
         }
         let length = array_from_length(vm, &returned).unwrap_or(0);
         let mut keys = Vec::with_capacity(length);
         for index in 0..length {
             let element = vm.get_prop(&returned, &index.to_string());
             if !element.is_string() && !is_symbol_carrier(&element) {
-                return Err(JsError::Throw(type_error(vm, "Proxy ownKeys trap returned invalid key")));
+                return Err(JsError::Throw(type_error(
+                    vm,
+                    "Proxy ownKeys trap returned invalid key",
+                )));
             }
             keys.push(vm.to_property_key(element)?);
         }
         return validate_proxy_own_keys(vm, &proxy_target_value, keys);
     }
     if vm.has_property(&handler, "ownKeys") && !trap.is_null() && !trap.is_undefined() {
-        return Err(JsError::Throw(type_error(vm, "Proxy ownKeys trap is not callable")));
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Proxy ownKeys trap is not callable",
+        )));
     }
     if proxy_target(&proxy_target_value).is_some() {
         proxy_own_property_keys_with_vm(vm, &proxy_target_value)
@@ -24602,10 +25237,17 @@ fn proxy_own_property_keys_with_vm(vm: &mut Vm, target: &Value) -> JsResult<Vec<
     }
 }
 
-fn validate_proxy_own_keys(vm: &mut Vm, target: &Value, keys: Vec<String>) -> JsResult<Vec<String>> {
+fn validate_proxy_own_keys(
+    vm: &mut Vm,
+    target: &Value,
+    keys: Vec<String>,
+) -> JsResult<Vec<String>> {
     let mut seen = HashSet::new();
     if keys.iter().any(|key| !seen.insert(key.clone())) {
-        return Err(JsError::Throw(type_error(vm, "Proxy ownKeys trap returned duplicate key")));
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Proxy ownKeys trap returned duplicate key",
+        )));
     }
     let target_keys = object_own_property_keys(target);
     let extensible = if let Some(object) = target.as_object_ref() {
@@ -24622,17 +25264,27 @@ fn validate_proxy_own_keys(vm: &mut Vm, target: &Value, keys: Vec<String>) -> Js
             &[target.clone(), Value::string_value(key.clone())],
         )?;
         if descriptor.is_object_like()
-            && !vm.get_prop_with_accessors(&descriptor, "configurable")?.truthy()
+            && !vm
+                .get_prop_with_accessors(&descriptor, "configurable")?
+                .truthy()
             && !keys.iter().any(|candidate| candidate == key)
         {
-            return Err(JsError::Throw(type_error(vm, "Proxy ownKeys trap omitted non-configurable key")));
+            return Err(JsError::Throw(type_error(
+                vm,
+                "Proxy ownKeys trap omitted non-configurable key",
+            )));
         }
     }
     if !extensible
         && (keys.len() != target_keys.len()
-            || keys.iter().any(|key| !target_keys.iter().any(|candidate| candidate == key)))
+            || keys
+                .iter()
+                .any(|key| !target_keys.iter().any(|candidate| candidate == key)))
     {
-        return Err(JsError::Throw(type_error(vm, "Proxy ownKeys trap violated non-extensible target")));
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Proxy ownKeys trap violated non-extensible target",
+        )));
     }
     // A proxy trap supplies the observable order; unlike ordinary own-key
     // storage, validation must never reorder its result.
@@ -24735,18 +25387,13 @@ fn object_own_enumerable_keys_mode(target: &Value, include_symbols: bool) -> Vec
         return partition_symbol_keys(keys);
     }
     if let Some(function) = target.as_function_ref() {
-        return partition_symbol_keys(
-            function
-                .props
-                .borrow()
-                .keys()
-                .filter(|key| {
-                    !matches!(key.as_str(), "name" | "length")
-                        && !matches!(function.kind, FunctionKind::Builtin(_))
-                })
-                .cloned()
-                .collect(),
-        );
+        return partition_symbol_keys(function_own_property_keys(
+            function,
+            true,
+            include_symbols,
+            false,
+            constructable(target),
+        ));
     }
     target
         .as_string()
@@ -24862,7 +25509,13 @@ fn object_own_property_keys(target: &Value) -> Vec<String> {
         return partition_symbol_keys(keys);
     }
     if let Some(function) = target.as_function_ref() {
-        return partition_symbol_keys(function.props.borrow().keys().cloned().collect());
+        return partition_symbol_keys(function_own_property_keys(
+            function,
+            false,
+            true,
+            true,
+            constructable(target),
+        ));
     }
     target
         .as_string()
@@ -24874,6 +25527,65 @@ fn object_own_property_keys(target: &Value) -> Vec<String> {
             keys
         })
         .unwrap_or_default()
+}
+
+/// Project a function's compact property tables into ECMAScript own-key
+/// order.  Function values keep descriptors separately from their callable
+/// storage; this single projection applies those attributes consistently to
+/// Object.keys, Reflect.ownKeys, and descriptor collection.
+fn function_own_property_keys(
+    function: &FunctionValue<'_>,
+    enumerable_only: bool,
+    include_symbols: bool,
+    include_metadata: bool,
+    is_constructable: bool,
+) -> Vec<String> {
+    let props = function.props.borrow();
+    let attributes = function.attributes.borrow();
+    let is_builtin = matches!(function.kind, FunctionKind::Builtin(_));
+    let visible = |key: &str| {
+        if (key.starts_with('\0') && !is_symbol_key(key))
+            || (!include_symbols && is_symbol_key(key))
+        {
+            return false;
+        }
+        if enumerable_only && (key == "name" || key == "length" || key == "prototype") {
+            return false;
+        }
+        if enumerable_only && is_builtin {
+            return false;
+        }
+        attributes
+            .get(key)
+            .is_none_or(|descriptor| !enumerable_only || descriptor.enumerable)
+    };
+
+    let mut keys = Vec::with_capacity(props.len() + attributes.len() + 1);
+    for key in props.keys() {
+        if key == "prototype" {
+            continue;
+        }
+        if !include_metadata && matches!(key.as_str(), "name" | "length") {
+            continue;
+        }
+        if visible(key) {
+            keys.push(key.clone());
+        }
+        // Class/function own-key order places the prototype immediately after
+        // name, before user-defined static properties.
+        if include_metadata && key == "name" && is_constructable {
+            keys.push("prototype".into());
+        }
+    }
+    if include_metadata && is_constructable && !keys.iter().any(|key| key == "prototype") {
+        keys.push("prototype".into());
+    }
+    for key in attributes.keys() {
+        if !props.contains_key(key) && visible(key) {
+            keys.push(key.clone());
+        }
+    }
+    keys
 }
 fn native_object_values(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let target = args
@@ -24994,17 +25706,31 @@ fn native_object_set_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
         let handler = proxy_handler(target).unwrap_or(Value::Undefined);
         let trap = vm.get_prop_with_accessors(&handler, "setPrototypeOf")?;
         if trap.is_function() {
-            let result = vm.call(trap, handler, vec![proxy_target_value.clone(), prototype.clone()])?;
+            let result = vm.call(
+                trap,
+                handler,
+                vec![proxy_target_value.clone(), prototype.clone()],
+            )?;
             if !result.truthy() {
-                return Err(JsError::Throw(type_error(vm, "Proxy setPrototypeOf trap returned false")));
+                return Err(JsError::Throw(type_error(
+                    vm,
+                    "Proxy setPrototypeOf trap returned false",
+                )));
             }
             validate_proxy_set_prototype_invariant(vm, &proxy_target_value, &prototype)?;
             return Ok(target.clone());
         }
         if vm.has_property(&handler, "setPrototypeOf") && !trap.is_null() && !trap.is_undefined() {
-            return Err(JsError::Throw(type_error(vm, "Proxy setPrototypeOf trap is not callable")));
+            return Err(JsError::Throw(type_error(
+                vm,
+                "Proxy setPrototypeOf trap is not callable",
+            )));
         }
-        return native_object_set_prototype_of(vm, Value::Undefined, &[proxy_target_value, prototype]);
+        return native_object_set_prototype_of(
+            vm,
+            Value::Undefined,
+            &[proxy_target_value, prototype],
+        );
     }
     let symbol_prototype = prototype
         .as_object_ref()
@@ -25421,8 +26147,7 @@ fn native_object_has_own_property(vm: &mut Vm, this: Value, args: &[Value]) -> J
             || props.contains_key(&accessor_slot("get", &key))
             || props.contains_key(&accessor_slot("set", &key))
             || (key == "prototype"
-                && (constructable(&target)
-                    && !props.contains_key(PROXY_NO_PROTOTYPE_PROP)
+                && (constructable(&target) && !props.contains_key(PROXY_NO_PROTOTYPE_PROP)
                     || matches!(&function.kind, FunctionKind::User { node, .. } if node.generator)))
     } else {
         target.as_object_ref().is_some_and(|object| {
